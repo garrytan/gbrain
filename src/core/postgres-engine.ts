@@ -1,5 +1,5 @@
-import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
+import { validateSlug, contentHash } from './utils.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
@@ -551,16 +551,6 @@ export class PostgresEngine implements BrainEngine {
 }
 
 // Helpers
-function validateSlug(slug: string): void {
-  if (!slug || /\.\./.test(slug) || /^\//.test(slug) || !/^[a-z0-9][a-z0-9/_-]*$/.test(slug)) {
-    throw new Error(`Invalid slug: "${slug}". Slugs must be lowercase alphanumeric with / - _ separators, no path traversal.`);
-  }
-}
-
-function contentHash(compiledTruth: string, timeline: string): string {
-  return createHash('sha256').update(compiledTruth + '\n---\n' + timeline).digest('hex');
-}
-
 function rowToPage(row: Record<string, unknown>): Page {
   return {
     id: row.id as number,
