@@ -26,6 +26,15 @@ describe('validateSlug', () => {
   test('rejects uppercase', () => {
     expect(() => validateSlug('People/John')).toThrow('Invalid slug');
   });
+
+  test('rejects trailing slash', () => {
+    expect(() => validateSlug('people/john/')).toThrow('Invalid slug');
+    expect(() => validateSlug('a/')).toThrow('Invalid slug');
+  });
+
+  test('rejects consecutive slashes', () => {
+    expect(() => validateSlug('people//john')).toThrow('Invalid slug');
+  });
 });
 
 describe('contentHash', () => {
