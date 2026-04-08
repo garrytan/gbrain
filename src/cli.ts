@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 
 import { PostgresEngine } from './core/postgres-engine.ts';
+import { SQLiteEngine } from './core/sqlite-engine.ts';
 import { loadConfig, toEngineConfig } from './core/config.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { VERSION } from './version.ts';
 
 const COMMAND_HELP: Record<string, string> = {
-  init: 'Usage: gbrain init [--supabase|--url <conn>]\n\nCreate brain (guided wizard).',
+  init: 'Usage: gbrain init [--supabase|--sqlite|--url <conn>] [--path <db-file>]\n\nCreate brain (guided wizard).',
   upgrade: 'Usage: gbrain upgrade\n\nSelf-update the CLI.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.',
   get: 'Usage: gbrain get <slug>\n\nRead a page by slug (supports fuzzy matching).',
   put: 'Usage: gbrain put <slug> [< file.md]\n\nWrite or update a page from stdin.',
@@ -236,11 +237,14 @@ async function main() {
 async function connectEngine(): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
-    console.error('No brain configured. Run: gbrain init --supabase');
+    console.error('No brain configured. Run: gbrain init --supabase or gbrain init --sqlite');
     process.exit(1);
   }
 
-  const engine = new PostgresEngine();
+  const engine = config.engine === 'sqlite'
+    ? new SQLiteEngine()
+    : new PostgresEngine();
+
   await engine.connect(toEngineConfig(config));
   return engine;
 }
@@ -252,7 +256,7 @@ USAGE
   gbrain <command> [options]
 
 SETUP
-  init [--supabase|--url <conn>]     Create brain (guided wizard)
+  init [--supabase|--sqlite|--url]    Create brain (guided wizard)
   upgrade                            Self-update
 
 PAGES
