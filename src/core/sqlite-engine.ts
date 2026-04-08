@@ -13,6 +13,7 @@ import type {
   PageVersion,
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
+  FileRecord, FileInput,
   EngineConfig,
 } from './types.ts';
 
@@ -693,6 +694,42 @@ export class SQLiteEngine implements BrainEngine {
     `).run(key, value);
   }
 
+  // ── Files ────────────────────────────────────────────────
+
+  async getFiles(slug?: string): Promise<FileRecord[]> {
+    const conn = this.getDb();
+    let rows: Record<string, unknown>[];
+    if (slug) {
+      rows = conn.query('SELECT * FROM files WHERE page_slug = ? ORDER BY filename').all(slug) as Record<string, unknown>[];
+    } else {
+      rows = conn.query('SELECT * FROM files ORDER BY page_slug, filename LIMIT 100').all() as Record<string, unknown>[];
+    }
+    return rows.map(r => this.rowToFileRecord(r));
+  }
+
+  async upsertFile(file: FileInput): Promise<void> {
+    const conn = this.getDb();
+    const now = new Date().toISOString();
+    conn.query(`
+      INSERT INTO files (page_slug, filename, storage_path, storage_url, mime_type, size_bytes, content_hash, metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (storage_path) DO UPDATE SET
+        content_hash = excluded.content_hash,
+        size_bytes = excluded.size_bytes,
+        mime_type = excluded.mime_type
+    `).run(
+      file.page_slug, file.filename, file.storage_path, file.storage_url,
+      file.mime_type, file.size_bytes, file.content_hash,
+      JSON.stringify(file.metadata || {}), now,
+    );
+  }
+
+  async findFileByHash(contentHash: string, storagePath: string): Promise<FileRecord | null> {
+    const conn = this.getDb();
+    const row = conn.query('SELECT * FROM files WHERE content_hash = ? AND storage_path = ?').get(contentHash, storagePath) as Record<string, unknown> | null;
+    return row ? this.rowToFileRecord(row) : null;
+  }
+
   // ── Private helpers ──────────────────────────────────────
 
   private getDb(): Database {
@@ -741,6 +778,21 @@ export class SQLiteEngine implements BrainEngine {
       chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
       score: Number(row.score),
       stale: Boolean(row.stale),
+    };
+  }
+
+  private rowToFileRecord(row: Record<string, unknown>): FileRecord {
+    return {
+      id: row.id as number,
+      page_slug: row.page_slug as string | null,
+      filename: row.filename as string,
+      storage_path: row.storage_path as string,
+      storage_url: row.storage_url as string,
+      mime_type: row.mime_type as string | null,
+      size_bytes: row.size_bytes as number | null,
+      content_hash: row.content_hash as string,
+      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata as Record<string, unknown>,
+      created_at: new Date(row.created_at as string),
     };
   }
 }

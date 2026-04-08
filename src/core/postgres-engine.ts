@@ -10,6 +10,7 @@ import type {
   PageVersion,
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
+  FileRecord, FileInput,
   EngineConfig,
 } from './types.ts';
 import * as db from './db.ts';
@@ -548,6 +549,36 @@ export class PostgresEngine implements BrainEngine {
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
     `;
   }
+
+  // Files
+  async getFiles(slug?: string): Promise<FileRecord[]> {
+    const sql = db.getConnection();
+    let rows;
+    if (slug) {
+      rows = await sql`SELECT * FROM files WHERE page_slug = ${slug} ORDER BY filename`;
+    } else {
+      rows = await sql`SELECT * FROM files ORDER BY page_slug, filename LIMIT 100`;
+    }
+    return rows.map(rowToFileRecord);
+  }
+
+  async upsertFile(file: FileInput): Promise<void> {
+    const sql = db.getConnection();
+    await sql`
+      INSERT INTO files (page_slug, filename, storage_path, storage_url, mime_type, size_bytes, content_hash, metadata)
+      VALUES (${file.page_slug}, ${file.filename}, ${file.storage_path}, ${file.storage_url}, ${file.mime_type}, ${file.size_bytes}, ${file.content_hash}, ${JSON.stringify(file.metadata || {})}::jsonb)
+      ON CONFLICT (storage_path) DO UPDATE SET
+        content_hash = EXCLUDED.content_hash,
+        size_bytes = EXCLUDED.size_bytes,
+        mime_type = EXCLUDED.mime_type
+    `;
+  }
+
+  async findFileByHash(contentHash: string, storagePath: string): Promise<FileRecord | null> {
+    const sql = db.getConnection();
+    const rows = await sql`SELECT * FROM files WHERE content_hash = ${contentHash} AND storage_path = ${storagePath}`;
+    return rows.length > 0 ? rowToFileRecord(rows[0]) : null;
+  }
 }
 
 // Helpers
@@ -590,5 +621,20 @@ function rowToSearchResult(row: Record<string, unknown>): SearchResult {
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
     score: Number(row.score),
     stale: Boolean(row.stale),
+  };
+}
+
+function rowToFileRecord(row: Record<string, unknown>): FileRecord {
+  return {
+    id: row.id as number,
+    page_slug: row.page_slug as string | null,
+    filename: row.filename as string,
+    storage_path: row.storage_path as string,
+    storage_url: row.storage_url as string,
+    mime_type: row.mime_type as string | null,
+    size_bytes: row.size_bytes as number | null,
+    content_hash: row.content_hash as string,
+    metadata: (typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) as Record<string, unknown>,
+    created_at: new Date(row.created_at as string),
   };
 }

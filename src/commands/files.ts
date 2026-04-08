@@ -2,20 +2,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
 import { join, relative, extname, basename } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
-import * as db from '../core/db.ts';
-
-interface FileRecord {
-  id: number;
-  page_slug: string | null;
-  filename: string;
-  storage_path: string;
-  storage_url: string;
-  mime_type: string | null;
-  size_bytes: number;
-  content_hash: string;
-  metadata: Record<string, unknown>;
-  created_at: string;
-}
+import type { FileInput } from '../core/types.ts';
 
 const MIME_TYPES: Record<string, string> = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
@@ -42,16 +29,16 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
 
   switch (subcommand) {
     case 'list':
-      await listFiles(args[1]);
+      await listFiles(engine, args[1]);
       break;
     case 'upload':
-      await uploadFile(args.slice(1));
+      await uploadFile(engine, args.slice(1));
       break;
     case 'sync':
-      await syncFiles(args[1]);
+      await syncFiles(engine, args[1]);
       break;
     case 'verify':
-      await verifyFiles();
+      await verifyFiles(engine);
       break;
     default:
       console.error(`Usage: gbrain files <list|upload|sync|verify> [args]`);
@@ -63,14 +50,8 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
   }
 }
 
-async function listFiles(slug?: string) {
-  const sql = db.getConnection();
-  let rows;
-  if (slug) {
-    rows = await sql`SELECT * FROM files WHERE page_slug = ${slug} ORDER BY filename`;
-  } else {
-    rows = await sql`SELECT * FROM files ORDER BY page_slug, filename LIMIT 100`;
-  }
+async function listFiles(engine: BrainEngine, slug?: string) {
+  const rows = await engine.getFiles(slug);
 
   if (rows.length === 0) {
     console.log(slug ? `No files for page: ${slug}` : 'No files stored.');
@@ -84,7 +65,7 @@ async function listFiles(slug?: string) {
   }
 }
 
-async function uploadFile(args: string[]) {
+async function uploadFile(engine: BrainEngine, args: string[]) {
   const filePath = args.find(a => !a.startsWith('--'));
   const pageSlug = args.find((a, i) => args[i - 1] === '--page') || null;
 
@@ -99,32 +80,30 @@ async function uploadFile(args: string[]) {
   const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
   const mimeType = getMimeType(filePath);
 
-  const sql = db.getConnection();
-
-  // Check for existing file by hash
-  const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
-  if (existing.length > 0) {
+  const existing = await engine.findFileByHash(hash, storagePath);
+  if (existing) {
     console.log(`File already uploaded (hash match): ${storagePath}`);
     return;
   }
 
   // TODO: actual Supabase Storage upload goes here
-  // For now, record metadata in Postgres
   const storageUrl = `https://storage.supabase.co/brain-files/${storagePath}`;
 
-  await sql`
-    INSERT INTO files (page_slug, filename, storage_path, storage_url, mime_type, size_bytes, content_hash, metadata)
-    VALUES (${pageSlug}, ${filename}, ${storagePath}, ${storageUrl}, ${mimeType}, ${stat.size}, ${hash}, ${'{}'}::jsonb)
-    ON CONFLICT (storage_path) DO UPDATE SET
-      content_hash = EXCLUDED.content_hash,
-      size_bytes = EXCLUDED.size_bytes,
-      mime_type = EXCLUDED.mime_type
-  `;
+  const file: FileInput = {
+    page_slug: pageSlug,
+    filename,
+    storage_path: storagePath,
+    storage_url: storageUrl,
+    mime_type: mimeType,
+    size_bytes: stat.size,
+    content_hash: hash,
+  };
+  await engine.upsertFile(file);
 
   console.log(`Uploaded: ${storagePath} (${Math.round(stat.size / 1024)}KB)`);
 }
 
-async function syncFiles(dir?: string) {
+async function syncFiles(engine: BrainEngine, dir?: string) {
   if (!dir || !existsSync(dir)) {
     console.error('Usage: gbrain files sync <directory>');
     process.exit(1);
@@ -150,27 +129,25 @@ async function syncFiles(dir?: string) {
     const mimeType = getMimeType(filePath);
     const stat = statSync(filePath);
 
-    const sql = db.getConnection();
-    const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
-    if (existing.length > 0) {
+    const existing = await engine.findFileByHash(hash, storagePath);
+    if (existing) {
       skipped++;
       continue;
     }
 
-    // Infer page slug from directory structure
     const pathParts = relativePath.split('/');
     const pageSlug = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : null;
-
     const storageUrl = `https://storage.supabase.co/brain-files/${storagePath}`;
 
-    await sql`
-      INSERT INTO files (page_slug, filename, storage_path, storage_url, mime_type, size_bytes, content_hash, metadata)
-      VALUES (${pageSlug}, ${filename}, ${storagePath}, ${storageUrl}, ${mimeType}, ${stat.size}, ${hash}, ${'{}'}::jsonb)
-      ON CONFLICT (storage_path) DO UPDATE SET
-        content_hash = EXCLUDED.content_hash,
-        size_bytes = EXCLUDED.size_bytes,
-        mime_type = EXCLUDED.mime_type
-    `;
+    await engine.upsertFile({
+      page_slug: pageSlug,
+      filename,
+      storage_path: storagePath,
+      storage_url: storageUrl,
+      mime_type: mimeType,
+      size_bytes: stat.size,
+      content_hash: hash,
+    });
 
     uploaded++;
   }
@@ -178,9 +155,8 @@ async function syncFiles(dir?: string) {
   console.log(`\n\nFiles sync complete: ${uploaded} uploaded, ${skipped} skipped (unchanged)`);
 }
 
-async function verifyFiles() {
-  const sql = db.getConnection();
-  const rows = await sql`SELECT * FROM files ORDER BY storage_path`;
+async function verifyFiles(engine: BrainEngine) {
+  const rows = await engine.getFiles();
 
   if (rows.length === 0) {
     console.log('No files to verify.');
@@ -189,11 +165,8 @@ async function verifyFiles() {
 
   let verified = 0;
   let mismatches = 0;
-  let missing = 0;
 
   for (const row of rows) {
-    // Note: full verification would check Supabase Storage hash
-    // For now, verify the DB record exists and has valid data
     if (!row.content_hash || !row.storage_path) {
       mismatches++;
       console.error(`  MISMATCH: ${row.storage_path} (missing hash or path)`);
@@ -202,11 +175,10 @@ async function verifyFiles() {
     }
   }
 
-  if (mismatches === 0 && missing === 0) {
+  if (mismatches === 0) {
     console.log(`${verified} files verified, 0 mismatches, 0 missing`);
   } else {
-    console.error(`VERIFY FAILED: ${mismatches} mismatches, ${missing} missing.`);
-    console.error(`Run: gbrain files sync --retry-failed`);
+    console.error(`VERIFY FAILED: ${mismatches} mismatches.`);
     process.exit(1);
   }
 }
@@ -224,7 +196,6 @@ function collectFiles(dir: string): string[] {
       if (stat.isDirectory()) {
         walk(full);
       } else if (!entry.endsWith('.md')) {
-        // Non-markdown files are candidates for storage
         files.push(full);
       }
     }

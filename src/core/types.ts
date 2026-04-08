@@ -169,6 +169,31 @@ export interface EngineConfig {
   engine?: 'postgres' | 'sqlite';
 }
 
+// Files
+export interface FileRecord {
+  id: number;
+  page_slug: string | null;
+  filename: string;
+  storage_path: string;
+  storage_url: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  content_hash: string;
+  metadata: Record<string, unknown>;
+  created_at: Date;
+}
+
+export interface FileInput {
+  page_slug: string | null;
+  filename: string;
+  storage_path: string;
+  storage_url: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  content_hash: string;
+  metadata?: Record<string, unknown>;
+}
+
 // Errors
 export class GBrainError extends Error {
   constructor(

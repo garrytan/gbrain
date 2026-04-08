@@ -8,6 +8,7 @@ import type {
   PageVersion,
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
+  FileRecord, FileInput,
   EngineConfig,
 } from './types.ts';
 
@@ -74,4 +75,9 @@ export interface BrainEngine {
   // Config
   getConfig(key: string): Promise<string | null>;
   setConfig(key: string, value: string): Promise<void>;
+
+  // Files
+  getFiles(slug?: string): Promise<FileRecord[]>;
+  upsertFile(file: FileInput): Promise<void>;
+  findFileByHash(contentHash: string, storagePath: string): Promise<FileRecord | null>;
 }
