@@ -53,16 +53,8 @@ export class SQLiteEngine implements BrainEngine {
     const schemaPath = join(dirname(new URL(import.meta.url).pathname), '..', 'sqlite-schema.sql');
     const schemaSql = readFileSync(schemaPath, 'utf-8');
 
-    // Execute the full schema at once — bun:sqlite exec supports multiple statements
-    // and handles trigger BEGIN...END blocks correctly.
-    try {
-      conn.exec(schemaSql);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.includes('already exists') && !msg.includes('duplicate')) {
-        throw e;
-      }
-    }
+    // bun:sqlite exec handles multi-statement SQL including triggers correctly
+    conn.exec(schemaSql);
 
     // Create vec0 virtual table if extension loaded
     if (this.hasVec0) {
@@ -81,6 +73,10 @@ export class SQLiteEngine implements BrainEngine {
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
     const conn = this.getDb();
+    // NOTE: bun:sqlite is synchronous. All SQLiteEngine methods execute
+    // synchronously even though they return Promises. The `await fn(this)`
+    // resolves via microtasks before any other macrotask can execute, so
+    // the BEGIN...COMMIT block is safe in single-threaded Bun environments.
     conn.exec('BEGIN');
     try {
       const result = await fn(this);
@@ -199,21 +195,26 @@ export class SQLiteEngine implements BrainEngine {
     if (!ftsQuery) return [];
 
     try {
+      // Get matching pages ranked by FTS5, then join to first chunk for result display
       const rows = conn.query(`
         SELECT
           p.slug, p.id as page_id, p.title, p.type,
           cc.chunk_text, cc.chunk_source,
-          pages_fts.rank AS score,
+          (-pages_fts.rank) AS score,
           0 AS stale
         FROM pages_fts
         JOIN pages p ON p.id = pages_fts.rowid
-        JOIN content_chunks cc ON cc.page_id = p.id
+        LEFT JOIN content_chunks cc ON cc.page_id = p.id
+          AND cc.id = (SELECT id FROM content_chunks WHERE page_id = p.id ORDER BY chunk_index LIMIT 1)
         WHERE pages_fts MATCH ?
         ORDER BY pages_fts.rank
         LIMIT ?
       `).all(ftsQuery, limit) as Record<string, unknown>[];
 
-      return rows.map(r => this.rowToSearchResult(r));
+      // Filter out rows with no chunk (page exists in FTS but has no chunks)
+      return rows
+        .filter(r => r.chunk_text != null)
+        .map(r => this.rowToSearchResult(r));
     } catch {
       return [];
     }
@@ -279,16 +280,16 @@ export class SQLiteEngine implements BrainEngine {
     `);
 
     for (const chunk of chunks) {
-      insertChunk.run(
+      const runResult = insertChunk.run(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
         chunk.model || 'text-embedding-3-large', chunk.token_count || null,
         chunk.embedding ? now : null,
       );
 
       if (this.hasVec0 && chunk.embedding) {
-        const lastId = conn.query('SELECT last_insert_rowid() as id').get() as { id: number };
+        const chunkId = runResult.lastInsertRowid;
         const vecStr = '[' + Array.from(chunk.embedding).join(',') + ']';
-        try { conn.query('INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)').run(lastId.id, vecStr); } catch {}
+        try { conn.query('INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)').run(chunkId, vecStr); } catch {}
       }
     }
   }
@@ -750,21 +751,32 @@ export function toFts5Query(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return '';
 
-  // Pass through if already uses FTS5 syntax
+  // If user already wrote FTS5 syntax, pass through.
+  // Note: malformed FTS5 will throw in SQLite, caught by searchKeyword which returns [].
   if (trimmed.includes('"') || trimmed.includes(' OR ') || trimmed.includes(' NOT ')) {
     return trimmed;
   }
 
   const tokens = trimmed.split(/\s+/);
-  const parts: string[] = [];
+  const positiveParts: string[] = [];
+  const negativeParts: string[] = [];
 
   for (const token of tokens) {
     if (token.startsWith('-') && token.length > 1) {
-      parts.push(`NOT ${token.slice(1)}`);
+      negativeParts.push(token.slice(1));
     } else {
-      parts.push(token);
+      positiveParts.push(token);
     }
   }
 
-  return parts.join(' ');
+  // FTS5 NOT requires a positive term before it
+  if (positiveParts.length === 0) {
+    // All negative tokens with no positive context — just return the first positive token
+    // to avoid a bare NOT error; treat as keyword search on the negated terms
+    return negativeParts.join(' ');
+  }
+
+  const result = positiveParts.join(' ');
+  if (negativeParts.length === 0) return result;
+  return result + ' NOT ' + negativeParts.join(' NOT ');
 }
