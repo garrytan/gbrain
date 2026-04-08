@@ -1,0 +1,30 @@
+# GBrain SQLite engine with vec0 extension pre-installed.
+# Usage:
+#   docker build -f Dockerfile.sqlite -t gbrain-sqlite .
+#   docker run -v ~/.gbrain:/root/.gbrain gbrain-sqlite <command>
+#
+# Examples:
+#   docker run -v ~/.gbrain:/root/.gbrain gbrain-sqlite init --sqlite
+#   docker run -v ~/.gbrain:/root/.gbrain -v /path/to/notes:/notes gbrain-sqlite import /notes
+#
+# For vector search with vec0, the extension is pre-installed at /usr/lib/vec0.so.
+# Without Docker, download the binary for your platform from:
+#   https://github.com/asg017/sqlite-vec/releases
+
+FROM oven/bun:1 AS base
+
+# Install vec0 extension for vector search
+# Note: update the URL to the latest release for your target platform
+RUN apt-get update && apt-get install -y wget ca-certificates && \
+    wget -qO /usr/lib/vec0.so \
+      https://github.com/asg017/sqlite-vec/releases/latest/download/vec0-linux-x86_64.so && \
+    chmod +x /usr/lib/vec0.so && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile
+
+COPY . .
+
+ENTRYPOINT ["bun", "run", "src/cli.ts"]
