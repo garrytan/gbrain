@@ -1,6 +1,6 @@
 # SQLite Engine Design
 
-## Status: Designed, not built. Community PRs welcome.
+## Status: Built. See `src/core/sqlite-engine.ts`.
 
 The pluggable engine interface (`docs/ENGINES.md`) means anyone can add a SQLite backend without touching the CLI, MCP server, or skills. This document is the full plan.
 

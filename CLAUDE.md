@@ -13,6 +13,8 @@ use the tools — ingest meetings, answer queries, maintain the brain, enrich fr
 
 - `src/core/engine.ts` — Pluggable engine interface (BrainEngine)
 - `src/core/postgres-engine.ts` — Postgres + pgvector implementation
+- `src/core/sqlite-engine.ts` — SQLite + FTS5 + vec0 implementation
+- `src/sqlite-schema.sql` — SQLite DDL (FTS5 triggers, vec0 virtual table)
 - `src/core/db.ts` — Connection management, schema initialization
 - `src/core/import-file.ts` — Shared single-file import (used by import + sync)
 - `src/core/sync.ts` — Pure sync functions (manifest parsing, filtering, slug conversion)
