@@ -25,27 +25,31 @@ export async function hybridSearch(
 ): Promise<SearchResult[]> {
   const limit = opts?.limit || 20;
 
-  // Determine query variants (optionally with expansion)
-  let queries = [query];
-  if (opts?.expansion && opts?.expandFn) {
-    try {
-      const expanded = await opts.expandFn(query);
-      queries = [query, ...expanded].slice(0, 3);
-    } catch {
-      // Expansion failure is non-fatal
-    }
-  }
+  // Run three independent paths in parallel:
+  // 1. Original query: embed → vector search (no expansion dependency)
+  // 2. Expanded queries: expand → embed → vector search
+  // 3. Keyword search (no embedding dependency)
+  const vectorSearchOpts = { limit: limit * 2 };
 
-  // Run vector (embed → search) and keyword search in parallel.
-  // Keyword search has no dependency on embeddings, so it starts immediately.
-  const [vectorLists, keywordResults] = await Promise.all([
-    // Path 1: embed all variants → vector search for each
-    Promise.all(queries.map(q => embed(q))).then(embeddings =>
-      Promise.all(embeddings.map(emb => engine.searchVector(emb, { limit: limit * 2 }))),
-    ),
-    // Path 2: keyword search (no embedding needed)
-    engine.searchKeyword(query, { limit: limit * 2 }),
+  const [originalVectorResults, expandedVectorResults, keywordResults] = await Promise.all([
+    // Path 1: embed original query → vector search (starts immediately)
+    embed(query)
+      .then(emb => engine.searchVector(emb, vectorSearchOpts)),
+    // Path 2: expand → embed alternatives → vector search (Haiku call runs in parallel)
+    (opts?.expansion && opts?.expandFn)
+      ? opts.expandFn(query)
+          .then(expanded => expanded.slice(0, 2))
+          .then(alts => Promise.all(alts.map(q => embed(q))))
+          .then(embeddings => Promise.all(
+            embeddings.map(emb => engine.searchVector(emb, vectorSearchOpts)),
+          ))
+          .catch(() => [] as SearchResult[][])
+      : Promise.resolve([] as SearchResult[][]),
+    // Path 3: keyword search (no embedding needed)
+    engine.searchKeyword(query, vectorSearchOpts),
   ]);
+
+  const vectorLists = [originalVectorResults, ...expandedVectorResults];
 
   // Merge all result lists via RRF
   const allLists = [...vectorLists, keywordResults];
