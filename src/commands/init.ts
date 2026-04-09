@@ -15,7 +15,6 @@ export async function runInit(args: string[]) {
   if (manualUrl) {
     databaseUrl = manualUrl;
   } else if (isNonInteractive) {
-    // Non-interactive mode requires --url
     const envUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
     if (envUrl) {
       databaseUrl = envUrl;
@@ -29,10 +28,47 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
+  // Detect Supabase direct connection URLs and warn about IPv6
+  if (databaseUrl.match(/db\.[a-z]+\.supabase\.co/) || databaseUrl.includes('.supabase.co:5432')) {
+    console.warn('');
+    console.warn('WARNING: You provided a Supabase direct connection URL (db.*.supabase.co:5432).');
+    console.warn('  Direct connections are IPv6 only and fail in many environments.');
+    console.warn('  Use the Session pooler connection string instead (port 6543):');
+    console.warn('  Supabase Dashboard > gear icon (Project Settings) > Database >');
+    console.warn('  Connection string > URI tab > change dropdown to "Session pooler"');
+    console.warn('');
+  }
+
   // Connect and init schema
   console.log('Connecting to database...');
   const engine = new PostgresEngine();
-  await engine.connect({ database_url: databaseUrl });
+  try {
+    await engine.connect({ database_url: databaseUrl });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Provide better error for Supabase IPv6 failures
+    if (databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
+      console.error('Connection failed. Supabase direct connections (db.*.supabase.co:5432) are IPv6 only.');
+      console.error('Use the Session pooler connection string instead (port 6543):');
+      console.error('  Supabase Dashboard > gear icon (Project Settings) > Database >');
+      console.error('  Connection string > URI tab > change dropdown to "Session pooler"');
+    }
+    throw e;
+  }
+
+  // Check pgvector extension
+  try {
+    const conn = (engine as any).sql || (await import('../core/db.ts')).getConnection();
+    const ext = await conn`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
+    if (ext.length === 0) {
+      console.error('pgvector extension not found. Run in Supabase SQL Editor:');
+      console.error('  CREATE EXTENSION vector;');
+      await engine.disconnect();
+      process.exit(1);
+    }
+  } catch {
+    // Non-fatal: proceed without pgvector check if query fails
+  }
 
   console.log('Running schema migration...');
   await engine.initSchema();
@@ -63,14 +99,14 @@ async function supabaseWizard(): Promise<string> {
     console.log('Then use: gbrain init --url <your-connection-string>');
   } catch {
     console.log('Supabase CLI not found.');
-    console.log('Install it: bun add -g supabase');
     console.log('Or provide a connection URL directly.');
   }
 
   // Fallback to manual URL
   console.log('\nEnter your Supabase/Postgres connection URL:');
-  console.log('  Format: postgresql://user:password@host:port/database');
-  console.log('  Find it: Supabase Dashboard > Settings > Database > Connection string\n');
+  console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres');
+  console.log('  Find it: Supabase Dashboard > gear icon (Project Settings) > Database >');
+  console.log('           Connection string > URI tab > change dropdown to "Session pooler"\n');
 
   const url = await readLine('Connection URL: ');
   if (!url) {
