@@ -8,7 +8,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
-import { embed } from '../embedding.ts';
+import { embed, embedBatch } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 
 const RRF_K = 60;
@@ -39,7 +39,7 @@ export async function hybridSearch(
     (opts?.expansion && opts?.expandFn)
       ? opts.expandFn(query)
           .then(expanded => expanded.slice(0, 2))
-          .then(alts => Promise.all(alts.map(q => embed(q))))
+          .then(alts => embedBatch(alts))
           .then(embeddings => Promise.all(
             embeddings.map(emb => engine.searchVector(emb, vectorSearchOpts)),
           ))
