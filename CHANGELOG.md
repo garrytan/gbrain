@@ -6,11 +6,10 @@ All notable changes to GBrain will be documented in this file.
 
 ### Added
 
-- SKILLPACK Section 18: Live Sync (MUST ADD). Contract-first guide for keeping the vector DB current with the brain repo automatically. Documents Session mode pooler prerequisite, sync+embed primitives, four approaches (cron, --watch, webhook, git hook), isSyncable exclusions, silent skip warning, --watch exit-after-5-failures behavior, and OpenClaw/Hermes cron registration examples.
-- `docs/GBRAIN_VERIFY.md`: Installation verification runbook with 6 checks. The critical test: push a change, wait for sync, search for corrected text. Includes coverage check (page count vs file count), embed check, and end-to-end sync test.
-- Setup skill Phase H (Live Sync Setup, MUST ADD) and Phase I (Full Verification). Phase H covers pooler check, automatic sync configuration, and sync+embed chaining. Phase I runs the full GBRAIN_VERIFY.md runbook.
-- README install steps 8 (automatic sync) and 9 (verification runbook). GBRAIN_VERIFY.md added to docs section.
-- CLAUDE.md: `source ~/.zshrc` instruction for loading API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY) before Tier 2 tests.
+- **Your brain never falls behind.** Live sync keeps the vector DB current with your brain repo automatically. Set up a cron, use `--watch`, hook into GitHub webhooks, or use git hooks. Your agent picks whatever fits its environment. Edit a markdown file, push, and within minutes it's searchable. No more stale embeddings serving wrong answers.
+- **Know your install actually works.** New verification runbook (`docs/GBRAIN_VERIFY.md`) catches the silent failures that used to go unnoticed: the pooler bug that skips pages, missing embeddings, stale sync. The real test: push a correction, wait, search for it. If the old text comes back, sync is broken and the runbook tells you exactly why.
+- **New installs set up live sync automatically.** The setup skill now includes live sync (Phase H) and full verification (Phase I) as mandatory steps. Agents that install GBrain will configure automatic sync and verify it works before declaring setup complete.
+- **Fixes the silent page-skip bug.** If your Supabase connection uses the Transaction mode pooler, sync silently skips most pages. The new docs call this out as a hard prerequisite with a clear fix (switch to Session mode). The verification runbook catches it by comparing page count against file count.
 
 ## [0.4.2] - 2026-04-10
 

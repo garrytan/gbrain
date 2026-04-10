@@ -113,6 +113,21 @@ Before shipping (/ship) or reviewing (/review), always run the full test suite:
 
 Both must pass. Do not ship with failing E2E tests. Do not skip E2E tests.
 
+## CHANGELOG voice
+
+CHANGELOG.md is read by agents during auto-update (Section 17). The agent summarizes
+the changelog to convince the user to upgrade. Write changelog entries that sell the
+upgrade, not document the implementation.
+
+- Lead with what the user can now DO that they couldn't before
+- Frame as benefits and capabilities, not files changed or code written
+- Make the user think "hell yeah, I want that"
+- Bad: "Added GBRAIN_VERIFY.md installation verification runbook"
+- Good: "Your agent now verifies the entire GBrain installation end-to-end, catching
+  silent sync failures and stale embeddings before they bite you"
+- Bad: "Setup skill Phase H and Phase I added"
+- Good: "New installs automatically set up live sync so your brain never falls behind"
+
 ## Version migrations
 
 When shipping a GBrain version that requires agent action after upgrade (schema

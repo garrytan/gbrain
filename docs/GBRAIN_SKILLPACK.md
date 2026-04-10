@@ -1023,15 +1023,20 @@ silent — do nothing. If true, message the user on their preferred channel.
 
 ### The Message
 
-Summarize the `changelog_diff` into 2-3 human-friendly bullets. No raw markdown.
-Lead with the most impactful change.
+Sell the upgrade. The user should feel "hell yeah, I want that." Lead with what
+they can DO now that they couldn't before, not what files changed. Frame as
+capabilities and benefits, not implementation details. Make them excited that
+GBrain keeps getting better. 2-3 punchy bullets, no raw markdown, no file names.
 
 > **GBrain v0.5.0 is available** (you're on v0.4.0)
 >
 > What's new:
-> - Semantic chunking now 3x faster with batched embedding
-> - New `gbrain files mirror` command for cloud storage migration
-> - Doctor command catches RLS misconfigurations
+> - Your brain never falls behind. Live sync keeps the vector DB current
+>   automatically, so edits show up in search within minutes, not "whenever
+>   someone remembers to run sync"
+> - New verification runbook catches silent failures: the pooler bug that
+>   skips pages, missing embeddings, stale search results
+> - New installs set up live sync automatically. No more manual setup step
 >
 > Want me to upgrade? I'll update everything and refresh my playbook.
 >
