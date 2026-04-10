@@ -18,6 +18,7 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
+import { isPGliteConfig } from './pglite.ts';
 
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
@@ -30,6 +31,14 @@ export class PostgresEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig & { poolSize?: number }): Promise<void> {
+    if (isPGliteConfig(config) && config.poolSize) {
+      throw new GBrainError(
+        'PGlite does not support pooled worker connections',
+        'poolSize was requested while using the pglite engine',
+        'Run imports with a single worker in pglite mode',
+      );
+    }
+
     if (config.poolSize) {
       // Instance-level connection for worker isolation
       const url = config.database_url;

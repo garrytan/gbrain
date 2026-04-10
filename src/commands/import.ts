@@ -6,6 +6,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { PostgresEngine } from '../core/postgres-engine.ts';
 import { importFile } from '../core/import-file.ts';
 import { loadConfig } from '../core/config.ts';
+import { isPGliteConfig, resolveImportWorkerCount } from '../core/pglite.ts';
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -25,6 +26,7 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   const workerCount = workersArg ? parseInt(workersArg, 10) : 1;
+  const config = loadConfig();
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
@@ -58,7 +60,10 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   }
 
   // Determine actual worker count
-  const actualWorkers = workerCount > 1 ? workerCount : 1;
+  const actualWorkers = Math.max(1, resolveImportWorkerCount(workerCount, config));
+  if (isPGliteConfig(config) && workerCount > 1) {
+    console.log('PGlite mode forces single-worker import; ignoring requested --workers value.');
+  }
   if (actualWorkers > 1) {
     console.log(`Using ${actualWorkers} parallel workers`);
   }
@@ -125,7 +130,6 @@ export async function runImport(engine: BrainEngine, args: string[]) {
 
   if (actualWorkers > 1) {
     // Parallel: create per-worker engine instances with small pool
-    const config = loadConfig();
     const workerEngines = await Promise.all(
       Array.from({ length: actualWorkers }, async () => {
         const eng = new PostgresEngine();

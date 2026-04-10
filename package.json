@@ -29,6 +29,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
+    "@electric-sql/pglite": "^0.4.4",
+    "@electric-sql/pglite-socket": "^0.1.4",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "gray-matter": "^4.0.3",
     "openai": "^4.0.0",

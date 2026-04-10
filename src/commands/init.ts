@@ -1,6 +1,37 @@
 import { execSync } from 'child_process';
 import { PostgresEngine } from '../core/postgres-engine.ts';
 import { saveConfig, type GBrainConfig } from '../core/config.ts';
+import { getPGliteDataDir } from '../core/pglite.ts';
+
+export function isSupabaseDirectUrl(url: string): boolean {
+  return /db\.[a-z]+\.supabase\.co/.test(url) || url.includes('.supabase.co:5432');
+}
+
+export function getConnectionHelpText(): string {
+  return [
+    '',
+    'Enter your Postgres connection URL:',
+    '  Local Postgres:   postgresql://postgres:***@localhost:5432/gbrain',
+    '  Hosted Postgres:  postgresql://user:***@db.example.com:5432/gbrain',
+    '  Supabase pooler:  postgresql://postgres.[ref]:***@aws-0-[region].pooler.supabase.com:6543/postgres',
+    '',
+    'For Supabase, use Project Settings > Database > Connection string > URI > Session pooler.',
+    'For local/self-hosted Postgres, make sure the database can run: CREATE EXTENSION vector; and CREATE EXTENSION pg_trgm;',
+    '',
+  ].join('\n');
+}
+
+export function getPGliteHelpText(): string {
+  return [
+    '',
+    'Use a local persisted PGlite database file path:',
+    '  gbrain init --pglite ~/.gbrain/brain.db',
+    '',
+    `PGlite stores its internal data in: ${getPGliteDataDir('~/.gbrain/brain.db')}`,
+    'This mode is experimental and is meant to avoid requiring an external Postgres service.',
+    '',
+  ].join('\n');
+}
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -8,19 +39,30 @@ export async function runInit(args: string[]) {
   const jsonOutput = args.includes('--json');
   const urlIndex = args.indexOf('--url');
   const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : null;
+  const pgliteIndex = args.indexOf('--pglite');
+  const manualPGlitePath = pgliteIndex !== -1 ? args[pgliteIndex + 1] : null;
   const keyIndex = args.indexOf('--key');
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
 
-  let databaseUrl: string;
+  let engineType: 'postgres' | 'pglite' = 'postgres';
+  let databaseUrl = '';
+  let databasePath = '';
 
-  if (manualUrl) {
+  if (manualPGlitePath) {
+    engineType = 'pglite';
+    databasePath = manualPGlitePath;
+  } else if (manualUrl) {
     databaseUrl = manualUrl;
   } else if (isNonInteractive) {
+    const envPath = process.env.GBRAIN_DATABASE_PATH;
     const envUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
-    if (envUrl) {
+    if (envPath) {
+      engineType = 'pglite';
+      databasePath = envPath;
+    } else if (envUrl) {
       databaseUrl = envUrl;
     } else {
-      console.error('--non-interactive requires --url <connection_string> or GBRAIN_DATABASE_URL env var');
+      console.error('--non-interactive requires --url <connection_string>, --pglite <file_path>, GBRAIN_DATABASE_URL, or GBRAIN_DATABASE_PATH');
       process.exit(1);
     }
   } else if (isSupabase) {
@@ -30,7 +72,7 @@ export async function runInit(args: string[]) {
   }
 
   // Detect Supabase direct connection URLs and warn about IPv6
-  if (databaseUrl.match(/db\.[a-z]+\.supabase\.co/) || databaseUrl.includes('.supabase.co:5432')) {
+  if (engineType === 'postgres' && isSupabaseDirectUrl(databaseUrl)) {
     console.warn('');
     console.warn('WARNING: You provided a Supabase direct connection URL (db.*.supabase.co:5432).');
     console.warn('  Direct connections are IPv6 only and fail in many environments.');
@@ -44,11 +86,13 @@ export async function runInit(args: string[]) {
   console.log('Connecting to database...');
   const engine = new PostgresEngine();
   try {
-    await engine.connect({ database_url: databaseUrl });
+    await engine.connect(engineType === 'pglite'
+      ? { engine: 'pglite', database_path: databasePath }
+      : { engine: 'postgres', database_url: databaseUrl });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     // Provide better error for Supabase IPv6 failures
-    if (databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
+    if (engineType === 'postgres' && databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
       console.error('Connection failed. Supabase direct connections (db.*.supabase.co:5432) are IPv6 only.');
       console.error('Use the Session pooler connection string instead (port 6543):');
       console.error('  Supabase Dashboard > gear icon (Project Settings) > Database >');
@@ -62,8 +106,7 @@ export async function runInit(args: string[]) {
     const conn = (engine as any).sql || (await import('../core/db.ts')).getConnection();
     const ext = await conn`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
     if (ext.length === 0) {
-      console.error('pgvector extension not found. Run in Supabase SQL Editor:');
-      console.error('  CREATE EXTENSION vector;');
+      console.error('pgvector extension not found. Run: CREATE EXTENSION vector;');
       await engine.disconnect();
       process.exit(1);
     }
@@ -76,8 +119,10 @@ export async function runInit(args: string[]) {
 
   // Save config
   const config: GBrainConfig = {
-    engine: 'postgres',
-    database_url: databaseUrl,
+    engine: engineType,
+    ...(engineType === 'pglite'
+      ? { database_path: databasePath }
+      : { database_url: databaseUrl }),
     ...(apiKey ? { openai_api_key: apiKey } : {}),
   };
   saveConfig(config);
@@ -88,7 +133,7 @@ export async function runInit(args: string[]) {
   await engine.disconnect();
 
   if (jsonOutput) {
-    console.log(JSON.stringify({ status: 'success', pages: stats.page_count, config_path: '~/.gbrain/config.json' }));
+    console.log(JSON.stringify({ status: 'success', engine: engineType, pages: stats.page_count, config_path: '~/.gbrain/config.json' }));
   } else {
     console.log(`\nBrain ready. ${stats.page_count} pages.`);
     console.log('Next: gbrain import <dir> to migrate your markdown.');
@@ -105,14 +150,11 @@ async function supabaseWizard(): Promise<string> {
     console.log('Then use: gbrain init --url <your-connection-string>');
   } catch {
     console.log('Supabase CLI not found.');
-    console.log('Or provide a connection URL directly.');
+    console.log('You can still use any Postgres connection URL directly.');
   }
 
   // Fallback to manual URL
-  console.log('\nEnter your Supabase/Postgres connection URL:');
-  console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres');
-  console.log('  Find it: Supabase Dashboard > gear icon (Project Settings) > Database >');
-  console.log('           Connection string > URI tab > change dropdown to "Session pooler"\n');
+  console.log(getConnectionHelpText());
 
   const url = await readLine('Connection URL: ');
   if (!url) {
