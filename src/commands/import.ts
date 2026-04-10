@@ -202,11 +202,16 @@ function collectMarkdownFiles(dir: string): string[] {
 
   function walk(d: string) {
     for (const entry of readdirSync(d)) {
-      // Skip hidden dirs and .raw dirs
-      if (entry.startsWith('.')) continue;
+      // Skip hidden dirs, node_modules, and .raw dirs
+      if (entry.startsWith('.') || entry === 'node_modules') continue;
 
       const full = join(d, entry);
-      const stat = statSync(full);
+      let stat;
+      try {
+        stat = statSync(full);
+      } catch {
+        continue;
+      }
 
       if (stat.isDirectory()) {
         walk(full);
