@@ -111,8 +111,8 @@ async function supabaseWizard(): Promise<string> {
   // Fallback to manual URL
   console.log('\nEnter your Supabase/Postgres connection URL:');
   console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres');
-  console.log('  Find it: Supabase Dashboard > gear icon (Project Settings) > Database >');
-  console.log('           Connection string > URI tab > change dropdown to "Session pooler"\n');
+  console.log('  Find it: Supabase Dashboard >  Connect Icon (on the top) > Direction - Connection String > Select  "Session Pooler"\n');
+
 
   const url = await readLine('Connection URL: ');
   if (!url) {
