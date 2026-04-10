@@ -62,10 +62,18 @@ export async function runInit(args: string[]) {
     const conn = (engine as any).sql || (await import('../core/db.ts')).getConnection();
     const ext = await conn`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
     if (ext.length === 0) {
-      console.error('pgvector extension not found. Run in Supabase SQL Editor:');
-      console.error('  CREATE EXTENSION vector;');
-      await engine.disconnect();
-      process.exit(1);
+      console.log('pgvector extension not found. Enabling it now...');
+      try {
+        await conn`CREATE EXTENSION IF NOT EXISTS vector`;
+        console.log('pgvector extension enabled.');
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error('Failed to enable pgvector extension automatically:', msg);
+        console.error('Run this manually in your Supabase SQL Editor:');
+        console.error('  CREATE EXTENSION IF NOT EXISTS vector;');
+        await engine.disconnect();
+        process.exit(1);
+      }
     }
   } catch {
     // Non-fatal: proceed without pgvector check if query fails
