@@ -107,7 +107,7 @@ export async function runImport(engine: BrainEngine, args: string[]) {
       skipped++;
     }
     processed++;
-    if (processed % 100 === 0 || processed === files.length) {
+    if (processed % 10 === 0 || processed === files.length) {
       logProgress();
       // Save checkpoint every 100 files
       if (processed % 100 === 0) {
@@ -199,8 +199,14 @@ export async function runImport(engine: BrainEngine, args: string[]) {
 
 function collectMarkdownFiles(dir: string): string[] {
   const files: string[] = [];
+  let dirsScanned = 0;
 
   function walk(d: string) {
+    dirsScanned++;
+    if (dirsScanned % 10 === 0) {
+      process.stdout.write(`\rScanning... ${dirsScanned} dirs, ${files.length} .md files found`);
+    }
+
     for (const entry of readdirSync(d)) {
       // Skip hidden dirs and .raw dirs
       if (entry.startsWith('.')) continue;
@@ -210,12 +216,13 @@ function collectMarkdownFiles(dir: string): string[] {
 
       if (stat.isDirectory()) {
         walk(full);
-      } else if (entry.endsWith('.md')) {
+      } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
         files.push(full);
       }
     }
   }
 
   walk(dir);
+  if (dirsScanned >= 100) process.stdout.write('\r\x1b[K');
   return files.sort();
 }
