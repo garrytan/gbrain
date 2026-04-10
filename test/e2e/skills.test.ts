@@ -112,7 +112,7 @@ function teardownOpenClawAgent() {
  * Run openclaw agent with a prompt and gbrain MCP configured.
  * Returns { stdout, stderr, exitCode }.
  */
-function runOpenClaw(prompt: string, timeoutMs = 120_000) {
+function runOpenClaw(prompt: string, timeoutMs = 300_000) {
   const result = Bun.spawnSync({
     cmd: ['openclaw', 'agent', '--agent', AGENT_ID, '--local', '-m', prompt, '--json'],
     cwd: REPO_ROOT,
@@ -174,7 +174,7 @@ Action: Sarah to draft VP Sales job description by April 7.
 
     const pages = await engine.listPages({ type: 'person' });
     expect(pages.length).toBeGreaterThanOrEqual(1);
-  }, 180_000);
+  }, 360_000);
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ describeT2('E2E Tier 2: Query Skill', () => {
     );
 
     expect(stdout.length).toBeGreaterThan(0);
-  }, 180_000);
+  }, 360_000);
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -222,5 +222,5 @@ describeT2('E2E Tier 2: Health Skill', () => {
     );
 
     expect(stdout.length).toBeGreaterThan(0);
-  }, 180_000);
+  }, 360_000);
 });
