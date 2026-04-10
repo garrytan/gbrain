@@ -129,6 +129,7 @@ function readLine(prompt: string): Promise<string> {
     process.stdin.setEncoding('utf-8');
     process.stdin.once('data', (chunk) => {
       data = chunk.toString().trim();
+      process.stdin.pause();
       resolve(data);
     });
     process.stdin.resume();
