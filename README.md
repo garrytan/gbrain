@@ -192,7 +192,7 @@ Without an OpenAI key, search still works (keyword only, no vector search). With
 
 ### With OpenClaw or Hermes Agent (recommended)
 
-To install, paste this into [OpenClaw](https://openclaw.com) or [Hermes Agent](https://hermesagent.com) and we'll work with you to do the rest:
+To install, paste this into [OpenClaw](https://openclaw.com) or [Hermes Agent](https://hermes-agent.nousresearch.com) and we'll work with you to do the rest:
 
 ```
 Set up gbrain (https://github.com/garrytan/gbrain) as my
