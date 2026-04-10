@@ -1,5 +1,5 @@
 ---
-type: deal
+type: mandate
 title: NovaMind Seed Round
 tags:
   - seed

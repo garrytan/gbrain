@@ -129,9 +129,8 @@ function inferType(filePath?: string): PageType {
   const lower = ('/' + filePath).toLowerCase();
   if (lower.includes('/people/') || lower.includes('/person/')) return 'person';
   if (lower.includes('/companies/') || lower.includes('/company/')) return 'company';
-  if (lower.includes('/deals/') || lower.includes('/deal/')) return 'deal';
-  if (lower.includes('/yc/')) return 'yc';
-  if (lower.includes('/civic/')) return 'civic';
+  if (lower.includes('/mandates/') || lower.includes('/mandate/')) return 'mandate';
+  if (lower.includes('/knowledge/') || lower.includes('/books/') || lower.includes('/transcripts/')) return 'knowledge';
   if (lower.includes('/projects/') || lower.includes('/project/')) return 'project';
   if (lower.includes('/sources/') || lower.includes('/source/')) return 'source';
   if (lower.includes('/media/')) return 'media';
