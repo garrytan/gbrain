@@ -7,7 +7,7 @@ const CONFIG_DIR = join(homedir(), '.gbrain');
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
 
 export interface GBrainConfig {
-  engine: 'postgres' | 'sqlite';
+  engine: 'postgres' | 'sqlite' | 'pglite';
   database_url?: string;
   database_path?: string;
   openai_api_key?: string;
@@ -27,16 +27,34 @@ export function loadConfig(): GBrainConfig | null {
 
   // Try env vars
   const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  const dbPath = process.env.GBRAIN_DATABASE_PATH;
 
-  if (!fileConfig && !dbUrl) return null;
+  if (!fileConfig && !dbUrl && !dbPath) return null;
 
-  // Merge: env vars override config file
-  return {
+  // Merge with explicit engine precedence:
+  // DATABASE_URL/GBRAIN_DATABASE_URL forces postgres mode.
+  // GBRAIN_DATABASE_PATH forces pglite mode when no URL override is present.
+  const merged: GBrainConfig = {
     engine: 'postgres',
     ...fileConfig,
-    ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
   };
+
+  if (dbUrl) {
+    merged.engine = 'postgres';
+    merged.database_url = dbUrl;
+    delete merged.database_path;
+    return merged;
+  }
+
+  if (dbPath) {
+    merged.engine = 'pglite';
+    merged.database_path = dbPath;
+    delete merged.database_url;
+    return merged;
+  }
+
+  return merged;
 }
 
 export function saveConfig(config: GBrainConfig): void {

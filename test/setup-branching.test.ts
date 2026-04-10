@@ -1,11 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { extractProjectRef } from '../src/core/supabase-admin.ts';
-import { cpus, totalmem } from 'os';
-
-// IPv6 detection (mirrors logic in init.ts)
-function isSupabaseDirectUrl(url: string): boolean {
-  return /db\.[a-z]+\.supabase\.co/.test(url) || url.includes('.supabase.co:5432');
-}
+import { isSupabaseDirectUrl, getConnectionHelpText, getPGliteHelpText } from '../src/commands/init.ts';
 
 describe('IPv6 detection', () => {
   test('detects db.xxx.supabase.co as direct (IPv6)', () => {
@@ -57,6 +52,22 @@ describe('defaultWorkers auto-tuning', () => {
   test('returns at least 2 for any CPU count', () => {
     const result = defaultWorkers(1, 8);
     expect(result).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('connection help text', () => {
+  test('mentions generic Postgres before Supabase specifics', () => {
+    const help = getConnectionHelpText();
+    expect(help).toContain('Enter your Postgres connection URL');
+    expect(help).toContain('Local Postgres');
+    expect(help).toContain('Hosted Postgres');
+    expect(help).toContain('Supabase pooler');
+  });
+
+  test('mentions experimental pglite local file mode', () => {
+    const help = getPGliteHelpText();
+    expect(help).toContain('gbrain init --pglite ~/.gbrain/brain.db');
+    expect(help).toContain('experimental');
   });
 });
 

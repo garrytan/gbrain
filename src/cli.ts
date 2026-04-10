@@ -292,7 +292,7 @@ async function handleCliOnly(command: string, args: string[]) {
 async function connectEngine(): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
-    console.error('No brain configured. Run: gbrain init --supabase');
+    console.error('No brain configured. Run: gbrain init --url <connection_string>, gbrain init --pglite <file_path>, or gbrain init --supabase.');
     process.exit(1);
   }
   const engine = new PostgresEngine();
@@ -328,7 +328,7 @@ USAGE
   gbrain <command> [options]
 
 SETUP
-  init [--supabase|--url <conn>]     Create brain (guided wizard)
+  init [--supabase|--url <conn>|--pglite <file>] Create brain (Postgres URL or experimental local PGlite)
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   doctor [--json]                    Health check (pgvector, RLS, schema, embeddings)
