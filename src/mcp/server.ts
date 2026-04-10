@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext } from '../core/operations.ts';
@@ -13,7 +14,7 @@ export async function startMcpServer(engine: BrainEngine) {
   );
 
   // Generate tool definitions from operations
-  server.setRequestHandler('tools/list' as any, async () => ({
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: operations.map(op => ({
       name: op.name,
       description: op.description,
@@ -35,7 +36,7 @@ export async function startMcpServer(engine: BrainEngine) {
   }));
 
   // Dispatch tool calls to operation handlers
-  server.setRequestHandler('tools/call' as any, async (request: any) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
     const op = operations.find(o => o.name === name);
     if (!op) {
