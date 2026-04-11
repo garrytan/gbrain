@@ -1,10 +1,43 @@
 # Local / Offline GBrain
 
-GBrain now has a fully local profile: SQLite on disk, stdio MCP on your machine, and no required cloud services. This is the fastest path to a private brain for Codex or Claude Code.
+This guide is for people who want to install and use GBrain **without Supabase, OpenAI, Anthropic, or any other required cloud service**.
 
-## What local/offline mode means
+In this profile:
 
-When you run `gbrain init --local`, GBrain writes a config like this to `~/.gbrain/config.json` (the stored `database_path` is an expanded absolute path, not a literal `~` string):
+- your markdown repo stays on disk as the source of truth
+- GBrain stores its index in a local SQLite file
+- `gbrain serve` exposes the same MCP tools over local stdio
+- keyword search works immediately
+- embeddings and local LLM rewrite are optional follow-up steps
+
+If you want the same instructions in Korean, use [docs/local-offline.ko.md](docs/local-offline.ko.md).
+
+---
+
+## 1. Choose the right profile
+
+Use the **local/offline** profile when you want:
+
+- a private brain on one machine
+- no required recurring cloud cost
+- Codex / Claude Code access through a local MCP server
+- SQLite instead of Postgres
+
+Use the **managed Postgres** profile when you want:
+
+- hosted pgvector scale
+- remote MCP over HTTP
+- cloud file/storage workflows (`gbrain files ...`)
+
+This guide only covers the **local/offline SQLite** path.
+
+---
+
+## 2. What `gbrain init --local` creates
+
+Running `gbrain init --local` writes a config to `~/.gbrain/config.json` and boots the SQLite schema.
+
+Typical result:
 
 ```json
 {
@@ -16,46 +49,261 @@ When you run `gbrain init --local`, GBrain writes a config like this to `~/.gbra
 }
 ```
 
-That profile gives you:
+Important detail:
 
-- markdown repo remains the source of truth
-- SQLite-backed local indexing and retrieval
-- `gbrain serve` over stdio for MCP clients
-- no required Supabase, OpenAI, Anthropic, or remote storage
-- honest feature gating when a workflow is still Postgres/cloud-only
+- the saved `database_path` is an **expanded absolute path**
+- GBrain does **not** persist a literal `~/.gbrain/brain.db` string
 
-## Bootstrap a local brain
+---
+
+## 3. Quick start: install and query your first local brain
+
+If you want the shortest path, copy these commands as-is:
+
+```bash
+# 1) Install Bun if you do not already have it
+curl -fsSL https://bun.sh/install | bash
+
+# 2) Reload your shell so `bun` is on PATH
+exec /bin/zsh
+
+# 3) Install gbrain globally
+bun add -g github:garrytan/gbrain
+
+# 4) Create a local/offline SQLite brain
+gbrain init --local
+
+# 5) Import a markdown repo
+gbrain import ~/git/brain
+
+# 6) Prove search works immediately
+gbrain query "some phrase that should exist in my notes"
+
+# 7) Start the local MCP server
+gbrain serve
+```
+
+At this point:
+
+- your notes are indexed locally
+- keyword search is available
+- Codex / Claude Code can attach through `gbrain serve`
+
+You do **not** need embeddings to start using the brain.
+
+---
+
+## 4. Detailed installation steps
+
+### Step 1: Install Bun
+
+If `bun --version` already works, skip this step.
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+exec /bin/zsh
+bun --version
+```
+
+Expected result: Bun prints a version string.
+
+### Step 2: Install GBrain
 
 ```bash
 bun add -g github:garrytan/gbrain
-gbrain init --local
-gbrain import ~/git/brain
-gbrain query "what do we know about competitive dynamics?"
+gbrain --version
 ```
 
-Optional custom database path:
+Expected result: `gbrain` prints a version string.
+
+### Step 3: Initialize a local brain
+
+Default path:
+
+```bash
+gbrain init --local
+```
+
+Custom SQLite path:
 
 ```bash
 gbrain init --local --path ~/brains/personal-brain.db
 ```
 
-After that, the default config lives in `~/.gbrain/config.json`, and both CLI commands and `gbrain serve` read the same SQLite profile.
+Expected result:
 
-## Local MCP setup
+- GBrain creates the SQLite file
+- GBrain writes `~/.gbrain/config.json`
+- GBrain prints the resolved SQLite path
 
-### Codex
+### Step 4: Import your markdown repo
 
-Add GBrain as a local stdio MCP server:
+```bash
+gbrain import /path/to/your/brain
+```
+
+Examples:
+
+```bash
+gbrain import ~/git/brain
+gbrain import ~/Documents/obsidian-vault
+```
+
+Expected result:
+
+- pages and chunks are written to SQLite
+- keyword search is usable immediately
+- embeddings remain deferred until you run `gbrain embed`
+
+### Step 5: Query the local brain
+
+```bash
+gbrain query "what do we know about competitive dynamics?"
+gbrain search "Pedro"
+gbrain stats
+gbrain health
+```
+
+Expected result:
+
+- `query` and `search` return local results
+- `stats` shows page/chunk counts
+- `health` reports embedding coverage honestly
+
+---
+
+## 5. Local embeddings are optional
+
+By default, local/offline mode is **write-first**:
+
+- `gbrain import` does **not** block on embeddings
+- `gbrain sync` does **not** block on embeddings
+- `gbrain embed` is the explicit backfill path
+
+That means you can start with keyword search immediately, then turn on semantic backfill later.
+
+### Option A: run without embeddings at first
+
+Do nothing extra.
+
+You still get:
+
+- page CRUD
+- keyword search
+- links / graph / timeline / stats
+- MCP access through `gbrain serve`
+
+### Option B: configure a local embedding runtime later
+
+GBrain looks for one of:
+
+- `GBRAIN_LOCAL_EMBEDDING_URL`
+- `OLLAMA_HOST` (uses `/api/embed`)
+
+Common example with Ollama-compatible runtime:
+
+```bash
+export OLLAMA_HOST=http://127.0.0.1:11434
+export GBRAIN_LOCAL_EMBEDDING_MODEL=nomic-embed-text
+gbrain embed --stale
+```
+
+Optional tuning:
+
+```bash
+export GBRAIN_LOCAL_EMBEDDING_DIMENSIONS=768
+```
+
+Use these commands:
+
+```bash
+gbrain embed --stale         # only missing chunks
+gbrain embed --all           # rebuild every chunk
+gbrain embed notes/offline-demo
+```
+
+What to expect:
+
+- `--stale` only embeds missing chunks
+- page-level `gbrain embed <slug>` can rebuild that page explicitly
+- if no runtime is configured, GBrain tells you that honestly instead of pretending embeddings succeeded
+
+---
+
+## 6. Local query rewrite is optional too
+
+Local/offline defaults to:
+
+```json
+"query_rewrite_provider": "heuristic"
+```
+
+That means:
+
+- search still works with no LLM runtime
+- GBrain uses cheap deterministic rewrites only
+
+If you want local LLM rewrite instead, switch config to:
+
+```json
+"query_rewrite_provider": "local_llm"
+```
+
+Then configure one of:
+
+- `GBRAIN_LOCAL_LLM_URL`
+- `OLLAMA_HOST` (uses `/api/generate`)
+
+Optional model override:
+
+```bash
+export GBRAIN_LOCAL_LLM_MODEL=qwen2.5:3b
+```
+
+If the runtime is missing, returns malformed output, or responds with an error, GBrain falls back to the original query.
+
+---
+
+## 7. Connect Codex to the local MCP server
+
+Initialize the brain first:
+
+```bash
+gbrain init --local
+```
+
+Then add the MCP server:
 
 ```bash
 codex mcp add gbrain -- gbrain serve
 ```
 
-Codex will spawn `gbrain serve`, which reads your local SQLite config from `~/.gbrain/config.json`.
+What this does:
 
-### Claude Code
+- Codex spawns `gbrain serve`
+- `gbrain serve` reads `~/.gbrain/config.json`
+- all MCP calls hit your local SQLite brain
 
-Use the local stdio MCP JSON shape in your Claude Code config:
+Recommended sanity check after adding it:
+
+- start a fresh Codex session
+- ask it to list GBrain tools or query a page you know exists
+
+If you use a non-default config directory, prefer a small wrapper script:
+
+```bash
+#!/bin/zsh
+export GBRAIN_CONFIG_DIR="$HOME/.gbrain-alt"
+exec gbrain serve
+```
+
+Then point Codex at that wrapper instead of assuming custom env support in every client.
+
+---
+
+## 8. Connect Claude Code to the local MCP server
+
+Use a local stdio MCP config like this:
 
 ```json
 {
@@ -68,75 +316,143 @@ Use the local stdio MCP JSON shape in your Claude Code config:
 }
 ```
 
-If you stick to the default config location (`~/.gbrain/config.json`), no extra environment wiring is required. If you need a non-standard config directory, prefer a tiny wrapper script that exports the env you need and then execs `gbrain serve`, rather than assuming every MCP client supports the same env configuration fields.
+Recommended workflow:
 
-## Offline workflow guidance
+1. run `gbrain init --local`
+2. run `gbrain import /path/to/brain`
+3. add the Claude Code MCP config
+4. restart Claude Code or reload MCP integrations
+5. ask Claude Code to call a simple GBrain tool
 
-A practical local/offline workflow looks like this:
+If you need a non-default config directory, use the same wrapper-script pattern described in the Codex section.
 
-1. `gbrain init --local` once
-2. `gbrain import <dir>` for the first load
-3. `gbrain sync --repo <dir>` as your markdown repo changes
-4. `gbrain serve` (or Codex / Claude Code spawning it) for agent access
-5. `gbrain embed --stale` when your local embedding runtime is available and you want semantic backfill
+---
 
-Important local-mode truths:
+## 9. Suggested first-day workflow
 
-- **Keyword search is immediate.** You do not need embeddings to start querying.
-- **Embeddings are optional and backfill-driven.** Import/sync keep working even if no local runtime is available yet.
-- **Query rewriting defaults to heuristics.** If you want local model-based rewrite, set `query_rewrite_provider` to `local_llm` and point GBrain at a local runtime.
-- **`check-update` is disabled in the offline profile.** It should not phone home unexpectedly.
-- **File/storage operations are not supported in sqlite/local mode yet.** Commands under `gbrain files ...` and related MCP file tools return honest unsupported-capability guidance instead of pretending to work.
+A practical local/offline routine looks like this:
 
-## Local embedding and query-rewrite caveats
+```bash
+# one-time bootstrap
+gbrain init --local
 
-Local semantic retrieval depends on a configured local runtime. GBrain does not bundle one.
+# first load
+gbrain import ~/git/brain
 
-### Embeddings
+# normal querying
+gbrain query "what changed with the series A?"
+gbrain search "Pedro"
 
-GBrain looks for one of these:
+# keep the index current as files change
+gbrain sync --repo ~/git/brain
 
-- `GBRAIN_LOCAL_EMBEDDING_URL`
-- `OLLAMA_HOST` (uses `/api/embed`)
+# optional semantic backfill later
+gbrain embed --stale
+```
 
-Optional tuning env vars:
+If you use an MCP client daily:
 
-- `GBRAIN_LOCAL_EMBEDDING_MODEL` (default: `nomic-embed-text`)
-- `GBRAIN_LOCAL_EMBEDDING_DIMENSIONS`
+```bash
+gbrain serve
+```
 
-If no local embedding runtime is configured, GBrain stays usable but semantic backfill is unavailable until you provide one.
+Or let Codex / Claude Code spawn it for you.
 
-### Query rewrite
+---
 
-Local LLM rewrite is optional. If you want it, configure either:
+## 10. Verification checklist
 
-- `GBRAIN_LOCAL_LLM_URL`
-- `OLLAMA_HOST` (uses `/api/generate`)
-
-Default local rewrite model: `qwen2.5:3b`
-
-If that runtime is missing or returns bad output, GBrain falls back to the original query instead of breaking search.
-
-## What is still Postgres / cloud oriented
-
-Use the managed Postgres path when you need:
-
-- pgvector-backed hosted scale
-- remote MCP deployment over HTTP
-- storage/file migration workflows (`gbrain files ...`)
-- Supabase admin / deployment helpers
-
-Those workflows still exist; they are just not part of the local/offline contract yet.
-
-## Suggested verification checklist
-
-For a local install, verify these in order:
+Run these in order:
 
 ```bash
 gbrain init --local
 gbrain import /path/to/brain
-gbrain query "some phrase that should exist"
-gbrain embed --stale   # only after a local embedding runtime is configured
+gbrain query "phrase I know exists"
+gbrain stats
+gbrain health
 ```
 
-Then confirm your MCP client can connect to `gbrain serve` and list/call tools against the SQLite profile.
+Then verify MCP:
+
+1. connect Codex or Claude Code to `gbrain serve`
+2. confirm tool listing succeeds
+3. confirm one simple call succeeds, for example:
+   - `search`
+   - `query`
+   - `get_page`
+
+If you configured embeddings:
+
+```bash
+gbrain embed --stale
+gbrain health
+```
+
+You should see embedding coverage increase.
+
+---
+
+## 11. What is not supported in local/offline mode yet
+
+These workflows are still managed/Postgres-oriented:
+
+- remote MCP deployment over HTTP
+- cloud file/storage migration workflows (`gbrain files ...`)
+- Supabase admin / deployment helpers
+
+In local/offline mode, these commands are expected to fail with honest guidance.
+
+That is intentional. The current local profile is designed to be truthful, not to silently attempt cloud behavior.
+
+---
+
+## 12. Troubleshooting
+
+### `gbrain init --local` succeeded, but query returns nothing
+
+You probably have not imported anything yet.
+
+Run:
+
+```bash
+gbrain import /path/to/brain
+gbrain stats
+```
+
+### `gbrain embed --stale` says no embedding provider is available
+
+You have not configured a local embedding runtime yet.
+
+Set one of:
+
+- `GBRAIN_LOCAL_EMBEDDING_URL`
+- `OLLAMA_HOST`
+
+Then rerun:
+
+```bash
+gbrain embed --stale
+```
+
+### `gbrain serve` works in the terminal but not from my MCP client
+
+Most often this means the client is using a different environment/config location than your shell.
+
+Use:
+
+- the default `~/.gbrain/config.json`, or
+- a wrapper script that exports the needed env vars before `exec gbrain serve`
+
+### `gbrain files ...` fails in local mode
+
+That is expected today.
+
+Local/offline SQLite mode does not support the cloud file/storage workflow yet.
+
+---
+
+## 13. If you want the same guide in Korean
+
+See:
+
+- [docs/local-offline.ko.md](docs/local-offline.ko.md)

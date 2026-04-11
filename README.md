@@ -19,7 +19,7 @@ This is what I actually use day to day. The agent runs while I sleep... literall
 
 **You don't need Postgres to start.** The knowledge model is just markdown files in a git repo. The [skills](docs/GBRAIN_SKILLPACK.md) and [schema](docs/GBRAIN_RECOMMENDED_SCHEMA.md) work with any AI agent that can read and write files. Start there.
 
-**You also don't need cloud services anymore.** `gbrain init --local` now boots a full local/offline brain on SQLite, `gbrain serve` exposes the same MCP tools over stdio, and Codex or Claude Code can attach to it without Supabase, OpenAI, or Anthropic in the loop. Local embeddings are optional and backfill-driven: import/sync stay usable immediately, and semantic retrieval comes online once you configure a local runtime and run `gbrain embed --stale`. See [docs/local-offline.md](docs/local-offline.md).
+**You also don't need cloud services anymore.** `gbrain init --local` now boots a full local/offline brain on SQLite, `gbrain serve` exposes the same MCP tools over stdio, and Codex or Claude Code can attach to it without Supabase, OpenAI, or Anthropic in the loop. Local embeddings are optional and backfill-driven: import/sync stay usable immediately, and semantic retrieval comes online once you configure a local runtime and run `gbrain embed --stale`. Detailed guides: [English](docs/local-offline.md) / [한국어](docs/local-offline.ko.md).
 
 I added Postgres + pgvector later because at 1,000 to 10,000 long markdown docs, `grep` stops working. You need real chunking, real retrieval, real search. GBrain now supports both that managed path and a local/offline SQLite path, optimized for OpenClaw and smart agents.
 
@@ -171,7 +171,7 @@ Your file count will be different. Your queries will be different. The agent pic
 
 ### Prerequisites
 
-**Local/offline (SQLite, no cloud)** is now a first-class path: run `gbrain init --local` to create `~/.gbrain/brain.db`, keep your repo on disk, and expose the same tools over `gbrain serve`. Keyword search works immediately. Semantic embeddings are optional, backfill-driven, and only require a local Ollama-compatible runtime when you want them. See [docs/local-offline.md](docs/local-offline.md).
+**Local/offline (SQLite, no cloud)** is now a first-class path: run `gbrain init --local` to create `~/.gbrain/brain.db`, keep your repo on disk, and expose the same tools over `gbrain serve`. Keyword search works immediately. Semantic embeddings are optional, backfill-driven, and only require a local Ollama-compatible runtime when you want them. Step-by-step guides: [English](docs/local-offline.md) / [한국어](docs/local-offline.ko.md).
 
 **Managed Postgres** still matters when you want pgvector at scale, remote MCP deployment, or cloud file/storage workflows. For that path, GBrain needs three things:
 
@@ -208,7 +208,7 @@ knowledge brain.
    (follow the wizard to connect my Supabase database)
 
 3. Scan ~/git/ and ~/Documents/ for markdown repos,
-   pick the best one, and run: gbrain import <path> --no-embed
+   pick the best one, and run: gbrain import <path>
 
 4. Run a query against the imported data to prove search works
 
@@ -272,6 +272,11 @@ gbrain embed --stale            # optional: backfill semantic embeddings once a 
 ```
 
 The CLI gives you page CRUD, search, tags, links, timeline, graph traversal, health checks, and MCP serve in both profiles. Cloud file/storage commands remain Postgres-only today and return honest unsupported-capability errors in sqlite/local mode. Run `gbrain --help` for the full list.
+
+If you want a copy-paste, first-day local setup guide, use:
+
+- [docs/local-offline.md](docs/local-offline.md)
+- [docs/local-offline.ko.md](docs/local-offline.ko.md)
 
 #### Local MCP server (Codex, Claude Code, Cursor, Windsurf, etc.)
 
@@ -427,14 +432,11 @@ OpenClaw users skip this step. The orchestrator runs the wizard for you during i
 # Import your markdown wiki (auto-chunks and auto-embeds)
 gbrain import /path/to/brain/
 
-# Skip embedding if you want to import fast and embed later
-gbrain import /path/to/brain/ --no-embed
-
 # Backfill embeddings for pages that don't have them
 gbrain embed --stale
 ```
 
-Import is idempotent. Re-running it skips unchanged files (compared by SHA-256 content hash). Progress bar shows status. ~30s for text import of 7,000 files, ~10-15 min for embedding. In local/offline mode, import and sync do not block on local embeddings being unavailable: keyword search works immediately, and `gbrain embed --stale` backfills semantic retrieval later once `OLLAMA_HOST` or `GBRAIN_LOCAL_EMBEDDING_URL` is configured.
+Import is idempotent. Re-running it skips unchanged files (compared by SHA-256 content hash). Progress bar shows status. ~30s for text import of 7,000 files, ~10-15 min for embedding. In local/offline mode, import and sync already defer embeddings by default: keyword search works immediately, and `gbrain embed --stale` backfills semantic retrieval later once `OLLAMA_HOST` or `GBRAIN_LOCAL_EMBEDDING_URL` is configured.
 
 ## File storage and migration
 
@@ -624,7 +626,7 @@ SEARCH
   gbrain query <question>                   Hybrid search (vector + keyword + RRF + expansion)
 
 IMPORT/EXPORT
-  gbrain import <dir> [--no-embed]          Import markdown directory (idempotent)
+  gbrain import <dir>                       Import markdown directory (idempotent, embeddings deferred)
   gbrain sync [--repo <path>] [flags]       Git-to-brain incremental sync
   gbrain export [--dir ./out/]              Export to markdown (round-trip)
 

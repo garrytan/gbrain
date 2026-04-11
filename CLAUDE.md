@@ -36,12 +36,13 @@ available in local mode versus what must fail with honest guidance.
 - `src/schema.sql` — Full Postgres + pgvector DDL (source of truth, generates schema-embedded.ts)
 - `scripts/deploy-remote.sh` — One-script remote MCP deployment
 - `docs/mcp/` — Remote/hosted per-client setup guides (Claude Desktop, Code, Cowork, Perplexity, ChatGPT)
-- `docs/local-offline.md` — Local/offline SQLite + Codex/Claude Code setup guide
+- `docs/local-offline.md` — Local/offline SQLite + Codex/Claude Code setup guide (English)
+- `docs/local-offline.ko.md` — Local/offline SQLite + Codex/Claude Code setup guide (Korean)
 - `openclaw.plugin.json` — ClawHub bundle plugin manifest
 
 ## Commands
 
-Run `gbrain --help` or `gbrain --tools-json` for full command reference. For local/offline contributors: `gbrain init --local` writes the SQLite/offline profile, and `gbrain serve` is the stdio MCP entrypoint both Codex and Claude Code consume.
+Run `gbrain --help` or `gbrain --tools-json` for full command reference. For local/offline contributors: `gbrain init --local` writes the SQLite/offline profile, and `gbrain serve` is the stdio MCP entrypoint both Codex and Claude Code consume. User-facing local setup docs now live in both `docs/local-offline.md` and `docs/local-offline.ko.md`.
 
 ## Testing
 
