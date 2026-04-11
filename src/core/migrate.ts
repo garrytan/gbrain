@@ -82,6 +82,48 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 5,
+    name: 'dynamic_embedding_dimensions',
+    sql: '',
+    handler: async (engine) => {
+      const { getProvider } = await import('./embedding/index.ts');
+      const provider = getProvider();
+      const newDims = provider.dimensions;
+      const newModel = `${provider.name}:${provider.model}`;
+
+      const currentDims = await engine.getConfig('embedding_dimensions');
+      const currentModel = await engine.getConfig('embedding_model');
+      const dbDims = parseInt(currentDims || '1536', 10);
+
+      if (dbDims !== newDims) {
+        console.log(`  Embedding dimensions changed: ${dbDims} → ${newDims}`);
+
+        const staleSQL = `
+          DROP INDEX IF EXISTS idx_chunks_embedding;
+          UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;
+          ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${newDims});
+          CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+        `;
+        await engine.transaction(async (tx) => {
+          await tx.runMigration(5, staleSQL);
+        });
+
+        await engine.setConfig('embedding_dimensions', String(newDims));
+        await engine.setConfig('embedding_model', newModel);
+
+        const stats = await engine.getStats();
+        console.log(`  Schema updated to vector(${newDims}). Run \`gbrain embed --all\` to re-embed ${stats.chunk_count} chunks.`);
+      } else if (currentModel !== newModel) {
+        console.log(`  Embedding model changed: ${currentModel} → ${newModel}`);
+        await engine.transaction(async (tx) => {
+          await tx.runMigration(5, `UPDATE content_chunks SET embedded_at = NULL;`);
+        });
+        await engine.setConfig('embedding_model', newModel);
+        console.log(`  Run \`gbrain embed --all\` to re-embed with new model.`);
+      }
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
