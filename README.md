@@ -135,7 +135,7 @@ GBrain doesn't ship with demo data. It finds YOUR markdown and makes it searchab
 === Discovery Complete ===
 ```
 
-**Act 2: Import.** Your files move from the repo into your Postgres-backed brain.
+**Act 2: Import.** Your files move from the repo into Supabase.
 
 ```bash
 gbrain import ~/git/brain/
@@ -171,11 +171,11 @@ Your file count will be different. Your queries will be different. The agent pic
 
 **Without Postgres**, you can use the GBrain knowledge model right now: the [skills](docs/GBRAIN_SKILLPACK.md), [schema](docs/GBRAIN_RECOMMENDED_SCHEMA.md), and compiled truth + timeline pattern work with any agent that reads and writes markdown files. Add Postgres when `grep` stops being enough.
 
-**With Postgres**, GBrain normally needs three things:
+**With Postgres**, GBrain needs three things:
 
 | Dependency | What it's for | How to get it |
 |------------|--------------|---------------|
-| **Postgres database** | Postgres + pgvector database | Supabase, self-hosted Postgres, Docker, Neon, RDS, etc. Must support `vector` + `pg_trgm` |
+| **Supabase account** | Postgres + pgvector database | [supabase.com](https://supabase.com) (Pro tier, $25/mo for 8GB) |
 | **OpenAI API key** | Embeddings (text-embedding-3-large) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | **Anthropic API key** | Multi-query expansion + LLM chunking (Haiku) | [console.anthropic.com](https://console.anthropic.com) |
 
@@ -187,8 +187,6 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 The Supabase connection URL is configured during `gbrain init`. The OpenAI and Anthropic SDKs read their keys from the environment automatically.
-
-**Experimental local mode:** you can also try `gbrain init --pglite ~/.gbrain/brain.db` to run against a persisted local PGlite-backed database without provisioning an external Postgres service. This is experimental and currently optimized for easier adoption in local/OpenClaw/Hermes-style environments, not for maximum scale.
 
 Without an OpenAI key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
 
@@ -204,11 +202,8 @@ knowledge brain.
    curl -fsSL https://bun.sh/install | bash
    Then run: bun add github:garrytan/gbrain
 
-2. Run: `gbrain init --url <your-postgres-connection-string>`
-   (or use `gbrain init --supabase` if you want the Supabase-flavored wizard)
-
-   Experimental local-file mode:
-   `gbrain init --pglite ~/.gbrain/brain.db`
+2. Run: gbrain init --supabase
+   (follow the wizard to connect my Supabase database)
 
 3. Scan ~/git/ and ~/Documents/ for markdown repos,
    pick the best one, and run: gbrain import <path> --no-embed
@@ -268,9 +263,7 @@ Install globally and use gbrain from the terminal:
 
 ```bash
 bun add -g github:garrytan/gbrain
-gbrain init --url <conn>        # any Postgres URL with vector + pg_trgm
-# or experimental local-file mode:
-gbrain init --pglite ~/.gbrain/brain.db
+gbrain init --supabase          # guided wizard, connects to your Postgres
 gbrain import ~/git/brain/      # index your markdown
 gbrain query "what do we know about competitive dynamics?"
 ```
@@ -372,14 +365,11 @@ After upgrading, run `gbrain init` again to apply any schema migrations (idempot
 After installing via CLI or library path, run the setup wizard:
 
 ```bash
-# Guided setup: accepts any Postgres connection URL (or use the Supabase-flavored wizard)
-gbrain init --url <conn>
+# Guided wizard: auto-provisions Supabase or accepts a connection URL
+gbrain init --supabase
 
 # Or connect to any Postgres with pgvector
-gbrain init --url postgresql://user:***@host:5432/dbname
-
-# Or use experimental local-file mode with PGlite
-gbrain init --pglite ~/.gbrain/brain.db
+gbrain init --url postgresql://user:pass@host:5432/dbname
 ```
 
 The init wizard:
