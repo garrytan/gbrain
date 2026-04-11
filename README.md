@@ -16,7 +16,7 @@ I was setting up my [OpenClaw](https://openclaw.ai) agent and started a markdown
 - Company profiles, food guides, travel logs
 - **Voice calls** that automatically create brain pages (Twilio + OpenAI Realtime)
 
-This is what I actually use day to day. The agent runs while I sleep... literally. The dream cycle scans every conversation from the day, enriches missing entities, fixes broken citations, and consolidates memory. I wake up and the brain is smarter than when I went to sleep. OpenClaw ships this as DREAMS.md. Hermes Agent can do the same with a nightly cron job (see the [SKILLPACK](docs/GBRAIN_SKILLPACK.md#the-dream-cycle) for setup).
+This is what I actually use day to day. The agent runs while I sleep... literally. The dream cycle scans every conversation from the day, enriches missing entities, fixes broken citations, and consolidates memory. I wake up and the brain is smarter than when I went to sleep. OpenClaw ships this as DREAMS.md. Hermes Agent can do the same with a nightly cron job (see the [cron schedule guide](docs/guides/cron-schedule.md) for setup).
 
 **You don't need Postgres to start.** The knowledge model is just markdown files in a git repo. The [skills](docs/GBRAIN_SKILLPACK.md) and [schema](docs/GBRAIN_RECOMMENDED_SCHEMA.md) work with any AI agent that can read and write files. Start there.
 

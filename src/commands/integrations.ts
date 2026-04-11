@@ -99,12 +99,19 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
 // For compiled binaries, these should be embedded at build time.
 // For source installs (bun run), they're read from disk.
 function getRecipesDir(): string {
-  // Try relative to this file (source install)
+  // Explicit override (for compiled binaries or custom installs)
+  if (process.env.GBRAIN_RECIPES_DIR && existsSync(process.env.GBRAIN_RECIPES_DIR)) {
+    return process.env.GBRAIN_RECIPES_DIR;
+  }
+  // Try relative to this file (source install via bun)
   const sourceDir = join(import.meta.dir, '../../recipes');
   if (existsSync(sourceDir)) return sourceDir;
   // Try relative to CWD (development)
   const cwdDir = join(process.cwd(), 'recipes');
   if (existsSync(cwdDir)) return cwdDir;
+  // Try global install path (bun add -g)
+  const globalDir = join(homedir(), '.bun', 'install', 'global', 'node_modules', 'gbrain', 'recipes');
+  if (existsSync(globalDir)) return globalDir;
   return '';
 }
 
@@ -222,8 +229,9 @@ function checkSecrets(secrets: RecipeSecret[]): { set: string[]; missing: Recipe
 type IntegrationStatus = 'available' | 'configured' | 'active';
 
 function getStatus(recipe: ParsedRecipe): IntegrationStatus {
-  const { set } = checkSecrets(recipe.frontmatter.secrets);
-  if (set.length === 0) return 'available';
+  const { set, missing } = checkSecrets(recipe.frontmatter.secrets);
+  // All required secrets must be set to be "configured"
+  if (missing.length > 0) return 'available';
 
   const heartbeat = readHeartbeat(recipe.frontmatter.id);
   const recentEvents = heartbeat.filter(e =>

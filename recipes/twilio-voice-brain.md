@@ -16,7 +16,7 @@ secrets:
     description: OpenAI API key (needs Realtime API access enabled on your account)
     where: https://platform.openai.com/api-keys — click "+ Create new secret key", copy immediately (you can't see it again)
 health_checks:
-  - "curl -sf https://api.twilio.com/2010-04-01 > /dev/null && echo 'Twilio: OK' || echo 'Twilio: FAIL'"
+  - "curl -sf -u \"$TWILIO_ACCOUNT_SID:$TWILIO_AUTH_TOKEN\" \"https://api.twilio.com/2010-04-01/Accounts/$TWILIO_ACCOUNT_SID.json\" > /dev/null && echo 'Twilio: OK' || echo 'Twilio: FAIL'"
   - "curl -sf -H \"Authorization: Bearer $OPENAI_API_KEY\" https://api.openai.com/v1/models > /dev/null && echo 'OpenAI: OK' || echo 'OpenAI: FAIL'"
 setup_time: 30 min
 cost_estimate: "$15-25/mo (Twilio number $1-2 + voice $0.01/min, OpenAI Realtime $0.06/min input + $0.24/min output)"
