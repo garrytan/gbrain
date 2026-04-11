@@ -1,6 +1,6 @@
 import { execSync } from 'child_process';
-import { PostgresEngine } from '../core/postgres-engine.ts';
 import { saveConfig, type GBrainConfig } from '../core/config.ts';
+import { createEngineFromConfig, toEngineConfig } from '../core/engine-factory.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -20,13 +20,13 @@ export async function runInit(args: string[]) {
     if (envUrl) {
       databaseUrl = envUrl;
     } else {
-      console.error('--non-interactive requires --url <connection_string> or GBRAIN_DATABASE_URL env var');
+      console.error('--non-interactive requires --url <connection_string> or GBRAIN_DATABASE_URL / DATABASE_URL');
       process.exit(1);
     }
   } else if (isSupabase) {
-    databaseUrl = await supabaseWizard();
+    databaseUrl = await postgresWizard();
   } else {
-    databaseUrl = await supabaseWizard();
+    databaseUrl = await postgresWizard();
   }
 
   // Detect Supabase direct connection URLs and warn about IPv6
@@ -42,9 +42,17 @@ export async function runInit(args: string[]) {
 
   // Connect and init schema
   console.log('Connecting to database...');
-  const engine = new PostgresEngine();
+  const engineConfig: GBrainConfig = {
+    engine: 'postgres',
+    database_url: databaseUrl,
+    offline: false,
+    embedding_provider: 'none',
+    query_rewrite_provider: 'none',
+    ...(apiKey ? { openai_api_key: apiKey } : {}),
+  };
+  const engine = createEngineFromConfig(engineConfig);
   try {
-    await engine.connect({ database_url: databaseUrl });
+    await engine.connect(toEngineConfig(engineConfig));
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     // Provide better error for Supabase IPv6 failures
@@ -75,12 +83,7 @@ export async function runInit(args: string[]) {
   await engine.initSchema();
 
   // Save config
-  const config: GBrainConfig = {
-    engine: 'postgres',
-    database_url: databaseUrl,
-    ...(apiKey ? { openai_api_key: apiKey } : {}),
-  };
-  saveConfig(config);
+  saveConfig(engineConfig);
   console.log('Config saved to ~/.gbrain/config.json');
 
   // Verify
@@ -96,7 +99,7 @@ export async function runInit(args: string[]) {
   }
 }
 
-async function supabaseWizard(): Promise<string> {
+async function postgresWizard(): Promise<string> {
   // Try Supabase CLI auto-provision
   try {
     execSync('bunx supabase --version', { stdio: 'pipe' });
@@ -105,13 +108,14 @@ async function supabaseWizard(): Promise<string> {
     console.log('Then use: gbrain init --url <your-connection-string>');
   } catch {
     console.log('Supabase CLI not found.');
-    console.log('Or provide a connection URL directly.');
+    console.log('You can still provide any Postgres connection URL directly.');
   }
 
   // Fallback to manual URL
-  console.log('\nEnter your Supabase/Postgres connection URL:');
+  console.log('\nEnter your Postgres connection URL:');
   console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres');
-  console.log('  Find it: Supabase Dashboard > gear icon (Project Settings) > Database >');
+  console.log('  Any working postgres:// connection string is acceptable.');
+  console.log('  For Supabase, find it at: Dashboard > gear icon (Project Settings) > Database >');
   console.log('           Connection string > URI tab > change dropdown to "Session pooler"\n');
 
   const url = await readLine('Connection URL: ');

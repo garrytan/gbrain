@@ -5,6 +5,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
 import { VERSION } from '../version.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
@@ -45,7 +46,7 @@ export async function startMcpServer(engine: BrainEngine) {
 
     const ctx: OperationContext = {
       engine,
-      config: loadConfig() || { engine: 'postgres' },
+      config: loadConfig() || DEFAULT_RUNTIME_CONFIG,
       logger: {
         info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
         warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
@@ -81,7 +82,7 @@ export async function handleToolCall(
 
   const ctx: OperationContext = {
     engine,
-    config: loadConfig() || { engine: 'postgres' },
+    config: loadConfig() || DEFAULT_RUNTIME_CONFIG,
     logger: { info: console.log, warn: console.warn, error: console.error },
     dryRun: !!(params?.dry_run),
   };

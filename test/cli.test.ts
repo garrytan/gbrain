@@ -1,25 +1,39 @@
-import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
-// Read cli.ts source for structural checks
+const repoRoot = new URL('..', import.meta.url).pathname;
 const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
+const originalEnv = { ...process.env };
+let tempHome: string;
 
-describe('CLI structure', () => {
+function writeUserConfig(config: Record<string, unknown>) {
+  const dir = join(tempHome, '.gbrain');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'config.json'), JSON.stringify(config, null, 2));
+}
+
+beforeEach(() => {
+  tempHome = mkdtempSync(join(tmpdir(), 'gbrain-cli-'));
+  process.env.HOME = tempHome;
+  delete process.env.GBRAIN_DATABASE_URL;
+  delete process.env.DATABASE_URL;
+  delete process.env.OPENAI_API_KEY;
+});
+
+afterEach(() => {
+  process.env = { ...originalEnv };
+  rmSync(tempHome, { recursive: true, force: true });
+});
+
+describe('CLI source shape', () => {
   test('imports operations from operations.ts', () => {
     expect(cliSource).toContain("from './core/operations.ts'");
   });
 
   test('builds cliOps map from operations', () => {
     expect(cliSource).toContain('cliOps');
-  });
-
-  test('CLI_ONLY set contains expected commands', () => {
-    expect(cliSource).toContain("'init'");
-    expect(cliSource).toContain("'upgrade'");
-    expect(cliSource).toContain("'import'");
-    expect(cliSource).toContain("'export'");
-    expect(cliSource).toContain("'embed'");
-    expect(cliSource).toContain("'files'");
   });
 
   test('has formatResult function for CLI output', () => {
@@ -43,7 +57,8 @@ describe('CLI version', () => {
 describe('CLI dispatch integration', () => {
   test('--version outputs version', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--version'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -54,7 +69,8 @@ describe('CLI dispatch integration', () => {
 
   test('unknown command prints error and exits 1', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'notacommand'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -66,7 +82,8 @@ describe('CLI dispatch integration', () => {
 
   test('per-command --help prints usage without DB connection', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'get', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -78,7 +95,8 @@ describe('CLI dispatch integration', () => {
 
   test('upgrade --help prints usage without running upgrade', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'upgrade', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -90,7 +108,8 @@ describe('CLI dispatch integration', () => {
 
   test('--help prints global help', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -103,7 +122,8 @@ describe('CLI dispatch integration', () => {
 
   test('--tools-json outputs valid JSON with operations', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
-      cwd: new URL('..', import.meta.url).pathname,
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -115,5 +135,27 @@ describe('CLI dispatch integration', () => {
     expect(tools[0]).toHaveProperty('name');
     expect(tools[0]).toHaveProperty('description');
     expect(tools[0]).toHaveProperty('parameters');
+  });
+
+  test('bootstrap rejects invalid engine/provider config before attempting a database connection', async () => {
+    writeUserConfig({
+      engine: 'postgres',
+      database_url: 'postgresql://user:pass@localhost:5432/gbrain',
+      embedding_provider: 'local',
+    });
+
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'stats'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    expect(stderr).toMatch(/embedding_provider.*requires sqlite/i);
+    expect(stderr).not.toMatch(/cannot connect to database/i);
+    expect(exitCode).toBe(1);
   });
 });

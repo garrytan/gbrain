@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import { readFileSync } from 'fs';
-import { PostgresEngine } from './core/postgres-engine.ts';
-import { loadConfig, toEngineConfig } from './core/config.ts';
+import { loadConfig } from './core/config.ts';
+import { createConnectedEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
@@ -132,7 +132,7 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
 function makeContext(engine: BrainEngine, params: Record<string, unknown>): OperationContext {
   return {
     engine,
-    config: loadConfig() || { engine: 'postgres' },
+    config: loadConfig() || DEFAULT_RUNTIME_CONFIG,
     logger: { info: console.log, warn: console.warn, error: console.error },
     dryRun: (params.dry_run as boolean) || false,
   };
@@ -292,12 +292,10 @@ async function handleCliOnly(command: string, args: string[]) {
 async function connectEngine(): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
-    console.error('No brain configured. Run: gbrain init --supabase');
+    console.error('No brain configured. Run: gbrain init or set GBRAIN_DATABASE_URL / DATABASE_URL.');
     process.exit(1);
   }
-  const engine = new PostgresEngine();
-  await engine.connect(toEngineConfig(config));
-  return engine;
+  return createConnectedEngine(config);
 }
 
 function printOpHelp(op: Operation) {
@@ -328,7 +326,7 @@ USAGE
   gbrain <command> [options]
 
 SETUP
-  init [--supabase|--url <conn>]     Create brain (guided wizard)
+  init [--supabase|--url <conn>]     Create brain (guided Postgres setup)
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   doctor [--json]                    Health check (pgvector, RLS, schema, embeddings)

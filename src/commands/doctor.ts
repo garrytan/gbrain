@@ -1,5 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
+import { loadConfig } from '../core/config.ts';
+import { supportsRawPostgresAccess } from '../core/engine-factory.ts';
 import { LATEST_VERSION } from '../core/migrate.ts';
 
 interface Check {
@@ -11,6 +13,7 @@ interface Check {
 export async function runDoctor(engine: BrainEngine, args: string[]) {
   const jsonOutput = args.includes('--json');
   const checks: Check[] = [];
+  const config = loadConfig();
 
   // 1. Connection
   try {
@@ -23,37 +26,42 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  // 2. pgvector extension
-  try {
-    const sql = db.getConnection();
-    const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
-    if (ext.length > 0) {
-      checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
-    } else {
-      checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+  // 2. Postgres-specific checks
+  if (config && supportsRawPostgresAccess(config)) {
+    try {
+      const sql = db.getConnection();
+      const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
+      if (ext.length > 0) {
+        checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
+      } else {
+        checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+      }
+    } catch {
+      checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
     }
-  } catch {
-    checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
-  }
 
-  // 3. RLS
-  try {
-    const sql = db.getConnection();
-    const tables = await sql`
-      SELECT tablename, rowsecurity FROM pg_tables
-      WHERE schemaname = 'public'
-        AND tablename IN ('pages','content_chunks','links','tags','raw_data',
-                           'page_versions','timeline_entries','ingest_log','config','files')
-    `;
-    const noRls = tables.filter((t: any) => !t.rowsecurity);
-    if (noRls.length === 0) {
-      checks.push({ name: 'rls', status: 'ok', message: 'RLS enabled on all tables' });
-    } else {
-      const names = noRls.map((t: any) => t.tablename).join(', ');
-      checks.push({ name: 'rls', status: 'warn', message: `RLS not enabled on: ${names}` });
+    try {
+      const sql = db.getConnection();
+      const tables = await sql`
+        SELECT tablename, rowsecurity FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename IN ('pages','content_chunks','links','tags','raw_data',
+                             'page_versions','timeline_entries','ingest_log','config','files')
+      `;
+      const noRls = tables.filter((t: any) => !t.rowsecurity);
+      if (noRls.length === 0) {
+        checks.push({ name: 'rls', status: 'ok', message: 'RLS enabled on all tables' });
+      } else {
+        const names = noRls.map((t: any) => t.tablename).join(', ');
+        checks.push({ name: 'rls', status: 'warn', message: `RLS not enabled on: ${names}` });
+      }
+    } catch {
+      checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS status' });
     }
-  } catch {
-    checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS status' });
+  } else {
+    const engineName = config?.engine || 'current';
+    checks.push({ name: 'pgvector', status: 'warn', message: `Skipped: pgvector check is Postgres-only for ${engineName} mode` });
+    checks.push({ name: 'rls', status: 'warn', message: `Skipped: RLS check is Postgres-only for ${engineName} mode` });
   }
 
   // 4. Schema version

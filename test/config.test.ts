@@ -1,22 +1,103 @@
-import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
-// redactUrl is not exported, so we test it by reading the source and
-// reimplementing the regex to verify the pattern, then test via CLI
+const originalEnv = { ...process.env };
+let tempHome: string;
 
-// Extract the redactUrl regex pattern from source
-const configSource = readFileSync(
-  new URL('../src/commands/config.ts', import.meta.url),
-  'utf-8',
-);
+function writeUserConfig(config: Record<string, unknown>) {
+  const dir = join(tempHome, '.gbrain');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'config.json'), JSON.stringify(config, null, 2));
+}
 
-// Reimplemented from source for unit testing
 function redactUrl(url: string): string {
   return url.replace(
     /(postgresql:\/\/[^:]+:)([^@]+)(@)/,
     '$1***$3',
   );
 }
+
+beforeEach(() => {
+  tempHome = mkdtempSync(join(tmpdir(), 'gbrain-config-'));
+  process.env.HOME = tempHome;
+  delete process.env.GBRAIN_DATABASE_URL;
+  delete process.env.DATABASE_URL;
+  delete process.env.OPENAI_API_KEY;
+});
+
+afterEach(() => {
+  process.env = { ...originalEnv };
+  rmSync(tempHome, { recursive: true, force: true });
+});
+
+describe('config loading', () => {
+  test('loads sqlite engine settings from config', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.gbrain/brain.db',
+      offline: true,
+      embedding_provider: 'local',
+      query_rewrite_provider: 'heuristic',
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    const config = loadConfig();
+
+    expect(config).toMatchObject({
+      engine: 'sqlite',
+      database_path: '~/.gbrain/brain.db',
+      offline: true,
+      embedding_provider: 'local',
+      query_rewrite_provider: 'heuristic',
+    });
+  });
+
+  test('preserves backward compatibility for legacy config files with no engine key', async () => {
+    writeUserConfig({
+      database_url: 'postgresql://user:pass@localhost:5432/gbrain',
+    });
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()).toMatchObject({
+      engine: 'postgres',
+      database_url: 'postgresql://user:pass@localhost:5432/gbrain',
+      offline: false,
+    });
+  });
+
+  test('defaults env-only database config to postgres unless local mode is explicitly configured', async () => {
+    process.env.GBRAIN_DATABASE_URL = 'postgresql://env-user:env-pass@localhost:5432/gbrain';
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()).toMatchObject({
+      engine: 'postgres',
+      database_url: 'postgresql://env-user:env-pass@localhost:5432/gbrain',
+      offline: false,
+    });
+  });
+
+  test('keeps explicit sqlite mode even when postgres env vars are present', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: '~/.gbrain/brain.db',
+      offline: true,
+      embedding_provider: 'local',
+      query_rewrite_provider: 'heuristic',
+    });
+    process.env.GBRAIN_DATABASE_URL = 'postgresql://env-user:env-pass@localhost:5432/gbrain';
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    expect(loadConfig()).toMatchObject({
+      engine: 'sqlite',
+      database_path: '~/.gbrain/brain.db',
+      offline: true,
+      embedding_provider: 'local',
+      query_rewrite_provider: 'heuristic',
+    });
+  });
+});
 
 describe('redactUrl', () => {
   test('redacts password in postgresql:// URL', () => {
@@ -26,7 +107,6 @@ describe('redactUrl', () => {
 
   test('redacts complex passwords with special chars', () => {
     const url = 'postgresql://postgres:p@ss!w0rd#123@db.supabase.co:5432/postgres';
-    // The regex is greedy on [^@]+ so it captures up to the LAST @
     const result = redactUrl(url);
     expect(result).not.toContain('p@ss');
     expect(result).toContain('***');
@@ -43,7 +123,6 @@ describe('redactUrl', () => {
 
   test('handles URL without password', () => {
     const url = 'postgresql://user@host:5432/dbname';
-    // No colon after user means regex doesn't match
     expect(redactUrl(url)).toBe(url);
   });
 
@@ -53,11 +132,19 @@ describe('redactUrl', () => {
 });
 
 describe('config source correctness', () => {
-  test('redactUrl function exists in config.ts', () => {
+  test('redactUrl function exists in config.ts', async () => {
+    const configSource = readFileSync(
+      new URL('../src/commands/config.ts', import.meta.url),
+      'utf-8',
+    );
     expect(configSource).toContain('function redactUrl');
   });
 
-  test('redactUrl uses the correct regex pattern', () => {
+  test('redactUrl uses the correct regex pattern', async () => {
+    const configSource = readFileSync(
+      new URL('../src/commands/config.ts', import.meta.url),
+      'utf-8',
+    );
     expect(configSource).toContain('postgresql:\\/\\/');
   });
 });

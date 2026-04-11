@@ -3,9 +3,9 @@ import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import { cpus, totalmem, homedir } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
-import { PostgresEngine } from '../core/postgres-engine.ts';
 import { importFile } from '../core/import-file.ts';
 import { loadConfig } from '../core/config.ts';
+import { createConnectedEngine, supportsParallelWorkers } from '../core/engine-factory.ts';
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -126,14 +126,17 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   }
 
   if (actualWorkers > 1) {
-    // Parallel: create per-worker engine instances with small pool
     const config = loadConfig();
+    if (!config) {
+      throw new Error('No brain configured. Run: gbrain init or set GBRAIN_DATABASE_URL / DATABASE_URL.');
+    }
+    if (!supportsParallelWorkers(config)) {
+      throw new Error(`Parallel import workers are not supported for ${config.engine} bootstrap yet.`);
+    }
+
+    // Parallel: create per-worker engine instances with backend-aware bootstrap
     const workerEngines = await Promise.all(
-      Array.from({ length: actualWorkers }, async () => {
-        const eng = new PostgresEngine();
-        await eng.connect({ database_url: config.database_url!, poolSize: 2 });
-        return eng;
-      })
+      Array.from({ length: actualWorkers }, async () => createConnectedEngine(config, { poolSize: 2 }))
     );
 
     // Thread-safe queue: use an atomic index counter instead of array.shift()
