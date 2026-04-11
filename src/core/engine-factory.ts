@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { PostgresEngine } from './postgres-engine.ts';
+import { SQLiteEngine } from './sqlite-engine.ts';
 import { GBrainError, type EngineConfig } from './types.ts';
 import type {
   EmbeddingProvider,
@@ -130,11 +131,7 @@ export function createEngineFromConfig(config: GBrainConfig): BrainEngine {
     case 'postgres':
       return new PostgresEngine();
     case 'sqlite':
-      throw new GBrainError(
-        'SQLite engine not implemented yet',
-        'engine="sqlite" is configured but the SQLite backend has not landed yet',
-        'Switch engine back to postgres until SQLite support is implemented',
-      );
+      return new SQLiteEngine();
   }
 }
 

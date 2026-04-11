@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 const originalEnv = { ...process.env };
 let tempHome: string;
@@ -42,7 +43,7 @@ describe('engine factory', () => {
     expect(engine).toBeInstanceOf(PostgresEngine);
   });
 
-  test('selects sqlite from config and fails with a clear not-implemented error on instantiation', async () => {
+  test('selects sqlite from config and instantiates the SQLite engine', async () => {
     writeConfig({
       engine: 'sqlite',
       database_path: '~/.gbrain/brain.db',
@@ -57,7 +58,8 @@ describe('engine factory', () => {
     const config = loadConfig();
     expect(config?.engine).toBe('sqlite');
 
-    expect(() => createEngineFromConfig(config!)).toThrow(/sqlite engine.*not implemented/i);
+    const engine = createEngineFromConfig(config!);
+    expect(engine).toBeInstanceOf(SQLiteEngine);
   });
 
   test('rejects local-only provider settings on postgres before bootstrap proceeds', async () => {

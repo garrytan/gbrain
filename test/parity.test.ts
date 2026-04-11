@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { operations, operationsByName } from '../src/core/operations.ts';
+import { SQLiteEngine, PostgresEngine } from '../src/core/index.ts';
 import type { Operation } from '../src/core/operations.ts';
 
 describe('operations contract parity', () => {
@@ -68,6 +69,11 @@ describe('operations contract parity', () => {
 
   test('operations count is at least 30', () => {
     expect(operations.length).toBeGreaterThanOrEqual(30);
+  });
+
+  test('core index exports both engine implementations', () => {
+    expect(SQLiteEngine).toBeDefined();
+    expect(PostgresEngine).toBeDefined();
   });
 
   test('MCP tool definitions can be generated from operations', () => {

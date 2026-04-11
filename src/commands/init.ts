@@ -72,7 +72,7 @@ export async function runInit(args: string[]) {
     if (ext.length === 0) {
       console.error('pgvector extension not found. Run this on your Postgres database:');
       console.error('  CREATE EXTENSION vector;');
-      console.error('  Use psql, your provider's query console, or Supabase SQL Editor if applicable.');
+      console.error("  Use psql, your provider's query console, or Supabase SQL Editor if applicable.");
       await engine.disconnect();
       process.exit(1);
     }
