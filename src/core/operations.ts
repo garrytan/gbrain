@@ -674,7 +674,7 @@ const learn: Operation = {
       const base = p.title
         ? slugifySegment(p.title as string)
         : slugifySegment(content.slice(0, 60));
-      slug = `learned/${base}`;
+      slug = `learned/${base || `fact-${Date.now()}`}`;
     }
 
     // Determine mode
@@ -730,13 +730,15 @@ const learn: Operation = {
       }
     });
 
-    // Log
-    await ctx.engine.logIngest({
-      source_type: source,
-      source_ref: slug,
-      pages_updated: [slug],
-      summary: `Learned: ${content.slice(0, 100)}`,
-    });
+    // Log (non-fatal — page is already saved)
+    try {
+      await ctx.engine.logIngest({
+        source_type: source,
+        source_ref: slug,
+        pages_updated: [slug],
+        summary: `Learned: ${content.slice(0, 100)}`,
+      });
+    } catch { /* non-fatal */ }
 
     return { slug, status: isAppend ? 'appended' : 'created', chunks: chunks.length };
   },
