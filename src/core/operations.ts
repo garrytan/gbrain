@@ -146,16 +146,28 @@ const delete_page: Operation = {
 
 const list_pages: Operation = {
   name: 'list_pages',
-  description: 'List pages with optional filters',
+  description: 'List pages with optional filters. Tag filters can be combined: `tags_all` requires every tag to be present on a page (AND), `tags_any` requires at least one of the listed tags to be present (OR). Use namespaced tag values like `firm_type:saas`, `theme:leadership`.',
   params: {
     type: { type: 'string', description: 'Filter by page type' },
-    tag: { type: 'string', description: 'Filter by tag' },
+    tag: { type: 'string', description: 'Filter by a single tag (legacy, prefer tags_all)' },
+    tags_all: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Require every tag in this list to be present on the page (AND semantics).',
+    },
+    tags_any: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Require at least one tag in this list to be present on the page (OR semantics).',
+    },
     limit: { type: 'number', description: 'Max results (default 50)' },
   },
   handler: async (ctx, p) => {
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
+      tags_all: p.tags_all as string[] | undefined,
+      tags_any: p.tags_any as string[] | undefined,
       limit: (p.limit as number) || 50,
     });
     return pages.map(pg => ({

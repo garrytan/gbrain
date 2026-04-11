@@ -111,8 +111,17 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
       if (paramDef?.type === 'boolean') {
         params[key] = true;
       } else if (i + 1 < args.length) {
-        params[key] = args[++i];
-        if (paramDef?.type === 'number') params[key] = Number(params[key]);
+        const raw = args[++i];
+        if (paramDef?.type === 'number') {
+          params[key] = Number(raw);
+        } else if (paramDef?.type === 'array') {
+          // Comma-separated values, or repeated flag. Repeat appends, comma splits.
+          const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+          const existing = (params[key] as string[] | undefined) || [];
+          params[key] = [...existing, ...parts];
+        } else {
+          params[key] = raw;
+        }
       }
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
@@ -343,7 +352,8 @@ PAGES
   get <slug>                         Read a page
   put <slug> [< file.md]             Write/update a page
   delete <slug>                      Delete a page
-  list [--type T] [--tag T] [-n N]   List pages
+  list [--type T] [--tag T] [--tags-all t1,t2] [--tags-any t1,t2] [-n N]
+                                     List pages (tags-all = AND, tags-any = OR)
 
 SEARCH
   search <query>                     Keyword search (tsvector)

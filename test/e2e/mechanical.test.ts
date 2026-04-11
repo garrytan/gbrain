@@ -94,6 +94,67 @@ describeE2E('E2E: Page CRUD', () => {
     expect(ycPages.some((p: any) => p.slug === 'people/sarah-chen')).toBe(true);
   });
 
+  test('list_pages tags_all AND: two required tags both present', async () => {
+    // Sarah Chen has tags: founder, yc-w25, ai-agents. Only page with both founder+yc-w25.
+    const pages = await callOp('list_pages', {
+      tags_all: ['founder', 'yc-w25'],
+    }) as any[];
+    expect(pages.length).toBe(1);
+    expect(pages[0].slug).toBe('people/sarah-chen');
+  });
+
+  test('list_pages tags_all AND: no page has all three, empty result', async () => {
+    // No single page has founder AND investor AND technical.
+    const pages = await callOp('list_pages', {
+      tags_all: ['founder', 'investor', 'technical'],
+    }) as any[];
+    expect(pages.length).toBe(0);
+  });
+
+  test('list_pages tags_all AND: one tag nonexistent, empty result', async () => {
+    const pages = await callOp('list_pages', {
+      tags_all: ['founder', 'tag-that-does-not-exist'],
+    }) as any[];
+    expect(pages.length).toBe(0);
+  });
+
+  test('list_pages tags_any OR: any of the listed tags matches', async () => {
+    // investor -> Marcus Reid; technical -> Priya Patel. Both should be returned.
+    const pages = await callOp('list_pages', {
+      tags_any: ['investor', 'technical'],
+    }) as any[];
+    const slugs = pages.map((p: any) => p.slug).sort();
+    expect(slugs).toContain('people/marcus-reid');
+    expect(slugs).toContain('people/priya-patel');
+    expect(slugs).not.toContain('people/sarah-chen');
+  });
+
+  test('list_pages tags_all + tags_any combined', async () => {
+    // Must have yc-w25 AND (founder OR investor). Only Sarah Chen satisfies.
+    const pages = await callOp('list_pages', {
+      tags_all: ['yc-w25'],
+      tags_any: ['founder', 'investor'],
+    }) as any[];
+    expect(pages.length).toBe(1);
+    expect(pages[0].slug).toBe('people/sarah-chen');
+  });
+
+  test('list_pages type filter + tags_all composes', async () => {
+    const pages = await callOp('list_pages', {
+      type: 'person',
+      tags_all: ['ai-agents'],
+    }) as any[];
+    expect(pages.length).toBe(1);
+    expect(pages[0].slug).toBe('people/sarah-chen');
+    expect(pages[0].type).toBe('person');
+  });
+
+  test('list_pages legacy tag param still works alongside tags_all', async () => {
+    // `tag` is normalized into tags_all internally.
+    const pages = await callOp('list_pages', { tag: 'founder' }) as any[];
+    expect(pages.some((p: any) => p.slug === 'people/sarah-chen')).toBe(true);
+  });
+
   test('put_page updates existing page', async () => {
     const updated = readFileSync(join(FIXTURES_PATH, 'people/sarah-chen.md'), 'utf-8')
       .replace('Stanford CS', 'MIT CS');

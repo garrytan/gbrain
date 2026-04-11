@@ -26,6 +26,8 @@ export interface PageInput {
 export interface PageFilters {
   type?: PageType;
   tag?: string;
+  tags_all?: string[];
+  tags_any?: string[];
   limit?: number;
   offset?: number;
 }
