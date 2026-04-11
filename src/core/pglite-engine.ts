@@ -54,8 +54,8 @@ export class PGLiteEngine implements BrainEngine {
     await this.db.exec(sql);
 
     // Now DB config table exists — load saved embedding config
+    resetProvider(); // clear cached provider before loading DB config
     await loadEmbeddingConfig(this);
-    resetProvider(); // re-resolve with DB config loaded
     const provider = getProvider();
 
     // Update schema defaults if DB config resolved differently
@@ -65,7 +65,26 @@ export class PGLiteEngine implements BrainEngine {
       await this.setConfig('embedding_dimensions', String(provider.dimensions));
     }
 
+    // After migrations complete, check if dimensions need updating (handles post-v5 provider changes)
+    // This covers the case where the user changes GBRAIN_EMBEDDING_PROVIDER after initial setup.
     const { applied } = await runMigrations(this);
+    const savedDimsStr = await this.getConfig('embedding_dimensions');
+    const savedDims = parseInt(savedDimsStr || '1536', 10);
+    if (savedDims !== provider.dimensions) {
+      console.log(`  Embedding dimensions changed: ${savedDims} → ${provider.dimensions}`);
+      const alterSQL = `
+        DROP INDEX IF EXISTS idx_chunks_embedding;
+        UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;
+        ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${provider.dimensions});
+        CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+      `;
+      await this.transaction(async (tx) => {
+        await tx.runMigration(5, alterSQL);
+      });
+      await this.setConfig('embedding_provider', provider.name);
+      await this.setConfig('embedding_dimensions', String(provider.dimensions));
+      await this.setConfig('embedding_model', `${provider.name}:${provider.model}`);
+    }
     if (applied > 0) {
       console.log(`  ${applied} migration(s) applied`);
     }
