@@ -65,28 +65,38 @@ export class PGLiteEngine implements BrainEngine {
       await this.setConfig('embedding_dimensions', String(provider.dimensions));
     }
 
-    // After migrations complete, check if dimensions need updating (handles post-v5 provider changes)
-    // This covers the case where the user changes GBRAIN_EMBEDDING_PROVIDER after initial setup.
     const { applied } = await runMigrations(this);
-    const savedDimsStr = await this.getConfig('embedding_dimensions');
-    const savedDims = parseInt(savedDimsStr || '1536', 10);
-    if (savedDims !== provider.dimensions) {
-      console.log(`  Embedding dimensions changed: ${savedDims} → ${provider.dimensions}`);
+    if (applied > 0) {
+      console.log(`  ${applied} migration(s) applied`);
+    }
+
+    // After migrations, ensure actual DB column matches provider dimensions.
+    // Read the real column type — config values can be stale or manually edited.
+    const colResult = await this.db.query<{ dim: number }>(
+      `SELECT atttypmod AS dim FROM pg_attribute
+       WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding' AND NOT attisdropped`
+    );
+    const actualDims = colResult.rows[0]?.dim ?? 1536;
+    const currentModel = await this.getConfig('embedding_model');
+    const expectedModel = `${provider.name}:${provider.model}`;
+
+    if (actualDims !== provider.dimensions) {
+      console.log(`  Embedding dimensions changed: ${actualDims} → ${provider.dimensions}`);
       const alterSQL = `
         DROP INDEX IF EXISTS idx_chunks_embedding;
         UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;
         ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${provider.dimensions});
         CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
       `;
-      await this.transaction(async (tx) => {
-        await tx.runMigration(5, alterSQL);
-      });
+      await this.db.exec(alterSQL);
       await this.setConfig('embedding_provider', provider.name);
       await this.setConfig('embedding_dimensions', String(provider.dimensions));
-      await this.setConfig('embedding_model', `${provider.name}:${provider.model}`);
-    }
-    if (applied > 0) {
-      console.log(`  ${applied} migration(s) applied`);
+      await this.setConfig('embedding_model', expectedModel);
+    } else if (currentModel !== expectedModel) {
+      // Model or provider changed but dimensions same — mark stale
+      await this.db.exec(`UPDATE content_chunks SET embedded_at = NULL`);
+      await this.setConfig('embedding_provider', provider.name);
+      await this.setConfig('embedding_model', expectedModel);
     }
   }
 
