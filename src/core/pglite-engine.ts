@@ -4,7 +4,7 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { getPgliteSchemaSQL } from './pglite-schema.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
@@ -46,7 +46,10 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+    const { getProvider } = await import('./embedding/index.ts');
+    const provider = getProvider();
+    const sql = getPgliteSchemaSQL(provider.dimensions, `${provider.name}:${provider.model}`);
+    await this.db.exec(sql);
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {
