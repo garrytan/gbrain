@@ -190,6 +190,147 @@ describe('local/offline profile semantics', () => {
     }
   });
 
+  test('local_llm rewrite uses GBRAIN_LOCAL_LLM_URL JSON mode', async () => {
+    process.env.GBRAIN_LOCAL_LLM_URL = 'http://127.0.0.1:4010/rewrite';
+    process.env.GBRAIN_LOCAL_LLM_MODEL = 'test-local-rewrite';
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('http://127.0.0.1:4010/rewrite');
+      return new Response(JSON.stringify({
+        alternatives: ['local semantic recall', 'semantic retrieval phrasing'],
+      }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    globalThis.fetch = fetchSpy as typeof fetch;
+
+    try {
+      const { expandQuery } = await import('../src/core/search/expansion.ts');
+      const result = await expandQuery('offline rewrite finds related concepts', {
+        config: {
+          engine: 'sqlite',
+          database_path: dbPath,
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'local_llm',
+        },
+      });
+
+      expect(result).toEqual([
+        'offline rewrite finds related concepts',
+        'local semantic recall',
+        'semantic retrieval phrasing',
+      ]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.GBRAIN_LOCAL_LLM_URL;
+      delete process.env.GBRAIN_LOCAL_LLM_MODEL;
+    }
+  });
+
+  test('local_llm rewrite uses OLLAMA_HOST generate mode', async () => {
+    process.env.OLLAMA_HOST = 'http://127.0.0.1:11434';
+    process.env.GBRAIN_LOCAL_LLM_MODEL = 'qwen-test';
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('http://127.0.0.1:11434/api/generate');
+      return new Response(JSON.stringify({
+        response: JSON.stringify({
+          alternatives: ['vector search recall', 'keyword + vector retrieval'],
+        }),
+      }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    globalThis.fetch = fetchSpy as typeof fetch;
+
+    try {
+      const { expandQuery } = await import('../src/core/search/expansion.ts');
+      const result = await expandQuery('hybrid search finds nearby matches', {
+        config: {
+          engine: 'sqlite',
+          database_path: dbPath,
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'local_llm',
+        },
+      });
+
+      expect(result).toEqual([
+        'hybrid search finds nearby matches',
+        'vector search recall',
+        'keyword + vector retrieval',
+      ]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.OLLAMA_HOST;
+      delete process.env.GBRAIN_LOCAL_LLM_MODEL;
+    }
+  });
+
+  test('local_llm rewrite falls back cleanly on malformed non-JSON payloads', async () => {
+    process.env.OLLAMA_HOST = 'http://127.0.0.1:11434';
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async () => new Response(JSON.stringify({
+      response: 'totally not structured rewrite output',
+    }), {
+      headers: { 'content-type': 'application/json' },
+    }));
+    globalThis.fetch = fetchSpy as typeof fetch;
+
+    try {
+      const { expandQuery } = await import('../src/core/search/expansion.ts');
+      const result = await expandQuery('offline rewrite must fail safely', {
+        config: {
+          engine: 'sqlite',
+          database_path: dbPath,
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'local_llm',
+        },
+      });
+
+      expect(result).toEqual(['offline rewrite must fail safely']);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.OLLAMA_HOST;
+    }
+  });
+
+  test('local_llm rewrite falls back to original query on non-200 responses', async () => {
+    process.env.GBRAIN_LOCAL_LLM_URL = 'http://127.0.0.1:4010/rewrite';
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async () => new Response('upstream unavailable', {
+      status: 503,
+      statusText: 'Service Unavailable',
+    }));
+    globalThis.fetch = fetchSpy as typeof fetch;
+
+    try {
+      const { expandQuery } = await import('../src/core/search/expansion.ts');
+      const result = await expandQuery('offline rewrite keeps original terms', {
+        config: {
+          engine: 'sqlite',
+          database_path: dbPath,
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'local_llm',
+        },
+      });
+
+      expect(result).toEqual(['offline rewrite keeps original terms']);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.GBRAIN_LOCAL_LLM_URL;
+    }
+  });
+
   test('check-update skips remote checks when offline is enabled', async () => {
     writeUserConfig({
       engine: 'sqlite',

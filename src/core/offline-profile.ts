@@ -1,6 +1,4 @@
-import { join } from 'path';
-import type { GBrainConfig, GBrainConfigInput, QueryRewriteProvider } from './config.ts';
-import { configDir } from './config.ts';
+import type { GBrainConfig, QueryRewriteProvider } from './config.ts';
 import { resolveEmbeddingProvider, type EmbeddingProviderCapability } from './embedding/provider.ts';
 
 const DEFAULT_LOCAL_REWRITE_MODEL = 'qwen2.5:3b';
@@ -46,20 +44,6 @@ interface LocalRewriteRuntime {
   url: string;
   model: string;
   kind: 'ollama-generate' | 'json-http';
-}
-
-export function createLocalProfileConfig(databasePath?: string): GBrainConfigInput {
-  return {
-    engine: 'sqlite',
-    database_path: databasePath ?? defaultLocalDatabasePath(),
-    offline: true,
-    embedding_provider: 'local',
-    query_rewrite_provider: 'heuristic',
-  };
-}
-
-export function defaultLocalDatabasePath(): string {
-  return join(configDir(), 'brain.db');
 }
 
 export function isOfflineProfile(config?: GBrainConfig | null): boolean {
@@ -276,14 +260,9 @@ function extractAlternativeQueries(raw: string): string[] {
       return parsed.queries.map(String);
     }
   } catch {
-    // Fall through to line parsing.
+    return [];
   }
-
-  return raw
-    .split(/\n+/)
-    .map(line => line.replace(/^[-*\d.\s]+/, '').trim())
-    .filter(Boolean)
-    .slice(0, MAX_QUERIES - 1);
+  return [];
 }
 
 function dedupeQueries(queries: string[]): string[] {
