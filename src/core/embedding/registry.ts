@@ -46,10 +46,10 @@ export function getProvider(): EmbeddingProvider {
     throw new Error(`Unknown embedding provider: ${providerName}. Supported: ${Object.keys(DEFAULTS).join(', ')}`);
   }
 
-  // If provider was overridden via env var (different from DB), ignore DB model/dimensions
-  // — they belong to the previous provider and would be wrong
-  const providerChanged = process.env.GBRAIN_EMBEDDING_PROVIDER && dbConfig.provider
-    && process.env.GBRAIN_EMBEDDING_PROVIDER !== dbConfig.provider;
+  // If provider was overridden via env var (different from DB or DB has no provider yet),
+  // ignore DB model/dimensions — they belong to the previous provider and would be wrong
+  const providerChanged = process.env.GBRAIN_EMBEDDING_PROVIDER
+    && (!dbConfig.provider || process.env.GBRAIN_EMBEDDING_PROVIDER !== dbConfig.provider);
   const dbModel = providerChanged ? undefined : dbConfig.model;
   const dbDims = providerChanged ? undefined : dbConfig.dimensions;
 

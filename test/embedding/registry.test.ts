@@ -150,6 +150,23 @@ describe('loadEmbeddingConfig + DB config fallback', () => {
     expect(provider.model).toBe('text-embedding-3-small');
   });
 
+  test('env var override ignores DB model/dims when DB has no provider (legacy upgrade)', async () => {
+    // Simulates: legacy brain with no embedding_provider key, user sets env var
+    process.env.GBRAIN_EMBEDDING_PROVIDER = 'voyage';
+    delete process.env.GBRAIN_EMBEDDING_MODEL;
+    delete process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+    await loadEmbeddingConfig(mockEngine({
+      // Legacy DB: has model/dims but no provider key
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: '1536',
+    }));
+    const provider = getProvider();
+    // Should use voyage defaults, NOT the old openai model/dims from DB
+    expect(provider.name).toBe('voyage');
+    expect(provider.model).toBe('voyage-4-large');
+    expect(provider.dimensions).toBe(1024);
+  });
+
   test('resetProvider clears DB config cache', async () => {
     delete process.env.GBRAIN_EMBEDDING_PROVIDER;
     await loadEmbeddingConfig(mockEngine({
