@@ -651,6 +651,7 @@ const learn: Operation = {
     title: { type: 'string', description: 'Page title (used when creating a new page)' },
     tags: { type: 'string', description: 'Comma-separated tags' },
     source: { type: 'string', description: 'Source identifier (default: "conversation")' },
+    no_embed: { type: 'boolean', description: 'Skip embedding (for testing or offline use)' },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -698,8 +699,8 @@ const learn: Operation = {
       chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
     }
 
-    // Embed (non-fatal)
-    try {
+    // Embed (non-fatal, skippable)
+    if (!p.no_embed) try {
       const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
       for (let i = 0; i < chunks.length; i++) {
         chunks[i].embedding = embeddings[i];

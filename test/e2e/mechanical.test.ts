@@ -981,6 +981,7 @@ describeE2E('E2E: Learn', () => {
       content: 'GBrain supports PGLite and Postgres engines.',
       slug: 'concepts/gbrain-engines',
       title: 'GBrain Engines',
+      no_embed: true,
     }) as any;
 
     expect(result.status).toBe('created');
@@ -998,6 +999,7 @@ describeE2E('E2E: Learn', () => {
     const result = await callOp('learn', {
       content: 'It also supports Voyage embeddings.',
       slug: 'concepts/gbrain-engines',
+      no_embed: true,
     }) as any;
 
     expect(result.status).toBe('appended');
@@ -1018,6 +1020,7 @@ describeE2E('E2E: Learn', () => {
     const result = await callOp('learn', {
       content: 'Deployment always goes through staging first.',
       title: 'Deployment Process',
+      no_embed: true,
     }) as any;
 
     expect(result.status).toBe('created');
@@ -1028,13 +1031,9 @@ describeE2E('E2E: Learn', () => {
     expect(page.compiled_truth).toContain('staging');
   });
 
-  test('learned content is searchable', async () => {
-    // This test may skip if no embedding API key — that's fine
-    const results = await callOp('search', { query: 'deployment staging' }) as any[];
-    // At minimum, keyword search should find it
-    if (results.length > 0) {
-      const found = results.some((r: any) => r.slug === 'learned/deployment-process');
-      expect(found).toBe(true);
-    }
+  test('learned content is searchable via keyword', async () => {
+    const results = await callOp('search', { query: 'Deployment staging' }) as any[];
+    const found = results.some((r: any) => r.slug === 'learned/deployment-process');
+    expect(found).toBe(true);
   });
 });
