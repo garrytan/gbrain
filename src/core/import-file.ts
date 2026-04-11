@@ -4,6 +4,7 @@ import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { embedBatch } from './embedding.ts';
+import { getEmbeddingModel, type EmbeddingProviderConfig } from './embedding-provider.ts';
 import type { ChunkInput } from './types.ts';
 
 export interface ImportResult {
@@ -25,7 +26,7 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: { noEmbed?: boolean; config?: EmbeddingProviderConfig | null } = {},
 ): Promise<ImportResult> {
   const parsed = parseMarkdown(content, slug + '.md');
 
@@ -62,9 +63,11 @@ export async function importFromContent(
   // Embed BEFORE the transaction (external API call)
   if (!opts.noEmbed && chunks.length > 0) {
     try {
-      const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
+      const embeddings = await embedBatch(chunks.map(c => c.chunk_text), { config: opts.config });
+      const model = getEmbeddingModel(opts.config);
       for (let i = 0; i < chunks.length; i++) {
         chunks[i].embedding = embeddings[i];
+        chunks[i].model = model;
         chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
       }
     } catch { /* non-fatal */ }
@@ -108,7 +111,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: { noEmbed?: boolean; config?: EmbeddingProviderConfig | null } = {},
 ): Promise<ImportResult> {
   const stat = statSync(filePath);
   if (stat.size > MAX_FILE_SIZE) {

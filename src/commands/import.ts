@@ -24,6 +24,7 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   const workerCount = workersArg ? parseInt(workersArg, 10) : 1;
+  const config = loadConfig();
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
@@ -82,7 +83,7 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   async function processFile(eng: BrainEngine, filePath: string) {
     const relativePath = relative(dir, filePath);
     try {
-      const result = await importFile(eng, filePath, relativePath, { noEmbed });
+      const result = await importFile(eng, filePath, relativePath, { noEmbed, config });
       if (result.status === 'imported') {
         imported++;
         chunksCreated += result.chunks;
@@ -127,7 +128,6 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   if (actualWorkers > 1) {
     // Parallel: create per-worker engine instances with small pool
     // PGLite is single-connection, so parallel workers are only for Postgres
-    const config = loadConfig();
     if (config?.engine === 'pglite') {
       // PGLite: sequential import through single engine
       for (const file of files) {

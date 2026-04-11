@@ -6,7 +6,7 @@
  *
  * Requires:
  *   - DATABASE_URL
- *   - OPENAI_API_KEY
+ *   - OPENAI_API_KEY or VENICE_API_KEY
  *   - ANTHROPIC_API_KEY
  *   - openclaw CLI installed with at least one agent configured
  *
@@ -40,7 +40,11 @@ function detectAgent(): string | null {
 // Check all Tier 2 dependencies
 function hasTier2Deps(): { ok: boolean; reason?: string; agent?: string } {
   if (!hasDatabase()) return { ok: false, reason: 'DATABASE_URL not set' };
-  if (!process.env.OPENAI_API_KEY) return { ok: false, reason: 'OPENAI_API_KEY not set' };
+  const hasEmbeddingKey = !!(
+    process.env.VENICE_API_KEY
+    || process.env.OPENAI_API_KEY
+  );
+  if (!hasEmbeddingKey) return { ok: false, reason: 'OPENAI_API_KEY or VENICE_API_KEY not set' };
   if (!process.env.ANTHROPIC_API_KEY) return { ok: false, reason: 'ANTHROPIC_API_KEY not set' };
 
   // Check if openclaw is installed

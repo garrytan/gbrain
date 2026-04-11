@@ -13,7 +13,7 @@ Deploy your personal knowledge brain as a serverless MCP endpoint on your existi
 ```bash
 # 1. Fill in your config
 cp .env.production.example .env.production
-# Edit .env.production with your DATABASE_URL, OPENAI_API_KEY, SUPABASE_PROJECT_REF
+# Edit .env.production with your DATABASE_URL, SUPABASE_PROJECT_REF, and either OPENAI_API_KEY or VENICE_API_KEY
 
 # 2. Deploy (one command)
 bash scripts/deploy-remote.sh
@@ -74,7 +74,18 @@ These remain CLI-only via `gbrain serve` (stdio).
 Install: `brew install supabase/tap/supabase` or `npm install -g supabase`
 
 **Edge Function deploys but returns 500**
-Check that OPENAI_API_KEY is set: `supabase secrets list`
+Check that your embedding provider secrets are set: `supabase secrets list`
+
+OpenAI:
+`OPENAI_API_KEY`
+
+Venice:
+`GBRAIN_EMBEDDING_PROVIDER=venice`
+`VENICE_API_KEY`
+
+OpenAI-compatible Venice mode also works:
+`OPENAI_API_KEY`
+`OPENAI_BASE_URL=https://api.venice.ai/api/v1`
 
 **"missing_auth" error**
 Include the Authorization header: `Authorization: Bearer YOUR_TOKEN`

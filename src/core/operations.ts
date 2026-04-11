@@ -123,7 +123,9 @@ const put_page: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    const result = await importFromContent(ctx.engine, p.slug as string, p.content as string);
+    const result = await importFromContent(ctx.engine, p.slug as string, p.content as string, {
+      config: ctx.config,
+    });
     return { slug: result.slug, status: result.status === 'imported' ? 'created_or_updated' : result.status, chunks: result.chunks };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
@@ -197,6 +199,7 @@ const query: Operation = {
       limit: (p.limit as number) || 20,
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
+      config: ctx.config,
     });
   },
   cliHints: { name: 'query', positional: ['query'] },
