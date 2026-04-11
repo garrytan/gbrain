@@ -84,6 +84,34 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
   }
 
+  // 6. Embedding config match
+  try {
+    const { getProvider } = await import('../core/embedding/index.ts');
+    const provider = getProvider();
+    const dbModel = await engine.getConfig('embedding_model');
+    const dbDims = await engine.getConfig('embedding_dimensions');
+    const currentModel = `${provider.name}:${provider.model}`;
+    const currentDims = String(provider.dimensions);
+
+    const modelMatch = dbModel === currentModel;
+    const dimsMatch = dbDims === currentDims;
+
+    if (modelMatch && dimsMatch) {
+      checks.push({ name: 'embedding_config', status: 'ok', message: `${currentModel} @ ${currentDims}d` });
+    } else {
+      const parts: string[] = [];
+      if (!modelMatch) parts.push(`model: ${dbModel} → ${currentModel}`);
+      if (!dimsMatch) parts.push(`dimensions: ${dbDims} → ${currentDims}`);
+      checks.push({
+        name: 'embedding_config',
+        status: 'warn',
+        message: `Mismatch: ${parts.join(', ')}. Run gbrain init to migrate, then gbrain embed --all`,
+      });
+    }
+  } catch {
+    checks.push({ name: 'embedding_config', status: 'warn', message: 'Could not check embedding config' });
+  }
+
   outputResults(checks, jsonOutput);
 }
 
