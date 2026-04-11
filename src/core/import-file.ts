@@ -4,6 +4,7 @@ import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { embedBatch } from './embedding.ts';
+import { slugifyPath } from './sync.ts';
 import type { ChunkInput } from './types.ts';
 
 export interface ImportResult {
@@ -103,6 +104,13 @@ export async function importFromContent(
 
 /**
  * Import from a file path. Validates size, reads content, delegates to importFromContent.
+ *
+ * Slug authority: the path on disk is the source of truth. `frontmatter.slug`
+ * is only accepted when it matches `slugifyPath(relativePath)`. A mismatch is
+ * rejected rather than silently honored — otherwise a file at `notes/random.md`
+ * could declare `slug: people/elon` in frontmatter and overwrite the legitimate
+ * `people/elon` page on the next `gbrain sync` or `gbrain import`. In shared
+ * brains where PRs are mergeable, this is a silent page-hijack primitive.
  */
 export async function importFromFile(
   engine: BrainEngine,
@@ -117,7 +125,25 @@ export async function importFromFile(
 
   const content = readFileSync(filePath, 'utf-8');
   const parsed = parseMarkdown(content, relativePath);
-  return importFromContent(engine, parsed.slug, content, opts);
+
+  // Enforce path-authoritative slug. parseMarkdown prefers frontmatter.slug over
+  // the path-derived slug, so a mismatch here means the frontmatter is trying
+  // to rewrite a page whose filesystem location says something different.
+  const expectedSlug = slugifyPath(relativePath);
+  if (parsed.slug !== expectedSlug) {
+    return {
+      slug: expectedSlug,
+      status: 'skipped',
+      chunks: 0,
+      error:
+        `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expectedSlug}" ` +
+        `(from ${relativePath}). Remove the frontmatter "slug:" line or move the file.`,
+    };
+  }
+
+  // Pass the path-derived slug explicitly so that any future change to
+  // parseMarkdown's precedence rules cannot re-introduce this bug.
+  return importFromContent(engine, expectedSlug, content, opts);
 }
 
 // Backward compat
