@@ -22,6 +22,19 @@ All notable changes to GBrain will be documented in this file.
 
 - **Community PR wave process** documented in CLAUDE.md for future contributor batches.
 
+### Contributors
+
+Thank you to everyone who reported bugs, submitted fixes, and helped make GBrain better:
+
+- **@orendi84** — slug validator ellipsis fix (PR #31)
+- **@mattbratos** — import walker resilience + MDX support (PRs #26, #27)
+- **@changergosum** — init exit fix + auto pgvector (PRs #17, #18)
+- **@eric-hth** — Supabase UI hint update (PR #30)
+- **@irresi** — parallel hybrid search (PR #8)
+- **@howardpen9** — Hermes Agent link fix (PR #34)
+- **@cktang88** — the thorough 12-bug report that drove v0.6.0 (Issue #22)
+- **@mvanhorn** — MCP schema handler fix (PR #25)
+
 ## [0.6.0] - 2026-04-10
 
 ### Added
