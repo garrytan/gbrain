@@ -10,7 +10,7 @@
 - 키워드 검색은 즉시 가능하며
 - 임베딩/로컬 LLM 재작성은 나중에 선택적으로 붙일 수 있습니다
 
-영문 문서는 [docs/local-offline.md](docs/local-offline.md)를 참고하세요.
+영문 문서는 [docs/local-offline.md](local-offline.md)를 참고하세요.
 
 ---
 

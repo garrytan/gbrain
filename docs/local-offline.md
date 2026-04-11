@@ -10,7 +10,7 @@ In this profile:
 - keyword search works immediately
 - embeddings and local LLM rewrite are optional follow-up steps
 
-If you want the same instructions in Korean, use [docs/local-offline.ko.md](docs/local-offline.ko.md).
+If you want the same instructions in Korean, use [docs/local-offline.ko.md](local-offline.ko.md).
 
 ---
 
@@ -455,4 +455,4 @@ Local/offline SQLite mode does not support the cloud file/storage workflow yet.
 
 See:
 
-- [docs/local-offline.ko.md](docs/local-offline.ko.md)
+- [docs/local-offline.ko.md](local-offline.ko.md)

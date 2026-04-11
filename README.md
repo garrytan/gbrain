@@ -612,7 +612,8 @@ Three strategies, dispatched by content type:
 
 ```
 SETUP
-  gbrain init [--supabase|--url <conn>]     Create brain (guided wizard)
+  gbrain init --local                       Create a local/offline SQLite brain
+  gbrain init [--supabase|--url <conn>]     Create a managed Postgres brain (guided wizard)
   gbrain upgrade                            Self-update
 
 PAGES
