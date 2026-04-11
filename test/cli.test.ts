@@ -169,4 +169,25 @@ describe('CLI dispatch integration', () => {
     expect(stderr).not.toMatch(/cannot connect to database/i);
     expect(exitCode).toBe(1);
   });
+
+  test('bootstrap rejects invalid engine config before attempting a database connection', async () => {
+    writeUserConfig({
+      engine: 'mysql',
+      database_url: 'postgresql://user:pass@localhost:5432/gbrain',
+    });
+
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'stats'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    expect(stderr).toMatch(/unsupported engine: mysql/i);
+    expect(stderr).not.toMatch(/cannot connect to database/i);
+    expect(exitCode).toBe(1);
+  });
 });

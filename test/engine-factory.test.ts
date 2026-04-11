@@ -69,4 +69,13 @@ describe('engine factory', () => {
       embedding_provider: 'local',
     })).toThrow(/embedding_provider.*requires sqlite/i);
   });
+
+  test('rejects unsupported engines before bootstrap proceeds', async () => {
+    const { resolveConfig } = await import('../src/core/engine-factory.ts');
+
+    expect(() => resolveConfig({
+      engine: 'mysql' as unknown as 'postgres',
+      database_url: 'postgresql://user:pass@localhost:5432/gbrain',
+    })).toThrow(/unsupported engine: mysql/i);
+  });
 });
