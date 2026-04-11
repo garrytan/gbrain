@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runEmbed } from '../src/commands/embed.ts';
@@ -8,6 +8,7 @@ import { importFile } from '../src/core/import-file.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
+const originalEnv = { ...process.env };
 let tempDir = '';
 let dbPath = '';
 let engine: SQLiteEngine;
@@ -67,18 +68,179 @@ function createUnavailableProvider(reason: string) {
   };
 }
 
+
+
+function writeUserConfig(config: Record<string, unknown>) {
+  const configDir = join(tempDir, '.gbrain');
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, 'config.json'), JSON.stringify(config, null, 2));
+}
+
+function captureConsole() {
+  const logs: string[] = [];
+  const errors: string[] = [];
+  const logSpy = mock((msg?: unknown) => { logs.push(String(msg ?? '')); });
+  const errorSpy = mock((msg?: unknown) => { errors.push(String(msg ?? '')); });
+  const exitSpy = mock((_code?: number) => undefined as never);
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalExit = process.exit;
+
+  console.log = logSpy as typeof console.log;
+  console.error = errorSpy as typeof console.error;
+  process.exit = exitSpy as typeof process.exit;
+
+  return {
+    logs,
+    errors,
+    exitSpy,
+    restore() {
+      console.log = originalLog;
+      console.error = originalError;
+      process.exit = originalExit;
+    },
+  };
+}
+
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'gbrain-local-offline-'));
   dbPath = join(tempDir, 'brain.db');
+  process.env.HOME = tempDir;
+  delete process.env.GBRAIN_CONFIG_DIR;
+  delete process.env.GBRAIN_DATABASE_URL;
+  delete process.env.DATABASE_URL;
   engine = new SQLiteEngine();
   await engine.connect({ engine: 'sqlite', database_path: dbPath });
   await engine.initSchema();
 });
 
 afterEach(async () => {
+  process.env = { ...originalEnv };
   resetEmbeddingProviderForTests();
   await engine.disconnect();
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+describe('local/offline profile semantics', () => {
+  test('offline profile marks cloud-only capabilities unsupported in local mode', async () => {
+    const { resolveOfflineProfile } = await import('../src/core/offline-profile.ts');
+
+    const profile = resolveOfflineProfile({
+      engine: 'sqlite',
+      database_path: dbPath,
+      offline: true,
+      embedding_provider: 'local',
+      query_rewrite_provider: 'heuristic',
+    });
+
+    expect(profile.status).toBe('local_offline');
+    expect(profile.offline).toBe(true);
+    expect(profile.engine.type).toBe('sqlite');
+    expect(profile.embedding.mode).toBe('local');
+    expect(profile.rewrite.mode).toBe('heuristic');
+    expect(profile.capabilities.check_update.supported).toBe(false);
+    expect(profile.capabilities.files.supported).toBe(false);
+    expect(profile.capabilities.files.reason).toMatch(/sqlite\/local mode/i);
+  });
+
+  test('init --local writes sqlite offline defaults without a cloud database URL', async () => {
+    const capture = captureConsole();
+
+    try {
+      const { runInit } = await import('../src/commands/init.ts');
+      await runInit(['--local', '--json']);
+    } finally {
+      capture.restore();
+    }
+
+    const { loadConfig } = await import('../src/core/config.ts');
+    const config = loadConfig();
+
+    expect(config).toMatchObject({
+      engine: 'sqlite',
+      database_path: join(tempDir, '.gbrain', 'brain.db'),
+      offline: true,
+      embedding_provider: 'local',
+      query_rewrite_provider: 'heuristic',
+    });
+    expect(readFileSync(join(tempDir, '.gbrain', 'config.json'), 'utf-8')).toContain('"engine": "sqlite"');
+  });
+
+  test('query rewrite provider none returns the original query without contacting a runtime', async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async () => new Response('{}'));
+    globalThis.fetch = fetchSpy as typeof fetch;
+
+    try {
+      const { expandQuery } = await import('../src/core/search/expansion.ts');
+      const result = await expandQuery('offline query rewrite stays disabled', {
+        config: {
+          engine: 'sqlite',
+          database_path: dbPath,
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'none',
+        },
+      });
+
+      expect(result).toEqual(['offline query rewrite stays disabled']);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('check-update skips remote checks when offline is enabled', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: dbPath,
+      offline: true,
+      embedding_provider: 'local',
+      query_rewrite_provider: 'heuristic',
+    });
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async () => new Response('{}'));
+    globalThis.fetch = fetchSpy as typeof fetch;
+    const capture = captureConsole();
+
+    try {
+      const { runCheckUpdate } = await import('../src/commands/check-update.ts');
+      await runCheckUpdate(['--json']);
+    } finally {
+      globalThis.fetch = originalFetch;
+      capture.restore();
+    }
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const output = JSON.parse(capture.logs.join('\n'));
+    expect(output.update_available).toBe(false);
+    expect(output.error).toBe('offline_mode');
+    expect(output.reason).toMatch(/offline/i);
+  });
+
+  test('files commands explain that local/offline mode does not support file storage yet', async () => {
+    writeUserConfig({
+      engine: 'sqlite',
+      database_path: dbPath,
+      offline: true,
+      embedding_provider: 'local',
+      query_rewrite_provider: 'heuristic',
+    });
+
+    const capture = captureConsole();
+
+    try {
+      const { runFiles } = await import('../src/commands/files.ts');
+      await runFiles(engine, ['list']);
+    } finally {
+      capture.restore();
+    }
+
+    expect(capture.exitSpy).toHaveBeenCalledWith(1);
+    expect(capture.errors.join('\n')).toMatch(/files\/storage commands/i);
+    expect(capture.errors.join('\n')).toMatch(/offline|sqlite\/local mode/i);
+  });
 });
 
 describe('local/offline embedding flow', () => {

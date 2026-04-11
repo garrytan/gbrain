@@ -1,4 +1,6 @@
 import { VERSION } from '../version.ts';
+import { loadConfig } from '../core/config.ts';
+import { resolveOfflineProfile } from '../core/offline-profile.ts';
 import { detectInstallMethod } from './upgrade.ts';
 
 interface CheckUpdateResult {
@@ -126,6 +128,29 @@ export async function runCheckUpdate(args: string[]) {
   const json = args.includes('--json');
   const method = detectInstallMethod();
   const upgradeCmd = upgradeCommandForMethod(method);
+  const config = loadConfig();
+  const profile = config ? resolveOfflineProfile(config) : null;
+
+  if (profile && !profile.capabilities.check_update.supported) {
+    const reason = profile.capabilities.check_update.reason || 'Update checks are disabled in offline mode.';
+    if (json) {
+      console.log(JSON.stringify({
+        current_version: VERSION,
+        current_source: 'package-json',
+        latest_version: '',
+        update_available: false,
+        upgrade_command: upgradeCmd,
+        release_url: '',
+        changelog_diff: '',
+        published_at: '',
+        error: 'offline_mode',
+        reason,
+      }, null, 2));
+    } else {
+      console.log(`GBrain ${VERSION} — ${reason}`);
+    }
+    return;
+  }
 
   const release = await fetchLatestRelease();
 

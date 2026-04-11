@@ -3,6 +3,7 @@ import * as db from '../core/db.ts';
 import { loadConfig } from '../core/config.ts';
 import { supportsRawPostgresAccess } from '../core/engine-factory.ts';
 import { LATEST_VERSION } from '../core/migrate.ts';
+import { resolveOfflineProfile } from '../core/offline-profile.ts';
 
 interface Check {
   name: string;
@@ -14,6 +15,7 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
   const jsonOutput = args.includes('--json');
   const checks: Check[] = [];
   const config = loadConfig();
+  const profile = config ? resolveOfflineProfile(config) : null;
 
   // 1. Connection
   try {
@@ -24,6 +26,37 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
     checks.push({ name: 'connection', status: 'fail', message: msg });
     outputResults(checks, jsonOutput);
     return;
+  }
+
+  if (config && profile) {
+    checks.push({ name: 'engine', status: 'ok', message: config.engine });
+    checks.push({
+      name: 'embedding_provider',
+      status: profile.embedding.available ? 'ok' : 'warn',
+      message: `${profile.embedding.mode}${profile.embedding.reason ? ` — ${profile.embedding.reason}` : ''}`,
+    });
+    checks.push({
+      name: 'query_rewrite_provider',
+      status: profile.rewrite.available ? 'ok' : 'warn',
+      message: `${profile.rewrite.mode}${profile.rewrite.reason ? ` — ${profile.rewrite.reason}` : ''}`,
+    });
+    checks.push({
+      name: 'offline_profile',
+      status: profile.offline ? 'ok' : 'warn',
+      message: profile.status === 'local_offline'
+        ? 'local/offline profile active (enabled)'
+        : 'cloud-connected profile active',
+    });
+
+    const unsupported = Object.entries(profile.capabilities)
+      .filter(([, capability]) => !capability.supported)
+      .map(([name, capability]) => `${name === 'files' ? 'file/storage' : 'check-update'}: ${capability.reason}`);
+
+    checks.push({
+      name: 'unsupported_capabilities',
+      status: unsupported.length > 0 ? 'warn' : 'ok',
+      message: unsupported.length > 0 ? unsupported.join('; ') : 'None',
+    });
   }
 
   // 2. Postgres-specific checks

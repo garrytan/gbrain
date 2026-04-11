@@ -38,6 +38,7 @@ export function resolveConfig(input: GBrainConfigInput): GBrainConfig {
     offline: input.offline ?? (engine === 'sqlite'),
     embedding_provider: input.embedding_provider ?? (engine === 'sqlite' ? 'local' : 'none'),
     query_rewrite_provider: input.query_rewrite_provider ?? (engine === 'sqlite' ? 'heuristic' : 'none'),
+    storage: input.storage,
     openai_api_key: input.openai_api_key,
     anthropic_api_key: input.anthropic_api_key,
   };

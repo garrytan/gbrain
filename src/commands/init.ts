@@ -1,8 +1,13 @@
 import { execSync } from 'child_process';
-import { saveConfig, type GBrainConfig } from '../core/config.ts';
+import {
+  createLocalConfigDefaults,
+  saveConfig,
+  type GBrainConfig,
+} from '../core/config.ts';
 import { createEngineFromConfig, toEngineConfig } from '../core/engine-factory.ts';
 
 export async function runInit(args: string[]) {
+  const isLocal = args.includes('--local');
   const isSupabase = args.includes('--supabase');
   const isNonInteractive = args.includes('--non-interactive');
   const jsonOutput = args.includes('--json');
@@ -10,6 +15,40 @@ export async function runInit(args: string[]) {
   const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : null;
   const keyIndex = args.indexOf('--key');
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
+  const pathIndex = args.findIndex(arg => arg === '--path' || arg === '--db-path');
+  const localDatabasePath = pathIndex !== -1 ? args[pathIndex + 1] : undefined;
+
+  if (isLocal) {
+    const engineConfig = createLocalConfigDefaults({
+      ...(localDatabasePath ? { database_path: localDatabasePath } : {}),
+    });
+    const engine = createEngineFromConfig(engineConfig);
+
+    console.log('Bootstrapping local SQLite brain...');
+    await engine.connect(toEngineConfig(engineConfig));
+    console.log('Running schema migration...');
+    await engine.initSchema();
+
+    saveConfig(engineConfig);
+    console.log('Config saved to ~/.gbrain/config.json');
+
+    const stats = await engine.getStats();
+    await engine.disconnect();
+
+    if (jsonOutput) {
+      console.log(JSON.stringify({
+        status: 'success',
+        pages: stats.page_count,
+        config_path: '~/.gbrain/config.json',
+        profile: 'local_offline',
+      }));
+    } else {
+      console.log(`\nLocal brain ready. ${stats.page_count} pages.`);
+      console.log(`SQLite DB: ${engineConfig.database_path}`);
+      console.log('Next: gbrain import <dir> to index your markdown locally.');
+    }
+    return;
+  }
 
   let databaseUrl: string;
 

@@ -9,6 +9,7 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import * as db from './db.ts';
+import { getUnsupportedCapabilityReason } from './offline-profile.ts';
 
 // --- Types ---
 
@@ -18,7 +19,8 @@ export type ErrorCode =
   | 'embedding_failed'
   | 'storage_error'
   | 'bucket_not_found'
-  | 'database_error';
+  | 'database_error'
+  | 'unsupported_capability';
 
 export class OperationError extends Error {
   constructor(
@@ -196,7 +198,7 @@ const query: Operation = {
     return hybridSearch(ctx.engine, p.query as string, {
       limit: (p.limit as number) || 20,
       expansion: expand,
-      expandFn: expand ? expandQuery : undefined,
+      expandFn: expand ? (query) => expandQuery(query, { config: ctx.config }) : undefined,
     });
   },
   cliHints: { name: 'query', positional: ['query'] },
@@ -533,7 +535,8 @@ const file_list: Operation = {
   params: {
     slug: { type: 'string', description: 'Filter by page slug' },
   },
-  handler: async (_ctx, p) => {
+  handler: async (ctx, p) => {
+    assertCapabilitySupported(ctx.config, 'files');
     const sql = db.getConnection();
     const slug = p.slug as string | undefined;
     if (slug) {
@@ -552,6 +555,7 @@ const file_upload: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
+    assertCapabilitySupported(ctx.config, 'files');
     if (ctx.dryRun) return { dry_run: true, action: 'file_upload', path: p.path };
 
     const { readFileSync, statSync } = await import('fs');
@@ -621,7 +625,8 @@ const file_url: Operation = {
   params: {
     storage_path: { type: 'string', required: true },
   },
-  handler: async (_ctx, p) => {
+  handler: async (ctx, p) => {
+    assertCapabilitySupported(ctx.config, 'files');
     const sql = db.getConnection();
     const rows = await sql`SELECT storage_path, mime_type, size_bytes FROM files WHERE storage_path = ${p.storage_path as string}`;
     if (rows.length === 0) {
@@ -658,6 +663,16 @@ export const operations: Operation[] = [
   // Files
   file_list, file_upload, file_url,
 ];
+
+function assertCapabilitySupported(
+  config: GBrainConfig,
+  capability: 'files',
+) {
+  const reason = getUnsupportedCapabilityReason(config, capability);
+  if (reason) {
+    throw new OperationError('unsupported_capability', reason);
+  }
+}
 
 export const operationsByName = Object.fromEntries(
   operations.map(op => [op.name, op]),

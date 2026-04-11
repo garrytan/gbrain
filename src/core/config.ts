@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { resolveConfig } from './engine-factory.ts';
+import type { StorageConfig } from './storage.ts';
 
 export type EngineType = 'postgres' | 'sqlite';
 export type EmbeddingProvider = 'none' | 'local';
@@ -16,6 +17,7 @@ export interface GBrainConfig {
   query_rewrite_provider: QueryRewriteProvider;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  storage?: StorageConfig;
 }
 
 export interface GBrainConfigInput {
@@ -27,6 +29,7 @@ export interface GBrainConfigInput {
   query_rewrite_provider?: QueryRewriteProvider;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  storage?: StorageConfig;
 }
 
 // Lazy-evaluated to avoid calling homedir() at module scope (breaks in Deno Edge Functions)
@@ -47,7 +50,7 @@ export function loadConfig(): GBrainConfig | null {
   }
 
   const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
-  const preferLocalConfig = fileConfig?.engine === 'sqlite';
+  const preferLocalConfig = fileConfig?.engine === 'sqlite' || fileConfig?.offline === true;
 
   if (!fileConfig && !dbUrl) return null;
 
@@ -78,4 +81,23 @@ export function configDir(): string {
 
 export function configPath(): string {
   return join(configDir(), 'config.json');
+}
+
+export function defaultLocalDatabasePath(): string {
+  return join(configDir(), 'brain.db');
+}
+
+export function createLocalConfigDefaults(
+  overrides: GBrainConfigInput = {},
+): GBrainConfig {
+  return resolveConfig({
+    engine: 'sqlite',
+    database_path: overrides.database_path ?? process.env.GBRAIN_DATABASE_PATH ?? defaultLocalDatabasePath(),
+    offline: overrides.offline ?? true,
+    embedding_provider: overrides.embedding_provider ?? 'local',
+    query_rewrite_provider: overrides.query_rewrite_provider ?? 'heuristic',
+    openai_api_key: overrides.openai_api_key,
+    anthropic_api_key: overrides.anthropic_api_key,
+    storage: overrides.storage,
+  });
 }

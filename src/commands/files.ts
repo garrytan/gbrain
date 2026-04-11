@@ -3,6 +3,8 @@ import { join, relative, extname, basename } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
+import { loadConfig } from '../core/config.ts';
+import { resolveOfflineProfile } from '../core/offline-profile.ts';
 
 interface FileRecord {
   id: number;
@@ -37,6 +39,17 @@ function fileHash(filePath: string): string {
 }
 
 export async function runFiles(engine: BrainEngine, args: string[]) {
+  void engine;
+  const config = loadConfig();
+  if (config) {
+    const profile = resolveOfflineProfile(config);
+    if (!profile.capabilities.files.supported) {
+      console.error(profile.capabilities.files.reason);
+      process.exit(1);
+      return;
+    }
+  }
+
   const subcommand = args[0];
 
   switch (subcommand) {
@@ -132,7 +145,6 @@ async function uploadFile(args: string[]) {
   }
 
   // Upload to storage backend if configured
-  const { loadConfig } = await import('../core/config.ts');
   const config = loadConfig();
   if (config?.storage) {
     const { createStorage } = await import('../core/storage.ts');
