@@ -70,8 +70,9 @@ export async function runInit(args: string[]) {
     const conn = (engine as any).sql || (await import('../core/db.ts')).getConnection();
     const ext = await conn`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
     if (ext.length === 0) {
-      console.error('pgvector extension not found. Run in Supabase SQL Editor:');
+      console.error('pgvector extension not found. Run this on your Postgres database:');
       console.error('  CREATE EXTENSION vector;');
+      console.error('  Use psql, your provider's query console, or Supabase SQL Editor if applicable.');
       await engine.disconnect();
       process.exit(1);
     }
@@ -103,20 +104,21 @@ async function postgresWizard(): Promise<string> {
   // Try Supabase CLI auto-provision
   try {
     execSync('bunx supabase --version', { stdio: 'pipe' });
-    console.log('Supabase CLI detected.');
-    console.log('To auto-provision, run: bunx supabase login && bunx supabase projects create');
-    console.log('Then use: gbrain init --url <your-connection-string>');
+    console.log('Supabase CLI detected (optional managed Postgres helper).');
+    console.log('If you want a managed Postgres example, you can run:');
+    console.log('  bunx supabase login && bunx supabase projects create');
+    console.log('Then pass any working connection string with: gbrain init --url <connection_string>');
   } catch {
-    console.log('Supabase CLI not found.');
-    console.log('You can still provide any Postgres connection URL directly.');
+    console.log('No Supabase CLI detected (optional).');
+    console.log('That is fine — any reachable Postgres connection string works.');
   }
 
   // Fallback to manual URL
   console.log('\nEnter your Postgres connection URL:');
-  console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres');
-  console.log('  Any working postgres:// connection string is acceptable.');
-  console.log('  For Supabase, find it at: Dashboard > gear icon (Project Settings) > Database >');
-  console.log('           Connection string > URI tab > change dropdown to "Session pooler"\n');
+  console.log('  Example format: postgresql://user:password@host:5432/database');
+  console.log('  Any working postgres:// or postgresql:// connection string is acceptable.');
+  console.log('  Example managed provider: Supabase session pooler URI from Dashboard >');
+  console.log('    gear icon (Project Settings) > Database > Connection string > URI > Session pooler\n');
 
   const url = await readLine('Connection URL: ');
   if (!url) {

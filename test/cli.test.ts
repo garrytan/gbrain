@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 
 const repoRoot = new URL('..', import.meta.url).pathname;
 const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
+const initSource = readFileSync(new URL('../src/commands/init.ts', import.meta.url), 'utf-8');
 const originalEnv = { ...process.env };
 let tempHome: string;
 
@@ -38,6 +39,16 @@ describe('CLI source shape', () => {
 
   test('has formatResult function for CLI output', () => {
     expect(cliSource).toContain('function formatResult');
+  });
+
+  test('init guidance keeps pgvector troubleshooting backend-neutral', () => {
+    expect(initSource).toContain('Run this on your Postgres database');
+    expect(initSource).not.toContain('Run in Supabase SQL Editor');
+  });
+
+  test('init guidance treats Supabase as an optional example, not the only setup path', () => {
+    expect(initSource).toContain('optional managed Postgres helper');
+    expect(initSource).toContain('Any working postgres:// or postgresql:// connection string is acceptable');
   });
 });
 
