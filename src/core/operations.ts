@@ -422,7 +422,6 @@ const sync_brain: Operation = {
     dry_run: { type: 'boolean', description: 'Preview changes without applying' },
     full: { type: 'boolean', description: 'Full re-sync (ignore checkpoint)' },
     no_pull: { type: 'boolean', description: 'Skip git pull' },
-    no_embed: { type: 'boolean', description: 'Skip embedding generation' },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -430,7 +429,6 @@ const sync_brain: Operation = {
     return performSync(ctx.engine, {
       repoPath: p.repo as string | undefined,
       dryRun: ctx.dryRun || (p.dry_run as boolean) || false,
-      noEmbed: (p.no_embed as boolean) || false,
       noPull: (p.no_pull as boolean) || false,
       full: (p.full as boolean) || false,
     });

@@ -342,7 +342,7 @@ SEARCH
   query <question> [--no-expand]     Hybrid search (RRF + expansion)
 
 IMPORT/EXPORT
-  import <dir> [--no-embed]          Import markdown directory
+  import <dir>                       Import markdown directory
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
   export [--dir ./out/]              Export to markdown
 

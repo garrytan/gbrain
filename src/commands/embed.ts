@@ -7,7 +7,7 @@ export async function runEmbed(engine: BrainEngine, args: string[]) {
   const slug = args.find(a => !a.startsWith('--'));
   const staleOnly = args.includes('--stale');
   const rebuildAll = args.includes('--all');
-  const provider = getEmbeddingProvider({ allowLegacyOpenAIFallback: true });
+  const provider = getEmbeddingProvider();
 
   if (!provider.capability.available) {
     console.error(provider.capability.reason || 'No embedding provider available.');

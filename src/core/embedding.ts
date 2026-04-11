@@ -13,7 +13,6 @@ export type {
 
 export interface EmbeddingRuntimeOptions {
   config?: GBrainConfig | null;
-  allowLegacyOpenAIFallback?: boolean;
   provider?: ResolvedEmbeddingProvider;
 }
 
@@ -41,7 +40,6 @@ export function getEmbeddingProvider(
 
   return resolveEmbeddingProvider({
     config: options.config ?? safeLoadConfig(),
-    allowLegacyOpenAIFallback: options.allowLegacyOpenAIFallback ?? true,
   });
 }
 

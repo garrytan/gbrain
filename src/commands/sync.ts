@@ -23,7 +23,6 @@ export interface SyncOpts {
   dryRun?: boolean;
   full?: boolean;
   noPull?: boolean;
-  noEmbed?: boolean;
 }
 
 function git(repoPath: string, ...args: string[]): string {
@@ -195,7 +194,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     // Reimport at new path (picks up content changes)
     const filePath = join(repoPath, to);
     if (existsSync(filePath)) {
-      const result = await importFile(engine, filePath, to, { noEmbed: true });
+      const result = await importFile(engine, filePath, to);
       if (result.status === 'imported') chunksCreated += result.chunks;
     }
     pagesAffected.push(newSlug);
@@ -208,7 +207,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       const filePath = join(repoPath, path);
       if (!existsSync(filePath)) continue;
       try {
-        const result = await importFile(engine, filePath, path, { noEmbed: true });
+        const result = await importFile(engine, filePath, path);
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
@@ -266,7 +265,7 @@ async function performFullSync(
 ): Promise<SyncResult> {
   console.log(`Running full import of ${repoPath}...`);
   const { runImport } = await import('./import.ts');
-  const importArgs = [repoPath, '--no-embed'];
+  const importArgs = [repoPath];
   await runImport(engine, importArgs);
 
   return {
@@ -287,9 +286,8 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   const dryRun = args.includes('--dry-run');
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');
-  const noEmbed = args.includes('--no-embed');
 
-  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed };
+  const opts: SyncOpts = { repoPath, dryRun, full, noPull };
 
   if (!watch) {
     const result = await performSync(engine, opts);

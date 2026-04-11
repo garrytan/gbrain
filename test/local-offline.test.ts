@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runEmbed } from '../src/commands/embed.ts';
-import { resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
+import { getEmbeddingProvider, resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
 import { importFile } from '../src/core/import-file.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
@@ -46,6 +46,77 @@ afterEach(async () => {
 });
 
 describe('local/offline embedding flow', () => {
+  test('embedding provider none stays unavailable even if OPENAI_API_KEY is set', () => {
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'test-key';
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'postgres',
+          database_url: 'postgres://example',
+          offline: false,
+          embedding_provider: 'none',
+          query_rewrite_provider: 'none',
+        },
+      });
+
+      expect(provider.capability.available).toBe(false);
+      expect(provider.capability.mode).toBe('none');
+      expect(provider.capability.implementation).toBe('none');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = previous;
+      }
+    }
+  });
+
+  test('local provider stays unavailable without a configured local runtime', () => {
+    const previousOpenAI = process.env.OPENAI_API_KEY;
+    const previousLocalUrl = process.env.GBRAIN_LOCAL_EMBEDDING_URL;
+    const previousOllama = process.env.OLLAMA_HOST;
+
+    process.env.OPENAI_API_KEY = 'test-key';
+    delete process.env.GBRAIN_LOCAL_EMBEDDING_URL;
+    delete process.env.OLLAMA_HOST;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'sqlite',
+          database_path: join(tempDir, 'brain.db'),
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+        },
+      });
+
+      expect(provider.capability.available).toBe(false);
+      expect(provider.capability.mode).toBe('local');
+      expect(provider.capability.implementation).toBe('none');
+    } finally {
+      if (previousOpenAI === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = previousOpenAI;
+      }
+
+      if (previousLocalUrl === undefined) {
+        delete process.env.GBRAIN_LOCAL_EMBEDDING_URL;
+      } else {
+        process.env.GBRAIN_LOCAL_EMBEDDING_URL = previousLocalUrl;
+      }
+
+      if (previousOllama === undefined) {
+        delete process.env.OLLAMA_HOST;
+      } else {
+        process.env.OLLAMA_HOST = previousOllama;
+      }
+    }
+  });
+
   test('deferred re-import marks rewritten chunks as missing embeddings', async () => {
     const firstProvider = createFakeProvider();
     setEmbeddingProviderForTests(firstProvider.provider);
