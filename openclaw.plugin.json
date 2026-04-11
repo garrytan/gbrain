@@ -10,10 +10,32 @@
       "description": "PostgreSQL connection URL (Supabase recommended)",
       "uiHints": { "sensitive": true }
     },
+    "embedding_provider": {
+      "type": "string",
+      "required": false,
+      "description": "Embedding provider to use: openai or venice"
+    },
     "openai_api_key": {
       "type": "string",
       "required": false,
-      "description": "OpenAI API key for embeddings (uses OPENAI_API_KEY env var if not set)",
+      "description": "OpenAI-compatible API key for embeddings (uses OPENAI_API_KEY env var if not set)",
+      "uiHints": { "sensitive": true }
+    },
+    "openai_base_url": {
+      "type": "string",
+      "required": false,
+      "description": "Optional OpenAI-compatible base URL (set to Venice to use OPENAI-compatible routing)"
+    },
+    "venice_api_key": {
+      "type": "string",
+      "required": false,
+      "description": "Venice API key for embeddings (uses VENICE_API_KEY env var if not set)",
+      "uiHints": { "sensitive": true }
+    },
+    "venice_base_url": {
+      "type": "string",
+      "required": false,
+      "description": "Optional Venice base URL override",
       "uiHints": { "sensitive": true }
     }
   },

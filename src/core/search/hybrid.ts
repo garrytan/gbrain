@@ -9,6 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
 import { embed } from '../embedding.ts';
+import { hasEmbeddingProvider, type EmbeddingProviderConfig } from '../embedding-provider.ts';
 import { dedupResults } from './dedup.ts';
 
 const RRF_K = 60;
@@ -16,6 +17,7 @@ const RRF_K = 60;
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
   expandFn?: (query: string) => Promise<string[]>;
+  config?: EmbeddingProviderConfig | null;
 }
 
 export async function hybridSearch(
@@ -28,8 +30,8 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, { limit: limit * 2 });
 
-  // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
+  // Skip vector search entirely if no embedding provider is configured
+  if (!hasEmbeddingProvider(opts?.config)) {
     return dedupResults(keywordResults).slice(0, limit);
   }
 
@@ -47,7 +49,7 @@ export async function hybridSearch(
   // Embed all query variants and run vector search
   let vectorLists: SearchResult[][] = [];
   try {
-    const embeddings = await Promise.all(queries.map(q => embed(q)));
+    const embeddings = await Promise.all(queries.map(q => embed(q, { config: opts?.config })));
     vectorLists = await Promise.all(
       embeddings.map(emb => engine.searchVector(emb, { limit: limit * 2 })),
     );

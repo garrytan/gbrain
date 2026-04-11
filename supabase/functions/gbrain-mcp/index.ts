@@ -35,6 +35,31 @@ function getOpenAiKey(): string {
   return Deno.env.get('OPENAI_API_KEY') || '';
 }
 
+function getOpenAiBaseUrl(): string {
+  // @ts-ignore: Deno env
+  return Deno.env.get('OPENAI_BASE_URL') || '';
+}
+
+function getVeniceKey(): string {
+  // @ts-ignore: Deno env
+  return Deno.env.get('VENICE_API_KEY') || '';
+}
+
+function getVeniceBaseUrl(): string {
+  // @ts-ignore: Deno env
+  return Deno.env.get('VENICE_BASE_URL') || '';
+}
+
+function getEmbeddingProvider(): 'openai' | 'venice' | undefined {
+  // @ts-ignore: Deno env
+  const explicit = Deno.env.get('GBRAIN_EMBEDDING_PROVIDER');
+  if (explicit === 'openai' || explicit === 'venice') return explicit;
+  if (getVeniceKey()) return 'venice';
+  if (getOpenAiBaseUrl().includes('venice.ai')) return 'venice';
+  if (getOpenAiKey()) return 'openai';
+  return undefined;
+}
+
 async function getEngine(): Promise<PostgresEngine> {
   if (!engine) {
     engine = new PostgresEngine();
@@ -171,7 +196,11 @@ function createMcpServer(eng: PostgresEngine): Server {
       config: {
         engine: 'postgres',
         database_url: getDbUrl(),
+        ...(getEmbeddingProvider() ? { embedding_provider: getEmbeddingProvider() } : {}),
         openai_api_key: getOpenAiKey(),
+        openai_base_url: getOpenAiBaseUrl(),
+        venice_api_key: getVeniceKey(),
+        venice_base_url: getVeniceBaseUrl(),
       },
       logger: {
         info: (msg: string) => console.log(`[info] ${msg}`),
@@ -242,9 +271,10 @@ app.get('/health', async (c) => {
     checks.pgvector = 'error';
   }
 
-  checks.openai = getOpenAiKey() ? 'configured' : 'missing';
+  const embeddingProvider = getEmbeddingProvider();
+  checks.embeddings = embeddingProvider ? `${embeddingProvider}:configured` : 'missing';
 
-  const status = Object.values(checks).every(v => v === 'ok' || v === 'configured') ? 'ok' : 'degraded';
+  const status = Object.values(checks).every(v => v === 'ok' || v.endsWith(':configured')) ? 'ok' : 'degraded';
   return c.json({ status, version: VERSION, checks });
 });
 

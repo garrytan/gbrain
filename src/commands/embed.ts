@@ -1,24 +1,27 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch } from '../core/embedding.ts';
+import { loadConfig } from '../core/config.ts';
+import { getEmbeddingModel } from '../core/embedding-provider.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 
 export async function runEmbed(engine: BrainEngine, args: string[]) {
+  const config = loadConfig();
   const slug = args.find(a => !a.startsWith('--'));
   const all = args.includes('--all');
   const stale = args.includes('--stale');
 
   if (slug) {
-    await embedPage(engine, slug);
+    await embedPage(engine, slug, config);
   } else if (all || stale) {
-    await embedAll(engine, stale);
+    await embedAll(engine, stale, config);
   } else {
     console.error('Usage: gbrain embed [<slug>|--all|--stale]');
     process.exit(1);
   }
 }
 
-async function embedPage(engine: BrainEngine, slug: string) {
+async function embedPage(engine: BrainEngine, slug: string, config = loadConfig()) {
   const page = await engine.getPage(slug);
   if (!page) {
     console.error(`Page not found: ${slug}`);
@@ -53,7 +56,8 @@ async function embedPage(engine: BrainEngine, slug: string) {
     return;
   }
 
-  const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+  const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text), { config });
+  const model = getEmbeddingModel(config);
   const updated: ChunkInput[] = chunks.map((c, i) => {
     const needsEmbed = toEmbed.find(te => te.chunk_index === c.chunk_index);
     const embIdx = needsEmbed ? toEmbed.indexOf(needsEmbed) : -1;
@@ -62,6 +66,7 @@ async function embedPage(engine: BrainEngine, slug: string) {
       chunk_text: c.chunk_text,
       chunk_source: c.chunk_source,
       embedding: embIdx >= 0 ? embeddings[embIdx] : undefined,
+      model: embIdx >= 0 ? model : c.model,
       token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
     };
   });
@@ -70,10 +75,11 @@ async function embedPage(engine: BrainEngine, slug: string) {
   console.log(`${slug}: embedded ${toEmbed.length} chunks`);
 }
 
-async function embedAll(engine: BrainEngine, staleOnly: boolean) {
+async function embedAll(engine: BrainEngine, staleOnly: boolean, config = loadConfig()) {
   const pages = await engine.listPages({ limit: 100000 });
   let total = 0;
   let embedded = 0;
+  const model = getEmbeddingModel(config);
 
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
@@ -85,7 +91,7 @@ async function embedAll(engine: BrainEngine, staleOnly: boolean) {
     if (toEmbed.length === 0) continue;
 
     try {
-      const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+      const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text), { config });
       // Build a map of new embeddings by chunk_index
       const embeddingMap = new Map<number, Float32Array>();
       for (let j = 0; j < toEmbed.length; j++) {
@@ -97,6 +103,7 @@ async function embedAll(engine: BrainEngine, staleOnly: boolean) {
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
+        model: embeddingMap.has(c.chunk_index) ? model : c.model,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(page.slug, updated);

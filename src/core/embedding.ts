@@ -2,15 +2,20 @@
  * Embedding Service
  * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * Supports OpenAI and Venice AI embeddings while keeping stored vectors at
+ * 1536 dimensions for schema compatibility.
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
 
 import OpenAI from 'openai';
+import {
+  getEmbeddingDimensions,
+  getEmbeddingModel,
+  resolveEmbeddingProvider,
+  type EmbeddingProviderConfig,
+} from './embedding-provider.ts';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
@@ -18,41 +23,72 @@ const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
 
 let client: OpenAI | null = null;
+let clientCacheKey: string | null = null;
 
-function getClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI();
+export interface EmbeddingRequestOpts {
+  config?: EmbeddingProviderConfig | null;
+}
+
+function getClient(config?: EmbeddingProviderConfig | null): OpenAI {
+  const provider = resolveEmbeddingProvider(config);
+  if (!provider) {
+    throw new Error(
+      'No embedding provider configured. Set OPENAI_API_KEY, VENICE_API_KEY, or OPENAI_BASE_URL.',
+    );
   }
+
+  const cacheKey = `${provider.provider}:${provider.baseURL || ''}:${provider.apiKey}`;
+  if (!client || clientCacheKey !== cacheKey) {
+    client = new OpenAI({
+      apiKey: provider.apiKey,
+      ...(provider.baseURL ? { baseURL: provider.baseURL } : {}),
+    });
+    clientCacheKey = cacheKey;
+  }
+
   return client;
 }
 
-export async function embed(text: string): Promise<Float32Array> {
+export async function embed(text: string, opts: EmbeddingRequestOpts = {}): Promise<Float32Array> {
   const truncated = text.slice(0, MAX_CHARS);
-  const result = await embedBatch([truncated]);
+  const result = await embedBatch([truncated], opts);
   return result[0];
 }
 
-export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
+export async function embedBatch(
+  texts: string[],
+  opts: EmbeddingRequestOpts = {},
+): Promise<Float32Array[]> {
   const truncated = texts.map(t => t.slice(0, MAX_CHARS));
   const results: Float32Array[] = [];
 
   // Process in batches of BATCH_SIZE
   for (let i = 0; i < truncated.length; i += BATCH_SIZE) {
     const batch = truncated.slice(i, i + BATCH_SIZE);
-    const batchResults = await embedBatchWithRetry(batch);
+    const batchResults = await embedBatchWithRetry(batch, opts);
     results.push(...batchResults);
   }
 
   return results;
 }
 
-async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
+async function embedBatchWithRetry(
+  texts: string[],
+  opts: EmbeddingRequestOpts,
+): Promise<Float32Array[]> {
+  const provider = resolveEmbeddingProvider(opts.config);
+  if (!provider) {
+    throw new Error(
+      'No embedding provider configured. Set OPENAI_API_KEY, VENICE_API_KEY, or OPENAI_BASE_URL.',
+    );
+  }
+
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await getClient().embeddings.create({
-        model: MODEL,
+      const response = await getClient(opts.config).embeddings.create({
+        model: provider.model,
         input: texts,
-        dimensions: DIMENSIONS,
+        dimensions: provider.dimensions,
       });
 
       // Sort by index to maintain order
@@ -91,4 +127,4 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
+export { getEmbeddingModel, getEmbeddingDimensions };

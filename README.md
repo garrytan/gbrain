@@ -220,7 +220,7 @@ You take a meeting with someone. The agent writes a brain page for them, links i
 | Dependency | What it's for | How to get it |
 |------------|--------------|---------------|
 | **Supabase account** | Postgres + pgvector database | [supabase.com](https://supabase.com) (Pro tier, $25/mo for 8GB) |
-| **OpenAI API key** | Embeddings (text-embedding-3-large) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **OpenAI or Venice API key** | Embeddings (OpenAI `text-embedding-3-large` or Venice `text-embedding-bge-m3`) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) or [venice.ai](https://venice.ai) |
 | **Anthropic API key** | Multi-query expansion + LLM chunking (Haiku) | [console.anthropic.com](https://console.anthropic.com) |
 
 Set the API keys as environment variables:
@@ -230,9 +230,24 @@ export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-The Supabase connection URL is configured during `gbrain init --supabase`. The OpenAI and Anthropic SDKs read their keys from the environment automatically.
+Or use Venice directly:
 
-Without an OpenAI key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
+```bash
+export GBRAIN_EMBEDDING_PROVIDER=venice
+export VENICE_API_KEY=...
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+If you prefer Venice's OpenAI-compatible mode, this also works:
+
+```bash
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=https://api.venice.ai/api/v1
+```
+
+The Supabase connection URL is configured during `gbrain init --supabase`. You can also persist the provider during setup with `gbrain init --embedding-provider venice --key ...`.
+
+Without an embedding key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
 
 ### GBrain without OpenClaw
 

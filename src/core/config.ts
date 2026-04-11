@@ -11,7 +11,11 @@ export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
   database_url?: string;
   database_path?: string;
+  embedding_provider?: 'openai' | 'venice';
   openai_api_key?: string;
+  openai_base_url?: string;
+  venice_api_key?: string;
+  venice_base_url?: string;
   anthropic_api_key?: string;
 }
 
@@ -40,7 +44,11 @@ export function loadConfig(): GBrainConfig | null {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
+    ...(process.env.GBRAIN_EMBEDDING_PROVIDER ? { embedding_provider: process.env.GBRAIN_EMBEDDING_PROVIDER as 'openai' | 'venice' } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.OPENAI_BASE_URL ? { openai_base_url: process.env.OPENAI_BASE_URL } : {}),
+    ...(process.env.VENICE_API_KEY ? { venice_api_key: process.env.VENICE_API_KEY } : {}),
+    ...(process.env.VENICE_BASE_URL ? { venice_base_url: process.env.VENICE_BASE_URL } : {}),
   };
   return merged as GBrainConfig;
 }
