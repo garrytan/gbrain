@@ -54,17 +54,17 @@ async function embedPage(engine: BrainEngine, slug: string) {
   }
 
   const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
-  const updated: ChunkInput[] = chunks.map((c, i) => {
-    const needsEmbed = toEmbed.find(te => te.chunk_index === c.chunk_index);
-    const embIdx = needsEmbed ? toEmbed.indexOf(needsEmbed) : -1;
-    return {
-      chunk_index: c.chunk_index,
-      chunk_text: c.chunk_text,
-      chunk_source: c.chunk_source,
-      embedding: embIdx >= 0 ? embeddings[embIdx] : undefined,
-      token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
-    };
-  });
+  const embeddingMap = new Map<number, Float32Array>();
+  for (let j = 0; j < toEmbed.length; j++) {
+    embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
+  }
+  const updated: ChunkInput[] = chunks.map(c => ({
+    chunk_index: c.chunk_index,
+    chunk_text: c.chunk_text,
+    chunk_source: c.chunk_source,
+    embedding: embeddingMap.get(c.chunk_index),
+    token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+  }));
 
   await engine.upsertChunks(slug, updated);
   console.log(`${slug}: embedded ${toEmbed.length} chunks`);
