@@ -23,7 +23,7 @@ const CLI_ONLY = new Set(['init', 'upgrade', 'check-update', 'import', 'export',
 
 async function main() {
   const args = process.argv.slice(2);
-  const command = args[0];
+  let command = args[0];
 
   if (!command || command === '--help' || command === '-h') {
     printHelp();
@@ -42,6 +42,11 @@ async function main() {
   }
 
   const subArgs = args.slice(1);
+
+  // DX alias: `ask` is a natural-language alias for `query`
+  if (command === 'ask') {
+    command = 'query';
+  }
 
   // Per-command --help
   if (subArgs.includes('--help') || subArgs.includes('-h')) {
@@ -342,6 +347,7 @@ PAGES
 SEARCH
   search <query>                     Keyword search (tsvector)
   query <question> [--no-expand]     Hybrid search (RRF + expansion)
+  ask <question> [--no-expand]       Alias for query
 
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
