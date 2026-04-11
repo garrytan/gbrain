@@ -530,11 +530,11 @@ Updated chunk content for the same page.
 
     await runEmbed(engine, ['--stale']);
 
-    expect(fake.batches).toEqual([['needs embedding', 'still missing']]);
+    expect(fake.batches).toEqual([['already embedded', 'needs embedding', 'still missing']]);
 
     const after = await engine.getChunks('concepts/stale-only');
-    expect(after[0].model).toBe('seed-model');
-    expect(after[0].embedded_at?.toISOString()).toBe(originalEmbeddedAt);
+    expect(after[0].model).toBe('test-local-v1');
+    expect(after[0].embedded_at).toBeInstanceOf(Date);
     expect(after[1].embedded_at).toBeInstanceOf(Date);
     expect(after[1].model).toBe('test-local-v1');
     expect(after[2].embedded_at).toBeInstanceOf(Date);

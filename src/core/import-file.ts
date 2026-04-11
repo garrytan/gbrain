@@ -25,7 +25,6 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
-  _opts: { noEmbed?: boolean } = {},
 ): Promise<ImportResult> {
   const parsed = parseMarkdown(content, slug + '.md');
 
@@ -85,7 +84,6 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean } = {},
 ): Promise<ImportResult> {
   const stat = statSync(filePath);
   if (stat.size > MAX_FILE_SIZE) {
@@ -94,7 +92,7 @@ export async function importFromFile(
 
   const content = readFileSync(filePath, 'utf-8');
   const parsed = parseMarkdown(content, relativePath);
-  return importFromContent(engine, parsed.slug, content, opts);
+  return importFromContent(engine, parsed.slug, content);
 }
 
 // Backward compat

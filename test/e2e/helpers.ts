@@ -126,7 +126,7 @@ export async function importFixtures() {
     const relPath = relative(FIXTURES_DIR, filePath);
     const content = readFileSync(filePath, 'utf-8');
     const parsed = parseMarkdown(content, relPath);
-    const result = await importFromContent(e, parsed.slug, content, { noEmbed: true });
+    const result = await importFromContent(e, parsed.slug, content);
     results.push(result);
   }
 
@@ -141,7 +141,7 @@ export async function importFixture(relativePath: string) {
   const filePath = join(FIXTURES_DIR, relativePath);
   const content = readFileSync(filePath, 'utf-8');
   const parsed = parseMarkdown(content, relativePath);
-  return importFromContent(e, parsed.slug, content, { noEmbed: true });
+  return importFromContent(e, parsed.slug, content);
 }
 
 /**

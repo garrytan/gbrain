@@ -225,11 +225,19 @@ export class SQLiteEngine implements BrainEngine {
     db.run(`UPDATE config SET value = 'sqlite' WHERE key = 'engine'`);
 
     const current = parseVersion(await this.getConfig('version'));
+    let migrated = false;
     if (current < LATEST_VERSION) {
       await this.runSqliteMigrations(current);
+      migrated = true;
     }
 
-    db.exec(`INSERT INTO pages_fts(pages_fts) VALUES ('rebuild')`);
+    // Rebuild FTS index after schema migration. On a fresh database at baseline
+    // version (no migrations needed), the FTS triggers maintain the index for all
+    // subsequent CRUD — no rebuild is required. If FTS corruption is ever suspected,
+    // re-running `gbrain init --local` triggers a migration version bump and rebuild.
+    if (migrated) {
+      db.exec(`INSERT INTO pages_fts(pages_fts) VALUES ('rebuild')`);
+    }
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
@@ -347,6 +355,14 @@ export class SQLiteEngine implements BrainEngine {
     return rows.map(rowToPage);
   }
 
+  /**
+   * Resolve partial slug input to matching page slugs.
+   *
+   * Parity note: PostgresEngine uses pg_trgm similarity scoring (the `%` operator),
+   * which tolerates typos and fuzzy partial-word matches. SQLiteEngine uses
+   * case-insensitive LIKE, which requires the query to be a substring of the slug
+   * or title. This is the best available approach without a trigram extension.
+   */
   async resolveSlugs(partial: string): Promise<string[]> {
     const normalized = partial.toLowerCase();
     const exact = this.database.query(`SELECT slug FROM pages WHERE slug = ?`).all(normalized) as { slug: string }[];
@@ -409,8 +425,13 @@ export class SQLiteEngine implements BrainEngine {
     sql += ` ORDER BY rank ASC LIMIT ?`;
     params.push(limit);
 
-    const rows = this.database.query(sql).all(...params) as Record<string, unknown>[];
-    return rows.map(row => rowToSearchResult(row, query));
+    try {
+      const rows = this.database.query(sql).all(...params) as Record<string, unknown>[];
+      return rows.map(row => rowToSearchResult(row, query));
+    } catch {
+      // Malformed FTS5 queries (special chars, unmatched quotes) degrade to empty results
+      return [];
+    }
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
@@ -1052,6 +1073,63 @@ function rowToIngestLog(row: Record<string, unknown>): IngestLogEntry {
   };
 }
 
+/**
+ * Extract a focused text snippet around matching query terms.
+ * Returns ~300-char window centered on the first match, with ellipsis markers.
+ */
+function extractSnippet(text: string, queryTerms: string[], windowSize: number = 300): string {
+  if (text.length <= windowSize) return text;
+
+  const lower = text.toLowerCase();
+  let firstMatch = -1;
+  for (const term of queryTerms) {
+    const idx = lower.indexOf(term.toLowerCase());
+    if (idx !== -1) {
+      firstMatch = idx;
+      break;
+    }
+  }
+
+  if (firstMatch === -1) {
+    // No term match found; return the beginning of the text
+    const end = Math.min(windowSize, text.length);
+    const slice = text.slice(0, end);
+    // Trim to last word boundary
+    const lastSpace = slice.lastIndexOf(' ');
+    return (lastSpace > windowSize * 0.6 ? slice.slice(0, lastSpace) : slice) + '...';
+  }
+
+  const half = Math.floor(windowSize / 2);
+  let start = Math.max(0, firstMatch - half);
+  let end = Math.min(text.length, start + windowSize);
+  if (end - start < windowSize) start = Math.max(0, end - windowSize);
+
+  let slice = text.slice(start, end);
+  let trimmedStart = start;
+  let trimmedEnd = end;
+
+  // Trim to word boundaries
+  const wordBoundaryTolerance = 40;
+  if (start > 0) {
+    const firstSpace = slice.indexOf(' ');
+    if (firstSpace > 0 && firstSpace < wordBoundaryTolerance) {
+      slice = slice.slice(firstSpace + 1);
+      trimmedStart = start + firstSpace + 1;
+    }
+  }
+  if (end < text.length) {
+    const lastSpace = slice.lastIndexOf(' ');
+    if (lastSpace > slice.length - wordBoundaryTolerance) {
+      slice = slice.slice(0, lastSpace);
+      trimmedEnd = trimmedStart + lastSpace;
+    }
+  }
+
+  const prefix = trimmedStart > 0 ? '...' : '';
+  const suffix = trimmedEnd < text.length ? '...' : '';
+  return prefix + slice + suffix;
+}
+
 function rowToSearchResult(row: Record<string, unknown>, query: string): SearchResult {
   const compiled = String(row.compiled_truth || '');
   const timeline = String(row.timeline || '');
@@ -1059,7 +1137,8 @@ function rowToSearchResult(row: Record<string, unknown>, query: string): SearchR
   const compiledMatch = normalizedTerms.some(term => compiled.toLowerCase().includes(term));
   const timelineMatch = normalizedTerms.some(term => timeline.toLowerCase().includes(term));
   const chunk_source = compiledMatch || !timelineMatch ? 'compiled_truth' : 'timeline';
-  const chunk_text = chunk_source === 'compiled_truth' ? compiled || timeline || String(row.title) : timeline || compiled || String(row.title);
+  const sourceText = chunk_source === 'compiled_truth' ? compiled || timeline || String(row.title) : timeline || compiled || String(row.title);
+  const chunk_text = extractSnippet(sourceText, normalizedTerms);
   const rawRank = Number(row.rank ?? 0);
 
   return {

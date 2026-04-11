@@ -41,7 +41,7 @@ async function embedPage(
   }
 
   const chunks = await ensurePageChunks(engine, page);
-  const targetChunks = selectChunksToEmbed(chunks, staleOnly);
+  const targetChunks = selectChunksToEmbed(chunks, staleOnly, provider.capability.model);
   if (targetChunks.length === 0) {
     console.log(`${slug}: all ${chunks.length} chunks already embedded`);
     return;
@@ -66,7 +66,7 @@ async function embedAll(
   for (let index = 0; index < pages.length; index++) {
     const page = pages[index];
     const chunks = await ensurePageChunks(engine, page);
-    const targetChunks = selectChunksToEmbed(chunks, staleOnly);
+    const targetChunks = selectChunksToEmbed(chunks, staleOnly, provider.capability.model);
     if (targetChunks.length === 0) {
       continue;
     }
@@ -103,9 +103,9 @@ async function ensurePageChunks(engine: BrainEngine, page: Page): Promise<Chunk[
   return chunks;
 }
 
-function selectChunksToEmbed(chunks: Chunk[], staleOnly: boolean): Chunk[] {
+function selectChunksToEmbed(chunks: Chunk[], staleOnly: boolean, currentModel?: string | null): Chunk[] {
   return staleOnly
-    ? chunks.filter(chunk => !chunk.embedded_at)
+    ? chunks.filter(chunk => !chunk.embedded_at || (currentModel && chunk.model !== currentModel))
     : chunks;
 }
 

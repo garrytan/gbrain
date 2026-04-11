@@ -5,6 +5,7 @@ import {
   type GBrainConfig,
 } from '../core/config.ts';
 import { createEngineFromConfig, toEngineConfig } from '../core/engine-factory.ts';
+import * as db from '../core/db.ts';
 
 export async function runInit(args: string[]) {
   const isLocal = args.includes('--local');
@@ -104,9 +105,12 @@ export async function runInit(args: string[]) {
     throw e;
   }
 
-  // Check pgvector extension
+  // Check pgvector extension.
+  // db.getConnection() returns the module-level singleton set by PostgresEngine.connect().
+  // This is safe here because createEngineFromConfig() above creates a standard (non-pooled)
+  // connection that always initializes the db module singleton.
   try {
-    const conn = (engine as any).sql || (await import('../core/db.ts')).getConnection();
+    const conn = db.getConnection();
     const ext = await conn`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
     if (ext.length === 0) {
       console.error('pgvector extension not found. Run this on your Postgres database:');

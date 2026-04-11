@@ -49,6 +49,12 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
       return;
     }
   }
+  if (config?.engine === 'sqlite') {
+    console.error('The files command requires a Postgres backend. SQLite does not support file storage.');
+    console.error('Use engine="postgres" in your config to use file commands.');
+    process.exit(1);
+    return;
+  }
 
   const subcommand = args[0];
 

@@ -180,7 +180,7 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 | CRUD | Full | Full | |
 | Keyword search | tsvector + ts_rank | FTS5 + bm25 | Different ranking algorithms |
 | Vector search | pgvector HNSW | sqlite-vss or vec0 | Different index types |
-| Fuzzy slug | pg_trgm | LIKE + Levenshtein | Postgres is better here |
+| Fuzzy slug | pg_trgm similarity (`%` operator) | case-insensitive LIKE pattern | Postgres matches fuzzy typos; SQLite requires substring match |
 | Graph traversal | Recursive CTE | Loop with depth tracking | Same interface |
 | Transactions | Full ACID | Full ACID | Both support this |
 | JSONB queries | GIN index | json_extract | Postgres is richer |
@@ -196,3 +196,13 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 **DuckDBEngine.** Analytical workloads. Bulk exports, embedding analysis, brain-wide statistics. Not for OLTP. Could be a secondary engine for analytics alongside Postgres for operations.
 
 **Custom/Remote.** The interface is clean enough that someone could build an engine backed by any storage: Firestore, DynamoDB, a REST API, even a flat file system. The interface doesn't assume SQL.
+
+## Known parity gaps
+
+These behavioral differences between PostgresEngine and SQLiteEngine are intentional trade-offs, not bugs:
+
+| Area | PostgresEngine | SQLiteEngine | Impact |
+|------|---------------|-------------|--------|
+| Fuzzy slug resolution | `pg_trgm` similarity scoring — tolerates typos and partial-word matches | Case-insensitive `LIKE` pattern — requires the query to be a substring of the slug or title | SQLite may miss typo-tolerant matches that Postgres would find. Workaround: use exact slugs when possible. |
+| Keyword search chunk_text | JOINs `content_chunks` and returns the actual matching chunk text (~500 tokens) | Returns a ~300-char snippet window extracted from the matched page body around matching terms | Both return focused text; the extraction mechanism differs. |
+| File storage | Full support (Postgres `files` table + cloud storage backends) | Not supported — the `files` command requires a Postgres backend | Local mode users store files via git or filesystem directly. |

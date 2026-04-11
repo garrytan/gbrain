@@ -97,9 +97,9 @@ describeE2E('E2E: Page CRUD', () => {
   test('put_page updates existing page', async () => {
     const updated = readFileSync(join(FIXTURES_PATH, 'people/sarah-chen.md'), 'utf-8')
       .replace('Stanford CS', 'MIT CS');
-    // Use importFromContent directly with noEmbed to avoid OpenAI timeout
+    // Use importFromContent directly to avoid OpenAI timeout (embedding is always deferred)
     const engine = getEngine();
-    const result = await importFromContent(engine, 'people/sarah-chen', updated, { noEmbed: true });
+    const result = await importFromContent(engine, 'people/sarah-chen', updated);
     expect(result.status).toBe('imported');
     const page = await callOp('get_page', { slug: 'people/sarah-chen' }) as any;
     expect(page.compiled_truth).toContain('MIT CS');
@@ -297,11 +297,11 @@ describeE2E('E2E: Versions', () => {
   test('put_page creates version, revert restores', async () => {
     const original = await callOp('get_page', { slug: 'people/sarah-chen' }) as any;
 
-    // Modify page using importFromContent with noEmbed
+    // Modify page using importFromContent (embedding is always deferred)
     const modified = readFileSync(join(FIXTURES_PATH, 'people/sarah-chen.md'), 'utf-8')
       .replace('Sarah Chen', 'Sarah Chen (Modified)');
     const engine = getEngine();
-    await importFromContent(engine, 'people/sarah-chen', modified, { noEmbed: true });
+    await importFromContent(engine, 'people/sarah-chen', modified);
 
     // Check versions exist
     const versions = await callOp('get_versions', { slug: 'people/sarah-chen' }) as any[];
@@ -489,14 +489,14 @@ describeE2E('E2E: Idempotency', () => {
     const modified = readFileSync(join(FIXTURES_PATH, 'people/sarah-chen.md'), 'utf-8')
       .replace('Stanford CS', 'MIT CS');
 
-    const result = await importFromContent(engine, 'people/sarah-chen', modified, { noEmbed: true });
+    const result = await importFromContent(engine, 'people/sarah-chen', modified);
     expect(result.status).toBe('imported');
 
     // Other pages should have been skipped if reimported
     const content = readFileSync(join(FIXTURES_PATH, 'people/marcus-reid.md'), 'utf-8');
     const { parseMarkdown } = await import('../../src/core/markdown.ts');
     const parsed = parseMarkdown(content, 'people/marcus-reid.md');
-    const result2 = await importFromContent(engine, parsed.slug, content, { noEmbed: true });
+    const result2 = await importFromContent(engine, parsed.slug, content);
     expect(result2.status).toBe('skipped');
   });
 });
