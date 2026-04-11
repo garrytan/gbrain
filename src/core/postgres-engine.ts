@@ -1,7 +1,7 @@
 import postgres from 'postgres';
 import type { BrainEngine } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { SCHEMA_SQL } from './schema-embedded.ts';
+// schema-embedded.ts is dynamically imported in initSchema() to avoid circular deps
 import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
@@ -16,7 +16,7 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, qualifiedModel, embeddingAlterSQL } from './utils.ts';
 
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
@@ -56,17 +56,54 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
+    const { getProvider, loadEmbeddingConfig, resetProvider } = await import('./embedding/index.ts');
+
+    // First pass: create schema with current provider (env var or defaults)
+    const initialProvider = getProvider();
     const conn = this.sql;
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      const { getSchemaSQL } = await import('./schema-embedded.ts');
+      await conn.unsafe(getSchemaSQL(initialProvider.dimensions, qualifiedModel(initialProvider), initialProvider.name));
 
-      // Run any pending migrations automatically
+      // Now DB config table exists — load saved embedding config
+      resetProvider();
+      await loadEmbeddingConfig(this);
+      const provider = getProvider();
+
+      // Update config if DB resolved a different provider
+      if (provider.name !== initialProvider.name || provider.model !== initialProvider.model) {
+        await this.setConfig('embedding_provider', provider.name);
+        await this.setConfig('embedding_model', qualifiedModel(provider));
+        await this.setConfig('embedding_dimensions', String(provider.dimensions));
+      }
+
       const { applied } = await runMigrations(this);
       if (applied > 0) {
         console.log(`  ${applied} migration(s) applied`);
+      }
+
+      // Ensure actual DB column matches provider dimensions (config can be stale)
+      const colResult = await conn`
+        SELECT atttypmod AS dim FROM pg_attribute
+        WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding' AND NOT attisdropped
+      `;
+      const actualDims = colResult[0]?.dim ?? 1536;
+      const expectedModel = qualifiedModel(provider);
+      const currentModel = await this.getConfig('embedding_model');
+
+      if (actualDims !== provider.dimensions) {
+        console.log(`  Embedding dimensions changed: ${actualDims} → ${provider.dimensions}`);
+        await conn.unsafe(embeddingAlterSQL(provider.dimensions));
+        await this.setConfig('embedding_provider', provider.name);
+        await this.setConfig('embedding_dimensions', String(provider.dimensions));
+        await this.setConfig('embedding_model', expectedModel);
+      } else if (currentModel !== expectedModel) {
+        await conn.unsafe(`UPDATE content_chunks SET embedded_at = NULL WHERE embedded_at IS NOT NULL`);
+        await this.setConfig('embedding_provider', provider.name);
+        await this.setConfig('embedding_model', expectedModel);
       }
     } finally {
       await conn`SELECT pg_advisory_unlock(42)`;

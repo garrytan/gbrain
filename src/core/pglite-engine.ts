@@ -4,7 +4,7 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { getPgliteSchemaSQL } from './pglite-schema.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
@@ -17,7 +17,7 @@ import type {
   IngestLogEntry, IngestLogInput,
   EngineConfig,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, qualifiedModel, embeddingAlterSQL } from './utils.ts';
 
 type PGLiteDB = PGlite;
 
@@ -46,11 +46,49 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+    const { getProvider, loadEmbeddingConfig, resetProvider } = await import('./embedding/index.ts');
+
+    // First pass: create schema with current provider (env var or defaults)
+    const initialProvider = getProvider();
+    const sql = getPgliteSchemaSQL(initialProvider.dimensions, qualifiedModel(initialProvider), initialProvider.name);
+    await this.db.exec(sql);
+
+    // Now DB config table exists — load saved embedding config
+    resetProvider();
+    await loadEmbeddingConfig(this);
+    const provider = getProvider();
+
+    // Update config if DB resolved a different provider
+    if (provider.name !== initialProvider.name || provider.model !== initialProvider.model) {
+      await this.setConfig('embedding_provider', provider.name);
+      await this.setConfig('embedding_model', qualifiedModel(provider));
+      await this.setConfig('embedding_dimensions', String(provider.dimensions));
+    }
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {
       console.log(`  ${applied} migration(s) applied`);
+    }
+
+    // Ensure actual DB column matches provider dimensions (config can be stale)
+    const colResult = await this.db.query<{ dim: number }>(
+      `SELECT atttypmod AS dim FROM pg_attribute
+       WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding' AND NOT attisdropped`
+    );
+    const actualDims = colResult.rows[0]?.dim ?? 1536;
+    const expectedModel = qualifiedModel(provider);
+    const currentModel = await this.getConfig('embedding_model');
+
+    if (actualDims !== provider.dimensions) {
+      console.log(`  Embedding dimensions changed: ${actualDims} → ${provider.dimensions}`);
+      await this.db.exec(embeddingAlterSQL(provider.dimensions));
+      await this.setConfig('embedding_provider', provider.name);
+      await this.setConfig('embedding_dimensions', String(provider.dimensions));
+      await this.setConfig('embedding_model', expectedModel);
+    } else if (currentModel !== expectedModel) {
+      await this.db.exec(`UPDATE content_chunks SET embedded_at = NULL WHERE embedded_at IS NOT NULL`);
+      await this.setConfig('embedding_provider', provider.name);
+      await this.setConfig('embedding_model', expectedModel);
     }
   }
 

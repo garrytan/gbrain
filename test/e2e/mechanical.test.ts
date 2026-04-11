@@ -598,7 +598,7 @@ describeE2E('E2E: Init Edge Cases', () => {
 
     // Re-init
     const { initSchema } = await import('../../src/core/db.ts');
-    await initSchema();
+    await initSchema(1536, 'openai:text-embedding-3-large');
 
     const after = await conn.unsafe(`SELECT count(*) as n FROM information_schema.tables WHERE table_schema = 'public'`);
     expect(after[0].n).toBe(before[0].n);
@@ -610,7 +610,7 @@ describeE2E('E2E: Init Edge Cases', () => {
     const before = await callOp('get_stats') as any;
 
     const { initSchema } = await import('../../src/core/db.ts');
-    await initSchema();
+    await initSchema(1536, 'openai:text-embedding-3-large');
 
     const after = await callOp('get_stats') as any;
     expect(after.page_count).toBe(before.page_count);
@@ -633,7 +633,7 @@ describeE2E('E2E: Schema Idempotency', () => {
     const indexes1 = await conn.unsafe(`SELECT count(*) as n FROM pg_indexes WHERE schemaname = 'public'`);
 
     const { initSchema } = await import('../../src/core/db.ts');
-    await initSchema();
+    await initSchema(1536, 'openai:text-embedding-3-large');
 
     const tables2 = await conn.unsafe(`SELECT count(*) as n FROM information_schema.tables WHERE table_schema = 'public'`);
     const indexes2 = await conn.unsafe(`SELECT count(*) as n FROM pg_indexes WHERE schemaname = 'public'`);

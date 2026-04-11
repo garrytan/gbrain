@@ -84,6 +84,38 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
   }
 
+  // 6. Embedding config match
+  try {
+    const { getProvider } = await import('../core/embedding/index.ts');
+    const { qualifiedModel } = await import('../core/utils.ts');
+    const provider = getProvider();
+    let dbModel = await engine.getConfig('embedding_model');
+    const dbDims = await engine.getConfig('embedding_dimensions');
+    const currentModel = qualifiedModel(provider);
+    const currentDims = String(provider.dimensions);
+
+    // Normalize legacy format: 'text-embedding-3-large' → 'openai:text-embedding-3-large'
+    if (dbModel && !dbModel.includes(':')) dbModel = `openai:${dbModel}`;
+
+    const modelMatch = dbModel === currentModel;
+    const dimsMatch = dbDims === currentDims;
+
+    if (modelMatch && dimsMatch) {
+      checks.push({ name: 'embedding_config', status: 'ok', message: `${currentModel} @ ${currentDims}d` });
+    } else {
+      const parts: string[] = [];
+      if (!modelMatch) parts.push(`model: ${dbModel} → ${currentModel}`);
+      if (!dimsMatch) parts.push(`dimensions: ${dbDims} → ${currentDims}`);
+      checks.push({
+        name: 'embedding_config',
+        status: 'warn',
+        message: `Mismatch: ${parts.join(', ')}. Run gbrain init to migrate, then gbrain embed --all`,
+      });
+    }
+  } catch {
+    checks.push({ name: 'embedding_config', status: 'warn', message: 'Could not check embedding config' });
+  }
+
   outputResults(checks, jsonOutput);
 }
 

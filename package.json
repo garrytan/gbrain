@@ -33,6 +33,7 @@
     "@anthropic-ai/sdk": "^0.30.0",
     "@aws-sdk/client-s3": "^3.1028.0",
     "@electric-sql/pglite": "^0.4.4",
+    "@google/genai": "^1.49.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "gray-matter": "^4.0.3",
     "openai": "^4.0.0",

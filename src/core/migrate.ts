@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
+import { qualifiedModel, embeddingAlterSQL } from './utils.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -81,6 +82,58 @@ const MIGRATIONS: Migration[] = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
     `,
+  },
+  {
+    version: 5,
+    name: 'dynamic_embedding_dimensions',
+    sql: '',
+    handler: async (engine) => {
+      const { getProvider } = await import('./embedding/index.ts');
+      const provider = getProvider();
+      const newDims = provider.dimensions;
+      const newModel = qualifiedModel(provider);
+
+      const [currentDims, rawModel, currentProvider] = await Promise.all([
+        engine.getConfig('embedding_dimensions'),
+        engine.getConfig('embedding_model'),
+        engine.getConfig('embedding_provider'),
+      ]);
+      let currentModel = rawModel;
+      const dbDims = parseInt(currentDims || '1536', 10);
+
+      // Normalize legacy format: 'text-embedding-3-large' → 'openai:text-embedding-3-large'
+      if (currentModel && !currentModel.includes(':')) {
+        currentModel = `openai:${currentModel}`;
+        await engine.setConfig('embedding_model', currentModel);
+      }
+
+      // Ensure embedding_provider key exists (added in this version)
+      if (!currentProvider) {
+        await engine.setConfig('embedding_provider', provider.name);
+      }
+
+      if (dbDims !== newDims) {
+        console.log(`  Embedding dimensions changed: ${dbDims} → ${newDims}`);
+        await engine.transaction(async (tx) => {
+          await tx.runMigration(5, embeddingAlterSQL(newDims));
+        });
+
+        await engine.setConfig('embedding_provider', provider.name);
+        await engine.setConfig('embedding_dimensions', String(newDims));
+        await engine.setConfig('embedding_model', newModel);
+
+        const stats = await engine.getStats();
+        console.log(`  Schema updated to vector(${newDims}). Run \`gbrain embed --all\` to re-embed ${stats.chunk_count} chunks.`);
+      } else if (currentModel !== newModel) {
+        console.log(`  Embedding model changed: ${currentModel} → ${newModel}`);
+        await engine.transaction(async (tx) => {
+          await tx.runMigration(5, `UPDATE content_chunks SET embedded_at = NULL WHERE embedded_at IS NOT NULL;`);
+        });
+        await engine.setConfig('embedding_provider', provider.name);
+        await engine.setConfig('embedding_model', newModel);
+        console.log(`  Run \`gbrain embed --all\` to re-embed with new model.`);
+      }
+    },
   },
 ];
 

@@ -3,8 +3,9 @@ import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
-import { embedBatch } from './embedding.ts';
+import { embedBatch, getProvider } from './embedding/index.ts';
 import type { ChunkInput } from './types.ts';
+import { qualifiedModel } from './utils.ts';
 
 export interface ImportResult {
   slug: string;
@@ -62,9 +63,11 @@ export async function importFromContent(
   // Embed BEFORE the transaction (external API call)
   if (!opts.noEmbed && chunks.length > 0) {
     try {
+      const provider = getProvider();
       const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
       for (let i = 0; i < chunks.length; i++) {
         chunks[i].embedding = embeddings[i];
+        chunks[i].model = qualifiedModel(provider);
         chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
       }
     } catch { /* non-fatal */ }

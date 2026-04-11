@@ -48,6 +48,26 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
   };
 }
 
+/** Escape single quotes for safe SQL string interpolation. */
+export function escapeSql(s: string): string {
+  return s.replace(/'/g, "''");
+}
+
+/** Build the canonical `provider:model` qualified name. */
+export function qualifiedModel(provider: { name: string; model: string }): string {
+  return `${provider.name}:${provider.model}`;
+}
+
+/** DDL to change the embedding column dimension + mark chunks stale. */
+export function embeddingAlterSQL(newDims: number): string {
+  return `
+    DROP INDEX IF EXISTS idx_chunks_embedding;
+    UPDATE content_chunks SET embedding = NULL, embedded_at = NULL WHERE embedded_at IS NOT NULL;
+    ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${newDims});
+    CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+  `;
+}
+
 export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
   return {
     slug: row.slug as string,

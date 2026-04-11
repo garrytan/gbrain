@@ -13,7 +13,11 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
-export const PGLITE_SCHEMA_SQL = `
+import { escapeSql } from './utils.ts';
+
+export function getPgliteSchemaSQL(dimensions: number, model: string, provider: string = 'openai'): string {
+  const safeModel = escapeSql(model);
+  return `
 -- GBrain PGLite schema (local embedded Postgres)
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -48,8 +52,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  embedding     vector(${dimensions}),
+  model         TEXT    NOT NULL DEFAULT '${safeModel}',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -154,8 +158,9 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
   ('engine', 'pglite'),
-  ('embedding_model', 'text-embedding-3-large'),
-  ('embedding_dimensions', '1536'),
+  ('embedding_provider', '${provider}'),
+  ('embedding_model', '${safeModel}'),
+  ('embedding_dimensions', '${dimensions}'),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
 
@@ -207,3 +212,4 @@ CREATE TRIGGER trg_timeline_search_vector
   FOR EACH ROW
   EXECUTE FUNCTION update_page_search_vector_from_timeline();
 `;
+}

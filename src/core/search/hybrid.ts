@@ -8,7 +8,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
-import { embed } from '../embedding.ts';
+import { embed } from '../embedding/index.ts';
 import { dedupResults } from './dedup.ts';
 
 const RRF_K = 60;
