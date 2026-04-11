@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'check-update', 'integrations', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'check-update', 'integrations', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -292,6 +292,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runMigrateEngine(engine, args);
         break;
       }
+      case 'eval': {
+        const { runEvalCommand } = await import('./commands/eval.ts');
+        await runEvalCommand(engine, args);
+        break;
+      }
     }
   } finally {
     if (command !== 'serve') await engine.disconnect();
@@ -354,6 +359,7 @@ PAGES
 SEARCH
   search <query>                     Keyword search (tsvector)
   query <question> [--no-expand]     Hybrid search (RRF + expansion)
+  eval --qrels <file> [options]      Measure retrieval quality (P@k, R@k, MRR, nDCG@k)
 
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory

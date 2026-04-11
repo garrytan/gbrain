@@ -29,6 +29,8 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 - `src/core/file-resolver.ts` — MIME detection, content hashing for file uploads
 - `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided)
 - `src/core/search/` — Hybrid search: vector + keyword + RRF + multi-query expansion + dedup
+- `src/core/search/eval.ts` — Retrieval eval harness: P@k, R@k, MRR, nDCG@k metrics + runEval() orchestrator
+- `src/commands/eval.ts` — `gbrain eval` command: single-run table + A/B config comparison
 - `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff
 - `src/mcp/server.ts` — MCP stdio server (generated from operations)
 - `supabase/functions/gbrain-mcp/index.ts` — Remote MCP server (Supabase Edge Function)
@@ -79,7 +81,8 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/yaml-lite.test.ts` (YAML parsing), `test/check-update.test.ts` (version check + update CLI),
 `test/pglite-engine.test.ts` (PGLite engine, all 37 BrainEngine methods),
 `test/utils.test.ts` (shared SQL utilities), `test/engine-factory.test.ts` (engine factory + dynamic imports),
-`test/integrations.test.ts` (recipe parsing, CLI routing, recipe validation).
+`test/integrations.test.ts` (recipe parsing, CLI routing, recipe validation),
+`test/eval.test.ts` (retrieval metrics: precisionAtK, recallAtK, mrr, ndcgAtK, parseQrels).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys)
