@@ -68,7 +68,7 @@ export async function setupDB(): Promise<PostgresEngine> {
 
   // Connect fresh
   await db.connect({ database_url: DATABASE_URL });
-  await db.initSchema();
+  await db.initSchema(1536, 'openai:text-embedding-3-large');
 
   // Truncate all data tables (preserves schema + extensions)
   const conn = db.getConnection();

@@ -1,7 +1,8 @@
 // AUTO-GENERATED — do not edit. Run: bun run build:schema
 // Source: src/schema.sql
 
-export const SCHEMA_SQL = `
+export function getSchemaSQL(dimensions: number, model: string): string {
+  return `
 -- GBrain Postgres + pgvector schema
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -36,8 +37,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  embedding     vector(${dimensions}),
+  model         TEXT    NOT NULL DEFAULT '${model}',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -141,8 +142,8 @@ CREATE TABLE IF NOT EXISTS config (
 
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
-  ('embedding_model', 'text-embedding-3-large'),
-  ('embedding_dimensions', '1536'),
+  ('embedding_model', '${model}'),
+  ('embedding_dimensions', '${dimensions}'),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
 
@@ -277,3 +278,4 @@ BEGIN
   END IF;
 END \$\$;
 `;
+}

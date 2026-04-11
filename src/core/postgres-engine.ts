@@ -1,7 +1,7 @@
 import postgres from 'postgres';
 import type { BrainEngine } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { SCHEMA_SQL } from './schema-embedded.ts';
+// schema-embedded.ts is dynamically imported in initSchema() to avoid circular deps
 import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
@@ -56,12 +56,15 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
+    const { getProvider } = await import('./embedding/index.ts');
+    const provider = getProvider();
     const conn = this.sql;
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      const { getSchemaSQL } = await import('./schema-embedded.ts');
+      await conn.unsafe(getSchemaSQL(provider.dimensions, `${provider.name}:${provider.model}`));
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this);
