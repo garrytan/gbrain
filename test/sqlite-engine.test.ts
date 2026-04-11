@@ -328,4 +328,33 @@ describe('SQLiteEngine', () => {
 
     expect(row.slug).toBe('people/alice');
   });
+
+  test('rerunning initSchema treats missing version row as baseline and migrates legacy slugs', async () => {
+    await putPage('people/alice.md', {
+      title: 'Alice Missing Version',
+      compiled_truth: 'Missing version row slug page.',
+    });
+
+    await engine.disconnect();
+
+    const raw = new Database(dbPath);
+    raw.exec('PRAGMA foreign_keys = ON;');
+    raw.run(`DELETE FROM config WHERE key = 'version'`);
+    raw.run(`UPDATE pages SET slug = 'People/Alice.md' WHERE slug = 'people/alice.md'`);
+    raw.close();
+
+    engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: dbPath });
+    await engine.initSchema();
+
+    expect(await engine.getConfig('version')).toBe('4');
+    expect((await engine.listPages()).map(page => page.slug)).toContain('people/alice');
+    expect((await engine.getPage('people/alice'))?.title).toBe('Alice Missing Version');
+
+    const verify = new Database(dbPath, { readonly: true });
+    const row = verify.query(`SELECT slug FROM pages LIMIT 1`).get() as { slug: string };
+    verify.close();
+
+    expect(row.slug).toBe('people/alice');
+  });
 });

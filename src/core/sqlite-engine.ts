@@ -21,6 +21,7 @@ import type {
 import { GBrainError } from './types.ts';
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-large';
+const BASELINE_VERSION = 1;
 
 const SCHEMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -218,7 +219,7 @@ export class SQLiteEngine implements BrainEngine {
         ('embedding_model', ?),
         ('embedding_dimensions', '1536'),
         ('chunk_strategy', 'semantic')`,
-      [String(LATEST_VERSION), DEFAULT_EMBEDDING_MODEL],
+      [String(BASELINE_VERSION), DEFAULT_EMBEDDING_MODEL],
     );
     db.run(`UPDATE config SET value = 'sqlite' WHERE key = 'engine'`);
 
@@ -906,8 +907,9 @@ function nowIso(): string {
 }
 
 function parseVersion(value: string | null): number {
-  const parsed = parseInt(value || String(LATEST_VERSION), 10);
-  return Number.isFinite(parsed) ? parsed : LATEST_VERSION;
+  const parsed = parseInt(value || String(BASELINE_VERSION), 10);
+  if (!Number.isFinite(parsed) || parsed < BASELINE_VERSION) return BASELINE_VERSION;
+  return parsed;
 }
 
 function escapeLike(value: string): string {
