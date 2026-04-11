@@ -79,3 +79,42 @@ export interface BrainEngine {
   runMigration(version: number, sql: string): Promise<void>;
   getChunksWithEmbeddings(slug: string): Promise<Chunk[]>;
 }
+
+/**
+ * Hard ceiling on the number of rows any search operation returns.
+ *
+ * Authenticated callers can pass arbitrary `limit` values through the
+ * remote MCP `search` / `query` tools and through `gbrain` CLI flags.
+ * Without a server-side clamp, a bearer token holder can request
+ * `{ limit: 10_000_000 }` and force Postgres to do a full FTS pass +
+ * sort + materialization, then ship the whole result set to the Edge
+ * Function isolate before any JS-side slice runs. This ceiling bounds
+ * the worst case to a predictable amount of work regardless of what
+ * the caller asks for.
+ *
+ * All `searchKeyword` / `searchVector` implementations must apply this
+ * cap at entry. `hybridSearch` must also apply it before multiplying
+ * `limit * 2` for internal expansion. See M001 in report/findings.md.
+ */
+export const MAX_SEARCH_LIMIT = 100;
+
+/**
+ * Clamp a caller-supplied search limit into the [1, MAX_SEARCH_LIMIT]
+ * range.
+ *
+ * - undefined / null → defaultLimit (itself clipped to the ceiling)
+ * - NaN → defaultLimit (caller sent garbage, don't guess intent)
+ * - zero or negative → defaultLimit (almost certainly a caller bug)
+ * - fractional → floored
+ * - +Infinity → MAX_SEARCH_LIMIT (caller meant "all of them", we bound it)
+ * - values above MAX_SEARCH_LIMIT → MAX_SEARCH_LIMIT
+ */
+export function clampSearchLimit(limit: number | undefined, defaultLimit = 20): number {
+  const raw = limit ?? defaultLimit;
+  if (Number.isNaN(raw)) return Math.min(defaultLimit, MAX_SEARCH_LIMIT);
+  if (raw < 1) return Math.min(defaultLimit, MAX_SEARCH_LIMIT);
+  const integral = Math.floor(raw);
+  // Math.min(Infinity, N) === N, so +Infinity flows through as MAX_SEARCH_LIMIT
+  // without a special case.
+  return Math.min(integral, MAX_SEARCH_LIMIT);
+}

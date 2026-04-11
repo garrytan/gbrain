@@ -32,6 +32,10 @@ export async function connect(config: EngineConfig): Promise<void> {
       max: 10,
       idle_timeout: 20,
       connect_timeout: 10,
+      // Bound any single query to 8 seconds. Defense in depth for M001:
+      // prevents a pathological FTS / vector scan from pinning a pooled
+      // connection even if a caller slips past the per-function clamp.
+      connection: { statement_timeout: '8s' },
       types: {
         // Register pgvector type
         bigint: postgres.BigInt,

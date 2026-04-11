@@ -1,5 +1,6 @@
 import postgres from 'postgres';
 import type { BrainEngine } from './engine.ts';
+import { clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type {
@@ -37,6 +38,12 @@ export class PostgresEngine implements BrainEngine {
         max: config.poolSize,
         idle_timeout: 20,
         connect_timeout: 10,
+        // Bound any single query to 8 seconds. Defense in depth for M001 —
+        // an authenticated caller who slips past the per-function limit
+        // clamp still cannot pin the connection on a long FTS / vector
+        // scan. The value matches Supabase's default for non-superuser
+        // roles; gbrain historically ran as a role that bypassed it.
+        connection: { statement_timeout: '8s' },
         types: { bigint: postgres.BigInt },
       });
       await this._sql`SELECT 1`;
@@ -178,7 +185,11 @@ export class PostgresEngine implements BrainEngine {
   // Search
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
     const sql = this.sql;
-    const limit = opts?.limit || 20;
+    // Clamp to MAX_SEARCH_LIMIT before building SQL. See M001 — an
+    // authenticated caller with a bearer token can pass any integer via
+    // the remote MCP `search` operation; without this clamp they can
+    // force a full-table sort on every request.
+    const limit = clampSearchLimit(opts?.limit);
 
     const rows = await sql`
       SELECT DISTINCT ON (p.slug)
@@ -193,7 +204,11 @@ export class PostgresEngine implements BrainEngine {
       WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
       ORDER BY p.slug, score DESC
     `;
-    // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit
+    // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit.
+    // NOTE: the SQL still materializes the full candidate set before this slice runs.
+    // That part of M001 is the subject of PR #44 (CTE rewrite with SQL-level LIMIT).
+    // The clamp above + the statement_timeout added in connect() bound the worst case
+    // even on master where the CTE rewrite has not landed yet.
     rows.sort((a: any, b: any) => b.score - a.score);
     rows.splice(limit);
 
@@ -202,7 +217,7 @@ export class PostgresEngine implements BrainEngine {
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
     const sql = this.sql;
-    const limit = opts?.limit || 20;
+    const limit = clampSearchLimit(opts?.limit);
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
 
     const rows = await sql`

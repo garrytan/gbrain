@@ -3,6 +3,7 @@ import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine } from './engine.ts';
+import { clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
 import type {
@@ -156,34 +157,43 @@ export class PGLiteEngine implements BrainEngine {
 
   // Search
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = opts?.limit || 20;
+    // Clamp to MAX_SEARCH_LIMIT. The remote MCP attack surface (Edge
+    // Function + postgres-engine) is the primary target of M001, but
+    // the same primitive exists here — a CLI caller or unit test with
+    // `{ limit: 10_000_000 }` would force a full FTS materialization
+    // on the in-process PGLite isolate. Match the ceiling used by the
+    // Postgres engine so both paths behave identically under abuse.
+    const limit = clampSearchLimit(opts?.limit);
 
+    // Subquery wrap so the LIMIT reflects the top-scored pages, not
+    // the alphabetically-first slugs. DISTINCT ON needs ORDER BY slug
+    // in the inner query, so a naive outer LIMIT would cut off by
+    // slug order — we sort by score in the outer query and then clip.
     const { rows } = await this.db.query(
-      `SELECT DISTINCT ON (p.slug)
-        p.slug, p.id as page_id, p.title, p.type,
-        cc.chunk_text, cc.chunk_source,
-        ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS score,
-        CASE WHEN p.updated_at < (
-          SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-        ) THEN true ELSE false END AS stale
-      FROM pages p
-      JOIN content_chunks cc ON cc.page_id = p.id
-      WHERE p.search_vector @@ websearch_to_tsquery('english', $1)
-      ORDER BY p.slug, score DESC`,
-      [query]
+      `SELECT *
+       FROM (
+         SELECT DISTINCT ON (p.slug)
+           p.slug, p.id as page_id, p.title, p.type,
+           cc.chunk_text, cc.chunk_source,
+           ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS score,
+           CASE WHEN p.updated_at < (
+             SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+           ) THEN true ELSE false END AS stale
+         FROM pages p
+         JOIN content_chunks cc ON cc.page_id = p.id
+         WHERE p.search_vector @@ websearch_to_tsquery('english', $1)
+         ORDER BY p.slug, score DESC
+       ) ranked
+       ORDER BY score DESC
+       LIMIT $2`,
+      [query, limit]
     );
 
-    // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit
-    const sorted = (rows as Record<string, unknown>[]).sort(
-      (a: any, b: any) => b.score - a.score
-    );
-    sorted.splice(limit);
-
-    return sorted.map(rowToSearchResult);
+    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = opts?.limit || 20;
+    const limit = clampSearchLimit(opts?.limit);
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
 
     const { rows } = await this.db.query(

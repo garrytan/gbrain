@@ -7,6 +7,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
 import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
@@ -23,10 +24,17 @@ export async function hybridSearch(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
-  const limit = opts?.limit || 20;
+  // Clamp the caller's limit to the shared ceiling, then cap the
+  // expanded (2x) inner limit as well. Previously, hybridSearch
+  // multiplied `limit` by 2 before handing it to searchKeyword/searchVector
+  // without any ceiling — so even if the per-engine clamp bounded the
+  // downstream call, the caller could still push the multiplier to an
+  // arbitrary value. This closes the amplification vector for M001.
+  const limit = clampSearchLimit(opts?.limit);
+  const innerLimit = Math.min(limit * 2, MAX_SEARCH_LIMIT);
 
   // Run keyword search (always available, no API key needed)
-  const keywordResults = await engine.searchKeyword(query, { limit: limit * 2 });
+  const keywordResults = await engine.searchKeyword(query, { limit: innerLimit });
 
   // Skip vector search entirely if no OpenAI key is configured
   if (!process.env.OPENAI_API_KEY) {
@@ -49,7 +57,7 @@ export async function hybridSearch(
   try {
     const embeddings = await Promise.all(queries.map(q => embed(q)));
     vectorLists = await Promise.all(
-      embeddings.map(emb => engine.searchVector(emb, { limit: limit * 2 })),
+      embeddings.map(emb => engine.searchVector(emb, { limit: innerLimit })),
     );
   } catch {
     // Embedding failure is non-fatal, fall back to keyword-only

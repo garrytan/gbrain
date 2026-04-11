@@ -179,6 +179,42 @@ describe('PGLiteEngine: Search', () => {
     const results = await engine.searchVector(fakeEmbedding);
     expect(results.length).toBe(0);
   });
+
+  test('searchKeyword clamps pathological limits at MAX_SEARCH_LIMIT', async () => {
+    // Seed more pages than MAX_SEARCH_LIMIT so the ceiling is observable.
+    // We need real distinct slugs so DISTINCT ON produces one row each.
+    await truncateAll();
+    const MAX = 100; // must match MAX_SEARCH_LIMIT in src/core/engine.ts
+    const SEED = MAX + 50; // over the ceiling on purpose
+    for (let i = 0; i < SEED; i++) {
+      const slug = `load/page-${i.toString().padStart(4, '0')}`;
+      await engine.putPage(slug, {
+        type: 'concept',
+        title: `Load page ${i}`,
+        compiled_truth: `commonterm body for page number ${i}`,
+      });
+      await engine.upsertChunks(slug, [
+        { chunk_index: 0, chunk_text: `commonterm chunk ${i}`, chunk_source: 'compiled_truth' },
+      ]);
+    }
+
+    // Attacker-supplied gigantic limit — before the clamp this would have
+    // materialized all SEED rows. The ceiling in clampSearchLimit must
+    // bound the result regardless of what the caller asks for.
+    const huge = await engine.searchKeyword('commonterm', { limit: 10_000_000 });
+    expect(huge.length).toBeLessThanOrEqual(MAX);
+    // And the ceiling is actually reached — otherwise the test would
+    // silently pass if the clamp were broken and the seed were too small.
+    expect(huge.length).toBe(MAX);
+
+    // Sanity: small limits still work normally
+    const small = await engine.searchKeyword('commonterm', { limit: 5 });
+    expect(small.length).toBe(5);
+
+    // Zero/negative fall back to the default (20), clamped against MAX
+    const zero = await engine.searchKeyword('commonterm', { limit: 0 });
+    expect(zero.length).toBe(20);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
