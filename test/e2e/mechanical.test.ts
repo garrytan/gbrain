@@ -153,7 +153,9 @@ describeE2E('E2E: Search', () => {
     expect(results.length).toBe(0);
   });
 
-  test('search quality: precision@5 for known queries', async () => {
+  test('search quality: keyword precision@5 for known queries', async () => {
+    const { precisionAtK } = await import('../../src/core/search/eval.ts');
+
     const groundTruth: Record<string, string[]> = {
       'NovaMind': ['people/sarah-chen', 'companies/novamind', 'deals/novamind-seed'],
       'hybrid search': ['concepts/hybrid-search', 'concepts/retrieval-augmented-generation'],
@@ -164,14 +166,19 @@ describeE2E('E2E: Search', () => {
     for (const [query, expected] of Object.entries(groundTruth)) {
       const results = await callOp('search', { query, limit: 5 }) as any[];
       const topSlugs = results.slice(0, 5).map((r: any) => r.slug);
-      const hits = expected.filter(e => topSlugs.includes(e));
-      scores[query] = hits.length / Math.min(expected.length, 5);
+      scores[query] = precisionAtK(topSlugs, new Set(expected), 5);
     }
 
-    console.log('\n  Search Quality (precision@5, keyword-only):');
+    console.log('\n  Search Quality (P@5, keyword-only):');
     for (const [query, score] of Object.entries(scores)) {
       console.log(`    "${query}": ${(score * 100).toFixed(0)}%`);
     }
+
+    // Every well-known name query must return at least one relevant result in top-5
+    expect(scores['NovaMind']).toBeGreaterThan(0);
+    // At least one of the two semantic queries should find something
+    const semanticPass = scores['hybrid search'] > 0 || scores['compiled truth'] > 0;
+    expect(semanticPass).toBe(true);
   });
 });
 

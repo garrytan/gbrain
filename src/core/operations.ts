@@ -8,6 +8,7 @@ import type { GBrainConfig } from './config.ts';
 import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
+import { runEval, parseQrels, type EvalConfig } from './search/eval.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -200,6 +201,47 @@ const query: Operation = {
     });
   },
   cliHints: { name: 'query', positional: ['query'] },
+};
+
+const eval_search: Operation = {
+  name: 'eval_search',
+  description: 'Evaluate retrieval quality against user-provided ground truth (qrels). Supports A/B config comparison. Returns metrics: P@k, R@k, MRR, nDCG@k.',
+  params: {
+    qrels: {
+      type: 'string',
+      required: true,
+      description: 'Path to qrels JSON file or inline JSON string. Format: [{"query":"...","relevant":["slug"]}] or {"version":1,"queries":[...]}',
+    },
+    config: {
+      type: 'object',
+      description: 'Search config for run A: {strategy, rrf_k, expand, dedup_cosine_threshold, dedup_type_ratio, dedup_max_per_page, limit, name}',
+    },
+    config_b: {
+      type: 'object',
+      description: 'Second search config for A/B comparison. When present, returns both reports side by side.',
+    },
+    k: {
+      type: 'number',
+      description: 'Metric cutoff depth for P@k, R@k, nDCG@k (default: 5)',
+    },
+  },
+  handler: async (ctx, p) => {
+    const qrels = parseQrels(p.qrels as string);
+    const configA = (p.config as EvalConfig | undefined) ?? {};
+    const k = (p.k as number | undefined) ?? 5;
+
+    if (p.config_b) {
+      const configB = p.config_b as EvalConfig;
+      const [reportA, reportB] = await Promise.all([
+        runEval(ctx.engine, qrels, configA, k),
+        runEval(ctx.engine, qrels, configB, k),
+      ]);
+      return { report_a: reportA, report_b: reportB };
+    }
+
+    return runEval(ctx.engine, qrels, configA, k);
+  },
+  cliHints: { name: 'eval' },
 };
 
 // --- Tags ---
@@ -640,7 +682,7 @@ export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
   // Search
-  search, query,
+  search, query, eval_search,
   // Tags
   add_tag, remove_tag, get_tags,
   // Links
