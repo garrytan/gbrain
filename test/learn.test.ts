@@ -61,6 +61,7 @@ describe('learn operation', () => {
       content: 'Alice prefers staging deploys',
       slug: 'people/alice',
       title: 'Alice',
+      no_embed: true,
     }) as any;
 
     expect(result.status).toBe('created');
@@ -94,6 +95,7 @@ describe('learn operation', () => {
     const result = await learn.handler(makeCtx(engine), {
       content: 'Alice moved to frontend.',
       slug: 'people/alice',
+      no_embed: true,
     }) as any;
 
     expect(result.status).toBe('appended');
@@ -114,6 +116,7 @@ describe('learn operation', () => {
     const result = await learn.handler(makeCtx(engine), {
       content: 'Some fact about deployment',
       title: 'Deployment Process',
+      no_embed: true,
     }) as any;
 
     expect(result.status).toBe('created');
@@ -124,6 +127,7 @@ describe('learn operation', () => {
     const engine = mockEngine();
     const result = await learn.handler(makeCtx(engine), {
       content: 'Alice prefers staging deploys before production',
+      no_embed: true,
     }) as any;
 
     expect(result.status).toBe('created');
@@ -138,6 +142,7 @@ describe('learn operation', () => {
       content: 'Fact from Slack',
       slug: 'notes/slack-facts',
       source: 'slack',
+      no_embed: true,
     });
 
     const tagCalls = engine._calls.filter(c => c.method === 'addTag');
@@ -151,6 +156,7 @@ describe('learn operation', () => {
       content: 'Fact about deploy',
       slug: 'notes/deploy',
       tags: 'devops, infrastructure',
+      no_embed: true,
     });
 
     const tagCalls = engine._calls.filter(c => c.method === 'addTag');
@@ -174,6 +180,7 @@ describe('learn operation', () => {
     await learn.handler(makeCtx(engine), {
       content: 'New content appended.',
       slug: 'notes/test',
+      no_embed: true,
     });
 
     const putCall = engine._calls.find(c => c.method === 'putPage');
@@ -186,6 +193,7 @@ describe('learn operation', () => {
       content: 'A new fact',
       slug: 'notes/fact',
       source: 'meeting',
+      no_embed: true,
     });
 
     const logCall = engine._calls.find(c => c.method === 'logIngest');
