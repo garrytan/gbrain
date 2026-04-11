@@ -1,5 +1,5 @@
 export type { EmbeddingProvider } from './types.ts';
-export { getProvider, resetProvider } from './registry.ts';
+export { getProvider, resetProvider, loadEmbeddingConfig } from './registry.ts';
 
 import { getProvider } from './registry.ts';
 

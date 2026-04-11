@@ -13,7 +13,7 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
-export function getPgliteSchemaSQL(dimensions: number, model: string): string {
+export function getPgliteSchemaSQL(dimensions: number, model: string, provider: string = 'openai'): string {
   const safeModel = model.replace(/'/g, "''");
   return `
 -- GBrain PGLite schema (local embedded Postgres)
@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
   ('engine', 'pglite'),
+  ('embedding_provider', '${provider}'),
   ('embedding_model', '${safeModel}'),
   ('embedding_dimensions', '${dimensions}'),
   ('chunk_strategy', 'semantic')

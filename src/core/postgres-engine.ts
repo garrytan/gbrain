@@ -56,15 +56,29 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    const { getProvider } = await import('./embedding/index.ts');
-    const provider = getProvider();
+    const { getProvider, loadEmbeddingConfig, resetProvider } = await import('./embedding/index.ts');
+
+    // First pass: create schema with current provider (env var or defaults)
+    const initialProvider = getProvider();
     const conn = this.sql;
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
       const { getSchemaSQL } = await import('./schema-embedded.ts');
-      await conn.unsafe(getSchemaSQL(provider.dimensions, `${provider.name}:${provider.model}`));
+      await conn.unsafe(getSchemaSQL(initialProvider.dimensions, `${initialProvider.name}:${initialProvider.model}`, initialProvider.name));
+
+      // Now DB config table exists — load saved embedding config
+      await loadEmbeddingConfig(this);
+      resetProvider(); // re-resolve with DB config loaded
+      const provider = getProvider();
+
+      // Update schema defaults if DB config resolved differently
+      if (provider.name !== initialProvider.name || provider.model !== initialProvider.model) {
+        await this.setConfig('embedding_provider', provider.name);
+        await this.setConfig('embedding_model', `${provider.name}:${provider.model}`);
+        await this.setConfig('embedding_dimensions', String(provider.dimensions));
+      }
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this);

@@ -1,7 +1,7 @@
 // AUTO-GENERATED — do not edit. Run: bun run build:schema
 // Source: src/schema.sql
 
-export function getSchemaSQL(dimensions: number, model: string): string {
+export function getSchemaSQL(dimensions: number, model: string, provider: string = 'openai'): string {
   const safeModel = model.replace(/'/g, "''");
   return `
 -- GBrain Postgres + pgvector schema
@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS config (
 
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
+  ('embedding_provider', '${provider}'),
   ('embedding_model', '${safeModel}'),
   ('embedding_dimensions', '${dimensions}'),
   ('chunk_strategy', 'semantic')

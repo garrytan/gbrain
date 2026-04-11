@@ -102,6 +102,12 @@ const MIGRATIONS: Migration[] = [
         await engine.setConfig('embedding_model', currentModel);
       }
 
+      // Ensure embedding_provider key exists (added in this version)
+      const currentProvider = await engine.getConfig('embedding_provider');
+      if (!currentProvider) {
+        await engine.setConfig('embedding_provider', provider.name);
+      }
+
       if (dbDims !== newDims) {
         console.log(`  Embedding dimensions changed: ${dbDims} → ${newDims}`);
 
@@ -115,6 +121,7 @@ const MIGRATIONS: Migration[] = [
           await tx.runMigration(5, staleSQL);
         });
 
+        await engine.setConfig('embedding_provider', provider.name);
         await engine.setConfig('embedding_dimensions', String(newDims));
         await engine.setConfig('embedding_model', newModel);
 
@@ -125,6 +132,7 @@ const MIGRATIONS: Migration[] = [
         await engine.transaction(async (tx) => {
           await tx.runMigration(5, `UPDATE content_chunks SET embedded_at = NULL;`);
         });
+        await engine.setConfig('embedding_provider', provider.name);
         await engine.setConfig('embedding_model', newModel);
         console.log(`  Run \`gbrain embed --all\` to re-embed with new model.`);
       }

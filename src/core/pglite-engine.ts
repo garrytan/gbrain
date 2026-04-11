@@ -46,10 +46,24 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    const { getProvider } = await import('./embedding/index.ts');
-    const provider = getProvider();
-    const sql = getPgliteSchemaSQL(provider.dimensions, `${provider.name}:${provider.model}`);
+    const { getProvider, loadEmbeddingConfig, resetProvider } = await import('./embedding/index.ts');
+
+    // First pass: create schema with current provider (env var or defaults)
+    const initialProvider = getProvider();
+    const sql = getPgliteSchemaSQL(initialProvider.dimensions, `${initialProvider.name}:${initialProvider.model}`, initialProvider.name);
     await this.db.exec(sql);
+
+    // Now DB config table exists — load saved embedding config
+    await loadEmbeddingConfig(this);
+    resetProvider(); // re-resolve with DB config loaded
+    const provider = getProvider();
+
+    // Update schema defaults if DB config resolved differently
+    if (provider.name !== initialProvider.name || provider.model !== initialProvider.model) {
+      await this.setConfig('embedding_provider', provider.name);
+      await this.setConfig('embedding_model', `${provider.name}:${provider.model}`);
+      await this.setConfig('embedding_dimensions', String(provider.dimensions));
+    }
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {

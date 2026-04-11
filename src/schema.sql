@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS config (
 
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
+  ('embedding_provider', 'openai'),
   ('embedding_model', 'text-embedding-3-large'),
   ('embedding_dimensions', '1536'),
   ('chunk_strategy', 'semantic')

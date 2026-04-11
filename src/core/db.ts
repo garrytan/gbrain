@@ -58,12 +58,12 @@ export async function disconnect(): Promise<void> {
   }
 }
 
-export async function initSchema(dimensions: number, model: string): Promise<void> {
+export async function initSchema(dimensions: number, model: string, provider: string = 'openai'): Promise<void> {
   const conn = getConnection();
   // Advisory lock prevents concurrent initSchema() calls from deadlocking
   await conn`SELECT pg_advisory_lock(42)`;
   try {
-    await conn.unsafe(getSchemaSQL(dimensions, model));
+    await conn.unsafe(getSchemaSQL(dimensions, model, provider));
   } finally {
     await conn`SELECT pg_advisory_unlock(42)`;
   }
