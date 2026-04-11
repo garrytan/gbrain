@@ -11,13 +11,14 @@ cat > "$OUT_FILE" << 'HEADER'
 // Source: src/schema.sql
 
 export function getSchemaSQL(dimensions: number, model: string): string {
+  const safeModel = model.replace(/'/g, "''");
   return `
 HEADER
 
 sed 's/`/\\`/g; s/\$/\\$/g' "$SCHEMA_FILE" \
   | sed "s/vector(1536)/vector(\${dimensions})/g" \
-  | sed "s/DEFAULT 'text-embedding-3-large'/DEFAULT '\${model}'/g" \
-  | sed "s/('embedding_model', 'text-embedding-3-large')/('embedding_model', '\${model}')/g" \
+  | sed "s/DEFAULT 'text-embedding-3-large'/DEFAULT '\${safeModel}'/g" \
+  | sed "s/('embedding_model', 'text-embedding-3-large')/('embedding_model', '\${safeModel}')/g" \
   | sed "s/('embedding_dimensions', '1536')/('embedding_dimensions', '\${dimensions}')/g" \
   >> "$OUT_FILE"
 

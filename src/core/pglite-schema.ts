@@ -14,6 +14,7 @@
  */
 
 export function getPgliteSchemaSQL(dimensions: number, model: string): string {
+  const safeModel = model.replace(/'/g, "''");
   return `
 -- GBrain PGLite schema (local embedded Postgres)
 
@@ -50,7 +51,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
   embedding     vector(${dimensions}),
-  model         TEXT    NOT NULL DEFAULT '${model}',
+  model         TEXT    NOT NULL DEFAULT '${safeModel}',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -155,7 +156,7 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
   ('engine', 'pglite'),
-  ('embedding_model', '${model}'),
+  ('embedding_model', '${safeModel}'),
   ('embedding_dimensions', '${dimensions}'),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
