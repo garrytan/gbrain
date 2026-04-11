@@ -2,6 +2,8 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- gen_random_uuid() is core in Postgres 13+; enable pgcrypto as fallback for older versions
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ============================================================
 -- pages: the core content table

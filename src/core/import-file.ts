@@ -67,7 +67,9 @@ export async function importFromContent(
         chunks[i].embedding = embeddings[i];
         chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
       }
-    } catch { /* non-fatal */ }
+    } catch (e: unknown) {
+      console.warn(`[gbrain] embedding failed for ${slug} (${chunks.length} chunks): ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // Transaction wraps all DB writes
@@ -95,6 +97,9 @@ export async function importFromContent(
 
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks);
+    } else {
+      // Content is empty — delete stale chunks so they don't ghost in search results
+      await tx.deleteChunks(slug);
     }
   });
 

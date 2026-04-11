@@ -3,6 +3,7 @@ import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
+let connectedUrl: string | null = null;
 
 export function getConnection(): ReturnType<typeof postgres> {
   if (!sql) {
@@ -16,7 +17,13 @@ export function getConnection(): ReturnType<typeof postgres> {
 }
 
 export async function connect(config: EngineConfig): Promise<void> {
-  if (sql) return;
+  if (sql) {
+    // Warn if a different URL is passed — the old connection is still in use
+    if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
+      console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
+    }
+    return;
+  }
 
   const url = config.database_url;
   if (!url) {
@@ -40,8 +47,10 @@ export async function connect(config: EngineConfig): Promise<void> {
 
     // Test connection
     await sql`SELECT 1`;
+    connectedUrl = url;
   } catch (e: unknown) {
     sql = null;
+    connectedUrl = null;
     const msg = e instanceof Error ? e.message : String(e);
     throw new GBrainError(
       'Cannot connect to database',
@@ -55,6 +64,7 @@ export async function disconnect(): Promise<void> {
   if (sql) {
     await sql.end();
     sql = null;
+    connectedUrl = null;
   }
 }
 

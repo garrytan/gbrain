@@ -34,11 +34,13 @@ export async function hybridSearch(
   }
 
   // Determine query variants (optionally with expansion)
+  // expandQuery already includes the original query in its return value,
+  // so we use it directly instead of prepending query again
   let queries = [query];
   if (opts?.expansion && opts?.expandFn) {
     try {
-      const expanded = await opts.expandFn(query);
-      queries = [query, ...expanded].slice(0, 3);
+      queries = await opts.expandFn(query);
+      if (queries.length === 0) queries = [query];
     } catch {
       // Expansion failure is non-fatal
     }
