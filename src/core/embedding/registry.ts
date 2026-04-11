@@ -6,7 +6,7 @@ import { VoyageProvider } from './voyage.ts';
 const DEFAULTS: Record<string, { model: string; dimensions: number }> = {
   openai: { model: 'text-embedding-3-large', dimensions: 1536 },
   gemini: { model: 'gemini-embedding-2-preview', dimensions: 1536 },
-  voyage: { model: 'voyage-3', dimensions: 1024 },
+  voyage: { model: 'voyage-4-large', dimensions: 1024 },
 };
 
 let cached: EmbeddingProvider | null = null;

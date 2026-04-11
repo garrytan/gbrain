@@ -6,7 +6,7 @@ export class VoyageProvider extends BaseProvider {
   readonly dimensions: number;
   protected batchSize = 128;
 
-  constructor(model = 'voyage-3', dimensions = 1024) {
+  constructor(model = 'voyage-4-large', dimensions = 1024) {
     super();
     this.model = model;
     this.dimensions = dimensions;

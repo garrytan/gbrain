@@ -33,7 +33,7 @@ describe('getProvider', () => {
     process.env.GBRAIN_EMBEDDING_PROVIDER = 'voyage';
     const provider = getProvider();
     expect(provider.name).toBe('voyage');
-    expect(provider.model).toBe('voyage-3');
+    expect(provider.model).toBe('voyage-4-large');
   });
 
   test('respects GBRAIN_EMBEDDING_MODEL env var', () => {
@@ -124,7 +124,7 @@ describe('loadEmbeddingConfig + DB config fallback', () => {
     }));
     const provider = getProvider();
     expect(provider.name).toBe('voyage');
-    expect(provider.model).toBe('voyage-3');
+    expect(provider.model).toBe('voyage-4-large');
     expect(provider.dimensions).toBe(1024);
   });
 
