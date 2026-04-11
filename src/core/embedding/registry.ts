@@ -77,9 +77,11 @@ export function getProvider(): EmbeddingProvider {
     case 'voyage':
       cached = new VoyageProvider(resolvedModel, dimensions);
       break;
+    default:
+      throw new Error(`No provider implementation for: ${providerName}`);
   }
 
-  return cached!;
+  return cached;
 }
 
 /** Reset cached provider and DB config (for tests). */

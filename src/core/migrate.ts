@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
+import { qualifiedModel, embeddingAlterSQL } from './utils.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -90,10 +91,14 @@ const MIGRATIONS: Migration[] = [
       const { getProvider } = await import('./embedding/index.ts');
       const provider = getProvider();
       const newDims = provider.dimensions;
-      const newModel = `${provider.name}:${provider.model}`;
+      const newModel = qualifiedModel(provider);
 
-      const currentDims = await engine.getConfig('embedding_dimensions');
-      let currentModel = await engine.getConfig('embedding_model');
+      const [currentDims, rawModel, currentProvider] = await Promise.all([
+        engine.getConfig('embedding_dimensions'),
+        engine.getConfig('embedding_model'),
+        engine.getConfig('embedding_provider'),
+      ]);
+      let currentModel = rawModel;
       const dbDims = parseInt(currentDims || '1536', 10);
 
       // Normalize legacy format: 'text-embedding-3-large' → 'openai:text-embedding-3-large'
@@ -103,22 +108,14 @@ const MIGRATIONS: Migration[] = [
       }
 
       // Ensure embedding_provider key exists (added in this version)
-      const currentProvider = await engine.getConfig('embedding_provider');
       if (!currentProvider) {
         await engine.setConfig('embedding_provider', provider.name);
       }
 
       if (dbDims !== newDims) {
         console.log(`  Embedding dimensions changed: ${dbDims} → ${newDims}`);
-
-        const staleSQL = `
-          DROP INDEX IF EXISTS idx_chunks_embedding;
-          UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;
-          ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${newDims});
-          CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
-        `;
         await engine.transaction(async (tx) => {
-          await tx.runMigration(5, staleSQL);
+          await tx.runMigration(5, embeddingAlterSQL(newDims));
         });
 
         await engine.setConfig('embedding_provider', provider.name);
@@ -130,7 +127,7 @@ const MIGRATIONS: Migration[] = [
       } else if (currentModel !== newModel) {
         console.log(`  Embedding model changed: ${currentModel} → ${newModel}`);
         await engine.transaction(async (tx) => {
-          await tx.runMigration(5, `UPDATE content_chunks SET embedded_at = NULL;`);
+          await tx.runMigration(5, `UPDATE content_chunks SET embedded_at = NULL WHERE embedded_at IS NOT NULL;`);
         });
         await engine.setConfig('embedding_provider', provider.name);
         await engine.setConfig('embedding_model', newModel);

@@ -16,7 +16,7 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, qualifiedModel, embeddingAlterSQL } from './utils.ts';
 
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
@@ -66,17 +66,17 @@ export class PostgresEngine implements BrainEngine {
     await conn`SELECT pg_advisory_lock(42)`;
     try {
       const { getSchemaSQL } = await import('./schema-embedded.ts');
-      await conn.unsafe(getSchemaSQL(initialProvider.dimensions, `${initialProvider.name}:${initialProvider.model}`, initialProvider.name));
+      await conn.unsafe(getSchemaSQL(initialProvider.dimensions, qualifiedModel(initialProvider), initialProvider.name));
 
       // Now DB config table exists — load saved embedding config
-      resetProvider(); // clear cached provider before loading DB config
+      resetProvider();
       await loadEmbeddingConfig(this);
       const provider = getProvider();
 
-      // Update schema defaults if DB config resolved differently
+      // Update config if DB resolved a different provider
       if (provider.name !== initialProvider.name || provider.model !== initialProvider.model) {
         await this.setConfig('embedding_provider', provider.name);
-        await this.setConfig('embedding_model', `${provider.name}:${provider.model}`);
+        await this.setConfig('embedding_model', qualifiedModel(provider));
         await this.setConfig('embedding_dimensions', String(provider.dimensions));
       }
 
@@ -85,28 +85,23 @@ export class PostgresEngine implements BrainEngine {
         console.log(`  ${applied} migration(s) applied`);
       }
 
-      // After migrations, ensure actual DB column matches provider dimensions.
+      // Ensure actual DB column matches provider dimensions (config can be stale)
       const colResult = await conn`
         SELECT atttypmod AS dim FROM pg_attribute
         WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding' AND NOT attisdropped
       `;
       const actualDims = colResult[0]?.dim ?? 1536;
+      const expectedModel = qualifiedModel(provider);
       const currentModel = await this.getConfig('embedding_model');
-      const expectedModel = `${provider.name}:${provider.model}`;
 
       if (actualDims !== provider.dimensions) {
         console.log(`  Embedding dimensions changed: ${actualDims} → ${provider.dimensions}`);
-        await conn.unsafe(`
-          DROP INDEX IF EXISTS idx_chunks_embedding;
-          UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;
-          ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${provider.dimensions});
-          CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
-        `);
+        await conn.unsafe(embeddingAlterSQL(provider.dimensions));
         await this.setConfig('embedding_provider', provider.name);
         await this.setConfig('embedding_dimensions', String(provider.dimensions));
         await this.setConfig('embedding_model', expectedModel);
       } else if (currentModel !== expectedModel) {
-        await conn.unsafe(`UPDATE content_chunks SET embedded_at = NULL`);
+        await conn.unsafe(`UPDATE content_chunks SET embedded_at = NULL WHERE embedded_at IS NOT NULL`);
         await this.setConfig('embedding_provider', provider.name);
         await this.setConfig('embedding_model', expectedModel);
       }

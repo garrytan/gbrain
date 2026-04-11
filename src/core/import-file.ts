@@ -5,6 +5,7 @@ import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { embedBatch, getProvider } from './embedding/index.ts';
 import type { ChunkInput } from './types.ts';
+import { qualifiedModel } from './utils.ts';
 
 export interface ImportResult {
   slug: string;
@@ -66,7 +67,7 @@ export async function importFromContent(
       const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
       for (let i = 0; i < chunks.length; i++) {
         chunks[i].embedding = embeddings[i];
-        chunks[i].model = `${provider.name}:${provider.model}`;
+        chunks[i].model = qualifiedModel(provider);
         chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
       }
     } catch { /* non-fatal */ }

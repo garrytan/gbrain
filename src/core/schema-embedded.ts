@@ -1,8 +1,10 @@
 // AUTO-GENERATED — do not edit. Run: bun run build:schema
 // Source: src/schema.sql
 
+import { escapeSql } from './utils.ts';
+
 export function getSchemaSQL(dimensions: number, model: string, provider: string = 'openai'): string {
-  const safeModel = model.replace(/'/g, "''");
+  const safeModel = escapeSql(model);
   return `
 -- GBrain Postgres + pgvector schema
 

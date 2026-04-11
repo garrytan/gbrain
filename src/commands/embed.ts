@@ -2,6 +2,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch, getProvider } from '../core/embedding/index.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
+import { qualifiedModel } from '../core/utils.ts';
 
 export async function runEmbed(engine: BrainEngine, args: string[]) {
   const slug = args.find(a => !a.startsWith('--'));
@@ -63,7 +64,7 @@ async function embedPage(engine: BrainEngine, slug: string) {
       chunk_text: c.chunk_text,
       chunk_source: c.chunk_source,
       embedding: embIdx >= 0 ? embeddings[embIdx] : undefined,
-      model: embIdx >= 0 ? `${provider.name}:${provider.model}` : c.model,
+      model: embIdx >= 0 ? qualifiedModel(provider) : c.model,
       token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
     };
   });
@@ -100,7 +101,7 @@ async function embedAll(engine: BrainEngine, staleOnly: boolean) {
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
-        model: embeddingMap.has(c.chunk_index) ? `${provider.name}:${provider.model}` : c.model,
+        model: embeddingMap.has(c.chunk_index) ? qualifiedModel(provider) : c.model,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(page.slug, updated);

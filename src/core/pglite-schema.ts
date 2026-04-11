@@ -13,8 +13,10 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
+import { escapeSql } from './utils.ts';
+
 export function getPgliteSchemaSQL(dimensions: number, model: string, provider: string = 'openai'): string {
-  const safeModel = model.replace(/'/g, "''");
+  const safeModel = escapeSql(model);
   return `
 -- GBrain PGLite schema (local embedded Postgres)
 

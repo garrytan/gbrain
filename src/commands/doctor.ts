@@ -87,10 +87,11 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
   // 6. Embedding config match
   try {
     const { getProvider } = await import('../core/embedding/index.ts');
+    const { qualifiedModel } = await import('../core/utils.ts');
     const provider = getProvider();
     let dbModel = await engine.getConfig('embedding_model');
     const dbDims = await engine.getConfig('embedding_dimensions');
-    const currentModel = `${provider.name}:${provider.model}`;
+    const currentModel = qualifiedModel(provider);
     const currentDims = String(provider.dimensions);
 
     // Normalize legacy format: 'text-embedding-3-large' → 'openai:text-embedding-3-large'
