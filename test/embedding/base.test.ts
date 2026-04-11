@@ -72,7 +72,7 @@ describe('BaseProvider', () => {
 
   test('throws after exhausting retries', async () => {
     const p = new AlwaysFailProvider();
-    expect(p.embed('hello')).rejects.toThrow('permanent failure');
+    await expect(p.embed('hello')).rejects.toThrow('permanent failure');
   });
 
   test('getRetryDelay uses exponential backoff with cap', () => {
