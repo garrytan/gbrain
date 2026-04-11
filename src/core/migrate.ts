@@ -93,8 +93,14 @@ const MIGRATIONS: Migration[] = [
       const newModel = `${provider.name}:${provider.model}`;
 
       const currentDims = await engine.getConfig('embedding_dimensions');
-      const currentModel = await engine.getConfig('embedding_model');
+      let currentModel = await engine.getConfig('embedding_model');
       const dbDims = parseInt(currentDims || '1536', 10);
+
+      // Normalize legacy format: 'text-embedding-3-large' → 'openai:text-embedding-3-large'
+      if (currentModel && !currentModel.includes(':')) {
+        currentModel = `openai:${currentModel}`;
+        await engine.setConfig('embedding_model', currentModel);
+      }
 
       if (dbDims !== newDims) {
         console.log(`  Embedding dimensions changed: ${dbDims} → ${newDims}`);
