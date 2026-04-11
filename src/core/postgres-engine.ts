@@ -127,32 +127,60 @@ export class PostgresEngine implements BrainEngine {
     const limit = filters?.limit || 100;
     const offset = filters?.offset || 0;
 
-    let rows;
-    if (filters?.type && filters?.tag) {
-      rows = await sql`
-        SELECT p.* FROM pages p
-        JOIN tags t ON t.page_id = p.id
-        WHERE p.type = ${filters.type} AND t.tag = ${filters.tag}
-        ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
-      `;
-    } else if (filters?.type) {
-      rows = await sql`
-        SELECT * FROM pages WHERE type = ${filters.type}
-        ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}
-      `;
-    } else if (filters?.tag) {
-      rows = await sql`
-        SELECT p.* FROM pages p
-        JOIN tags t ON t.page_id = p.id
-        WHERE t.tag = ${filters.tag}
-        ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
-      `;
-    } else {
-      rows = await sql`
-        SELECT * FROM pages
-        ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}
-      `;
+    // Normalize single `tag` into `tags_all` so all tag filters share one code path.
+    const tagsAll: string[] = [
+      ...(filters?.tag ? [filters.tag] : []),
+      ...(filters?.tags_all ?? []),
+    ];
+    const tagsAny: string[] = filters?.tags_any ?? [];
+
+    // Fast path: no tag filters -> plain query (no joins).
+    if (tagsAll.length === 0 && tagsAny.length === 0) {
+      const rows = filters?.type
+        ? await sql`
+            SELECT * FROM pages WHERE type = ${filters.type}
+            ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}
+          `
+        : await sql`
+            SELECT * FROM pages
+            ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}
+          `;
+      return rows.map(rowToPage);
     }
+
+    // Tag-filter path: GROUP BY + HAVING counts, composable across tags_all and tags_any.
+    //
+    // Strategy:
+    //   WHERE t.tag = ANY($candidate) AND (p.type filter if any)
+    //   GROUP BY p.id
+    //   HAVING count DISTINCT matching tags_all = tags_all.length
+    //      AND (tags_any empty OR count DISTINCT matching tags_any >= 1)
+    //
+    // The candidate set is the union of tags_all and tags_any so one join covers both.
+    const candidate = [...new Set([...tagsAll, ...tagsAny])];
+
+    const typeClause = filters?.type
+      ? sql`AND p.type = ${filters.type}`
+      : sql``;
+
+    const havingAll = tagsAll.length > 0
+      ? sql`COUNT(DISTINCT t.tag) FILTER (WHERE t.tag = ANY(${tagsAll})) = ${tagsAll.length}`
+      : sql`TRUE`;
+
+    const havingAny = tagsAny.length > 0
+      ? sql`AND COUNT(DISTINCT t.tag) FILTER (WHERE t.tag = ANY(${tagsAny})) >= 1`
+      : sql``;
+
+    const rows = await sql`
+      SELECT p.* FROM pages p
+      JOIN tags t ON t.page_id = p.id
+      WHERE t.tag = ANY(${candidate})
+      ${typeClause}
+      GROUP BY p.id
+      HAVING ${havingAll} ${havingAny}
+      ORDER BY p.updated_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
 
     return rows.map(rowToPage);
   }
