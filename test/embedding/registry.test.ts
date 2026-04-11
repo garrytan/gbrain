@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { getProvider, resetProvider } from '../../src/core/embedding/registry.ts';
+import { getProvider, resetProvider, loadEmbeddingConfig } from '../../src/core/embedding/registry.ts';
 
 describe('getProvider', () => {
   const originalEnv = { ...process.env };
@@ -81,5 +81,83 @@ describe('getProvider', () => {
   test('throws on empty model name', () => {
     process.env.GBRAIN_EMBEDDING_MODEL = '   ';
     expect(() => getProvider()).toThrow('GBRAIN_EMBEDDING_MODEL cannot be empty');
+  });
+});
+
+describe('loadEmbeddingConfig + DB config fallback', () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    resetProvider();
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    resetProvider();
+  });
+
+  function mockEngine(config: Record<string, string>) {
+    return { getConfig: async (key: string) => config[key] || null };
+  }
+
+  test('falls back to DB config when env vars not set', async () => {
+    delete process.env.GBRAIN_EMBEDDING_PROVIDER;
+    delete process.env.GBRAIN_EMBEDDING_MODEL;
+    delete process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+    await loadEmbeddingConfig(mockEngine({
+      embedding_provider: 'gemini',
+      embedding_model: 'gemini:gemini-embedding-2-preview',
+      embedding_dimensions: '1536',
+    }));
+    const provider = getProvider();
+    expect(provider.name).toBe('gemini');
+    expect(provider.model).toBe('gemini-embedding-2-preview');
+    expect(provider.dimensions).toBe(1536);
+  });
+
+  test('env var overrides DB config', async () => {
+    process.env.GBRAIN_EMBEDDING_PROVIDER = 'voyage';
+    await loadEmbeddingConfig(mockEngine({
+      embedding_provider: 'gemini',
+      embedding_model: 'gemini:gemini-embedding-2-preview',
+      embedding_dimensions: '1536',
+    }));
+    const provider = getProvider();
+    expect(provider.name).toBe('voyage');
+    expect(provider.model).toBe('voyage-3');
+    expect(provider.dimensions).toBe(1024);
+  });
+
+  test('defaults when neither env var nor DB config set', async () => {
+    delete process.env.GBRAIN_EMBEDDING_PROVIDER;
+    delete process.env.GBRAIN_EMBEDDING_MODEL;
+    delete process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+    await loadEmbeddingConfig(mockEngine({}));
+    const provider = getProvider();
+    expect(provider.name).toBe('openai');
+    expect(provider.model).toBe('text-embedding-3-large');
+    expect(provider.dimensions).toBe(1536);
+  });
+
+  test('extracts model from provider:model format in DB config', async () => {
+    delete process.env.GBRAIN_EMBEDDING_PROVIDER;
+    delete process.env.GBRAIN_EMBEDDING_MODEL;
+    await loadEmbeddingConfig(mockEngine({
+      embedding_provider: 'openai',
+      embedding_model: 'openai:text-embedding-3-small',
+    }));
+    const provider = getProvider();
+    expect(provider.model).toBe('text-embedding-3-small');
+  });
+
+  test('resetProvider clears DB config cache', async () => {
+    delete process.env.GBRAIN_EMBEDDING_PROVIDER;
+    await loadEmbeddingConfig(mockEngine({
+      embedding_provider: 'voyage',
+    }));
+    resetProvider();
+    // After reset, dbConfig is cleared — should fall back to defaults
+    const provider = getProvider();
+    expect(provider.name).toBe('openai');
   });
 });

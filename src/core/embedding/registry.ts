@@ -46,7 +46,14 @@ export function getProvider(): EmbeddingProvider {
     throw new Error(`Unknown embedding provider: ${providerName}. Supported: ${Object.keys(DEFAULTS).join(', ')}`);
   }
 
-  const model = (process.env.GBRAIN_EMBEDDING_MODEL || dbConfig.model || defaults.model).trim();
+  // If provider was overridden via env var (different from DB), ignore DB model/dimensions
+  // — they belong to the previous provider and would be wrong
+  const providerChanged = process.env.GBRAIN_EMBEDDING_PROVIDER && dbConfig.provider
+    && process.env.GBRAIN_EMBEDDING_PROVIDER !== dbConfig.provider;
+  const dbModel = providerChanged ? undefined : dbConfig.model;
+  const dbDims = providerChanged ? undefined : dbConfig.dimensions;
+
+  const model = (process.env.GBRAIN_EMBEDDING_MODEL || dbModel || defaults.model).trim();
   if (!model) {
     throw new Error('GBRAIN_EMBEDDING_MODEL cannot be empty');
   }
@@ -54,7 +61,7 @@ export function getProvider(): EmbeddingProvider {
   // For DB-stored model in "provider:model" format, extract just the model part
   const resolvedModel = model.includes(':') ? model.split(':').slice(1).join(':') : model;
 
-  const rawDims = process.env.GBRAIN_EMBEDDING_DIMENSIONS || dbConfig.dimensions;
+  const rawDims = process.env.GBRAIN_EMBEDDING_DIMENSIONS || dbDims;
   const dimensions = rawDims ? parseInt(String(rawDims), 10) : defaults.dimensions;
   if (!Number.isInteger(dimensions) || dimensions <= 0) {
     throw new Error(`Invalid GBRAIN_EMBEDDING_DIMENSIONS: "${rawDims}". Must be a positive integer.`);
