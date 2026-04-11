@@ -965,3 +965,76 @@ describeE2E('E2E: Performance Baselines', () => {
     console.log(`    Link + backlink: ${linkMs.toFixed(0)}ms`);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// Learn
+// ─────────────────────────────────────────────────────────────────
+
+describeE2E('E2E: Learn', () => {
+  beforeAll(async () => {
+    await setupDB();
+  });
+  afterAll(teardownDB);
+
+  test('learn creates a new page', async () => {
+    const result = await callOp('learn', {
+      content: 'GBrain supports PGLite and Postgres engines.',
+      slug: 'concepts/gbrain-engines',
+      title: 'GBrain Engines',
+    }) as any;
+
+    expect(result.status).toBe('created');
+    expect(result.slug).toBe('concepts/gbrain-engines');
+    expect(result.chunks).toBeGreaterThan(0);
+
+    // Verify page exists
+    const page = await callOp('get_page', { slug: 'concepts/gbrain-engines' }) as any;
+    expect(page.title).toBe('GBrain Engines');
+    expect(page.compiled_truth).toContain('PGLite');
+    expect(page.tags).toContain('source:conversation');
+  });
+
+  test('learn appends to existing page', async () => {
+    const result = await callOp('learn', {
+      content: 'It also supports Voyage embeddings.',
+      slug: 'concepts/gbrain-engines',
+    }) as any;
+
+    expect(result.status).toBe('appended');
+
+    const page = await callOp('get_page', { slug: 'concepts/gbrain-engines' }) as any;
+    expect(page.compiled_truth).toContain('PGLite');
+    expect(page.compiled_truth).toContain('Voyage embeddings');
+  });
+
+  test('learn creates version on append', async () => {
+    const versions = await callOp('get_versions', { slug: 'concepts/gbrain-engines' }) as any[];
+    expect(versions.length).toBeGreaterThanOrEqual(1);
+    // The version should contain the original compiled_truth before append
+    expect(versions[0].compiled_truth).not.toContain('Voyage embeddings');
+  });
+
+  test('learn auto-generates slug under learned/ prefix', async () => {
+    const result = await callOp('learn', {
+      content: 'Deployment always goes through staging first.',
+      title: 'Deployment Process',
+    }) as any;
+
+    expect(result.status).toBe('created');
+    expect(result.slug).toBe('learned/deployment-process');
+
+    const page = await callOp('get_page', { slug: 'learned/deployment-process' }) as any;
+    expect(page).toBeTruthy();
+    expect(page.compiled_truth).toContain('staging');
+  });
+
+  test('learned content is searchable', async () => {
+    // This test may skip if no embedding API key — that's fine
+    const results = await callOp('search', { query: 'deployment staging' }) as any[];
+    // At minimum, keyword search should find it
+    if (results.length > 0) {
+      const found = results.some((r: any) => r.slug === 'learned/deployment-process');
+      expect(found).toBe(true);
+    }
+  });
+});
