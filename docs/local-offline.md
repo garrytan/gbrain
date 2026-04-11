@@ -4,12 +4,12 @@ GBrain now has a fully local profile: SQLite on disk, stdio MCP on your machine,
 
 ## What local/offline mode means
 
-When you run `gbrain init --local`, GBrain writes a config like this to `~/.gbrain/config.json`:
+When you run `gbrain init --local`, GBrain writes a config like this to `~/.gbrain/config.json` (the stored `database_path` is an expanded absolute path, not a literal `~` string):
 
 ```json
 {
   "engine": "sqlite",
-  "database_path": "~/.gbrain/brain.db",
+  "database_path": "/Users/alice/.gbrain/brain.db",
   "offline": true,
   "embedding_provider": "local",
   "query_rewrite_provider": "heuristic"

@@ -68,7 +68,7 @@ An agent without this loop answers from stale context. An agent with it gets sma
 
 Never do anything twice. If you look someone up once, that lookup lives in the brain forever. If a pattern emerges across three meetings, the agent captures it. If you generate an original idea in conversation, it goes to `originals/` — your searchable intellectual archive.
 
-## Architecture
+## Architecture (managed/Postgres example)
 
 ```
 ┌──────────────────┐    ┌───────────────┐    ┌──────────────────┐
@@ -137,7 +137,7 @@ GBrain doesn't ship with demo data. It finds YOUR markdown and makes it searchab
 === Discovery Complete ===
 ```
 
-**Act 2: Import.** Your files move from the repo into Supabase.
+**Act 2: Import (managed/Postgres example).** Your files move from the repo into Supabase.
 
 ```bash
 gbrain import ~/git/brain/
