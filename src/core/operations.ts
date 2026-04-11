@@ -9,6 +9,11 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import * as db from './db.ts';
+import { chunkText } from './chunkers/recursive.ts';
+import { embedBatch } from './embedding.ts';
+import { slugifySegment } from './sync.ts';
+import { createHash } from 'crypto';
+import type { ChunkInput } from './types.ts';
 
 // --- Types ---
 
@@ -635,6 +640,109 @@ const file_url: Operation = {
   },
 };
 
+// --- Learn ---
+
+const learn: Operation = {
+  name: 'learn',
+  description: 'Learn a new fact: append to an existing page or create a new one. For conversation-driven knowledge ingestion.',
+  params: {
+    content: { type: 'string', required: true, description: 'The fact or knowledge to save' },
+    slug: { type: 'string', description: 'Target page slug. If omitted, auto-generated from content' },
+    title: { type: 'string', description: 'Page title (used when creating a new page)' },
+    tags: { type: 'string', description: 'Comma-separated tags' },
+    source: { type: 'string', description: 'Source identifier (default: "conversation")' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'learn', slug: p.slug };
+
+    const content = (p.content as string || '').trim();
+    if (!content) {
+      throw new OperationError('validation_error', 'content is required');
+    }
+
+    const source = (p.source as string) || 'conversation';
+    const userTags = p.tags
+      ? (p.tags as string).split(',').map(t => t.trim()).filter(Boolean)
+      : [];
+
+    // Determine slug
+    let slug = p.slug as string | undefined;
+    let existing = slug ? await ctx.engine.getPage(slug) : null;
+
+    if (!slug) {
+      const base = p.title
+        ? slugifySegment(p.title as string)
+        : slugifySegment(content.slice(0, 60));
+      slug = `learned/${base}`;
+    }
+
+    // Determine mode
+    const isAppend = !!existing;
+    const compiledTruth = isAppend
+      ? existing!.compiled_truth + '\n\n' + content
+      : content;
+    const title = isAppend
+      ? existing!.title
+      : (p.title as string) || content.split('\n')[0].slice(0, 80) || slug;
+    const type = isAppend ? existing!.type : 'concept' as const;
+
+    // Hash
+    const hash = createHash('sha256')
+      .update(JSON.stringify({ title, type, compiled_truth: compiledTruth }))
+      .digest('hex');
+
+    // Chunk
+    const chunks: ChunkInput[] = [];
+    for (const c of chunkText(compiledTruth)) {
+      chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
+    }
+
+    // Embed (non-fatal)
+    try {
+      const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
+      for (let i = 0; i < chunks.length; i++) {
+        chunks[i].embedding = embeddings[i];
+        chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
+      }
+    } catch { /* non-fatal — store chunks without embeddings */ }
+
+    // Transaction
+    await ctx.engine.transaction(async (tx) => {
+      if (isAppend) await tx.createVersion(slug!);
+
+      await tx.putPage(slug!, {
+        type,
+        title,
+        compiled_truth: compiledTruth,
+        timeline: isAppend ? existing!.timeline || '' : '',
+        frontmatter: isAppend ? existing!.frontmatter || {} : {},
+        content_hash: hash,
+      });
+
+      await tx.addTag(slug!, `source:${source}`);
+      for (const tag of userTags) {
+        await tx.addTag(slug!, tag);
+      }
+
+      if (chunks.length > 0) {
+        await tx.upsertChunks(slug!, chunks);
+      }
+    });
+
+    // Log
+    await ctx.engine.logIngest({
+      source_type: source,
+      source_ref: slug,
+      pages_updated: [slug],
+      summary: `Learned: ${content.slice(0, 100)}`,
+    });
+
+    return { slug, status: isAppend ? 'appended' : 'created', chunks: chunks.length };
+  },
+  cliHints: { name: 'learn', positional: ['slug'], stdin: 'content' },
+};
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -660,6 +768,8 @@ export const operations: Operation[] = [
   log_ingest, get_ingest_log,
   // Files
   file_list, file_upload, file_url,
+  // Learn
+  learn,
 ];
 
 export const operationsByName = Object.fromEntries(
