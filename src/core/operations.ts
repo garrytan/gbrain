@@ -15,6 +15,7 @@ import * as db from './db.ts';
 export type ErrorCode =
   | 'page_not_found'
   | 'invalid_params'
+  | 'validation_error'
   | 'embedding_failed'
   | 'storage_error'
   | 'bucket_not_found'
