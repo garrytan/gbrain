@@ -87,6 +87,52 @@ describe('createStorage', () => {
     }
   });
 
+  // --- Path traversal containment (R3-F002 fix) ---
+
+  test('blocks upload path traversal via ../', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await expect(storage.upload('../../etc/evil', Buffer.from('pwned'))).rejects.toThrow('Path traversal blocked');
+      await expect(storage.upload('../sibling/file', Buffer.from('x'))).rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('blocks download path traversal via ../', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await expect(storage.download('../../etc/passwd')).rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('blocks delete path traversal via ../', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await expect(storage.delete('../../../tmp/important')).rejects.toThrow('Path traversal blocked');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('allows legitimate nested paths', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-traversal-'));
+    try {
+      const storage = new LocalStorage(tmpDir);
+      await storage.upload('pages/people/elon/avatar.png', Buffer.from('img'));
+      const data = await storage.download('pages/people/elon/avatar.png');
+      expect(data.toString()).toBe('img');
+      expect(await storage.exists('pages/people/elon/avatar.png')).toBe(true);
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
   test('throws for unknown backend', async () => {
     expect(createStorage({ backend: 'unknown' as any, bucket: 'test' })).rejects.toThrow('Unknown storage backend');
   });
