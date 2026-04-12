@@ -303,7 +303,27 @@ Then point Codex at that wrapper instead of assuming custom env support in every
 
 ## 8. Connect Claude Code to the local MCP server
 
-Use a local stdio MCP config like this:
+The shortest path mirrors the Codex setup:
+
+```bash
+claude mcp add gbrain -- gbrain serve
+```
+
+What this does:
+
+- Claude Code spawns `gbrain serve` on demand
+- `gbrain serve` reads `~/.gbrain/config.json`
+- all MCP calls hit your local SQLite brain
+
+Recommended workflow:
+
+1. run `gbrain init --local`
+2. run `gbrain import /path/to/brain`
+3. run `claude mcp add gbrain -- gbrain serve`
+4. start a new Claude Code session
+5. ask Claude Code to call a simple GBrain tool
+
+Alternatively, you can add the server manually via JSON config. In `~/.claude.json` or a project `.claude/mcp.json`:
 
 ```json
 {
@@ -316,19 +336,40 @@ Use a local stdio MCP config like this:
 }
 ```
 
-Recommended workflow:
-
-1. run `gbrain init --local`
-2. run `gbrain import /path/to/brain`
-3. add the Claude Code MCP config
-4. restart Claude Code or reload MCP integrations
-5. ask Claude Code to call a simple GBrain tool
-
 If you need a non-default config directory, use the same wrapper-script pattern described in the Codex section.
 
 ---
 
-## 9. Suggested first-day workflow
+## 9. Using Codex and Claude Code simultaneously
+
+Both clients can connect to the same local brain at the same time. Each spawns its own `gbrain serve` process, and both read from the same SQLite database at `~/.gbrain/brain.db`. SQLite WAL mode makes concurrent reads safe.
+
+To set up both in one go:
+
+```bash
+# initialize once
+gbrain init --local
+gbrain import ~/git/brain
+
+# register with Codex
+codex mcp add gbrain -- gbrain serve
+
+# register with Claude Code
+claude mcp add gbrain -- gbrain serve
+```
+
+After this:
+
+- Codex sessions have full access to your local brain
+- Claude Code sessions have full access to your local brain
+- reads are safe to share concurrently
+- writes from one session are visible to the other immediately
+
+No further configuration is needed. Both clients auto-spawn the server when they need it.
+
+---
+
+## 10. Suggested first-day workflow
 
 A practical local/offline routine looks like this:
 
@@ -360,7 +401,7 @@ Or let Codex / Claude Code spawn it for you.
 
 ---
 
-## 10. Verification checklist
+## 11. Verification checklist
 
 Run these in order:
 
@@ -392,7 +433,7 @@ You should see embedding coverage increase.
 
 ---
 
-## 11. What is not supported in local/offline mode yet
+## 12. What is not supported in local/offline mode yet
 
 These workflows are still managed/Postgres-oriented:
 
@@ -406,7 +447,7 @@ That is intentional. The current local profile is designed to be truthful, not t
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### `gbrain init --local` succeeded, but query returns nothing
 
@@ -451,7 +492,7 @@ Local/offline SQLite mode does not support the cloud file/storage workflow yet.
 
 ---
 
-## 13. If you want the same guide in Korean
+## 14. If you want the same guide in Korean
 
 See:
 
