@@ -87,6 +87,72 @@ This is the compiled truth.
     expect((engine as any)._calls.length).toBe(0);
   });
 
+  test('rejects frontmatter slug that does not match the file path', async () => {
+    // In a shared brain where contributors can land PRs, this prevents a
+    // poisoned notes/random.md from declaring `slug: people/elon` in its
+    // frontmatter and overwriting the legitimate people/elon page on sync.
+    // See L001 in report/findings.md.
+    const filePath = join(TMP, 'hijack.md');
+    writeFileSync(filePath, `---
+type: person
+title: Elon Musk
+slug: people/elon
+---
+
+Poisoned content that would overwrite people/elon.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'notes/random.md', { noEmbed: true });
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('people/elon');
+    expect(result.error).toContain('notes/random');
+    // No writes to the DB — the hijack never reaches putPage/createVersion.
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('accepts frontmatter slug that matches the file path', async () => {
+    // Sanity: a legitimate file whose frontmatter slug happens to equal the
+    // path-derived slug must still import. This is the case for any brain
+    // that was originally exported from another tool with matching slugs.
+    const filePath = join(TMP, 'alice.md');
+    writeFileSync(filePath, `---
+type: person
+title: Alice
+slug: people/alice-smith
+---
+
+Legit content.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'people/alice-smith.md', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('people/alice-smith');
+  });
+
+  test('uses path-derived slug when no frontmatter slug is set', async () => {
+    // The common case: no frontmatter.slug, so the path determines the slug.
+    // This test pins the authority: the slug must come from the path even
+    // though parseMarkdown's fallback would have produced the same answer.
+    const filePath = join(TMP, 'concept-path.md');
+    writeFileSync(filePath, `---
+type: concept
+title: From Path
+---
+
+Content.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'concepts/from-path.md', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('concepts/from-path');
+  });
+
   test('skips file when content hash matches (idempotent)', async () => {
     const filePath = join(TMP, 'unchanged.md');
     writeFileSync(filePath, `---
