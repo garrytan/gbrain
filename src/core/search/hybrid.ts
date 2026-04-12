@@ -28,8 +28,15 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, { limit: limit * 2 });
 
-  // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
+  // Skip vector search if no embedding API key is configured for any provider
+  const hasEmbeddingKey = !!(
+    process.env.OPENAI_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.GBRAIN_EMBEDDING_API_KEY ||
+    process.env.GBRAIN_EMBEDDING_PROVIDER === 'ollama'
+  );
+  if (!hasEmbeddingKey) {
     return dedupResults(keywordResults).slice(0, limit);
   }
 

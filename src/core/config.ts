@@ -13,6 +13,20 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  // Multi-provider embedding support
+  embedding_provider?: 'openai' | 'gemini' | 'ollama' | 'dashscope' | 'deepseek' | 'zhipu' | 'custom';
+  embedding_model?: string;
+  embedding_dimensions?: number;
+  gemini_api_key?: string;
+  ollama_base_url?: string;
+  dashscope_api_key?: string;
+  dashscope_base_url?: string;
+  deepseek_api_key?: string;
+  deepseek_base_url?: string;
+  zhipu_api_key?: string;
+  zhipu_base_url?: string;
+  embedding_api_key?: string;
+  embedding_base_url?: string;
 }
 
 /**
