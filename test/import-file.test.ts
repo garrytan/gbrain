@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
-import { importFile } from '../src/core/import-file.ts';
+import { importFile, importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
@@ -250,6 +250,51 @@ Content to chunk but not embed.
         expect(chunk.embedding).toBeUndefined();
       }
     }
+  });
+
+  test('rejects in-memory content larger than MAX_FILE_SIZE', async () => {
+    // The remote MCP put_page operation hands user-supplied content straight
+    // to importFromContent, which is the path this guard defends. The guard
+    // must trigger BEFORE parseMarkdown / chunkText / embedBatch — if it doesn't,
+    // an authenticated attacker can force the owner to pay for embedding a
+    // multi-megabyte string (see F002 in report/findings.md).
+    const bigContent = '---\ntitle: Big\n---\n' + 'x'.repeat(5_100_000);
+
+    const engine = mockEngine();
+    const result = await importFromContent(engine, 'big-slug', bigContent, { noEmbed: true });
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('too large');
+    // No engine work at all — confirms the guard short-circuits before any
+    // parsing or chunking allocation.
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('uses UTF-8 byte length, not JS string length, for the size check', async () => {
+    // 2.6M 4-byte codepoints = ~10.4 MB UTF-8 but only 2.6M JS UTF-16 code units.
+    // A length-based check would let this through; a byteLength check catches it.
+    // This is the exact edge case an attacker would use if they knew about a
+    // naive `content.length > MAX_FILE_SIZE` guard.
+    const fourByteChar = '\u{1F600}'; // emoji, 4 bytes in UTF-8
+    const bigContent = fourByteChar.repeat(2_600_000);
+
+    const engine = mockEngine();
+    const result = await importFromContent(engine, 'emoji-slug', bigContent, { noEmbed: true });
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('too large');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('accepts in-memory content just under MAX_FILE_SIZE', async () => {
+    // Sanity: content exactly at the limit must still import. If this test
+    // fails, the guard is off-by-one and will break legitimate large imports.
+    const content = '---\ntitle: Borderline\n---\n' + 'x'.repeat(4_900_000);
+
+    const engine = mockEngine();
+    const result = await importFromContent(engine, 'borderline-slug', content, { noEmbed: true });
+
+    expect(result.status).toBe('imported');
   });
 
   test('assigns sequential chunk_index values', async () => {

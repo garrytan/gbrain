@@ -20,6 +20,12 @@ const MAX_FILE_SIZE = 5_000_000; // 5MB
  * parse -> hash -> embed (external) -> transaction(version + putPage + tags + chunks)
  *
  * Used by put_page operation and importFromFile.
+ *
+ * Size guard: content is rejected if its UTF-8 byte length exceeds MAX_FILE_SIZE.
+ * importFromFile already enforces this against disk size before calling here, but
+ * the remote MCP put_page operation passes caller-supplied content straight in,
+ * so the guard has to live on this function — otherwise an authenticated caller
+ * can spend the owner's OpenAI budget at will by shipping a megabyte-sized page.
  */
 export async function importFromContent(
   engine: BrainEngine,
@@ -27,6 +33,19 @@ export async function importFromContent(
   content: string,
   opts: { noEmbed?: boolean } = {},
 ): Promise<ImportResult> {
+  // Reject oversized payloads before any parsing, chunking, or embedding happens.
+  // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
+  // so the network path behaves identically to the file path.
+  const byteLength = Buffer.byteLength(content, 'utf-8');
+  if (byteLength > MAX_FILE_SIZE) {
+    return {
+      slug,
+      status: 'skipped',
+      chunks: 0,
+      error: `Content too large (${byteLength} bytes, max ${MAX_FILE_SIZE})`,
+    };
+  }
+
   const parsed = parseMarkdown(content, slug + '.md');
 
   // Hash includes ALL fields for idempotency (not just compiled_truth + timeline)
