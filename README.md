@@ -24,16 +24,18 @@ INSTALL:
 
   git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
   curl -fsSL https://bun.sh/install | bash
-  source ~/.bashrc 2>/dev/null; source ~/.zshrc 2>/dev/null
   export PATH="$HOME/.bun/bin:$PATH"
   bun install && bun link
   Verify: gbrain --version
+  (If gbrain is not found, restart your shell or add the PATH export
+  to your shell profile.)
 
-API KEYS — ask the user for these. Embeddings and search need them:
+API KEYS — ask the user for these:
 
   export OPENAI_API_KEY=sk-...          # required for vector search
-  export ANTHROPIC_API_KEY=sk-ant-...   # required for multi-query expansion
-  Save these in your environment permanently (shell profile or .env).
+  export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
+  Save to shell profile or .env. Without OpenAI, keyword search still
+  works. Without Anthropic, search works but skips query expansion.
 
 SET UP THE BRAIN:
 
@@ -70,11 +72,12 @@ GO LIVE — read and permanently adopt these docs from ~/gbrain/:
   docs/GBRAIN_VERIFY.md — run all 6 verification checks. #4 (live sync
     actually works) is the most important.
 
-INTEGRATIONS — run gbrain integrations list. Read and set up EVERY
-  available recipe. Each recipe in ~/gbrain/recipes/ is a self-contained
-  installer: it tells you what credentials to ask for, how to validate
-  them, and what cron job to register. Ask the user for each API key.
-  Verify: gbrain integrations doctor
+INTEGRATIONS — run gbrain integrations list. Each recipe in
+  ~/gbrain/recipes/ is a self-contained installer: it tells you what
+  credentials to ask for, how to validate, and what cron to register.
+  Ask the user which integrations they want (email, calendar, voice,
+  Twitter). Set up the ones they have credentials for.
+  Verify: gbrain integrations doctor (after at least one is configured)
 
 UPGRADE: cd ~/gbrain && git pull origin main && bun install
 ```
