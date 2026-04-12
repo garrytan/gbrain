@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.9.2] - 2026-04-12
+
+### Fixed
+
+- **Fresh local installs initialize cleanly again.** `gbrain init` now creates the local PGLite data directory before taking its advisory lock, so first-run setup no longer misreports a missing directory as a lock timeout.
+
 ## [0.9.1] - 2026-04-11
 
 ### Fixed

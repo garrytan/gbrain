@@ -59,6 +59,8 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
     return { lockDir: '', acquired: true };
   }
 
+  mkdirSync(dataDir, { recursive: true });
+
   const timeoutMs = opts?.timeoutMs ?? 30_000; // 30 second default timeout
   const startTime = Date.now();
 

@@ -26,6 +26,18 @@ describe('pglite-lock', () => {
     expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(false);
   });
 
+  test('creates missing data directory before acquiring lock', async () => {
+    const missingDataDir = join(TEST_DIR, 'missing-data-dir');
+
+    const lock = await acquireLock(missingDataDir);
+    expect(lock.acquired).toBe(true);
+    expect(existsSync(missingDataDir)).toBe(true);
+    expect(existsSync(join(missingDataDir, '.gbrain-lock'))).toBe(true);
+
+    await releaseLock(lock);
+    expect(existsSync(join(missingDataDir, '.gbrain-lock'))).toBe(false);
+  });
+
   test('prevents concurrent lock acquisition', async () => {
     const lock1 = await acquireLock(TEST_DIR, { timeoutMs: 2000 });
     expect(lock1.acquired).toBe(true);
