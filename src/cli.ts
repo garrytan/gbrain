@@ -363,7 +363,7 @@ USAGE
   gbrain <command> [options]
 
 SETUP
-  init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
+  init [--pglite|--supabase|--url]   Create brain (PGLite default, no server, OpenAI/Gemini embeddings)
   migrate --to <supabase|pglite>     Transfer brain between engines
   upgrade                            Self-update
   check-update [--json]              Check for new versions

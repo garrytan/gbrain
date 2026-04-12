@@ -242,19 +242,28 @@ You take a meeting with someone. The agent writes a brain page for them, links i
 | Dependency | What it's for | How to get it |
 |------------|--------------|---------------|
 | **Supabase account** | Postgres + pgvector database | [supabase.com](https://supabase.com) (Pro tier, $25/mo for 8GB) |
-| **OpenAI API key** | Embeddings (text-embedding-3-large) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **OpenAI or Gemini API key** | Embeddings (`text-embedding-3-large` or `gemini-embedding-001`) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) / [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
 | **Anthropic API key** | Multi-query expansion + LLM chunking (Haiku) | [console.anthropic.com](https://console.anthropic.com) |
 
 Set the API keys as environment variables:
 
 ```bash
+# OpenAI embeddings (default)
 export OPENAI_API_KEY=sk-...
+
+# OR Gemini embeddings (1536-dim compatible with the existing schema)
+export GEMINI_API_KEY=AIza...
+# alias also supported: GOOGLE_API_KEY
+export GBRAIN_EMBEDDING_PROVIDER=gemini
+
+# Optional overrides
+export GBRAIN_EMBEDDING_MODEL=gemini-embedding-001
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-The Supabase connection URL is configured during `gbrain init --supabase`. The OpenAI and Anthropic SDKs read their keys from the environment automatically.
+The Supabase connection URL is configured during `gbrain init --supabase`. OpenAI, Gemini, and Anthropic credentials can be supplied via environment variables, or stored in `~/.gbrain/config.json` when passed during `gbrain init`.
 
-Without an OpenAI key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
+Without an embedding provider key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
 
 ### GBrain without OpenClaw
 
@@ -577,7 +586,7 @@ Three strategies, dispatched by content type:
 
 ```
 SETUP
-  gbrain init [--supabase|--url <conn>]     Create brain (PGLite default, or Supabase)
+  gbrain init [--pglite|--supabase|--url <conn>] [--provider openai|gemini] [--key <api_key>]   Create brain (PGLite default, or Supabase)
   gbrain migrate --to supabase|pglite       Migrate between engines (bidirectional)
   gbrain upgrade                            Self-update
 
