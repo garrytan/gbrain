@@ -28,8 +28,8 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, { limit: limit * 2 });
 
-  // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
+  // Skip vector search entirely if no embedding key is configured
+  if (!process.env.OPENAI_API_KEY && !process.env.GEMINI_API_KEY) {
     return dedupResults(keywordResults).slice(0, limit);
   }
 
