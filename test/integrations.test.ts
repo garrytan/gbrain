@@ -176,6 +176,43 @@ describe('CLI integration', () => {
   test('help text mentions integrations', () => {
     expect(cliSource).toContain('integrations');
   });
+
+  test('help text mentions install subcommand', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'integrations', '--help'], {
+      cwd: new URL('..', import.meta.url).pathname,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('integrations install <id>');
+  });
+
+  test('install subcommand returns machine-readable recipe payload', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'integrations', 'install', 'email-to-brain', '--json'], {
+      cwd: new URL('..', import.meta.url).pathname,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: {
+        ...process.env,
+        GOOGLE_CLIENT_ID: 'test-client',
+        GOOGLE_CLIENT_SECRET: 'test-secret',
+      },
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    expect(stderr).not.toContain('Unknown subcommand');
+    expect(exitCode).toBe(0);
+    const output = JSON.parse(stdout);
+    expect(output.recipe.id).toBe('email-to-brain');
+    expect(output.recipe.category).toBe('sense');
+    expect(output.dependencies[0].id).toBe('credential-gateway');
+    expect(output.instructions).toContain('Email-to-Brain');
+    expect(output.instructions).toContain('credential-gateway');
+    expect(output.instructions).toContain('GOOGLE_CLIENT_ID');
+  });
 });
 
 // --- Recipe file validation ---
@@ -271,12 +308,27 @@ describe('all recipes', () => {
     }
   });
 
+  test('infra recipes validate with integrations test command', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'integrations', 'test', 'recipes/ngrok-tunnel.md'], {
+      cwd: new URL('..', import.meta.url).pathname,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    expect(stderr).toBe('');
+    expect(exitCode).toBe(0);
+    expect(stdout).not.toContain("Invalid category: 'infra'");
+    expect(stdout).toContain('PASS: ngrok-tunnel');
+  });
+
   test('no recipe contains personal references', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
     const recipesDir = new URL('../recipes/', import.meta.url).pathname;
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
-    const personalPatterns = /wintermute|mercury|16507969501|\+1650796/i;
+    const personalPatterns = /wintermute|mercury|16507969501|\+1\*\*\*\*96/i;
     for (const file of files) {
       const content = readFileSync(resolve(recipesDir, file), 'utf-8');
       expect(content).not.toMatch(personalPatterns);

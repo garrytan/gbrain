@@ -242,6 +242,96 @@ function getStatus(recipe: ParsedRecipe): IntegrationStatus {
   return 'configured';
 }
 
+interface InstallDependencyStatus {
+  id: string;
+  name: string;
+  category: RecipeFrontmatter['category'];
+  status: IntegrationStatus;
+  missing_secrets: string[];
+}
+
+interface InstallSecretStatus extends RecipeSecret {
+  is_set: boolean;
+  required_by: string[];
+}
+
+function resolveInstallDependencies(recipe: ParsedRecipe, allRecipes: ParsedRecipe[]): ParsedRecipe[] {
+  const ordered: ParsedRecipe[] = [];
+  const visited = new Set<string>();
+
+  function visit(id: string): void {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const dep = allRecipes.find(r => r.frontmatter.id === id);
+    if (!dep) return;
+    for (const nested of dep.frontmatter.requires) visit(nested);
+    ordered.push(dep);
+  }
+
+  for (const dep of recipe.frontmatter.requires) visit(dep);
+  return ordered;
+}
+
+function collectInstallSecrets(recipes: ParsedRecipe[]): InstallSecretStatus[] {
+  const merged = new Map<string, InstallSecretStatus>();
+  for (const recipe of recipes) {
+    for (const secret of recipe.frontmatter.secrets) {
+      const existing = merged.get(secret.name);
+      if (existing) {
+        if (!existing.required_by.includes(recipe.frontmatter.id)) {
+          existing.required_by.push(recipe.frontmatter.id);
+        }
+        if (!existing.is_set && process.env[secret.name]) {
+          existing.is_set = true;
+        }
+        continue;
+      }
+      merged.set(secret.name, {
+        ...secret,
+        is_set: !!process.env[secret.name],
+        required_by: [recipe.frontmatter.id],
+      });
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function buildInstallInstructions(recipe: ParsedRecipe, deps: InstallDependencyStatus[], secrets: InstallSecretStatus[]): string {
+  const lines: string[] = [];
+  lines.push(`${recipe.frontmatter.name} (${recipe.frontmatter.id}) install plan`);
+  lines.push('');
+  lines.push('Goal: Follow the recipe body in order, validate each prerequisite, and stop on failures.');
+  lines.push('');
+
+  if (deps.length > 0) {
+    lines.push('Dependencies to set up first:');
+    for (const dep of deps) {
+      const missing = dep.missing_secrets.length > 0 ? `; missing secrets: ${dep.missing_secrets.join(', ')}` : '';
+      lines.push(`- ${dep.id} (${dep.category}) — ${dep.status}${missing}`);
+    }
+    lines.push('');
+  }
+
+  if (secrets.length > 0) {
+    lines.push('Secrets and credentials:');
+    for (const secret of secrets) {
+      const status = secret.is_set ? '[set]' : '[missing]';
+      lines.push(`- ${secret.name} ${status} — required by ${secret.required_by.join(', ')}`);
+      lines.push(`  ${secret.description}`);
+      lines.push(`  Get it: ${secret.where}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('Execution order:');
+  const orderedIds = [...deps.map(dep => dep.id), recipe.frontmatter.id];
+  orderedIds.forEach((id, idx) => lines.push(`${idx + 1}. ${id}`));
+  lines.push('');
+  lines.push('Recipe body:');
+  lines.push(recipe.body);
+  return lines.join('\n');
+}
+
 // --- Dependency Resolution ---
 
 function checkDependencies(recipe: ParsedRecipe, allRecipes: ParsedRecipe[]): string[] {
@@ -376,6 +466,54 @@ function cmdShow(args: string[]): void {
 
   console.log('\n--- Recipe Body ---\n');
   console.log(recipe.body);
+}
+
+function cmdInstall(args: string[]): void {
+  const jsonMode = args.includes('--json');
+  const id = args.find(a => !a.startsWith('-'));
+  if (!id) {
+    console.error('Usage: gbrain integrations install <recipe-id> [--json]');
+    process.exit(1);
+  }
+
+  const recipe = findRecipe(id);
+  if (!recipe) {
+    process.exit(1);
+  }
+
+  const allRecipes = loadAllRecipes();
+  const dependencyRecipes = resolveInstallDependencies(recipe, allRecipes);
+  const dependencies: InstallDependencyStatus[] = dependencyRecipes.map(dep => ({
+    id: dep.frontmatter.id,
+    name: dep.frontmatter.name,
+    category: dep.frontmatter.category,
+    status: getStatus(dep),
+    missing_secrets: checkSecrets(dep.frontmatter.secrets).missing.map(s => s.name),
+  }));
+  const secrets = collectInstallSecrets([...dependencyRecipes, recipe]);
+  const instructions = buildInstallInstructions(recipe, dependencies, secrets);
+
+  if (jsonMode) {
+    console.log(JSON.stringify({
+      recipe: {
+        id: recipe.frontmatter.id,
+        name: recipe.frontmatter.name,
+        version: recipe.frontmatter.version,
+        description: recipe.frontmatter.description,
+        category: recipe.frontmatter.category,
+        requires: recipe.frontmatter.requires,
+        setup_time: recipe.frontmatter.setup_time,
+        cost_estimate: recipe.frontmatter.cost_estimate,
+      },
+      dependencies,
+      secrets,
+      instructions,
+      body: recipe.body,
+    }, null, 2));
+    return;
+  }
+
+  console.log(`\n${instructions}\n`);
 }
 
 function cmdStatus(args: string[]): void {
@@ -590,8 +728,8 @@ function cmdTest(args: string[]): void {
   if (!f.name) warnings.push('Missing: name (will default to id)');
   if (!f.description) warnings.push('Missing: description');
   if (!f.version) warnings.push('Missing: version');
-  if (!['sense', 'reflex'].includes(f.category)) {
-    errors.push(`Invalid category: '${f.category}' (must be 'sense' or 'reflex')`);
+  if (!['infra', 'sense', 'reflex'].includes(f.category)) {
+    errors.push(`Invalid category: '${f.category}' (must be 'infra', 'sense', or 'reflex')`);
   }
 
   // Check secrets format
@@ -634,6 +772,7 @@ function printHelp(): void {
 USAGE
   gbrain integrations                  Show integration dashboard
   gbrain integrations list [--json]    List available integrations
+  gbrain integrations install <id>     Build install payload from recipe + deps
   gbrain integrations show <id>        Show recipe details
   gbrain integrations status <id>      Check secrets + health
   gbrain integrations doctor [--json]  Run health checks
@@ -662,6 +801,9 @@ export async function runIntegrations(args: string[]): Promise<void> {
   switch (sub) {
     case 'list':
       cmdList(subArgs);
+      break;
+    case 'install':
+      cmdInstall(subArgs);
       break;
     case 'show':
       cmdShow(subArgs);

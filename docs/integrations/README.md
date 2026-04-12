@@ -24,7 +24,9 @@ Next query is smarter (the compounding effect)
 ### Self-Installing Recipes
 
 These are integration recipes your agent can set up for you. Run
-`gbrain integrations` to see what's available and their status.
+`gbrain integrations` to see what's available and their status, then use
+`gbrain integrations install <recipe-id>` to build the install payload your
+agent should follow.
 
 | Recipe | Category | Requires | What It Does | Setup Time |
 |--------|----------|----------|-------------|------------|
@@ -73,6 +75,19 @@ setup_time: 30 min              # estimated time to complete setup
 **The recipe IS the installer.** Your agent (OpenClaw, Hermes, Claude Code) reads
 the markdown body and executes the setup steps. It asks you for API keys, validates
 each one, configures the integration, and runs a smoke test.
+
+Use the CLI to package that handoff cleanly:
+
+```bash
+gbrain integrations install email-to-brain
+gbrain integrations install email-to-brain --json
+```
+
+The install payload includes:
+- the selected recipe
+- dependency order
+- consolidated secret checklist
+- the full recipe body for the agent to execute
 
 ## The Deterministic Collector Pattern
 

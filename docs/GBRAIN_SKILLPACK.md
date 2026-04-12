@@ -100,7 +100,8 @@ Keeping it running and up to date.
 | `gbrain sync` | Sync local markdown repo to gbrain index |
 | `gbrain import <path>` | Import files into the brain |
 | `gbrain embed --stale` | Re-embed pages with stale or missing embeddings |
-| `gbrain integrations` | Manage integration recipes (senses + reflexes) |
+| `gbrain integrations` | Show integration dashboard (available/configured/active) |
+| `gbrain integrations install <id>` | Build install payload from recipe + dependencies for an agent to execute |
 | `gbrain stats` | Show brain statistics (page count, last sync, etc.) |
 | `gbrain doctor` | Diagnose brain health issues |
 | `gbrain check-update` | Check for new versions and integration recipes |
