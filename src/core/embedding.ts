@@ -1,7 +1,12 @@
 /**
- * Embedding Service — Multi-Provider
+ * Embedding Service — Multi-Provider (v2)
  *
- * Supports: OpenAI, Gemini, Ollama, and any OpenAI-compatible endpoint.
+ * Supports:
+ *   International: OpenAI, Gemini, Ollama
+ *   China: DashScope (Qwen), DeepSeek, Zhipu (GLM)
+ *   Generic: any OpenAI-compatible endpoint
+ *
+ * All providers use OpenAI SDK with different baseURL + apiKey.
  * Provider is selected via GBRAIN_EMBEDDING_PROVIDER env var or config file.
  * Default: "openai" (backward compatible).
  *
@@ -14,7 +19,14 @@ import { loadConfig } from './config.ts';
 
 // ── Provider registry ──────────────────────────────────────────────
 
-export type EmbeddingProvider = 'openai' | 'gemini' | 'ollama' | 'custom';
+export type EmbeddingProvider =
+  | 'openai'
+  | 'gemini'
+  | 'ollama'
+  | 'dashscope'   // Alibaba Qwen
+  | 'deepseek'
+  | 'zhipu'       // GLM / ChatGLM
+  | 'custom';
 
 interface ProviderConfig {
   provider: EmbeddingProvider;
@@ -22,13 +34,23 @@ interface ProviderConfig {
   dimensions: number;
   apiKey?: string;
   baseUrl?: string;
+  /** Whether to send `dimensions` param in API request */
+  sendDimensions: boolean;
 }
 
-const PROVIDER_DEFAULTS: Record<EmbeddingProvider, { model: string; dimensions: number }> = {
-  openai:  { model: 'text-embedding-3-large', dimensions: 1536 },
-  gemini:  { model: 'gemini-embedding-001',    dimensions: 1536 },
-  ollama:  { model: 'nomic-embed-text',       dimensions: 768  },
-  custom:  { model: 'text-embedding-3-large', dimensions: 1536 },
+const PROVIDER_DEFAULTS: Record<EmbeddingProvider, {
+  model: string;
+  dimensions: number;
+  baseUrl?: string;
+  sendDimensions: boolean;
+}> = {
+  openai:    { model: 'text-embedding-3-large', dimensions: 1536, sendDimensions: true },
+  gemini:    { model: 'gemini-embedding-001',   dimensions: 768,  baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', sendDimensions: true },
+  ollama:    { model: 'nomic-embed-text',       dimensions: 768,  baseUrl: 'http://localhost:11434/v1', sendDimensions: false },
+  dashscope: { model: 'text-embedding-v3',      dimensions: 1024, baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', sendDimensions: true },
+  deepseek:  { model: 'deepseek-embedding-v2',  dimensions: 768,  baseUrl: 'https://api.deepseek.com/v1', sendDimensions: false },
+  zhipu:     { model: 'embedding-3',            dimensions: 2048, baseUrl: 'https://open.bigmodel.cn/api/paas/v4', sendDimensions: false },
+  custom:    { model: 'text-embedding-3-large', dimensions: 1536, sendDimensions: true },
 };
 
 // ── Configuration resolution ───────────────────────────────────────
@@ -55,6 +77,8 @@ function resolveProvider(): ProviderConfig {
     10
   );
 
+  const sendDimensions = defaults.sendDimensions;
+
   let apiKey: string | undefined;
   let baseUrl: string | undefined;
 
@@ -65,11 +89,23 @@ function resolveProvider(): ProviderConfig {
       break;
     case 'gemini':
       apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || (config as any)?.gemini_api_key;
-      baseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+      baseUrl = defaults.baseUrl;
       break;
     case 'ollama':
-      baseUrl = process.env.OLLAMA_BASE_URL || (config as any)?.ollama_base_url || 'http://localhost:11434/v1';
+      baseUrl = process.env.OLLAMA_BASE_URL || (config as any)?.ollama_base_url || defaults.baseUrl;
       apiKey = 'ollama'; // Ollama doesn't need a real key but OpenAI SDK requires one
+      break;
+    case 'dashscope':
+      apiKey = process.env.DASHSCOPE_API_KEY || (config as any)?.dashscope_api_key;
+      baseUrl = process.env.DASHSCOPE_BASE_URL || (config as any)?.dashscope_base_url || defaults.baseUrl;
+      break;
+    case 'deepseek':
+      apiKey = process.env.DEEPSEEK_API_KEY || (config as any)?.deepseek_api_key;
+      baseUrl = process.env.DEEPSEEK_BASE_URL || (config as any)?.deepseek_base_url || defaults.baseUrl;
+      break;
+    case 'zhipu':
+      apiKey = process.env.ZHIPU_API_KEY || (config as any)?.zhipu_api_key;
+      baseUrl = process.env.ZHIPU_BASE_URL || (config as any)?.zhipu_base_url || defaults.baseUrl;
       break;
     case 'custom':
       apiKey = process.env.GBRAIN_EMBEDDING_API_KEY || (config as any)?.embedding_api_key;
@@ -77,7 +113,7 @@ function resolveProvider(): ProviderConfig {
       break;
   }
 
-  return { provider, model, dimensions, apiKey, baseUrl };
+  return { provider, model, dimensions, apiKey, baseUrl, sendDimensions };
 }
 
 // ── Client management ──────────────────────────────────────────────
@@ -100,8 +136,8 @@ function getClient(): { client: OpenAI; config: ProviderConfig } {
     if (config.apiKey) clientOpts.apiKey = config.apiKey;
     if (config.baseUrl) clientOpts.baseURL = config.baseUrl;
 
-    // Gemini and Ollama don't need org/project
-    if (config.provider === 'gemini' || config.provider === 'ollama') {
+    // Non-OpenAI providers don't need org/project
+    if (config.provider !== 'openai') {
       clientOpts.organization = null;
       clientOpts.project = null;
     }
@@ -139,13 +175,15 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      // Gemini's OpenAI-compat endpoint supports `dimensions` for
-      // gemini-embedding-001 to truncate output dimensions.
       const createParams: Record<string, unknown> = {
         model: config.model,
         input: texts,
-        dimensions: config.dimensions,
       };
+
+      // Only send dimensions if the provider supports it
+      if (config.sendDimensions && config.dimensions) {
+        createParams.dimensions = config.dimensions;
+      }
 
       const response = await client.embeddings.create(createParams as any);
 
@@ -186,7 +224,6 @@ function sleep(ms: number): Promise<void> {
 
 // ── Exported constants (dynamic based on config) ───────────────────
 
-// For backward compatibility, export resolved values
 const _resolved = resolveProvider();
 export const EMBEDDING_MODEL = _resolved.model;
 export const EMBEDDING_DIMENSIONS = _resolved.dimensions;
