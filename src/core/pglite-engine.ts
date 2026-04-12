@@ -157,52 +157,62 @@ export class PGLiteEngine implements BrainEngine {
   // Search
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
     const limit = opts?.limit || 20;
+    const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
 
     const { rows } = await this.db.query(
-      `SELECT DISTINCT ON (p.slug)
+      `SELECT
         p.slug, p.id as page_id, p.title, p.type,
-        cc.chunk_text, cc.chunk_source,
+        cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
         ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS score,
         CASE WHEN p.updated_at < (
           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
         ) THEN true ELSE false END AS stale
       FROM pages p
       JOIN content_chunks cc ON cc.page_id = p.id
-      WHERE p.search_vector @@ websearch_to_tsquery('english', $1)
-      ORDER BY p.slug, score DESC`,
-      [query]
+      WHERE p.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}
+      ORDER BY score DESC
+      LIMIT $2`,
+      [query, limit]
     );
 
-    // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit
-    const sorted = (rows as Record<string, unknown>[]).sort(
-      (a: any, b: any) => b.score - a.score
-    );
-    sorted.splice(limit);
-
-    return sorted.map(rowToSearchResult);
+    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
     const limit = opts?.limit || 20;
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
+    const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
 
     const { rows } = await this.db.query(
       `SELECT
         p.slug, p.id as page_id, p.title, p.type,
-        cc.chunk_text, cc.chunk_source,
+        cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
         1 - (cc.embedding <=> $1::vector) AS score,
         CASE WHEN p.updated_at < (
           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
         ) THEN true ELSE false END AS stale
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL
+      WHERE cc.embedding IS NOT NULL ${detailFilter}
       ORDER BY cc.embedding <=> $1::vector
       LIMIT $2`,
       [vecStr, limit]
     );
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+  }
+
+  async getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>> {
+    if (ids.length === 0) return new Map();
+    const { rows } = await this.db.query(
+      `SELECT id, embedding FROM content_chunks WHERE id = ANY($1::int[]) AND embedding IS NOT NULL`,
+      [ids]
+    );
+    const result = new Map<number, Float32Array>();
+    for (const row of rows as Record<string, unknown>[]) {
+      if (row.embedding) result.set(row.id as number, row.embedding as Float32Array);
+    }
+    return result;
   }
 
   // Chunks

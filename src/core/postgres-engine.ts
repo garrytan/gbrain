@@ -180,22 +180,36 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const limit = opts?.limit || 20;
 
-    const rows = await sql`
-      SELECT DISTINCT ON (p.slug)
-        p.slug, p.id as page_id, p.title, p.type,
-        cc.chunk_text, cc.chunk_source,
-        ts_rank(p.search_vector, websearch_to_tsquery('english', ${query})) AS score,
-        CASE WHEN p.updated_at < (
-          SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-        ) THEN true ELSE false END AS stale
-      FROM pages p
-      JOIN content_chunks cc ON cc.page_id = p.id
-      WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
-      ORDER BY p.slug, score DESC
-    `;
-    // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit
-    rows.sort((a: any, b: any) => b.score - a.score);
-    rows.splice(limit);
+    const rows = opts?.detail === 'low'
+      ? await sql`
+          SELECT
+            p.slug, p.id as page_id, p.title, p.type,
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+            ts_rank(p.search_vector, websearch_to_tsquery('english', ${query})) AS score,
+            CASE WHEN p.updated_at < (
+              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+            ) THEN true ELSE false END AS stale
+          FROM pages p
+          JOIN content_chunks cc ON cc.page_id = p.id
+          WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
+            AND cc.chunk_source = 'compiled_truth'
+          ORDER BY score DESC
+          LIMIT ${limit}
+        `
+      : await sql`
+          SELECT
+            p.slug, p.id as page_id, p.title, p.type,
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+            ts_rank(p.search_vector, websearch_to_tsquery('english', ${query})) AS score,
+            CASE WHEN p.updated_at < (
+              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+            ) THEN true ELSE false END AS stale
+          FROM pages p
+          JOIN content_chunks cc ON cc.page_id = p.id
+          WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
+          ORDER BY score DESC
+          LIMIT ${limit}
+        `;
 
     return rows.map(rowToSearchResult);
   }
@@ -205,22 +219,51 @@ export class PostgresEngine implements BrainEngine {
     const limit = opts?.limit || 20;
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
 
-    const rows = await sql`
-      SELECT
-        p.slug, p.id as page_id, p.title, p.type,
-        cc.chunk_text, cc.chunk_source,
-        1 - (cc.embedding <=> ${vecStr}::vector) AS score,
-        CASE WHEN p.updated_at < (
-          SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-        ) THEN true ELSE false END AS stale
-      FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL
-      ORDER BY cc.embedding <=> ${vecStr}::vector
-      LIMIT ${limit}
-    `;
+    const rows = opts?.detail === 'low'
+      ? await sql`
+          SELECT
+            p.slug, p.id as page_id, p.title, p.type,
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+            1 - (cc.embedding <=> ${vecStr}::vector) AS score,
+            CASE WHEN p.updated_at < (
+              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+            ) THEN true ELSE false END AS stale
+          FROM content_chunks cc
+          JOIN pages p ON p.id = cc.page_id
+          WHERE cc.embedding IS NOT NULL AND cc.chunk_source = 'compiled_truth'
+          ORDER BY cc.embedding <=> ${vecStr}::vector
+          LIMIT ${limit}
+        `
+      : await sql`
+          SELECT
+            p.slug, p.id as page_id, p.title, p.type,
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+            1 - (cc.embedding <=> ${vecStr}::vector) AS score,
+            CASE WHEN p.updated_at < (
+              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+            ) THEN true ELSE false END AS stale
+          FROM content_chunks cc
+          JOIN pages p ON p.id = cc.page_id
+          WHERE cc.embedding IS NOT NULL
+          ORDER BY cc.embedding <=> ${vecStr}::vector
+          LIMIT ${limit}
+        `;
 
     return rows.map(rowToSearchResult);
+  }
+
+  async getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>> {
+    if (ids.length === 0) return new Map();
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, embedding FROM content_chunks
+      WHERE id = ANY(${ids}::int[]) AND embedding IS NOT NULL
+    `;
+    const result = new Map<number, Float32Array>();
+    for (const row of rows) {
+      if (row.embedding) result.set(row.id as number, row.embedding as Float32Array);
+    }
+    return result;
   }
 
   // Chunks

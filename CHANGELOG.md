@@ -2,6 +2,26 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.8.1] - 2026-04-11
+
+### Added
+
+- **Search now knows what matters.** Compiled truth (your distilled assessments above the `---`) now ranks 2x higher than timeline entries in hybrid search. Query "what does Variant do?" and you get the assessment, not a meeting note from March. The boost is applied after RRF normalization so it plays fair with the rest of the ranking pipeline.
+- **Control how deep search goes.** New `--detail` flag on `gbrain query`: `low` returns only compiled truth, `medium` (default) returns everything with dedup, `high` returns all chunks uncapped. MCP picks it up automatically. Auto-escalates from low to high if no results found.
+- **Cosine re-scoring for query-specific ranking.** After RRF fusion, chunks are re-scored against the actual query embedding. Two questions about the same page now surface different sections. "AI security" gets the security content, "when did we last meet" gets the timeline.
+- **Source-aware dedup.** The dedup pipeline now guarantees at least one compiled truth chunk per page in results, even if timeline chunks scored higher on keyword match.
+- **Search debug mode.** Set `GBRAIN_SEARCH_DEBUG=1` to see intermediate scores (RRF raw, normalized, boosted, cosine, blended) for every result. Useful for tuning.
+
+### Changed
+
+- **Keyword search returns chunks, not pages.** Removed `DISTINCT ON (p.slug)` from keyword search. Previously returned only 1 chunk per page. Now returns multiple chunks per page, properly handled by the dedup pipeline. The bare `search` operation also now runs through dedup.
+- **RRF dedup key uses chunk IDs.** Changed from text-prefix matching (`slug:text50`) to `slug:chunk_id` with text-prefix fallback. Eliminates silent chunk loss when two chunks share the same opening text.
+- **SearchResult now includes chunk_id and chunk_index.** Both engines return these fields from all search queries. Enables re-scoring and better dedup.
+
+### Credits
+
+Inspired by [Ramp Labs' "Latent Briefing" paper](https://ramp.com) (April 2026). Their research on KV cache compaction for multi-agent memory sharing directly informed the compiled truth boosting, variable detail levels, and query-specific re-scoring.
+
 ## [0.8.0] - 2026-04-11
 
 ### Added

@@ -2,8 +2,11 @@
  * Hybrid Search with Reciprocal Rank Fusion (RRF)
  * Ported from production Ruby implementation (content_chunk.rb)
  *
+ * Pipeline: keyword + vector → RRF fusion → normalize → boost → cosine re-score → dedup
+ *
  * RRF score = sum(1 / (60 + rank_in_list))
- * Merges vector + keyword results fairly regardless of score scale.
+ * Compiled truth boost: 2.0x for compiled_truth chunks after RRF normalization
+ * Cosine re-score: blend 0.7*rrf + 0.3*cosine for query-specific ranking
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -12,6 +15,8 @@ import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 
 const RRF_K = 60;
+const COMPILED_TRUTH_BOOST = 2.0;
+const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
@@ -24,9 +29,10 @@ export async function hybridSearch(
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
   const limit = opts?.limit || 20;
+  const searchOpts: SearchOpts = { limit: limit * 2, detail: opts?.detail };
 
   // Run keyword search (always available, no API key needed)
-  const keywordResults = await engine.searchKeyword(query, { limit: limit * 2 });
+  const keywordResults = await engine.searchKeyword(query, searchOpts);
 
   // Skip vector search entirely if no OpenAI key is configured
   if (!process.env.OPENAI_API_KEY) {
@@ -46,10 +52,12 @@ export async function hybridSearch(
 
   // Embed all query variants and run vector search
   let vectorLists: SearchResult[][] = [];
+  let queryEmbedding: Float32Array | null = null;
   try {
     const embeddings = await Promise.all(queries.map(q => embed(q)));
+    queryEmbedding = embeddings[0];
     vectorLists = await Promise.all(
-      embeddings.map(emb => engine.searchVector(emb, { limit: limit * 2 })),
+      embeddings.map(emb => engine.searchVector(emb, searchOpts)),
     );
   } catch {
     // Embedding failure is non-fatal, fall back to keyword-only
@@ -59,12 +67,22 @@ export async function hybridSearch(
     return dedupResults(keywordResults).slice(0, limit);
   }
 
-  // Merge all result lists via RRF
+  // Merge all result lists via RRF (includes normalization + boost)
   const allLists = [...vectorLists, keywordResults];
-  const fused = rrfFusion(allLists);
+  let fused = rrfFusion(allLists);
+
+  // Cosine re-scoring before dedup so semantically better chunks survive
+  if (queryEmbedding) {
+    fused = await cosineReScore(engine, fused, queryEmbedding);
+  }
 
   // Dedup
   const deduped = dedupResults(fused);
+
+  // Auto-escalate: if detail=low returned 0, retry with high
+  if (deduped.length === 0 && opts?.detail === 'low') {
+    return hybridSearch(engine, query, { ...opts, detail: 'high' });
+  }
 
   return deduped.slice(0, limit);
 }
@@ -72,6 +90,7 @@ export async function hybridSearch(
 /**
  * Reciprocal Rank Fusion: merge multiple ranked lists.
  * Each result gets score = sum(1 / (K + rank)) across all lists it appears in.
+ * After accumulation: normalize to 0-1, then boost compiled_truth chunks.
  */
 function rrfFusion(lists: SearchResult[][]): SearchResult[] {
   const scores = new Map<string, { result: SearchResult; score: number }>();
@@ -79,7 +98,7 @@ function rrfFusion(lists: SearchResult[][]): SearchResult[] {
   for (const list of lists) {
     for (let rank = 0; rank < list.length; rank++) {
       const r = list[rank];
-      const key = `${r.slug}:${r.chunk_text.slice(0, 50)}`;
+      const key = `${r.slug}:${r.chunk_id ?? r.chunk_text.slice(0, 50)}`;
       const existing = scores.get(key);
       const rrfScore = 1 / (RRF_K + rank);
 
@@ -91,8 +110,83 @@ function rrfFusion(lists: SearchResult[][]): SearchResult[] {
     }
   }
 
-  // Sort by fused score descending
-  return Array.from(scores.values())
+  const entries = Array.from(scores.values());
+  if (entries.length === 0) return [];
+
+  // Normalize to 0-1 by dividing by observed max
+  const maxScore = Math.max(...entries.map(e => e.score));
+  if (maxScore > 0) {
+    for (const e of entries) {
+      const rawScore = e.score;
+      e.score = e.score / maxScore;
+
+      // Apply compiled truth boost after normalization
+      const boost = e.result.chunk_source === 'compiled_truth' ? COMPILED_TRUTH_BOOST : 1.0;
+      e.score *= boost;
+
+      if (DEBUG) {
+        console.error(`[search-debug] ${e.result.slug}:${e.result.chunk_id} rrf_raw=${rawScore.toFixed(4)} rrf_norm=${(rawScore / maxScore).toFixed(4)} boost=${boost} boosted=${e.score.toFixed(4)} source=${e.result.chunk_source}`);
+      }
+    }
+  }
+
+  // Sort by boosted score descending
+  return entries
     .sort((a, b) => b.score - a.score)
     .map(({ result, score }) => ({ ...result, score }));
+}
+
+/**
+ * Cosine re-scoring: blend RRF score with query-chunk cosine similarity.
+ * Runs before dedup so semantically better chunks survive.
+ */
+async function cosineReScore(
+  engine: BrainEngine,
+  results: SearchResult[],
+  queryEmbedding: Float32Array,
+): Promise<SearchResult[]> {
+  const chunkIds = results
+    .map(r => r.chunk_id)
+    .filter((id): id is number => id != null);
+
+  if (chunkIds.length === 0) return results;
+
+  let embeddingMap: Map<number, Float32Array>;
+  try {
+    embeddingMap = await engine.getEmbeddingsByChunkIds(chunkIds);
+  } catch {
+    // DB error is non-fatal, return results without re-scoring
+    return results;
+  }
+
+  if (embeddingMap.size === 0) return results;
+
+  // Normalize RRF scores to 0-1 for blending
+  const maxRrf = Math.max(...results.map(r => r.score));
+
+  return results.map(r => {
+    const chunkEmb = r.chunk_id != null ? embeddingMap.get(r.chunk_id) : undefined;
+    if (!chunkEmb) return r;
+
+    const cosine = cosineSimilarity(queryEmbedding, chunkEmb);
+    const normRrf = maxRrf > 0 ? r.score / maxRrf : 0;
+    const blended = 0.7 * normRrf + 0.3 * cosine;
+
+    if (DEBUG) {
+      console.error(`[search-debug] ${r.slug}:${r.chunk_id} cosine=${cosine.toFixed(4)} norm_rrf=${normRrf.toFixed(4)} blended=${blended.toFixed(4)}`);
+    }
+
+    return { ...r, score: blended };
+  }).sort((a, b) => b.score - a.score);
+}
+
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  let dot = 0, magA = 0, magB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    magA += a[i] * a[i];
+    magB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(magA) * Math.sqrt(magB);
+  return denom === 0 ? 0 : dot / denom;
 }
