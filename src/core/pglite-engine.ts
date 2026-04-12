@@ -5,6 +5,7 @@ import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
@@ -23,6 +24,7 @@ type PGLiteDB = PGlite;
 
 export class PGLiteEngine implements BrainEngine {
   private _db: PGLiteDB | null = null;
+  private _lock: LockHandle | null = null;
 
   get db(): PGLiteDB {
     if (!this._db) throw new Error('PGLite not connected. Call connect() first.');
@@ -32,6 +34,14 @@ export class PGLiteEngine implements BrainEngine {
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
     const dataDir = config.database_path || undefined; // undefined = in-memory
+
+    // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
+    this._lock = await acquireLock(dataDir);
+
+    if (!this._lock.acquired) {
+      throw new Error('Could not acquire PGLite lock. Another gbrain process is using the database.');
+    }
+
     this._db = await PGlite.create({
       dataDir,
       extensions: { vector, pg_trgm },
@@ -42,6 +52,10 @@ export class PGLiteEngine implements BrainEngine {
     if (this._db) {
       await this._db.close();
       this._db = null;
+    }
+    if (this._lock?.acquired) {
+      await releaseLock(this._lock);
+      this._lock = null;
     }
   }
 
