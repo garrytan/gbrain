@@ -2,7 +2,7 @@ import { readFileSync, statSync } from 'fs';
 import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
-import { chunkText } from './chunkers/recursive.ts';
+import { chunkTextSemantic } from './chunkers/semantic.ts';
 import { embedBatch } from './embedding.ts';
 import type { ChunkInput } from './types.ts';
 
@@ -46,15 +46,15 @@ export async function importFromContent(
     return { slug, status: 'skipped', chunks: 0 };
   }
 
-  // Chunk compiled_truth and timeline
+  const embedFn = opts.noEmbed ? undefined : embedBatch;
   const chunks: ChunkInput[] = [];
   if (parsed.compiled_truth.trim()) {
-    for (const c of chunkText(parsed.compiled_truth)) {
+    for (const c of await chunkTextSemantic(parsed.compiled_truth, { embedFn })) {
       chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
     }
   }
   if (parsed.timeline?.trim()) {
-    for (const c of chunkText(parsed.timeline)) {
+    for (const c of await chunkTextSemantic(parsed.timeline, { embedFn })) {
       chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
     }
   }
