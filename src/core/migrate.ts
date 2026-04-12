@@ -82,6 +82,16 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 5,
+    name: 'typed_link_identity',
+    sql: `
+      ALTER TABLE links DROP CONSTRAINT IF EXISTS links_from_page_id_to_page_id_key;
+      DROP INDEX IF EXISTS links_from_page_id_to_page_id_key;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_links_from_to_type
+        ON links(from_page_id, to_page_id, link_type);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

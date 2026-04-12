@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS links (
   link_type    TEXT    NOT NULL DEFAULT '',
   context      TEXT    NOT NULL DEFAULT '',
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(from_page_id, to_page_id)
+  UNIQUE(from_page_id, to_page_id, link_type)
 );
 
 CREATE INDEX IF NOT EXISTS idx_links_from ON links(from_page_id);

@@ -62,6 +62,50 @@
 
 ## P2
 
+### Obsidian non-markdown embed graph nodes
+**What:** Represent Obsidian embeds such as `![[image.png]]`, PDFs, audio, and other attachments as graph-addressable entities instead of only reporting them during Obsidian link sync.
+
+**Why:** The first Obsidian graph sync milestone should safely mirror page-to-page links. File embeds require a broader file/attachment edge model because the current `links` table points to `pages`, not stored files.
+
+**Pros:** Complete parity with Obsidian's graph, including media-heavy vaults.
+
+**Cons:** Touches file storage, graph traversal, and health semantics beyond the first milestone.
+
+**Context:** Deferred during Obsidian sync autoplan (2026-04-12). V1 should report non-markdown embeds as `file_embeds_unlinked` and create `obsidian_embed` links only when the embed target resolves to a markdown page.
+
+### Semantic backlink repair after Obsidian graph backfill
+**What:** Run or build higher-level semantic backlink repair only after deterministic Obsidian `[[wikilinks]]` have been imported into the structured graph.
+
+**Why:** Native vault links are the user's authored source of truth. Semantic/agent-created relationships should enrich that graph, not compensate for missing deterministic edges.
+
+**Pros:** Cleaner graph provenance, fewer noisy timeline backlinks, better review surface for agent-created links.
+
+**Cons:** Requires a second phase after Obsidian sync lands.
+
+**Context:** Deferred during Obsidian sync autoplan (2026-04-12). Keep timeline entries reserved for events/evidence, not raw wikilink fanout.
+
+### Obsidian alias frontmatter resolver
+**What:** Teach Obsidian link resolution to use note aliases from frontmatter as a fallback after exact path and basename matching.
+
+**Why:** Obsidian aliases are useful for human-authored links, but global alias matching can be many-to-one and requires careful ambiguity reporting.
+
+**Pros:** Better compatibility with mature Obsidian vaults.
+
+**Cons:** Can silently misresolve if aliases are duplicated or stale.
+
+**Context:** Deferred during Obsidian sync autoplan (2026-04-12). V1 should report unresolved/ambiguous links rather than infer through aliases.
+
+### Built-in Obsidian sync watcher
+**What:** Add a first-class watch/daemon mode that runs content sync, stale embedding, and Obsidian link reconciliation on an interval or filesystem events.
+
+**Why:** Users can initially use cron, launchd, or git hooks. A built-in watcher would make continuous mirroring turnkey.
+
+**Pros:** Better user experience for always-current brains.
+
+**Cons:** Needs lifecycle management, duplicate-run protection, and operational docs.
+
+**Context:** Deferred during Obsidian sync autoplan (2026-04-12). First milestone should ship deterministic sync and dry-run/backfill before daemonizing it.
+
 ### Community recipe submission (`gbrain integrations submit`)
 **What:** Package a user's custom integration recipe as a PR to the GBrain repo. Validates frontmatter, checks constrained DSL health_checks, creates PR with template.
 

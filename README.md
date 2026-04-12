@@ -574,6 +574,7 @@ SEARCH
 IMPORT/EXPORT
   gbrain import <dir> [--no-embed]          Import markdown directory (idempotent)
   gbrain sync [--repo <path>] [flags]       Git-to-brain incremental sync
+  gbrain obsidian-link-sync --repo <path>   Mirror Obsidian wikilinks into links
   gbrain export [--dir ./out/]              Export to markdown (round-trip)
 
 FILES

@@ -43,7 +43,7 @@ function createTestRepo(): string {
     'tags: [engineer, frontend]',
     '---',
     '',
-    'Alice is a frontend engineer at Acme Corp.',
+    'Alice is a frontend engineer at Acme Corp. She follows [[concepts/testing]].',
     '',
     '---',
     '',
@@ -103,6 +103,9 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const testing = await engine.getPage('concepts/testing');
     expect(testing).not.toBeNull();
     expect(testing!.title).toBe('Testing Philosophy');
+
+    const links = await engine.getLinks('people/alice');
+    expect(links.some(l => l.to_slug === 'concepts/testing' && l.link_type === 'obsidian_link')).toBe(true);
   });
 
   test('second sync with no changes returns up_to_date', async () => {
@@ -133,7 +136,7 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
       'tags: [designer]',
       '---',
       '',
-      'Bob is a product designer who loves typography.',
+      'Bob is a product designer who loves typography and works with [[people/alice|Alice]].',
     ].join('\n'));
     gitCommit(repoPath, 'add bob');
 
@@ -151,6 +154,9 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     expect(bob).not.toBeNull();
     expect(bob!.title).toBe('Bob Jones');
     expect(bob!.compiled_truth).toContain('typography');
+
+    const links = await engine.getLinks('people/bob');
+    expect(links.some(l => l.to_slug === 'people/alice' && l.context.includes('Alice'))).toBe(true);
   });
 
   test('incremental sync picks up modifications — corrected text appears', async () => {

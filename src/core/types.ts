@@ -79,6 +79,18 @@ export interface Link {
   context: string;
 }
 
+export interface LinkInput {
+  to_slug: string;
+  context?: string;
+}
+
+export interface LinkReconcileResult {
+  added: number;
+  updated: number;
+  removed: number;
+  unchanged: number;
+}
+
 export interface GraphNode {
   slug: string;
   title: string;

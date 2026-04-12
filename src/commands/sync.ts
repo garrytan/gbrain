@@ -5,6 +5,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
 import { buildSyncManifest, isSyncable, pathToSlug } from '../core/sync.ts';
 import type { SyncManifest } from '../core/sync.ts';
+import { buildVaultIndex, type VaultIndex } from '../core/obsidian-links.ts';
 
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run';
@@ -173,6 +174,19 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     console.log(`Large sync (${totalChanges} files). Importing text, deferring embeddings.`);
   }
 
+  let obsidianIndex: VaultIndex | null = null;
+  if (totalChanges > 0) {
+    const { collectMarkdownFiles } = await import('./import.ts');
+    const allRelativePaths = collectMarkdownFiles(repoPath).map(path => relative(repoPath, path));
+    obsidianIndex = buildVaultIndex(allRelativePaths);
+    if (obsidianIndex.slugCollisions.size > 0) {
+      const details = Array.from(obsidianIndex.slugCollisions)
+        .map(([slug, paths]) => `${slug}: ${paths.join(', ')}`)
+        .join('; ');
+      throw new Error(`Obsidian link sync aborted: multiple files collapse to the same gbrain slug. ${details}`);
+    }
+  }
+
   const pagesAffected: string[] = [];
   let chunksCreated = 0;
   const start = Date.now();
@@ -228,6 +242,17 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   }
 
   const elapsed = Date.now() - start;
+
+  if (obsidianIndex) {
+    const { performObsidianLinkSync } = await import('./obsidian-link-sync.ts');
+    const linkReport = await performObsidianLinkSync(engine, {
+      repoPath,
+      dryRun: false,
+      json: false,
+      strict: false,
+    });
+    console.log(`Obsidian links: +${linkReport.added} ~${linkReport.updated} -${linkReport.removed}, unresolved ${linkReport.unresolved.length}, ambiguous ${linkReport.ambiguous.length}`);
+  }
 
   // Update sync state AFTER all changes succeed
   await engine.setConfig('sync.last_commit', headCommit);

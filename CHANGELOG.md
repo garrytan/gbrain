@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- **Obsidian graph sync.** `gbrain import` and `gbrain sync` now materialize deterministic Obsidian `[[wikilinks]]` as typed `obsidian_link` / `obsidian_embed` graph edges. `gbrain obsidian-link-sync --repo <vault> --dry-run` backfills existing vaults and reports unresolved or ambiguous links before writing.
+
+### Changed
+
+- **Typed links can coexist between the same pages.** Link uniqueness now includes `link_type`, so an Obsidian edge can live beside curated relationship edges without overwriting them.
+
 ## [0.9.1] - 2026-04-11
 
 ### Fixed
