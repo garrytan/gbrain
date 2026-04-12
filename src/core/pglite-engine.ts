@@ -2,6 +2,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
@@ -21,27 +23,145 @@ import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } f
 
 type PGLiteDB = PGlite;
 
+interface PGLiteLockInfo {
+  pid: number;
+  acquiredAt: string;
+  dataDir: string;
+}
+
 export class PGLiteEngine implements BrainEngine {
   private _db: PGLiteDB | null = null;
+  private _dataDir: string | null = null;
+  private _lockPath: string | null = null;
+  private _lockFd: number | null = null;
 
   get db(): PGLiteDB {
     if (!this._db) throw new Error('PGLite not connected. Call connect() first.');
     return this._db;
   }
 
+  private getLockPath(dataDir: string): string {
+    return join(dataDir, '.gbrain.lock');
+  }
+
+  private readLockInfo(lockPath: string): PGLiteLockInfo | null {
+    try {
+      return JSON.parse(readFileSync(lockPath, 'utf-8')) as PGLiteLockInfo;
+    } catch {
+      return null;
+    }
+  }
+
+  private isPidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private cleanupStalePostmasterPid(dataDir: string): void {
+    const pidPath = join(dataDir, 'postmaster.pid');
+    if (!existsSync(pidPath)) return;
+
+    try {
+      const raw = readFileSync(pidPath, 'utf-8').trim();
+      const firstLine = raw.split(/\r?\n/, 1)[0]?.trim();
+      const pid = Number.parseInt(firstLine || '', 10);
+      if (!Number.isFinite(pid) || !this.isPidAlive(pid)) {
+        unlinkSync(pidPath);
+      }
+    } catch {
+      // Leave unknown pid files alone rather than risk corrupting a live DB.
+    }
+  }
+
+  private acquireLock(dataDir: string): void {
+    mkdirSync(dirname(dataDir), { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+
+    const lockPath = this.getLockPath(dataDir);
+    try {
+      const fd = openSync(lockPath, 'wx');
+      const info: PGLiteLockInfo = {
+        pid: process.pid,
+        acquiredAt: new Date().toISOString(),
+        dataDir,
+      };
+      writeFileSync(fd, JSON.stringify(info, null, 2));
+      this._lockFd = fd;
+      this._lockPath = lockPath;
+    } catch (error: unknown) {
+      const info = this.readLockInfo(lockPath);
+      if (info?.pid && !this.isPidAlive(info.pid)) {
+        rmSync(lockPath, { force: true });
+        const fd = openSync(lockPath, 'wx');
+        const recovered: PGLiteLockInfo = {
+          pid: process.pid,
+          acquiredAt: new Date().toISOString(),
+          dataDir,
+        };
+        writeFileSync(fd, JSON.stringify(recovered, null, 2));
+        this._lockFd = fd;
+        this._lockPath = lockPath;
+        return;
+      }
+
+      const owner = info?.pid ? ` by pid ${info.pid}` : '';
+      throw new Error(
+        `Local PGLite brain is already in use${owner}. Run one gbrain command at a time, or remove stale lock ${lockPath} after confirming no other gbrain process is running.`
+      );
+    }
+  }
+
+  private releaseLock(): void {
+    if (this._lockFd !== null) {
+      try {
+        closeSync(this._lockFd);
+      } catch {
+        // best effort
+      }
+      try {
+        if (this._lockPath) unlinkSync(this._lockPath);
+      } catch {
+        // best effort
+      }
+      this._lockFd = null;
+      this._lockPath = null;
+    }
+  }
+
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
     const dataDir = config.database_path || undefined; // undefined = in-memory
-    this._db = await PGlite.create({
-      dataDir,
-      extensions: { vector, pg_trgm },
-    });
+    if (dataDir) {
+      this.acquireLock(dataDir);
+      this.cleanupStalePostmasterPid(dataDir);
+      this._dataDir = dataDir;
+    }
+
+    try {
+      this._db = await PGlite.create({
+        dataDir,
+        extensions: { vector, pg_trgm },
+      });
+    } catch (error: unknown) {
+      this.releaseLock();
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(`PGLite failed to initialize properly: ${msg}`);
+    }
   }
 
   async disconnect(): Promise<void> {
-    if (this._db) {
-      await this._db.close();
-      this._db = null;
+    try {
+      if (this._db) {
+        await this._db.close();
+        this._db = null;
+      }
+    } finally {
+      this.releaseLock();
+      this._dataDir = null;
     }
   }
 
