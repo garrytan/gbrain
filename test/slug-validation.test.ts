@@ -97,7 +97,7 @@ describe('slugifyPath', () => {
   });
 
   test('Apple Notes example 2', () => {
-    expect(slugifyPath('Apple Notes/2018-12-14 Garry Tan Photo.md')).toBe('apple-notes/2018-12-14-garry-tan-photo');
+    expect(slugifyPath('Apple Notes/2018-12-14 Team Photo.md')).toBe('apple-notes/2018-12-14-team-photo');
   });
 
   test('Apple Notes example 3 (parens and ellipsis)', () => {

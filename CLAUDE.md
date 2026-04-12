@@ -26,16 +26,15 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 - `src/core/sync.ts` — Pure sync functions (manifest parsing, filtering, slug conversion)
 - `src/core/storage.ts` — Pluggable storage interface (S3, Supabase Storage, local)
 - `src/core/supabase-admin.ts` — Supabase admin API (project discovery, pgvector check)
-- `src/core/file-resolver.ts` — MIME detection, content hashing for file uploads
+- `src/core/file-resolver.ts` — File resolution with fallback chain (local -> .redirect.yaml -> .redirect -> .supabase)
 - `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided)
 - `src/core/search/` — Hybrid search: vector + keyword + RRF + multi-query expansion + dedup
 - `src/core/search/eval.ts` — Retrieval eval harness: P@k, R@k, MRR, nDCG@k metrics + runEval() orchestrator
 - `src/commands/eval.ts` — `gbrain eval` command: single-run table + A/B config comparison
 - `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff
 - `src/mcp/server.ts` — MCP stdio server (generated from operations)
-- `supabase/functions/gbrain-mcp/index.ts` — Remote MCP server (Supabase Edge Function)
-- `src/edge-entry.ts` — Curated bundle entry point for Edge Function (excludes fs-dependent modules)
 - `src/commands/auth.ts` — Standalone token management (create/list/revoke/test)
+- `src/commands/upgrade.ts` — Self-update CLI with post-upgrade feature discovery
 - `src/core/schema-embedded.ts` — AUTO-GENERATED from schema.sql (run `bun run build:schema`)
 - `src/schema.sql` — Full Postgres + pgvector DDL (source of truth, generates schema-embedded.ts)
 - `src/commands/integrations.ts` — Standalone integration recipe management (no DB needed)
@@ -52,8 +51,13 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 - `docs/guides/quiet-hours.md` — Notification hold + timezone-aware delivery
 - `docs/guides/diligence-ingestion.md` — Data room to brain pages pipeline
 - `docs/designs/HOMEBREW_FOR_PERSONAL_AI.md` — 10-star vision for integration system
-- `scripts/deploy-remote.sh` — One-script remote MCP deployment
-- `docs/mcp/` — Per-client setup guides (Claude Desktop, Code, Cowork, Perplexity, ChatGPT)
+- `docs/mcp/` — Per-client setup guides (Claude Desktop, Code, Cowork, Perplexity)
+- `skills/_brain-filing-rules.md` — Cross-cutting brain filing rules (referenced by all brain-writing skills)
+- `skills/migrations/` — Version migration files with feature_pitch YAML frontmatter
+- `src/commands/publish.ts` — Deterministic brain page publisher (code+skill pair, zero LLM calls)
+- `src/commands/backlinks.ts` — Back-link checker and fixer (enforces Iron Law)
+- `src/commands/lint.ts` — Page quality linter (catches LLM artifacts, placeholder dates)
+- `src/commands/report.ts` — Structured report saver (audit trail for maintenance/enrichment)
 - `openclaw.plugin.json` — ClawHub bundle plugin manifest
 
 ## Commands
@@ -83,6 +87,10 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/utils.test.ts` (shared SQL utilities), `test/engine-factory.test.ts` (engine factory + dynamic imports),
 `test/integrations.test.ts` (recipe parsing, CLI routing, recipe validation),
 `test/eval.test.ts` (retrieval metrics: precisionAtK, recallAtK, mrr, ndcgAtK, parseQrels).
+`test/publish.test.ts` (content stripping, encryption, password generation, HTML output),
+`test/backlinks.test.ts` (entity extraction, back-link detection, timeline entry generation),
+`test/lint.test.ts` (LLM artifact detection, code fence stripping, frontmatter validation),
+`test/report.test.ts` (report format, directory structure).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys)

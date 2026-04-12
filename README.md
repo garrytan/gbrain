@@ -18,7 +18,7 @@ GBrain is designed to be installed and operated by an AI agent. If you don't hav
 Copy this block into OpenClaw or Hermes Agent. The agent will install GBrain, set up the brain schema, import your files, configure all integrations, and verify everything works. GBrain needs a persistent agent that can run cron jobs and background sync.
 
 ```
-GOAL: I want Garry Tan's exact opinionated AI agent setup. Get me
+GOAL: I want an opinionated AI agent setup that actually works. Get me
 there. Install GBrain, set up the brain schema, import my files,
 configure all integrations, and verify everything works. Do not skip
 steps. Verify each step before proceeding. If a step fails, stop
@@ -143,6 +143,28 @@ An agent without this loop answers from stale context. An agent with it gets sma
 
 > "Prep me for my meeting with Jordan in 30 minutes"
 > — pulls dossier, shared history, recent activity, open threads
+
+## Voice: "Her" Out of the Box
+
+The voice integration is the strongest demonstration of why a personal brain matters.
+Call a phone number. Your AI answers. It knows who's calling, pulls their full context
+from thousands of people pages, references your last meeting, and responds like someone
+who actually knows your world. When the call ends, a structured brain page appears with
+the transcript, entity detection, and cross-references.
+
+This isn't a demo. It runs on a real phone number, screens unknown callers, and gets
+smarter with every call. Your agent picks its own name and personality. WebRTC works in
+a browser tab with zero setup. A real phone number is optional.
+
+<p align="center">
+  <img src="docs/images/voice-client.png" alt="Voice client connected" width="300" />
+</p>
+
+> [See it in action](https://x.com/garrytan/status/2043022208512172263)
+
+The voice recipe ships with GBrain: [Voice-to-Brain](recipes/twilio-voice-brain.md).
+Your agent installs it, sets up the voice server, and you have a working AI phone line
+in 30 minutes. 25 production patterns from a real deployment included.
 
 ## How this happened
 
@@ -279,20 +301,23 @@ GBrain exposes 30 MCP tools via stdio. Add this to your MCP client config:
 
 This gives your agent `get_page`, `put_page`, `search`, `query`, `add_link`, `traverse_graph`, `sync_brain`, `file_upload`, and 22 more tools. All generated from the same operation definitions as the CLI.
 
-#### Remote MCP Server (Claude Desktop, Cowork, Perplexity, ChatGPT)
+#### Remote MCP Server (Claude Desktop, Cowork, Perplexity)
 
-Access your brain from any device, any AI client. Deploy as a serverless endpoint on your existing Supabase instance:
+Access your brain from any device, any AI client. Run `gbrain serve` behind an HTTP
+server with a public tunnel:
 
 ```bash
-cp .env.production.example .env.production   # fill in 3 values
-bash scripts/deploy-remote.sh                 # links, builds, deploys
-bun run src/commands/auth.ts create "claude-desktop"  # get a token
+# Set up a public tunnel (see recipes/ngrok-tunnel.md)
+ngrok http 8787 --url your-brain.ngrok.app
+
+# Create a bearer token for your client
+bun run src/commands/auth.ts create "claude-desktop"
 ```
 
 Then add to your AI client:
-- **Claude Code:** `claude mcp add gbrain -t http https://YOUR_REF.supabase.co/functions/v1/gbrain-mcp/mcp -H "Authorization: Bearer TOKEN"`
-- **Claude Desktop:** Settings > Integrations > Add (NOT JSON config)
-- **Perplexity Computer:** Settings > Connectors > Add remote MCP
+- **Claude Code:** `claude mcp add gbrain -t http https://your-brain.ngrok.app/mcp -H "Authorization: Bearer TOKEN"`
+- **Claude Desktop:** Settings > Integrations > Add (NOT JSON config, [details](docs/mcp/CLAUDE_DESKTOP.md))
+- **Perplexity:** Settings > Connectors > Add remote MCP ([details](docs/mcp/PERPLEXITY.md))
 
 Per-client setup guides: [`docs/mcp/`](docs/mcp/DEPLOY.md)
 
@@ -603,7 +628,7 @@ ADMIN
   gbrain revert <slug> <version-id>         Revert to previous version
   gbrain config [get|set] <key> [value]     Brain config
   gbrain serve                              MCP server (stdio, local)
-  scripts/deploy-remote.sh                  Deploy remote MCP server (Supabase Edge Functions)
+  gbrain upgrade                            Self-update with feature discovery
   bun run src/commands/auth.ts              Token management (create/list/revoke/test)
   gbrain call <tool> '<json>'               Raw tool invocation
   gbrain --tools-json                       Tool discovery (JSON)

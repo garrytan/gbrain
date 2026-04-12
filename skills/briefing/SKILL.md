@@ -2,6 +2,9 @@
 
 Compile a daily briefing from brain context.
 
+> **Filing rule:** When the briefing creates or updates brain pages,
+> follow `skills/_brain-filing-rules.md`.
+
 ## Workflow
 
 1. **Today's meetings.** For each meeting on the calendar:
@@ -71,6 +74,18 @@ RECENT CHANGES (24h)
 PEOPLE IN PLAY
 - [name] -- [why they're active]
 ```
+
+## Back-Linking During Briefing
+
+If the briefing creates or updates any brain pages (e.g., new meeting prep
+pages, updated entity pages), the back-linking iron law applies: every entity
+mentioned must have a back-link from their page. See `skills/_brain-filing-rules.md`.
+
+## Citation in Briefings
+
+When presenting facts from brain pages, include inline citations:
+- "Jane is CTO of Acme [Source: people/jane-doe, updated 2026-04-01]"
+- This lets the user trace any claim back to the brain page and assess freshness
 
 ## Tools Used
 

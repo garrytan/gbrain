@@ -1,8 +1,8 @@
 ---
 id: x-to-brain
 name: X-to-Brain
-version: 0.7.0
-description: Twitter timeline, mentions, and keyword monitoring flow into brain pages. Tracks deletions and engagement velocity.
+version: 0.8.1
+description: Twitter timeline, mentions, and keyword monitoring flow into brain pages. Tracks deletions, engagement velocity, OCR on images, and real-time alerts.
 category: sense
 requires: []
 secrets:
@@ -201,7 +201,99 @@ The agent should review collected data 2-3x daily and run enrichment.
 
 ```bash
 mkdir -p ~/.gbrain/integrations/x-to-brain
-echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.7.0","status":"ok","details":{"user_id":"X_USER_ID"}}' >> ~/.gbrain/integrations/x-to-brain/heartbeat.jsonl
+echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.8.1","status":"ok","details":{"user_id":"X_USER_ID"}}' >> ~/.gbrain/integrations/x-to-brain/heartbeat.jsonl
+```
+
+## Production Patterns (v0.8.1)
+
+These patterns come from a production deployment tracking 19+ accounts with
+real-time monitoring.
+
+### Image OCR (NEW)
+
+**Problem:** Text-only collection misses visual context in tweet images --
+screenshots, charts, memes with text overlay, quote screenshots.
+
+**Fix:** Run OCR on tweet images via a vision model (Claude Sonnet or equivalent):
+- For every tweet with images, extract full text content via vision API
+- Store OCR output alongside the tweet data
+- Include extracted text in entity detection and brain page updates
+- Charts/data visualizations: extract data points, describe findings
+
+This catches signal that text-only collectors miss entirely.
+
+### Real-Time Monitoring via Filtered Stream (NEW)
+
+**Problem:** 30-minute polling means you find out about things 30 minutes late.
+For time-sensitive content (engagement spikes, deletions, breaking threads),
+that's too slow.
+
+**Fix:** Use Twitter's Filtered Stream API (`GET /2/tweets/search/stream`) for
+near-real-time monitoring. Catches outbound tweets within seconds.
+
+**Setup:**
+1. Add filter rules: `POST /2/tweets/search/stream/rules` with your tracking terms
+2. Open persistent connection: `GET /2/tweets/search/stream`
+3. Process tweets as they arrive (no polling delay)
+
+**Requirements:** Basic tier ($200/mo) minimum for Filtered Stream access.
+
+**Use alongside polling:** Stream for real-time alerts, polling for completeness
+(stream can drop tweets during disconnects).
+
+### Tweet Rating Rubric (NEW)
+
+**Problem:** Not all tweets deserve the same attention. Without scoring, every
+tweet gets equal weight.
+
+**Fix:** Rate tweets on a 6-dimension rubric:
+1. **Reach** -- follower count, engagement rate
+2. **Relevance** -- connection to your interests/work
+3. **Sentiment** -- positive/negative/neutral toward you
+4. **Novelty** -- new information vs rehash
+5. **Actionability** -- does this require a response?
+6. **Virality potential** -- engagement velocity, quote-tweet ratio
+
+Re-rate after 60 minutes to track engagement trajectory. A tweet at 50 likes
+that hits 500 in an hour is a different signal than one that stays at 50.
+
+### Outbound Tweet Monitoring (NEW)
+
+**Problem:** You tweet something and don't notice engagement patterns until
+hours later.
+
+**Fix:** 60-second monitoring window after every outbound tweet:
+- Check engagement velocity (likes, replies, quotes)
+- Flag unusual reply-to-like ratios (high reply ratios signal controversy)
+- Flag if quote-tweet ratio > retweet ratio (commentary, not sharing)
+- Cross-reference mentioned accounts against brain for context
+
+### X-to-Brain Pipeline (NEW)
+
+Every tweet interaction can automatically create/update brain pages:
+- Mentioned person has a brain page? Append to their timeline
+- New person mentioned? Check notability gate, create page if notable
+- Article URL in tweet? Fetch and ingest via article workflow
+- Video URL in tweet? Queue for transcription pipeline
+- Images? OCR and extract text content
+
+Follow `skills/_brain-filing-rules.md` for filing decisions.
+
+### Cron Staggering (IMPORTANT)
+
+**Problem:** Multiple cron jobs firing simultaneously causes resource contention
+and timeouts.
+
+**Fix:** Stagger all collection schedules so max 1 runs per minute:
+```
+# Good: staggered
+*/30 * * * * x-collector       # :00, :30
+5,35 * * * * x-bundle-ingest   # :05, :35
+10 */3 * * * social-monitor     # :10 every 3h
+
+# Bad: overlapping
+*/30 * * * * x-collector
+*/30 * * * * x-bundle-ingest   # fires at same time!
 ```
 
 ## Implementation Guide

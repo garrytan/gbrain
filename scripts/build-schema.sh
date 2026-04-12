@@ -1,7 +1,7 @@
 #!/bin/bash
 # Generate src/core/schema-embedded.ts from src/schema.sql
 # One source of truth: schema.sql is the canonical file.
-# This script produces a TypeScript constant for use in compiled binaries and Edge Functions.
+# This script produces a TypeScript constant for use in compiled binaries.
 set -e
 SCHEMA_FILE="src/schema.sql"
 OUT_FILE="src/core/schema-embedded.ts"

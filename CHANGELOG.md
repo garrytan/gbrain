@@ -2,6 +2,109 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.9.0] - 2026-04-11
+
+### Added
+
+- **Large files don't bloat your git repo anymore.** `gbrain files upload-raw`
+  auto-routes by size: text and PDFs under 100 MB stay in git, everything larger
+  (or any media file) goes to Supabase Storage with a `.redirect.yaml` pointer
+  left in the repo. Files over 100 MB use TUS resumable upload (6 MB chunks with
+  retry and backoff) so a flaky connection doesn't lose a 2 GB video upload.
+  `gbrain files signed-url` generates 1-hour access links for private buckets.
+
+- **The full file migration lifecycle works end to end.** `mirror` uploads to
+  cloud and keeps local copies. `redirect` replaces local files with
+  `.redirect.yaml` pointers (verifies remote exists first, won't delete data).
+  `restore` downloads back from cloud. `clean` removes pointers when you're sure.
+  `status` shows where you are. Three states, zero data loss risk.
+
+- **Your brain now enforces its own graph integrity.** The Iron Law of Back-Linking
+  is mandatory across all skills. Every mention of a person or company creates
+  a bidirectional link. This transforms your brain from a flat file store into a
+  traversable knowledge graph.
+
+- **Filing rules prevent the #1 brain mistake.** New `skills/_brain-filing-rules.md`
+  stops the most common error: dumping everything into `sources/`. File by primary
+  subject, not format. Includes notability gate and citation requirements.
+
+- **Enrichment protocol that actually works.** Rewritten from a 46-line API list to
+  a 7-step pipeline with 3-tier system, person/company page templates, pluggable
+  data sources, validation rules, and bulk enrichment safety.
+
+- **Ingest handles everything.** Articles, videos, podcasts, PDFs, screenshots,
+  meeting transcripts, social media. Each with a workflow that uses real gbrain
+  commands (`upload-raw`, `signed-url`) instead of theoretical patterns.
+
+- **Citation requirements across all skills.** Every fact needs inline
+  `[Source: ...]` citations. Three formats, source precedence hierarchy.
+
+- **Maintain skill catches what you missed.** Back-link enforcement, citation audit,
+  filing violations, file storage health checks, benchmark testing.
+
+- **Voice calls don't crash on em dashes anymore.** Unicode sanitization for Twilio
+  WebSocket, PII scrub, identity-first prompt, DIY STT+LLM+TTS pipeline option,
+  Smart VAD default, auto-upload call audio via `gbrain files upload-raw`.
+
+- **X-to-Brain gets eyes.** Image OCR, Filtered Stream real-time monitoring,
+  6-dimension tweet rating rubric, outbound tweet monitoring, cron staggering.
+
+- **Share brain pages without exposing the brain.** `gbrain publish` generates
+  beautiful, self-contained HTML from any brain page. Strips private data
+  (frontmatter, citations, confirmations, brain links, timeline) automatically.
+  Optional AES-256-GCM password gate with client-side decryption, no server
+  needed. Dark/light mode, mobile-optimized typography. This is the first
+  code+skill pair: deterministic code does the work, the skill tells the agent
+  when and how. See the [Thin Harness, Fat Skills](https://x.com/garrytan/status/2042925773300908103)
+  thread for the architecture philosophy.
+
+### Changed
+
+- **Supabase Storage** now auto-selects upload method by file size: standard POST
+  for < 100 MB, TUS resumable for >= 100 MB. Signed URL generation for private
+  bucket access (1-hour expiry).
+- **File resolver** supports both `.redirect.yaml` (v0.9+) and legacy `.redirect`
+  (v0.8) formats for backward compatibility.
+- **Redirect format** upgraded from `.redirect` (5 fields) to `.redirect.yaml`
+  (10 fields: target, bucket, storage_path, size, size_human, hash, mime,
+  uploaded, source_url, type).
+- **All skills** updated to reference actual `gbrain files` commands instead of
+  theoretical patterns.
+- **Back-link enforcer closes the loop.** `gbrain check-backlinks check` scans your
+  brain for entity mentions without back-links. `gbrain check-backlinks fix` creates
+  them. The Iron Law of Back-Linking is in every skill, now the code enforces it.
+
+- **Page linter catches LLM slop.** `gbrain lint` flags "Of course! Here is..."
+  preambles, wrapping code fences, placeholder dates, missing frontmatter, broken
+  citations, and empty sections. `gbrain lint --fix` auto-strips the fixable ones.
+  Every brain that uses AI for ingestion accumulates this. Now it's one command.
+
+- **Audit trail for everything.** `gbrain report --type enrichment-sweep` saves
+  timestamped reports to `brain/reports/{type}/YYYY-MM-DD-HHMM.md`. The maintain
+  skill references this for enrichment sweeps, meeting syncs, and maintenance runs.
+
+- **Publish skill** added to manifest (8th skill). First code+skill pair.
+- Skills version bumped to 0.9.0.
+- 67 new unit tests across publish, backlinks, lint, and report. Total: 409 pass.
+
+## [0.8.0] - 2026-04-11
+
+### Added
+
+- **Your AI can answer the phone now.** Voice-to-brain v0.8.0 ships 25 production patterns from a real deployment. WebRTC works in a browser tab with just an OpenAI key, phone number via Twilio is optional. Your agent picks its own name and personality. Pre-computed engagement bids mean it greets you with something specific ("dude, your social radar caught something wild today"), not "how can I help you?" Context-first prompts, proactive advisor mode, caller routing, dynamic noise suppression, stuck watchdog, thinking sounds during tool calls. This is the "Her" experience, out of the box.
+- **Upgrade = feature discovery.** When you upgrade to v0.8.0, the CLI tells you what's new and your agent offers to set up voice immediately. WebRTC-first (zero setup), then asks about a phone number. Migration files now have YAML frontmatter with `feature_pitch` so every future version can pitch its headline feature through the upgrade flow.
+- **Remote MCP simplified.** The Supabase Edge Function deployment is gone. Remote MCP now uses a self-hosted server + ngrok tunnel. Simpler, more reliable, works with any AI client. All `docs/mcp/` guides updated to reflect the actual production architecture.
+
+### Changed
+
+- **Voice recipe is now 25 production patterns deep.** Identity separation, pre-computed bid system, context-first prompts, proactive advisor mode, conversation timing (the #1 fix), no-repetition rule, radical prompt compression (13K to 4.7K tokens), OpenAI Realtime Prompting Guide structure, auth-before-speech, brain escalation, stuck watchdog, never-hang-up rule, thinking sounds, fallback TwiML, tool set architecture, trusted user auth, caller routing, dynamic VAD, on-screen debug UI, live moment capture, belt-and-suspenders post-call, mandatory 3-step post-call, WebRTC parity, dual API event handling, report-aware query routing.
+- **WebRTC session pseudocode updated.** Native FormData, `tools` in session config, `type: 'realtime'` on all session.update calls. WebRTC transcription NOT supported over data channel (use Whisper post-call).
+- **MCP docs rewritten.** All per-client guides (Claude Code, Claude Desktop, Cowork, Perplexity) updated from Edge Function URLs to self-hosted + ngrok pattern.
+
+### Removed
+
+- **Supabase Edge Function MCP deployment.** `scripts/deploy-remote.sh`, `supabase/functions/gbrain-mcp/`, `src/edge-entry.ts`, `.env.production.example`, `docs/mcp/CHATGPT.md` all removed. The Edge Function never worked reliably. Self-hosted + ngrok is the path.
+
 ## [0.7.0] - 2026-04-11
 
 ### Added
