@@ -314,7 +314,7 @@ export function generateHtml({ title, markdown, encrypted }: GenerateHtmlOptions
 ${passwordHtml}
 <div id="content"></div>
 ${encryptedVars}
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js" integrity="sha384-H+hy9ULve6xfxRkWIh/YOtvDdpXgV2fmAGQkIDTxIgZwNoaoBal14Di2YTMR6MzR" crossorigin="anonymous"><\/script>
 ${contentScript}
 </body>
 </html>`;
