@@ -10,3 +10,4 @@ bin/
 .gstack/
 supabase/.temp/
 .claude/skills/
+.idea

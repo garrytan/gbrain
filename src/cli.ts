@@ -22,7 +22,7 @@ const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'in
 
 async function main() {
   const args = process.argv.slice(2);
-  const command = args[0];
+  let command = args[0];
 
   if (!command || command === '--help' || command === '-h') {
     printHelp();
@@ -41,6 +41,11 @@ async function main() {
   }
 
   const subArgs = args.slice(1);
+
+  // DX alias: `ask` is a natural-language alias for `query`
+  if (command === 'ask') {
+    command = 'query';
+  }
 
   // Per-command --help
   if (subArgs.includes('--help') || subArgs.includes('-h')) {
@@ -122,7 +127,13 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
 
   // Read stdin for content params
   if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
-    params[op.cliHints.stdin] = readFileSync('/dev/stdin', 'utf-8');
+    const stdinContent = readFileSync('/dev/stdin', 'utf-8');
+    const MAX_STDIN = 5_000_000; // 5MB
+    if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
+      console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
+      process.exit(1);
+    }
+    params[op.cliHints.stdin] = stdinContent;
   }
 
   return params;
@@ -379,6 +390,7 @@ PAGES
 SEARCH
   search <query>                     Keyword search (tsvector)
   query <question> [--no-expand]     Hybrid search (RRF + expansion)
+  ask <question> [--no-expand]       Alias for query
 
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory

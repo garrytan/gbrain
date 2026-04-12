@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, mkdirSync, rmSync } from 'fs';
+import { writeFileSync, mkdirSync, rmSync, symlinkSync } from 'fs';
 import { join } from 'path';
-import { importFile } from '../src/core/import-file.ts';
+import { importFile, importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
@@ -84,6 +84,91 @@ This is the compiled truth.
 
     expect(result.status).toBe('skipped');
     expect(result.error).toContain('too large');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('rejects frontmatter slug that does not match the file path', async () => {
+    // In a shared brain where contributors can land PRs, this prevents a
+    // poisoned notes/random.md from declaring `slug: people/elon` in its
+    // frontmatter and overwriting the legitimate people/elon page on sync.
+    const filePath = join(TMP, 'hijack.md');
+    writeFileSync(filePath, `---
+type: person
+title: Elon Musk
+slug: people/elon
+---
+
+Poisoned content that would overwrite people/elon.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'notes/random.md', { noEmbed: true });
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('people/elon');
+    expect(result.error).toContain('notes/random');
+    // No writes to the DB — the hijack never reaches putPage/createVersion.
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('accepts frontmatter slug that matches the file path', async () => {
+    // Sanity: a legitimate file whose frontmatter slug happens to equal the
+    // path-derived slug must still import.
+    const filePath = join(TMP, 'alice.md');
+    writeFileSync(filePath, `---
+type: person
+title: Alice
+slug: people/alice-smith
+---
+
+Legit content.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'people/alice-smith.md', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('people/alice-smith');
+  });
+
+  test('uses path-derived slug when no frontmatter slug is set', async () => {
+    // The common case: no frontmatter.slug, so the path determines the slug.
+    const filePath = join(TMP, 'concept-path.md');
+    writeFileSync(filePath, `---
+type: concept
+title: From Path
+---
+
+Content.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'concepts/from-path.md', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('concepts/from-path');
+  });
+
+  test('skips symlinks in importFromFile (defense-in-depth)', async () => {
+    // Even if the walker somehow passes a symlink through, importFromFile
+    // should catch it and return skipped.
+    const realFile = join(TMP, 'real-target.md');
+    writeFileSync(realFile, `---
+type: concept
+title: Real
+---
+
+Content.
+`);
+    const linkPath = join(TMP, 'symlink-file.md');
+    try { rmSync(linkPath); } catch { /* may not exist */ }
+    symlinkSync(realFile, linkPath);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, linkPath, 'symlink-file.md', { noEmbed: true });
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('symlink');
     expect((engine as any)._calls.length).toBe(0);
   });
 
@@ -250,6 +335,49 @@ Content to chunk but not embed.
         expect(chunk.embedding).toBeUndefined();
       }
     }
+  });
+
+  test('rejects in-memory content larger than MAX_FILE_SIZE', async () => {
+    // The remote MCP put_page operation hands user-supplied content straight
+    // to importFromContent, which is the path this guard defends. The guard
+    // must trigger BEFORE parseMarkdown / chunkText / embedBatch — if it doesn't,
+    // an authenticated attacker can force the owner to pay for embedding a
+    // multi-megabyte string.
+    const bigContent = '---\ntitle: Big\n---\n' + 'x'.repeat(5_100_000);
+
+    const engine = mockEngine();
+    const result = await importFromContent(engine, 'big-slug', bigContent, { noEmbed: true });
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('too large');
+    // No engine work at all — confirms the guard short-circuits before any
+    // parsing or chunking allocation.
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('uses UTF-8 byte length, not JS string length, for the size check', async () => {
+    // 2.6M 4-byte codepoints = ~10.4 MB UTF-8 but only 2.6M JS UTF-16 code units.
+    // A length-based check would let this through; a byteLength check catches it.
+    const fourByteChar = '\u{1F600}'; // emoji, 4 bytes in UTF-8
+    const bigContent = fourByteChar.repeat(2_600_000);
+
+    const engine = mockEngine();
+    const result = await importFromContent(engine, 'emoji-slug', bigContent, { noEmbed: true });
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('too large');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('accepts in-memory content just under MAX_FILE_SIZE', async () => {
+    // Sanity: content exactly at the limit must still import. If this test
+    // fails, the guard is off-by-one and will break legitimate large imports.
+    const content = '---\ntitle: Borderline\n---\n' + 'x'.repeat(4_900_000);
+
+    const engine = mockEngine();
+    const result = await importFromContent(engine, 'borderline-slug', content, { noEmbed: true });
+
+    expect(result.status).toBe('imported');
   });
 
   test('assigns sequential chunk_index values', async () => {

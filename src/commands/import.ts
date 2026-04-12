@@ -1,4 +1,4 @@
-import { readdirSync, statSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
+import { readdirSync, lstatSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import { cpus, totalmem, homedir } from 'os';
@@ -211,7 +211,7 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   }
 }
 
-function collectMarkdownFiles(dir: string): string[] {
+export function collectMarkdownFiles(dir: string): string[] {
   const files: string[] = [];
 
   function walk(d: string) {
@@ -224,10 +224,25 @@ function collectMarkdownFiles(dir: string): string[] {
       const full = join(d, entry);
       let stat;
       try {
-        stat = statSync(full);
+        // lstatSync, not statSync: we must NOT follow symlinks. A symlink
+        // inside the brain directory can point to any file the importing
+        // user can read, so a contributor to a shared brain could plant
+        // notes/innocent.md as a symlink to ~/.gbrain/config.json, /etc/passwd,
+        // or another sensitive file outside the brain root — and on the
+        // next `gbrain import` it would be read, chunked, embedded, and
+        // indexed, at which point a bearer-token holder could exfiltrate
+        // it via search/get_page. See L002 in report/findings.md.
+        stat = lstatSync(full);
       } catch {
         // Broken symlink or permission error — skip
         console.warn(`[gbrain import] Skipping unreadable path: ${full}`);
+        continue;
+      }
+
+      // Skip symlinks (both file and directory targets). This also blocks
+      // circular symlink DoS since we refuse to descend into linked dirs.
+      if (stat.isSymbolicLink()) {
+        console.warn(`[gbrain import] Skipping symlink: ${full}`);
         continue;
       }
 
