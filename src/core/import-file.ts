@@ -67,7 +67,9 @@ export async function importFromContent(
         chunks[i].embedding = embeddings[i];
         chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
       }
-    } catch { /* non-fatal */ }
+    } catch (e: unknown) {
+      console.error(`  Warning: embedding failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // Transaction wraps all DB writes
