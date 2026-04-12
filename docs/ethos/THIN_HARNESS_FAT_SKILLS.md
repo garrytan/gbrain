@@ -4,10 +4,11 @@ title: "Thin Harness, Fat Skills"
 subtitle: "How to Make AI Agents Actually Understand Your Data"
 author: Garry Tan
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-04-11
 tags: [ai, agents, gstack, harness-engineering, skills, architecture]
 status: draft-v4
-talk: "YC Spring 2026 — Thin Harness, Fat Skills"
+talk: "YC Spring 2026 -- Thin Harness, Fat Skills"
+thread: https://x.com/garrytan/status/2042925773300908103
 ---
 
 # Thin Harness, Fat Skills

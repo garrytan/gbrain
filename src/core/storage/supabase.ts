@@ -1,8 +1,17 @@
 import type { StorageBackend, StorageConfig } from '../storage.ts';
 
+/** Size thresholds for upload method selection */
+const TUS_THRESHOLD = 100 * 1024 * 1024;   // 100 MB — use TUS resumable above this
+const TUS_CHUNK_SIZE = 6 * 1024 * 1024;     // 6 MB chunks for TUS uploads
+const SIGNED_URL_EXPIRY = 3600;             // 1 hour
+
 /**
  * Supabase Storage — uses the Supabase Storage REST API.
  * Auth via the service role key (not the anon key).
+ *
+ * Upload method auto-selected by file size:
+ *   < 100 MB  → standard POST (single request)
+ *   >= 100 MB → TUS resumable upload (6 MB chunks with retry)
  */
 export class SupabaseStorage implements StorageBackend {
   private projectUrl: string;
@@ -30,6 +39,15 @@ export class SupabaseStorage implements StorageBackend {
   }
 
   async upload(path: string, data: Buffer, mime?: string): Promise<void> {
+    if (data.length >= TUS_THRESHOLD) {
+      await this.uploadTus(path, data, mime);
+    } else {
+      await this.uploadStandard(path, data, mime);
+    }
+  }
+
+  /** Standard single-request upload for files < 100 MB */
+  private async uploadStandard(path: string, data: Buffer, mime?: string): Promise<void> {
     const res = await fetch(this.url(path), {
       method: 'POST',
       headers: {
@@ -42,6 +60,90 @@ export class SupabaseStorage implements StorageBackend {
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`Supabase upload failed: ${res.status} ${body}`);
+    }
+  }
+
+  /**
+   * TUS resumable upload for files >= 100 MB.
+   * Sends in 6 MB chunks with retry + exponential backoff.
+   */
+  private async uploadTus(path: string, data: Buffer, mime?: string): Promise<void> {
+    const tusUrl = `${this.projectUrl}/storage/v1/upload/resumable`;
+    const objectName = `${this.bucket}/${path}`;
+
+    // Step 1: Create the upload session
+    const createRes = await fetch(tusUrl, {
+      method: 'POST',
+      headers: {
+        ...this.headers(),
+        'Tus-Resumable': '1.0.0',
+        'Upload-Length': String(data.length),
+        'Upload-Metadata': [
+          `bucketName ${btoa(this.bucket)}`,
+          `objectName ${btoa(path)}`,
+          `contentType ${btoa(mime || 'application/octet-stream')}`,
+        ].join(','),
+        'x-upsert': 'true',
+      },
+    });
+
+    if (!createRes.ok) {
+      const body = await createRes.text();
+      throw new Error(`TUS create failed: ${createRes.status} ${body}`);
+    }
+
+    const uploadUrl = createRes.headers.get('Location');
+    if (!uploadUrl) throw new Error('TUS create did not return Location header');
+
+    // Step 2: Upload chunks
+    let offset = 0;
+    while (offset < data.length) {
+      let attempt = 0;
+      const maxAttempts = 3;
+      while (attempt < maxAttempts) {
+        try {
+          // On retry, check server's actual offset (TUS spec requirement)
+          if (attempt > 0) {
+            const headRes = await fetch(uploadUrl, {
+              method: 'HEAD',
+              headers: { ...this.headers(), 'Tus-Resumable': '1.0.0' },
+            });
+            if (headRes.ok) {
+              const serverOffset = headRes.headers.get('Upload-Offset');
+              if (serverOffset) offset = parseInt(serverOffset, 10);
+            }
+          }
+
+          const end = Math.min(offset + TUS_CHUNK_SIZE, data.length);
+          const chunk = data.subarray(offset, end);
+
+          const patchRes = await fetch(uploadUrl, {
+            method: 'PATCH',
+            headers: {
+              ...this.headers(),
+              'Tus-Resumable': '1.0.0',
+              'Upload-Offset': String(offset),
+              'Content-Type': 'application/offset+octet-stream',
+              'Content-Length': String(chunk.length),
+            },
+            body: chunk,
+          });
+
+          if (!patchRes.ok) {
+            const body = await patchRes.text();
+            throw new Error(`TUS PATCH failed: ${patchRes.status} ${body}`);
+          }
+
+          const newOffset = patchRes.headers.get('Upload-Offset');
+          offset = newOffset ? parseInt(newOffset, 10) : end;
+          break; // Success, move to next chunk
+        } catch (err) {
+          attempt++;
+          if (attempt >= maxAttempts) throw err;
+          // Exponential backoff: 1s, 2s, 4s
+          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+        }
+      }
     }
   }
 
@@ -81,8 +183,28 @@ export class SupabaseStorage implements StorageBackend {
     return items.map(i => `${prefix}/${i.name}`);
   }
 
+  /** Generate a signed URL with 1-hour expiry for private bucket access */
+  async getSignedUrl(path: string, expiresIn: number = SIGNED_URL_EXPIRY): Promise<string> {
+    const res = await fetch(`${this.projectUrl}/storage/v1/object/sign/${this.bucket}/${path}`, {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiresIn }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Supabase signed URL failed: ${res.status} ${body}`);
+    }
+    const result = await res.json() as { signedURL: string };
+    return `${this.projectUrl}${result.signedURL}`;
+  }
+
   async getUrl(path: string): Promise<string> {
-    // Public URL (if bucket is public) or signed URL
-    return `${this.projectUrl}/storage/v1/object/public/${this.bucket}/${path}`;
+    // Try signed URL first (works for private buckets)
+    try {
+      return await this.getSignedUrl(path);
+    } catch {
+      // Fall back to public URL
+      return `${this.projectUrl}/storage/v1/object/public/${this.bucket}/${path}`;
+    }
   }
 }

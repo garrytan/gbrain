@@ -1,8 +1,12 @@
-import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, unlinkSync } from 'fs';
-import { join, relative, extname, basename } from 'path';
+import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { join, relative, extname, basename, dirname } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
+import { humanSize } from '../core/file-resolver.ts';
+
+/** Size threshold: files >= 100 MB use TUS resumable upload */
+const SIZE_THRESHOLD = 100 * 1024 * 1024;
 
 interface FileRecord {
   id: number;
@@ -67,20 +71,28 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
     case 'clean':
       await cleanFiles(args.slice(1));
       break;
+    case 'upload-raw':
+      await uploadRaw(args.slice(1));
+      break;
+    case 'signed-url':
+      await signedUrl(args.slice(1));
+      break;
     case 'status':
       await filesStatus(args.slice(1));
       break;
     default:
-      console.error(`Usage: gbrain files <list|upload|sync|verify|mirror|unmirror|redirect|restore|clean|status> [args]`);
+      console.error(`Usage: gbrain files <command> [args]`);
       console.error(`  list [slug]               List files for a page (or all)`);
       console.error(`  upload <file> --page <slug>  Upload file linked to page`);
+      console.error(`  upload-raw <file> --page <slug> [--type <type>]  Smart upload with .redirect.yaml pointer`);
+      console.error(`  signed-url <path>         Generate signed URL for stored file`);
       console.error(`  sync <dir>                Upload directory to storage`);
       console.error(`  verify                    Verify all uploads match local`);
       console.error(`  mirror <dir> [--dry-run]  Mirror files to cloud storage`);
       console.error(`  unmirror <dir>            Remove mirror marker (files stay in storage)`);
-      console.error(`  redirect <dir> [--dry-run]  Replace files with .redirect breadcrumbs`);
+      console.error(`  redirect <dir> [--dry-run]  Replace files with .redirect.yaml pointers`);
       console.error(`  restore <dir>             Download from storage, recreate local files`);
-      console.error(`  clean <dir> [--yes]       Delete .redirect breadcrumbs (irreversible)`);
+      console.error(`  clean <dir> [--yes]       Delete redirect pointers (irreversible)`);
       console.error(`  status                    Show migration status of directories`);
       process.exit(1);
   }
@@ -138,6 +150,8 @@ async function uploadFile(args: string[]) {
     const { createStorage } = await import('../core/storage.ts');
     const storage = await createStorage(config.storage as any);
     const content = readFileSync(filePath);
+    const method = content.length >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
+    console.log(`Uploading ${humanSize(stat.size)} via ${method}...`);
     await storage.upload(storagePath, content, mimeType || undefined);
   }
 
@@ -150,7 +164,133 @@ async function uploadFile(args: string[]) {
       mime_type = EXCLUDED.mime_type
   `;
 
-  console.log(`Uploaded: ${storagePath} (${Math.round(stat.size / 1024)}KB)`);
+  console.log(`Uploaded: ${storagePath} (${humanSize(stat.size)})`);
+}
+
+/**
+ * Smart upload with size routing and .redirect.yaml pointer creation.
+ *
+ * Size routing:
+ *   < 100 MB text/PDF  → stays in git (brain repo), no cloud upload
+ *   >= 100 MB OR media  → upload to cloud storage, create .redirect.yaml pointer
+ *
+ * The .redirect.yaml pointer stays in the brain repo so git tracks what was stored.
+ */
+async function uploadRaw(args: string[]) {
+  const filePath = args.find(a => !a.startsWith('--'));
+  const pageSlug = args.find((a, i) => args[i - 1] === '--page') || null;
+  const fileType = args.find((a, i) => args[i - 1] === '--type') || null;
+  const noPointer = args.includes('--no-pointer');
+
+  if (!filePath || !existsSync(filePath)) {
+    console.error('Usage: gbrain files upload-raw <file> --page <slug> [--type <type>] [--no-pointer]');
+    process.exit(1);
+  }
+
+  const stat = statSync(filePath);
+  const filename = basename(filePath);
+  const mimeType = getMimeType(filePath);
+  const isMedia = mimeType?.startsWith('video/') || mimeType?.startsWith('audio/') || mimeType?.startsWith('image/');
+  const needsCloud = stat.size >= SIZE_THRESHOLD || isMedia;
+
+  if (!needsCloud) {
+    // Small text/PDF files stay in git
+    console.log(JSON.stringify({
+      success: true,
+      storage: 'git',
+      path: filePath,
+      size: stat.size,
+      size_human: humanSize(stat.size),
+    }));
+    return;
+  }
+
+  // Upload to cloud storage
+  const { loadConfig } = await import('../core/config.ts');
+  const config = loadConfig();
+  if (!config?.storage) {
+    console.error('No storage backend configured. Run gbrain init with storage settings.');
+    console.error('Or use gbrain files upload for manual uploads.');
+    process.exit(1);
+  }
+
+  const { createStorage } = await import('../core/storage.ts');
+  const storage = await createStorage(config.storage as any);
+  const content = readFileSync(filePath);
+  const hash = createHash('sha256').update(content).digest('hex');
+  const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
+  const bucket = (config.storage as any).bucket || 'brain-files';
+
+  const method = content.length >= SIZE_THRESHOLD ? 'TUS resumable' : 'standard';
+  console.error(`Uploading ${humanSize(stat.size)} via ${method}...`);
+  await storage.upload(storagePath, content, mimeType || undefined);
+
+  // Create .redirect.yaml pointer in the brain repo
+  let pointerPath: string | null = null;
+  if (!noPointer && pageSlug) {
+    const { stringify } = await import('../core/yaml-lite.ts');
+    const pointer = stringify({
+      target: `supabase://${bucket}/${storagePath}`,
+      bucket,
+      storage_path: storagePath,
+      size: stat.size,
+      size_human: humanSize(stat.size),
+      hash: `sha256:${hash}`,
+      mime: mimeType || 'application/octet-stream',
+      uploaded: new Date().toISOString(),
+      ...(fileType ? { type: fileType } : {}),
+    });
+    // Write pointer next to the page that references it
+    pointerPath = `${pageSlug}/${filename}.redirect.yaml`;
+    console.error(`Pointer: ${pointerPath}`);
+  }
+
+  // Record in DB
+  const sql = db.getConnection();
+  await sql`
+    INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+    VALUES (${pageSlug}, ${filename}, ${storagePath}, ${mimeType}, ${stat.size}, ${'sha256:' + hash},
+            ${JSON.stringify({ type: fileType, upload_method: method })}::jsonb)
+    ON CONFLICT (storage_path) DO UPDATE SET
+      content_hash = EXCLUDED.content_hash,
+      size_bytes = EXCLUDED.size_bytes,
+      mime_type = EXCLUDED.mime_type
+  `;
+
+  // Output JSON for scripting
+  console.log(JSON.stringify({
+    success: true,
+    storage: 'supabase',
+    storagePath,
+    bucket,
+    reference: `supabase://${bucket}/${storagePath}`,
+    pointerPath,
+    size: stat.size,
+    size_human: humanSize(stat.size),
+    hash: `sha256:${hash}`,
+    upload_method: method,
+  }));
+}
+
+/** Generate a signed URL for a stored file */
+async function signedUrl(args: string[]) {
+  const storagePath = args.find(a => !a.startsWith('--'));
+  if (!storagePath) {
+    console.error('Usage: gbrain files signed-url <storage-path>');
+    process.exit(1);
+  }
+
+  const { loadConfig } = await import('../core/config.ts');
+  const config = loadConfig();
+  if (!config?.storage) {
+    console.error('No storage backend configured.');
+    process.exit(1);
+  }
+
+  const { createStorage } = await import('../core/storage.ts');
+  const storage = await createStorage(config.storage as any);
+  const url = await storage.getUrl(storagePath);
+  console.log(url);
 }
 
 async function syncFiles(dir?: string) {
@@ -343,14 +483,20 @@ async function redirectFiles(args: string[]) {
       }
     }
 
-    const breadcrumb = stringify({
-      moved_to: 'storage',
-      bucket: marker.bucket || 'brain-files',
-      path: relPath,
-      moved_at: new Date().toISOString().split('T')[0],
-      original_hash: `sha256:${hash}`,
+    const stat = statSync(filePath);
+    const mimeType = getMimeType(filePath);
+    const bucket = marker.bucket || 'brain-files';
+    const pointer = stringify({
+      target: `supabase://${bucket}/${relPath}`,
+      bucket,
+      storage_path: relPath,
+      size: stat.size,
+      size_human: humanSize(stat.size),
+      hash: `sha256:${hash}`,
+      mime: mimeType || 'application/octet-stream',
+      uploaded: new Date().toISOString(),
     });
-    writeFileSync(filePath + '.redirect', breadcrumb);
+    writeFileSync(filePath + '.redirect.yaml', pointer);
     unlinkSync(filePath);
     redirected++;
   }
@@ -380,7 +526,7 @@ async function restoreFiles(args: string[]) {
       if (entry.startsWith('.')) continue;
       const full = join(d, entry);
       if (statSync(full).isDirectory()) findRedirects(full);
-      else if (entry.endsWith('.redirect')) redirectFiles.push(full);
+      else if (entry.endsWith('.redirect.yaml') || entry.endsWith('.redirect')) redirectFiles.push(full);
     }
   }
   findRedirects(dir);
@@ -389,9 +535,10 @@ async function restoreFiles(args: string[]) {
   let failed = 0;
   for (const redirectPath of redirectFiles) {
     const info = parseYaml(readFileSync(redirectPath, 'utf-8'));
-    const originalPath = redirectPath.replace(/\.redirect$/, '');
+    const originalPath = redirectPath.replace(/\.redirect(\.yaml)?$/, '');
     try {
-      const data = await storage.download(info.path);
+      const storagePath = info.storage_path || info.path; // v0.9 or legacy format
+      const data = await storage.download(storagePath);
       writeFileSync(originalPath, data);
       unlinkSync(redirectPath);
       restored++;
@@ -411,7 +558,7 @@ async function cleanFiles(args: string[]) {
   if (!dir || !existsSync(dir)) { console.error('Usage: gbrain files clean <dir> [--yes]'); process.exit(1); }
 
   if (!confirmed) {
-    console.error('WARNING: This permanently removes .redirect breadcrumbs.');
+    console.error('WARNING: This permanently removes redirect pointers.');
     console.error('After this, files are only accessible from cloud storage.');
     console.error('Git history still has the originals if you need them.');
     console.error('Run with --yes to confirm.');
@@ -424,7 +571,7 @@ async function cleanFiles(args: string[]) {
       if (entry.startsWith('.')) continue;
       const full = join(d, entry);
       if (statSync(full).isDirectory()) findAndClean(full);
-      else if (entry.endsWith('.redirect')) { unlinkSync(full); cleaned++; }
+      else if (entry.endsWith('.redirect.yaml') || entry.endsWith('.redirect')) { unlinkSync(full); cleaned++; }
     }
   }
   findAndClean(dir);
@@ -443,7 +590,7 @@ async function filesStatus(args: string[]) {
       const full = join(d, entry);
       if (entry === '.supabase') { mirrored++; continue; }
       if (statSync(full).isDirectory()) scan(full);
-      else if (entry.endsWith('.redirect')) redirected++;
+      else if (entry.endsWith('.redirect.yaml') || entry.endsWith('.redirect')) redirected++;
       else if (!entry.endsWith('.md')) local++;
     }
   }
