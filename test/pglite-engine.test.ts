@@ -58,6 +58,22 @@ describe('PGLiteEngine: Pages', () => {
     expect(fetched!.content_hash).toBeTruthy();
   });
 
+  test('putPage generates unique content_hash per page content', async () => {
+    const pageA = await engine.putPage('test/hash-a', {
+      type: 'person', title: 'Alice',
+      compiled_truth: 'Alice is the CEO of Acme Corp.',
+    });
+    const pageB = await engine.putPage('test/hash-b', {
+      type: 'company', title: 'Beta Inc',
+      compiled_truth: 'Beta Inc builds enterprise software.',
+    });
+
+    // Different content MUST produce different hashes (import idempotency depends on this)
+    expect(pageA.content_hash).toBeTruthy();
+    expect(pageB.content_hash).toBeTruthy();
+    expect(pageA.content_hash).not.toBe(pageB.content_hash);
+  });
+
   test('putPage upserts on conflict', async () => {
     await engine.putPage('test/upsert', testPage);
     const updated = await engine.putPage('test/upsert', {
