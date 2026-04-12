@@ -5,6 +5,9 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
@@ -491,5 +494,47 @@ describe('PGLiteEngine: Cascade deletes', () => {
     expect(chunks.length).toBe(0);
     const tags = await engine.getTags('test/cascade');
     expect(tags.length).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// File-backed locking / recovery
+// ─────────────────────────────────────────────────────────────────
+describe('PGLiteEngine: file-backed locking', () => {
+  test('rejects a second connection to the same file-backed brain', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'gbrain-pglite-lock-'));
+    const first = new PGLiteEngine();
+    const second = new PGLiteEngine();
+
+    try {
+      await first.connect({ engine: 'pglite', database_path: dataDir });
+      await first.initSchema();
+
+      await expect(second.connect({ engine: 'pglite', database_path: dataDir })).rejects.toThrow(/already in use/i);
+    } finally {
+      await first.disconnect();
+      await second.disconnect();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test('recovers from stale lock and stale postmaster pid', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'gbrain-pglite-stale-'));
+    const lockPath = join(dataDir, '.gbrain.lock');
+    const pidPath = join(dataDir, 'postmaster.pid');
+    const engine = new PGLiteEngine();
+
+    try {
+      writeFileSync(lockPath, JSON.stringify({ pid: 999999, acquiredAt: new Date().toISOString(), dataDir }));
+      writeFileSync(pidPath, '999999\n');
+
+      await engine.connect({ engine: 'pglite', database_path: dataDir });
+      await engine.initSchema();
+
+      expect(await engine.getStats()).toBeTruthy();
+    } finally {
+      await engine.disconnect();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });
