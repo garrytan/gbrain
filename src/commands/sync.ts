@@ -180,10 +180,10 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     const allRelativePaths = collectMarkdownFiles(repoPath).map(path => relative(repoPath, path));
     obsidianIndex = buildVaultIndex(allRelativePaths);
     if (obsidianIndex.slugCollisions.size > 0) {
-      const details = Array.from(obsidianIndex.slugCollisions)
-        .map(([slug, paths]) => `${slug}: ${paths.join(', ')}`)
-        .join('; ');
-      throw new Error(`Obsidian link sync aborted: multiple files collapse to the same gbrain slug. ${details}`);
+      console.warn(`Warning: ${obsidianIndex.slugCollisions.size} slug collision(s) detected. Colliding files will be skipped for link sync.`);
+      for (const [slug, paths] of obsidianIndex.slugCollisions) {
+        console.warn(`  ${slug}: ${paths.join(', ')}`);
+      }
     }
   }
 

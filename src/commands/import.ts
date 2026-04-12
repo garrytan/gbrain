@@ -41,11 +41,10 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   const allRelativePaths = allFiles.map(file => relative(dir, file));
   const obsidianIndex = buildVaultIndex(allRelativePaths);
   if (obsidianIndex.slugCollisions.size > 0) {
-    console.error('Obsidian link sync aborted: multiple files collapse to the same gbrain slug.');
+    console.warn(`Warning: ${obsidianIndex.slugCollisions.size} slug collision(s) detected. Colliding files will be skipped for link sync.`);
     for (const [slug, paths] of obsidianIndex.slugCollisions) {
-      console.error(`  ${slug}: ${paths.join(', ')}`);
+      console.warn(`  ${slug}: ${paths.join(', ')}`);
     }
-    process.exit(1);
   }
 
   // Resume from checkpoint if available

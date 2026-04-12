@@ -27,6 +27,7 @@ export interface VaultIndex {
   byExactLower: Map<string, VaultIndexEntry[]>;
   byBasenameLower: Map<string, VaultIndexEntry[]>;
   slugCollisions: Map<string, string[]>;
+  collidingSlugs: Set<string>;
 }
 
 export interface ResolvedObsidianLink {
@@ -107,11 +108,15 @@ export function buildVaultIndex(relativePaths: string[]): VaultIndex {
   }
 
   const slugCollisions = new Map<string, string[]>();
+  const collidingSlugs = new Set<string>();
   for (const [slug, paths] of slugToPaths) {
-    if (paths.length > 1) slugCollisions.set(slug, paths);
+    if (paths.length > 1) {
+      slugCollisions.set(slug, paths);
+      collidingSlugs.add(slug);
+    }
   }
 
-  return { entries, byExact, byBasename, byExactLower, byBasenameLower, slugCollisions };
+  return { entries, byExact, byBasename, byExactLower, byBasenameLower, slugCollisions, collidingSlugs };
 }
 
 export function extractObsidianLinks(content: string): ObsidianLinkToken[] {

@@ -80,11 +80,12 @@ export async function performObsidianLinkSync(
   const report = createEmptyObsidianReport();
   addSlugCollisionsToReport(index, report);
 
-  if (report.slugCollisions.length === 0) {
+  {
     for (const filePath of files) {
       const relativePath = relative(opts.repoPath, filePath);
       if (!isSyncable(relativePath)) continue;
       const sourceSlug = index.entries.find(e => e.relativePath === relativePath)?.slug || '';
+      if (index.collidingSlugs.has(sourceSlug)) continue;
       const sourcePage = await engine.getPage(sourceSlug);
       if (!sourcePage) {
         report.missingSources.push(relativePath);
@@ -134,7 +135,7 @@ export async function performObsidianLinkSync(
     }
   }
 
-  if (!opts.dryRun && report.slugCollisions.length === 0) {
+  if (!opts.dryRun) {
     await engine.logIngest({
       source_type: 'obsidian_link_sync',
       source_ref: opts.repoPath,
