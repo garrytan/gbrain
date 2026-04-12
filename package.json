@@ -34,6 +34,7 @@
     "@electric-sql/pglite": "^0.4.4",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "gray-matter": "^4.0.3",
+    "marked": "^18.0.0",
     "openai": "^4.0.0",
     "pgvector": "^0.2.0",
     "postgres": "^3.4.0"

@@ -39,7 +39,6 @@ export async function connect(config: EngineConfig): Promise<void> {
       max: 10,
       idle_timeout: 20,
       connect_timeout: 10,
-      connection: { statement_timeout: '8s' },
       types: {
         // Register pgvector type
         bigint: postgres.BigInt,

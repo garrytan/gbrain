@@ -188,34 +188,40 @@ export class PostgresEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
-    // CTE: rank pages by FTS score, then pick the best chunk per page in SQL
-    const rows = await sql`
-      WITH ranked_pages AS (
-        SELECT p.id, p.slug, p.title, p.type,
-          ts_rank(p.search_vector, websearch_to_tsquery('english', ${query})) AS score
-        FROM pages p
-        WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
-          ${type ? sql`AND p.type = ${type}` : sql``}
-          ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
+    // Search-only timeout: prevents DoS via expensive queries without
+    // affecting long-running operations like embed --all or bulk import
+    await sql`SET statement_timeout = '8s'`;
+    try {
+      // CTE: rank pages by FTS score, then pick the best chunk per page in SQL
+      const rows = await sql`
+        WITH ranked_pages AS (
+          SELECT p.id, p.slug, p.title, p.type,
+            ts_rank(p.search_vector, websearch_to_tsquery('english', ${query})) AS score
+          FROM pages p
+          WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
+            ${type ? sql`AND p.type = ${type}` : sql``}
+            ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
+          ORDER BY score DESC
+          LIMIT ${limit}
+          OFFSET ${offset}
+        ),
+        best_chunks AS (
+          SELECT DISTINCT ON (rp.slug)
+            rp.slug, rp.id as page_id, rp.title, rp.type, rp.score,
+            cc.chunk_text, cc.chunk_source
+          FROM ranked_pages rp
+          JOIN content_chunks cc ON cc.page_id = rp.id
+          ORDER BY rp.slug, cc.chunk_index
+        )
+        SELECT slug, page_id, title, type, chunk_text, chunk_source, score,
+          false AS stale
+        FROM best_chunks
         ORDER BY score DESC
-        LIMIT ${limit}
-        OFFSET ${offset}
-      ),
-      best_chunks AS (
-        SELECT DISTINCT ON (rp.slug)
-          rp.slug, rp.id as page_id, rp.title, rp.type, rp.score,
-          cc.chunk_text, cc.chunk_source
-        FROM ranked_pages rp
-        JOIN content_chunks cc ON cc.page_id = rp.id
-        ORDER BY rp.slug, cc.chunk_index
-      )
-      SELECT slug, page_id, title, type, chunk_text, chunk_source, score,
-        false AS stale
-      FROM best_chunks
-      ORDER BY score DESC
-    `;
-
-    return rows.map(rowToSearchResult);
+      `;
+      return rows.map(rowToSearchResult);
+    } finally {
+      await sql`SET statement_timeout = '0'`;
+    }
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
@@ -231,23 +237,28 @@ export class PostgresEngine implements BrainEngine {
 
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
 
-    const rows = await sql`
-      SELECT
-        p.slug, p.id as page_id, p.title, p.type,
-        cc.chunk_text, cc.chunk_source,
-        1 - (cc.embedding <=> ${vecStr}::vector) AS score,
-        false AS stale
-      FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL
-        ${type ? sql`AND p.type = ${type}` : sql``}
-        ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
-      ORDER BY cc.embedding <=> ${vecStr}::vector
-      LIMIT ${limit}
-      OFFSET ${offset}
-    `;
-
-    return rows.map(rowToSearchResult);
+    // Search-only timeout (see searchKeyword for rationale)
+    await sql`SET statement_timeout = '8s'`;
+    try {
+      const rows = await sql`
+        SELECT
+          p.slug, p.id as page_id, p.title, p.type,
+          cc.chunk_text, cc.chunk_source,
+          1 - (cc.embedding <=> ${vecStr}::vector) AS score,
+          false AS stale
+        FROM content_chunks cc
+        JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NOT NULL
+          ${type ? sql`AND p.type = ${type}` : sql``}
+          ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
+        ORDER BY cc.embedding <=> ${vecStr}::vector
+        LIMIT ${limit}
+        OFFSET ${offset}
+      `;
+      return rows.map(rowToSearchResult);
+    } finally {
+      await sql`SET statement_timeout = '0'`;
+    }
   }
 
   // Chunks

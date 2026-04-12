@@ -210,8 +210,9 @@ describe('generateHtml', () => {
     expect(html).toContain('prefers-color-scheme: dark');
   });
 
-  test('includes marked.js CDN', () => {
+  test('inlines marked.js (no CDN dependency)', () => {
     const html = generateHtml({ title: 'T', markdown: 'x' });
-    expect(html).toContain('cdn.jsdelivr.net/npm/marked');
+    expect(html).not.toContain('cdn.jsdelivr.net');
+    expect(html).toContain('marked');
   });
 });

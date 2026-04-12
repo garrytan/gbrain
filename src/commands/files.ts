@@ -240,9 +240,10 @@ async function uploadRaw(args: string[]) {
       uploaded: new Date().toISOString(),
       ...(fileType ? { type: fileType } : {}),
     });
-    // Write pointer next to the page that references it
-    pointerPath = `${pageSlug}/${filename}.redirect.yaml`;
-    console.error(`Pointer: ${pointerPath}`);
+    // Write pointer next to the original file
+    pointerPath = filePath + '.redirect.yaml';
+    writeFileSync(pointerPath, pointer);
+    console.error(`Pointer written: ${pointerPath}`);
   }
 
   // Record in DB
