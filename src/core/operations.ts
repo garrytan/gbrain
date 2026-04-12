@@ -8,6 +8,7 @@ import type { GBrainConfig } from './config.ts';
 import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
+import { dedupResults } from './search/dedup.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -178,7 +179,8 @@ const search: Operation = {
     limit: { type: 'number', description: 'Max results (default 20)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.searchKeyword(p.query as string, { limit: (p.limit as number) || 20 });
+    const results = await ctx.engine.searchKeyword(p.query as string, { limit: (p.limit as number) || 20 });
+    return dedupResults(results);
   },
   cliHints: { name: 'search', positional: ['query'] },
 };
@@ -190,13 +192,16 @@ const query: Operation = {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
+    detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
   },
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
+    const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
     return hybridSearch(ctx.engine, p.query as string, {
       limit: (p.limit as number) || 20,
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
+      detail,
     });
   },
   cliHints: { name: 'query', positional: ['query'] },
