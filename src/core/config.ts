@@ -11,7 +11,10 @@ export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
   database_url?: string;
   database_path?: string;
+  embedding_provider?: 'openai' | 'gemini';
+  embedding_model?: string;
   openai_api_key?: string;
+  gemini_api_key?: string;
   anthropic_api_key?: string;
 }
 
@@ -28,6 +31,10 @@ export function loadConfig(): GBrainConfig | null {
 
   // Try env vars
   const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const embeddingProvider = process.env.GBRAIN_EMBEDDING_PROVIDER as 'openai' | 'gemini' | undefined;
+  const embeddingModel = process.env.GBRAIN_EMBEDDING_MODEL;
 
   if (!fileConfig && !dbUrl) return null;
 
@@ -35,12 +42,22 @@ export function loadConfig(): GBrainConfig | null {
   const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
     || (fileConfig?.database_path ? 'pglite' : 'postgres');
 
+  // Infer embedding provider if not explicitly set
+  const inferredEmbeddingProvider = embeddingProvider
+    || fileConfig?.embedding_provider
+    || (geminiKey && !openaiKey ? 'gemini' : undefined)
+    || (openaiKey || fileConfig?.openai_api_key ? 'openai' : undefined)
+    || (geminiKey || fileConfig?.gemini_api_key ? 'gemini' : undefined);
+
   // Merge: env vars override config file
   const merged = {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
-    ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(inferredEmbeddingProvider ? { embedding_provider: inferredEmbeddingProvider } : {}),
+    ...(embeddingModel ? { embedding_model: embeddingModel } : {}),
+    ...(openaiKey ? { openai_api_key: openaiKey } : {}),
+    ...(geminiKey ? { gemini_api_key: geminiKey } : {}),
   };
   return merged as GBrainConfig;
 }
