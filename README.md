@@ -161,7 +161,7 @@ I was setting up my [OpenClaw](https://openclaw.ai) agent and started a markdown
 
 The agent runs while I sleep. The dream cycle scans every conversation, enriches missing entities, fixes broken citations, and consolidates memory. I wake up and the brain is smarter than when I went to sleep. See the [cron schedule guide](docs/guides/cron-schedule.md) for setup.
 
-**PGLite runs locally by default.** `gbrain init` gives you embedded Postgres with pgvector, hybrid search, and all 37 operations. No server, no subscription. When your brain outgrows local (1000+ files, multi-device access, remote MCP), `gbrain migrate --to supabase` moves everything to managed Postgres.
+**PGLite runs locally by default.** `gbrain init` gives you embedded Postgres with pgvector, hybrid search, and all 39 engine operations. No server, no subscription. When your brain outgrows local (1000+ files, multi-device access, remote MCP), `gbrain migrate --to supabase` moves everything to managed Postgres.
 
 ## Architecture
 

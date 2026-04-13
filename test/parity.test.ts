@@ -66,8 +66,10 @@ describe('operations contract parity', () => {
     }
   });
 
-  test('operations count is at least 30', () => {
-    expect(operations.length).toBeGreaterThanOrEqual(30);
+  test('operations count matches README claim (30 MCP tools)', () => {
+    // If this fails, update README.md's "30 MCP tools" claim and add/remove
+    // the matching operation below. Keeping this exact prevents silent drift.
+    expect(operations.length).toBe(30);
   });
 
   test('MCP tool definitions can be generated from operations', () => {
