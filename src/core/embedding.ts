@@ -1,7 +1,7 @@
 import { loadConfig, type GBrainConfig } from './config.ts';
 import type { ChunkInput } from './types.ts';
 import type { ResolvedEmbeddingProvider } from './embedding/provider.ts';
-import { resolveEmbeddingProvider } from './embedding/provider.ts';
+import { modelUsesNomicTaskPrefixes, resolveEmbeddingProvider } from './embedding/provider.ts';
 
 const MAX_CHARS = 8000;
 const BATCH_SIZE = 100;
@@ -15,6 +15,8 @@ export interface EmbeddingRuntimeOptions {
   config?: GBrainConfig | null;
   provider?: ResolvedEmbeddingProvider;
 }
+
+type EmbeddingKind = 'document' | 'query';
 
 export interface EmbeddedChunkBatch {
   capability: ResolvedEmbeddingProvider['capability'];
@@ -50,7 +52,12 @@ export function getEmbeddingRuntime(
 }
 
 export async function embed(text: string, options: EmbeddingRuntimeOptions = {}): Promise<Float32Array> {
-  const results = await embedBatch([text], options);
+  const results = await embedBatchForKind([text], 'query', options);
+  return results[0];
+}
+
+export async function embedQuery(text: string, options: EmbeddingRuntimeOptions = {}): Promise<Float32Array> {
+  const results = await embedBatchForKind([text], 'query', options);
   return results[0];
 }
 
@@ -58,8 +65,17 @@ export async function embedBatch(
   texts: string[],
   options: EmbeddingRuntimeOptions = {},
 ): Promise<Float32Array[]> {
+  return embedBatchForKind(texts, 'document', options);
+}
+
+async function embedBatchForKind(
+  texts: string[],
+  kind: EmbeddingKind,
+  options: EmbeddingRuntimeOptions = {},
+): Promise<Float32Array[]> {
   const provider = getEmbeddingProvider(options);
-  const truncated = texts.map(text => truncateForEmbedding(text));
+  const prepared = texts.map(text => prepareEmbeddingInput(text, kind, provider));
+  const truncated = prepared.map(text => truncateForEmbedding(text));
 
   if (!provider.capability.available) {
     throw new Error(provider.capability.reason || 'Embedding provider unavailable');
@@ -119,11 +135,25 @@ export function estimateTokenCount(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export const EMBEDDING_MODEL = 'text-embedding-3-large';
-export const EMBEDDING_DIMENSIONS = 1536;
+export const EMBEDDING_MODEL = 'nomic-embed-text';
+export const EMBEDDING_DIMENSIONS = 768;
 
 function truncateForEmbedding(text: string): string {
   return text.slice(0, MAX_CHARS);
+}
+
+function prepareEmbeddingInput(
+  text: string,
+  kind: EmbeddingKind,
+  provider: ResolvedEmbeddingProvider,
+): string {
+  if (!modelUsesNomicTaskPrefixes(provider.capability.model)) {
+    return text;
+  }
+
+  return kind === 'document'
+    ? `search_document: ${text}`
+    : `search_query: ${text}`;
 }
 
 function safeLoadConfig(): GBrainConfig | null {

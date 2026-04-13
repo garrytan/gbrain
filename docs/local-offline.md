@@ -45,7 +45,7 @@ Typical result:
   "database_path": "/Users/alice/.gbrain/brain.db",
   "offline": true,
   "embedding_provider": "local",
-  "embedding_model": "bge-m3",
+  "embedding_model": "nomic-embed-text",
   "query_rewrite_provider": "heuristic"
 }
 ```
@@ -208,11 +208,15 @@ If Ollama is already running on the default host/port and you are using the defa
 gbrain embed --stale
 ```
 
+The default model is `nomic-embed-text`. GBrain applies the retrieval prefixes
+internally, so document chunks use `search_document:` and search queries use
+`search_query:` automatically.
+
 If you need a custom host/port or a non-default model, override only those pieces:
 
 ```bash
 export OLLAMA_HOST=http://127.0.0.1:11434
-export GBRAIN_LOCAL_EMBEDDING_MODEL=bge-m3
+export GBRAIN_LOCAL_EMBEDDING_MODEL=nomic-embed-text
 gbrain embed --stale
 ```
 

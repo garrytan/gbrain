@@ -82,6 +82,27 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 5,
+    name: 'pgvector_768_for_nomic',
+    sql: `
+      DROP INDEX IF EXISTS idx_chunks_embedding;
+      ALTER TABLE content_chunks
+        ALTER COLUMN embedding TYPE vector(768)
+        USING NULL::vector(768);
+      ALTER TABLE content_chunks
+        ALTER COLUMN model SET DEFAULT 'nomic-embed-text';
+      UPDATE content_chunks
+      SET embedding = NULL,
+          embedded_at = NULL,
+          model = 'nomic-embed-text';
+      INSERT INTO config (key, value) VALUES ('embedding_model', 'nomic-embed-text')
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+      INSERT INTO config (key, value) VALUES ('embedding_dimensions', '768')
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+      CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

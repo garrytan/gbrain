@@ -97,7 +97,7 @@ export function createLocalConfigDefaults(
     database_path: overrides.database_path ?? process.env.GBRAIN_DATABASE_PATH ?? defaultLocalDatabasePath(),
     offline: overrides.offline ?? true,
     embedding_provider: overrides.embedding_provider ?? 'local',
-    embedding_model: overrides.embedding_model ?? 'bge-m3',
+    embedding_model: overrides.embedding_model ?? 'nomic-embed-text',
     query_rewrite_provider: overrides.query_rewrite_provider ?? 'heuristic',
     openai_api_key: overrides.openai_api_key,
     anthropic_api_key: overrides.anthropic_api_key,

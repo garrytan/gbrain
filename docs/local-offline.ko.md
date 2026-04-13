@@ -49,7 +49,7 @@
   "database_path": "/Users/alice/.gbrain/brain.db",
   "offline": true,
   "embedding_provider": "local",
-  "embedding_model": "bge-m3",
+  "embedding_model": "nomic-embed-text",
   "query_rewrite_provider": "heuristic"
 }
 ```
@@ -206,11 +206,15 @@ Ollama가 기본 호스트/포트로 떠 있고 기본 모델을 쓸 거라면, 
 gbrain embed --stale
 ```
 
+기본 모델은 `nomic-embed-text`입니다. GBrain이 retrieval prefix를 내부적으로
+자동 적용하므로 문서 청크는 `search_document:`, 검색 질의는 `search_query:`
+형태로 처리됩니다.
+
 커스텀 호스트/포트나 다른 모델을 쓰는 경우에만 필요한 값만 override 하세요.
 
 ```bash
 export OLLAMA_HOST=http://127.0.0.1:11434
-export GBRAIN_LOCAL_EMBEDDING_MODEL=bge-m3
+export GBRAIN_LOCAL_EMBEDDING_MODEL=nomic-embed-text
 gbrain embed --stale
 ```
 

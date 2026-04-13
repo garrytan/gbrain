@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runEmbed } from '../src/commands/embed.ts';
-import { getEmbeddingProvider, resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
+import { embedChunks, getEmbeddingProvider, resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
 import { importFile } from '../src/core/import-file.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
@@ -28,6 +28,26 @@ function createFakeProvider() {
       embedBatch: async (texts: string[]) => {
         batches.push([...texts]);
         return texts.map((text, index) => new Float32Array([text.length, index + 1, texts.length]));
+      },
+    },
+  };
+}
+
+function createCapturingProvider(model: string) {
+  const batches: string[][] = [];
+  return {
+    batches,
+    provider: {
+      capability: {
+        available: true,
+        mode: 'local' as const,
+        implementation: 'test-local' as const,
+        model,
+        dimensions: 3,
+      },
+      embedBatch: async (texts: string[]) => {
+        batches.push([...texts]);
+        return texts.map((_text, index) => new Float32Array([index + 1, texts.length, model.length]));
       },
     },
   };
@@ -161,7 +181,7 @@ describe('local/offline profile semantics', () => {
       database_path: join(tempDir, '.gbrain', 'brain.db'),
       offline: true,
       embedding_provider: 'local',
-      embedding_model: 'bge-m3',
+      embedding_model: 'nomic-embed-text',
       query_rewrite_provider: 'heuristic',
     });
     expect(readFileSync(join(tempDir, '.gbrain', 'config.json'), 'utf-8')).toContain('"engine": "sqlite"');
@@ -432,7 +452,7 @@ describe('local/offline embedding flow', () => {
       expect(init?.method).toBe('POST');
       expect(init?.headers).toEqual({ 'content-type': 'application/json' });
       expect(JSON.parse(String(init?.body ?? '{}'))).toEqual({
-        model: 'bge-m3',
+        model: 'nomic-embed-text',
         input: ['hello from default ollama'],
       });
 
@@ -458,7 +478,7 @@ describe('local/offline embedding flow', () => {
       expect(provider.capability.available).toBe(true);
       expect(provider.capability.mode).toBe('local');
       expect(provider.capability.implementation).toBe('local-http');
-      expect(provider.capability.model).toBe('bge-m3');
+      expect(provider.capability.model).toBe('nomic-embed-text');
       expect(provider.capability.dimensions).toBeNull();
 
       const embeddings = await provider.embedBatch(['hello from default ollama']);
@@ -562,6 +582,30 @@ describe('local/offline embedding flow', () => {
     }
   });
 
+  test('embedChunks prefixes nomic documents for retrieval tasks', async () => {
+    const provider = createCapturingProvider('nomic-embed-text');
+
+    await embedChunks([{
+      chunk_index: 0,
+      chunk_text: 'document body',
+      chunk_source: 'compiled_truth',
+    }], { provider: provider.provider });
+
+    expect(provider.batches).toEqual([['search_document: document body']]);
+  });
+
+  test('embedChunks leaves non-nomic document text unchanged', async () => {
+    const provider = createCapturingProvider('bge-m3');
+
+    await embedChunks([{
+      chunk_index: 0,
+      chunk_text: 'document body',
+      chunk_source: 'compiled_truth',
+    }], { provider: provider.provider });
+
+    expect(provider.batches).toEqual([['document body']]);
+  });
+
   test('deferred re-import marks rewritten chunks as missing embeddings', async () => {
     const firstProvider = createFakeProvider();
     setEmbeddingProviderForTests(firstProvider.provider);
@@ -596,7 +640,7 @@ Updated chunk content for the same page.
     expect(chunksAfterRewrite).toHaveLength(1);
     expect(chunksAfterRewrite[0].chunk_text).toContain('Updated chunk content');
     expect(chunksAfterRewrite[0].embedded_at).toBeNull();
-    expect(chunksAfterRewrite[0].model).toBe('text-embedding-3-large');
+    expect(chunksAfterRewrite[0].model).toBe('nomic-embed-text');
   });
 
   test('stale-only embedding updates only missing chunks', async () => {
@@ -790,6 +834,34 @@ Timeline sentence.
     const hybridResults = await hybridSearch(engine, 'offline retrieval fallback', { limit: 5 });
 
     expect(hybridResults).toEqual(keywordResults);
+  });
+
+  test('hybrid search prefixes nomic queries for retrieval tasks', async () => {
+    const provider = createCapturingProvider('nomic-embed-text');
+    setEmbeddingProviderForTests(provider.provider);
+
+    const mockEngine = {
+      searchKeyword: async () => [],
+      searchVector: async () => [],
+    } as any;
+
+    await hybridSearch(mockEngine, 'who is alice?', { limit: 5 });
+
+    expect(provider.batches).toEqual([['search_query: who is alice?']]);
+  });
+
+  test('hybrid search leaves non-nomic queries unchanged', async () => {
+    const provider = createCapturingProvider('bge-m3');
+    setEmbeddingProviderForTests(provider.provider);
+
+    const mockEngine = {
+      searchKeyword: async () => [],
+      searchVector: async () => [],
+    } as any;
+
+    await hybridSearch(mockEngine, 'who is alice?', { limit: 5 });
+
+    expect(provider.batches).toEqual([['who is alice?']]);
   });
 
   test('hybrid search fuses vector and keyword rankings when both are available', async () => {

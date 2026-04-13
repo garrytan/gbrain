@@ -8,7 +8,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
-import { embed, getEmbeddingProvider } from '../embedding.ts';
+import { embedQuery, getEmbeddingProvider } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 
 const RRF_K = 60;
@@ -44,7 +44,7 @@ export async function hybridSearch(
   }
 
   const embeddingSettled = await Promise.allSettled(
-    queries.map(q => embed(q, { provider })),
+    queries.map(q => embedQuery(q, { provider })),
   );
   const embeddings = embeddingSettled.flatMap((result) => (
     result.status === 'fulfilled' ? [result.value] : []

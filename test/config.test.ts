@@ -33,6 +33,11 @@ afterEach(() => {
 });
 
 describe('config loading', () => {
+  test('createLocalConfigDefaults uses nomic-embed-text as the local default embedding model', async () => {
+    const { createLocalConfigDefaults } = await import('../src/core/config.ts');
+    expect(createLocalConfigDefaults().embedding_model).toBe('nomic-embed-text');
+  });
+
   test('loads sqlite engine settings from config', async () => {
     writeUserConfig({
       engine: 'sqlite',

@@ -1,6 +1,6 @@
 import type { EmbeddingProvider as EmbeddingProviderMode, GBrainConfig } from '../config.ts';
 
-const DEFAULT_LOCAL_MODEL = 'bge-m3';
+const DEFAULT_LOCAL_MODEL = 'nomic-embed-text';
 const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 
 export interface EmbeddingProviderCapability {
@@ -19,6 +19,10 @@ export interface ResolvedEmbeddingProvider {
 
 export interface ResolveEmbeddingProviderOptions {
   config?: GBrainConfig | null;
+}
+
+export function modelUsesNomicTaskPrefixes(model: string | null | undefined): boolean {
+  return typeof model === 'string' && model.startsWith('nomic-embed-text');
 }
 
 export function resolveEmbeddingProvider(

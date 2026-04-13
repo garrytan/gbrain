@@ -21,7 +21,7 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 
-const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-large';
+const DEFAULT_EMBEDDING_MODEL = 'nomic-embed-text';
 const BASELINE_VERSION = 1;
 
 const SCHEMA_SQL = `
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_text TEXT NOT NULL,
   chunk_source TEXT NOT NULL DEFAULT 'compiled_truth',
   embedding BLOB,
-  model TEXT NOT NULL DEFAULT 'text-embedding-3-large',
+  model TEXT NOT NULL DEFAULT 'nomic-embed-text',
   token_count INTEGER,
   embedded_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -218,7 +218,7 @@ export class SQLiteEngine implements BrainEngine {
         ('version', ?),
         ('engine', 'sqlite'),
         ('embedding_model', ?),
-        ('embedding_dimensions', '1536'),
+        ('embedding_dimensions', '768'),
         ('chunk_strategy', 'semantic')`,
       [String(BASELINE_VERSION), DEFAULT_EMBEDDING_MODEL],
     );
