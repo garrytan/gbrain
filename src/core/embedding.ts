@@ -2,15 +2,20 @@
  * Embedding Service
  * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * Default: OpenAI text-embedding-3-large at 1536 dimensions.
+ * Configurable via env vars for alternative providers (DashScope, GLM, etc.):
+ *   OPENAI_BASE_URL  — API endpoint (e.g. https://dashscope.aliyuncs.com/compatible-mode/v1)
+ *   EMBEDDING_MODEL  — model name (e.g. text-embedding-v3)
+ *   EMBEDDING_DIMENSIONS — vector dimensions (e.g. 1024)
+ *
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-large';
+const DIMENSIONS = parseInt(process.env.EMBEDDING_DIMENSIONS || '1536', 10);
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
