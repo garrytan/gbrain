@@ -571,12 +571,35 @@ const file_upload: Operation = {
     const { basename, extname } = await import('path');
     const { createHash } = await import('crypto');
 
+    const { lstatSync, realpathSync } = await import('fs');
+    const { resolve, dirname } = await import('path');
+
     const filePath = p.path as string;
     const pageSlug = (p.page_slug as string) || null;
+
+    // Path confinement: reject absolute paths, symlinks, and traversal.
+    // file_upload is reachable via MCP so the path comes from an
+    // authenticated but untrusted caller. Without confinement, a
+    // bearer token holder can read any file the process can access.
+    const resolved = resolve(filePath);
+    const cwd = process.cwd();
+    if (!resolved.startsWith(cwd + '/') && resolved !== cwd) {
+      throw new OperationError('path_denied', `file_upload path must be within the working directory. Got: ${filePath}`);
+    }
+    const lst = lstatSync(resolved);
+    if (lst.isSymbolicLink()) {
+      throw new OperationError('path_denied', `file_upload rejects symlinks: ${filePath}`);
+    }
+
     const stat = statSync(filePath);
     const content = readFileSync(filePath);
     const hash = createHash('sha256').update(content).digest('hex');
     const filename = basename(filePath);
+    // Validate page_slug: reject traversal sequences so a crafted
+    // slug can't escape the storage directory structure.
+    if (pageSlug && /\.\.[\\/]/.test(pageSlug)) {
+      throw new OperationError('invalid_slug', `page_slug contains path traversal: ${pageSlug}`);
+    }
     const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
 
     const MIME_TYPES: Record<string, string> = {
