@@ -1,6 +1,6 @@
 # Captain Multimodal Search
 
-GBrain handles text. Captain handles everything else — images, video, audio, PDFs with complex layouts. One API, same search pattern.
+GBrain handles text. Captain handles multimodal — images, video, audio, PDFs with complex layouts. One API, same search pattern.
 
 ## What this adds
 
