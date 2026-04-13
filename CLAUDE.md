@@ -16,7 +16,7 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 - `src/core/operations.ts` — Contract-first operation definitions (the foundation)
 - `src/core/engine.ts` — Pluggable engine interface (BrainEngine)
 - `src/core/engine-factory.ts` — Engine factory with dynamic imports (`'pglite'` | `'postgres'`)
-- `src/core/pglite-engine.ts` — PGLite (embedded Postgres 17.5 via WASM) implementation, all 37 BrainEngine methods
+- `src/core/pglite-engine.ts` — PGLite (embedded Postgres 17.5 via WASM) implementation, all 39 BrainEngine methods
 - `src/core/pglite-schema.ts` — PGLite-specific DDL (pgvector, pg_trgm, triggers)
 - `src/core/postgres-engine.ts` — Postgres + pgvector implementation (Supabase / self-hosted)
 - `src/core/utils.ts` — Shared SQL utilities extracted from postgres-engine.ts
@@ -81,7 +81,7 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/setup-branching.test.ts` (setup flow), `test/slug-validation.test.ts` (slug validation),
 `test/storage.test.ts` (storage backends), `test/supabase-admin.test.ts` (Supabase admin),
 `test/yaml-lite.test.ts` (YAML parsing), `test/check-update.test.ts` (version check + update CLI),
-`test/pglite-engine.test.ts` (PGLite engine, all 37 BrainEngine methods),
+`test/pglite-engine.test.ts` (PGLite engine, all 39 BrainEngine methods),
 `test/utils.test.ts` (shared SQL utilities), `test/engine-factory.test.ts` (engine factory + dynamic imports),
 `test/integrations.test.ts` (recipe parsing, CLI routing, recipe validation),
 `test/publish.test.ts` (content stripping, encryption, password generation, HTML output),

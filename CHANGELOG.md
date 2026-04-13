@@ -2,6 +2,17 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **`gbrain health` now reports the same thing no matter which engine you're on.** The Postgres engine's `getHealth` used a different definition of `stale_pages`, `orphan_pages`, and `dead_links` than PGLite — so `gbrain doctor --json` told you different stories depending on your backend. Both engines now use the PGLite semantics: stale = compiled truth older than the latest timeline entry, orphan = no incoming links, dead = a link pointing at a missing page.
+- **`file_url` returns a URL you can actually open.** The MCP/CLI `file_url` operation used to return a hardcoded `gbrain:files/<path>` placeholder. It now returns a signed URL for Supabase Storage, a public URL for S3/R2/MinIO, and a `file://` path for local — all routed through your configured storage backend.
+
+### Added
+
+- **`gbrain doctor` catches missing API keys before you hit a real query.** New checks: `api_keys` (fails if `OPENAI_API_KEY` is missing — required for vector search — and warns on missing `ANTHROPIC_API_KEY`), `embedding_smoke` (actually calls OpenAI with one tiny input so you know the key works), `storage_backend` (probes the configured backend if it isn't local), and `hnsw_index` (warns if the vector index is missing so you don't wonder why search is slow).
+
 ## [0.9.1] - 2026-04-11
 
 ### Fixed

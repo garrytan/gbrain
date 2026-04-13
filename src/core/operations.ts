@@ -625,18 +625,30 @@ const file_upload: Operation = {
 
 const file_url: Operation = {
   name: 'file_url',
-  description: 'Get a URL for a stored file',
+  description: 'Get a URL for a stored file (signed where the backend supports it)',
   params: {
     storage_path: { type: 'string', required: true },
   },
-  handler: async (_ctx, p) => {
+  handler: async (ctx, p) => {
+    const storagePath = p.storage_path as string;
     const sql = db.getConnection();
-    const rows = await sql`SELECT storage_path, mime_type, size_bytes FROM files WHERE storage_path = ${p.storage_path as string}`;
+    const rows = await sql`SELECT storage_path, mime_type, size_bytes FROM files WHERE storage_path = ${storagePath}`;
     if (rows.length === 0) {
-      throw new OperationError('storage_error', `File not found: ${p.storage_path}`);
+      throw new OperationError('storage_error', `File not found: ${storagePath}`, 'Upload via gbrain files upload, or check the path with gbrain files list');
     }
-    // TODO: generate signed URL from Supabase Storage
-    return { storage_path: rows[0].storage_path, url: `gbrain:files/${rows[0].storage_path}` };
+
+    if (!ctx.config.storage) {
+      throw new OperationError(
+        'storage_error',
+        'No storage backend configured',
+        'Set storage backend via gbrain config set storage.backend <local|supabase|s3>',
+      );
+    }
+
+    const { createStorage } = await import('./storage.ts');
+    const storage = await createStorage(ctx.config.storage as Parameters<typeof createStorage>[0]);
+    const url = await storage.getUrl(storagePath);
+    return { storage_path: rows[0].storage_path, url };
   },
 };
 

@@ -339,6 +339,37 @@ describeE2E('E2E: Admin', () => {
     expect(typeof health.page_count).toBe('number');
     expect(typeof health.embed_coverage).toBe('number');
   });
+
+  test('get_health semantics: orphans, stale, dead_links match PGLite definitions', async () => {
+    // Fresh setup so counts are deterministic.
+    await setupDB();
+
+    const engine = getEngine();
+    const basePage = {
+      type: 'concept' as const,
+      title: 'base',
+      compiled_truth: 'hello',
+      timeline: '',
+    };
+
+    await engine.putPage('test/a', { ...basePage, title: 'A' });
+    await engine.putPage('test/b', { ...basePage, title: 'B' });
+    await engine.putPage('test/c', { ...basePage, title: 'C' });
+    await engine.addLink('test/b', 'test/a'); // A has incoming → not orphan
+
+    await engine.addTimelineEntry('test/c', { date: '2030-01-01', summary: 'future' });
+    const conn = getConn();
+    await conn`UPDATE pages SET updated_at = '2020-01-01' WHERE slug = 'test/c'`;
+
+    const health = await engine.getHealth();
+    expect(health.page_count).toBe(3);
+    expect(health.orphan_pages).toBe(2); // B and C
+    expect(health.stale_pages).toBe(1); // C
+    expect(health.dead_links).toBe(0); // FK protects under normal ops
+
+    // Re-import fixtures so downstream tests (if any) still see the canonical set.
+    await importFixtures();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -420,38 +451,79 @@ describeE2E('E2E: Ingest Log & Raw Data', () => {
 // ─────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: Files', () => {
+  let storageDir: string;
+
   beforeAll(async () => {
     await setupDB();
     await importFixtures();
+    storageDir = mkdtempSync(join(tmpdir(), 'gbrain-e2e-storage-'));
   });
-  afterAll(teardownDB);
+  afterAll(() => {
+    rmSync(storageDir, { recursive: true, force: true });
+    return teardownDB();
+  });
+
+  function makeCtxWithStorage() {
+    return {
+      engine: getEngine(),
+      config: {
+        engine: 'postgres' as const,
+        database_url: process.env.DATABASE_URL!,
+        storage: { backend: 'local' as const, bucket: 'test', localPath: storageDir },
+      },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+    };
+  }
+
+  async function callOpWithStorage(name: string, params: Record<string, unknown> = {}) {
+    const op = operationsByName[name];
+    if (!op) throw new Error(`Unknown operation: ${name}`);
+    return op.handler(makeCtxWithStorage() as any, params);
+  }
 
   test('file_list returns empty initially', async () => {
     const files = await callOp('file_list', {}) as any[];
     expect(files.length).toBe(0);
   });
 
-  test('file_upload stores metadata + file_list shows it', async () => {
-    // Create a temp file
+  test('file_upload stores metadata + file_list shows it + file_url returns a real URL', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-e2e-'));
     const tmpFile = join(tmpDir, 'test-doc.pdf');
     writeFileSync(tmpFile, 'fake pdf content');
 
     try {
-      const result = await callOp('file_upload', {
+      const result = await callOpWithStorage('file_upload', {
         path: tmpFile,
         page_slug: 'people/sarah-chen',
       }) as any;
       expect(result.status).toBe('uploaded');
       expect(result.storage_path).toContain('sarah-chen');
 
-      // Verify file_list
       const files = await callOp('file_list', {}) as any[];
       expect(files.length).toBe(1);
 
-      // Verify file_url returns URI format
-      const url = await callOp('file_url', { storage_path: result.storage_path }) as any;
-      expect(url.url).toContain('gbrain:files/');
+      // file_url must return a real URL from the configured backend
+      const url = await callOpWithStorage('file_url', { storage_path: result.storage_path }) as any;
+      expect(url.url).not.toContain('gbrain:files/');
+      expect(url.url.startsWith('file://')).toBe(true);
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('file_url fails with actionable error when no storage is configured', async () => {
+    // First upload a file with storage configured so the files row exists.
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-e2e-nostorage-'));
+    const tmpFile = join(tmpDir, 'x.bin');
+    writeFileSync(tmpFile, 'bytes');
+    try {
+      const uploaded = await callOpWithStorage('file_upload', { path: tmpFile }) as any;
+
+      // Now try file_url without storage in the context.
+      expect(
+        callOp('file_url', { storage_path: uploaded.storage_path }),
+      ).rejects.toThrow(/No storage backend configured/);
     } finally {
       rmSync(tmpDir, { recursive: true });
     }
@@ -774,7 +846,7 @@ describeE2E('E2E: Doctor Command', () => {
   const cliCwd = join(import.meta.dir, '../..');
   const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, GBRAIN_DATABASE_URL: process.env.DATABASE_URL! });
 
-  test('gbrain doctor exits 0 on healthy DB', () => {
+  test('gbrain doctor exits 0 only when API keys + DB are both healthy', () => {
     // Init first so config exists for CLI
     Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
@@ -786,7 +858,14 @@ describeE2E('E2E: Doctor Command', () => {
       env: cliEnv(),
       timeout: 15_000,
     });
-    expect(result.exitCode).toBe(0);
+    // Without OPENAI_API_KEY, the api_keys check now fails (by design: README
+    // treats it as required for vector search). Accept 1 in that case; require
+    // 0 only when a real key is present.
+    if (process.env.OPENAI_API_KEY) {
+      expect(result.exitCode).toBe(0);
+    } else {
+      expect(result.exitCode).toBe(1);
+    }
   }, 60_000);
 
   test('gbrain doctor --json produces valid JSON', () => {

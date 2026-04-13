@@ -152,7 +152,7 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 
 **Dependencies:** `@electric-sql/pglite` (v0.4.4+)
 
-**What it is:** Embedded Postgres 17.5 compiled to WASM via ElectricSQL's PGLite. Runs in-process, no server, no Docker, no accounts. Same SQL as PostgresEngine -- not a separate dialect. All 37 BrainEngine methods implemented.
+**What it is:** Embedded Postgres 17.5 compiled to WASM via ElectricSQL's PGLite. Runs in-process, no server, no Docker, no accounts. Same SQL as PostgresEngine -- not a separate dialect. All 39 BrainEngine methods implemented.
 
 **PGLite-specific details:**
 - Uses `pglite-schema.ts` for DDL (pgvector extension, pg_trgm, triggers, indexes)

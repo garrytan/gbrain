@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION } from '../core/migrate.ts';
+import { loadConfig } from '../core/config.ts';
 
 interface Check {
   name: string;
@@ -82,6 +83,65 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
     }
   } catch {
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
+  }
+
+  // 6. API keys
+  const hasOpenAI = !!process.env.OPENAI_API_KEY;
+  const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
+  if (hasOpenAI && hasAnthropic) {
+    checks.push({ name: 'api_keys', status: 'ok', message: 'OPENAI_API_KEY and ANTHROPIC_API_KEY set' });
+  } else if (hasOpenAI) {
+    checks.push({ name: 'api_keys', status: 'warn', message: 'OPENAI_API_KEY set; ANTHROPIC_API_KEY missing (query expansion disabled)' });
+  } else {
+    checks.push({ name: 'api_keys', status: 'fail', message: 'OPENAI_API_KEY not set. Vector search and embedding will fail. Run: export OPENAI_API_KEY=sk-...' });
+  }
+
+  // 7. Embedding smoke test (only if OPENAI set)
+  if (hasOpenAI) {
+    try {
+      const { embed } = await import('../core/embedding.ts');
+      await embed('gbrain doctor smoke test');
+      checks.push({ name: 'embedding_smoke', status: 'ok', message: 'OpenAI embeddings reachable' });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      checks.push({ name: 'embedding_smoke', status: 'fail', message: `Smoke test failed: ${msg}. Check API key validity, quota, and network.` });
+    }
+  }
+
+  // 8. Storage backend
+  const config = loadConfig();
+  const storageCfg = (config as unknown as { storage?: { backend?: string } } | null)?.storage;
+  if (!storageCfg || !storageCfg.backend) {
+    checks.push({ name: 'storage_backend', status: 'ok', message: 'No storage backend configured (files commands disabled)' });
+  } else if (storageCfg.backend === 'local') {
+    checks.push({ name: 'storage_backend', status: 'ok', message: 'Local storage backend' });
+  } else {
+    try {
+      const { createStorage } = await import('../core/storage.ts');
+      const storage = await createStorage(storageCfg as Parameters<typeof createStorage>[0]);
+      await storage.list('');
+      checks.push({ name: 'storage_backend', status: 'ok', message: `${storageCfg.backend} storage reachable` });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      checks.push({ name: 'storage_backend', status: 'fail', message: `${storageCfg.backend} storage unreachable: ${msg}` });
+    }
+  }
+
+  // 9. HNSW index on content_chunks.embedding
+  try {
+    const sql = db.getConnection();
+    const indexes = await sql`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'content_chunks'
+    `;
+    const hasHnsw = (indexes as { indexdef: string }[]).some(i => /USING\s+hnsw/i.test(i.indexdef));
+    if (hasHnsw) {
+      checks.push({ name: 'hnsw_index', status: 'ok', message: 'HNSW index present on content_chunks.embedding' });
+    } else {
+      checks.push({ name: 'hnsw_index', status: 'warn', message: 'HNSW index missing on content_chunks.embedding (vector search will be slow). Run gbrain init to rebuild schema.' });
+    }
+  } catch {
+    checks.push({ name: 'hnsw_index', status: 'warn', message: 'Could not check HNSW index' });
   }
 
   outputResults(checks, jsonOutput);

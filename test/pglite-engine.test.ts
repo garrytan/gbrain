@@ -1,5 +1,5 @@
 /**
- * PGLite Engine Tests — validates all 37 BrainEngine methods against PGLite (in-memory).
+ * PGLite Engine Tests — validates all 39 BrainEngine methods against PGLite (in-memory).
  *
  * No Docker, no DATABASE_URL, no external dependencies. Runs instantly in CI.
  */
@@ -444,6 +444,50 @@ describe('PGLiteEngine: Stats & Health', () => {
     expect(health.page_count).toBe(1);
     expect(health.missing_embeddings).toBe(1); // chunk has no embedding
     expect(health.embed_coverage).toBe(0);
+  });
+});
+
+describe('PGLiteEngine: getHealth semantics', () => {
+  beforeAll(async () => {
+    await truncateAll();
+
+    // Page A: referenced by another page → not orphan
+    await engine.putPage('test/a', { ...testPage, title: 'A' });
+    // Page B: links to A → so A has incoming; B itself has no incoming → orphan
+    await engine.putPage('test/b', { ...testPage, title: 'B' });
+    await engine.addLink('test/b', 'test/a');
+
+    // Page C: stale — updated_at older than latest timeline entry
+    await engine.putPage('test/c', { ...testPage, title: 'C' });
+    await engine.addTimelineEntry('test/c', { date: '2030-01-01', summary: 'future entry' });
+    // Force updated_at to be in the past so timeline entry's created_at > updated_at
+    await (engine as any).db.exec(
+      `UPDATE pages SET updated_at = '2020-01-01' WHERE slug = 'test/c'`,
+    );
+    // B and C have no incoming links → orphans
+  });
+
+  test('orphan_pages counts pages with no incoming links', async () => {
+    const health = await engine.getHealth();
+    // A has an incoming link; B and C do not.
+    expect(health.orphan_pages).toBe(2);
+  });
+
+  test('stale_pages counts pages whose updated_at precedes latest timeline entry', async () => {
+    const health = await engine.getHealth();
+    expect(health.stale_pages).toBe(1); // just C
+  });
+
+  test('dead_links is zero under FK-protected inserts', async () => {
+    // ON DELETE CASCADE on links.to_page_id prevents dead links under normal
+    // operation. This check still runs so corrupt data shows up.
+    const health = await engine.getHealth();
+    expect(health.dead_links).toBe(0);
+  });
+
+  test('page_count reflects all pages', async () => {
+    const health = await engine.getHealth();
+    expect(health.page_count).toBe(3);
   });
 });
 
