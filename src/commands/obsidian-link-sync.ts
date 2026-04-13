@@ -79,6 +79,7 @@ export async function performObsidianLinkSync(
   const index = buildVaultIndex(relativePaths);
   const report = createEmptyObsidianReport();
   addSlugCollisionsToReport(index, report);
+  const existingPageSlugs = await engine.getExistingPageSlugs(index.entries.map(entry => entry.slug));
 
   {
     for (const filePath of files) {
@@ -86,8 +87,7 @@ export async function performObsidianLinkSync(
       if (!isSyncable(relativePath)) continue;
       const sourceSlug = index.entries.find(e => e.relativePath === relativePath)?.slug || '';
       if (index.collidingSlugs.has(sourceSlug)) continue;
-      const sourcePage = await engine.getPage(sourceSlug);
-      if (!sourcePage) {
+      if (!existingPageSlugs.has(sourceSlug)) {
         report.missingSources.push(relativePath);
         report.filesScanned++;
         continue;
@@ -98,7 +98,7 @@ export async function performObsidianLinkSync(
       for (const [linkType, links] of Array.from(desired.linksByType)) {
         const filtered = [];
         for (const link of links) {
-          if (await engine.getPage(link.to_slug)) {
+          if (existingPageSlugs.has(link.to_slug)) {
             filtered.push(link);
           } else {
             report.missingTargets.push({ source: relativePath, target: link.context || link.to_slug, toSlug: link.to_slug });

@@ -88,6 +88,22 @@ export class PGLiteEngine implements BrainEngine {
     return rowToPage(rows[0] as Record<string, unknown>);
   }
 
+  async getExistingPageSlugs(slugs: string[]): Promise<Set<string>> {
+    const uniqueSlugs = Array.from(new Set(slugs.filter(Boolean)));
+    const found = new Set<string>();
+    for (let i = 0; i < uniqueSlugs.length; i += 1000) {
+      const batch = uniqueSlugs.slice(i, i + 1000);
+      if (batch.length === 0) continue;
+      const placeholders = batch.map((_, idx) => `$${idx + 1}`).join(', ');
+      const { rows } = await this.db.query(
+        `SELECT slug FROM pages WHERE slug IN (${placeholders})`,
+        batch,
+      );
+      for (const row of rows as { slug: string }[]) found.add(row.slug);
+    }
+    return found;
+  }
+
   async putPage(slug: string, page: PageInput): Promise<Page> {
     slug = validateSlug(slug);
     const hash = page.content_hash || contentHash(page.compiled_truth, page.timeline || '');
@@ -347,9 +363,10 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     const result: LinkReconcileResult = { added: 0, updated: 0, removed: 0, unchanged: 0 };
+    const existingTargets = await this.getExistingPageSlugs(Array.from(desiredByTarget.keys()));
 
     for (const [to, context] of desiredByTarget) {
-      if (!await this.getPage(to)) continue;
+      if (!existingTargets.has(to)) continue;
       if (!currentByTarget.has(to)) {
         await this.addLink(from, to, context, linkType);
         result.added++;

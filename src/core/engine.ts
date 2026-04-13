@@ -30,6 +30,7 @@ export interface BrainEngine {
 
   // Pages CRUD
   getPage(slug: string): Promise<Page | null>;
+  getExistingPageSlugs(slugs: string[]): Promise<Set<string>>;
   putPage(slug: string, page: PageInput): Promise<Page>;
   deletePage(slug: string): Promise<void>;
   listPages(filters?: PageFilters): Promise<Page[]>;

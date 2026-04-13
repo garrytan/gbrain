@@ -271,6 +271,17 @@ describe('PGLiteEngine: Links', () => {
     expect(links.map(l => l.link_type).sort()).toEqual(['employment', 'obsidian_link']);
   });
 
+  test('getExistingPageSlugs returns existing slugs in one call shape', async () => {
+    const slugs = await engine.getExistingPageSlugs([
+      'people/alice',
+      'companies/acme',
+      'missing/page',
+      'people/alice',
+    ]);
+
+    expect(slugs).toEqual(new Set(['people/alice', 'companies/acme']));
+  });
+
   test('reconcileLinksForPage only removes stale links of the requested type', async () => {
     await engine.addLink('people/alice', 'companies/acme', 'works at', 'employment');
     await engine.addLink('people/alice', 'companies/acme', '[[ACME]]', 'obsidian_link');
