@@ -345,13 +345,27 @@ describe('isInternalUrl', () => {
   test('blocks cloud metadata endpoints', () => {
     expect(isInternalUrl('http://169.254.169.254/latest/meta-data/')).toBe(true);
     expect(isInternalUrl('http://metadata.google.internal/computeMetadata/v1/')).toBe(true);
-    expect(isInternalUrl('http://100.100.100.200/latest/meta-data/')).toBe(true);
   });
 
-  test('blocks loopback', () => {
+  test('blocks loopback — all representations', () => {
     expect(isInternalUrl('http://localhost:8080/health')).toBe(true);
     expect(isInternalUrl('http://127.0.0.1:3000/api')).toBe(true);
     expect(isInternalUrl('http://0.0.0.0/admin')).toBe(true);
+    expect(isInternalUrl('http://[::1]/admin')).toBe(true);
+    expect(isInternalUrl('http://[::ffff:127.0.0.1]/admin')).toBe(true);
+  });
+
+  test('blocks hex/octal/decimal bypass attempts', () => {
+    // 127.0.0.1 in hex octets
+    expect(isInternalUrl('http://0x7f.0x0.0x0.0x1/admin')).toBe(true);
+    // 127.0.0.1 in octal octets
+    expect(isInternalUrl('http://0177.0.0.01/admin')).toBe(true);
+    // 127.0.0.1 as single decimal integer (inet_aton)
+    expect(isInternalUrl('http://2130706433/admin')).toBe(true);
+    // 169.254.169.254 as single decimal
+    expect(isInternalUrl('http://2852039166/latest/meta-data/')).toBe(true);
+    // 10.0.0.1 in hex
+    expect(isInternalUrl('http://0xa.0x0.0x0.0x1/internal')).toBe(true);
   });
 
   test('blocks private RFC1918 ranges', () => {
@@ -361,10 +375,17 @@ describe('isInternalUrl', () => {
     expect(isInternalUrl('http://172.31.255.255/data')).toBe(true);
   });
 
+  test('blocks CGNAT range (RFC6598)', () => {
+    expect(isInternalUrl('http://100.64.0.1/internal')).toBe(true);
+    expect(isInternalUrl('http://100.127.255.255/internal')).toBe(true);
+  });
+
   test('allows public URLs', () => {
     expect(isInternalUrl('https://api.example.com/health')).toBe(false);
     expect(isInternalUrl('https://hooks.slack.com/services/T00/B00/xxx')).toBe(false);
-    expect(isInternalUrl('https://172.32.0.1/external')).toBe(false); // outside 172.16-31 range
+    expect(isInternalUrl('https://172.32.0.1/external')).toBe(false);
+    expect(isInternalUrl('https://100.128.0.1/external')).toBe(false); // outside CGNAT
+    expect(isInternalUrl('https://8.8.8.8/dns')).toBe(false);
   });
 
   test('handles malformed URLs gracefully', () => {

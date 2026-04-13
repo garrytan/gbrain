@@ -274,31 +274,114 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
 // For compiled binaries, these should be embedded at build time.
 // For source installs (bun run), they're read from disk.
 /**
- * Returns true if a URL points to a known internal, metadata, or
- * loopback address. Used to block SSRF in http health checks even
- * for embedded recipes. Catches AWS/GCP/Azure metadata endpoints,
- * loopback, and private RFC1918 ranges.
+ * Returns true if a URL points to a non-public address. Parses the
+ * hostname into numeric octets so hex (0x7f000001), octal (0177),
+ * decimal (2130706433), and IPv6-mapped (::ffff:127.0.0.1) encodings
+ * are all caught. Checks against RFC1918, RFC3927 (link-local, covers
+ * cloud metadata at 169.254.169.254), RFC6598 (CGNAT), and loopback.
+ *
+ * Defense-in-depth for embedded recipe http health checks.
+ * Non-embedded recipes are blocked before reaching this.
  */
 export function isInternalUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-    // Cloud metadata endpoints
-    if (host === '169.254.169.254') return true;         // AWS/GCP
-    if (host === 'metadata.google.internal') return true; // GCP
-    if (host === '100.100.100.200') return true;          // Alibaba
-    // Loopback
-    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0') return true;
-    // Private ranges (simple prefix check)
-    if (host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('172.')) {
-      const second = parseInt(host.split('.')[1], 10);
-      if (host.startsWith('172.') && second >= 16 && second <= 31) return true;
-      if (host.startsWith('10.') || host.startsWith('192.168.')) return true;
-    }
-    return false;
+
+    // Metadata hostnames (their IPs are also caught by range checks
+    // below, but an explicit name check avoids DNS timing dependency)
+    if (host === 'metadata.google.internal') return true;
+    if (host === 'metadata.internal') return true;
+
+    const octets = hostnameToOctets(host);
+    if (!octets) return false;
+
+    return isPrivateIpv4(octets);
   } catch {
     return false;
   }
+}
+
+/**
+ * Parse a hostname into 4 IPv4 octets. Handles:
+ * - Dotted decimal:      127.0.0.1
+ * - Dotted hex:          0x7f.0x0.0x0.0x1
+ * - Dotted octal:        0177.0.0.01
+ * - Single decimal:      2130706433  (inet_aton compat)
+ * - IPv6-mapped v4:      ::ffff:127.0.0.1
+ * - Localhost by name:   localhost
+ *
+ * Returns null for non-IP hostnames (they go through the metadata
+ * name check above instead).
+ */
+function hostnameToOctets(host: string): [number, number, number, number] | null {
+  // Strip IPv6 brackets
+  const clean = host.startsWith('[') ? host.slice(1, -1) : host;
+
+  // IPv6-mapped IPv4 — dotted form (::ffff:127.0.0.1)
+  const mappedDotted = clean.match(/^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/i);
+  if (mappedDotted) {
+    const o = mappedDotted.slice(1).map(Number) as [number, number, number, number];
+    if (o.every(v => v >= 0 && v <= 255)) return o;
+  }
+  // IPv6-mapped IPv4 — hex form (::ffff:7f00:1) as URL parsers normalize to
+  const mappedHex = clean.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16);
+    const lo = parseInt(mappedHex[2], 16);
+    return [(hi >>> 8) & 0xFF, hi & 0xFF, (lo >>> 8) & 0xFF, lo & 0xFF];
+  }
+
+  // IPv6 loopback → map to 127.0.0.1
+  if (clean === '::1' || clean === '0:0:0:0:0:0:0:1') return [127, 0, 0, 1];
+
+  // localhost by name
+  if (clean === 'localhost') return [127, 0, 0, 1];
+
+  // Dotted notation (handles decimal, hex 0x, octal 0-prefix)
+  const parts = clean.split('.');
+  if (parts.length === 4) {
+    const o = parts.map(parseOctet);
+    if (o.every(v => v !== null && v >= 0 && v <= 255)) {
+      return o as [number, number, number, number];
+    }
+  }
+
+  // Single integer (inet_aton: 2130706433 = 127.0.0.1)
+  if (/^\d+$/.test(clean)) {
+    const num = parseInt(clean, 10);
+    if (num >= 0 && num <= 0xFFFFFFFF) {
+      return [(num >>> 24) & 0xFF, (num >>> 16) & 0xFF, (num >>> 8) & 0xFF, num & 0xFF];
+    }
+  }
+
+  return null;
+}
+
+function parseOctet(s: string): number | null {
+  if (s.startsWith('0x') || s.startsWith('0X')) {
+    const v = parseInt(s, 16);
+    return isNaN(v) ? null : v;
+  }
+  if (s.startsWith('0') && s.length > 1) {
+    const v = parseInt(s, 8);
+    return isNaN(v) ? null : v;
+  }
+  const v = parseInt(s, 10);
+  return isNaN(v) ? null : v;
+}
+
+function isPrivateIpv4(o: [number, number, number, number]): boolean {
+  const [a, b] = o;
+  if (a === 0) return true;                               // 0.0.0.0/8 current network
+  if (a === 10) return true;                              // 10.0.0.0/8 RFC1918
+  if (a === 100 && b >= 64 && b <= 127) return true;      // 100.64.0.0/10 CGNAT RFC6598
+  if (a === 127) return true;                             // 127.0.0.0/8 loopback
+  if (a === 169 && b === 254) return true;                // 169.254.0.0/16 link-local (metadata)
+  if (a === 172 && b >= 16 && b <= 31) return true;       // 172.16.0.0/12 RFC1918
+  if (a === 192 && b === 168) return true;                // 192.168.0.0/16 RFC1918
+  if (a === 198 && (b === 18 || b === 19)) return true;   // 198.18.0.0/15 benchmark
+  return false;
 }
 
 function getRecipesDir(): string {
