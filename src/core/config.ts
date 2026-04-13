@@ -28,17 +28,20 @@ export function loadConfig(): GBrainConfig | null {
 
   // Try env vars
   const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  const dbPath = process.env.GBRAIN_DATABASE_PATH;
 
-  if (!fileConfig && !dbUrl) return null;
+  if (!fileConfig && !dbUrl && !dbPath) return null;
 
-  // Infer engine type if not explicitly set
-  const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
-    || (fileConfig?.database_path ? 'pglite' : 'postgres');
+  // Infer engine type: explicit path => pglite, explicit url => postgres, otherwise use config
+  const inferredEngine: 'postgres' | 'pglite' = dbPath
+    ? 'pglite'
+    : (fileConfig?.engine || (fileConfig?.database_path ? 'pglite' : 'postgres'));
 
   // Merge: env vars override config file
   const merged = {
     ...fileConfig,
     engine: inferredEngine,
+    ...(dbPath ? { database_path: dbPath } : {}),
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
   };
