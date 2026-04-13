@@ -10,7 +10,7 @@ Your AI agent is smart but it doesn't know anything about your life. GBrain fixe
 
 GBrain is designed to be installed and operated by an AI agent. If you don't have one running yet:
 
-- **[OpenClaw](https://openclaw.ai)** — Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, requires 8GB+ RAM instance)
+- **[OpenClaw](https://openclaw.ai)** — Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/openclaw-render-template) (one click, requires 8GB+ RAM instance)
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** — Deploy on [Railway using this template](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
 
 ## Start here
