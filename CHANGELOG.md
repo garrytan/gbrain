@@ -2,6 +2,19 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.10.0] - 2026-04-12
+
+### Added
+
+- **Your Obsidian vault is now a first-class graph.** `gbrain import` and `gbrain sync` automatically parse `[[wikilinks]]` and `![[embeds]]` from your markdown and materialize them as typed graph edges (`obsidian_link` / `obsidian_embed`). Your vault's link structure lives in the brain alongside curated relationship edges.
+- **Backfill existing vaults with one command.** `gbrain obsidian-link-sync --repo <vault>` scans every file, resolves links (exact path, same-folder, basename, case-insensitive fallback), and reconciles the graph. `--dry-run` previews changes. `--strict` exits non-zero on unresolved or ambiguous links.
+- **Slug collision detection.** If two vault files collapse to the same gbrain slug (e.g., `Notes/A B.md` and `Notes/A-B.md`), link sync reports the collision and skips those ambiguous files instead of creating the wrong edges.
+
+### Changed
+
+- **Typed links can coexist between the same pages.** Link uniqueness now includes `link_type`, so an Obsidian edge lives beside curated relationship edges without overwriting them. Schema migration v5 handles the constraint upgrade automatically.
+- **Large vault sync avoids remote-database round trips.** Obsidian link sync batches page-existence checks, so a 10k-link vault does not issue one query per link target against hosted Postgres.
+
 ## [0.9.3] - 2026-04-12
 
 ### Added

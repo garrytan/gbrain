@@ -7,7 +7,7 @@ import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
-  Link, GraphNode,
+  Link, LinkInput, LinkReconcileResult, GraphNode,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -94,6 +94,20 @@ export class PostgresEngine implements BrainEngine {
     `;
     if (rows.length === 0) return null;
     return rowToPage(rows[0]);
+  }
+
+  async getExistingPageSlugs(slugs: string[]): Promise<Set<string>> {
+    const uniqueSlugs = Array.from(new Set(slugs.filter(Boolean)));
+    const found = new Set<string>();
+    for (let i = 0; i < uniqueSlugs.length; i += 1000) {
+      const batch = uniqueSlugs.slice(i, i + 1000);
+      if (batch.length === 0) continue;
+      const rows = await this.sql<{ slug: string }[]>`
+        SELECT slug FROM pages WHERE slug IN ${this.sql(batch)}
+      `;
+      for (const row of rows) found.add(row.slug);
+    }
+    return found;
   }
 
   async putPage(slug: string, page: PageInput): Promise<Page> {
@@ -336,12 +350,13 @@ export class PostgresEngine implements BrainEngine {
   // Links
   async addLink(from: string, to: string, context?: string, linkType?: string): Promise<void> {
     const sql = this.sql;
+    const type = linkType || '';
     const result = await sql`
       INSERT INTO links (from_page_id, to_page_id, link_type, context)
-      SELECT f.id, t.id, ${linkType || ''}, ${context || ''}
+      SELECT f.id, t.id, ${type}, ${context || ''}
       FROM pages f, pages t
       WHERE f.slug = ${from} AND t.slug = ${to}
-      ON CONFLICT (from_page_id, to_page_id) DO UPDATE SET
+      ON CONFLICT (from_page_id, to_page_id, link_type) DO UPDATE SET
         link_type = EXCLUDED.link_type,
         context = EXCLUDED.context
       RETURNING id
@@ -349,13 +364,58 @@ export class PostgresEngine implements BrainEngine {
     if (result.length === 0) throw new Error(`addLink failed: page "${from}" or "${to}" not found`);
   }
 
-  async removeLink(from: string, to: string): Promise<void> {
+  async removeLink(from: string, to: string, linkType?: string): Promise<void> {
     const sql = this.sql;
-    await sql`
-      DELETE FROM links
-      WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-        AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
-    `;
+    if (linkType === undefined) {
+      await sql`
+        DELETE FROM links
+        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
+          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
+      `;
+    } else {
+      await sql`
+        DELETE FROM links
+        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
+          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
+          AND link_type = ${linkType}
+      `;
+    }
+  }
+
+  async reconcileLinksForPage(from: string, linkType: string, desired: LinkInput[]): Promise<LinkReconcileResult> {
+    const current = (await this.getLinks(from)).filter(l => l.link_type === linkType);
+    const currentByTarget = new Map(current.map(l => [l.to_slug, l.context]));
+    const desiredByTarget = new Map<string, string>();
+    for (const link of desired) {
+      const context = link.context || '';
+      const existing = desiredByTarget.get(link.to_slug);
+      desiredByTarget.set(link.to_slug, existing && existing !== context ? `${existing}\n${context}` : context);
+    }
+
+    const result: LinkReconcileResult = { added: 0, updated: 0, removed: 0, unchanged: 0 };
+    const existingTargets = await this.getExistingPageSlugs(Array.from(desiredByTarget.keys()));
+
+    for (const [to, context] of desiredByTarget) {
+      if (!existingTargets.has(to)) continue;
+      if (!currentByTarget.has(to)) {
+        await this.addLink(from, to, context, linkType);
+        result.added++;
+      } else if (currentByTarget.get(to) !== context) {
+        await this.addLink(from, to, context, linkType);
+        result.updated++;
+      } else {
+        result.unchanged++;
+      }
+    }
+
+    for (const link of current) {
+      if (!desiredByTarget.has(link.to_slug)) {
+        await this.removeLink(from, link.to_slug, linkType);
+        result.removed++;
+      }
+    }
+
+    return result;
   }
 
   async getLinks(slug: string): Promise<Link[]> {

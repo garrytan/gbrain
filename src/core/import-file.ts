@@ -4,7 +4,8 @@ import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { embedBatch } from './embedding.ts';
-import { slugifyPath } from './sync.ts';
+import { isSyncable, slugifyPath } from './sync.ts';
+import { desiredLinksForFile, OBSIDIAN_EMBED_TYPE, OBSIDIAN_LINK_TYPE, type VaultIndex } from './obsidian-links.ts';
 import type { ChunkInput } from './types.ts';
 
 export interface ImportResult {
@@ -12,9 +13,20 @@ export interface ImportResult {
   status: 'imported' | 'skipped' | 'error';
   chunks: number;
   error?: string;
+  linksAdded?: number;
+  linksUpdated?: number;
+  linksRemoved?: number;
 }
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB
+
+interface ImportOpts {
+  noEmbed?: boolean;
+  obsidian?: {
+    relativePath: string;
+    index: VaultIndex;
+  };
+}
 
 /**
  * Import content from a string. Core pipeline:
@@ -32,7 +44,7 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: ImportOpts = {},
 ): Promise<ImportResult> {
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
@@ -92,6 +104,13 @@ export async function importFromContent(
     }
   }
 
+  let linksAdded = 0;
+  let linksUpdated = 0;
+  let linksRemoved = 0;
+  const obsidianDesired = opts.obsidian && isSyncable(opts.obsidian.relativePath)
+    ? desiredLinksForFile(opts.obsidian.relativePath, content, opts.obsidian.index)
+    : null;
+
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug);
@@ -115,6 +134,15 @@ export async function importFromContent(
       await tx.addTag(slug, tag);
     }
 
+    if (obsidianDesired) {
+      for (const linkType of [OBSIDIAN_LINK_TYPE, OBSIDIAN_EMBED_TYPE]) {
+        const result = await tx.reconcileLinksForPage(slug, linkType, obsidianDesired.linksByType.get(linkType) || []);
+        linksAdded += result.added;
+        linksUpdated += result.updated;
+        linksRemoved += result.removed;
+      }
+    }
+
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks);
     } else {
@@ -123,7 +151,7 @@ export async function importFromContent(
     }
   });
 
-  return { slug, status: 'imported', chunks: chunks.length };
+  return { slug, status: 'imported', chunks: chunks.length, linksAdded, linksUpdated, linksRemoved };
 }
 
 /**
@@ -140,7 +168,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: ImportOpts = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -173,7 +201,10 @@ export async function importFromFile(
 
   // Pass the path-derived slug explicitly so that any future change to
   // parseMarkdown's precedence rules cannot re-introduce this bug.
-  return importFromContent(engine, expectedSlug, content, opts);
+  return importFromContent(engine, expectedSlug, content, {
+    ...opts,
+    obsidian: opts.obsidian ? { ...opts.obsidian, relativePath } : undefined,
+  });
 }
 
 // Backward compat

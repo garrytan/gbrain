@@ -82,6 +82,35 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 5,
+    name: 'typed_link_identity',
+    sql: `
+      DO $$
+      DECLARE
+        unique_constraint record;
+      BEGIN
+        FOR unique_constraint IN
+          SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.contype = 'u'
+            AND t.relname = 'links'
+            AND n.nspname = current_schema()
+            AND c.conkey = ARRAY[
+              (SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attname = 'from_page_id'),
+              (SELECT a.attnum FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attname = 'to_page_id')
+            ]::int2[]
+        LOOP
+          EXECUTE format('ALTER TABLE links DROP CONSTRAINT %I', unique_constraint.conname);
+        END LOOP;
+      END $$;
+      DROP INDEX IF EXISTS links_from_page_id_to_page_id_key;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_links_from_to_type
+        ON links(from_page_id, to_page_id, link_type);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

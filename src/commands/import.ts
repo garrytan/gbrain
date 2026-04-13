@@ -5,6 +5,7 @@ import { cpus, totalmem, homedir } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
 import { loadConfig } from '../core/config.ts';
+import { buildVaultIndex } from '../core/obsidian-links.ts';
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -37,6 +38,14 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   // Collect all .md files
   const allFiles = collectMarkdownFiles(dir);
   console.log(`Found ${allFiles.length} markdown files`);
+  const allRelativePaths = allFiles.map(file => relative(dir, file));
+  const obsidianIndex = buildVaultIndex(allRelativePaths);
+  if (obsidianIndex.slugCollisions.size > 0) {
+    console.warn(`Warning: ${obsidianIndex.slugCollisions.size} slug collision(s) detected. Colliding files will be skipped for link sync.`);
+    for (const [slug, paths] of obsidianIndex.slugCollisions) {
+      console.warn(`  ${slug}: ${paths.join(', ')}`);
+    }
+  }
 
   // Resume from checkpoint if available
   const checkpointPath = join(homedir(), '.gbrain', 'import-checkpoint.json');
@@ -188,6 +197,17 @@ export async function runImport(engine: BrainEngine, args: string[]) {
     console.log(`  ${imported} pages imported`);
     console.log(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
     console.log(`  ${chunksCreated} chunks created`);
+  }
+
+  const { performObsidianLinkSync } = await import('./obsidian-link-sync.ts');
+  const linkReport = await performObsidianLinkSync(engine, {
+    repoPath: dir,
+    dryRun: false,
+    json: false,
+    strict: false,
+  });
+  if (!jsonOutput) {
+    console.log(`  Obsidian links: +${linkReport.added} ~${linkReport.updated} -${linkReport.removed}, unresolved ${linkReport.unresolved.length}, ambiguous ${linkReport.ambiguous.length}`);
   }
 
   // Log the ingest

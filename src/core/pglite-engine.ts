@@ -11,7 +11,7 @@ import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
-  Link, GraphNode,
+  Link, LinkInput, LinkReconcileResult, GraphNode,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -86,6 +86,22 @@ export class PGLiteEngine implements BrainEngine {
     );
     if (rows.length === 0) return null;
     return rowToPage(rows[0] as Record<string, unknown>);
+  }
+
+  async getExistingPageSlugs(slugs: string[]): Promise<Set<string>> {
+    const uniqueSlugs = Array.from(new Set(slugs.filter(Boolean)));
+    const found = new Set<string>();
+    for (let i = 0; i < uniqueSlugs.length; i += 1000) {
+      const batch = uniqueSlugs.slice(i, i + 1000);
+      if (batch.length === 0) continue;
+      const placeholders = batch.map((_, idx) => `$${idx + 1}`).join(', ');
+      const { rows } = await this.db.query(
+        `SELECT slug FROM pages WHERE slug IN (${placeholders})`,
+        batch,
+      );
+      for (const row of rows as { slug: string }[]) found.add(row.slug);
+    }
+    return found;
   }
 
   async putPage(slug: string, page: PageInput): Promise<Page> {
@@ -304,25 +320,72 @@ export class PGLiteEngine implements BrainEngine {
 
   // Links
   async addLink(from: string, to: string, context?: string, linkType?: string): Promise<void> {
+    const type = linkType || '';
     await this.db.query(
       `INSERT INTO links (from_page_id, to_page_id, link_type, context)
        SELECT f.id, t.id, $3, $4
        FROM pages f, pages t
        WHERE f.slug = $1 AND t.slug = $2
-       ON CONFLICT (from_page_id, to_page_id) DO UPDATE SET
+       ON CONFLICT (from_page_id, to_page_id, link_type) DO UPDATE SET
          link_type = EXCLUDED.link_type,
          context = EXCLUDED.context`,
-      [from, to, linkType || '', context || '']
+      [from, to, type, context || '']
     );
   }
 
-  async removeLink(from: string, to: string): Promise<void> {
-    await this.db.query(
-      `DELETE FROM links
-       WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1)
-         AND to_page_id = (SELECT id FROM pages WHERE slug = $2)`,
-      [from, to]
-    );
+  async removeLink(from: string, to: string, linkType?: string): Promise<void> {
+    if (linkType === undefined) {
+      await this.db.query(
+        `DELETE FROM links
+         WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1)
+           AND to_page_id = (SELECT id FROM pages WHERE slug = $2)`,
+        [from, to]
+      );
+    } else {
+      await this.db.query(
+        `DELETE FROM links
+         WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1)
+           AND to_page_id = (SELECT id FROM pages WHERE slug = $2)
+           AND link_type = $3`,
+        [from, to, linkType]
+      );
+    }
+  }
+
+  async reconcileLinksForPage(from: string, linkType: string, desired: LinkInput[]): Promise<LinkReconcileResult> {
+    const current = (await this.getLinks(from)).filter(l => l.link_type === linkType);
+    const currentByTarget = new Map(current.map(l => [l.to_slug, l.context]));
+    const desiredByTarget = new Map<string, string>();
+    for (const link of desired) {
+      const context = link.context || '';
+      const existing = desiredByTarget.get(link.to_slug);
+      desiredByTarget.set(link.to_slug, existing && existing !== context ? `${existing}\n${context}` : context);
+    }
+
+    const result: LinkReconcileResult = { added: 0, updated: 0, removed: 0, unchanged: 0 };
+    const existingTargets = await this.getExistingPageSlugs(Array.from(desiredByTarget.keys()));
+
+    for (const [to, context] of desiredByTarget) {
+      if (!existingTargets.has(to)) continue;
+      if (!currentByTarget.has(to)) {
+        await this.addLink(from, to, context, linkType);
+        result.added++;
+      } else if (currentByTarget.get(to) !== context) {
+        await this.addLink(from, to, context, linkType);
+        result.updated++;
+      } else {
+        result.unchanged++;
+      }
+    }
+
+    for (const link of current) {
+      if (!desiredByTarget.has(link.to_slug)) {
+        await this.removeLink(from, link.to_slug, linkType);
+        result.removed++;
+      }
+    }
+
+    return result;
   }
 
   async getLinks(slug: string): Promise<Link[]> {
@@ -564,13 +627,16 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+         WHERE (p.compiled_truth != '' OR p.timeline != '')
+           AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
         ) as stale_pages,
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
-        (SELECT count(*) FROM links l
-         WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
+        (SELECT count(*) FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE p.compiled_truth = '' AND p.timeline = ''
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings
     `);

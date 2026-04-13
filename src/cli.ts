@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'obsidian-link-sync', 'serve', 'call', 'config', 'doctor', 'migrate']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -278,6 +278,11 @@ async function handleCliOnly(command: string, args: string[]) {
     await runReport(args);
     return;
   }
+  if (command === 'obsidian-link-sync' && (args.includes('--help') || args.includes('-h'))) {
+    const { runObsidianLinkSync } = await import('./commands/obsidian-link-sync.ts');
+    await runObsidianLinkSync({} as BrainEngine, args);
+    return;
+  }
 
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
@@ -301,6 +306,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'embed': {
         const { runEmbed } = await import('./commands/embed.ts');
         await runEmbed(engine, args);
+        break;
+      }
+      case 'obsidian-link-sync': {
+        const { runObsidianLinkSync } = await import('./commands/obsidian-link-sync.ts');
+        await runObsidianLinkSync(engine, args);
         break;
       }
       case 'serve': {
@@ -395,6 +405,7 @@ SEARCH
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
+  obsidian-link-sync --repo <path>   Mirror Obsidian graph links
   export [--dir ./out/]              Export to markdown
 
 FILES
@@ -409,7 +420,7 @@ EMBEDDINGS
   embed [<slug>|--all|--stale]       Generate/refresh embeddings
 
 LINKS
-  link <from> <to> [--type T]        Create typed link
+  link <from> <to> [--link-type T]   Create typed link
   unlink <from> <to>                 Remove link
   backlinks <slug>                   Incoming links
   graph <slug> [--depth N]           Traverse link graph

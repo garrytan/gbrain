@@ -24,6 +24,8 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 - `src/commands/migrate-engine.ts` — Bidirectional engine migration (`gbrain migrate --to supabase/pglite`)
 - `src/core/import-file.ts` — importFromFile + importFromContent (chunk + embed + tags)
 - `src/core/sync.ts` — Pure sync functions (manifest parsing, filtering, slug conversion)
+- `src/core/obsidian-links.ts` — Obsidian wikilink parsing, vault indexing, and link resolution
+- `src/commands/obsidian-link-sync.ts` — Deterministic Obsidian graph backfill/reconciliation command
 - `src/core/storage.ts` — Pluggable storage interface (S3, Supabase Storage, local)
 - `src/core/supabase-admin.ts` — Supabase admin API (project discovery, pgvector check)
 - `src/core/file-resolver.ts` — File resolution with fallback chain (local -> .redirect.yaml -> .redirect -> .supabase)
@@ -68,8 +70,8 @@ Key commands added in v0.7:
 
 ## Testing
 
-`bun test` runs all tests (23 unit test files + 4 E2E test files). Unit tests run
-without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
+`bun test` runs all tests. Unit tests run without a database. E2E tests skip
+gracefully when `DATABASE_URL` is not set.
 
 Unit tests: `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts`
 (chunking), `test/sync.test.ts` (sync logic), `test/parity.test.ts` (operations contract
@@ -87,7 +89,8 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/publish.test.ts` (content stripping, encryption, password generation, HTML output),
 `test/backlinks.test.ts` (entity extraction, back-link detection, timeline entry generation),
 `test/lint.test.ts` (LLM artifact detection, code fence stripping, frontmatter validation),
-`test/report.test.ts` (report format, directory structure).
+`test/report.test.ts` (report format, directory structure),
+`test/obsidian-links.test.ts` (Obsidian wikilink parsing and resolution).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys)

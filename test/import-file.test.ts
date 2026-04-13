@@ -2,6 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { writeFileSync, mkdirSync, rmSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { importFile, importFromContent } from '../src/core/import-file.ts';
+import { buildVaultIndex } from '../src/core/obsidian-links.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
@@ -72,6 +73,41 @@ This is the compiled truth.
     // Chunks were upserted
     const chunkCall = calls.find((c: any) => c.method === 'upsertChunks');
     expect(chunkCall).toBeTruthy();
+  });
+
+  test('reconciles Obsidian links when vault index is provided', async () => {
+    const filePath = join(TMP, 'home.md');
+    writeFileSync(filePath, `---
+type: concept
+title: Home
+---
+
+See [[People/Alice]].
+`);
+
+    const index = buildVaultIndex(['home.md', 'People/Alice.md']);
+    const engine = mockEngine({
+      reconcileLinksForPage: (_from: string, linkType: string) => Promise.resolve({
+        added: linkType === 'obsidian_link' ? 1 : 0,
+        updated: 0,
+        removed: 0,
+        unchanged: 0,
+      }),
+    });
+
+    const result = await importFile(engine, filePath, 'home.md', {
+      noEmbed: true,
+      obsidian: { relativePath: 'home.md', index },
+    });
+
+    expect(result.linksAdded).toBe(1);
+    const calls = (engine as any)._calls;
+    const reconcileCall = calls.find((c: any) => c.method === 'reconcileLinksForPage');
+    expect(reconcileCall.args[0]).toBe('home');
+    expect(reconcileCall.args[1]).toBe('obsidian_link');
+    expect(reconcileCall.args[2]).toEqual([
+      { to_slug: 'people/alice', context: '[[People/Alice]]' },
+    ]);
   });
 
   test('skips files larger than MAX_FILE_SIZE (5MB)', async () => {

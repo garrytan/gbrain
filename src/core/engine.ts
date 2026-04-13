@@ -2,7 +2,7 @@ import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
-  Link, GraphNode,
+  Link, LinkInput, LinkReconcileResult, GraphNode,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -30,6 +30,7 @@ export interface BrainEngine {
 
   // Pages CRUD
   getPage(slug: string): Promise<Page | null>;
+  getExistingPageSlugs(slugs: string[]): Promise<Set<string>>;
   putPage(slug: string, page: PageInput): Promise<Page>;
   deletePage(slug: string): Promise<void>;
   listPages(filters?: PageFilters): Promise<Page[]>;
@@ -46,7 +47,8 @@ export interface BrainEngine {
 
   // Links
   addLink(from: string, to: string, context?: string, linkType?: string): Promise<void>;
-  removeLink(from: string, to: string): Promise<void>;
+  removeLink(from: string, to: string, linkType?: string): Promise<void>;
+  reconcileLinksForPage(from: string, linkType: string, desired: LinkInput[]): Promise<LinkReconcileResult>;
   getLinks(slug: string): Promise<Link[]>;
   getBacklinks(slug: string): Promise<Link[]>;
   traverseGraph(slug: string, depth?: number): Promise<GraphNode[]>;

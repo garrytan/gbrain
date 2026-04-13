@@ -283,11 +283,12 @@ const remove_link: Operation = {
   params: {
     from: { type: 'string', required: true },
     to: { type: 'string', required: true },
+    link_type: { type: 'string', description: 'Optional link type to remove only one typed edge' },
   },
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
-    await ctx.engine.removeLink(p.from as string, p.to as string);
+    await ctx.engine.removeLink(p.from as string, p.to as string, p.link_type as string | undefined);
     return { status: 'ok' };
   },
   cliHints: { name: 'unlink', positional: ['from', 'to'] },

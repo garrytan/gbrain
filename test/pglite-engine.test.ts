@@ -262,6 +262,44 @@ describe('PGLiteEngine: Links', () => {
     expect(links[0].to_slug).toBe('companies/acme');
   });
 
+  test('typed links between the same pages coexist', async () => {
+    await engine.addLink('people/alice', 'companies/acme', 'works at', 'employment');
+    await engine.addLink('people/alice', 'companies/acme', '[[ACME]]', 'obsidian_link');
+
+    const links = await engine.getLinks('people/alice');
+    expect(links.filter(l => l.to_slug === 'companies/acme')).toHaveLength(2);
+    expect(links.map(l => l.link_type).sort()).toEqual(['employment', 'obsidian_link']);
+  });
+
+  test('getExistingPageSlugs returns existing slugs in one call shape', async () => {
+    const slugs = await engine.getExistingPageSlugs([
+      'people/alice',
+      'companies/acme',
+      'missing/page',
+      'people/alice',
+    ]);
+
+    expect(slugs).toEqual(new Set(['people/alice', 'companies/acme']));
+  });
+
+  test('reconcileLinksForPage only removes stale links of the requested type', async () => {
+    await engine.addLink('people/alice', 'companies/acme', 'works at', 'employment');
+    await engine.addLink('people/alice', 'companies/acme', '[[ACME]]', 'obsidian_link');
+    await engine.addLink('people/alice', 'companies/beta', '[[Beta]]', 'obsidian_link');
+
+    const result = await engine.reconcileLinksForPage('people/alice', 'obsidian_link', [
+      { to_slug: 'companies/acme', context: '[[ACME|Acme Corp]]' },
+    ]);
+
+    expect(result.updated).toBe(1);
+    expect(result.removed).toBe(1);
+
+    const links = await engine.getLinks('people/alice');
+    expect(links.some(l => l.to_slug === 'companies/beta')).toBe(false);
+    expect(links.some(l => l.to_slug === 'companies/acme' && l.link_type === 'employment')).toBe(true);
+    expect(links.some(l => l.to_slug === 'companies/acme' && l.context === '[[ACME|Acme Corp]]')).toBe(true);
+  });
+
   test('getBacklinks', async () => {
     await engine.addLink('people/alice', 'companies/acme');
     const backlinks = await engine.getBacklinks('companies/acme');
@@ -444,6 +482,14 @@ describe('PGLiteEngine: Stats & Health', () => {
     expect(health.page_count).toBe(1);
     expect(health.missing_embeddings).toBe(1); // chunk has no embedding
     expect(health.embed_coverage).toBe(0);
+  });
+
+  test('getHealth does not count pages with outgoing links as orphans', async () => {
+    await engine.putPage('test/target', { ...testPage, title: 'Target' });
+    await engine.addLink('test/stats', 'test/target', '[[Target]]', 'obsidian_link');
+
+    const health = await engine.getHealth();
+    expect(health.orphan_pages).toBe(0);
   });
 });
 
