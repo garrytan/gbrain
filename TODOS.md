@@ -47,18 +47,8 @@
 
 ## P1 (new from v0.7.0)
 
-### Constrained health_check DSL for third-party recipes
-**What:** Replace shell command health_checks with a typed DSL: `{type: "env_exists", name: "KEY"}`, `{type: "url_responds", url: "..."}`, `{type: "heartbeat_fresh", max_age: "24h"}`.
-
-**Why:** Shell commands in recipe frontmatter = arbitrary code execution from markdown. Currently trusted because recipes are first-party only. This DSL is the mandatory gate before opening community recipe submissions.
-
-**Pros:** Eliminates RCE risk from third-party recipes. Health checks become machine-parseable.
-
-**Cons:** Less flexible than shell commands for novel checks. Need to define enough check types to cover common cases.
-
-**Context:** From CEO review + Codex outside voice (2026-04-11). User approved shell commands for first-party but explicitly requested constrained DSL before third-party recipes.
-
-**Depends on:** v0.7.0 recipe format (shipped).
+### ~~Constrained health_check DSL for third-party recipes~~
+**Completed:** v0.9.3 (2026-04-12). Typed DSL with 4 check types (`http`, `env_exists`, `command`, `any_of`). All 7 first-party recipes migrated. String health checks accepted with deprecation warning + metachar validation for non-embedded recipes.
 
 ## P2
 
@@ -117,7 +107,7 @@
 
 **Context:** From CEO review (2026-04-11). User explicitly deferred due to bandwidth constraints. Target v0.9.0.
 
-**Depends on:** Constrained health_check DSL (P1).
+**Depends on:** Constrained health_check DSL (P1) — **SHIPPED in v0.9.3.**
 
 ### Always-on deployment recipes (Fly.io, Railway)
 **What:** Alternative deployment recipes for voice-to-brain and future integrations that run on cloud servers instead of local + ngrok.

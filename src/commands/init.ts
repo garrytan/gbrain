@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { readdirSync, statSync } from 'fs';
+import { readdirSync, lstatSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { saveConfig, type GBrainConfig } from '../core/config.ts';
@@ -166,7 +166,11 @@ function countMarkdownFiles(dir: string, maxScan = 1500): number {
         if (entry.startsWith('.') || entry === 'node_modules') continue;
         const full = join(d, entry);
         try {
-          const stat = statSync(full);
+          let stat;
+          try {
+            stat = lstatSync(full);
+          } catch { continue; }
+          if (stat.isSymbolicLink()) continue;
           if (stat.isDirectory()) scan(full);
           else if (entry.endsWith('.md')) count++;
         } catch { /* skip unreadable */ }

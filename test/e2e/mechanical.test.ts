@@ -459,6 +459,53 @@ describeE2E('E2E: Files', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// Security: Query Bounds
+// ─────────────────────────────────────────────────────────────────
+
+describeE2E('E2E: file_list LIMIT enforcement', () => {
+  beforeAll(async () => {
+    await setupDB();
+  });
+  afterAll(teardownDB);
+
+  test('file_list with slug filter respects LIMIT 100', async () => {
+    const sql = getConn();
+    const testSlug = 'test-limit-slug';
+
+    // Create the parent page first (FK constraint on files.page_slug)
+    await sql`
+      INSERT INTO pages (slug, title, type, compiled_truth, frontmatter)
+      VALUES (${testSlug}, ${'Test Limit Page'}, ${'note'}, ${'body'}, ${'{}'}::jsonb)
+      ON CONFLICT (slug) DO NOTHING
+    `;
+
+    // Insert 150 file rows for the same slug
+    for (let i = 0; i < 150; i++) {
+      await sql`
+        INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+        VALUES (${testSlug}, ${'file-' + String(i).padStart(3, '0') + '.txt'}, ${testSlug + '/file-' + i + '.txt'}, ${'text/plain'}, ${100}, ${'hash-' + i}, ${'{}'}::jsonb)
+        ON CONFLICT (storage_path) DO NOTHING
+      `;
+    }
+
+    // Verify we inserted 150
+    const count = await sql`SELECT count(*) as cnt FROM files WHERE page_slug = ${testSlug}`;
+    expect(Number(count[0].cnt)).toBe(150);
+
+    // Call file_list with slug — should return at most 100
+    const files = await callOp('file_list', { slug: testSlug }) as any[];
+    expect(files.length).toBeLessThanOrEqual(100);
+    expect(files.length).toBe(100);
+  });
+
+  test('file_list without slug also respects LIMIT 100', async () => {
+    // The 150 rows from the previous test are still in the DB
+    const files = await callOp('file_list', {}) as any[];
+    expect(files.length).toBeLessThanOrEqual(100);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
 // Idempotency Stress
 // ─────────────────────────────────────────────────────────────────
 

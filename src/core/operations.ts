@@ -536,6 +536,11 @@ const get_ingest_log: Operation = {
 
 // --- File Operations ---
 
+// Both branches need a LIMIT. Without one, the slug-filtered branch materializes
+// every file for that slug — an MCP caller can force unbounded memory consumption
+// by targeting a page with many attachments.
+const FILE_LIST_LIMIT = 100;
+
 const file_list: Operation = {
   name: 'file_list',
   description: 'List stored files',
@@ -546,9 +551,9 @@ const file_list: Operation = {
     const sql = db.getConnection();
     const slug = p.slug as string | undefined;
     if (slug) {
-      return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename`;
+      return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`;
     }
-    return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT 100`;
+    return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT ${FILE_LIST_LIMIT}`;
   },
 };
 
