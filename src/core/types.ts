@@ -145,6 +145,12 @@ export interface BrainHealth {
   orphan_pages: number;
   dead_links: number;
   missing_embeddings: number;
+  embedding_provider: string;
+  embedding_model: string;
+  embedding_dimensions: number;
+  embedding_dimensions_overridden: boolean;
+  embedding_reset_required: boolean;
+  embedding_reset_reason: string | null;
 }
 
 // Ingest log

@@ -1,27 +1,14 @@
-/**
- * PGLite schema — derived from schema-embedded.ts (Postgres schema).
- *
- * Differences from Postgres:
- * - No RLS block (no role system in embedded PGLite)
- * - No access_tokens / mcp_request_log (local-only, no remote auth)
- * - No files table (file attachments require Supabase Storage)
- * - No pg_advisory_lock (single connection)
- *
- * Everything else is identical: same tables, triggers, indexes, pgvector HNSW, tsvector GIN.
- *
- * DRIFT WARNING: When schema-embedded.ts changes, update this file to match.
- * test/edge-bundle.test.ts has a drift detection test.
- */
+import { getEmbeddingColumnType, getEmbeddingIndexOps, type EmbeddingMetadata } from './embedding.ts';
 
-export const PGLITE_SCHEMA_SQL = `
--- GBrain PGLite schema (local embedded Postgres)
+function sqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
 
+export function buildPGliteSchemaSql(metadata: EmbeddingMetadata): string {
+  return `
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- ============================================================
--- pages: the core content table
--- ============================================================
 CREATE TABLE IF NOT EXISTS pages (
   id            SERIAL PRIMARY KEY,
   slug          TEXT    NOT NULL UNIQUE,
@@ -39,17 +26,14 @@ CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
 
--- ============================================================
--- content_chunks: chunked content with embeddings
--- ============================================================
 CREATE TABLE IF NOT EXISTS content_chunks (
   id            SERIAL PRIMARY KEY,
   page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  embedding     ${getEmbeddingColumnType(metadata)},
+  model         TEXT    NOT NULL DEFAULT ${sqlString(metadata.model)},
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -57,11 +41,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding ${getEmbeddingIndexOps(metadata)});
 
--- ============================================================
--- links: cross-references between pages
--- ============================================================
 CREATE TABLE IF NOT EXISTS links (
   id           SERIAL PRIMARY KEY,
   from_page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -75,9 +56,6 @@ CREATE TABLE IF NOT EXISTS links (
 CREATE INDEX IF NOT EXISTS idx_links_from ON links(from_page_id);
 CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_page_id);
 
--- ============================================================
--- tags
--- ============================================================
 CREATE TABLE IF NOT EXISTS tags (
   id      SERIAL PRIMARY KEY,
   page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -88,9 +66,6 @@ CREATE TABLE IF NOT EXISTS tags (
 CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
 CREATE INDEX IF NOT EXISTS idx_tags_page_id ON tags(page_id);
 
--- ============================================================
--- raw_data: sidecar data
--- ============================================================
 CREATE TABLE IF NOT EXISTS raw_data (
   id         SERIAL PRIMARY KEY,
   page_id    INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -102,9 +77,6 @@ CREATE TABLE IF NOT EXISTS raw_data (
 
 CREATE INDEX IF NOT EXISTS idx_raw_data_page ON raw_data(page_id);
 
--- ============================================================
--- timeline_entries: structured timeline
--- ============================================================
 CREATE TABLE IF NOT EXISTS timeline_entries (
   id       SERIAL PRIMARY KEY,
   page_id  INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -118,9 +90,6 @@ CREATE TABLE IF NOT EXISTS timeline_entries (
 CREATE INDEX IF NOT EXISTS idx_timeline_page ON timeline_entries(page_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_date ON timeline_entries(date);
 
--- ============================================================
--- page_versions: snapshot history
--- ============================================================
 CREATE TABLE IF NOT EXISTS page_versions (
   id             SERIAL PRIMARY KEY,
   page_id        INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -131,9 +100,6 @@ CREATE TABLE IF NOT EXISTS page_versions (
 
 CREATE INDEX IF NOT EXISTS idx_versions_page ON page_versions(page_id);
 
--- ============================================================
--- ingest_log
--- ============================================================
 CREATE TABLE IF NOT EXISTS ingest_log (
   id            SERIAL PRIMARY KEY,
   source_type   TEXT    NOT NULL,
@@ -143,9 +109,6 @@ CREATE TABLE IF NOT EXISTS ingest_log (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ============================================================
--- config: brain-level settings
--- ============================================================
 CREATE TABLE IF NOT EXISTS config (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -154,14 +117,14 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
   ('engine', 'pglite'),
-  ('embedding_model', 'text-embedding-3-large'),
-  ('embedding_dimensions', '1536'),
+  ('embedding_provider', ${sqlString(metadata.provider)}),
+  ('embedding_model', ${sqlString(metadata.model)}),
+  ('embedding_dimensions', ${sqlString(String(metadata.dimensions))}),
+  ('embedding_dimensions_overridden', ${sqlString(String(metadata.dimensionsOverridden))}),
+  ('embedding_reset_required', 'false'),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
 
--- ============================================================
--- Trigger-based search_vector (spans pages + timeline_entries)
--- ============================================================
 ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
@@ -192,8 +155,6 @@ CREATE TRIGGER trg_pages_search_vector
   EXECUTE FUNCTION update_page_search_vector();
 
 CREATE OR REPLACE FUNCTION update_page_search_vector_from_timeline() RETURNS trigger AS $$
-DECLARE
-  page_row pages%ROWTYPE;
 BEGIN
   UPDATE pages SET updated_at = now()
   WHERE id = coalesce(NEW.page_id, OLD.page_id);
@@ -207,3 +168,4 @@ CREATE TRIGGER trg_timeline_search_vector
   FOR EACH ROW
   EXECUTE FUNCTION update_page_search_vector_from_timeline();
 `;
+}

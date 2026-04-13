@@ -90,6 +90,15 @@ const MIGRATIONS: Migration[] = [
       INSERT INTO config (key, value) VALUES ('embedding_provider', 'openai') ON CONFLICT (key) DO NOTHING;
     `,
   },
+  {
+    version: 6,
+    name: 'embedding_metadata_state',
+    sql: `
+      INSERT INTO config (key, value) VALUES ('embedding_dimensions_overridden', 'false') ON CONFLICT (key) DO NOTHING;
+      INSERT INTO config (key, value) VALUES ('embedding_reset_required', 'false') ON CONFLICT (key) DO NOTHING;
+      INSERT INTO config (key, value) VALUES ('embedding_reset_reason', '') ON CONFLICT (key) DO NOTHING;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

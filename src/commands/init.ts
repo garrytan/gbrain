@@ -78,7 +78,10 @@ async function initPGLite(opts: {
     database_path: dbPath,
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
     ...(opts.embeddingProvider ? { embedding_provider: opts.embeddingProvider } : {}),
-    ...(opts.embeddingModel ? { ollama_model: opts.embeddingModel } : {}),
+    ...(opts.embeddingModel ? {
+      embedding_model: opts.embeddingModel,
+      ...(opts.embeddingProvider === 'ollama' ? { ollama_model: opts.embeddingModel } : {}),
+    } : {}),
   };
   saveConfig(config);
 
@@ -157,7 +160,10 @@ async function initPostgres(opts: {
     database_url: databaseUrl,
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
     ...(opts.embeddingProvider ? { embedding_provider: opts.embeddingProvider } : {}),
-    ...(opts.embeddingModel ? { ollama_model: opts.embeddingModel } : {}),
+    ...(opts.embeddingModel ? {
+      embedding_model: opts.embeddingModel,
+      ...(opts.embeddingProvider === 'ollama' ? { ollama_model: opts.embeddingModel } : {}),
+    } : {}),
   };
   saveConfig(config);
   console.log('Config saved to ~/.gbrain/config.json');

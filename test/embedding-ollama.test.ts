@@ -6,8 +6,10 @@
  */
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import {
+  OpenAIEmbeddingProvider,
   OllamaEmbeddingProvider,
   getEmbeddingProvider,
+  resolveEmbeddingMetadata,
   resetEmbeddingProvider,
 } from '../src/core/embedding.ts';
 
@@ -466,6 +468,30 @@ describe('getEmbeddingProvider factory', () => {
     // Pass empty config to skip file read
     const provider = getEmbeddingProvider({ embedding_provider: 'ollama' });
     expect(provider).toBeInstanceOf(OllamaEmbeddingProvider);
+  });
+});
+
+describe('resolveEmbeddingMetadata', () => {
+  test('resolves nomic-embed-text to 768 dimensions', () => {
+    const metadata = resolveEmbeddingMetadata({
+      embedding_provider: 'ollama',
+      embedding_model: 'nomic-embed-text',
+    });
+    expect(metadata.provider).toBe('ollama');
+    expect(metadata.model).toBe('nomic-embed-text');
+    expect(metadata.dimensions).toBe(768);
+    expect(metadata.dimensionsOverridden).toBe(false);
+  });
+
+  test('uses OpenAI native dimensions by default with no explicit override', () => {
+    process.env.OPENAI_API_KEY = 'sk-test-key';
+    const metadata = resolveEmbeddingMetadata({ embedding_provider: 'openai' });
+    const provider = new OpenAIEmbeddingProvider();
+    expect(metadata.provider).toBe('openai');
+    expect(metadata.model).toBe('text-embedding-3-large');
+    expect(metadata.dimensions).toBe(3072);
+    expect(metadata.dimensionsOverridden).toBe(false);
+    expect(provider.dimensions).toBe(3072);
   });
 });
 

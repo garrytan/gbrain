@@ -34,7 +34,7 @@ export async function hybridSearch(
   // Skip vector search if no embedding provider is available
   const provider = getEmbeddingProvider();
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
-  const hasOllama = provider.model !== 'text-embedding-3-large'; // heuristic: non-OpenAI = Ollama
+  const hasOllama = provider.provider === 'ollama';
   if (!hasOpenAI && !hasOllama) {
     return dedupResults(keywordResults).slice(offset, offset + limit);
   }

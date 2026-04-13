@@ -73,12 +73,25 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
   try {
     const health = await engine.getHealth();
     const pct = (health.embed_coverage * 100).toFixed(0);
+    const overrideLabel = health.embedding_dimensions_overridden ? 'override' : 'provider default';
+    checks.push({
+      name: 'embedding_config',
+      status: 'ok',
+      message: `${health.embedding_provider}/${health.embedding_model} at ${health.embedding_dimensions}d (${overrideLabel})`,
+    });
+
     if (health.embed_coverage >= 0.9) {
       checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing` });
     } else if (health.embed_coverage > 0) {
-      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed refresh` });
+      const suffix = health.embedding_reset_required && health.embedding_reset_reason
+        ? ` ${health.embedding_reset_reason}`
+        : ' Run: gbrain embed --stale';
+      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${health.missing_embeddings} missing.${suffix}` });
     } else {
-      checks.push({ name: 'embeddings', status: 'warn', message: 'No embeddings yet. Run: gbrain embed refresh' });
+      const message = health.embedding_reset_required && health.embedding_reset_reason
+        ? health.embedding_reset_reason
+        : 'No embeddings yet. Run: gbrain embed --stale';
+      checks.push({ name: 'embeddings', status: 'warn', message });
     }
   } catch {
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });

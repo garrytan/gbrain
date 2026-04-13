@@ -69,6 +69,7 @@ async function embedPage(engine: BrainEngine, slug: string) {
   }));
 
   await engine.upsertChunks(slug, updated);
+  await clearEmbeddingResetFlagIfRecovered(engine);
   console.log(`${slug}: embedded ${toEmbed.length} chunks (${provider.model})`);
 }
 
@@ -144,5 +145,15 @@ async function embedAll(engine: BrainEngine, staleOnly: boolean) {
   const numWorkers = Math.min(CONCURRENCY, pages.length);
   await Promise.all(Array.from({ length: numWorkers }, () => worker()));
 
+  await clearEmbeddingResetFlagIfRecovered(engine);
+
   console.log(`\n\nEmbedded ${embedded} chunks across ${pages.length} pages`);
+}
+
+async function clearEmbeddingResetFlagIfRecovered(engine: BrainEngine) {
+  const health = await engine.getHealth();
+  if (health.missing_embeddings === 0 && health.embedding_reset_required) {
+    await engine.setConfig('embedding_reset_required', 'false');
+    await engine.setConfig('embedding_reset_reason', '');
+  }
 }

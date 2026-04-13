@@ -44,13 +44,32 @@ export function rowToPage(row: Record<string, unknown>): Page {
 }
 
 export function rowToChunk(row: Record<string, unknown>, includeEmbedding = false): Chunk {
+  let embedding: Float32Array | null = null;
+  if (includeEmbedding && row.embedding) {
+    if (row.embedding instanceof Float32Array) {
+      embedding = row.embedding;
+    } else if (Array.isArray(row.embedding)) {
+      embedding = new Float32Array(row.embedding as number[]);
+    } else if (typeof row.embedding === 'string') {
+      const trimmed = row.embedding.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        const numbers = trimmed.slice(1, -1)
+          .split(',')
+          .map(part => part.trim())
+          .filter(Boolean)
+          .map(Number);
+        embedding = new Float32Array(numbers);
+      }
+    }
+  }
+
   return {
     id: row.id as number,
     page_id: row.page_id as number,
     chunk_index: row.chunk_index as number,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
-    embedding: includeEmbedding && row.embedding ? row.embedding as Float32Array : null,
+    embedding,
     model: row.model as string,
     token_count: row.token_count as number | null,
     embedded_at: row.embedded_at ? new Date(row.embedded_at as string) : null,
