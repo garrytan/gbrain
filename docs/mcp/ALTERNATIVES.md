@@ -1,54 +1,64 @@
-# Alternative: Self-Hosted MCP Server
+# Remote MCP Deployment Options
 
-If you prefer running GBrain on your own machine instead of Supabase Edge Functions, you can expose `gbrain serve --http` via a tunnel.
+GBrain's MCP server runs via `gbrain serve` (stdio transport). To make it
+accessible from other devices and AI clients, you need an HTTP wrapper and
+a public tunnel. Here are your options.
 
-## Tailscale Funnel
+## ngrok (recommended)
 
-[Tailscale Funnel](https://tailscale.com/kb/1223/tailscale-funnel) gives you a permanent public HTTPS URL with automatic TLS. Free tier available.
-
-```bash
-# 1. Install Tailscale
-brew install tailscale
-
-# 2. Start gbrain with HTTP transport (when available)
-gbrain serve --http 3000
-
-# 3. Expose via Funnel
-tailscale funnel 3000
-# Your brain is now at https://your-machine.ts.net
-```
-
-Pros: zero deployment, no Deno bundling, no cold start, no timeout limits.
-Cons: requires your machine to be running and connected.
-
-## ngrok
-
-[ngrok](https://ngrok.com) provides temporary or persistent tunnels.
+[ngrok](https://ngrok.com) provides instant public tunnels. The Hobby tier
+($8/mo) gives you a fixed domain that never changes.
 
 ```bash
 # 1. Install ngrok
 brew install ngrok
 
-# 2. Start gbrain with HTTP transport
-gbrain serve --http 3000
+# 2. Start your MCP server (behind an HTTP wrapper)
+# See docs/mcp/DEPLOY.md for the server setup
 
 # 3. Expose via ngrok
-ngrok http 3000
-# Use the generated URL in your MCP client config
+ngrok http 8787 --url your-brain.ngrok.app
 ```
 
-Pros: quick setup, works behind firewalls.
-Cons: free tier URLs change on restart (paid tier for persistent URLs), requires running process.
+See the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for full setup
+including auth token configuration and fixed domain setup.
 
-## When to use alternatives vs Edge Functions
+## Tailscale Funnel
 
-| | Edge Functions | Tailscale/ngrok |
-|--|---|---|
-| Works when laptop is off | Yes | No |
-| Zero cold start | No (~300ms) | Yes |
-| No timeout limits | No (60s) | Yes |
-| sync_brain remotely | No | Yes |
-| file_upload remotely | No | Yes |
-| Extra accounts needed | None | Tailscale or ngrok |
+[Tailscale Funnel](https://tailscale.com/kb/1223/tailscale-funnel) gives you
+a permanent public HTTPS URL with automatic TLS. Free tier available. Best for
+private networks where you control both endpoints.
 
-Note: `gbrain serve --http` is planned but not yet implemented. Currently only stdio transport is available via `gbrain serve`.
+```bash
+# 1. Install Tailscale
+brew install tailscale
+
+# 2. Expose your MCP server
+tailscale funnel 8787
+# Your brain is now at https://your-machine.ts.net
+```
+
+## Fly.io / Railway (always-on)
+
+For production deployments that need to run 24/7 without your machine:
+
+- **Fly.io:** $5-10/mo, global edge, `fly deploy`
+- **Railway:** $5/mo, git push deploy
+
+Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
+
+## Comparison
+
+| | ngrok | Tailscale | Fly.io/Railway |
+|--|---|---|---|
+| Cost | $8/mo (Hobby) | Free | $5-10/mo |
+| Fixed URL | Yes (Hobby) | Yes | Yes |
+| Works when laptop is off | No | No | Yes |
+| Cold start | None | None | None |
+| Timeout limits | None | None | None |
+| All 30 operations | Yes | Yes | Yes |
+| Setup time | 5 min | 10 min | 15 min |
+
+**Note:** `gbrain serve --http` (built-in HTTP transport) is planned but not yet
+implemented. Currently, remote MCP requires a custom HTTP wrapper around `gbrain serve`.
+See [DEPLOY.md](DEPLOY.md) for details.

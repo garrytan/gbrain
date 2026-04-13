@@ -1,6 +1,8 @@
 # Connect GBrain to Claude Desktop
 
-**Important:** Claude Desktop does NOT connect to remote MCP servers via `claude_desktop_config.json`. That file only works for local stdio servers. Remote HTTP servers must be added through the GUI.
+**Important:** Claude Desktop does NOT connect to remote MCP servers via
+`claude_desktop_config.json`. That file only works for local stdio servers.
+Remote HTTP servers must be added through the GUI.
 
 ## Setup
 
@@ -9,9 +11,12 @@
 3. Click **Add Integration** (or **Add Connector**)
 4. Enter the MCP server URL:
    ```
-   https://YOUR_REF.supabase.co/functions/v1/gbrain-mcp/mcp
+   https://YOUR-DOMAIN.ngrok.app/mcp
    ```
+   Replace `YOUR-DOMAIN` with your ngrok domain (see
+   [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for setup).
 5. Set authentication to **Bearer Token** and paste your token
+   (create one with `bun run src/commands/auth.ts create "claude-desktop"`)
 6. Save
 
 ## Verify
@@ -26,6 +31,9 @@ Claude Desktop will use your GBrain tools automatically.
 
 ## Common Mistakes
 
-**Using claude_desktop_config.json for remote servers** — this silently fails. The JSON config only works for local stdio MCP servers. Remote HTTP servers must be added via Settings > Integrations.
+**Using claude_desktop_config.json for remote servers** — this silently fails
+with no error message. The JSON config only works for local stdio MCP servers.
+Remote HTTP servers must be added via Settings > Integrations in the GUI.
 
-**Using the wrong URL** — make sure the URL ends with `/mcp` (not `/health` or just the function name).
+**Using the wrong URL** — make sure the URL ends with `/mcp` (not `/health`
+or just the base domain).

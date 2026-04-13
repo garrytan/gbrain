@@ -29,19 +29,20 @@ describe('validateSlug', () => {
 
 describe('contentHash', () => {
   test('returns deterministic hash', () => {
-    const h1 = contentHash('hello', 'world');
-    const h2 = contentHash('hello', 'world');
+    const page = { title: 'Test', type: 'concept' as const, compiled_truth: 'hello', timeline: 'world' };
+    const h1 = contentHash(page);
+    const h2 = contentHash(page);
     expect(h1).toBe(h2);
   });
 
   test('changes when content changes', () => {
-    const h1 = contentHash('hello', 'world');
-    const h2 = contentHash('hello', 'changed');
+    const h1 = contentHash({ title: 'Test', type: 'concept' as const, compiled_truth: 'hello', timeline: 'world' });
+    const h2 = contentHash({ title: 'Test', type: 'concept' as const, compiled_truth: 'hello', timeline: 'changed' });
     expect(h1).not.toBe(h2);
   });
 
   test('returns hex string', () => {
-    const h = contentHash('test', '');
+    const h = contentHash({ title: 'Test', type: 'concept' as const, compiled_truth: 'test', timeline: '' });
     expect(h).toMatch(/^[a-f0-9]{64}$/);
   });
 });

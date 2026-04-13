@@ -1,39 +1,51 @@
 # Deploy GBrain Remote MCP Server
 
-Deploy your personal knowledge brain as a serverless MCP endpoint on your existing Supabase instance. Works with Claude Desktop, Claude Code, Cowork, and Perplexity Computer.
+Access your brain from any device, any AI client. GBrain's MCP server runs locally
+via `gbrain serve` (stdio). For remote access, wrap it in an HTTP server behind a
+public tunnel.
 
-## Prerequisites
+## Two Paths
 
-- GBrain already set up (`gbrain init` completed, data imported)
-- [Supabase CLI](https://supabase.com/docs/guides/cli) installed
-- Your Supabase project ref (the `xxx` from `https://xxx.supabase.co`)
-
-## Quick Start
+### Local (zero setup)
 
 ```bash
-# 1. Fill in your config
-cp .env.production.example .env.production
-# Edit .env.production with your DATABASE_URL, OPENAI_API_KEY, SUPABASE_PROJECT_REF
-
-# 2. Deploy (one command)
-bash scripts/deploy-remote.sh
-
-# 3. Create an access token
-DATABASE_URL=$DATABASE_URL bun run src/commands/auth.ts create "my-client"
-# Save the token — it's shown once
-
-# 4. Test it
-bun run src/commands/auth.ts test \
-  https://YOUR_REF.supabase.co/functions/v1/gbrain-mcp/mcp \
-  --token YOUR_TOKEN
+gbrain serve
 ```
 
-## Authentication
+Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
+No server, no tunnel, no token needed.
 
-GBrain uses bearer tokens stored in your database (SHA-256 hashed). Each token has a name for identification.
+### Remote (any device, any AI client)
+
+```
+Your AI client (Claude Desktop, Perplexity, etc.)
+  → ngrok tunnel (https://YOUR-DOMAIN.ngrok.app)
+  → Your HTTP server (wraps gbrain serve)
+  → Supabase Postgres (via pooler connection string)
+```
+
+This requires:
+1. A machine running `gbrain serve` behind an HTTP wrapper
+2. A public tunnel (ngrok, Tailscale, or cloud host)
+3. Bearer token auth for security
+
+## Remote Setup
+
+### 1. Set up the tunnel
+
+See the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for full setup.
+Quick version:
 
 ```bash
-# Create a token
+brew install ngrok
+ngrok config add-authtoken YOUR_TOKEN
+ngrok http 8787 --url your-brain.ngrok.app  # Hobby tier for fixed domain
+```
+
+### 2. Create access tokens
+
+```bash
+# Create a token for each client
 bun run src/commands/auth.ts create "claude-desktop"
 
 # List all tokens
@@ -43,50 +55,48 @@ bun run src/commands/auth.ts list
 bun run src/commands/auth.ts revoke "claude-desktop"
 ```
 
-Tokens are per-client. Create one for each device/app. Revoke individually if compromised.
+Tokens are per-client. Create one for each device/app. Revoke individually
+if compromised. Tokens are stored SHA-256 hashed in your database.
 
-## Updating
+### 3. Connect your AI client
 
-When you update GBrain (new operations, bug fixes):
+- **Claude Code:** [setup guide](CLAUDE_CODE.md)
+- **Claude Desktop:** [setup guide](CLAUDE_DESKTOP.md) (must use GUI, not JSON config)
+- **Claude Cowork:** [setup guide](CLAUDE_COWORK.md)
+- **Perplexity:** [setup guide](PERPLEXITY.md)
+
+### 4. Verify
 
 ```bash
-git pull
-bash scripts/deploy-remote.sh
-```
-
-Your tokens survive upgrades. Check your deployed version:
-
-```bash
-curl https://YOUR_REF.supabase.co/functions/v1/gbrain-mcp/health
+bun run src/commands/auth.ts test \
+  https://YOUR-DOMAIN.ngrok.app/mcp \
+  --token YOUR_TOKEN
 ```
 
 ## Operations
 
-All 28 GBrain operations are available remotely except:
-- `sync_brain` (may exceed 60s Edge Function timeout)
-- `file_upload` (may exceed 60s timeout with large files)
+All 30 GBrain operations are available remotely, including `sync_brain` and
+`file_upload` (no timeout limits with self-hosted server).
 
-These remain CLI-only via `gbrain serve` (stdio).
+## Deployment Options
+
+See [ALTERNATIVES.md](ALTERNATIVES.md) for a comparison of ngrok, Tailscale
+Funnel, and cloud hosts (Fly.io, Railway).
 
 ## Troubleshooting
-
-**"supabase: command not found"**
-Install: `brew install supabase/tap/supabase` or `npm install -g supabase`
-
-**Edge Function deploys but returns 500**
-Check that OPENAI_API_KEY is set: `supabase secrets list`
 
 **"missing_auth" error**
 Include the Authorization header: `Authorization: Bearer YOUR_TOKEN`
 
 **"invalid_token" error**
-Run `bun run src/commands/auth.ts list` to see active tokens. The token may have been revoked or mistyped.
+Run `bun run src/commands/auth.ts list` to see active tokens.
 
 **"service_unavailable" error**
-Database connection failed. Check your Supabase dashboard for outages or connection pool limits.
+Database connection failed. Check your Supabase dashboard for outages.
 
 **Claude Desktop doesn't connect**
-Remote MCP servers must be added via Settings > Integrations, NOT claude_desktop_config.json. See [CLAUDE_DESKTOP.md](CLAUDE_DESKTOP.md).
+Remote servers must be added via Settings > Integrations, NOT
+`claude_desktop_config.json`. See [CLAUDE_DESKTOP.md](CLAUDE_DESKTOP.md).
 
 ## Expected Latencies
 
@@ -99,4 +109,7 @@ Remote MCP servers must be added via Settings > Integrations, NOT claude_desktop
 | put_page | 100-500ms | Write + trigger search_vector update |
 | get_stats | < 100ms | Aggregate query |
 
-Cold start adds ~300-500ms on the first request after idle (Postgres connection setup via pgbouncer).
+**Note:** `gbrain serve --http` (built-in HTTP transport) is planned but not yet
+implemented. Currently, remote MCP requires a custom HTTP wrapper. See the
+production deployment pattern in the [voice recipe](../../recipes/twilio-voice-brain.md)
+for a reference implementation.

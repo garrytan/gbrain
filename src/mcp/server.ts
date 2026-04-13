@@ -3,9 +3,28 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
-import type { OperationContext } from '../core/operations.ts';
+import type { Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { VERSION } from '../version.ts';
+
+/** Validate required params exist and have the expected type */
+function validateParams(op: Operation, params: Record<string, unknown>): string | null {
+  for (const [key, def] of Object.entries(op.params)) {
+    if (def.required && (params[key] === undefined || params[key] === null)) {
+      return `Missing required parameter: ${key}`;
+    }
+    if (params[key] !== undefined && params[key] !== null) {
+      const val = params[key];
+      const expected = def.type;
+      if (expected === 'string' && typeof val !== 'string') return `Parameter "${key}" must be a string`;
+      if (expected === 'number' && typeof val !== 'number') return `Parameter "${key}" must be a number`;
+      if (expected === 'boolean' && typeof val !== 'boolean') return `Parameter "${key}" must be a boolean`;
+      if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return `Parameter "${key}" must be an object`;
+      if (expected === 'array' && !Array.isArray(val)) return `Parameter "${key}" must be an array`;
+    }
+  }
+  return null;
+}
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -54,8 +73,14 @@ export async function startMcpServer(engine: BrainEngine) {
       dryRun: !!(params?.dry_run),
     };
 
+    const safeParams = params || {};
+    const validationError = validateParams(op, safeParams);
+    if (validationError) {
+      return { content: [{ type: 'text', text: JSON.stringify({ error: 'invalid_params', message: validationError }, null, 2) }], isError: true };
+    }
+
     try {
-      const result = await op.handler(ctx, params || {});
+      const result = await op.handler(ctx, safeParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (e: unknown) {
       if (e instanceof OperationError) {
@@ -78,6 +103,9 @@ export async function handleToolCall(
 ): Promise<unknown> {
   const op = operations.find(o => o.name === tool);
   if (!op) throw new Error(`Unknown tool: ${tool}`);
+
+  const validationError = validateParams(op, params);
+  if (validationError) throw new Error(validationError);
 
   const ctx: OperationContext = {
     engine,

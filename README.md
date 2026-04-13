@@ -10,97 +10,86 @@ Your AI agent is smart but it doesn't know anything about your life. GBrain fixe
 
 GBrain is designed to be installed and operated by an AI agent. If you don't have one running yet:
 
-- **[OpenClaw](https://openclaw.ai)** — Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/openclaw/alphaclaw) (one click, requires 8GB+ RAM instance)
+- **[OpenClaw](https://openclaw.ai)** — Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, requires 8GB+ RAM instance)
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** — Deploy on [Railway using this template](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
 
-## Start here: paste this into your agent
+## Start here
 
-Copy this block into OpenClaw or Hermes Agent. The agent will install GBrain, set up the brain schema, import your files, configure all integrations, and verify everything works. GBrain needs a persistent agent that can run cron jobs and background sync.
+**https://github.com/garrytan/gbrain** — clone this repo into your agent's filesystem. It's home base for docs, skills, upgrades, and recipes. To upgrade later: `git pull origin main && bun install`.
+
+Copy this block into [OpenClaw](https://openclaw.ai), [Hermes](https://github.com/NousResearch/hermes-agent), or any persistent AI agent. The agent reads the docs, does the work, and asks you for API keys. ~30 minutes.
 
 ```
-GOAL: I want Garry Tan's exact opinionated AI agent setup. Get me
-there. Install GBrain, set up the brain schema, import my files,
-configure all integrations, and verify everything works. Do not skip
-steps. Verify each step before proceeding. If a step fails, stop
-and fix it.
+INSTALL:
 
-You don't need a server to start. gbrain init defaults to PGLite
-(embedded Postgres 17.5 via WASM). No Supabase account, no Docker,
-no connection strings. One command and you have a full Postgres brain
-with pgvector, hybrid search, and all 37 operations. When your brain
-outgrows local (1000+ files), gbrain migrate --to supabase moves
-everything to managed Postgres in one shot.
-
-The knowledge model is markdown files in a git repo. Read
-docs/GBRAIN_SKILLPACK.md for the full agent playbook and
-docs/GBRAIN_RECOMMENDED_SCHEMA.md for the brain directory structure.
-
-STEP 1 — INSTALL
-  curl -fsSL https://bun.sh/install | bash && source ~/.bashrc
-  bun add github:garrytan/gbrain
+  git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
+  curl -fsSL https://bun.sh/install | bash
+  export PATH="$HOME/.bun/bin:$PATH"
+  bun install && bun link
   Verify: gbrain --version
+  (If gbrain is not found, restart your shell or add the PATH export
+  to your shell profile.)
 
-STEP 2 — DATABASE
-  Run: gbrain init
-  This creates a local PGLite brain (embedded Postgres, no server).
-  Brain ready in ~2 seconds. No accounts, no connection strings.
-  Verify: gbrain doctor --json (all checks pass)
+API KEYS — ask the user for these:
 
-  For large brains (1000+ files) or remote access, use Supabase:
-    gbrain init --supabase
-  You can migrate anytime: gbrain migrate --to supabase
+  export OPENAI_API_KEY=sk-...          # required for vector search
+  export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
+  Save to shell profile or .env. Without OpenAI, keyword search still
+  works. Without Anthropic, search works but skips query expansion.
 
-STEP 3 — SCHEMA
-  Read docs/GBRAIN_RECOMMENDED_SCHEMA.md — this is the brain's directory
-  structure. Set up the MECE directories (people/, companies/, deals/,
-  concepts/, etc.) with README.md resolvers in each. The schema tells
-  you exactly what goes where and how to resolve ambiguity.
-  The agent maintains this structure automatically after setup.
+SET UP THE BRAIN:
 
-STEP 4 — IMPORT
-  Find markdown: find ~/git ~/Documents ~/notes -maxdepth 3 -name "*.md" | head -30
-  Tell user what you found. Import: gbrain import /path/ --no-embed
-  Verify: gbrain stats (page count > 0)
+  gbrain init                           # PGLite, no server needed
+  Verify: gbrain doctor --json          # all checks pass
 
-STEP 5 — SEARCH
-  Run: gbrain embed --stale (generates vector embeddings, ~1 min per 1000 pages)
-  Then: gbrain query "what are the key themes across these documents?"
-  Show the user the results. This is the magic moment.
-  Verify: results include semantic matches, not just keyword hits
+  The user's markdown files (notes, docs, brain repo) are SEPARATE from
+  this tool repo. Ask the user where their files are, or create a new
+  brain repo: mkdir -p ~/brain && cd ~/brain && git init
 
-STEP 6 — GO LIVE
-  a. Read docs/GBRAIN_SKILLPACK.md — adopt brain-first lookup, entity
-     detection, and back-linking into your behavior immediately
-  b. Set up live sync: gbrain sync --repo /path/ && gbrain embed --stale
-     (see docs/guides/live-sync.md for cron/watch/webhook options)
-  c. Set up auto-update: gbrain check-update --json on a daily cron
-     (never auto-install — always ask the user first)
-  d. Run verification: read and execute docs/GBRAIN_VERIFY.md
+  Read ~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md — set up the MECE
+  directory structure (people/, companies/, concepts/, etc.) inside the
+  user's brain repo, NOT inside ~/gbrain.
 
-STEP 7 — INTEGRATIONS
-  Run: gbrain integrations list
-  For EVERY available recipe, set it up. Each recipe is a markdown file
-  that tells the agent exactly what credentials to ask for, how to
-  validate them, and how to wire the integration. The agent reads the
-  recipe, asks the user for API keys, and handles the rest.
-  Voice, email, calendar, Twitter — install them all.
-  Verify: gbrain integrations doctor (all health checks pass)
+  gbrain import ~/brain/ --no-embed     # import markdown files
+  gbrain embed --stale                  # generate vector embeddings
+  gbrain query "key themes across these documents?"
 
-DONE. Tell the user: "GBrain is live. You have [N] pages with hybrid
-search. I now check the brain before answering questions. All available
-integrations are configured."
+GO LIVE — read and permanently adopt these docs from ~/gbrain/:
+
+  docs/GBRAIN_SKILLPACK.md — the full agent playbook. Save to your
+    memory: brain-first lookup on every message, entity detection,
+    back-linking. This changes how you behave permanently.
+
+  Set up recurring jobs using your platform's scheduler (crontab,
+  OpenClaw cron, Railway cron, or a process manager):
+    - Live sync (every 15 min): gbrain sync --repo ~/brain && gbrain embed --stale
+    - Auto-update (daily): gbrain check-update --json (tell user, never auto-install)
+    - Dream cycle (nightly): read docs/guides/cron-schedule.md for the
+      full protocol — entity sweep, citation fixes, memory consolidation.
+      This is what makes the brain compound. Do not skip it.
+    - Weekly: gbrain doctor --json && gbrain embed --stale
+
+  docs/GBRAIN_VERIFY.md — run all 6 verification checks. #4 (live sync
+    actually works) is the most important.
+
+INTEGRATIONS — run gbrain integrations list. Each recipe in
+  ~/gbrain/recipes/ is a self-contained installer: it tells you what
+  credentials to ask for, how to validate, and what cron to register.
+  Ask the user which integrations they want (email, calendar, voice,
+  Twitter). Set up the ones they have credentials for.
+  Verify: gbrain integrations doctor (after at least one is configured)
+
+UPGRADE: cd ~/gbrain && git pull origin main && bun install
 ```
 
 ### Without an agent (standalone CLI)
 
 ```bash
-bun add -g github:garrytan/gbrain
+git clone https://github.com/garrytan/gbrain.git && cd gbrain && bun install && bun link
 gbrain init                     # local brain, ready in 2 seconds
-gbrain import ~/git/brain/      # index your markdown
+gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
 ```
-
-Run `gbrain --help` for all commands. See [MCP setup](docs/mcp/DEPLOY.md) for connecting Claude Desktop, Perplexity, etc.
 
 ## Getting Data In
 
@@ -143,6 +132,28 @@ An agent without this loop answers from stale context. An agent with it gets sma
 
 > "Prep me for my meeting with Jordan in 30 minutes"
 > — pulls dossier, shared history, recent activity, open threads
+
+## Voice: "Her" Out of the Box
+
+The voice integration is the strongest demonstration of why a personal brain matters.
+Call a phone number. Your AI answers. It knows who's calling, pulls their full context
+from thousands of people pages, references your last meeting, and responds like someone
+who actually knows your world. When the call ends, a structured brain page appears with
+the transcript, entity detection, and cross-references.
+
+This isn't a demo. It runs on a real phone number, screens unknown callers, and gets
+smarter with every call. Your agent picks its own name and personality. WebRTC works in
+a browser tab with zero setup. A real phone number is optional.
+
+<p align="center">
+  <img src="docs/images/voice-client.png" alt="Voice client connected" width="300" />
+</p>
+
+> [See it in action](https://x.com/garrytan/status/2043022208512172263)
+
+The voice recipe ships with GBrain: [Voice-to-Brain](recipes/twilio-voice-brain.md).
+Your agent installs it, sets up the voice server, and you have a working AI phone line
+in 30 minutes. 25 production patterns from a real deployment included.
 
 ## How this happened
 
@@ -279,20 +290,23 @@ GBrain exposes 30 MCP tools via stdio. Add this to your MCP client config:
 
 This gives your agent `get_page`, `put_page`, `search`, `query`, `add_link`, `traverse_graph`, `sync_brain`, `file_upload`, and 22 more tools. All generated from the same operation definitions as the CLI.
 
-#### Remote MCP Server (Claude Desktop, Cowork, Perplexity, ChatGPT)
+#### Remote MCP Server (Claude Desktop, Cowork, Perplexity)
 
-Access your brain from any device, any AI client. Deploy as a serverless endpoint on your existing Supabase instance:
+Access your brain from any device, any AI client. Run `gbrain serve` behind an HTTP
+server with a public tunnel:
 
 ```bash
-cp .env.production.example .env.production   # fill in 3 values
-bash scripts/deploy-remote.sh                 # links, builds, deploys
-bun run src/commands/auth.ts create "claude-desktop"  # get a token
+# Set up a public tunnel (see recipes/ngrok-tunnel.md)
+ngrok http 8787 --url your-brain.ngrok.app
+
+# Create a bearer token for your client
+bun run src/commands/auth.ts create "claude-desktop"
 ```
 
 Then add to your AI client:
-- **Claude Code:** `claude mcp add gbrain -t http https://YOUR_REF.supabase.co/functions/v1/gbrain-mcp/mcp -H "Authorization: Bearer TOKEN"`
-- **Claude Desktop:** Settings > Integrations > Add (NOT JSON config)
-- **Perplexity Computer:** Settings > Connectors > Add remote MCP
+- **Claude Code:** `claude mcp add gbrain -t http https://your-brain.ngrok.app/mcp -H "Authorization: Bearer TOKEN"`
+- **Claude Desktop:** Settings > Integrations > Add (NOT JSON config, [details](docs/mcp/CLAUDE_DESKTOP.md))
+- **Perplexity:** Settings > Connectors > Add remote MCP ([details](docs/mcp/PERPLEXITY.md))
 
 Per-client setup guides: [`docs/mcp/`](docs/mcp/DEPLOY.md)
 
@@ -351,20 +365,11 @@ PGLite (default) requires no external database. For production scale (7K+ pages,
 
 ## Upgrade
 
-Upgrade depends on how you installed:
-
 ```bash
-# Installed via bun (standalone or library)
-bun update gbrain
-
-# Installed via ClawHub
-clawhub update gbrain
-
-# Compiled binary
-# Download the latest from https://github.com/garrytan/gbrain/releases
+cd ~/gbrain && git pull origin main && bun install
 ```
 
-After upgrading, run `gbrain init` again to apply any schema migrations (idempotent, safe to re-run).
+Then run `gbrain init` to apply any schema migrations (idempotent, safe to re-run).
 
 ## Setup details
 
@@ -603,7 +608,7 @@ ADMIN
   gbrain revert <slug> <version-id>         Revert to previous version
   gbrain config [get|set] <key> [value]     Brain config
   gbrain serve                              MCP server (stdio, local)
-  scripts/deploy-remote.sh                  Deploy remote MCP server (Supabase Edge Functions)
+  gbrain upgrade                            Self-update with feature discovery
   bun run src/commands/auth.ts              Token management (create/list/revoke/test)
   gbrain call <tool> '<json>'               Raw tool invocation
   gbrain --tools-json                       Tool discovery (JSON)

@@ -3,7 +3,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig } from './types.ts';
 
-// Lazy-evaluated to avoid calling homedir() at module scope (breaks in Deno Edge Functions)
+// Lazy-evaluated to avoid calling homedir() at module scope (breaks in serverless/bundled environments)
 function getConfigDir() { return join(homedir(), '.gbrain'); }
 function getConfigPath() { return join(getConfigDir(), 'config.json'); }
 

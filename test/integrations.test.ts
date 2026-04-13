@@ -211,4 +211,75 @@ describe('twilio-voice-brain recipe', () => {
       expect(secret.where).toContain('https://');
     }
   });
+
+  test('recipe has all required secrets', () => {
+    const { readFileSync } = require('fs');
+    const content = readFileSync(
+      new URL('../recipes/twilio-voice-brain.md', import.meta.url),
+      'utf-8'
+    );
+    const recipe = parseRecipe(content, 'twilio-voice-brain.md');
+    expect(recipe).not.toBeNull();
+    const secretNames = recipe!.frontmatter.secrets.map((s: any) => s.name);
+    expect(secretNames).toContain('TWILIO_ACCOUNT_SID');
+    expect(secretNames).toContain('TWILIO_AUTH_TOKEN');
+    expect(secretNames).toContain('OPENAI_API_KEY');
+  });
+
+  test('recipe version is valid semver', () => {
+    const { readFileSync } = require('fs');
+    const content = readFileSync(
+      new URL('../recipes/twilio-voice-brain.md', import.meta.url),
+      'utf-8'
+    );
+    const recipe = parseRecipe(content, 'twilio-voice-brain.md');
+    expect(recipe).not.toBeNull();
+    expect(recipe!.frontmatter.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  test('recipe requires resolve to existing recipe files', () => {
+    const { readFileSync, existsSync } = require('fs');
+    const { resolve } = require('path');
+    const content = readFileSync(
+      new URL('../recipes/twilio-voice-brain.md', import.meta.url),
+      'utf-8'
+    );
+    const recipe = parseRecipe(content, 'twilio-voice-brain.md');
+    expect(recipe).not.toBeNull();
+    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    for (const dep of recipe!.frontmatter.requires) {
+      const depPath = resolve(recipesDir, `${dep}.md`);
+      expect(existsSync(depPath)).toBe(true);
+    }
+  });
+});
+
+// --- All recipes parse without error ---
+
+describe('all recipes', () => {
+  test('every recipe file in recipes/ parses correctly', () => {
+    const { readFileSync, readdirSync } = require('fs');
+    const { resolve } = require('path');
+    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const content = readFileSync(resolve(recipesDir, file), 'utf-8');
+      const recipe = parseRecipe(content, file);
+      expect(recipe).not.toBeNull();
+      expect(recipe!.frontmatter.id).toBeTruthy();
+    }
+  });
+
+  test('no recipe contains personal references', () => {
+    const { readFileSync, readdirSync } = require('fs');
+    const { resolve } = require('path');
+    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
+    const personalPatterns = /wintermute|mercury|16507969501|\+1650796/i;
+    for (const file of files) {
+      const content = readFileSync(resolve(recipesDir, file), 'utf-8');
+      expect(content).not.toMatch(personalPatterns);
+    }
+  });
 });

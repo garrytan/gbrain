@@ -124,6 +124,24 @@ echo "=== Discovery Complete ==="
    > "You have N binary files (X GB) in your brain repo. Want to move them to cloud
    > storage? Your git repo will drop from X GB to Y MB. All links keep working."
 
+   If the user agrees, configure storage and run migration:
+   ```bash
+   # Configure storage backend (Supabase Storage recommended)
+   gbrain config set storage.backend supabase
+   gbrain config set storage.bucket brain-files
+   gbrain config set storage.projectUrl <supabase-url>
+   gbrain config set storage.serviceRoleKey <service-role-key>
+
+   # Migrate binary files to cloud (3-step lifecycle)
+   gbrain files mirror <brain-dir>       # Upload to cloud, keep local
+   gbrain files redirect <brain-dir>     # Replace local with .redirect.yaml pointers
+   # (optional) gbrain files clean <brain-dir> --yes   # Remove pointers too
+   ```
+
+   After migration, `gbrain files upload-raw` handles new files automatically:
+   small text/PDFs stay in git, large/media files go to cloud with `.redirect.yaml`
+   pointers. Files >= 100 MB use TUS resumable upload for reliability.
+
 If no markdown repos are found, create a starter brain with a few template pages
 (a person page, a company page, a concept page) from docs/GBRAIN_RECOMMENDED_SCHEMA.md.
 

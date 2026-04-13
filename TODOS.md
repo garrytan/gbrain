@@ -33,7 +33,7 @@
 **Depends on:** PGLite engine shipping (to have a real use case for the PR).
 
 ### ChatGPT MCP support (OAuth 2.1)
-**What:** Add OAuth 2.1 with Dynamic Client Registration to the Edge Function so ChatGPT can connect.
+**What:** Add OAuth 2.1 with Dynamic Client Registration to the self-hosted MCP server so ChatGPT can connect.
 
 **Why:** ChatGPT requires OAuth 2.1 for MCP connectors. Bearer token auth is NOT supported. This is the only major AI client that can't use GBrain remotely.
 
@@ -41,9 +41,9 @@
 
 **Cons:** OAuth 2.1 is a significant implementation: authorization endpoint, token endpoint, PKCE flow, dynamic client registration. Estimated CC: ~3-4 hours.
 
-**Context:** Discovered during DX review (2026-04-10). All other clients (Claude Desktop/Code/Cowork, Perplexity) work with bearer tokens. See `docs/mcp/CHATGPT.md` for current status.
+**Context:** Discovered during DX review (2026-04-10). All other clients (Claude Desktop/Code/Cowork, Perplexity) work with bearer tokens. The Edge Function deployment was removed in v0.8.0. OAuth needs to be added to the self-hosted HTTP MCP server (or `gbrain serve --http` when implemented).
 
-**Depends on:** v0.6.0 remote MCP server (shipped).
+**Depends on:** `gbrain serve --http` (not yet implemented).
 
 ## P1 (new from v0.7.0)
 
@@ -88,18 +88,18 @@
 
 **Depends on:** v0.7.0 recipe format (shipped).
 
-### Fly.io HTTP server as alternative deployment
-**What:** Add `gbrain serve --http` and a Dockerfile/fly.toml for users who prefer a traditional server over Edge Functions.
+### `gbrain serve --http` + Fly.io/Railway deployment
+**What:** Add `gbrain serve --http` as a thin HTTP wrapper around the stdio MCP server. Include a Dockerfile/fly.toml for cloud deployment.
 
-**Why:** Avoids the Deno bundling seam. Bun runs natively. No 60s timeout. No cold start. Codex flagged the bundle strategy as "permanent maintenance tax."
+**Why:** The Edge Function deployment was removed in v0.8.0. Remote MCP now requires a custom HTTP wrapper around `gbrain serve`. A built-in `--http` flag would make this zero-effort. Bun runs natively, no bundling seam, no 60s timeout, no cold start.
 
-**Pros:** Simpler code path, no edge-entry.ts needed, no Deno compat concerns. Supports sync_brain and file_upload remotely.
+**Pros:** Simpler remote MCP setup. Users run `gbrain serve --http` behind ngrok instead of building a custom server. Supports all 30 operations remotely (including sync_brain and file_upload).
 
-**Cons:** Users need a Fly.io account. Not zero-infra.
+**Cons:** Users need ngrok ($8/mo) or a cloud host (Fly.io $5/mo, Railway $5/mo). Not zero-infra.
 
-**Context:** From CEO review (2026-04-10). Edge Functions are the primary path. Fly.io is for power users who want full operation support remotely.
+**Context:** The production deployment at wintermute uses a custom Hono server wrapping `gbrain serve`. This TODO would formalize that pattern into the CLI. ChatGPT OAuth 2.1 support depends on this.
 
-**Depends on:** v0.6.0 remote MCP server (shipped).
+**Depends on:** v0.8.0 (Edge Function removal shipped).
 
 ## Completed
 

@@ -1,14 +1,27 @@
 # Connect GBrain to Claude Code
 
-## Setup
+## Option 1: Local (recommended, zero server needed)
+
+```bash
+claude mcp add gbrain -- gbrain serve
+```
+
+That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
+tunnel, no token needed. Works with both PGLite and Supabase engines.
+
+## Option 2: Remote (access from any machine)
+
+If you have GBrain running on a server with a public tunnel (see
+[ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md)):
 
 ```bash
 claude mcp add gbrain -t http \
-  https://YOUR_REF.supabase.co/functions/v1/gbrain-mcp/mcp \
+  https://YOUR-DOMAIN.ngrok.app/mcp \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-Replace `YOUR_REF` with your Supabase project ref and `YOUR_TOKEN` with a token from `bun run src/commands/auth.ts create "claude-code"`.
+Replace `YOUR-DOMAIN` with your ngrok domain and `YOUR_TOKEN` with a token
+from `bun run src/commands/auth.ts create "claude-code"`.
 
 ## Verify
 

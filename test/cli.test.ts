@@ -40,6 +40,26 @@ describe('CLI version', () => {
   });
 });
 
+describe('ask alias', () => {
+  test('ask alias maps to query in source', () => {
+    expect(cliSource).toContain("if (command === 'ask')");
+    expect(cliSource).toContain("command = 'query'");
+  });
+
+  test('ask does NOT appear in --tools-json output', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
+      cwd: new URL('..', import.meta.url).pathname,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    const tools = JSON.parse(stdout);
+    const names = tools.map((t: any) => t.name);
+    expect(names).not.toContain('ask');
+  });
+});
+
 describe('CLI dispatch integration', () => {
   test('--version outputs version', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--version'], {
