@@ -14,7 +14,12 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
-import { dirname, basename } from 'path';
+import { dirname, basename, join } from 'path';
+import { createRequire } from 'module';
+
+// Inline marked.js so published HTML is truly self-contained (no CDN dependency)
+const require = createRequire(import.meta.url);
+const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.umd.js'), 'utf8');
 
 // ── Content stripping ──────────────────────────────────────────────
 
@@ -314,7 +319,7 @@ export function generateHtml({ title, markdown, encrypted }: GenerateHtmlOptions
 ${passwordHtml}
 <div id="content"></div>
 ${encryptedVars}
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
+<script>${MARKED_JS}<\/script>
 ${contentScript}
 </body>
 </html>`;
