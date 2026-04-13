@@ -242,6 +242,61 @@ describe('PGLiteEngine: Chunks', () => {
     expect(chunks.length).toBe(1);
     expect(chunks[0].embedding).not.toBeNull();
   });
+
+  // Issue #91: PGLite pgvector returns embeddings as strings, not Float32Array
+  test('getChunksWithEmbeddings returns Float32Array (not string)', async () => {
+    await engine.putPage('test/embed-type', testPage);
+    const embedding = new Float32Array(1536);
+    embedding[0] = 0.1; embedding[1] = 0.2; embedding[2] = 0.3; embedding[3] = -0.5;
+    await engine.upsertChunks('test/embed-type', [
+      { chunk_index: 0, chunk_text: 'Type check', chunk_source: 'compiled_truth', embedding },
+    ]);
+    const chunks = await engine.getChunksWithEmbeddings('test/embed-type');
+    const emb = chunks[0].embedding;
+    expect(emb).toBeInstanceOf(Float32Array);
+    expect(emb!.length).toBe(1536);
+    expect(emb![0]).toBeCloseTo(0.1);
+    expect(emb![1]).toBeCloseTo(0.2);
+    expect(emb![3]).toBeCloseTo(-0.5);
+  });
+
+  test('embedding survives PGLite→PGLite migration round-trip (#91)', async () => {
+    await engine.putPage('test/embed-migrate', testPage);
+    const embedding = new Float32Array(1536);
+    embedding[0] = 0.1; embedding[1] = 0.2; embedding[3] = -0.5;
+    await engine.upsertChunks('test/embed-migrate', [
+      { chunk_index: 0, chunk_text: 'Migrate me', chunk_source: 'compiled_truth', embedding },
+    ]);
+
+    // Read from source (same path as migrate-engine.ts)
+    const sourceChunks = await engine.getChunksWithEmbeddings('test/embed-migrate');
+
+    // Write to a second PGLite (simulates migration target)
+    const target = new PGLiteEngine();
+    await target.connect({});
+    await target.initSchema();
+    try {
+      await target.putPage('test/embed-migrate', testPage);
+      await target.upsertChunks('test/embed-migrate', sourceChunks.map(c => ({
+        chunk_index: c.chunk_index,
+        chunk_text: c.chunk_text,
+        chunk_source: c.chunk_source,
+        embedding: c.embedding || undefined,
+        model: c.model,
+        token_count: c.token_count || undefined,
+      })));
+
+      const targetChunks = await target.getChunksWithEmbeddings('test/embed-migrate');
+      expect(targetChunks.length).toBe(1);
+      const emb = targetChunks[0].embedding;
+      expect(emb).toBeInstanceOf(Float32Array);
+      expect(emb![0]).toBeCloseTo(0.1);
+      expect(emb![1]).toBeCloseTo(0.2);
+      expect(emb![3]).toBeCloseTo(-0.5);
+    } finally {
+      await target.disconnect();
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────

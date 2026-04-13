@@ -43,6 +43,21 @@ export function rowToPage(row: Record<string, unknown>): Page {
   };
 }
 
+/**
+ * Normalize a raw embedding value to Float32Array.
+ * PGLite's pgvector returns embeddings as a string like "[0.1,0.2,...]",
+ * while Postgres drivers may return Float32Array or number[].
+ */
+function parseEmbedding(raw: unknown): Float32Array {
+  if (raw instanceof Float32Array) return raw;
+  if (typeof raw === 'string') {
+    const nums = raw.slice(1, -1).split(',').map(Number);
+    return new Float32Array(nums);
+  }
+  if (Array.isArray(raw)) return new Float32Array(raw);
+  throw new Error(`Unexpected embedding type: ${typeof raw}`);
+}
+
 export function rowToChunk(row: Record<string, unknown>, includeEmbedding = false): Chunk {
   return {
     id: row.id as number,
@@ -50,7 +65,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     chunk_index: row.chunk_index as number,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
-    embedding: includeEmbedding && row.embedding ? row.embedding as Float32Array : null,
+    embedding: includeEmbedding && row.embedding ? parseEmbedding(row.embedding) : null,
     model: row.model as string,
     token_count: row.token_count as number | null,
     embedded_at: row.embedded_at ? new Date(row.embedded_at as string) : null,
