@@ -111,8 +111,17 @@ gbrain stats
 gbrain embed --stale
 ```
 
-If `OPENAI_API_KEY` is not set, embeddings can't be generated. Keyword search
-still works without embeddings, but hybrid/semantic search won't.
+If your local embedding runtime is not reachable, or `nomic-embed-text` is not
+installed, embeddings can't be generated. Keyword search still works without
+embeddings, but hybrid/semantic search won't.
+
+If you are upgrading an existing Postgres brain to the 768-dim nomic schema,
+run this once before backfilling:
+
+```bash
+gbrain init
+gbrain embed --all
+```
 
 ### 4c. End-to-End Test
 
@@ -156,15 +165,17 @@ gbrain stats
 
 **Expected:** Embedded chunk count matches (or is close to) total chunk count.
 
-**If zero or very low:** `OPENAI_API_KEY` may be missing or invalid. Check:
+**If zero or very low:** your local embedding runtime may be unavailable or the
+model may be missing. Check:
 
 ```bash
-echo $OPENAI_API_KEY | head -c 10
+ollama list | grep nomic-embed-text
 ```
 
-If blank, set the key. Then:
+If the model is missing, install it. Then:
 
 ```bash
+ollama pull nomic-embed-text
 gbrain embed --stale
 ```
 

@@ -19,7 +19,7 @@ This is what I actually use day to day. The agent runs while I sleep... literall
 
 **You don't need Postgres to start.** The knowledge model is just markdown files in a git repo. The [skills](docs/GBRAIN_SKILLPACK.md) and [schema](docs/GBRAIN_RECOMMENDED_SCHEMA.md) work with any AI agent that can read and write files. Start there.
 
-**You also don't need cloud services anymore.** `gbrain init --local` now boots a full local/offline brain on SQLite, `gbrain serve` exposes the same MCP tools over stdio, and Codex or Claude Code can attach to it without Supabase, OpenAI, or Anthropic in the loop. Local embeddings are optional and backfill-driven: import/sync stay usable immediately, and semantic retrieval comes online once you configure a local runtime and run `gbrain embed --stale`. Detailed guides: [English](docs/local-offline.md) / [한국어](docs/local-offline.ko.md).
+**You also don't need cloud services anymore.** `gbrain init --local` now boots a full local/offline brain on SQLite, `gbrain serve` exposes the same MCP tools over stdio, and Codex or Claude Code can attach to it without Supabase, OpenAI, or Anthropic in the loop. Local embeddings are optional and backfill-driven: import/sync stay usable immediately, and semantic retrieval comes online once you configure a local runtime and run `gbrain embed --stale`. The default local model is `nomic-embed-text`, and GBrain applies `search_document:` / `search_query:` prefixes internally for retrieval. Detailed guides: [English](docs/local-offline.md) / [한국어](docs/local-offline.ko.md).
 
 I added Postgres + pgvector later because at 1,000 to 10,000 long markdown docs, `grep` stops working. You need real chunking, real retrieval, real search. GBrain now supports both that managed path and a local/offline SQLite path, optimized for OpenClaw and smart agents.
 
@@ -178,19 +178,21 @@ Your file count will be different. Your queries will be different. The agent pic
 | Dependency | What it's for | How to get it |
 |------------|--------------|---------------|
 | **Supabase account** | Postgres + pgvector database | [supabase.com](https://supabase.com) (Pro tier, $25/mo for 8GB) |
-| **OpenAI API key** | Embeddings (text-embedding-3-large) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **Local embedding runtime** | Embeddings (`nomic-embed-text`) | `ollama pull nomic-embed-text` |
 | **Anthropic API key** | Multi-query expansion + LLM chunking (Haiku) | [console.anthropic.com](https://console.anthropic.com) |
 
-Set the API keys as environment variables:
+Set the Anthropic API key as an environment variable:
 
 ```bash
-export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-The Supabase connection URL is configured during `gbrain init`. The OpenAI and Anthropic SDKs read their keys from the environment automatically.
+The Supabase connection URL is configured during `gbrain init`. Anthropic reads
+its key from the environment automatically. Embeddings come from the local
+provider (`OLLAMA_HOST` or `GBRAIN_LOCAL_EMBEDDING_URL`) and default to
+`nomic-embed-text`.
 
-Without an OpenAI key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
+Without a local embedding runtime, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
 
 ### With OpenClaw or Hermes Agent (recommended)
 
@@ -577,7 +579,7 @@ content_chunks           Chunked content with embeddings
   page_id (FK)           Links to pages
   chunk_text             The chunk content
   chunk_source           'compiled_truth' or 'timeline'
-  embedding (vector)     1536-dim from text-embedding-3-large
+  embedding (vector)     768-dim from nomic-embed-text
   HNSW index             Cosine similarity search
 
 links                    Cross-references between pages
@@ -727,14 +729,14 @@ For a brain with ~7,500 pages:
 | Page text (compiled_truth + timeline) | ~150MB |
 | JSONB frontmatter + indexes | ~70MB |
 | Content chunks (~22K, text) | ~80MB |
-| Embeddings (22K x 1536 floats) | ~134MB |
+| Embeddings (22K x 768 floats) | ~67MB |
 | HNSW index overhead | ~270MB |
 | Links, tags, timeline, versions | ~50MB |
 | **Total** | **~750MB** |
 
 Supabase free tier (500MB) won't fit a large brain. Supabase Pro ($25/mo, 8GB) is the starting point.
 
-Initial embedding cost: ~$4-5 for 7,500 pages via OpenAI text-embedding-3-large.
+Initial embedding footprint: ~67MB for 7,500 pages at 768 dimensions. Runtime cost depends on your local embedding host.
 
 ## Docs
 
