@@ -82,6 +82,14 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 5,
+    name: 'embedding_provider_config',
+    sql: `
+      -- Add embedding_provider config key (default: openai)
+      INSERT INTO config (key, value) VALUES ('embedding_provider', 'openai') ON CONFLICT (key) DO NOTHING;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

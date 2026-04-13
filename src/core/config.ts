@@ -13,6 +13,12 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  /** Embedding provider: 'openai' (default) or 'ollama' (local) */
+  embedding_provider?: 'openai' | 'ollama';
+  /** Ollama API base URL (default: http://localhost:11434) */
+  ollama_base_url?: string;
+  /** Ollama embedding model name (default: nomic-embed-text) */
+  ollama_model?: string;
 }
 
 /**

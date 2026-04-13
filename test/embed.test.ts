@@ -2,24 +2,34 @@ import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 // Mock the embedding module BEFORE importing runEmbed, so runEmbed picks up
-// the mocked embedBatch. We track max concurrent invocations via a counter
+// the mocked getEmbeddingProvider. We track max concurrent invocations via a counter
 // that increments on entry and decrements when the mock resolves.
 let activeEmbedCalls = 0;
 let maxConcurrentEmbedCalls = 0;
 let totalEmbedCalls = 0;
 
+const mockEmbedFn = async (texts: string[]) => {
+  activeEmbedCalls++;
+  totalEmbedCalls++;
+  if (activeEmbedCalls > maxConcurrentEmbedCalls) {
+    maxConcurrentEmbedCalls = activeEmbedCalls;
+  }
+  // Simulate API latency so concurrent workers actually overlap.
+  await new Promise(r => setTimeout(r, 30));
+  activeEmbedCalls--;
+  return texts.map(() => new Float32Array(1536));
+};
+
 mock.module('../src/core/embedding.ts', () => ({
-  embedBatch: async (texts: string[]) => {
-    activeEmbedCalls++;
-    totalEmbedCalls++;
-    if (activeEmbedCalls > maxConcurrentEmbedCalls) {
-      maxConcurrentEmbedCalls = activeEmbedCalls;
-    }
-    // Simulate API latency so concurrent workers actually overlap.
-    await new Promise(r => setTimeout(r, 30));
-    activeEmbedCalls--;
-    return texts.map(() => new Float32Array(1536));
-  },
+  getEmbeddingProvider: () => ({
+    embed: (text: string) => mockEmbedFn([text]).then(r => r[0]),
+    embedBatch: mockEmbedFn,
+    model: 'test-mock',
+    dimensions: 1536,
+  }),
+  resetEmbeddingProvider: () => {},
+  embedBatch: mockEmbedFn,
+  embed: (text: string) => mockEmbedFn([text]).then(r => r[0]),
 }));
 
 // Import AFTER mocking.

@@ -16,6 +16,10 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  const embeddingProvider = args.includes('--ollama') ? 'ollama' as const
+    : args.includes('--openai') ? 'openai' as const : undefined;
+  const embedModelIndex = args.indexOf('--embedding-model');
+  const embeddingModel = embedModelIndex !== -1 ? args[embedModelIndex + 1] : undefined;
 
   // Explicit PGLite mode
   if (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)) {
@@ -33,7 +37,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath });
+    return initPGLite({ jsonOutput, apiKey, customPath, embeddingProvider, embeddingModel });
   }
 
   // Supabase/Postgres mode
@@ -52,10 +56,16 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, embeddingProvider, embeddingModel });
 }
 
-async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
+async function initPGLite(opts: {
+  jsonOutput: boolean;
+  apiKey: string | null;
+  customPath: string | null;
+  embeddingProvider?: 'openai' | 'ollama';
+  embeddingModel?: string;
+}) {
   const dbPath = opts.customPath || join(homedir(), '.gbrain', 'brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
 
@@ -67,6 +77,8 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
     engine: 'pglite',
     database_path: dbPath,
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+    ...(opts.embeddingProvider ? { embedding_provider: opts.embeddingProvider } : {}),
+    ...(opts.embeddingModel ? { ollama_model: opts.embeddingModel } : {}),
   };
   saveConfig(config);
 
@@ -84,7 +96,13 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   }
 }
 
-async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null }) {
+async function initPostgres(opts: {
+  databaseUrl: string;
+  jsonOutput: boolean;
+  apiKey: string | null;
+  embeddingProvider?: 'openai' | 'ollama';
+  embeddingModel?: string;
+}) {
   const { databaseUrl } = opts;
 
   // Detect Supabase direct connection URLs and warn about IPv6
@@ -138,6 +156,8 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
     engine: 'postgres',
     database_url: databaseUrl,
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+    ...(opts.embeddingProvider ? { embedding_provider: opts.embeddingProvider } : {}),
+    ...(opts.embeddingModel ? { ollama_model: opts.embeddingModel } : {}),
   };
   saveConfig(config);
   console.log('Config saved to ~/.gbrain/config.json');
