@@ -3,8 +3,10 @@ import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine } from './engine.ts';
+import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
@@ -23,6 +25,7 @@ type PGLiteDB = PGlite;
 
 export class PGLiteEngine implements BrainEngine {
   private _db: PGLiteDB | null = null;
+  private _lock: LockHandle | null = null;
 
   get db(): PGLiteDB {
     if (!this._db) throw new Error('PGLite not connected. Call connect() first.');
@@ -32,6 +35,14 @@ export class PGLiteEngine implements BrainEngine {
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
     const dataDir = config.database_path || undefined; // undefined = in-memory
+
+    // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
+    this._lock = await acquireLock(dataDir);
+
+    if (!this._lock.acquired) {
+      throw new Error('Could not acquire PGLite lock. Another gbrain process is using the database.');
+    }
+
     this._db = await PGlite.create({
       dataDir,
       extensions: { vector, pg_trgm },
@@ -42,6 +53,10 @@ export class PGLiteEngine implements BrainEngine {
     if (this._db) {
       await this._db.close();
       this._db = null;
+    }
+    if (this._lock?.acquired) {
+      await releaseLock(this._lock);
+      this._lock = null;
     }
   }
 
@@ -156,7 +171,12 @@ export class PGLiteEngine implements BrainEngine {
 
   // Search
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = opts?.limit || 20;
+    const limit = clampSearchLimit(opts?.limit);
+    const offset = opts?.offset || 0;
+
+    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    }
 
     const { rows } = await this.db.query(
       `SELECT DISTINCT ON (p.slug)
@@ -173,18 +193,22 @@ export class PGLiteEngine implements BrainEngine {
       [query]
     );
 
-    // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit
+    // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit + offset
     const sorted = (rows as Record<string, unknown>[]).sort(
       (a: any, b: any) => b.score - a.score
     );
-    sorted.splice(limit);
 
-    return sorted.map(rowToSearchResult);
+    return sorted.slice(offset, offset + limit).map(rowToSearchResult);
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = opts?.limit || 20;
+    const limit = clampSearchLimit(opts?.limit);
+    const offset = opts?.offset || 0;
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
+
+    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    }
 
     const { rows } = await this.db.query(
       `SELECT
@@ -198,8 +222,9 @@ export class PGLiteEngine implements BrainEngine {
       JOIN pages p ON p.id = cc.page_id
       WHERE cc.embedding IS NOT NULL
       ORDER BY cc.embedding <=> $1::vector
-      LIMIT $2`,
-      [vecStr, limit]
+      LIMIT $2
+      OFFSET $3`,
+      [vecStr, limit, offset]
     );
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
@@ -250,7 +275,7 @@ export class PGLiteEngine implements BrainEngine {
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
          chunk_text = EXCLUDED.chunk_text,
          chunk_source = EXCLUDED.chunk_source,
-         embedding = COALESCE(EXCLUDED.embedding, content_chunks.embedding),
+         embedding = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding ELSE COALESCE(EXCLUDED.embedding, content_chunks.embedding) END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
          embedded_at = COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)`,

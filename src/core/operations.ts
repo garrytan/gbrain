@@ -176,9 +176,13 @@ const search: Operation = {
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
+    offset: { type: 'number', description: 'Skip first N results (for pagination)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.searchKeyword(p.query as string, { limit: (p.limit as number) || 20 });
+    return ctx.engine.searchKeyword(p.query as string, {
+      limit: (p.limit as number) || 20,
+      offset: (p.offset as number) || 0,
+    });
   },
   cliHints: { name: 'search', positional: ['query'] },
 };
@@ -189,12 +193,14 @@ const query: Operation = {
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
+    offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
   },
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
     return hybridSearch(ctx.engine, p.query as string, {
       limit: (p.limit as number) || 20,
+      offset: (p.offset as number) || 0,
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
     });

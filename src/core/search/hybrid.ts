@@ -7,6 +7,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
 import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
@@ -24,21 +25,25 @@ export async function hybridSearch(
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
   const limit = opts?.limit || 20;
+  const offset = opts?.offset || 0;
+  const innerLimit = Math.min(limit * 2, MAX_SEARCH_LIMIT);
 
   // Run keyword search (always available, no API key needed)
-  const keywordResults = await engine.searchKeyword(query, { limit: limit * 2 });
+  const keywordResults = await engine.searchKeyword(query, { limit: innerLimit });
 
   // Skip vector search entirely if no OpenAI key is configured
   if (!process.env.OPENAI_API_KEY) {
-    return dedupResults(keywordResults).slice(0, limit);
+    return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
   // Determine query variants (optionally with expansion)
+  // expandQuery already includes the original query in its return value,
+  // so we use it directly instead of prepending query again
   let queries = [query];
   if (opts?.expansion && opts?.expandFn) {
     try {
-      const expanded = await opts.expandFn(query);
-      queries = [query, ...expanded].slice(0, 3);
+      queries = await opts.expandFn(query);
+      if (queries.length === 0) queries = [query];
     } catch {
       // Expansion failure is non-fatal
     }
@@ -49,14 +54,14 @@ export async function hybridSearch(
   try {
     const embeddings = await Promise.all(queries.map(q => embed(q)));
     vectorLists = await Promise.all(
-      embeddings.map(emb => engine.searchVector(emb, { limit: limit * 2 })),
+      embeddings.map(emb => engine.searchVector(emb, { limit: innerLimit })),
     );
   } catch {
     // Embedding failure is non-fatal, fall back to keyword-only
   }
 
   if (vectorLists.length === 0) {
-    return dedupResults(keywordResults).slice(0, limit);
+    return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
   // Merge all result lists via RRF
@@ -66,7 +71,7 @@ export async function hybridSearch(
   // Dedup
   const deduped = dedupResults(fused);
 
-  return deduped.slice(0, limit);
+  return deduped.slice(offset, offset + limit);
 }
 
 /**

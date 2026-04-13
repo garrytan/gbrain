@@ -1,5 +1,6 @@
 import postgres from 'postgres';
 import type { BrainEngine } from './engine.ts';
+import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type {
@@ -98,7 +99,7 @@ export class PostgresEngine implements BrainEngine {
   async putPage(slug: string, page: PageInput): Promise<Page> {
     slug = validateSlug(slug);
     const sql = this.sql;
-    const hash = page.content_hash || contentHash(page.compiled_truth, page.timeline || '');
+    const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
     const rows = await sql`
@@ -178,49 +179,86 @@ export class PostgresEngine implements BrainEngine {
   // Search
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
     const sql = this.sql;
-    const limit = opts?.limit || 20;
+    const limit = clampSearchLimit(opts?.limit);
+    const offset = opts?.offset || 0;
+    const type = opts?.type;
+    const excludeSlugs = opts?.exclude_slugs;
 
-    const rows = await sql`
-      SELECT DISTINCT ON (p.slug)
-        p.slug, p.id as page_id, p.title, p.type,
-        cc.chunk_text, cc.chunk_source,
-        ts_rank(p.search_vector, websearch_to_tsquery('english', ${query})) AS score,
-        CASE WHEN p.updated_at < (
-          SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-        ) THEN true ELSE false END AS stale
-      FROM pages p
-      JOIN content_chunks cc ON cc.page_id = p.id
-      WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
-      ORDER BY p.slug, score DESC
-    `;
-    // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit
-    rows.sort((a: any, b: any) => b.score - a.score);
-    rows.splice(limit);
+    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    }
 
-    return rows.map(rowToSearchResult);
+    // Search-only timeout: prevents DoS via expensive queries without
+    // affecting long-running operations like embed --all or bulk import
+    await sql`SET statement_timeout = '8s'`;
+    try {
+      // CTE: rank pages by FTS score, then pick the best chunk per page in SQL
+      const rows = await sql`
+        WITH ranked_pages AS (
+          SELECT p.id, p.slug, p.title, p.type,
+            ts_rank(p.search_vector, websearch_to_tsquery('english', ${query})) AS score
+          FROM pages p
+          WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
+            ${type ? sql`AND p.type = ${type}` : sql``}
+            ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
+          ORDER BY score DESC
+          LIMIT ${limit}
+          OFFSET ${offset}
+        ),
+        best_chunks AS (
+          SELECT DISTINCT ON (rp.slug)
+            rp.slug, rp.id as page_id, rp.title, rp.type, rp.score,
+            cc.chunk_text, cc.chunk_source
+          FROM ranked_pages rp
+          JOIN content_chunks cc ON cc.page_id = rp.id
+          ORDER BY rp.slug, cc.chunk_index
+        )
+        SELECT slug, page_id, title, type, chunk_text, chunk_source, score,
+          false AS stale
+        FROM best_chunks
+        ORDER BY score DESC
+      `;
+      return rows.map(rowToSearchResult);
+    } finally {
+      await sql`SET statement_timeout = '0'`;
+    }
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
     const sql = this.sql;
-    const limit = opts?.limit || 20;
+    const limit = clampSearchLimit(opts?.limit);
+    const offset = opts?.offset || 0;
+    const type = opts?.type;
+    const excludeSlugs = opts?.exclude_slugs;
+
+    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    }
+
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
 
-    const rows = await sql`
-      SELECT
-        p.slug, p.id as page_id, p.title, p.type,
-        cc.chunk_text, cc.chunk_source,
-        1 - (cc.embedding <=> ${vecStr}::vector) AS score,
-        CASE WHEN p.updated_at < (
-          SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-        ) THEN true ELSE false END AS stale
-      FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL
-      ORDER BY cc.embedding <=> ${vecStr}::vector
-      LIMIT ${limit}
-    `;
-
-    return rows.map(rowToSearchResult);
+    // Search-only timeout (see searchKeyword for rationale)
+    await sql`SET statement_timeout = '8s'`;
+    try {
+      const rows = await sql`
+        SELECT
+          p.slug, p.id as page_id, p.title, p.type,
+          cc.chunk_text, cc.chunk_source,
+          1 - (cc.embedding <=> ${vecStr}::vector) AS score,
+          false AS stale
+        FROM content_chunks cc
+        JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NOT NULL
+          ${type ? sql`AND p.type = ${type}` : sql``}
+          ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
+        ORDER BY cc.embedding <=> ${vecStr}::vector
+        LIMIT ${limit}
+        OFFSET ${offset}
+      `;
+      return rows.map(rowToSearchResult);
+    } finally {
+      await sql`SET statement_timeout = '0'`;
+    }
   }
 
   // Chunks
@@ -268,7 +306,7 @@ export class PostgresEngine implements BrainEngine {
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
          chunk_text = EXCLUDED.chunk_text,
          chunk_source = EXCLUDED.chunk_source,
-         embedding = COALESCE(EXCLUDED.embedding, content_chunks.embedding),
+         embedding = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding ELSE COALESCE(EXCLUDED.embedding, content_chunks.embedding) END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
          embedded_at = COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)`,
@@ -298,7 +336,7 @@ export class PostgresEngine implements BrainEngine {
   // Links
   async addLink(from: string, to: string, context?: string, linkType?: string): Promise<void> {
     const sql = this.sql;
-    await sql`
+    const result = await sql`
       INSERT INTO links (from_page_id, to_page_id, link_type, context)
       SELECT f.id, t.id, ${linkType || ''}, ${context || ''}
       FROM pages f, pages t
@@ -306,7 +344,9 @@ export class PostgresEngine implements BrainEngine {
       ON CONFLICT (from_page_id, to_page_id) DO UPDATE SET
         link_type = EXCLUDED.link_type,
         context = EXCLUDED.context
+      RETURNING id
     `;
+    if (result.length === 0) throw new Error(`addLink failed: page "${from}" or "${to}" not found`);
   }
 
   async removeLink(from: string, to: string): Promise<void> {
@@ -381,9 +421,13 @@ export class PostgresEngine implements BrainEngine {
   // Tags
   async addTag(slug: string, tag: string): Promise<void> {
     const sql = this.sql;
+    // Verify page exists before attempting insert (ON CONFLICT DO NOTHING
+    // swallows the "already tagged" case, but we still need to detect missing pages)
+    const page = await sql`SELECT id FROM pages WHERE slug = ${slug}`;
+    if (page.length === 0) throw new Error(`addTag failed: page "${slug}" not found`);
     await sql`
       INSERT INTO tags (page_id, tag)
-      SELECT id, ${tag} FROM pages WHERE slug = ${slug}
+      VALUES (${page[0].id}, ${tag})
       ON CONFLICT (page_id, tag) DO NOTHING
     `;
   }
@@ -410,11 +454,13 @@ export class PostgresEngine implements BrainEngine {
   // Timeline
   async addTimelineEntry(slug: string, entry: TimelineInput): Promise<void> {
     const sql = this.sql;
-    await sql`
+    const result = await sql`
       INSERT INTO timeline_entries (page_id, date, source, summary, detail)
       SELECT id, ${entry.date}::date, ${entry.source || ''}, ${entry.summary}, ${entry.detail || ''}
       FROM pages WHERE slug = ${slug}
+      RETURNING id
     `;
+    if (result.length === 0) throw new Error(`addTimelineEntry failed: page "${slug}" not found`);
   }
 
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
@@ -451,14 +497,16 @@ export class PostgresEngine implements BrainEngine {
   // Raw data
   async putRawData(slug: string, source: string, data: object): Promise<void> {
     const sql = this.sql;
-    await sql`
+    const result = await sql`
       INSERT INTO raw_data (page_id, source, data)
       SELECT id, ${source}, ${JSON.stringify(data)}::jsonb
       FROM pages WHERE slug = ${slug}
       ON CONFLICT (page_id, source) DO UPDATE SET
         data = EXCLUDED.data,
         fetched_at = now()
+      RETURNING id
     `;
+    if (result.length === 0) throw new Error(`putRawData failed: page "${slug}" not found`);
   }
 
   async getRawData(slug: string, source?: string): Promise<RawData[]> {
@@ -489,6 +537,7 @@ export class PostgresEngine implements BrainEngine {
       FROM pages WHERE slug = ${slug}
       RETURNING *
     `;
+    if (rows.length === 0) throw new Error(`createVersion failed: page "${slug}" not found`);
     return rows[0] as unknown as PageVersion;
   }
 
@@ -555,13 +604,16 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+         WHERE (p.compiled_truth != '' OR p.timeline != '')
+           AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
         ) as stale_pages,
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
-        (SELECT count(*) FROM links l
-         WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
+        (SELECT count(*) FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE p.compiled_truth = '' AND p.timeline = ''
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings
     `;

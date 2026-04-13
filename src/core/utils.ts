@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import type { Page, PageType, Chunk, SearchResult } from './types.ts';
+import type { Page, PageInput, PageType, Chunk, SearchResult } from './types.ts';
 
 /**
  * Validate and normalize a slug. Slugs are lowercased repo-relative paths.
@@ -13,10 +13,19 @@ export function validateSlug(slug: string): string {
 }
 
 /**
- * SHA-256 hash of compiled_truth + timeline, used for import idempotency.
+ * SHA-256 hash of page content, used for import idempotency.
+ * Hashes all PageInput fields to match importFromContent's hash algorithm.
  */
-export function contentHash(compiledTruth: string, timeline: string): string {
-  return createHash('sha256').update(compiledTruth + '\n---\n' + timeline).digest('hex');
+export function contentHash(page: PageInput): string {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      title: page.title,
+      type: page.type,
+      compiled_truth: page.compiled_truth,
+      timeline: page.timeline || '',
+      frontmatter: page.frontmatter || {},
+    }))
+    .digest('hex');
 }
 
 export function rowToPage(row: Record<string, unknown>): Page {

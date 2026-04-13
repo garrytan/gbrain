@@ -66,6 +66,7 @@ export interface SearchResult {
 
 export interface SearchOpts {
   limit?: number;
+  offset?: number;
   type?: PageType;
   exclude_slugs?: string[];
 }

@@ -11,6 +11,16 @@ import type {
   EngineConfig,
 } from './types.ts';
 
+/** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */
+export const MAX_SEARCH_LIMIT = 100;
+
+/** Clamp a user-provided search limit to a safe range. */
+export function clampSearchLimit(limit: number | undefined, defaultLimit = 20): number {
+  if (limit === undefined || limit === null || !Number.isFinite(limit) || Number.isNaN(limit)) return defaultLimit;
+  if (limit <= 0) return defaultLimit;
+  return Math.min(Math.floor(limit), MAX_SEARCH_LIMIT);
+}
+
 export interface BrainEngine {
   // Lifecycle
   connect(config: EngineConfig): Promise<void>;
