@@ -13,6 +13,16 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  /** Embedding provider: 'openai' (default) or 'ollama' (local) */
+  embedding_provider?: 'openai' | 'ollama';
+  /** Generic embedding model name for the active provider. */
+  embedding_model?: string;
+  /** Optional explicit embedding dimensions override. */
+  embedding_dimensions?: number;
+  /** Ollama API base URL (default: http://localhost:11434) */
+  ollama_base_url?: string;
+  /** Legacy alias for Ollama embedding model name. */
+  ollama_model?: string;
 }
 
 /**
@@ -41,7 +51,20 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.GBRAIN_EMBEDDING_PROVIDER ? { embedding_provider: process.env.GBRAIN_EMBEDDING_PROVIDER as 'openai' | 'ollama' } : {}),
+    ...((process.env.GBRAIN_EMBEDDING_MODEL || process.env.OLLAMA_EMBEDDING_MODEL)
+      ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL || process.env.OLLAMA_EMBEDDING_MODEL }
+      : {}),
+    ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS
+      ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) }
+      : {}),
+    ...(process.env.OLLAMA_BASE_URL ? { ollama_base_url: process.env.OLLAMA_BASE_URL } : {}),
   };
+
+  if (!merged.embedding_model && merged.ollama_model) {
+    merged.embedding_model = merged.ollama_model;
+  }
+
   return merged as GBrainConfig;
 }
 

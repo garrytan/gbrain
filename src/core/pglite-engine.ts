@@ -5,7 +5,7 @@ import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { buildPGliteSchemaSql } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -19,9 +19,22 @@ import type {
   IngestLogEntry, IngestLogInput,
   EngineConfig,
 } from './types.ts';
+import {
+  getEmbeddingColumnType,
+  getEmbeddingIndexOps,
+  getEmbeddingStorageType,
+  resolveEmbeddingMetadata,
+  type EmbeddingMetadata,
+} from './embedding.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
 
 type PGLiteDB = PGlite;
+
+function parseVectorDimensions(typeString: string | null | undefined): number | null {
+  if (!typeString) return null;
+  const match = typeString.match(/(?:vector|halfvec)\((\d+)\)/);
+  return match ? parseInt(match[1], 10) : null;
+}
 
 export class PGLiteEngine implements BrainEngine {
   private _db: PGLiteDB | null = null;
@@ -47,6 +60,8 @@ export class PGLiteEngine implements BrainEngine {
       dataDir,
       extensions: { vector, pg_trgm },
     });
+
+    await this.reconcileEmbeddingSchema();
   }
 
   async disconnect(): Promise<void> {
@@ -61,12 +76,120 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+    await this.db.exec(buildPGliteSchemaSql(resolveEmbeddingMetadata()));
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {
       console.log(`  ${applied} migration(s) applied`);
     }
+
+    await this.reconcileEmbeddingSchema();
+  }
+
+  private async embeddingSchemaExists(): Promise<boolean> {
+    const { rows } = await this.db.query(
+      `SELECT
+         to_regclass('public.content_chunks') AS content_chunks,
+         to_regclass('public.config') AS config`
+    );
+    const row = rows[0] as { content_chunks?: string | null; config?: string | null } | undefined;
+    return Boolean(row?.content_chunks && row?.config);
+  }
+
+  private async currentEmbeddingColumnDimensions(): Promise<number | null> {
+    const { rows } = await this.db.query(
+      `SELECT format_type(a.atttypid, a.atttypmod) AS embedding_type
+       FROM pg_attribute a
+       JOIN pg_class c ON c.oid = a.attrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND c.relname = 'content_chunks'
+         AND a.attname = 'embedding'
+         AND a.attnum > 0
+         AND NOT a.attisdropped`
+    );
+    const row = rows[0] as { embedding_type?: string | null } | undefined;
+    return parseVectorDimensions(row?.embedding_type ?? null);
+  }
+
+  private async readStoredEmbeddingState(): Promise<{
+    provider: string | null;
+    model: string | null;
+    dimensions: number | null;
+    dimensionsOverridden: boolean;
+    resetRequired: boolean;
+    resetReason: string | null;
+    chunkCount: number;
+  }> {
+    const { rows } = await this.db.query(
+      `SELECT
+         MAX(CASE WHEN key = 'embedding_provider' THEN value END) AS embedding_provider,
+         MAX(CASE WHEN key = 'embedding_model' THEN value END) AS embedding_model,
+         MAX(CASE WHEN key = 'embedding_dimensions' THEN value END) AS embedding_dimensions,
+         MAX(CASE WHEN key = 'embedding_dimensions_overridden' THEN value END) AS embedding_dimensions_overridden,
+         MAX(CASE WHEN key = 'embedding_reset_required' THEN value END) AS embedding_reset_required,
+         MAX(CASE WHEN key = 'embedding_reset_reason' THEN value END) AS embedding_reset_reason
+       FROM config`
+    );
+    const { rows: chunkRows } = await this.db.query(`SELECT count(*)::int AS chunk_count FROM content_chunks`);
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return {
+      provider: (row?.embedding_provider as string | null | undefined) ?? null,
+      model: (row?.embedding_model as string | null | undefined) ?? null,
+      dimensions: row?.embedding_dimensions ? parseInt(String(row.embedding_dimensions), 10) : null,
+      dimensionsOverridden: String(row?.embedding_dimensions_overridden || 'false') === 'true',
+      resetRequired: String(row?.embedding_reset_required || 'false') === 'true',
+      resetReason: ((row?.embedding_reset_reason as string | null | undefined) || null),
+      chunkCount: Number((chunkRows[0] as { chunk_count?: number }).chunk_count || 0),
+    };
+  }
+
+  private async persistEmbeddingState(
+    metadata: EmbeddingMetadata,
+    resetRequired: boolean,
+    resetReason: string | null,
+  ): Promise<void> {
+    await this.setConfig('embedding_provider', metadata.provider);
+    await this.setConfig('embedding_model', metadata.model);
+    await this.setConfig('embedding_dimensions', String(metadata.dimensions));
+    await this.setConfig('embedding_dimensions_overridden', String(metadata.dimensionsOverridden));
+    await this.setConfig('embedding_reset_required', String(resetRequired));
+    await this.setConfig('embedding_reset_reason', resetReason || '');
+  }
+
+  private async reconcileEmbeddingSchema(): Promise<void> {
+    if (!(await this.embeddingSchemaExists())) return;
+
+    const desired = resolveEmbeddingMetadata();
+    const actualDimensions = await this.currentEmbeddingColumnDimensions();
+    const stored = await this.readStoredEmbeddingState();
+    const metadataMismatch =
+      stored.provider !== desired.provider ||
+      stored.model !== desired.model ||
+      stored.dimensions !== desired.dimensions ||
+      stored.dimensionsOverridden !== desired.dimensionsOverridden;
+
+    if (!metadataMismatch && actualDimensions === desired.dimensions) {
+      if (stored.provider === null || stored.model === null || stored.dimensions === null) {
+        await this.persistEmbeddingState(desired, stored.resetRequired, stored.resetReason);
+      }
+      return;
+    }
+
+    const requiresReembed = stored.chunkCount > 0;
+    const reason = requiresReembed
+      ? `Embeddings were reset after switching to ${desired.provider}/${desired.model} (${desired.dimensions}d). Run: gbrain embed --stale`
+      : null;
+
+    await this.db.exec('DROP INDEX IF EXISTS idx_chunks_embedding');
+    await this.db.query(
+      'UPDATE content_chunks SET embedding = NULL, embedded_at = NULL, model = $1',
+      [desired.model]
+    );
+    await this.db.exec(`ALTER TABLE content_chunks ALTER COLUMN embedding TYPE ${getEmbeddingColumnType(desired)}`);
+    await this.db.exec(`ALTER TABLE content_chunks ALTER COLUMN model SET DEFAULT '${desired.model.replace(/'/g, "''")}'`);
+    await this.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding ${getEmbeddingIndexOps(desired)})`);
+    await this.persistEmbeddingState(desired, requiresReembed, reason);
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
@@ -205,6 +328,7 @@ export class PGLiteEngine implements BrainEngine {
     const limit = clampSearchLimit(opts?.limit);
     const offset = opts?.offset || 0;
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
+    const castType = getEmbeddingStorageType(resolveEmbeddingMetadata().dimensions);
 
     if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
@@ -214,14 +338,14 @@ export class PGLiteEngine implements BrainEngine {
       `SELECT
         p.slug, p.id as page_id, p.title, p.type,
         cc.chunk_text, cc.chunk_source,
-        1 - (cc.embedding <=> $1::vector) AS score,
+        1 - (cc.embedding <=> $1::${castType}) AS score,
         CASE WHEN p.updated_at < (
           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
         ) THEN true ELSE false END AS stale
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE cc.embedding IS NOT NULL
-      ORDER BY cc.embedding <=> $1::vector
+      ORDER BY cc.embedding <=> $1::${castType}
       LIMIT $2
       OFFSET $3`,
       [vecStr, limit, offset]
@@ -255,6 +379,7 @@ export class PGLiteEngine implements BrainEngine {
     const rowParts: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
+    const castType = getEmbeddingStorageType(resolveEmbeddingMetadata().dimensions);
 
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
@@ -262,11 +387,11 @@ export class PGLiteEngine implements BrainEngine {
         : null;
 
       if (embeddingStr) {
-        rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::${castType}, $${paramIdx++}, $${paramIdx++}, now())`);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || resolveEmbeddingMetadata().model, chunk.token_count || null);
       } else {
         rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || resolveEmbeddingMetadata().model, chunk.token_count || null);
       }
     }
 
@@ -572,7 +697,13 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
-        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings
+        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
+        (SELECT value FROM config WHERE key = 'embedding_provider') as embedding_provider,
+        (SELECT value FROM config WHERE key = 'embedding_model') as embedding_model,
+        (SELECT value FROM config WHERE key = 'embedding_dimensions') as embedding_dimensions,
+        (SELECT value FROM config WHERE key = 'embedding_dimensions_overridden') as embedding_dimensions_overridden,
+        (SELECT value FROM config WHERE key = 'embedding_reset_required') as embedding_reset_required,
+        NULLIF((SELECT value FROM config WHERE key = 'embedding_reset_reason'), '') as embedding_reset_reason
     `);
 
     const r = h as Record<string, unknown>;
@@ -583,6 +714,12 @@ export class PGLiteEngine implements BrainEngine {
       orphan_pages: Number(r.orphan_pages),
       dead_links: Number(r.dead_links),
       missing_embeddings: Number(r.missing_embeddings),
+      embedding_provider: String(r.embedding_provider || 'unknown'),
+      embedding_model: String(r.embedding_model || 'unknown'),
+      embedding_dimensions: Number(r.embedding_dimensions || 0),
+      embedding_dimensions_overridden: String(r.embedding_dimensions_overridden || 'false') === 'true',
+      embedding_reset_required: String(r.embedding_reset_required || 'false') === 'true',
+      embedding_reset_reason: (r.embedding_reset_reason as string | null | undefined) ?? null,
     };
   }
 

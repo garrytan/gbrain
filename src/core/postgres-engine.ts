@@ -2,7 +2,7 @@ import postgres from 'postgres';
 import type { BrainEngine } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { SCHEMA_SQL } from './schema-embedded.ts';
+import { buildSchemaSql } from './schema-embedded.ts';
 import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
@@ -17,7 +17,24 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
+import {
+  getEmbeddingColumnType,
+  getEmbeddingIndexOps,
+  getEmbeddingStorageType,
+  resolveEmbeddingMetadata,
+  type EmbeddingMetadata,
+} from './embedding.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+
+function sqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function parseVectorDimensions(typeString: string | null | undefined): number | null {
+  if (!typeString) return null;
+  const match = typeString.match(/(?:vector|halfvec)\((\d+)\)/);
+  return match ? parseInt(match[1], 10) : null;
+}
 
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
@@ -41,9 +58,11 @@ export class PostgresEngine implements BrainEngine {
         types: { bigint: postgres.BigInt },
       });
       await this._sql`SELECT 1`;
+      await this.reconcileEmbeddingSchema();
     } else {
       // Module-level singleton (backward compat for CLI main engine)
       await db.connect(config);
+      await this.reconcileEmbeddingSchema();
     }
   }
 
@@ -58,20 +77,127 @@ export class PostgresEngine implements BrainEngine {
 
   async initSchema(): Promise<void> {
     const conn = this.sql;
+    const metadata = resolveEmbeddingMetadata();
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      await conn.unsafe(buildSchemaSql(metadata));
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this);
       if (applied > 0) {
         console.log(`  ${applied} migration(s) applied`);
       }
+
+      await this.reconcileEmbeddingSchema();
     } finally {
       await conn`SELECT pg_advisory_unlock(42)`;
     }
+  }
+
+  private async embeddingSchemaExists(): Promise<boolean> {
+    const conn = this.sql;
+    const [row] = await conn`
+      SELECT
+        to_regclass('public.content_chunks') AS content_chunks,
+        to_regclass('public.config') AS config
+    `;
+    return Boolean(row?.content_chunks && row?.config);
+  }
+
+  private async currentEmbeddingColumnDimensions(): Promise<number | null> {
+    const conn = this.sql;
+    const [row] = await conn`
+      SELECT format_type(a.atttypid, a.atttypmod) AS embedding_type
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = 'content_chunks'
+        AND a.attname = 'embedding'
+        AND a.attnum > 0
+        AND NOT a.attisdropped
+    `;
+    return parseVectorDimensions((row?.embedding_type as string | null | undefined) ?? null);
+  }
+
+  private async readStoredEmbeddingState(): Promise<{
+    provider: string | null;
+    model: string | null;
+    dimensions: number | null;
+    dimensionsOverridden: boolean;
+    resetRequired: boolean;
+    resetReason: string | null;
+    chunkCount: number;
+  }> {
+    const conn = this.sql;
+    const [row] = await conn`
+      SELECT
+        MAX(CASE WHEN key = 'embedding_provider' THEN value END) AS embedding_provider,
+        MAX(CASE WHEN key = 'embedding_model' THEN value END) AS embedding_model,
+        MAX(CASE WHEN key = 'embedding_dimensions' THEN value END) AS embedding_dimensions,
+        MAX(CASE WHEN key = 'embedding_dimensions_overridden' THEN value END) AS embedding_dimensions_overridden,
+        MAX(CASE WHEN key = 'embedding_reset_required' THEN value END) AS embedding_reset_required,
+        MAX(CASE WHEN key = 'embedding_reset_reason' THEN value END) AS embedding_reset_reason
+      FROM config
+    `;
+    const [chunkRow] = await conn`SELECT count(*)::int AS chunk_count FROM content_chunks`;
+    return {
+      provider: (row?.embedding_provider as string | null | undefined) ?? null,
+      model: (row?.embedding_model as string | null | undefined) ?? null,
+      dimensions: row?.embedding_dimensions ? parseInt(String(row.embedding_dimensions), 10) : null,
+      dimensionsOverridden: String(row?.embedding_dimensions_overridden || 'false') === 'true',
+      resetRequired: String(row?.embedding_reset_required || 'false') === 'true',
+      resetReason: (row?.embedding_reset_reason as string | null | undefined) ?? null,
+      chunkCount: Number(chunkRow?.chunk_count || 0),
+    };
+  }
+
+  private async persistEmbeddingState(
+    metadata: EmbeddingMetadata,
+    resetRequired: boolean,
+    resetReason: string | null,
+  ): Promise<void> {
+    await this.setConfig('embedding_provider', metadata.provider);
+    await this.setConfig('embedding_model', metadata.model);
+    await this.setConfig('embedding_dimensions', String(metadata.dimensions));
+    await this.setConfig('embedding_dimensions_overridden', String(metadata.dimensionsOverridden));
+    await this.setConfig('embedding_reset_required', String(resetRequired));
+    await this.setConfig('embedding_reset_reason', resetReason || '');
+  }
+
+  private async reconcileEmbeddingSchema(): Promise<void> {
+    if (!(await this.embeddingSchemaExists())) return;
+
+    const conn = this.sql;
+    const desired = resolveEmbeddingMetadata();
+    const actualDimensions = await this.currentEmbeddingColumnDimensions();
+    const stored = await this.readStoredEmbeddingState();
+    const metadataMismatch =
+      stored.provider !== desired.provider ||
+      stored.model !== desired.model ||
+      stored.dimensions !== desired.dimensions ||
+      stored.dimensionsOverridden !== desired.dimensionsOverridden;
+
+    if (!metadataMismatch && actualDimensions === desired.dimensions) {
+      if (stored.provider === null || stored.model === null || stored.dimensions === null) {
+        await this.persistEmbeddingState(desired, stored.resetRequired, stored.resetReason);
+      }
+      return;
+    }
+
+    const requiresReembed = stored.chunkCount > 0;
+    const reason = requiresReembed
+      ? `Embeddings were reset after switching to ${desired.provider}/${desired.model} (${desired.dimensions}d). Run: gbrain embed --stale`
+      : null;
+
+    await conn.unsafe('DROP INDEX IF EXISTS idx_chunks_embedding');
+    await conn`UPDATE content_chunks SET embedding = NULL, embedded_at = NULL, model = ${desired.model}`;
+    await conn.unsafe(`ALTER TABLE content_chunks ALTER COLUMN embedding TYPE ${getEmbeddingColumnType(desired)}`);
+    await conn.unsafe(`ALTER TABLE content_chunks ALTER COLUMN model SET DEFAULT ${sqlString(desired.model)}`);
+    await conn.unsafe(`CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding ${getEmbeddingIndexOps(desired)})`);
+    await this.persistEmbeddingState(desired, requiresReembed, reason);
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
@@ -230,6 +356,7 @@ export class PostgresEngine implements BrainEngine {
     const offset = opts?.offset || 0;
     const type = opts?.type;
     const excludeSlugs = opts?.exclude_slugs;
+    const metadata = resolveEmbeddingMetadata();
 
     if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
@@ -244,14 +371,14 @@ export class PostgresEngine implements BrainEngine {
         SELECT
           p.slug, p.id as page_id, p.title, p.type,
           cc.chunk_text, cc.chunk_source,
-          1 - (cc.embedding <=> ${vecStr}::vector) AS score,
+          1 - (cc.embedding <=> ${vecStr}::${sql.unsafe(getEmbeddingStorageType(metadata.dimensions))}) AS score,
           false AS stale
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE cc.embedding IS NOT NULL
           ${type ? sql`AND p.type = ${type}` : sql``}
           ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
-        ORDER BY cc.embedding <=> ${vecStr}::vector
+        ORDER BY cc.embedding <=> ${vecStr}::${sql.unsafe(getEmbeddingStorageType(metadata.dimensions))}
         LIMIT ${limit}
         OFFSET ${offset}
       `;
@@ -285,6 +412,8 @@ export class PostgresEngine implements BrainEngine {
     const rows: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
+    const metadata = resolveEmbeddingMetadata();
+    const castType = getEmbeddingStorageType(metadata.dimensions);
 
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
@@ -292,11 +421,11 @@ export class PostgresEngine implements BrainEngine {
         : null;
 
       if (embeddingStr) {
-        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::${castType}, $${paramIdx++}, $${paramIdx++}, now())`);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || resolveEmbeddingMetadata().model, chunk.token_count || null);
       } else {
         rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || resolveEmbeddingMetadata().model, chunk.token_count || null);
       }
     }
 
@@ -615,7 +744,13 @@ export class PostgresEngine implements BrainEngine {
          JOIN pages p ON p.id = cc.page_id
          WHERE p.compiled_truth = '' AND p.timeline = ''
         ) as dead_links,
-        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings
+        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
+        (SELECT value FROM config WHERE key = 'embedding_provider') as embedding_provider,
+        (SELECT value FROM config WHERE key = 'embedding_model') as embedding_model,
+        (SELECT value FROM config WHERE key = 'embedding_dimensions') as embedding_dimensions,
+        (SELECT value FROM config WHERE key = 'embedding_dimensions_overridden') as embedding_dimensions_overridden,
+        (SELECT value FROM config WHERE key = 'embedding_reset_required') as embedding_reset_required,
+        NULLIF((SELECT value FROM config WHERE key = 'embedding_reset_reason'), '') as embedding_reset_reason
     `;
 
     return {
@@ -625,6 +760,12 @@ export class PostgresEngine implements BrainEngine {
       orphan_pages: Number(h.orphan_pages),
       dead_links: Number(h.dead_links),
       missing_embeddings: Number(h.missing_embeddings),
+      embedding_provider: String(h.embedding_provider || 'unknown'),
+      embedding_model: String(h.embedding_model || 'unknown'),
+      embedding_dimensions: Number(h.embedding_dimensions || 0),
+      embedding_dimensions_overridden: String(h.embedding_dimensions_overridden || 'false') === 'true',
+      embedding_reset_required: String(h.embedding_reset_required || 'false') === 'true',
+      embedding_reset_reason: (h.embedding_reset_reason as string | null | undefined) ?? null,
     };
   }
 

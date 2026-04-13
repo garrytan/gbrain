@@ -8,8 +8,14 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
+import { resetEmbeddingProvider, resolveEmbeddingMetadata } from '../src/core/embedding.ts';
+import { runEmbed } from '../src/commands/embed.ts';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 let engine: PGLiteEngine;
+const embeddingDimensions = resolveEmbeddingMetadata().dimensions;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -175,7 +181,7 @@ describe('PGLiteEngine: Search', () => {
   });
 
   test('searchVector returns empty when no embeddings', async () => {
-    const fakeEmbedding = new Float32Array(1536);
+    const fakeEmbedding = new Float32Array(embeddingDimensions);
     const results = await engine.searchVector(fakeEmbedding);
     expect(results.length).toBe(0);
   });
@@ -234,7 +240,7 @@ describe('PGLiteEngine: Chunks', () => {
 
   test('getChunksWithEmbeddings returns embedding data', async () => {
     await engine.putPage('test/embed', testPage);
-    const embedding = new Float32Array(1536).fill(0.1);
+    const embedding = new Float32Array(embeddingDimensions).fill(0.1);
     await engine.upsertChunks('test/embed', [
       { chunk_index: 0, chunk_text: 'With embedding', chunk_source: 'compiled_truth', embedding },
     ]);
@@ -444,6 +450,8 @@ describe('PGLiteEngine: Stats & Health', () => {
     expect(health.page_count).toBe(1);
     expect(health.missing_embeddings).toBe(1); // chunk has no embedding
     expect(health.embed_coverage).toBe(0);
+    expect(health.embedding_dimensions).toBe(embeddingDimensions);
+    expect(health.embedding_provider).toBe(resolveEmbeddingMetadata().provider);
   });
 });
 
@@ -491,5 +499,170 @@ describe('PGLiteEngine: Cascade deletes', () => {
     expect(chunks.length).toBe(0);
     const tags = await engine.getTags('test/cascade');
     expect(tags.length).toBe(0);
+  });
+});
+
+describe('PGLiteEngine: embedding dimension migration', () => {
+  function restoreEmbeddingEnv(snapshot: Record<string, string | undefined>) {
+    const keys = [
+      'GBRAIN_EMBEDDING_PROVIDER',
+      'GBRAIN_EMBEDDING_DIMENSIONS',
+      'GBRAIN_EMBEDDING_MODEL',
+      'OLLAMA_EMBEDDING_MODEL',
+      'OPENAI_API_KEY',
+    ];
+    for (const key of keys) {
+      if (snapshot[key] === undefined) delete process.env[key];
+      else process.env[key] = snapshot[key];
+    }
+    resetEmbeddingProvider();
+  }
+
+  test('migrates a 1536d brain to nomic-embed-text and embed --stale succeeds afterward', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-migrate-'));
+    const snapshot = {
+      GBRAIN_EMBEDDING_PROVIDER: process.env.GBRAIN_EMBEDDING_PROVIDER,
+      GBRAIN_EMBEDDING_DIMENSIONS: process.env.GBRAIN_EMBEDDING_DIMENSIONS,
+      GBRAIN_EMBEDDING_MODEL: process.env.GBRAIN_EMBEDDING_MODEL,
+      OLLAMA_EMBEDDING_MODEL: process.env.OLLAMA_EMBEDDING_MODEL,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    };
+    const originalFetch = globalThis.fetch;
+    const source = new PGLiteEngine();
+    const migrated = new PGLiteEngine();
+
+    try {
+      process.env.GBRAIN_EMBEDDING_PROVIDER = 'openai';
+      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.GBRAIN_EMBEDDING_DIMENSIONS = '1536';
+      delete process.env.GBRAIN_EMBEDDING_MODEL;
+      delete process.env.OLLAMA_EMBEDDING_MODEL;
+      resetEmbeddingProvider();
+
+      await source.connect({ database_path: dir, engine: 'pglite' });
+      await source.initSchema();
+      await source.putPage('test/switch', testPage);
+      await source.upsertChunks('test/switch', [
+        {
+          chunk_index: 0,
+          chunk_text: 'legacy embedding',
+          chunk_source: 'compiled_truth',
+          embedding: new Float32Array(1536).fill(0.1),
+          model: 'text-embedding-3-large',
+        },
+      ]);
+      await source.disconnect();
+
+      process.env.GBRAIN_EMBEDDING_PROVIDER = 'ollama';
+      process.env.OLLAMA_EMBEDDING_MODEL = 'nomic-embed-text';
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+      resetEmbeddingProvider();
+
+      await migrated.connect({ database_path: dir, engine: 'pglite' });
+      const health = await migrated.getHealth();
+      const chunks = await migrated.getChunks('test/switch');
+
+      expect(health.embedding_provider).toBe('ollama');
+      expect(health.embedding_model).toBe('nomic-embed-text');
+      expect(health.embedding_dimensions).toBe(768);
+      expect(health.embedding_reset_required).toBe(true);
+      expect(health.missing_embeddings).toBe(1);
+      expect(chunks.length).toBe(1);
+      expect(chunks[0].embedded_at).toBeNull();
+      expect(chunks[0].model).toBe('nomic-embed-text');
+
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        embeddings: [Array.from({ length: 768 }, () => 0.25)],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      await runEmbed(migrated, ['--stale']);
+
+      const recovered = await migrated.getHealth();
+      expect(recovered.missing_embeddings).toBe(0);
+      expect(recovered.embed_coverage).toBe(1);
+      expect(recovered.embedding_reset_required).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await source.disconnect().catch(() => undefined);
+      await migrated.disconnect().catch(() => undefined);
+      restoreEmbeddingEnv(snapshot);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('migrates a 768d ollama brain back to OpenAI native dimensions', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-migrate-'));
+    const snapshot = {
+      GBRAIN_EMBEDDING_PROVIDER: process.env.GBRAIN_EMBEDDING_PROVIDER,
+      GBRAIN_EMBEDDING_DIMENSIONS: process.env.GBRAIN_EMBEDDING_DIMENSIONS,
+      GBRAIN_EMBEDDING_MODEL: process.env.GBRAIN_EMBEDDING_MODEL,
+      OLLAMA_EMBEDDING_MODEL: process.env.OLLAMA_EMBEDDING_MODEL,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    };
+    const source = new PGLiteEngine();
+    const migrated = new PGLiteEngine();
+
+    try {
+      process.env.GBRAIN_EMBEDDING_PROVIDER = 'ollama';
+      process.env.OLLAMA_EMBEDDING_MODEL = 'nomic-embed-text';
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+      resetEmbeddingProvider();
+
+      await source.connect({ database_path: dir, engine: 'pglite' });
+      await source.initSchema();
+      await source.putPage('test/switch-back', testPage);
+      await source.upsertChunks('test/switch-back', [
+        {
+          chunk_index: 0,
+          chunk_text: 'ollama embedding',
+          chunk_source: 'compiled_truth',
+          embedding: new Float32Array(768).fill(0.1),
+          model: 'nomic-embed-text',
+        },
+      ]);
+      await source.disconnect();
+
+      process.env.GBRAIN_EMBEDDING_PROVIDER = 'openai';
+      process.env.OPENAI_API_KEY = 'sk-test';
+      delete process.env.OLLAMA_EMBEDDING_MODEL;
+      delete process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+      resetEmbeddingProvider();
+
+      await migrated.connect({ database_path: dir, engine: 'pglite' });
+      const health = await migrated.getHealth();
+      const chunks = await migrated.getChunks('test/switch-back');
+
+      expect(health.embedding_provider).toBe('openai');
+      expect(health.embedding_model).toBe('text-embedding-3-large');
+      expect(health.embedding_dimensions).toBe(3072);
+      expect(health.embedding_reset_required).toBe(true);
+      expect(health.missing_embeddings).toBe(1);
+      expect(chunks[0].embedded_at).toBeNull();
+
+      await migrated.upsertChunks('test/switch-back', [
+        {
+          chunk_index: 0,
+          chunk_text: chunks[0].chunk_text,
+          chunk_source: chunks[0].chunk_source,
+          embedding: new Float32Array(3072).fill(0.2),
+          model: 'text-embedding-3-large',
+        },
+      ]);
+
+      const recovered = await migrated.getHealth();
+      const recoveredChunks = await migrated.getChunks('test/switch-back');
+      expect(recovered.missing_embeddings).toBe(0);
+      expect(recoveredChunks[0].embedded_at).not.toBeNull();
+    } finally {
+      await source.disconnect().catch(() => undefined);
+      await migrated.disconnect().catch(() => undefined);
+      restoreEmbeddingEnv(snapshot);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

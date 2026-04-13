@@ -9,7 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
-import { embed } from '../embedding.ts';
+import { getEmbeddingProvider } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 
 const RRF_K = 60;
@@ -31,8 +31,11 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, { limit: innerLimit });
 
-  // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
+  // Skip vector search if no embedding provider is available
+  const provider = getEmbeddingProvider();
+  const hasOpenAI = !!process.env.OPENAI_API_KEY;
+  const hasOllama = provider.provider === 'ollama';
+  if (!hasOpenAI && !hasOllama) {
     return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
@@ -52,7 +55,7 @@ export async function hybridSearch(
   // Embed all query variants and run vector search
   let vectorLists: SearchResult[][] = [];
   try {
-    const embeddings = await Promise.all(queries.map(q => embed(q)));
+    const embeddings = await Promise.all(queries.map(q => provider.embed(q)));
     vectorLists = await Promise.all(
       embeddings.map(emb => engine.searchVector(emb, { limit: innerLimit })),
     );

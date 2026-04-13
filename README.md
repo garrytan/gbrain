@@ -231,7 +231,8 @@ You take a meeting with someone. The agent writes a brain page for them, links i
 | Dependency | What it's for | How to get it |
 |------------|--------------|---------------|
 | **Supabase account** | Postgres + pgvector database | [supabase.com](https://supabase.com) (Pro tier, $25/mo for 8GB) |
-| **OpenAI API key** | Embeddings (text-embedding-3-large) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **OpenAI API key** | OpenAI embeddings (provider-native dimensions by default) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **Ollama** | Local embeddings such as `nomic-embed-text` (768d) | [ollama.com](https://ollama.com) |
 | **Anthropic API key** | Multi-query expansion + LLM chunking (Haiku) | [console.anthropic.com](https://console.anthropic.com) |
 
 Set the API keys as environment variables:
@@ -244,6 +245,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 The Supabase connection URL is configured during `gbrain init --supabase`. The OpenAI and Anthropic SDKs read their keys from the environment automatically.
 
 Without an OpenAI key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
+
+Embedding provider metadata is stored in the brain config. Switching provider/model automatically rebuilds the embedding column to the right dimension and marks chunks for re-embedding, so `gbrain embed --stale` is the recovery step after a provider change.
 
 ### GBrain without OpenClaw
 
@@ -379,6 +382,7 @@ Then run `gbrain init` to apply any schema migrations (idempotent, safe to re-ru
 gbrain init                     # PGLite (default)
 gbrain init --supabase          # guided wizard for Supabase
 gbrain init --url <conn>        # any Postgres with pgvector
+gbrain init --ollama --embedding-model nomic-embed-text
 ```
 
 Import is idempotent. Re-running skips unchanged files (SHA-256 content hash). ~30s for text import of 7,000 files, ~10-15 min for embedding.
@@ -514,7 +518,7 @@ content_chunks           Chunked content with embeddings
   page_id (FK)           Links to pages
   chunk_text             The chunk content
   chunk_source           'compiled_truth' or 'timeline'
-  embedding (vector)     1536-dim from text-embedding-3-large
+  embedding              vector/halfvec sized to the active embedding model
   HNSW index             Cosine similarity search
 
 links                    Cross-references between pages
@@ -584,6 +588,7 @@ FILES
 
 EMBEDDINGS
   gbrain embed [<slug>|--all|--stale]       Generate/refresh embeddings
+                                           `--stale` is the recovery path after provider/model switches
 
 LINKS + GRAPH
   gbrain link <from> <to> [--type T]        Create typed link
@@ -601,7 +606,7 @@ TIMELINE
   gbrain timeline-add <slug> <date> <text>  Add timeline entry
 
 ADMIN
-  gbrain doctor [--json]                    Health checks (pgvector, RLS, schema, embeddings)
+  gbrain doctor [--json]                    Health checks (pgvector, RLS, schema, provider/model/dimensions, embeddings)
   gbrain stats                              Brain statistics
   gbrain health                             Health dashboard (embed coverage, stale, orphans)
   gbrain history <slug>                     Page version history

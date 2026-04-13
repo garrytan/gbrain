@@ -205,8 +205,10 @@ function formatResult(opName: string, result: unknown): string {
         - (h.orphan_pages > 0 ? 1 : 0));
       return [
         `Health score: ${score}/10`,
+        `Embedding config: ${h.embedding_provider}/${h.embedding_model} (${h.embedding_dimensions}d${h.embedding_dimensions_overridden ? ', override' : ''})`,
         `Embed coverage: ${(h.embed_coverage * 100).toFixed(1)}%`,
         `Missing embeddings: ${h.missing_embeddings}`,
+        ...(h.embedding_reset_required && h.embedding_reset_reason ? [`Reset status: ${h.embedding_reset_reason}`] : []),
         `Stale pages: ${h.stale_pages}`,
         `Orphan pages: ${h.orphan_pages}`,
         `Dead links: ${h.dead_links}`,
