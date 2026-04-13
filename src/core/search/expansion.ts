@@ -22,7 +22,9 @@ function getClient(): Anthropic {
 }
 
 export async function expandQuery(query: string): Promise<string[]> {
-  const wordCount = (query.match(/\S+/g) || []).length;
+  // CJK text is not space-delimited — count characters instead of whitespace-separated tokens
+  const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(query);
+  const wordCount = hasCJK ? query.replace(/\s/g, '').length : (query.match(/\S+/g) || []).length;
   if (wordCount < MIN_WORDS) return [query];
 
   try {
