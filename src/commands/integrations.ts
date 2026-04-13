@@ -150,6 +150,16 @@ export async function executeHealthCheck(
         if (!url || url.includes('undefined')) {
           return { ...base, status: 'fail', output: `Missing env var in URL: ${check.url}` };
         }
+        // Block requests to internal/metadata endpoints. A CWD recipe
+        // with url: http://169.254.169.254/latest/meta-data/ reads
+        // cloud credentials. Non-embedded recipes are blocked entirely;
+        // embedded recipes are still checked against known internal ranges.
+        if (!isEmbedded) {
+          return { ...base, status: 'blocked', output: `Blocked: http health checks are only allowed in embedded (first-party) recipes.` };
+        }
+        if (isInternalUrl(url)) {
+          return { ...base, status: 'blocked', output: `Blocked: health check URL points to an internal/metadata address: ${url}` };
+        }
         const headers: Record<string, string> = {};
         if (check.headers) {
           for (const [k, v] of Object.entries(check.headers)) {
@@ -263,6 +273,34 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
 // Recipes are loaded from the recipes/ directory at runtime.
 // For compiled binaries, these should be embedded at build time.
 // For source installs (bun run), they're read from disk.
+/**
+ * Returns true if a URL points to a known internal, metadata, or
+ * loopback address. Used to block SSRF in http health checks even
+ * for embedded recipes. Catches AWS/GCP/Azure metadata endpoints,
+ * loopback, and private RFC1918 ranges.
+ */
+export function isInternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    // Cloud metadata endpoints
+    if (host === '169.254.169.254') return true;         // AWS/GCP
+    if (host === 'metadata.google.internal') return true; // GCP
+    if (host === '100.100.100.200') return true;          // Alibaba
+    // Loopback
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0') return true;
+    // Private ranges (simple prefix check)
+    if (host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('172.')) {
+      const second = parseInt(host.split('.')[1], 10);
+      if (host.startsWith('172.') && second >= 16 && second <= 31) return true;
+      if (host.startsWith('10.') || host.startsWith('192.168.')) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function getRecipesDir(): string {
   // Explicit override (for compiled binaries or custom installs)
   if (process.env.GBRAIN_RECIPES_DIR && existsSync(process.env.GBRAIN_RECIPES_DIR)) {

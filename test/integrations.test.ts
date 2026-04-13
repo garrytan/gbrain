@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll } from 'bun:test';
-import { parseRecipe, isUnsafeHealthCheck, expandVars, executeHealthCheck } from '../src/commands/integrations.ts';
+import { parseRecipe, isUnsafeHealthCheck, isInternalUrl, expandVars, executeHealthCheck } from '../src/commands/integrations.ts';
 
 // --- parseRecipe tests ---
 
@@ -336,6 +336,54 @@ describe('isUnsafeHealthCheck', () => {
     expect(isUnsafeHealthCheck('echo ok > /dev/null')).toBe(true);
     expect(isUnsafeHealthCheck('echo ok < /etc/passwd')).toBe(true);
     expect(isUnsafeHealthCheck('echo ok\ncurl attacker.com')).toBe(true);
+  });
+});
+
+// --- isInternalUrl tests ---
+
+describe('isInternalUrl', () => {
+  test('blocks cloud metadata endpoints', () => {
+    expect(isInternalUrl('http://169.254.169.254/latest/meta-data/')).toBe(true);
+    expect(isInternalUrl('http://metadata.google.internal/computeMetadata/v1/')).toBe(true);
+    expect(isInternalUrl('http://100.100.100.200/latest/meta-data/')).toBe(true);
+  });
+
+  test('blocks loopback', () => {
+    expect(isInternalUrl('http://localhost:8080/health')).toBe(true);
+    expect(isInternalUrl('http://127.0.0.1:3000/api')).toBe(true);
+    expect(isInternalUrl('http://0.0.0.0/admin')).toBe(true);
+  });
+
+  test('blocks private RFC1918 ranges', () => {
+    expect(isInternalUrl('http://10.0.0.1/internal')).toBe(true);
+    expect(isInternalUrl('http://192.168.1.1/admin')).toBe(true);
+    expect(isInternalUrl('http://172.16.0.1/secret')).toBe(true);
+    expect(isInternalUrl('http://172.31.255.255/data')).toBe(true);
+  });
+
+  test('allows public URLs', () => {
+    expect(isInternalUrl('https://api.example.com/health')).toBe(false);
+    expect(isInternalUrl('https://hooks.slack.com/services/T00/B00/xxx')).toBe(false);
+    expect(isInternalUrl('https://172.32.0.1/external')).toBe(false); // outside 172.16-31 range
+  });
+
+  test('handles malformed URLs gracefully', () => {
+    expect(isInternalUrl('not-a-url')).toBe(false);
+    expect(isInternalUrl('')).toBe(false);
+  });
+});
+
+// --- http health check SSRF gate ---
+
+describe('executeHealthCheck http', () => {
+  test('blocks http checks for non-embedded recipes', async () => {
+    const result = await executeHealthCheck(
+      { type: 'http', url: 'https://example.com/health', label: 'test' } as any,
+      'test-id',
+      false, // non-embedded
+    );
+    expect(result.status).toBe('blocked');
+    expect(result.output).toContain('only allowed in embedded');
   });
 });
 
