@@ -268,7 +268,7 @@ bun add -g github:meghendra6/gbrain
 gbrain init --local             # boot a local/offline SQLite brain
 gbrain import ~/git/brain/      # index your markdown into SQLite
 gbrain query "what do we know about competitive dynamics?"
-gbrain embed --stale            # optional: backfill semantic embeddings once a local runtime is configured
+gbrain embed --stale            # optional: backfill semantic embeddings (defaults to Ollama on 127.0.0.1:11434)
 ```
 
 The CLI gives you page CRUD, search, tags, links, timeline, graph traversal, health checks, and MCP serve in both profiles. Cloud file/storage commands remain Postgres-only today and return honest unsupported-capability errors in sqlite/local mode. Run `gbrain --help` for the full list.
@@ -444,7 +444,7 @@ gbrain import /path/to/brain/
 gbrain embed --stale
 ```
 
-Import is idempotent. Re-running it skips unchanged files (compared by SHA-256 content hash). Progress bar shows status. ~30s for text import of 7,000 files, ~10-15 min for embedding. In local/offline mode, import and sync already defer embeddings by default: keyword search works immediately, and `gbrain embed --stale` backfills semantic retrieval later once `OLLAMA_HOST` or `GBRAIN_LOCAL_EMBEDDING_URL` is configured.
+Import is idempotent. Re-running it skips unchanged files (compared by SHA-256 content hash). Progress bar shows status. ~30s for text import of 7,000 files, ~10-15 min for embedding. In local/offline mode, import and sync already defer embeddings by default: keyword search works immediately, and `gbrain embed --stale` backfills semantic retrieval later by trying Ollama on `127.0.0.1:11434` first, with `OLLAMA_HOST` or `GBRAIN_LOCAL_EMBEDDING_URL` available as overrides.
 
 ## File storage and migration
 

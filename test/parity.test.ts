@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdirSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
@@ -108,13 +109,12 @@ describe('operations contract parity', () => {
 // Behavioral correctness tests — real SQLiteEngine operations
 // ─────────────────────────────────────────────────────────────────
 
-const PARITY_TMP = join(import.meta.dir, '.tmp-parity');
+const PARITY_TMP = mkdtempSync(join(tmpdir(), 'gbrain-parity-'));
 
 describe('SQLiteEngine behavioral correctness', () => {
   let engine: InstanceType<typeof SQLiteEngine>;
 
   beforeAll(async () => {
-    mkdirSync(PARITY_TMP, { recursive: true });
     engine = new SQLiteEngine();
     await engine.connect({ database_path: join(PARITY_TMP, 'parity-test.db') });
     await engine.initSchema();

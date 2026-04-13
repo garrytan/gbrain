@@ -193,12 +193,19 @@ gbrain health
 
 ### 옵션 B: 나중에 로컬 임베딩 런타임 연결
 
-GBrain은 아래 중 하나를 찾습니다.
+GBrain은 임베딩 런타임을 아래 순서로 결정합니다.
 
-- `GBRAIN_LOCAL_EMBEDDING_URL`
-- `OLLAMA_HOST` (`/api/embed` 사용)
+1. `GBRAIN_LOCAL_EMBEDDING_URL`
+2. `OLLAMA_HOST` (`/api/embed` 사용)
+3. 기본 Ollama 엔드포인트 `http://127.0.0.1:11434/api/embed`
 
-예시:
+Ollama가 기본 호스트/포트로 떠 있고 기본 모델을 쓸 거라면, 런타임 URL 관련 추가 설정 없이 바로 실행하면 됩니다.
+
+```bash
+gbrain embed --stale
+```
+
+커스텀 호스트/포트나 다른 모델을 쓰는 경우에만 필요한 값만 override 하세요.
 
 ```bash
 export OLLAMA_HOST=http://127.0.0.1:11434
@@ -224,7 +231,8 @@ gbrain embed notes/offline-demo
 
 - `--stale` : 아직 임베딩되지 않은 청크만 backfill
 - `gbrain embed <slug>` : 해당 페이지 전체를 명시적으로 rebuild 가능
-- 로컬 런타임이 없으면 GBrain이 솔직하게 unavailable을 알려줌
+- 기본 엔드포인트에 Ollama가 없으면 `OLLAMA_HOST` 또는 `GBRAIN_LOCAL_EMBEDDING_URL`로 override
+- 런타임은 보이지만 모델이 없으면 Ollama가 그 에러를 그대로 돌려줌
 
 ---
 
@@ -501,11 +509,11 @@ gbrain import /path/to/brain
 gbrain stats
 ```
 
-### `gbrain embed --stale`가 provider unavailable이라고 나온다
+### `gbrain embed --stale`가 Ollama 연결 에러로 실패한다
 
-로컬 임베딩 런타임을 아직 설정하지 않은 상태입니다.
+기본적으로 GBrain은 `http://127.0.0.1:11434/api/embed`를 먼저 시도합니다.
 
-다음 중 하나를 설정하세요.
+로컬 런타임이 다른 호스트/포트에 떠 있다면 다음 중 하나를 설정하세요.
 
 - `GBRAIN_LOCAL_EMBEDDING_URL`
 - `OLLAMA_HOST`

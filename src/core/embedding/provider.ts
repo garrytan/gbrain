@@ -1,6 +1,7 @@
 import type { EmbeddingProvider as EmbeddingProviderMode, GBrainConfig } from '../config.ts';
 
 const DEFAULT_LOCAL_MODEL = 'nomic-embed-text';
+const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 
 export interface EmbeddingProviderCapability {
   mode: EmbeddingProviderMode;
@@ -46,10 +47,6 @@ function resolveLocalProvider(mode: EmbeddingProviderMode): ResolvedEmbeddingPro
   if (mode !== 'local') return null;
 
   const configuredUrl = resolveLocalEmbeddingUrl();
-  if (!configuredUrl) {
-    return null;
-  }
-
   const configuredModel = process.env.GBRAIN_LOCAL_EMBEDDING_MODEL || DEFAULT_LOCAL_MODEL;
   const configuredDimensions = parsePositiveInt(process.env.GBRAIN_LOCAL_EMBEDDING_DIMENSIONS);
 
@@ -95,7 +92,7 @@ function resolveLocalProvider(mode: EmbeddingProviderMode): ResolvedEmbeddingPro
   };
 }
 
-function resolveLocalEmbeddingUrl(): string | null {
+function resolveLocalEmbeddingUrl(): string {
   const configured = process.env.GBRAIN_LOCAL_EMBEDDING_URL;
   if (configured) return configured;
 
@@ -104,11 +101,7 @@ function resolveLocalEmbeddingUrl(): string | null {
     return new URL('/api/embed', withTrailingSlash(ollamaHost)).toString();
   }
 
-  if (process.env.GBRAIN_LOCAL_EMBEDDING_MODEL) {
-    return 'http://127.0.0.1:11434/api/embed';
-  }
-
-  return null;
+  return new URL('/api/embed', withTrailingSlash(DEFAULT_OLLAMA_HOST)).toString();
 }
 
 function unavailableProvider(capability: EmbeddingProviderCapability): ResolvedEmbeddingProvider {

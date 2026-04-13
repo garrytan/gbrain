@@ -195,12 +195,19 @@ You still get:
 
 ### Option B: configure a local embedding runtime later
 
-GBrain looks for one of:
+GBrain resolves the embedding runtime in this order:
 
-- `GBRAIN_LOCAL_EMBEDDING_URL`
-- `OLLAMA_HOST` (uses `/api/embed`)
+1. `GBRAIN_LOCAL_EMBEDDING_URL`
+2. `OLLAMA_HOST` (uses `/api/embed`)
+3. default Ollama endpoint `http://127.0.0.1:11434/api/embed`
 
-Common example with Ollama-compatible runtime:
+If Ollama is already running on the default host/port and you are using the default model, no extra runtime URL configuration is required:
+
+```bash
+gbrain embed --stale
+```
+
+If you need a custom host/port or a non-default model, override only those pieces:
 
 ```bash
 export OLLAMA_HOST=http://127.0.0.1:11434
@@ -226,7 +233,8 @@ What to expect:
 
 - `--stale` only embeds missing chunks
 - page-level `gbrain embed <slug>` can rebuild that page explicitly
-- if no runtime is configured, GBrain tells you that honestly instead of pretending embeddings succeeded
+- if Ollama is not running on the default endpoint, use `OLLAMA_HOST` or `GBRAIN_LOCAL_EMBEDDING_URL`
+- if the runtime is reachable but the model is missing, Ollama returns that error directly
 
 ---
 
@@ -507,11 +515,11 @@ gbrain import /path/to/brain
 gbrain stats
 ```
 
-### `gbrain embed --stale` says no embedding provider is available
+### `gbrain embed --stale` fails while trying to reach Ollama
 
-You have not configured a local embedding runtime yet.
+By default, GBrain tries `http://127.0.0.1:11434/api/embed`.
 
-Set one of:
+If your local runtime is on a different host or port, set one of:
 
 - `GBRAIN_LOCAL_EMBEDDING_URL`
 - `OLLAMA_HOST`

@@ -412,14 +412,36 @@ describe('local/offline embedding flow', () => {
     }
   });
 
-  test('local provider stays unavailable without a configured local runtime', () => {
+  test('local provider auto-detects the default Ollama endpoint when env vars are unset', async () => {
     const previousOpenAI = process.env.OPENAI_API_KEY;
     const previousLocalUrl = process.env.GBRAIN_LOCAL_EMBEDDING_URL;
     const previousOllama = process.env.OLLAMA_HOST;
+    const previousModel = process.env.GBRAIN_LOCAL_EMBEDDING_MODEL;
+    const previousDimensions = process.env.GBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
 
     process.env.OPENAI_API_KEY = 'test-key';
     delete process.env.GBRAIN_LOCAL_EMBEDDING_URL;
     delete process.env.OLLAMA_HOST;
+    delete process.env.GBRAIN_LOCAL_EMBEDDING_MODEL;
+    delete process.env.GBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('http://127.0.0.1:11434/api/embed');
+      expect(init?.method).toBe('POST');
+      expect(init?.headers).toEqual({ 'content-type': 'application/json' });
+      expect(JSON.parse(String(init?.body ?? '{}'))).toEqual({
+        model: 'nomic-embed-text',
+        input: ['hello from default ollama'],
+      });
+
+      return new Response(JSON.stringify({
+        embeddings: [[1, 2, 3]],
+      }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    globalThis.fetch = fetchSpy as typeof fetch;
 
     try {
       const provider = getEmbeddingProvider({
@@ -432,10 +454,18 @@ describe('local/offline embedding flow', () => {
         },
       });
 
-      expect(provider.capability.available).toBe(false);
+      expect(provider.capability.available).toBe(true);
       expect(provider.capability.mode).toBe('local');
-      expect(provider.capability.implementation).toBe('none');
+      expect(provider.capability.implementation).toBe('local-http');
+      expect(provider.capability.model).toBe('nomic-embed-text');
+      expect(provider.capability.dimensions).toBeNull();
+
+      const embeddings = await provider.embedBatch(['hello from default ollama']);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(Array.from(embeddings[0] ?? [])).toEqual([1, 2, 3]);
     } finally {
+      globalThis.fetch = originalFetch;
+
       if (previousOpenAI === undefined) {
         delete process.env.OPENAI_API_KEY;
       } else {
@@ -452,6 +482,18 @@ describe('local/offline embedding flow', () => {
         delete process.env.OLLAMA_HOST;
       } else {
         process.env.OLLAMA_HOST = previousOllama;
+      }
+
+      if (previousModel === undefined) {
+        delete process.env.GBRAIN_LOCAL_EMBEDDING_MODEL;
+      } else {
+        process.env.GBRAIN_LOCAL_EMBEDDING_MODEL = previousModel;
+      }
+
+      if (previousDimensions === undefined) {
+        delete process.env.GBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
+      } else {
+        process.env.GBRAIN_LOCAL_EMBEDDING_DIMENSIONS = previousDimensions;
       }
     }
   });
