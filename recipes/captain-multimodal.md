@@ -7,7 +7,7 @@ GBrain handles text. Captain handles multimodal — images, video, audio, PDFs w
 - Search photos, screenshots, diagrams by describing what's in them
 - Search video recordings by scene, dialogue, or topic
 - Search audio (calls, podcasts, voice memos) by spoken content
-- Cross-modal reranking via Gemini so text and media results rank correctly together
+- Cross-modal reranking so text and media results rank correctly together
 
 GBrain's text pipeline is unchanged. Captain runs alongside it for non-text content.
 
