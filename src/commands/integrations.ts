@@ -194,6 +194,17 @@ export async function executeHealthCheck(
     }
 
     case 'command': {
+      // Gate: non-embedded recipes (loaded from CWD) must not execute
+      // arbitrary commands. The string path has isUnsafeHealthCheck()
+      // but the typed DSL command path was missing the isEmbedded
+      // check entirely. A CWD recipe with embedded=true bypasses both.
+      if (!isEmbedded) {
+        return {
+          ...base,
+          status: 'blocked',
+          output: `Blocked: command health checks are only allowed in embedded (first-party) recipes. Move this recipe to the installed recipes directory.`,
+        };
+      }
       try {
         const { spawnSync } = await import('child_process');
         const result = spawnSync(check.argv[0], check.argv.slice(1), {
