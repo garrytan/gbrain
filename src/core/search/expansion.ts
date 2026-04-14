@@ -8,6 +8,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { loadConfig } from '../config.ts';
 
 const MAX_QUERIES = 3;
 const MIN_WORDS = 3;
@@ -16,7 +17,12 @@ let anthropicClient: Anthropic | null = null;
 
 function getClient(): Anthropic {
   if (!anthropicClient) {
-    anthropicClient = new Anthropic();
+    // Same pattern as embedding.ts: read key from gbrain's own config so
+    // subprocess callers don't need ANTHROPIC_API_KEY in their env.
+    const config = loadConfig();
+    anthropicClient = config?.anthropic_api_key
+      ? new Anthropic({ apiKey: config.anthropic_api_key })
+      : new Anthropic(); // SDK falls back to ANTHROPIC_API_KEY env var if set
   }
   return anthropicClient;
 }

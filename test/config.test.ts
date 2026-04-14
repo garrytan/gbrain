@@ -1,5 +1,6 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { readFileSync } from 'fs';
+import { loadConfig } from '../src/core/config.ts';
 
 // redactUrl is not exported, so we test it by reading the source and
 // reimplementing the regex to verify the pattern, then test via CLI
@@ -59,5 +60,67 @@ describe('config source correctness', () => {
 
   test('redactUrl uses the correct regex pattern', () => {
     expect(configSource).toContain('postgresql:\\/\\/');
+  });
+});
+
+describe('loadConfig: API key merging (for self-contained subprocess use)', () => {
+  // These tests verify that gbrain can be called as a subprocess by agents/cron
+  // without the caller needing to propagate API keys — loadConfig picks them up
+  // from either the config file OR env vars, and both embedding.ts and
+  // expansion.ts read the merged config to instantiate their SDK clients.
+
+  let originalOpenAI: string | undefined;
+  let originalAnthropic: string | undefined;
+  let originalDatabaseUrl: string | undefined;
+
+  beforeEach(() => {
+    originalOpenAI = process.env.OPENAI_API_KEY;
+    originalAnthropic = process.env.ANTHROPIC_API_KEY;
+    originalDatabaseUrl = process.env.DATABASE_URL;
+    // Ensure loadConfig() returns something (needs DATABASE_URL when no file exists)
+    process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
+  });
+
+  afterEach(() => {
+    if (originalOpenAI === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAI;
+    if (originalAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalAnthropic;
+    if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = originalDatabaseUrl;
+  });
+
+  test('merges OPENAI_API_KEY from env into config', () => {
+    process.env.OPENAI_API_KEY = 'sk-test-openai-xyz';
+    const config = loadConfig();
+    expect(config?.openai_api_key).toBe('sk-test-openai-xyz');
+  });
+
+  test('merges ANTHROPIC_API_KEY from env into config (regression: was missing)', () => {
+    // Before this fix, loadConfig() only merged OPENAI_API_KEY and silently
+    // dropped ANTHROPIC_API_KEY from the env. That meant subprocess callers
+    // who set ANTHROPIC_API_KEY in their shell still couldn't get query
+    // expansion because downstream code only saw the un-merged config.
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test-xyz';
+    const config = loadConfig();
+    expect(config?.anthropic_api_key).toBe('sk-ant-test-xyz');
+  });
+
+  test('merges both keys when both env vars set', () => {
+    process.env.OPENAI_API_KEY = 'sk-o';
+    process.env.ANTHROPIC_API_KEY = 'sk-a';
+    const config = loadConfig();
+    expect(config?.openai_api_key).toBe('sk-o');
+    expect(config?.anthropic_api_key).toBe('sk-a');
+  });
+
+  test('config has no keys when neither env nor file provides them', () => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const config = loadConfig();
+    // When no key anywhere, the fields should be absent (undefined), not empty strings.
+    // Downstream SDK clients fall through to SDK's own env-default behavior.
+    expect(config?.openai_api_key).toBeUndefined();
+    expect(config?.anthropic_api_key).toBeUndefined();
   });
 });
