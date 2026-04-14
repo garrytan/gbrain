@@ -51,6 +51,32 @@ describe('slugifySegment', () => {
   test('handles curly quotes and ellipsis', () => {
     expect(slugifySegment('she\u2026said \u201chello\u201d')).toBe('shesaid-hello');
   });
+
+  test('preserves Chinese characters (Han)', () => {
+    expect(slugifySegment('品牌圣经')).toBe('品牌圣经');
+    expect(slugifySegment('销售论证文档')).toBe('销售论证文档');
+  });
+
+  test('preserves Japanese (Hiragana + Katakana)', () => {
+    expect(slugifySegment('ひらがな')).toBe('ひらがな');
+    expect(slugifySegment('カタカナ')).toBe('カタカナ');
+    expect(slugifySegment('テスト文書')).toBe('テスト文書');
+  });
+
+  test('preserves Korean (Hangul)', () => {
+    expect(slugifySegment('한글테스트')).toBe('한글테스트');
+  });
+
+  test('mixed CJK + ASCII: lowercase ASCII, preserve CJK, space → hyphen', () => {
+    expect(slugifySegment('ICP-理想客户画像')).toBe('icp-理想客户画像');
+    expect(slugifySegment('你好 world')).toBe('你好-world');
+  });
+
+  test('two different CJK names produce different slugs (no collision)', () => {
+    // Regression: before this fix, both collapsed to empty string and their
+    // pages would overwrite each other during import.
+    expect(slugifySegment('品牌圣经')).not.toBe(slugifySegment('销售论证文档'));
+  });
 });
 
 describe('slugifyPath', () => {
@@ -109,6 +135,24 @@ describe('slugifyPath', () => {
   test('meetings transcript example', () => {
     expect(slugifyPath('meetings/transcripts/2026-01-21 maria - california c4 collaboration discussion.md'))
       .toBe('meetings/transcripts/2026-01-21-maria-california-c4-collaboration-discussion');
+  });
+
+  test('pure-CJK filenames keep their characters', () => {
+    expect(slugifyPath('inbox/品牌圣经.md')).toBe('inbox/品牌圣经');
+    expect(slugifyPath('inbox/销售论证文档.md')).toBe('inbox/销售论证文档');
+  });
+
+  test('pure-CJK filenames do not collide', () => {
+    // Regression: before this fix, both pure-CJK files collapsed to the
+    // parent directory slug (e.g., "inbox") and silently overwrote each
+    // other during gbrain import (reported as "N imported, 0 errors").
+    const slug1 = slugifyPath('inbox/品牌圣经.md');
+    const slug2 = slugifyPath('inbox/销售论证文档.md');
+    expect(slug1).not.toBe(slug2);
+  });
+
+  test('CJK directory names also preserved', () => {
+    expect(slugifyPath('会议/2026-04-14.md')).toBe('会议/2026-04-14');
   });
 });
 

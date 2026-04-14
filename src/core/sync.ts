@@ -96,15 +96,23 @@ export function isSyncable(path: string): boolean {
   return true;
 }
 
+// CJK ranges: Han, Hiragana, Katakana, Hangul. Same set used by the chunker
+// (see src/core/chunkers/recursive.ts) and query expansion (PR #98) for
+// consistent CJK handling across the codebase.
+const CJK_CLASS = '\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af';
+
 /**
  * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
+ * CJK characters are preserved (not stripped) so Chinese/Japanese/Korean
+ * filenames produce meaningful, non-colliding slugs.
  */
 export function slugifySegment(segment: string): string {
   return segment
     .normalize('NFD')                     // Decompose accented chars
-    .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
+    .replace(/[\u0300-\u036f]/g, '')      // Strip Latin accent marks
+    .normalize('NFC')                     // Recompose Hangul syllables (NFD splits them into Jamo)
     .toLowerCase()
-    .replace(/[^a-z0-9.\s_-]/g, '')      // Keep alphanumeric, dots, spaces, underscores, hyphens
+    .replace(new RegExp(`[^a-z0-9.\\s_${CJK_CLASS}-]`, 'g'), '') // Keep ASCII alphanum, dots, spaces, _-, CJK
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
