@@ -12,12 +12,13 @@ GBrain is designed to be installed and operated by an AI agent. If you don't hav
 
 - **[OpenClaw](https://openclaw.ai)** — Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, requires 8GB+ RAM instance)
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** — Deploy on [Railway using this template](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
+- **[Nanobot](https://github.com/HKUDS/nanobot)** — Self-hosted, `uv tool install nanobot-ai` (lightweight, runs on Linux, macOS, and Windows)
 
 ## Start here
 
 **https://github.com/garrytan/gbrain** — clone this repo into your agent's filesystem. It's home base for docs, skills, upgrades, and recipes. To upgrade later: `git pull origin main && bun install`.
 
-Copy this block into [OpenClaw](https://openclaw.ai), [Hermes](https://github.com/NousResearch/hermes-agent), or any persistent AI agent. The agent reads the docs, does the work, and asks you for API keys. ~30 minutes.
+Copy this block into [OpenClaw](https://openclaw.ai), [Hermes](https://github.com/NousResearch/hermes-agent), [Nanobot](https://github.com/HKUDS/nanobot), or any persistent AI agent. The agent reads the docs, does the work, and asks you for API keys. ~30 minutes.
 
 ```
 INSTALL:
@@ -284,6 +285,18 @@ GBrain exposes 30 MCP tools via stdio. Add this to your MCP client config:
   "gbrain": {
     "command": "gbrain",
     "args": ["serve"]
+  }
+}
+```
+
+**Nanobot** (`config.json`):
+```json
+{
+  "mcp_servers": {
+    "gbrain": {
+      "command": "gbrain",
+      "args": ["serve"]
+    }
   }
 }
 ```
