@@ -132,4 +132,34 @@ describe('Recursive Text Chunker', () => {
     const chunks = chunkText(text, { chunkSize: 10 });
     expect(chunks.length).toBeGreaterThan(1);
   });
+
+  test('splits long Chinese paragraph into multiple chunks (CJK word count)', () => {
+    // A 2,000-char Chinese paragraph would be counted as 1 "word" by the
+    // whitespace regex (no spaces between Chinese chars) and returned as a
+    // single chunk, which then exceeds OpenAI's 8192-token embedding limit.
+    // With CJK-aware counting, 1 char ≈ 1 "word" and chunkSize bounds apply.
+    const paragraph = '这是一段很长的中文文字用来测试分块器是否能够正确处理中日韩文字。'.repeat(60);
+    const chunks = chunkText(paragraph, { chunkSize: 100 });
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      // Each chunk should be within 1.5x of target (the greedy-merge tolerance)
+      const charCount = chunk.text.replace(/\s/g, '').length;
+      expect(charCount).toBeLessThanOrEqual(150);
+    }
+  });
+
+  test('splits Japanese and Korean text as well', () => {
+    const japanese = 'これは日本語のテストです。分割されるべきです。'.repeat(40);
+    const korean = '이것은 한국어 테스트입니다. 분할되어야 합니다.'.repeat(40);
+    const jaChunks = chunkText(japanese, { chunkSize: 50 });
+    const koChunks = chunkText(korean, { chunkSize: 50 });
+    expect(jaChunks.length).toBeGreaterThan(1);
+    expect(koChunks.length).toBeGreaterThan(1);
+  });
+
+  test('mixed CJK + English text still gets split', () => {
+    const mixed = ('Hello world 你好世界 this is 混合文本 testing. ').repeat(50);
+    const chunks = chunkText(mixed, { chunkSize: 50 });
+    expect(chunks.length).toBeGreaterThan(1);
+  });
 });
