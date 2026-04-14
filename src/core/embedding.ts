@@ -8,6 +8,7 @@
  */
 
 import OpenAI from 'openai';
+import { loadConfig } from './config.ts';
 
 const MODEL = 'text-embedding-3-large';
 const DIMENSIONS = 1536;
@@ -21,7 +22,15 @@ let client: OpenAI | null = null;
 
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI();
+    // Prefer key from gbrain's own config (~/.gbrain/config.json). loadConfig()
+    // already merges OPENAI_API_KEY env var into the config for backward
+    // compatibility, so this covers both config-file and env-var users —
+    // and lets callers (cron jobs, agents, subprocess wrappers) run `gbrain`
+    // without needing to propagate the env var themselves.
+    const config = loadConfig();
+    client = config?.openai_api_key
+      ? new OpenAI({ apiKey: config.openai_api_key })
+      : new OpenAI(); // SDK falls back to OPENAI_API_KEY env var if set
   }
   return client;
 }

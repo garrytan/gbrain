@@ -16,6 +16,7 @@ import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 import { autoDetectDetail } from './intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
+import { loadConfig } from '../config.ts';
 
 const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -85,8 +86,11 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
-  // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
+  // Skip vector search entirely if no OpenAI key is available anywhere.
+  // Check both env (legacy) and config file so gbrain works as a
+  // self-contained subprocess for callers without env-var propagation.
+  const hasOpenAIKey = !!(process.env.OPENAI_API_KEY || loadConfig()?.openai_api_key);
+  if (!hasOpenAIKey) {
     // Apply backlink boost in keyword-only path too. One getBacklinkCounts query
     // per search request; not N+1.
     if (keywordResults.length > 0) {
