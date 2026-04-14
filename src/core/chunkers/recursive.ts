@@ -16,8 +16,11 @@
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs
   ['\n'],                            // L1: lines
-  ['. ', '! ', '? ', '.\n', '!\n', '?\n'], // L2: sentences
-  ['; ', ': ', ', '],                // L3: clauses
+  // L2: sentences (ASCII + CJK full-width). Full-width '。！？' are unambiguous
+  // sentence endings in Chinese/Japanese — no trailing space required.
+  ['. ', '! ', '? ', '.\n', '!\n', '?\n', '。', '！', '？'],
+  // L3: clauses (ASCII + CJK full-width). '、' is Japanese list separator.
+  ['; ', ': ', ', ', '；', '：', '，', '、'],
   [],                                // L4: words (whitespace split)
 ];
 
@@ -138,6 +141,20 @@ function splitAtDelimiters(text: string, delimiters: string[]): string[] {
  * Fallback: split on whitespace boundaries to hit target word count.
  */
 function splitOnWhitespace(text: string, target: number): string[] {
+  // CJK fallback: a paragraph of Chinese/Japanese with no whitespace would
+  // produce a single "word" via the regex below, defeating the size target.
+  // Slice at character boundaries so each piece is ≤ target chars (≈ tokens).
+  if (CJK_RE.test(text) && !/\s/.test(text)) {
+    const pieces: string[] = [];
+    for (let i = 0; i < text.length; i += target) {
+      const piece = text.slice(i, i + target);
+      if (piece.trim().length > 0) {
+        pieces.push(piece);
+      }
+    }
+    return pieces;
+  }
+
   const words = text.match(/\S+\s*/g) || [];
   if (words.length === 0) return [];
 
@@ -218,6 +235,18 @@ function extractTrailingContext(text: string, targetWords: number): string {
   return trailing;
 }
 
+// CJK ranges: Han, Hiragana, Katakana, Hangul. Mirrors the detection in
+// search/expansion.ts (PR #98) so word-count semantics stay consistent.
+const CJK_RE = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/;
+
 function countWords(text: string): number {
+  // CJK text is not space-delimited — a whole paragraph of Chinese would
+  // be counted as 1 "word" by the whitespace-based regex, so the chunker
+  // never splits it and the entire paragraph gets sent as one >8192-token
+  // embedding request. Count non-whitespace characters when CJK is present
+  // so 1 char ≈ 1 "word" and chunkSize targets still bound chunk size.
+  if (CJK_RE.test(text)) {
+    return text.replace(/\s/g, '').length;
+  }
   return (text.match(/\S+/g) || []).length;
 }
