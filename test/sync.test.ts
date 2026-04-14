@@ -48,6 +48,38 @@ describe('buildSyncManifest', () => {
     expect(manifest.added).toEqual(['people/a.md']);
     expect(manifest.modified).toEqual(['people/b.md']);
   });
+
+  // CJK / unicode path handling. The sync pipeline relies on `-c core.quotepath=false`
+  // being passed to the git call site (see src/commands/sync.ts git() helper) so
+  // these paths arrive here in UTF-8 instead of git's default double-quoted
+  // octal-escaped form (e.g. `"inbox/\350\256\260\345\275\225.md"`). Without
+  // that flag, the paths below would come in quoted+escaped, fail downstream
+  // filesystem lookups, and get silently dropped from the manifest.
+
+  test('preserves pure-CJK filenames (Chinese/Japanese/Korean)', () => {
+    const output = `A\tinbox/品牌圣经.md\nM\tinbox/ひらがな.md\nA\tinbox/한글.md`;
+    const manifest = buildSyncManifest(output);
+    expect(manifest.added).toEqual(['inbox/品牌圣经.md', 'inbox/한글.md']);
+    expect(manifest.modified).toEqual(['inbox/ひらがな.md']);
+  });
+
+  test('preserves CJK filenames with spaces (Apple Notes export pattern)', () => {
+    // Real-world example: Apple Notes exports files named like
+    // "2026-04-14 22_38 记录-个人智能体_原文.md" — spaces + CJK trigger
+    // git's path quoting unless core.quotepath=false is set.
+    const output = `A\tinbox/2026-04-14 22_38 记录-个人智能体_原文.md\nA\tinbox/2026-04-14 23_58 记录-人人都要龙虾群_原文.md`;
+    const manifest = buildSyncManifest(output);
+    expect(manifest.added).toEqual([
+      'inbox/2026-04-14 22_38 记录-个人智能体_原文.md',
+      'inbox/2026-04-14 23_58 记录-人人都要龙虾群_原文.md',
+    ]);
+  });
+
+  test('preserves CJK rename entries', () => {
+    const output = `R100\tinbox/旧名字.md\tinbox/新名字.md`;
+    const manifest = buildSyncManifest(output);
+    expect(manifest.renamed).toEqual([{ from: 'inbox/旧名字.md', to: 'inbox/新名字.md' }]);
+  });
 });
 
 describe('isSyncable', () => {
