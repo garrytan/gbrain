@@ -13,7 +13,8 @@
     "./types": "./src/core/types.ts",
     "./operations": "./src/core/operations.ts",
     "./minions": "./src/core/minions/index.ts",
-    "./engine-factory": "./src/core/engine-factory.ts"
+    "./engine-factory": "./src/core/engine-factory.ts",
+    "./src/*": "./src/*"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
