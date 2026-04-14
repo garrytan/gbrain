@@ -279,6 +279,13 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // serve --help doesn't need a DB connection
+  if (command === 'serve' && (args.includes('--help') || args.includes('-h'))) {
+    const { runServe } = await import('./commands/serve.ts');
+    await runServe(null as any, args); // engine unused for --help
+    return;
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
