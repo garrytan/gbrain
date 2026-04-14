@@ -31,6 +31,23 @@ function collectSyncableFiles(rootDir: string): { fullPath: string; relPath: str
 }
 
 export async function runRelink(engine: BrainEngine, args: string[]) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`gbrain relink — rebuild DB link graph from markdown links
+
+USAGE
+  gbrain relink [--dir <brain-dir>] [--dry-run]
+
+OPTIONS
+  --dir <path>     Brain directory to scan (default: current directory)
+  --dry-run        Report how many files would be relinked without writing
+
+Relink re-imports every syncable markdown file under <dir> with embeddings
+skipped, which triggers link reconciliation in import-file. Use after bulk
+markdown edits, schema migrations, or when the DB link graph has drifted
+from the markdown source of truth.`);
+    return;
+  }
+
   const dirIdx = args.indexOf('--dir');
   const rootDir = dirIdx >= 0 ? args[dirIdx + 1] : '.';
   const dryRun = args.includes('--dry-run');
