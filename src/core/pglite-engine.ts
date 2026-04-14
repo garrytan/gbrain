@@ -611,6 +611,22 @@ export class PGLiteEngine implements BrainEngine {
     await this.db.exec(sql);
   }
 
+  async getEmbeddingDimensions(): Promise<number | null> {
+    const { rows } = await this.db.query(
+      `SELECT format_type(a.atttypid, a.atttypmod) AS type
+       FROM pg_attribute a
+       JOIN pg_class c ON c.oid = a.attrelid
+       WHERE c.relname = 'content_chunks'
+         AND a.attname = 'embedding'
+         AND a.attnum > 0
+         AND NOT a.attisdropped`
+    );
+    if (rows.length === 0) return null;
+    const type = String((rows[0] as { type: string }).type || '');
+    const match = type.match(/vector\((\d+)\)/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
   async getChunksWithEmbeddings(slug: string): Promise<Chunk[]> {
     const { rows } = await this.db.query(
       `SELECT cc.* FROM content_chunks cc

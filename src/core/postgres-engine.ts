@@ -629,6 +629,23 @@ export class PostgresEngine implements BrainEngine {
     await conn.unsafe(sqlStr);
   }
 
+  async getEmbeddingDimensions(): Promise<number | null> {
+    const conn = this.sql;
+    const rows = await conn`
+      SELECT format_type(a.atttypid, a.atttypmod) AS type
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      WHERE c.relname = 'content_chunks'
+        AND a.attname = 'embedding'
+        AND a.attnum > 0
+        AND NOT a.attisdropped
+    `;
+    if (rows.length === 0) return null;
+    const type = String(rows[0].type || '');
+    const match = type.match(/vector\((\d+)\)/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
   async getChunksWithEmbeddings(slug: string): Promise<Chunk[]> {
     const conn = this.sql;
     const rows = await conn`

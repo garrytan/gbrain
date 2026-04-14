@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
+import { resolveEmbeddingSettings, ensureEmbeddingSchema } from './embedding-config.ts';
 import { embedBatch } from './embedding.ts';
 import type { ChunkInput } from './types.ts';
 
@@ -62,9 +63,12 @@ export async function importFromContent(
   // Embed BEFORE the transaction (external API call)
   if (!opts.noEmbed && chunks.length > 0) {
     try {
-      const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
+      await ensureEmbeddingSchema(engine);
+      const settings = await resolveEmbeddingSettings(engine);
+      const embeddings = await embedBatch(chunks.map(c => c.chunk_text), engine);
       for (let i = 0; i < chunks.length; i++) {
         chunks[i].embedding = embeddings[i];
+        chunks[i].model = settings.model;
         chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
       }
     } catch { /* non-fatal */ }

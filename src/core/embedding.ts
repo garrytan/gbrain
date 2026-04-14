@@ -8,60 +8,76 @@
  */
 
 import OpenAI from 'openai';
+import type { BrainEngine } from './engine.ts';
+import { resolveOpenAICredentials } from './openai-credentials.ts';
+import { resolveEmbeddingSettings } from './embedding-config.ts';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
 
-let client: OpenAI | null = null;
+let openAIClient: OpenAI | null = null;
+let openAIClientCacheKey = '';
 
-function getClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI();
+async function getOpenAIClient(engine?: BrainEngine): Promise<{ client: OpenAI; model: string; dimensions: number }> {
+  const settings = await resolveEmbeddingSettings(engine);
+  const creds = resolveOpenAICredentials();
+  if (!creds) {
+    throw new Error('No OpenAI-compatible credentials found. Set OPENAI_API_KEY or authenticate Hermes/Codex first.');
   }
-  return client;
+
+  const cacheKey = `${creds.baseURL || ''}|${creds.apiKey}`;
+  if (!openAIClient || openAIClientCacheKey !== cacheKey) {
+    openAIClient = new OpenAI({
+      apiKey: creds.apiKey,
+      ...(creds.baseURL ? { baseURL: creds.baseURL } : {}),
+    });
+    openAIClientCacheKey = cacheKey;
+  }
+
+  return { client: openAIClient, model: settings.model, dimensions: settings.dimensions };
 }
 
-export async function embed(text: string): Promise<Float32Array> {
+export async function embed(text: string, engine?: BrainEngine): Promise<Float32Array> {
   const truncated = text.slice(0, MAX_CHARS);
-  const result = await embedBatch([truncated]);
+  const result = await embedBatch([truncated], engine);
   return result[0];
 }
 
-export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
+export async function embedBatch(texts: string[], engine?: BrainEngine): Promise<Float32Array[]> {
+  const settings = await resolveEmbeddingSettings(engine);
   const truncated = texts.map(t => t.slice(0, MAX_CHARS));
   const results: Float32Array[] = [];
 
-  // Process in batches of BATCH_SIZE
   for (let i = 0; i < truncated.length; i += BATCH_SIZE) {
     const batch = truncated.slice(i, i + BATCH_SIZE);
-    const batchResults = await embedBatchWithRetry(batch);
+    const batchResults = settings.provider === 'ollama'
+      ? await embedBatchWithOllama(batch, settings)
+      : await embedBatchWithOpenAI(batch, engine);
     results.push(...batchResults);
   }
 
   return results;
 }
 
-async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
+async function embedBatchWithOpenAI(texts: string[], engine?: BrainEngine): Promise<Float32Array[]> {
+  const { client, model, dimensions } = await getOpenAIClient(engine);
+
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await getClient().embeddings.create({
-        model: MODEL,
+      const response = await client.embeddings.create({
+        model,
         input: texts,
-        dimensions: DIMENSIONS,
+        dimensions,
       });
 
-      // Sort by index to maintain order
       const sorted = response.data.sort((a, b) => a.index - b.index);
       return sorted.map(d => new Float32Array(d.embedding));
     } catch (e: unknown) {
       if (attempt === MAX_RETRIES - 1) throw e;
 
-      // Check for rate limit with Retry-After header
       let delay = exponentialDelay(attempt);
 
       if (e instanceof OpenAI.APIError && e.status === 429) {
@@ -78,8 +94,44 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
     }
   }
 
-  // Should not reach here
   throw new Error('Embedding failed after all retries');
+}
+
+async function embedBatchWithOllama(
+  texts: string[],
+  settings: Awaited<ReturnType<typeof resolveEmbeddingSettings>>,
+): Promise<Float32Array[]> {
+  const response = await fetch(`${settings.baseURL || 'http://127.0.0.1:11434'}/api/embed`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: settings.model,
+      input: texts,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Ollama embeddings failed (${response.status}): ${body.slice(0, 400)}`);
+  }
+
+  const payload = await response.json() as { embeddings?: number[][]; embedding?: number[]; error?: string };
+  const rawEmbeddings = Array.isArray(payload.embeddings)
+    ? payload.embeddings
+    : Array.isArray(payload.embedding)
+      ? [payload.embedding]
+      : null;
+
+  if (!rawEmbeddings) {
+    throw new Error(`Ollama embeddings response missing embeddings array${payload.error ? `: ${payload.error}` : ''}`);
+  }
+
+  return rawEmbeddings.map((embedding, index) => {
+    if (embedding.length !== settings.dimensions) {
+      throw new Error(`Ollama embedding dimension mismatch for item ${index}: expected ${settings.dimensions}, got ${embedding.length}`);
+    }
+    return new Float32Array(embedding);
+  });
 }
 
 function exponentialDelay(attempt: number): number {
@@ -91,4 +143,4 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
+export { DEFAULT_OPENAI_MODEL as EMBEDDING_MODEL, DEFAULT_OPENAI_DIMENSIONS as EMBEDDING_DIMENSIONS } from './embedding-config.ts';

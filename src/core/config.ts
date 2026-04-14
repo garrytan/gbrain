@@ -13,6 +13,11 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  embedding_provider?: 'openai' | 'ollama';
+  embedding_model?: string;
+  embedding_dimensions?: number;
+  embedding_base_url?: string;
+  ollama_base_url?: string;
 }
 
 /**
