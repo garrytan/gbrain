@@ -69,5 +69,6 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
     chunk_index: row.chunk_index as number,
     score: Number(row.score),
     stale: Boolean(row.stale),
+    ...(row.source_url ? { source_url: row.source_url as string } : {}),
   };
 }

@@ -64,6 +64,7 @@ export interface SearchResult {
   chunk_index: number;
   score: number;
   stale: boolean;
+  source_url?: string;
 }
 
 export interface SearchOpts {
