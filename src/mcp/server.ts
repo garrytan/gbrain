@@ -26,15 +26,29 @@ function validateParams(op: Operation, params: Record<string, unknown>): string 
   return null;
 }
 
-export async function startMcpServer(engine: BrainEngine) {
+export interface McpServerOptions {
+  /** When true, mutating operations (put_page, delete_page, etc.) are
+   *  hidden from tools/list and rejected on tools/call. Read-only
+   *  clients like dashboards or search interfaces can connect safely
+   *  without risking accidental writes. Default: false (all ops). */
+  readonly?: boolean;
+}
+
+export async function startMcpServer(engine: BrainEngine, opts?: McpServerOptions) {
+  const readonly = opts?.readonly ?? (process.env.GBRAIN_MCP_READONLY === '1' || process.env.GBRAIN_MCP_READONLY === 'true');
+
+  const visibleOps = readonly
+    ? operations.filter(op => !op.mutating)
+    : operations;
+
   const server = new Server(
     { name: 'gbrain', version: VERSION },
     { capabilities: { tools: {} } },
   );
 
-  // Generate tool definitions from operations
+  // Generate tool definitions — filtered by readonly mode
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: operations.map(op => ({
+    tools: visibleOps.map(op => ({
       name: op.name,
       description: op.description,
       inputSchema: {
@@ -54,12 +68,25 @@ export async function startMcpServer(engine: BrainEngine) {
     })),
   }));
 
-  // Dispatch tool calls to operation handlers
+  // Dispatch tool calls — enforce readonly at the boundary
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
     const op = operations.find(o => o.name === name);
     if (!op) {
       return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
+    }
+
+    if (readonly && op.mutating) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'readonly',
+            message: `Operation "${name}" is mutating and this server is in readonly mode. Start without GBRAIN_MCP_READONLY to enable writes.`,
+          }, null, 2),
+        }],
+        isError: true,
+      };
     }
 
     const ctx: OperationContext = {
@@ -90,6 +117,10 @@ export async function startMcpServer(engine: BrainEngine) {
       return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
     }
   });
+
+  if (readonly) {
+    process.stderr.write(`[gbrain] MCP server starting in READONLY mode (${visibleOps.length} of ${operations.length} operations available)\n`);
+  }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
