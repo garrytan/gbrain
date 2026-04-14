@@ -114,6 +114,10 @@ gbrain embed --stale
 If `OPENAI_API_KEY` is not set, embeddings can't be generated. Keyword search
 still works without embeddings, but hybrid/semantic search won't.
 
+If you're using a local Ollama embedding model through the OpenAI-compatible API,
+make sure `OPENAI_BASE_URL`, `OPENAI_EMBED_MODEL`, and `OPENAI_EMBED_DIMENSIONS`
+are also set. See `docs/guides/local-ollama-embeddings.md`.
+
 ### 4c. End-to-End Test
 
 This is the real test. Edit a brain page, push, wait, search.

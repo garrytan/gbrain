@@ -237,9 +237,20 @@ You take a meeting with someone. The agent writes a brain page for them, links i
 Set the API keys as environment variables:
 
 ```bash
-export OPENAI_API_KEY=sk-...
-export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=***
+export ANTHROPIC_API_KEY=***
 ```
+
+Or use a local Ollama embedding model through its OpenAI-compatible endpoint:
+
+```bash
+export OPENAI_API_KEY=dummy
+export OPENAI_BASE_URL=http://127.0.0.1:11434/v1
+export OPENAI_EMBED_MODEL=qwen3-embedding:4b
+export OPENAI_EMBED_DIMENSIONS=1536
+```
+
+See [`docs/guides/local-ollama-embeddings.md`](docs/guides/local-ollama-embeddings.md) for the full setup and the schema-compatibility caveat.
 
 The Supabase connection URL is configured during `gbrain init --supabase`. The OpenAI and Anthropic SDKs read their keys from the environment automatically.
 
