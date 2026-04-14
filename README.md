@@ -104,6 +104,7 @@ Once GBrain is installed, your agent needs data flowing in. GBrain ships integra
 | [X-to-Brain](recipes/x-to-brain.md) | — | Twitter → brain pages (timeline + mentions + deletions) |
 | [Calendar-to-Brain](recipes/calendar-to-brain.md) | credential-gateway | Google Calendar → searchable daily pages |
 | [Meeting Sync](recipes/meeting-sync.md) | — | Circleback transcripts → brain pages with attendees |
+| [Captain Multimodal](recipes/captain-multimodal.md) | — | Images, video, audio → searchable collections (Captain YC W26) |
 
 Run `gbrain integrations` to see status. Dependencies resolve automatically. See [Getting Data In](docs/integrations/README.md) for the full guide.
 
@@ -244,6 +245,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 The Supabase connection URL is configured during `gbrain init --supabase`. The OpenAI and Anthropic SDKs read their keys from the environment automatically.
 
 Without an OpenAI key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
+
+**Multimodal search** (images, video, audio) supplied by [Captain](https://runcaptain.com) (YC W26). Optional. See [recipes/captain-multimodal.md](recipes/captain-multimodal.md).
 
 ### GBrain without OpenClaw
 
