@@ -3,6 +3,8 @@
  * Each operation defines its schema, handler, and optional CLI hints.
  */
 
+import { resolve as resolvePath } from 'path';
+import { lstatSync } from 'fs';
 import type { BrainEngine } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import { importFromContent } from './import-file.ts';
@@ -10,6 +12,31 @@ import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import * as db from './db.ts';
+
+/**
+ * Validate that a file path is not a symlink. The remote Edge Function
+ * was removed in v0.8.0 so file_upload is only reachable via the local
+ * stdio MCP server and the CLI — both run as the local user who can
+ * already read any file. The symlink check prevents a planted symlink
+ * inside a shared brain directory from being silently followed.
+ */
+export function validateUploadPath(filePath: string): void {
+  const resolved = resolvePath(filePath);
+  const stat = lstatSync(resolved);
+  if (stat.isSymbolicLink()) {
+    throw new OperationError('path_denied', `file_upload rejects symlinks: ${filePath}`);
+  }
+}
+
+/**
+ * Validate that a page_slug does not contain path traversal sequences.
+ * Used by file_upload to prevent storage path injection.
+ */
+export function validatePageSlug(slug: string): void {
+  if (/\.\.[\\/]/.test(slug)) {
+    throw new OperationError('invalid_slug', `page_slug contains path traversal: ${slug}`);
+  }
+}
 
 // --- Types ---
 
@@ -578,6 +605,10 @@ const file_upload: Operation = {
 
     const filePath = p.path as string;
     const pageSlug = (p.page_slug as string) || null;
+
+    validateUploadPath(filePath);
+    if (pageSlug) validatePageSlug(pageSlug);
+
     const stat = statSync(filePath);
     const content = readFileSync(filePath);
     const hash = createHash('sha256').update(content).digest('hex');
