@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll, afterEach } from 'bun:test';
-import { writeFileSync, mkdirSync, rmSync } from 'fs';
+import { writeFileSync, mkdirSync, rmSync, symlinkSync } from 'fs';
 import { join } from 'path';
-import { importFile } from '../src/core/import-file.ts';
+import { importFile, importFromContent } from '../src/core/import-file.ts';
 import { resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -89,6 +89,65 @@ This is the compiled truth.
 
     expect(result.status).toBe('skipped');
     expect(result.error).toContain('too large');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('rejects frontmatter slug that does not match the file path', async () => {
+    const filePath = join(TMP, 'hijack.md');
+    writeFileSync(filePath, `---
+type: person
+title: Hijack
+slug: people/elon
+---
+
+Poisoned content.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'notes/random.md');
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('people/elon');
+    expect(result.error).toContain('notes/random');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('accepts frontmatter slug when it matches the path-derived slug', async () => {
+    const filePath = join(TMP, 'alice.md');
+    writeFileSync(filePath, `---
+type: person
+title: Alice
+slug: people/alice-smith
+---
+
+Legit content.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'people/alice-smith.md');
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('people/alice-smith');
+  });
+
+  test('skips symlinks in importFromFile', async () => {
+    const realFile = join(TMP, 'real-target.md');
+    writeFileSync(realFile, `---
+type: concept
+title: Real
+---
+
+Content.
+`);
+    const linkPath = join(TMP, 'symlink-file.md');
+    try { rmSync(linkPath); } catch { /* ignore */ }
+    symlinkSync(realFile, linkPath);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, linkPath, 'symlink-file.md');
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('symlink');
     expect((engine as any)._calls.length).toBe(0);
   });
 
@@ -294,6 +353,17 @@ This import should write chunks first and defer embeddings.
       expect(chunk.embedding).toBeUndefined();
       expect(chunk.model).toBeUndefined();
     }
+  });
+
+  test('rejects oversized in-memory content before DB work', async () => {
+    const bigContent = '---\ntitle: Big\n---\n' + 'x'.repeat(5_100_000);
+
+    const engine = mockEngine();
+    const result = await importFromContent(engine, 'big-slug', bigContent);
+
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('too large');
+    expect((engine as any)._calls.length).toBe(0);
   });
 
   test('assigns sequential chunk_index values', async () => {

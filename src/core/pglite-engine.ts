@@ -172,6 +172,20 @@ export class PGLiteEngine implements BrainEngine {
   // Search
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
     const limit = opts?.limit || 20;
+    const params: unknown[] = [query];
+    let filterSql = '';
+
+    if (opts?.type) {
+      params.push(opts.type);
+      filterSql += ` AND p.type = $${params.length}`;
+    }
+
+    if (opts?.exclude_slugs?.length) {
+      const excludeSlugs = opts.exclude_slugs.map((slug) => validateSlug(slug));
+      const placeholderStart = params.length + 1;
+      filterSql += ` AND p.slug NOT IN (${excludeSlugs.map((_, idx) => `$${placeholderStart + idx}`).join(', ')})`;
+      params.push(...excludeSlugs);
+    }
 
     const { rows } = await this.db.query(
       `SELECT DISTINCT ON (p.slug)
@@ -183,9 +197,9 @@ export class PGLiteEngine implements BrainEngine {
         ) THEN true ELSE false END AS stale
       FROM pages p
       JOIN content_chunks cc ON cc.page_id = p.id
-      WHERE p.search_vector @@ websearch_to_tsquery('english', $1)
+      WHERE p.search_vector @@ websearch_to_tsquery('english', $1)${filterSql}
       ORDER BY p.slug, score DESC`,
-      [query]
+      params
     );
 
     // Re-sort by score (DISTINCT ON requires ORDER BY slug first) and apply limit
@@ -200,6 +214,22 @@ export class PGLiteEngine implements BrainEngine {
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
     const limit = opts?.limit || 20;
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
+    const params: unknown[] = [vecStr];
+    let filterSql = '';
+
+    if (opts?.type) {
+      params.push(opts.type);
+      filterSql += ` AND p.type = $${params.length}`;
+    }
+
+    if (opts?.exclude_slugs?.length) {
+      const excludeSlugs = opts.exclude_slugs.map((slug) => validateSlug(slug));
+      const placeholderStart = params.length + 1;
+      filterSql += ` AND p.slug NOT IN (${excludeSlugs.map((_, idx) => `$${placeholderStart + idx}`).join(', ')})`;
+      params.push(...excludeSlugs);
+    }
+
+    params.push(limit);
 
     const { rows } = await this.db.query(
       `SELECT
@@ -211,10 +241,10 @@ export class PGLiteEngine implements BrainEngine {
         ) THEN true ELSE false END AS stale
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL
+      WHERE cc.embedding IS NOT NULL${filterSql}
       ORDER BY cc.embedding <=> $1::vector
-      LIMIT $2`,
-      [vecStr, limit]
+      LIMIT $${params.length}`,
+      params
     );
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);

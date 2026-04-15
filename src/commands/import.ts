@@ -1,4 +1,4 @@
-import { readdirSync, statSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
+import { readdirSync, lstatSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import { cpus, totalmem, homedir } from 'os';
@@ -209,7 +209,7 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   }
 }
 
-function collectMarkdownFiles(dir: string): string[] {
+export function collectMarkdownFiles(dir: string): string[] {
   const files: string[] = [];
 
   function walk(d: string) {
@@ -220,9 +220,14 @@ function collectMarkdownFiles(dir: string): string[] {
       const full = join(d, entry);
       let stat;
       try {
-        stat = statSync(full);
+        stat = lstatSync(full);
       } catch {
         console.warn(`[gbrain import] Skipping unreadable path: ${full}`);
+        continue;
+      }
+
+      if (stat.isSymbolicLink()) {
+        console.warn(`[gbrain import] Skipping symlink: ${full}`);
         continue;
       }
 

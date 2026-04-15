@@ -179,6 +179,81 @@ describe('PGLiteEngine: Search', () => {
     const results = await engine.searchVector(fakeEmbedding);
     expect(results.length).toBe(0);
   });
+
+  test('searchKeyword honors type and exclude_slugs filters', async () => {
+    await engine.putPage('people/alice-keyword', {
+      type: 'person',
+      title: 'Alice Keyword',
+      compiled_truth: 'Keyword retrieval for a person entry.',
+    });
+    await engine.upsertChunks('people/alice-keyword', [
+      { chunk_index: 0, chunk_text: 'keyword retrieval for person', chunk_source: 'compiled_truth' },
+    ]);
+
+    await engine.putPage('projects/apollo-keyword', {
+      type: 'project',
+      title: 'Apollo Keyword',
+      compiled_truth: 'Keyword retrieval for a project entry.',
+    });
+    await engine.upsertChunks('projects/apollo-keyword', [
+      { chunk_index: 0, chunk_text: 'keyword retrieval for project', chunk_source: 'compiled_truth' },
+    ]);
+
+    const peopleOnly = await engine.searchKeyword('keyword retrieval', { type: 'person' });
+    expect(peopleOnly.map((entry) => entry.slug)).toEqual(['people/alice-keyword']);
+
+    const excluded = await engine.searchKeyword('keyword retrieval', {
+      type: 'person',
+      exclude_slugs: ['people/alice-keyword'],
+    });
+    expect(excluded).toEqual([]);
+  });
+
+  test('searchVector honors type and exclude_slugs filters', async () => {
+    const personEmbedding = new Float32Array(768);
+    personEmbedding[0] = 1;
+    const projectEmbedding = new Float32Array(768);
+    projectEmbedding[0] = 1;
+    const queryEmbedding = new Float32Array(768);
+    queryEmbedding[0] = 1;
+
+    await engine.putPage('people/alice-vector', {
+      type: 'person',
+      title: 'Alice Vector',
+      compiled_truth: 'Vector retrieval for a person entry.',
+    });
+    await engine.upsertChunks('people/alice-vector', [
+      {
+        chunk_index: 0,
+        chunk_text: 'vector retrieval person',
+        chunk_source: 'compiled_truth',
+        embedding: personEmbedding,
+      },
+    ]);
+
+    await engine.putPage('projects/apollo-vector', {
+      type: 'project',
+      title: 'Apollo Vector',
+      compiled_truth: 'Vector retrieval for a project entry.',
+    });
+    await engine.upsertChunks('projects/apollo-vector', [
+      {
+        chunk_index: 0,
+        chunk_text: 'vector retrieval project',
+        chunk_source: 'compiled_truth',
+        embedding: projectEmbedding,
+      },
+    ]);
+
+    const projectsOnly = await engine.searchVector(queryEmbedding, { type: 'project' });
+    expect(projectsOnly.map((entry) => entry.slug)).toEqual(['projects/apollo-vector']);
+
+    const excluded = await engine.searchVector(queryEmbedding, {
+      type: 'project',
+      exclude_slugs: ['projects/apollo-vector'],
+    });
+    expect(excluded).toEqual([]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
