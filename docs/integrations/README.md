@@ -28,13 +28,14 @@ These are integration recipes your agent can set up for you. Run
 
 | Recipe | Category | Requires | What It Does | Setup Time |
 |--------|----------|----------|-------------|------------|
+| [google-tools-mcp](../../recipes/google-tools-mcp.md) | Infra | — | **Unified Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Forms, Slides via MCP (153 tools) | 5 min |
 | [ngrok-tunnel](../../recipes/ngrok-tunnel.md) | Infra | — | Fixed public URL for MCP + voice ($8/mo) | 10 min |
-| [credential-gateway](../../recipes/credential-gateway.md) | Infra | — | Gmail + Calendar access (ClawVisor or Google OAuth) | 15 min |
 | [voice-to-brain](../../recipes/twilio-voice-brain.md) | Sense | ngrok-tunnel | Phone calls create brain pages via Twilio + OpenAI Realtime | 30 min |
-| [email-to-brain](../../recipes/email-to-brain.md) | Sense | credential-gateway | Gmail messages flow into entity pages via deterministic collector | 20 min |
 | [x-to-brain](../../recipes/x-to-brain.md) | Sense | — | Twitter timeline, mentions, keyword monitoring with deletion detection | 15 min |
-| [calendar-to-brain](../../recipes/calendar-to-brain.md) | Sense | credential-gateway | Google Calendar events become searchable daily brain pages | 20 min |
 | [meeting-sync](../../recipes/meeting-sync.md) | Sense | — | Circleback meeting transcripts auto-import with attendee propagation | 15 min |
+| ~~[credential-gateway](../../recipes/credential-gateway.md)~~ | ~~Infra~~ | — | ~~Gmail + Calendar access~~ *Deprecated — use google-tools-mcp* | — |
+| ~~[email-to-brain](../../recipes/email-to-brain.md)~~ | ~~Sense~~ | — | ~~Gmail collector~~ *Deprecated — use google-tools-mcp* | — |
+| ~~[calendar-to-brain](../../recipes/calendar-to-brain.md)~~ | ~~Sense~~ | — | ~~Calendar sync~~ *Deprecated — use google-tools-mcp* | — |
 
 ### Manual Integration Guides
 
