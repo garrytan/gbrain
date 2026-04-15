@@ -76,8 +76,8 @@ export function buildSyncManifest(gitDiffOutput: string): SyncManifest {
  * Filter a file path to determine if it should be synced to GBrain.
  */
 export function isSyncable(path: string): boolean {
-  // Must be .md
-  if (!path.endsWith('.md')) return false;
+  // Must be .md or .mdx
+  if (!path.endsWith('.md') && !path.endsWith('.mdx')) return false;
 
   // Skip hidden directories
   if (path.split('/').some(p => p.startsWith('.'))) return false;
@@ -119,7 +119,7 @@ export function slugifySegment(segment: string): string {
  *   notes/v1.0.0.md → notes/v1.0.0
  */
 export function slugifyPath(filePath: string): string {
-  let path = filePath.replace(/\.md$/i, '');
+  let path = filePath.replace(/\.mdx?$/i, '');
   path = path.replace(/\\/g, '/');
   path = path.replace(/^\.?\//, '');
   return path.split('/').map(slugifySegment).filter(Boolean).join('/');

@@ -58,7 +58,12 @@ describe('isSyncable', () => {
     expect(isSyncable('notes.md')).toBe(true);
   });
 
-  test('rejects non-.md files', () => {
+  test('accepts .mdx files', () => {
+    expect(isSyncable('components/hero.mdx')).toBe(true);
+    expect(isSyncable('docs/getting-started.mdx')).toBe(true);
+  });
+
+  test('rejects non-.md/.mdx files', () => {
     expect(isSyncable('people/photo.jpg')).toBe(false);
     expect(isSyncable('config.json')).toBe(false);
     expect(isSyncable('src/cli.ts')).toBe(false);

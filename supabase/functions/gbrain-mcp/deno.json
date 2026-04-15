@@ -2,7 +2,13 @@
   "imports": {
     "postgres": "npm:postgres@3",
     "openai": "npm:openai@4",
-    "@modelcontextprotocol/sdk/": "npm:@modelcontextprotocol/sdk@1/",
+    "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@0",
+    "@aws-sdk/client-s3": "npm:@aws-sdk/client-s3@3",
+    "gray-matter": "npm:gray-matter@4",
+    "child_process": "node:child_process",
+    "@modelcontextprotocol/sdk/server/index.js": "npm:@modelcontextprotocol/sdk@1/server/index.js",
+    "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js": "npm:@modelcontextprotocol/sdk@1/server/webStandardStreamableHttp.js",
+    "@modelcontextprotocol/sdk/types.js": "npm:@modelcontextprotocol/sdk@1/types.js",
     "hono": "npm:hono@4",
     "hono/cors": "npm:hono@4/cors",
     "crypto": "node:crypto"

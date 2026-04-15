@@ -212,13 +212,22 @@ function collectMarkdownFiles(dir: string): string[] {
     for (const entry of readdirSync(d)) {
       // Skip hidden dirs and .raw dirs
       if (entry.startsWith('.')) continue;
+      // Skip node_modules
+      if (entry === 'node_modules') continue;
 
       const full = join(d, entry);
-      const stat = statSync(full);
+      let stat;
+      try {
+        stat = statSync(full);
+      } catch {
+        // Broken symlink or permission error — skip
+        console.warn(`[gbrain import] Skipping unreadable path: ${full}`);
+        continue;
+      }
 
       if (stat.isDirectory()) {
         walk(full);
-      } else if (entry.endsWith('.md')) {
+      } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
         files.push(full);
       }
     }

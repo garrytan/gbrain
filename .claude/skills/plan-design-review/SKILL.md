@@ -1,1 +1,0 @@
-/Users/garrytan/git/gbrain/.claude/skills/gstack/plan-design-review/SKILL.md

@@ -1,1 +1,0 @@
-/Users/garrytan/git/gbrain/.claude/skills/gstack/review/SKILL.md

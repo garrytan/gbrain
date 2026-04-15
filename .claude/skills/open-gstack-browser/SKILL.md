@@ -1,1 +1,0 @@
-/Users/garrytan/git/gbrain/.claude/skills/gstack/open-gstack-browser/SKILL.md

@@ -106,7 +106,7 @@ export async function runInit(args: string[]) {
     throw e;
   }
 
-  // Check pgvector extension.
+  // Check and auto-create pgvector extension.
   // db.getConnection() returns the module-level singleton set by PostgresEngine.connect().
   // This is safe here because createEngineFromConfig() above creates a standard (non-pooled)
   // connection that always initializes the db module singleton.
@@ -114,11 +114,17 @@ export async function runInit(args: string[]) {
     const conn = db.getConnection();
     const ext = await conn`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
     if (ext.length === 0) {
-      console.error('pgvector extension not found. Run this on your Postgres database:');
-      console.error('  CREATE EXTENSION vector;');
-      console.error("  Use psql, your provider's query console, or Supabase SQL Editor if applicable.");
-      await engine.disconnect();
-      process.exit(1);
+      console.log('pgvector extension not found. Attempting to create...');
+      try {
+        await conn`CREATE EXTENSION IF NOT EXISTS vector`;
+        console.log('pgvector extension created successfully.');
+      } catch {
+        console.error('Could not auto-create pgvector extension. Run this on your Postgres database:');
+        console.error('  CREATE EXTENSION vector;');
+        console.error("  Use psql, your provider's query console, or Supabase SQL Editor if applicable.");
+        await engine.disconnect();
+        process.exit(1);
+      }
     }
   } catch {
     // Non-fatal: proceed without pgvector check if query fails
@@ -180,6 +186,7 @@ function readLine(prompt: string): Promise<string> {
     process.stdin.setEncoding('utf-8');
     process.stdin.once('data', (chunk) => {
       data = chunk.toString().trim();
+      process.stdin.pause();
       resolve(data);
     });
     process.stdin.resume();

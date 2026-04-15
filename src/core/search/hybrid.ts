@@ -64,7 +64,6 @@ export async function hybridSearch(
   if (vectorLists.length === 0 || vectorLists.every(list => list.length === 0)) {
     return keywordResults.slice(0, limit);
   }
-
   // Merge all result lists via RRF
   const allLists = [...vectorLists, keywordResults];
   const fused = rrfFusion(allLists);

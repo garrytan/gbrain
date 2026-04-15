@@ -2,6 +2,39 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.6.1] - 2026-04-10
+
+### Fixed
+
+- **Import no longer silently drops files with "..." in the name.** The path traversal check rejected any filename containing two consecutive dots, killing 1.2% of files in real-world corpora (YouTube transcripts, TED talks, podcast titles). Now only rejects actual traversal patterns like `../`. Community fix wave, 8 contributors.
+- **Import no longer crashes on JavaScript/TypeScript projects.** The file walker crashed on `node_modules` directories and broken symlinks. Now skips `node_modules` and handles broken symlinks gracefully with a warning.
+- **`gbrain init` exits cleanly after setup.** Previously hung forever because stdin stayed open. Now pauses stdin after reading input.
+- **pgvector extension auto-created during init.** No more copy-pasting SQL into the Supabase editor. `gbrain init` now runs `CREATE EXTENSION IF NOT EXISTS vector` automatically, with a clear fallback message if it can't.
+- **Supabase connection string hint matches current dashboard UI.** Updated navigation path to match the 2026 Supabase dashboard layout.
+- **Hermes Agent link fixed in README.** Pointed to the correct NousResearch GitHub repo.
+
+### Changed
+
+- **Search is faster.** Keyword search now runs in parallel with the embedding pipeline instead of waiting for it. Saves ~200-500ms per hybrid search call.
+- **.mdx files are now importable.** The import walker, sync filter, and slug generator all recognize `.mdx` alongside `.md`.
+
+### Added
+
+- **Community PR wave process** documented in CLAUDE.md for future contributor batches.
+
+### Contributors
+
+Thank you to everyone who reported bugs, submitted fixes, and helped make GBrain better:
+
+- **@orendi84** — slug validator ellipsis fix (PR #31)
+- **@mattbratos** — import walker resilience + MDX support (PRs #26, #27)
+- **@changergosum** — init exit fix + auto pgvector (PRs #17, #18)
+- **@eric-hth** — Supabase UI hint update (PR #30)
+- **@irresi** — parallel hybrid search (PR #8)
+- **@howardpen9** — Hermes Agent link fix (PR #34)
+- **@cktang88** — the thorough 12-bug report that drove v0.6.0 (Issue #22)
+- **@mvanhorn** — MCP schema handler fix (PR #25)
+
 ## [0.6.0] - 2026-04-10
 
 ### Added

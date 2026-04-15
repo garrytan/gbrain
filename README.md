@@ -4,7 +4,7 @@ The memex Vannevar Bush imagined, built for people who think for a living.
 
 ## How this happened
 
-I was setting up my [OpenClaw](https://openclaw.com) agent and started a markdown brain repo. One page per person, one page per company, compiled truth on top, append-only timeline on the bottom. The agent got smarter the more it knew, so I kept feeding it. Meetings, emails, tweets, Apple Notes, calendar data, original ideas. One thing led to another. Within a week I had:
+I was setting up my [OpenClaw](https://openclaw.ai) agent and started a markdown brain repo. One page per person, one page per company, compiled truth on top, append-only timeline on the bottom. The agent got smarter the more it knew, so I kept feeding it. Meetings, emails, tweets, Apple Notes, calendar data, original ideas. One thing led to another. Within a week I had:
 
 - **10,000+ markdown files** indexed and searchable
 - **3,000+ people** with compiled dossiers and relationship history
@@ -107,7 +107,7 @@ Without the skillpack, your agent has tools but no playbook. With it, the agent 
 
 GBrain is world knowledge — people, companies, deals, meetings, concepts, your original thinking. It's the long-term memory of what you know about the world.
 
-[OpenClaw](https://openclaw.com) agent memory (`memory_search`) is operational state — preferences, decisions, session context, how the agent should behave.
+[OpenClaw](https://openclaw.ai) agent memory (`memory_search`) is operational state — preferences, decisions, session context, how the agent should behave.
 
 They're complementary:
 
@@ -196,7 +196,7 @@ Without a local embedding runtime, search still works (keyword only, no vector s
 
 ### With OpenClaw or Hermes Agent (recommended)
 
-To install, paste this into [OpenClaw](https://openclaw.com) or [Hermes Agent](https://hermesagent.com) and we'll work with you to do the rest:
+To install, paste this into [OpenClaw](https://openclaw.ai) or [Hermes Agent](https://github.com/NousResearch/hermes-agent) and we'll work with you to do the rest:
 
 ```
 Set up gbrain (https://github.com/meghendra6/gbrain) as my

@@ -627,7 +627,7 @@ export class PostgresEngine implements BrainEngine {
 // Helpers
 function validateSlug(slug: string): string {
   // Git is the system of record — slugs are lowercased repo-relative paths.
-  if (!slug || /\.\./.test(slug) || /^\//.test(slug)) {
+  if (!slug || /(^|\/)\.\.($|\/)/.test(slug) || /^\//.test(slug)) {
     throw new Error(`Invalid slug: "${slug}". Slugs cannot be empty, start with /, or contain path traversal.`);
   }
   // Normalize to lowercase — all entry points (pathToSlug, inferSlug, frontmatter, direct writes) go through here

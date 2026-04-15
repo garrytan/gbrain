@@ -209,6 +209,30 @@ done
 
 If any SHA differs from what's in the workflow files, update the pin and version comment.
 
+## Community PR wave process
+
+Never merge external PRs directly into master. Instead, use the "fix wave" workflow:
+
+1. **Categorize** — group PRs by theme (bug fixes, features, infra, docs)
+2. **Deduplicate** — if two PRs fix the same thing, pick the one that changes fewer
+   lines. Close the other with a note pointing to the winner.
+3. **Collector branch** — create a feature branch (e.g. `garrytan/fix-wave-N`), cherry-pick
+   or manually re-implement the best fixes from each PR. Do NOT merge PR branches directly —
+   read the diff, understand the fix, and write it yourself if needed.
+4. **Test the wave** — verify with `bun test && bun run test:e2e` (full E2E lifecycle).
+   Every fix in the wave must have test coverage.
+5. **Close with context** — every closed PR gets a comment explaining why and what (if
+   anything) supersedes it. Contributors did real work; respect that with clear communication
+   and thank them.
+6. **Ship as one PR** — single PR to master with all attributions preserved via
+   `Co-Authored-By:` trailers. Include a summary of what merged and what closed.
+
+**Community PR guardrails:**
+- Always AskUserQuestion before accepting commits that touch voice, tone, or
+  promotional material (README intro, CHANGELOG voice, skill templates).
+- Never auto-merge PRs that remove YC references or "neutralize" the founder perspective.
+- Preserve contributor attribution in commit messages.
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill

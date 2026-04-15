@@ -7,7 +7,7 @@ import { slugifySegment, slugifyPath } from '../src/core/sync.ts';
 
 function validateSlug(slug: string): boolean {
   // Mirrors the logic in postgres-engine.ts
-  if (!slug || /\.\./.test(slug) || /^\//.test(slug)) return false;
+  if (!slug || /(^|\/)\.\.($|\/)/.test(slug) || /^\//.test(slug)) return false;
   return true;
 }
 
@@ -64,6 +64,11 @@ describe('slugifyPath', () => {
 
   test('strips .md extension case-insensitively', () => {
     expect(slugifyPath('notes/file.MD')).toBe('notes/file');
+  });
+
+  test('strips .mdx extension', () => {
+    expect(slugifyPath('components/hero.mdx')).toBe('components/hero');
+    expect(slugifyPath('docs/guide.MDX')).toBe('docs/guide');
   });
 
   test('normalizes backslashes', () => {
@@ -147,5 +152,34 @@ describe('validateSlug (widened for any filename chars)', () => {
   test('accepts slug with dots (not traversal)', () => {
     expect(validateSlug('notes/v1.0.0')).toBe(true);
     expect(validateSlug('notes/file.name.md')).toBe(true);
+  });
+
+  // Ellipsis false positive regression tests (PR #31)
+  test('accepts slug with ellipsis (...)', () => {
+    expect(validateSlug('ted-talks/i got 99 problems... palsy is just one')).toBe(true);
+    expect(validateSlug('huberman-lab/how...works')).toBe(true);
+    expect(validateSlug('multiple...dots...here')).toBe(true);
+  });
+
+  test('accepts slug with double dots in non-traversal positions', () => {
+    expect(validateSlug('notes/v1..2')).toBe(true);
+    expect(validateSlug('file..name')).toBe(true);
+  });
+
+  test('rejects bare .. as slug', () => {
+    expect(validateSlug('..')).toBe(false);
+  });
+
+  test('rejects .. at start of path', () => {
+    expect(validateSlug('../etc/passwd')).toBe(false);
+  });
+
+  test('rejects .. in middle of path', () => {
+    expect(validateSlug('notes/../../etc')).toBe(false);
+    expect(validateSlug('a/../b')).toBe(false);
+  });
+
+  test('rejects .. at end of path', () => {
+    expect(validateSlug('notes/..')).toBe(false);
   });
 });
