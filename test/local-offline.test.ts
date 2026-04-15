@@ -643,7 +643,7 @@ Updated chunk content for the same page.
     expect(chunksAfterRewrite[0].model).toBe('nomic-embed-text');
   });
 
-  test('stale-only embedding updates only missing chunks', async () => {
+  test('stale-only embedding repairs stale chunk layouts before embedding missing chunks', async () => {
     const fake = createFakeProvider();
     setEmbeddingProviderForTests(fake.provider);
 
@@ -675,20 +675,125 @@ Updated chunk content for the same page.
       },
     ]);
 
-    const before = await engine.getChunks('concepts/stale-only');
-    const originalEmbeddedAt = before[0].embedded_at?.toISOString();
-
     await runEmbed(engine, ['--stale']);
 
-    expect(fake.batches).toEqual([['already embedded', 'needs embedding', 'still missing']]);
+    expect(fake.batches).toEqual([['already embedded\nneeds embedding', 'still missing']]);
 
     const after = await engine.getChunks('concepts/stale-only');
+    expect(after).toHaveLength(2);
+    expect(after[0].chunk_text).toBe('already embedded\nneeds embedding');
     expect(after[0].model).toBe('test-local-v1');
     expect(after[0].embedded_at).toBeInstanceOf(Date);
     expect(after[1].embedded_at).toBeInstanceOf(Date);
     expect(after[1].model).toBe('test-local-v1');
-    expect(after[2].embedded_at).toBeInstanceOf(Date);
-    expect(after[2].model).toBe('test-local-v1');
+    expect(after[1].chunk_text).toBe('still missing');
+  });
+
+  test('stale-only embedding backfills missing frontmatter chunks for existing pages', async () => {
+    const fake = createFakeProvider();
+    setEmbeddingProviderForTests(fake.provider);
+
+    await engine.putPage('systems/llvm', {
+      type: 'system',
+      title: 'LLVM',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter: {
+        codemap: [
+          {
+            system: 'systems/llvm',
+            pointers: [
+              {
+                path: 'llvm/lib/Passes/PassBuilder.cpp',
+                symbol: 'PassBuilder::buildPerModuleDefaultPipeline()',
+                role: 'Builds the default optimization pipeline',
+                verified_at: '2026-04-15',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await engine.upsertChunks('systems/llvm', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Compiler infrastructure overview.',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([1, 2, 3]),
+        model: 'test-local-v1',
+        token_count: 3,
+      },
+    ]);
+
+    await runEmbed(engine, ['--stale']);
+
+    const after = await engine.getChunks('systems/llvm');
+    expect(after).toHaveLength(2);
+    expect(after[0]?.chunk_source).toBe('compiled_truth');
+    expect(after[0]?.embedded_at).toBeInstanceOf(Date);
+    expect(after[1]?.chunk_source).toBe('frontmatter');
+    expect(after[1]?.chunk_text).toContain('PassBuilder::buildPerModuleDefaultPipeline()');
+    expect(after[1]?.embedded_at).toBeInstanceOf(Date);
+  });
+
+  test('stale-only embedding removes obsolete frontmatter chunks after codemap deletion', async () => {
+    const fake = createFakeProvider();
+    setEmbeddingProviderForTests(fake.provider);
+
+    await engine.putPage('systems/llvm', {
+      type: 'system',
+      title: 'LLVM',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter: {
+        codemap: [
+          {
+            system: 'systems/llvm',
+            pointers: [
+              {
+                path: 'llvm/lib/Passes/PassBuilder.cpp',
+                symbol: 'PassBuilder::buildPerModuleDefaultPipeline()',
+                role: 'Builds the default optimization pipeline',
+                verified_at: '2026-04-15',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await engine.upsertChunks('systems/llvm', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Compiler infrastructure overview.',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([1, 2, 3]),
+        model: 'test-local-v1',
+        token_count: 3,
+      },
+      {
+        chunk_index: 1,
+        chunk_text: 'pointer llvm/lib/Passes/PassBuilder.cpp PassBuilder::buildPerModuleDefaultPipeline()',
+        chunk_source: 'frontmatter',
+        embedding: new Float32Array([4, 5, 6]),
+        model: 'test-local-v1',
+        token_count: 6,
+      },
+    ]);
+
+    await engine.putPage('systems/llvm', {
+      type: 'system',
+      title: 'LLVM',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    await runEmbed(engine, ['--stale']);
+
+    const after = await engine.getChunks('systems/llvm');
+    expect(after).toHaveLength(1);
+    expect(after[0]?.chunk_source).toBe('compiled_truth');
+    expect(after[0]?.chunk_text).toBe('Compiler infrastructure overview.');
   });
 
   test('unchanged content does not trigger re-embedding', async () => {

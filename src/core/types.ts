@@ -1,5 +1,45 @@
 // Page types
-export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media';
+export type PageType =
+  | 'person'
+  | 'company'
+  | 'deal'
+  | 'yc'
+  | 'civic'
+  | 'project'
+  | 'concept'
+  | 'source'
+  | 'media'
+  | 'system';
+
+export type ChunkSource = 'compiled_truth' | 'timeline' | 'frontmatter';
+
+export interface CodemapPointer {
+  path: string;
+  symbol?: string;
+  role: string;
+  verified_at?: string;
+  stale?: boolean;
+}
+
+export interface CodemapEntry {
+  system: string;
+  pointers: CodemapPointer[];
+  vocabulary?: string;
+}
+
+export interface SystemEntryPoint {
+  name: string;
+  path: string;
+  purpose: string;
+}
+
+export interface SystemFrontmatter {
+  repo?: string;
+  language?: string[];
+  build_command?: string;
+  test_command?: string;
+  key_entry_points?: SystemEntryPoint[];
+}
 
 export interface Page {
   id: number;
@@ -36,7 +76,7 @@ export interface Chunk {
   page_id: number;
   chunk_index: number;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline';
+  chunk_source: ChunkSource;
   embedding: Float32Array | null;
   model: string;
   token_count: number | null;
@@ -46,7 +86,7 @@ export interface Chunk {
 export interface ChunkInput {
   chunk_index: number;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline';
+  chunk_source: ChunkSource;
   embedding?: Float32Array;
   model?: string;
   token_count?: number;
@@ -59,7 +99,7 @@ export interface SearchResult {
   title: string;
   type: PageType;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline';
+  chunk_source: ChunkSource;
   score: number;
   stale: boolean;
 }

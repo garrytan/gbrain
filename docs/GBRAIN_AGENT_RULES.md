@@ -1,5 +1,5 @@
-<!-- gbrain-agent-rules-version: 0.5.1 -->
-<!-- source: https://raw.githubusercontent.com/meghendra6/gbrain/master/docs/GBRAIN_AGENT_RULES.md -->
+<!-- gbrain-agent-rules-version: 0.5.2 -->
+<!-- source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_AGENT_RULES.md -->
 # GBrain Agent Rules
 
 These are the behavioral rules your AI agent must follow to operate gbrain as a
@@ -18,7 +18,7 @@ Every conversation must follow this cycle:
 
 ```
 Signal arrives (message, meeting, email, link)
-  → Detect entities (people, companies, concepts)
+  → Detect entities (people, companies, concepts, technical systems)
   → READ brain first (gbrain search / query / get)
   → Respond with brain context
   → WRITE new info back to brain (gbrain put_page)
@@ -35,9 +35,10 @@ Signal arrives (message, meeting, email, link)
 
 ---
 
-## 2. Brain-First Lookup (before every entity question)
+## 2. Brain-First Lookup (before every entity or technical question)
 
-Before calling ANY external API to research a person, company, or topic:
+Before calling ANY external API or broad code search to research a person,
+company, concept, system, or topic:
 
 ```
 1. gbrain search "name"          -- keyword match, fast, always works
@@ -75,6 +76,17 @@ People, companies, concepts. For each:
 3. Thin page → enrich in background
 4. Rich page → load silently for context
 5. New facts → append to timeline
+
+### Technical Concept Mentions
+
+In addition to people/company/deal entities, detect:
+
+| Signal | Destination |
+|--------|-------------|
+| User asks "how does X work" | `brain/concepts/{x-slug}.md` |
+| User mentions a system/repo | `brain/systems/{system-slug}.md` |
+| User asks a cross-system question | Check all relevant concept + system pages |
+| Agent discovers a reusable code pattern | Update or create a concept page with `codemap` |
 
 ### Rules
 
@@ -175,3 +187,4 @@ format, cron schedules, page templates, upgrade procedures), use the
 | 15 | Five operational disciplines |
 | 17 | Upgrade and auto-update flow |
 | 18 | Live sync setup |
+| 19 | Technical knowledge maps |

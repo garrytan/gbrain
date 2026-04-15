@@ -1,5 +1,8 @@
 import type { BrainEngine } from './engine.ts';
+import { buildFrontmatterSearchText } from './markdown.ts';
+import { ensurePageChunks } from './page-chunks.ts';
 import { slugifyPath } from './sync.ts';
+import type { Page } from './types.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -30,7 +33,7 @@ const MIGRATIONS: Migration[] = [
     name: 'slugify_existing_pages',
     sql: '',
     handler: async (engine) => {
-      const pages = await engine.listPages();
+      const pages = await listAllPages(engine);
       let renamed = 0;
       for (const page of pages) {
         const newSlug = slugifyPath(page.slug);
@@ -103,6 +106,21 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
     `,
   },
+  {
+    version: 6,
+    name: 'searchable_frontmatter',
+    sql: `
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT '';
+    `,
+    handler: async (engine) => {
+      const pages = await listAllPages(engine);
+      for (const page of pages) {
+        const searchText = buildFrontmatterSearchText(page.frontmatter);
+        await backfillSearchText(engine, page.id, searchText);
+        await ensurePageChunks(engine, page);
+      }
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -136,4 +154,37 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   }
 
   return { applied, current: applied > 0 ? MIGRATIONS[MIGRATIONS.length - 1].version : current };
+}
+
+async function backfillSearchText(engine: BrainEngine, pageId: number, searchText: string): Promise<void> {
+  const candidate = engine as BrainEngine & {
+    sql?: (TemplateStringsArray | any);
+    db?: { query: (query: string, values?: unknown[]) => Promise<unknown> };
+  };
+
+  if ('sql' in candidate && candidate.sql) {
+    await candidate.sql`UPDATE pages SET search_text = ${searchText} WHERE id = ${pageId}`;
+    return;
+  }
+
+  if ('db' in candidate && candidate.db) {
+    await candidate.db.query('UPDATE pages SET search_text = $1 WHERE id = $2', [searchText, pageId]);
+    return;
+  }
+
+  throw new Error('search_text backfill requires a SQL-capable engine');
+}
+
+async function listAllPages(engine: BrainEngine, batchSize = 1000): Promise<Page[]> {
+  const pages: Page[] = [];
+
+  for (let offset = 0; ; offset += batchSize) {
+    const batch = await engine.listPages({ limit: batchSize, offset });
+    pages.push(...batch);
+    if (batch.length < batchSize) {
+      break;
+    }
+  }
+
+  return pages;
 }

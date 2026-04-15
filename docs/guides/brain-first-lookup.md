@@ -2,16 +2,18 @@
 
 ## Goal
 
-Check the brain before calling ANY external API. The brain almost always has
-something. External APIs fill gaps, they don't start from scratch.
+Check the brain before calling ANY external API or doing broad repo search.
+The brain almost always has something. External sources fill gaps, they don't
+start from scratch.
 
 ## What the User Gets
 
-Without this: the agent calls Brave Search for someone you've had 12 meetings with.
-You get a LinkedIn summary instead of your relationship history.
+Without this: the agent calls Brave Search for someone you've had 12 meetings
+with, or greps 100K lines of unfamiliar code just to find three files.
 
-With this: the agent pulls your compiled truth, recent timeline entries, and
-shared context before doing anything else. External APIs only fill gaps.
+With this: the agent pulls compiled truth, recent timeline entries, and
+technical maps before doing anything else. External APIs or code search only
+fill gaps.
 
 ## Implementation
 
@@ -33,9 +35,9 @@ lookup(name_or_topic):
   page = gbrain get "people/{slugify(name_or_topic)}"
   if page: return page
 
-  // STEP 4: External API (FALLBACK ONLY)
-  // Only reach here if brain has nothing
-  return external_search(name_or_topic)
+  // STEP 4: External API or broad repo search (FALLBACK ONLY)
+  // Only reach here if brain has nothing useful
+  return external_search_or_repo_scan(name_or_topic)
 ```
 
 **This is mandatory.** An agent that calls Brave Search before checking the brain
@@ -54,6 +56,10 @@ A LinkedIn scrape gives you their job title. The brain gives you: "co-founded
 Brex, you had coffee with him 3 times, last discussed the payments infrastructure
 thesis, he's interested in your take on AI agents."
 
+For technical work, blind repo search gives you file matches with no structure.
+The brain can give you: "this concept lives in these three systems, here are the
+entry points, and here is the vocabulary each codebase uses."
+
 ## Tricky Spots
 
 1. **Try keyword first, then hybrid.** Keyword search works without embeddings
@@ -71,6 +77,10 @@ thesis, he's interested in your take on AI agents."
 4. **Load compiled truth + recent timeline.** The compiled truth gives you the
    state of play in 30 seconds. The timeline gives you what changed recently.
    Both together = full context.
+
+5. **Use the same protocol for code questions.** Before searching a repo for
+   "autograd" or "dispatcher", check `concepts/` and `systems/` first. The map
+   tells you which files to inspect and which vocabulary to search for.
 
 ## How to Verify
 

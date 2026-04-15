@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { buildPageChunks, importFromContent } from '../src/core/import-file.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { ChunkInput, PageInput } from '../src/core/types.ts';
+import { importContentHash } from '../src/core/utils.ts';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -224,6 +226,130 @@ describe('SQLiteEngine', () => {
     expect(await engine.searchVector(new Float32Array([0.1, 0.2, 0.3]))).toEqual([]);
   });
 
+  test('revertToVersion refreshes searchable codemap state', async () => {
+    await putPage('systems/revert-test.md', {
+      type: 'system',
+      title: 'Revert Test',
+      compiled_truth: 'Original symbol map.',
+      timeline: '',
+      frontmatter: {
+        codemap: [
+          {
+            system: 'systems/revert-test',
+            pointers: [
+              {
+                path: 'src/original.ts',
+                symbol: 'Old::Symbol()',
+                role: 'Original implementation',
+                verified_at: '2026-04-16',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await putChunks('systems/revert-test.md', buildPageChunks('Original symbol map.', '', {
+      codemap: [
+        {
+          system: 'systems/revert-test',
+          pointers: [
+            {
+              path: 'src/original.ts',
+              symbol: 'Old::Symbol()',
+              role: 'Original implementation',
+              verified_at: '2026-04-16',
+            },
+          ],
+        },
+      ],
+    }));
+
+    const version = await engine.createVersion('systems/revert-test.md');
+    await putPage('systems/revert-test.md', {
+      type: 'system',
+      title: 'Revert Test',
+      compiled_truth: 'Updated symbol map.',
+      timeline: '',
+      frontmatter: {
+        codemap: [
+          {
+            system: 'systems/revert-test',
+            pointers: [
+              {
+                path: 'src/updated.ts',
+                symbol: 'New::Symbol()',
+                role: 'Updated implementation',
+                verified_at: '2026-04-16',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await putChunks('systems/revert-test.md', buildPageChunks('Updated symbol map.', '', {
+      codemap: [
+        {
+          system: 'systems/revert-test',
+          pointers: [
+            {
+              path: 'src/updated.ts',
+              symbol: 'New::Symbol()',
+              role: 'Updated implementation',
+              verified_at: '2026-04-16',
+            },
+          ],
+        },
+      ],
+    }));
+
+    expect((await engine.searchKeyword('New Symbol')).map(result => result.slug)).toEqual(['systems/revert-test.md']);
+
+    await engine.revertToVersion('systems/revert-test.md', version.id);
+
+    expect(await engine.searchKeyword('New Symbol')).toEqual([]);
+    expect((await engine.searchKeyword('Old Symbol')).map(result => result.slug)).toEqual(['systems/revert-test.md']);
+    const reverted = await engine.getPage('systems/revert-test.md');
+    expect(reverted?.content_hash).toBe(importContentHash({
+      title: 'Revert Test',
+      type: 'system',
+      compiled_truth: 'Original symbol map.',
+      timeline: '',
+      frontmatter: {
+        codemap: [
+          {
+            system: 'systems/revert-test',
+            pointers: [
+              {
+                path: 'src/original.ts',
+                symbol: 'Old::Symbol()',
+                role: 'Original implementation',
+                verified_at: '2026-04-16',
+              },
+            ],
+          },
+        ],
+      },
+      tags: [],
+    }));
+    const chunks = await engine.getChunks('systems/revert-test.md');
+    expect(chunks[0]?.chunk_text).toBe('Original symbol map.');
+    expect(chunks[chunks.length - 1]?.chunk_text).toContain('Old::Symbol()');
+    const rerun = await importFromContent(engine, 'systems/revert-test.md', `---
+type: system
+title: Revert Test
+codemap:
+  - system: systems/revert-test
+    pointers:
+      - path: src/original.ts
+        symbol: Old::Symbol()
+        role: Original implementation
+        verified_at: 2026-04-16
+---
+Original symbol map.
+`);
+    expect(rerun.status).toBe('skipped');
+  });
+
   test('reports stats and health for SQLite data', async () => {
     await putPage('people/alice.md', { title: 'Alice' });
     await putPage('companies/acme.md', { type: 'company', title: 'Acme' });
@@ -357,5 +483,140 @@ describe('SQLiteEngine', () => {
     verify.close();
 
     expect(row.slug).toBe('people/alice');
+  });
+
+  test('searchKeyword finds codemap symbols indexed from frontmatter', async () => {
+    await putPage('systems/llvm.md', {
+      type: 'system',
+      title: 'LLVM',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter: {
+        codemap: [
+          {
+            system: 'systems/llvm',
+            pointers: [
+              {
+                path: 'llvm/lib/Passes/PassBuilder.cpp',
+                symbol: 'PassBuilder::buildPerModuleDefaultPipeline()',
+                role: 'Builds the default optimization pipeline',
+                verified_at: '2026-04-15',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const results = await engine.searchKeyword('PassBuilder default pipeline');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.slug).toBe('systems/llvm.md');
+    expect(results[0]?.chunk_source).toBe('frontmatter');
+    expect(results[0]?.chunk_text).toContain('PassBuilder::buildPerModuleDefaultPipeline()');
+  });
+
+  test('searchKeyword avoids degrading C++ into a broad single-letter search', async () => {
+    await putPage('systems/llvm.md', {
+      type: 'system',
+      title: 'LLVM',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter: {
+        language: ['C++'],
+      },
+    });
+    await putPage('companies/builderco.md', {
+      type: 'company',
+      title: 'BuilderCo',
+      compiled_truth: 'A company builder for new ventures.',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    const results = await engine.searchKeyword('C++');
+    expect(results.map(result => result.slug)).toEqual(['systems/llvm.md']);
+  });
+
+  test('searchKeyword matches symbol and path-heavy technical queries', async () => {
+    await putPage('systems/llvm.md', {
+      type: 'system',
+      title: 'LLVM',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter: {
+        codemap: [
+          {
+            system: 'systems/llvm',
+            pointers: [
+              {
+                path: 'llvm/lib/Passes/PassBuilder.cpp',
+                symbol: 'PassBuilder::buildPerModuleDefaultPipeline()',
+                role: 'Builds the default optimization pipeline',
+                verified_at: '2026-04-15',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const results = await engine.searchKeyword(
+      'PassBuilder::buildPerModuleDefaultPipeline() llvm/lib/Passes/PassBuilder.cpp',
+    );
+    expect(results.map(result => result.slug)).toEqual(['systems/llvm.md']);
+  });
+});
+
+describe('SQLiteEngine migrations', () => {
+  test('migration v6 backfills searchable frontmatter beyond the first 100 pages', async () => {
+    for (let index = 0; index < 150; index += 1) {
+      await putPage(`systems/system-${index}.md`, {
+        type: 'system',
+        title: `System ${index}`,
+        compiled_truth: `System ${index} overview.`,
+        timeline: '',
+        frontmatter: {
+          codemap: [
+            {
+              system: `systems/system-${index}.md`,
+              pointers: [
+                {
+                  path: `src/system-${index}.ts`,
+                  symbol: `System${index}.run()`,
+                  role: 'Entry point',
+                  verified_at: '2026-04-16',
+                },
+              ],
+            },
+          ],
+        },
+      });
+      await putChunks(`systems/system-${index}.md`, [
+        {
+          chunk_index: 0,
+          chunk_text: `System ${index} overview.`,
+          chunk_source: 'compiled_truth',
+        },
+      ]);
+    }
+
+    const db = (engine as any).database as Database;
+    db.run(`UPDATE pages SET search_text = ''`);
+    db.run(`UPDATE config SET value = ? WHERE key = 'version'`, [String(LATEST_VERSION - 1)]);
+
+    await engine.initSchema();
+
+    const row = db.query(`
+      SELECT search_text
+      FROM pages
+      WHERE slug = 'systems/system-149.md'
+    `).get() as { search_text: string } | null;
+    expect(row?.search_text).toContain('System149.run()');
+
+    const chunks = await engine.getChunks('systems/system-149.md');
+    expect(chunks.map(chunk => chunk.chunk_source)).toEqual(['compiled_truth', 'frontmatter']);
+
+    const results = await engine.searchKeyword('System149.run');
+    expect(results.map(result => result.slug)).toEqual(['systems/system-149.md']);
   });
 });

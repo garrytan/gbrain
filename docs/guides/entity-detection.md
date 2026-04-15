@@ -56,7 +56,8 @@ If the idea references a world concept: brain/concepts/{slug}.md
 If it's a product/business idea: brain/ideas/{slug}.md
 
 STEP 2 — ENTITIES:
-Extract all person names, company names, media titles.
+Extract all person names, company names, media titles, technical systems,
+and reusable technical concepts.
 
 For each entity:
   a. Run: gbrain search "{name}"
@@ -117,9 +118,11 @@ is_notable(entity):
 | User generated the idea | `brain/originals/{slug}.md` |
 | User's synthesis of others' ideas | `brain/originals/` (the synthesis is original) |
 | World concept someone else coined | `brain/concepts/{slug}.md` |
+| Technical concept or mechanism | `brain/concepts/{slug}.md` |
 | Product or business idea | `brain/ideas/{slug}.md` |
 | Person mentioned | `brain/people/{slug}.md` |
 | Company mentioned | `brain/companies/{slug}.md` |
+| Repo / codebase / subsystem mentioned | `brain/systems/{slug}.md` |
 | Media referenced | `brain/media/{type}/{slug}.md` |
 
 ### The Iron Law of Back-Linking
@@ -164,6 +167,12 @@ to Pedro" only works if Pedro's page links back to every mention.
 5. **Dedup before creating.** Always `gbrain search` before creating a page.
    Variant spellings, nicknames, and company abbreviations cause duplicates.
    "Pedro Franceschi" and "Pedro" might be the same person.
+
+6. **Technical detection uses the same compounding loop.** If the user asks
+   "where is operator fusion implemented?" or compares two systems, treat that
+   like an entity signal. Search for existing `concepts/` and `systems/` pages,
+   then update them with codemap pointers when the exploration reveals reusable
+   structure.
 
 ## How to Verify
 

@@ -1,12 +1,11 @@
 import { readFileSync, statSync, lstatSync } from 'fs';
-import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
-import { parseMarkdown } from './markdown.ts';
+import { buildFrontmatterSearchText, parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { estimateTokenCount } from './embedding.ts';
 import { slugifyPath } from './sync.ts';
 import type { ChunkInput } from './types.ts';
-import { validateSlug } from './utils.ts';
+import { importContentHash, validateSlug } from './utils.ts';
 
 export interface ImportResult {
   slug: string;
@@ -40,24 +39,14 @@ export async function importFromContent(
 
   const parsed = parseMarkdown(content, slug + '.md');
 
-  // Hash includes ALL fields for idempotency (not just compiled_truth + timeline)
-  const hash = createHash('sha256')
-    .update(JSON.stringify({
-      title: parsed.title,
-      type: parsed.type,
-      compiled_truth: parsed.compiled_truth,
-      timeline: parsed.timeline,
-      frontmatter: parsed.frontmatter,
-      tags: parsed.tags.sort(),
-    }))
-    .digest('hex');
+  const hash = importContentHash(parsed);
 
   const existing = await engine.getPage(slug);
   if (existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0 };
   }
 
-  const chunks = buildPageChunks(parsed.compiled_truth, parsed.timeline);
+  const chunks = buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter);
 
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
@@ -136,7 +125,11 @@ export async function importFromFile(
 export const importFile = importFromFile;
 export type ImportFileResult = ImportResult;
 
-export function buildPageChunks(compiledTruth: string, timeline: string): ChunkInput[] {
+export function buildPageChunks(
+  compiledTruth: string,
+  timeline: string,
+  frontmatter?: Record<string, unknown>,
+): ChunkInput[] {
   const chunks: ChunkInput[] = [];
 
   if (compiledTruth.trim()) {
@@ -156,6 +149,18 @@ export function buildPageChunks(compiledTruth: string, timeline: string): ChunkI
         chunk_index: chunks.length,
         chunk_text: chunk.text,
         chunk_source: 'timeline',
+        token_count: estimateTokenCount(chunk.text),
+      });
+    }
+  }
+
+  const searchText = frontmatter ? buildFrontmatterSearchText(frontmatter) : '';
+  if (searchText) {
+    for (const chunk of chunkText(searchText)) {
+      chunks.push({
+        chunk_index: chunks.length,
+        chunk_text: chunk.text,
+        chunk_source: 'frontmatter',
         token_count: estimateTokenCount(chunk.text),
       });
     }

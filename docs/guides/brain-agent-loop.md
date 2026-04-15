@@ -16,15 +16,16 @@ in working memory. It never forgets. It never stops indexing.
 ## The Loop
 
 ```
-Signal arrives (message, meeting, email, tweet, link)
+Signal arrives (message, meeting, email, tweet, link, code question)
   │
   ▼
-DETECT entities (people, companies, concepts, original thinking)
+DETECT entities (people, companies, concepts, systems, original thinking)
   │  → spawn sub-agent (see entity-detection.md)
   │
   ▼
 READ: check brain FIRST (before responding)
   │  → gbrain search "{entity name}"
+  │  → gbrain search "{system or concept name}"
   │  → gbrain get {slug} (if you know it)
   │  → gbrain query "what do we know about {topic}"
   │
@@ -106,6 +107,10 @@ on_message(text):
    Brave Search. `gbrain get` before Crustdata. The brain has relationship
    history, your own assessments, meeting transcripts, cross-references.
    No external API can provide that.
+
+5. **Technical questions use the same loop.** Before grepping a large repo
+   for "where is X implemented?", check the relevant `concepts/` and `systems/`
+   pages. A 400-token map often saves 10,000 tokens of blind code reading.
 
 ## How to Verify It Works
 

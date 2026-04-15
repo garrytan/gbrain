@@ -34,6 +34,7 @@ available in local mode versus what must fail with honest guidance.
 - `src/commands/auth.ts` — Standalone token management (create/list/revoke/test)
 - `src/commands/setup-agent.ts` — Auto-detect Claude Code/Codex, register MCP, inject agent rules
 - `docs/GBRAIN_AGENT_RULES.md` — Compact behavioral rules for AI agents (injected by setup-agent)
+- `skills/codemap-ingest/SKILL.md` — Technical knowledge map workflow for system pages + codemap-backed concepts
 - `src/core/schema-embedded.ts` — AUTO-GENERATED from schema.sql (run `bun run build:schema`)
 - `src/schema.sql` — Full Postgres + pgvector DDL (source of truth, generates schema-embedded.ts)
 - `scripts/deploy-remote.sh` — One-script remote MCP deployment
@@ -108,8 +109,8 @@ stop and remove it before starting a new one.
 
 Read the skill files in `skills/` before doing brain operations. They contain the
 workflows, heuristics, and quality rules for ingestion, querying, maintenance,
-enrichment, and setup. 7 skills: ingest, query, maintain, enrich, briefing,
-migrate, setup.
+enrichment, technical codemap ingest, and setup. 8 skills: ingest, query,
+codemap-ingest, maintain, enrich, briefing, migrate, setup.
 
 ## Build
 

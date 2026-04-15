@@ -34,6 +34,9 @@ I added Postgres + pgvector later because at 1,000 to 10,000 long markdown docs,
 > "What changed with the Series A since Tuesday?"
 > — diffs timeline entries across deal and company pages
 
+> "How does operator fusion work across PyTorch and LLVM?"
+> — reads concept + system maps first, then jumps to the 2-3 source files that matter
+
 > "Prep me for my meeting with Jordan in 30 minutes"
 > — pulls dossier, shared history, recent activity, open threads
 
@@ -55,7 +58,7 @@ The core loop:
 
 ```
 Signal arrives (meeting, email, tweet, link)
-  → Agent detects entities (people, companies, ideas)
+  → Agent detects entities (people, companies, ideas, systems, technical concepts)
   → READ: check the brain first (gbrain search, gbrain get)
   → Respond with full context
   → WRITE: update brain pages with new information
@@ -96,6 +99,7 @@ The numbers above aren't theoretical. They come from a real deployment documente
 
 - **The brain-agent loop** — the read-write cycle that makes knowledge compound
 - **Entity detection** — spawn on every message, capture people/companies/original ideas
+- **Technical knowledge maps** — map concepts across codebases before reading source
 - **Enrichment pipeline** — 7-step protocol with tiered API spend
 - **Meeting ingestion** — transcript to brain pages with entity propagation
 - **Source attribution** — every fact traceable to where it came from

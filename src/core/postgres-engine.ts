@@ -3,7 +3,7 @@ import type { BrainEngine } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type {
-  Page, PageInput, PageFilters,
+  Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
   Link, GraphNode,
@@ -16,7 +16,9 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { buildFrontmatterSearchText } from './markdown.ts';
+import { ensurePageChunks } from './page-chunks.ts';
+import { validateSlug, contentHash, importContentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
 
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
@@ -100,15 +102,17 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const hash = page.content_hash || contentHash(page.compiled_truth, page.timeline || '');
     const frontmatter = page.frontmatter || {};
+    const searchText = buildFrontmatterSearchText(frontmatter);
 
     const rows = await sql`
-      INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${JSON.stringify(frontmatter)}::jsonb, ${hash}, now())
+      INSERT INTO pages (slug, type, title, compiled_truth, timeline, search_text, frontmatter, content_hash, updated_at)
+      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${searchText}, ${JSON.stringify(frontmatter)}::jsonb, ${hash}, now())
       ON CONFLICT (slug) DO UPDATE SET
         type = EXCLUDED.type,
         title = EXCLUDED.title,
         compiled_truth = EXCLUDED.compiled_truth,
         timeline = EXCLUDED.timeline,
+        search_text = EXCLUDED.search_text,
         frontmatter = EXCLUDED.frontmatter,
         content_hash = EXCLUDED.content_hash,
         updated_at = now()
@@ -133,24 +137,24 @@ export class PostgresEngine implements BrainEngine {
         SELECT p.* FROM pages p
         JOIN tags t ON t.page_id = p.id
         WHERE p.type = ${filters.type} AND t.tag = ${filters.tag}
-        ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
+        ORDER BY p.updated_at DESC, p.id DESC LIMIT ${limit} OFFSET ${offset}
       `;
     } else if (filters?.type) {
       rows = await sql`
         SELECT * FROM pages WHERE type = ${filters.type}
-        ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}
+        ORDER BY updated_at DESC, id DESC LIMIT ${limit} OFFSET ${offset}
       `;
     } else if (filters?.tag) {
       rows = await sql`
         SELECT p.* FROM pages p
         JOIN tags t ON t.page_id = p.id
         WHERE t.tag = ${filters.tag}
-        ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
+        ORDER BY p.updated_at DESC, p.id DESC LIMIT ${limit} OFFSET ${offset}
       `;
     } else {
       rows = await sql`
         SELECT * FROM pages
-        ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}
+        ORDER BY updated_at DESC, id DESC LIMIT ${limit} OFFSET ${offset}
       `;
     }
 
@@ -225,17 +229,39 @@ export class PostgresEngine implements BrainEngine {
 
     return this.withSearchTimeout(async (sql) => {
       const rows = await sql.unsafe(
-        `SELECT DISTINCT ON (p.slug)
-          p.slug, p.id as page_id, p.title, p.type,
-          cc.chunk_text, cc.chunk_source,
-          ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS score,
-          CASE WHEN p.updated_at < (
-            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-          ) THEN true ELSE false END AS stale
-        FROM pages p
-        JOIN content_chunks cc ON cc.page_id = p.id
-        WHERE p.search_vector @@ websearch_to_tsquery('english', $1)${filterSql}
-        ORDER BY p.slug, score DESC`,
+        `SELECT DISTINCT ON (ranked.slug)
+          ranked.slug, ranked.page_id, ranked.title, ranked.type,
+          CASE
+            WHEN ranked.frontmatter_score > ranked.chunk_score THEN ranked.search_text
+            ELSE ranked.chunk_text
+          END AS chunk_text,
+          CASE
+            WHEN ranked.frontmatter_score > ranked.chunk_score THEN 'frontmatter'
+            ELSE ranked.chunk_source
+          END AS chunk_source,
+          ranked.page_score AS score,
+          ranked.stale
+        FROM (
+          SELECT
+            p.slug,
+            p.id AS page_id,
+            p.title,
+            p.type,
+            p.search_text,
+            cc.chunk_text,
+            cc.chunk_source,
+            cc.chunk_index,
+            ts_rank(to_tsvector('english', coalesce(p.search_text, '')), websearch_to_tsquery('english', $1)) AS frontmatter_score,
+            ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)) AS chunk_score,
+            ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS page_score,
+            CASE WHEN p.updated_at < (
+              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+            ) THEN true ELSE false END AS stale
+          FROM pages p
+          JOIN content_chunks cc ON cc.page_id = p.id
+          WHERE p.search_vector @@ websearch_to_tsquery('english', $1)${filterSql}
+        ) ranked
+        ORDER BY ranked.slug, GREATEST(ranked.frontmatter_score, ranked.chunk_score) DESC, ranked.page_score DESC, ranked.chunk_index ASC`,
         params,
       );
 
@@ -567,14 +593,54 @@ export class PostgresEngine implements BrainEngine {
 
   async revertToVersion(slug: string, versionId: number): Promise<void> {
     const sql = this.sql;
-    await sql`
-      UPDATE pages SET
-        compiled_truth = pv.compiled_truth,
-        frontmatter = pv.frontmatter,
-        updated_at = now()
+    const rows = await sql`
+      SELECT pv.compiled_truth, pv.frontmatter, p.title, p.type, p.timeline
       FROM page_versions pv
-      WHERE pages.slug = ${slug} AND pv.id = ${versionId} AND pv.page_id = pages.id
+      JOIN pages p ON p.id = pv.page_id
+      WHERE p.slug = ${slug} AND pv.id = ${versionId}
+      LIMIT 1
     `;
+    if (rows.length === 0) return;
+
+    const version = rows[0] as {
+      compiled_truth: string;
+      frontmatter: unknown;
+      title: string;
+      type: PageType;
+      timeline?: unknown;
+    };
+    const frontmatter = (
+      version.frontmatter && typeof version.frontmatter === 'object' && !Array.isArray(version.frontmatter)
+    )
+      ? version.frontmatter as Record<string, unknown>
+      : typeof version.frontmatter === 'string' && version.frontmatter.length > 0
+        ? JSON.parse(version.frontmatter) as Record<string, unknown>
+        : {};
+    const tags = await this.getTags(slug);
+    const searchText = buildFrontmatterSearchText(frontmatter);
+    const hash = importContentHash({
+      title: version.title,
+      type: version.type,
+      compiled_truth: version.compiled_truth,
+      timeline: String(version.timeline ?? ''),
+      frontmatter,
+      tags,
+    });
+
+    await sql`
+      UPDATE pages
+      SET compiled_truth = ${version.compiled_truth},
+          search_text = ${searchText},
+          frontmatter = ${JSON.stringify(frontmatter)}::jsonb,
+          content_hash = ${hash},
+          updated_at = now()
+      WHERE slug = ${slug}
+    `;
+
+    const page = await this.getPage(slug);
+    if (page) {
+      await ensurePageChunks(this, page);
+    }
   }
 
   // Stats + health

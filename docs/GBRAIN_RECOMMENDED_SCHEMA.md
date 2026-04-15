@@ -128,6 +128,8 @@ brain/
 │   └── README.md
 ├── concepts/          — mental models and frameworks you'd teach
 │   └── README.md
+├── systems/           — codebase and subsystem architecture maps
+│   └── README.md
 ├── writing/           — prose artifacts (essays, philosophy, drafts)
 │   └── README.md
 ├── programs/          — major life workstreams (the forest, not the trees)

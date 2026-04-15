@@ -2,6 +2,25 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+## [0.9.0] - 2026-04-16
+
+### Added
+
+- **Your brain can now map large codebases before touching source.** `system` pages and `codemap` frontmatter let agents store repo architecture, key entry points, vocabulary differences, and the exact files that implement a concept across multiple systems. Instead of re-orienting from scratch every session, the agent can read the map first and jump straight to the code that matters.
+- **New `codemap-ingest` skill + templates.** Agents now have a dedicated workflow for turning code exploration into reusable `systems/` and `concepts/` pages, with templates for both page shapes and explicit pointer-verification discipline.
+
+### Changed
+
+- **Brain-first lookup now applies to technical questions too.** The compact agent rules, SKILLPACK, query skill, and supporting guides now tell agents to check `concepts/` and `systems/` before broad repo search, and to write back verified code pointers when they discover reusable structure.
+- **`codemap` data is now searchable instead of decorative.** Technical frontmatter is indexed into page search, imported as dedicated `frontmatter` chunks for hybrid retrieval, and migrated into existing installs so symbol/path lookups can find the right page before broad repo search.
+- **Upgrade refresh now updates agent rules too.** `gbrain upgrade` now reruns `gbrain setup-agent --skip-mcp` after a successful install so Codex/Claude clients pick up new brain rules without unexpectedly changing MCP registration.
+
+### Fixed
+
+- **Timestamp normalization is limited to `codemap.verified_at`.** Parsing no longer rewrites unrelated frontmatter timestamps just because gray-matter produced a `Date`, which avoids accidental UTC coercion and needless content churn.
+
 ## [0.8.0] - 2026-04-11
 
 ### Added

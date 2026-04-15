@@ -314,6 +314,59 @@ describeE2E('E2E: Versions', () => {
     const reverted = await callOp('get_page', { slug: 'people/sarah-chen' }) as any;
     expect(reverted.compiled_truth).not.toContain('(Modified)');
   });
+
+  test('revert_version refreshes codemap search state', async () => {
+    const engine = getEngine();
+    const original = `---
+type: system
+title: Revert Codemap
+codemap:
+  - system: systems/revert-codemap
+    pointers:
+      - path: src/original.ts
+        symbol: Old::Symbol()
+        role: Original implementation
+        verified_at: 2026-04-16
+---
+
+Original symbol map.
+`;
+    const updated = `---
+type: system
+title: Revert Codemap
+codemap:
+  - system: systems/revert-codemap
+    pointers:
+      - path: src/updated.ts
+        symbol: New::Symbol()
+        role: Updated implementation
+        verified_at: 2026-04-16
+---
+
+Updated symbol map.
+`;
+
+    await importFromContent(engine, 'systems/revert-codemap', original);
+    await engine.createVersion('systems/revert-codemap');
+    await importFromContent(engine, 'systems/revert-codemap', updated);
+
+    expect((await engine.searchKeyword('New Symbol')).map(result => result.slug)).toContain('systems/revert-codemap');
+
+    const versions = await engine.getVersions('systems/revert-codemap');
+    await callOp('revert_version', {
+      slug: 'systems/revert-codemap',
+      version_id: versions[versions.length - 1]!.id,
+    });
+
+    expect(await engine.searchKeyword('New Symbol')).toEqual([]);
+    expect((await engine.searchKeyword('Old Symbol')).map(result => result.slug)).toContain('systems/revert-codemap');
+    const chunks = await engine.getChunks('systems/revert-codemap');
+    expect(chunks[0]?.chunk_text).toBe('Original symbol map.');
+    expect(chunks[chunks.length - 1]?.chunk_text).toContain('Old::Symbol()');
+
+    const rerun = await importFromContent(engine, 'systems/revert-codemap', original);
+    expect(rerun.status).toBe('skipped');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────

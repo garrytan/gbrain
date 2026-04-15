@@ -4,6 +4,7 @@ import { join } from 'path';
 import { importFile, importFromContent } from '../src/core/import-file.ts';
 import { resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
 
@@ -77,6 +78,89 @@ This is the compiled truth.
     // Chunks were upserted
     const chunkCall = calls.find((c: any) => c.method === 'upsertChunks');
     expect(chunkCall).toBeTruthy();
+  });
+
+  test('timestamp-only frontmatter changes do not get skipped', async () => {
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: ':memory:' });
+    try {
+      await engine.initSchema();
+
+      const first = `---
+title: Date Test
+reviewed_at: 2026-04-15T12:30:00-07:00
+---
+Body`;
+      const second = `---
+title: Date Test
+reviewed_at: 2026-04-16T12:30:00-07:00
+---
+Body`;
+
+      expect((await importFromContent(engine, 'concepts/date-test', first)).status).toBe('imported');
+      expect((await importFromContent(engine, 'concepts/date-test', second)).status).toBe('imported');
+      expect((await engine.getPage('concepts/date-test'))?.frontmatter.reviewed_at).toBe('2026-04-16T19:30:00.000Z');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('infers system page type from systems path during import', async () => {
+    const filePath = join(TMP, 'llvm.md');
+    writeFileSync(filePath, `---
+title: LLVM
+repo: https://github.com/llvm/llvm-project
+codemap:
+  - system: systems/llvm
+    pointers:
+      - path: llvm/lib/Passes/PassBuilder.cpp
+        symbol: PassBuilder::buildPerModuleDefaultPipeline()
+        role: Constructs optimization pipelines
+        verified_at: 2026-04-15
+---
+
+Compiler infrastructure summary.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'systems/llvm.md');
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('systems/llvm');
+
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    expect(putCall).toBeTruthy();
+    expect(putCall.args[0]).toBe('systems/llvm');
+    expect(putCall.args[1].type).toBe('system');
+    expect(putCall.args[1].frontmatter.codemap).toEqual([
+      {
+        system: 'systems/llvm',
+        pointers: [
+          {
+            path: 'llvm/lib/Passes/PassBuilder.cpp',
+            symbol: 'PassBuilder::buildPerModuleDefaultPipeline()',
+            role: 'Constructs optimization pipelines',
+            verified_at: '2026-04-15',
+          },
+        ],
+      },
+    ]);
+
+    const chunkCall = calls.find((c: any) => c.method === 'upsertChunks');
+    expect(chunkCall).toBeTruthy();
+    expect(chunkCall.args[1]).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        chunk_source: 'frontmatter',
+      }),
+    ]));
+    expect(
+      chunkCall.args[1].some((chunk: any) =>
+        chunk.chunk_source === 'frontmatter'
+        && chunk.chunk_text.includes('PassBuilder::buildPerModuleDefaultPipeline()')
+        && chunk.chunk_text.includes('llvm/lib/Passes/PassBuilder.cpp'),
+      ),
+    ).toBe(true);
   });
 
   test('skips files larger than MAX_FILE_SIZE (5MB)', async () => {

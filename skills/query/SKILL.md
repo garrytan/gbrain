@@ -16,6 +16,28 @@ Answer questions using the brain's knowledge with 3-layer search and synthesis.
 4. **Synthesize answer** with citations. Every claim traces back to a specific page slug.
 5. **Flag gaps.** If the brain doesn't have info, say "the brain doesn't have information on X" rather than hallucinating.
 
+## Technical Concept Queries
+
+When the user asks about architecture, mechanisms, implementation details, or
+cross-system technical concepts:
+
+1. Search brain first:
+   - `gbrain search "<concept or system name>"`
+   - `gbrain query "what do we know about <concept or system name>"`
+2. If a concept page has `codemap`:
+   - read compiled truth for orientation
+   - use the listed pointers for targeted code navigation
+   - verify central pointers if `verified_at` is older than 30 days
+3. If a concept page exists without `codemap`:
+   - use the compiled truth as starting context
+   - after code exploration, write back the missing pointers
+4. If no concept/system page exists:
+   - explore the codebase normally
+   - create a `system` page and/or concept page with `codemap` before ending the task
+
+The map is not a replacement for grep. It is the "map before territory" layer
+that tells the agent which files are worth reading.
+
 ## Quality Rules
 
 - Never hallucinate. Only answer from brain content.

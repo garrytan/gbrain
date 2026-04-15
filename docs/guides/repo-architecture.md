@@ -78,6 +78,7 @@ brain/
 ├── meetings/              # Meeting transcripts + analysis
 ├── originals/             # YOUR original thinking (highest value)
 ├── concepts/              # World concepts and frameworks
+├── systems/               # Codebase and subsystem architecture maps
 ├── ideas/                 # Product and business ideas
 ├── media/                 # Video transcripts, books, articles
 │   ├── youtube/

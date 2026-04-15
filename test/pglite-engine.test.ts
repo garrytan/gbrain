@@ -5,9 +5,12 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { buildPageChunks, importFromContent } from '../src/core/import-file.ts';
+import { runMigrations } from '../src/core/migrate.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
+import { importContentHash } from '../src/core/utils.ts';
 
 let engine: PGLiteEngine;
 
@@ -207,6 +210,118 @@ describe('PGLiteEngine: Search', () => {
       exclude_slugs: ['people/alice-keyword'],
     });
     expect(excluded).toEqual([]);
+  });
+
+  test('searchKeyword finds codemap symbols stored in technical frontmatter', async () => {
+    const frontmatter = {
+      codemap: [
+        {
+          system: 'systems/llvm',
+          pointers: [
+            {
+              path: 'llvm/lib/Passes/PassBuilder.cpp',
+              symbol: 'PassBuilder::buildPerModuleDefaultPipeline()',
+              role: 'Builds the default optimization pipeline',
+              verified_at: '2026-04-15',
+            },
+          ],
+        },
+      ],
+    };
+
+    await engine.putPage('systems/llvm', {
+      type: 'system',
+      title: 'LLVM',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter,
+    });
+    await engine.upsertChunks('systems/llvm', buildPageChunks('Compiler infrastructure overview.', '', frontmatter));
+
+    const results = await engine.searchKeyword('PassBuilder default pipeline');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.slug).toBe('systems/llvm');
+    expect(results[0]?.chunk_source).toBe('frontmatter');
+    expect(results[0]?.chunk_text).toContain('PassBuilder::buildPerModuleDefaultPipeline()');
+  });
+
+  test('searchKeyword prefers frontmatter snippets even before frontmatter chunks are rebuilt', async () => {
+    const frontmatter = {
+      codemap: [
+        {
+          system: 'systems/llvm',
+          pointers: [
+            {
+              path: 'llvm/lib/Passes/LegacyPassBuilder.cpp',
+              symbol: 'LegacyPassBuilder::rebuildPipeline()',
+              role: 'Rebuilds the legacy optimization pipeline',
+              verified_at: '2026-04-15',
+            },
+          ],
+        },
+      ],
+    };
+
+    await engine.putPage('systems/llvm-migrated', {
+      type: 'system',
+      title: 'LLVM Migrated',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter,
+    });
+    await engine.upsertChunks('systems/llvm-migrated', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Compiler infrastructure overview.',
+        chunk_source: 'compiled_truth',
+      },
+    ]);
+
+    const results = await engine.searchKeyword('LegacyPassBuilder rebuild pipeline');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.slug).toBe('systems/llvm-migrated');
+    expect(results[0]?.chunk_source).toBe('frontmatter');
+    expect(results[0]?.chunk_text).toContain('LegacyPassBuilder::rebuildPipeline()');
+  });
+
+  test('migration v6 backfills dedicated frontmatter chunks for upgraded pages', async () => {
+    const frontmatter = {
+      codemap: [
+        {
+          system: 'systems/llvm',
+          pointers: [
+            {
+              path: 'llvm/lib/Passes/LegacyPassBuilder.cpp',
+              symbol: 'LegacyPassBuilder::rebuildPipeline()',
+              role: 'Rebuilds the legacy optimization pipeline',
+              verified_at: '2026-04-15',
+            },
+          ],
+        },
+      ],
+    };
+
+    await engine.putPage('systems/llvm-upgraded', {
+      type: 'system',
+      title: 'LLVM Upgraded',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter,
+    });
+    await engine.upsertChunks('systems/llvm-upgraded', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Compiler infrastructure overview.',
+        chunk_source: 'compiled_truth',
+      },
+    ]);
+    await engine.setConfig('version', String(5));
+
+    await runMigrations(engine);
+
+    const chunks = await engine.getChunks('systems/llvm-upgraded');
+    expect(chunks.map(chunk => chunk.chunk_source)).toEqual(['compiled_truth', 'frontmatter']);
+    expect(chunks[1]?.chunk_text).toContain('LegacyPassBuilder::rebuildPipeline()');
   });
 
   test('searchVector honors type and exclude_slugs filters', async () => {
@@ -456,15 +571,92 @@ describe('PGLiteEngine: Versions', () => {
     expect(versions.length).toBe(1);
   });
 
-  test('revertToVersion restores content', async () => {
+  test('revertToVersion restores content and technical search state', async () => {
+    const originalFrontmatter = {
+      codemap: [
+        {
+          system: 'systems/test-version',
+          pointers: [
+            {
+              path: 'src/original.ts',
+              symbol: 'Old::Symbol()',
+              role: 'Original implementation',
+              verified_at: '2026-04-16',
+            },
+          ],
+        },
+      ],
+    };
+    const updatedFrontmatter = {
+      codemap: [
+        {
+          system: 'systems/test-version',
+          pointers: [
+            {
+              path: 'src/updated.ts',
+              symbol: 'New::Symbol()',
+              role: 'Updated implementation',
+              verified_at: '2026-04-16',
+            },
+          ],
+        },
+      ],
+    };
+
+    await engine.putPage('test/version', {
+      ...testPage,
+      type: 'system',
+      title: 'Versioned System',
+      compiled_truth: 'Original symbol map.',
+      frontmatter: originalFrontmatter,
+    });
+    await engine.upsertChunks('test/version', buildPageChunks('Original symbol map.', '', originalFrontmatter));
+
     await engine.createVersion('test/version');
-    await engine.putPage('test/version', { ...testPage, compiled_truth: 'Changed' });
+    await engine.putPage('test/version', {
+      ...testPage,
+      type: 'system',
+      title: 'Versioned System',
+      compiled_truth: 'Changed',
+      frontmatter: updatedFrontmatter,
+    });
+    await engine.upsertChunks('test/version', buildPageChunks('Changed', '', updatedFrontmatter));
 
     const versions = await engine.getVersions('test/version');
     await engine.revertToVersion('test/version', versions[0].id);
 
     const page = await engine.getPage('test/version');
-    expect(page!.compiled_truth).toBe(testPage.compiled_truth);
+    expect(page!.compiled_truth).toBe('Original symbol map.');
+    expect(page!.content_hash).toBe(importContentHash({
+      title: 'Versioned System',
+      type: 'system',
+      compiled_truth: 'Original symbol map.',
+      timeline: testPage.timeline!,
+      frontmatter: originalFrontmatter,
+      tags: [],
+    }));
+    expect(await engine.searchKeyword('New Symbol')).toEqual([]);
+    expect((await engine.searchKeyword('Old Symbol')).map(result => result.slug)).toEqual(['test/version']);
+    const chunks = await engine.getChunks('test/version');
+    expect(chunks[0]?.chunk_text).toBe('Original symbol map.');
+    expect(chunks[chunks.length - 1]?.chunk_text).toContain('Old::Symbol()');
+    const rerun = await importFromContent(engine, 'test/version', `---
+type: system
+title: Versioned System
+codemap:
+  - system: systems/test-version
+    pointers:
+      - path: src/original.ts
+        symbol: Old::Symbol()
+        role: Original implementation
+        verified_at: 2026-04-16
+---
+Original symbol map.
+
+---
+${testPage.timeline!}
+`);
+    expect(rerun.status).toBe('skipped');
   });
 });
 

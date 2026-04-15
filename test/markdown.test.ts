@@ -198,5 +198,134 @@ Some content.`;
     expect(parseMarkdown('', 'people/someone.md').type).toBe('person');
     expect(parseMarkdown('', 'concepts/thing.md').type).toBe('concept');
     expect(parseMarkdown('', 'companies/acme.md').type).toBe('company');
+    expect(parseMarkdown('', 'systems/llvm.md').type).toBe('system');
+  });
+
+  test('preserves codemap frontmatter as structured data', () => {
+    const md = `---
+type: concept
+title: Operator Fusion
+codemap:
+  - system: systems/pytorch
+    pointers:
+      - path: torch/_inductor/fx_passes/group_fusion.py
+        symbol: group_fusion_passes()
+        role: Identifies fusible FX subgraphs
+        verified_at: 2026-04-15
+    vocabulary: fusion group
+---
+
+Compiled truth.
+`;
+
+    const parsed = parseMarkdown(md);
+    expect(parsed.frontmatter.codemap).toEqual([
+      {
+        system: 'systems/pytorch',
+        pointers: [
+          {
+            path: 'torch/_inductor/fx_passes/group_fusion.py',
+            symbol: 'group_fusion_passes()',
+            role: 'Identifies fusible FX subgraphs',
+            verified_at: '2026-04-15',
+          },
+        ],
+        vocabulary: 'fusion group',
+      },
+    ]);
+  });
+
+  test('only normalizes codemap verified_at dates and leaves unrelated timestamps untouched', () => {
+    const md = `---
+type: concept
+title: LLVM Pipelines
+reviewed_at: 2026-04-15T12:30:00-07:00
+codemap:
+  - system: systems/llvm
+    pointers:
+      - path: llvm/lib/Passes/PassBuilder.cpp
+        symbol: PassBuilder::buildPerModuleDefaultPipeline()
+        role: Builds the default optimization pipeline
+        verified_at: 2026-04-15
+---
+
+Compiled truth.
+`;
+
+    const parsed = parseMarkdown(md);
+    expect(parsed.frontmatter.reviewed_at).toBeInstanceOf(Date);
+    expect(parsed.frontmatter.codemap).toEqual([
+      {
+        system: 'systems/llvm',
+        pointers: [
+          {
+            path: 'llvm/lib/Passes/PassBuilder.cpp',
+            symbol: 'PassBuilder::buildPerModuleDefaultPipeline()',
+            role: 'Builds the default optimization pipeline',
+            verified_at: '2026-04-15',
+          },
+        ],
+      },
+    ]);
+  });
+
+  test('round-trips system page frontmatter with codemap metadata intact', () => {
+    const original = `---
+type: system
+title: LLVM
+repo: https://github.com/llvm/llvm-project
+language:
+  - C++
+build_command: cmake -G Ninja ../llvm && ninja
+test_command: ninja check-llvm
+key_entry_points:
+  - name: Pass builder
+    path: llvm/lib/Passes/PassBuilder.cpp
+    purpose: Builds optimization pipelines
+codemap:
+  - system: systems/llvm
+    pointers:
+      - path: llvm/lib/Transforms/InstCombine/InstructionCombining.cpp
+        symbol: InstCombinerImpl::run()
+        role: Fuses adjacent IR instructions
+        verified_at: 2026-04-15
+---
+
+Architecture summary.
+`;
+
+    const parsed = parseMarkdown(original, 'systems/llvm.md');
+    const serialized = serializeMarkdown(
+      parsed.frontmatter,
+      parsed.compiled_truth,
+      parsed.timeline,
+      { type: parsed.type, title: parsed.title, tags: parsed.tags },
+    );
+    const reparsed = parseMarkdown(serialized, 'systems/llvm.md');
+
+    expect(reparsed.type).toBe('system');
+    expect(reparsed.frontmatter.repo).toBe('https://github.com/llvm/llvm-project');
+    expect(reparsed.frontmatter.build_command).toBe('cmake -G Ninja ../llvm && ninja');
+    expect(reparsed.frontmatter.test_command).toBe('ninja check-llvm');
+    expect(reparsed.frontmatter.key_entry_points).toEqual([
+      {
+        name: 'Pass builder',
+        path: 'llvm/lib/Passes/PassBuilder.cpp',
+        purpose: 'Builds optimization pipelines',
+      },
+    ]);
+    expect(reparsed.frontmatter.codemap).toEqual([
+      {
+        system: 'systems/llvm',
+        pointers: [
+          {
+            path: 'llvm/lib/Transforms/InstCombine/InstructionCombining.cpp',
+            symbol: 'InstCombinerImpl::run()',
+            role: 'Fuses adjacent IR instructions',
+            verified_at: '2026-04-15',
+          },
+        ],
+      },
+    ]);
   });
 });

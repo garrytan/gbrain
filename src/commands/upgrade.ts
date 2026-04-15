@@ -55,6 +55,7 @@ export async function runUpgrade(args: string[]) {
     const newVersion = verifyUpgrade();
     // Save old version for post-upgrade migration detection
     saveUpgradeState(oldVersion, newVersion);
+    refreshAgentSetup();
     // Run post-upgrade feature discovery (reads migration files from the NEW binary)
     try {
       execSync('gbrain post-upgrade', { stdio: 'inherit', timeout: 30_000 });
@@ -91,6 +92,22 @@ function saveUpgradeState(oldVersion: string, newVersion: string) {
     writeFileSync(statePath, JSON.stringify(state, null, 2));
   } catch {
     // best-effort
+  }
+}
+
+function refreshAgentSetup() {
+  try {
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    if (!home) return;
+
+    const hasClaude = existsSync(join(home, '.claude'));
+    const hasCodex = existsSync(join(home, '.codex'));
+    if (!hasClaude && !hasCodex) return;
+
+    console.log('Refreshing agent rules...');
+    execSync('gbrain setup-agent --skip-mcp', { stdio: 'inherit', timeout: 30_000 });
+  } catch {
+    console.warn('Could not refresh agent rules automatically. Run `gbrain setup-agent` manually if needed.');
   }
 }
 

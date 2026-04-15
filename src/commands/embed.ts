@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedChunks, getEmbeddingProvider } from '../core/embedding.ts';
-import { buildPageChunks } from '../core/import-file.ts';
-import type { Chunk, ChunkInput, Page } from '../core/types.ts';
+import { ensurePageChunks } from '../core/page-chunks.ts';
+import type { Chunk, ChunkInput } from '../core/types.ts';
 
 export async function runEmbed(engine: BrainEngine, args: string[]) {
   const slug = args.find(a => !a.startsWith('--'));
@@ -85,22 +85,6 @@ async function embedAll(
   }
 
   console.log(`\n\nEmbedded ${embedded} chunks across ${touchedPages} pages`);
-}
-
-async function ensurePageChunks(engine: BrainEngine, page: Page): Promise<Chunk[]> {
-  let chunks = await engine.getChunks(page.slug);
-  if (chunks.length > 0) {
-    return chunks;
-  }
-
-  const built = buildPageChunks(page.compiled_truth, page.timeline);
-  if (built.length === 0) {
-    return [];
-  }
-
-  await engine.upsertChunks(page.slug, built);
-  chunks = await engine.getChunks(page.slug);
-  return chunks;
 }
 
 function selectChunksToEmbed(chunks: Chunk[], staleOnly: boolean, currentModel?: string | null): Chunk[] {

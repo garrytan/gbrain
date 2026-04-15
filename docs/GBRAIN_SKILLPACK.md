@@ -1,4 +1,4 @@
-<!-- skillpack-version: 0.7.0 -->
+<!-- skillpack-version: 0.7.1 -->
 <!-- source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_SKILLPACK.md -->
 # GBrain Skillpack: Reference Architecture for AI Agents
 
@@ -87,6 +87,32 @@ Keeping it running and up to date.
 |-------|---------------|
 | [Upgrades & Auto-Update](guides/upgrades-auto-update.md) | check-update, agent notifications, migration files |
 | [Live Sync](guides/live-sync.md) | Keep the index current: cron, --watch, webhook approaches |
+
+## Section 19: Technical Knowledge Maps
+
+### 19.1 System Pages
+
+Create one `system` page per major codebase or subsystem. Include:
+- architecture summary (200-400 words)
+- key entry points (path + purpose)
+- component map
+- key abstractions and vocabulary
+- build and test commands
+
+### 19.2 Concept Pages with Codemap
+
+When a concept spans multiple systems, add a `codemap` to frontmatter:
+- one entry per system
+- each pointer records `path`, `symbol`, `role`, and `verified_at`
+- include vocabulary mapping when different systems use different names
+- keep compiled truth focused on the cross-system picture, not raw file dumps
+
+### 19.3 Maintenance Discipline
+
+- verify codemap pointers lazily, when you actually use them
+- mark stale pointers instead of deleting them
+- update compiled truth when a new cross-system connection is discovered
+- treat the map as orientation for targeted repo reading, not as a substitute for source
 
 ---
 

@@ -1,10 +1,10 @@
 import { Database } from 'bun:sqlite';
-import { createHash } from 'crypto';
 import { mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { LATEST_VERSION } from './migrate.ts';
+import { ensurePageChunks } from './page-chunks.ts';
 import { searchLocalVectors } from './search/vector-local.ts';
 import { slugifyPath } from './sync.ts';
 import type {
@@ -20,6 +20,8 @@ import type {
   EngineConfig,
 } from './types.ts';
 import { GBrainError } from './types.ts';
+import { buildFrontmatterSearchText, expandTechnicalAliases } from './markdown.ts';
+import { contentHash, importContentHash } from './utils.ts';
 
 const DEFAULT_EMBEDDING_MODEL = 'nomic-embed-text';
 const BASELINE_VERSION = 1;
@@ -35,6 +37,7 @@ CREATE TABLE IF NOT EXISTS pages (
   title TEXT NOT NULL,
   compiled_truth TEXT NOT NULL DEFAULT '',
   timeline TEXT NOT NULL DEFAULT '',
+  search_text TEXT NOT NULL DEFAULT '',
   frontmatter TEXT NOT NULL DEFAULT '{}',
   content_hash TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -46,26 +49,27 @@ CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
   title,
   compiled_truth,
   timeline,
+  search_text,
   content='pages',
   content_rowid='id',
   tokenize='porter unicode61'
 );
 
 CREATE TRIGGER IF NOT EXISTS pages_fts_insert AFTER INSERT ON pages BEGIN
-  INSERT INTO pages_fts(rowid, title, compiled_truth, timeline)
-  VALUES (new.id, new.title, new.compiled_truth, new.timeline);
+  INSERT INTO pages_fts(rowid, title, compiled_truth, timeline, search_text)
+  VALUES (new.id, new.title, new.compiled_truth, new.timeline, new.search_text);
 END;
 
 CREATE TRIGGER IF NOT EXISTS pages_fts_update AFTER UPDATE ON pages BEGIN
-  INSERT INTO pages_fts(pages_fts, rowid, title, compiled_truth, timeline)
-  VALUES ('delete', old.id, old.title, old.compiled_truth, old.timeline);
-  INSERT INTO pages_fts(rowid, title, compiled_truth, timeline)
-  VALUES (new.id, new.title, new.compiled_truth, new.timeline);
+  INSERT INTO pages_fts(pages_fts, rowid, title, compiled_truth, timeline, search_text)
+  VALUES ('delete', old.id, old.title, old.compiled_truth, old.timeline, old.search_text);
+  INSERT INTO pages_fts(rowid, title, compiled_truth, timeline, search_text)
+  VALUES (new.id, new.title, new.compiled_truth, new.timeline, new.search_text);
 END;
 
 CREATE TRIGGER IF NOT EXISTS pages_fts_delete AFTER DELETE ON pages BEGIN
-  INSERT INTO pages_fts(pages_fts, rowid, title, compiled_truth, timeline)
-  VALUES ('delete', old.id, old.title, old.compiled_truth, old.timeline);
+  INSERT INTO pages_fts(pages_fts, rowid, title, compiled_truth, timeline, search_text)
+  VALUES ('delete', old.id, old.title, old.compiled_truth, old.timeline, old.search_text);
 END;
 
 CREATE TABLE IF NOT EXISTS content_chunks (
@@ -291,16 +295,19 @@ export class SQLiteEngine implements BrainEngine {
     const normalizedSlug = validateSlug(slug);
     const now = nowIso();
     const hash = page.content_hash || contentHash(page.compiled_truth, page.timeline || '');
-    const frontmatter = JSON.stringify(page.frontmatter || {});
+    const frontmatterObject = page.frontmatter || {};
+    const frontmatter = JSON.stringify(frontmatterObject);
+    const searchText = buildFrontmatterSearchText(frontmatterObject);
 
     this.database.run(`
-      INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO pages (slug, type, title, compiled_truth, timeline, search_text, frontmatter, content_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(slug) DO UPDATE SET
         type = excluded.type,
         title = excluded.title,
         compiled_truth = excluded.compiled_truth,
         timeline = excluded.timeline,
+        search_text = excluded.search_text,
         frontmatter = excluded.frontmatter,
         content_hash = excluded.content_hash,
         updated_at = excluded.updated_at
@@ -310,6 +317,7 @@ export class SQLiteEngine implements BrainEngine {
       page.title,
       page.compiled_truth,
       page.timeline || '',
+      searchText,
       frontmatter,
       hash,
       now,
@@ -348,7 +356,7 @@ export class SQLiteEngine implements BrainEngine {
       sql += ` WHERE ${conditions.join(' AND ')}`;
     }
 
-    sql += ` ORDER BY p.updated_at DESC LIMIT ? OFFSET ?`;
+    sql += ` ORDER BY p.updated_at DESC, p.id DESC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
     const rows = this.database.query(sql).all(...params) as Record<string, unknown>[];
@@ -402,7 +410,8 @@ export class SQLiteEngine implements BrainEngine {
         p.type,
         p.compiled_truth,
         p.timeline,
-        bm25(pages_fts, 8.0, 3.0, 2.0) AS rank,
+        p.search_text,
+        bm25(pages_fts, 8.0, 3.0, 2.0, 2.5) AS rank,
         CASE WHEN EXISTS (
           SELECT 1 FROM timeline_entries te
           WHERE te.page_id = p.id AND p.updated_at < te.created_at
@@ -527,6 +536,17 @@ export class SQLiteEngine implements BrainEngine {
       ORDER BY cc.chunk_index
     `).all(validateSlug(slug)) as Record<string, unknown>[];
     return rows.map(rowToChunk);
+  }
+
+  async getChunksWithEmbeddings(slug: string): Promise<Chunk[]> {
+    const rows = this.database.query(`
+      SELECT cc.*
+      FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      WHERE p.slug = ?
+      ORDER BY cc.chunk_index
+    `).all(validateSlug(slug)) as Record<string, unknown>[];
+    return rows.map(row => rowToChunk(row, true));
   }
 
   async deleteChunks(slug: string): Promise<void> {
@@ -735,7 +755,7 @@ export class SQLiteEngine implements BrainEngine {
   async revertToVersion(slug: string, versionId: number): Promise<void> {
     const normalizedSlug = validateSlug(slug);
     const row = this.database.query(`
-      SELECT pv.compiled_truth, pv.frontmatter
+      SELECT pv.compiled_truth, pv.frontmatter, p.title, p.type, p.timeline
       FROM page_versions pv
       JOIN pages p ON p.id = pv.page_id
       WHERE p.slug = ? AND pv.id = ?
@@ -743,11 +763,25 @@ export class SQLiteEngine implements BrainEngine {
     `).get(normalizedSlug, versionId) as Record<string, unknown> | null;
 
     if (!row) return;
+    const frontmatter = parseJsonObject(row.frontmatter);
+    const tags = await this.getTags(normalizedSlug);
+    const searchText = buildFrontmatterSearchText(frontmatter);
+    const hash = importContentHash({
+      title: String(row.title),
+      type: String(row.type) as PageType,
+      compiled_truth: String(row.compiled_truth),
+      timeline: String(row.timeline ?? ''),
+      frontmatter,
+      tags,
+    });
     this.database.run(`
       UPDATE pages
-      SET compiled_truth = ?, frontmatter = ?, updated_at = ?
+      SET compiled_truth = ?, search_text = ?, frontmatter = ?, content_hash = ?, updated_at = ?
       WHERE slug = ?
-    `, [row.compiled_truth, row.frontmatter, nowIso(), normalizedSlug]);
+    `, [row.compiled_truth, searchText, JSON.stringify(frontmatter), hash, nowIso(), normalizedSlug]);
+
+    const page = await this.requirePage(normalizedSlug);
+    await ensurePageChunks(this, page);
   }
 
   async getStats(): Promise<BrainStats> {
@@ -902,6 +936,57 @@ export class SQLiteEngine implements BrainEngine {
             );
           `);
           break;
+        case 6:
+          {
+            const columns = this.database.query(`PRAGMA table_info(pages)`).all() as Array<{ name: string }>;
+            const hasSearchText = columns.some((column) => column.name === 'search_text');
+            this.database.exec(`
+              DROP TRIGGER IF EXISTS pages_fts_insert;
+              DROP TRIGGER IF EXISTS pages_fts_update;
+              DROP TRIGGER IF EXISTS pages_fts_delete;
+              DROP TABLE IF EXISTS pages_fts;
+            `);
+
+            if (!hasSearchText) {
+              this.database.exec(`ALTER TABLE pages ADD COLUMN search_text TEXT NOT NULL DEFAULT '';`);
+            }
+
+            for (const page of await this.listAllPages()) {
+              const searchText = buildFrontmatterSearchText(page.frontmatter);
+              this.database.run(`UPDATE pages SET search_text = ? WHERE id = ?`, [searchText, page.id]);
+              await ensurePageChunks(this, page);
+            }
+
+            this.database.exec(`
+              CREATE VIRTUAL TABLE pages_fts USING fts5(
+                title,
+                compiled_truth,
+                timeline,
+                search_text,
+                content='pages',
+                content_rowid='id',
+                tokenize='porter unicode61'
+              );
+
+              CREATE TRIGGER pages_fts_insert AFTER INSERT ON pages BEGIN
+                INSERT INTO pages_fts(rowid, title, compiled_truth, timeline, search_text)
+                VALUES (new.id, new.title, new.compiled_truth, new.timeline, new.search_text);
+              END;
+
+              CREATE TRIGGER pages_fts_update AFTER UPDATE ON pages BEGIN
+                INSERT INTO pages_fts(pages_fts, rowid, title, compiled_truth, timeline, search_text)
+                VALUES ('delete', old.id, old.title, old.compiled_truth, old.timeline, old.search_text);
+                INSERT INTO pages_fts(rowid, title, compiled_truth, timeline, search_text)
+                VALUES (new.id, new.title, new.compiled_truth, new.timeline, new.search_text);
+              END;
+
+              CREATE TRIGGER pages_fts_delete AFTER DELETE ON pages BEGIN
+                INSERT INTO pages_fts(pages_fts, rowid, title, compiled_truth, timeline, search_text)
+                VALUES ('delete', old.id, old.title, old.compiled_truth, old.timeline, old.search_text);
+              END;
+            `);
+          }
+          break;
       }
 
       await this.setConfig('version', String(version));
@@ -909,7 +994,7 @@ export class SQLiteEngine implements BrainEngine {
   }
 
   private async migrateLegacySlugs(): Promise<void> {
-    const pages = await this.listPages();
+    const pages = await this.listAllPages();
     for (const page of pages) {
       const newSlug = slugifyPath(page.slug);
       if (newSlug !== page.slug) {
@@ -922,6 +1007,20 @@ export class SQLiteEngine implements BrainEngine {
         }
       }
     }
+  }
+
+  private async listAllPages(batchSize = 1000): Promise<Page[]> {
+    const pages: Page[] = [];
+
+    for (let offset = 0; ; offset += batchSize) {
+      const batch = await this.listPages({ limit: batchSize, offset });
+      pages.push(...batch);
+      if (batch.length < batchSize) {
+        break;
+      }
+    }
+
+    return pages;
   }
 
   private async requirePage(slug: string): Promise<Page> {
@@ -956,10 +1055,6 @@ function validateSlug(slug: string): string {
   return slug.toLowerCase();
 }
 
-function contentHash(compiledTruth: string, timeline: string): string {
-  return createHash('sha256').update(compiledTruth + '\n---\n' + timeline).digest('hex');
-}
-
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -975,11 +1070,7 @@ function escapeLike(value: string): string {
 }
 
 function prepareFtsQuery(query: string): string {
-  const terms = query
-    .trim()
-    .split(/\s+/)
-    .map(term => term.replace(/["']/g, '').trim())
-    .filter(Boolean);
+  const terms = extractSearchTerms(query);
   if (terms.length === 0) return '';
   return terms.map(term => `"${term}"*`).join(' AND ');
 }
@@ -1009,14 +1100,14 @@ function rowToPage(row: Record<string, unknown>): Page {
   };
 }
 
-function rowToChunk(row: Record<string, unknown>): Chunk {
+function rowToChunk(row: Record<string, unknown>, includeEmbedding = false): Chunk {
   return {
     id: Number(row.id),
     page_id: Number(row.page_id),
     chunk_index: Number(row.chunk_index),
     chunk_text: String(row.chunk_text),
-    chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
-    embedding: null,
+    chunk_source: row.chunk_source as Chunk['chunk_source'],
+    embedding: includeEmbedding ? blobToFloat32(row.embedding) : null,
     model: String(row.model),
     token_count: row.token_count === null || row.token_count === undefined ? null : Number(row.token_count),
     embedded_at: row.embedded_at ? new Date(String(row.embedded_at)) : null,
@@ -1133,11 +1224,23 @@ function extractSnippet(text: string, queryTerms: string[], windowSize: number =
 function rowToSearchResult(row: Record<string, unknown>, query: string): SearchResult {
   const compiled = String(row.compiled_truth || '');
   const timeline = String(row.timeline || '');
-  const normalizedTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const searchText = String(row.search_text || '');
+  const normalizedTerms = extractSearchTerms(query).map(term => term.toLowerCase());
   const compiledMatch = normalizedTerms.some(term => compiled.toLowerCase().includes(term));
   const timelineMatch = normalizedTerms.some(term => timeline.toLowerCase().includes(term));
-  const chunk_source = compiledMatch || !timelineMatch ? 'compiled_truth' : 'timeline';
-  const sourceText = chunk_source === 'compiled_truth' ? compiled || timeline || String(row.title) : timeline || compiled || String(row.title);
+  const frontmatterMatch = normalizedTerms.some(term => searchText.toLowerCase().includes(term));
+  const chunk_source = compiledMatch
+    ? 'compiled_truth'
+    : timelineMatch
+      ? 'timeline'
+      : frontmatterMatch
+        ? 'frontmatter'
+        : 'compiled_truth';
+  const sourceText = chunk_source === 'compiled_truth'
+    ? compiled || timeline || searchText || String(row.title)
+    : chunk_source === 'timeline'
+      ? timeline || compiled || searchText || String(row.title)
+      : searchText || compiled || timeline || String(row.title);
   const chunk_text = extractSnippet(sourceText, normalizedTerms);
   const rawRank = Number(row.rank ?? 0);
 
@@ -1160,10 +1263,27 @@ function rowToLocalVectorCandidate(row: Record<string, unknown>) {
     title: String(row.title),
     type: row.type as PageType,
     chunk_text: String(row.chunk_text),
-    chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
+    chunk_source: row.chunk_source as Chunk['chunk_source'],
     stale: Boolean(row.stale),
     embedding: blobToFloat32(row.embedding),
   };
+}
+
+function extractSearchTerms(query: string): string[] {
+  const parts = query
+    .trim()
+    .split(/\s+/)
+    .map(term => term.replace(/["']/g, '').trim())
+    .flatMap((term) => {
+      const aliases = expandTechnicalAliases(term);
+      const normalized = term.split(/[^A-Za-z0-9]+/).filter(Boolean);
+      const filteredNormalized = aliases.length > 0
+        ? normalized.filter(piece => piece.length > 1)
+        : normalized;
+      return [...filteredNormalized, ...aliases];
+    })
+    .filter(Boolean);
+  return Array.from(new Set(parts));
 }
 
 function parseJsonObject(value: unknown): Record<string, unknown> {

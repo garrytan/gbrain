@@ -71,4 +71,9 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(source).not.toContain('via npm');
     expect(source).not.toContain('npm upgrade');
   });
+
+  test('refreshes agent rules after a successful upgrade', () => {
+    expect(source).toContain('gbrain setup-agent --skip-mcp');
+    expect(source).not.toContain("execSync('gbrain setup-agent',");
+  });
 });

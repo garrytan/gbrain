@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from '../src/core/utils.ts';
+import { validateSlug, contentHash, importContentHash, rowToPage, rowToChunk, rowToSearchResult } from '../src/core/utils.ts';
 
 describe('validateSlug', () => {
   test('accepts valid slugs', () => {
@@ -43,6 +43,100 @@ describe('contentHash', () => {
   test('returns hex string', () => {
     const h = contentHash('test', '');
     expect(h).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
+describe('importContentHash', () => {
+  test('returns deterministic hash for full import state', () => {
+    const input = {
+      title: 'LLVM',
+      type: 'system' as const,
+      compiled_truth: 'Compiler infrastructure.',
+      timeline: '',
+      frontmatter: { repo: 'llvm/llvm-project', language: ['C++'] },
+      tags: ['compiler', 'tooling'],
+    };
+    expect(importContentHash(input)).toBe(importContentHash(input));
+  });
+
+  test('normalizes tag order', () => {
+    const h1 = importContentHash({
+      title: 'LLVM',
+      type: 'system',
+      compiled_truth: 'Compiler infrastructure.',
+      timeline: '',
+      frontmatter: {},
+      tags: ['tooling', 'compiler'],
+    });
+    const h2 = importContentHash({
+      title: 'LLVM',
+      type: 'system',
+      compiled_truth: 'Compiler infrastructure.',
+      timeline: '',
+      frontmatter: {},
+      tags: ['compiler', 'tooling'],
+    });
+    expect(h1).toBe(h2);
+  });
+
+  test('normalizes frontmatter key order recursively', () => {
+    const h1 = importContentHash({
+      title: 'LLVM',
+      type: 'system',
+      compiled_truth: 'Compiler infrastructure.',
+      timeline: '',
+      frontmatter: {
+        codemap: [
+          {
+            pointers: [
+              { symbol: 'Old::Symbol()', role: 'Original implementation', path: 'src/original.ts' },
+            ],
+            system: 'systems/llvm',
+          },
+        ],
+        repo: 'llvm/llvm-project',
+      },
+      tags: [],
+    });
+    const h2 = importContentHash({
+      title: 'LLVM',
+      type: 'system',
+      compiled_truth: 'Compiler infrastructure.',
+      timeline: '',
+      frontmatter: {
+        repo: 'llvm/llvm-project',
+        codemap: [
+          {
+            system: 'systems/llvm',
+            pointers: [
+              { path: 'src/original.ts', role: 'Original implementation', symbol: 'Old::Symbol()' },
+            ],
+          },
+        ],
+      },
+      tags: [],
+    });
+    expect(h1).toBe(h2);
+  });
+
+  test('preserves Date frontmatter values instead of collapsing them', () => {
+    const h1 = importContentHash({
+      title: 'LLVM',
+      type: 'system',
+      compiled_truth: 'Compiler infrastructure.',
+      timeline: '',
+      frontmatter: { reviewed_at: new Date('2026-04-15T12:30:00-07:00') },
+      tags: [],
+    });
+    const h2 = importContentHash({
+      title: 'LLVM',
+      type: 'system',
+      compiled_truth: 'Compiler infrastructure.',
+      timeline: '',
+      frontmatter: { reviewed_at: new Date('2026-04-16T12:30:00-07:00') },
+      tags: [],
+    });
+    expect(h1).not.toBe(h2);
   });
 });
 
