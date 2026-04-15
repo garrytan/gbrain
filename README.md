@@ -440,14 +440,14 @@ GBrain ships integration recipes that your agent sets up for you. Each recipe te
 
 | Recipe | Requires | What It Does |
 |--------|----------|-------------|
+| [Google Tools MCP](recipes/google-tools-mcp.md) | — | **Unified Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Forms, Slides via MCP (153 tools) |
 | [Public Tunnel](recipes/ngrok-tunnel.md) | — | Fixed URL for MCP + voice (ngrok Hobby $8/mo) |
-| [Credential Gateway](recipes/credential-gateway.md) | — | Gmail + Calendar access |
-| [Voice-to-Brain](recipes/twilio-voice-brain.md) | ngrok-tunnel | Phone calls to brain pages (Twilio + OpenAI Realtime) |
-| [Email-to-Brain](recipes/email-to-brain.md) | credential-gateway | Gmail to entity pages |
-| [X-to-Brain](recipes/x-to-brain.md) | — | Twitter timeline + mentions + deletions |
-| [Calendar-to-Brain](recipes/calendar-to-brain.md) | credential-gateway | Google Calendar to searchable daily pages |
-| [Meeting Sync](recipes/meeting-sync.md) | — | Circleback transcripts to brain pages with attendees |
-| [Restart Sweep](recipes/restart-sweep.md) | OpenClaw + Telegram | Detect dropped Telegram messages after OpenClaw gateway restarts |
+| [Voice-to-Brain](recipes/twilio-voice-brain.md) | ngrok-tunnel | Phone calls → brain pages (Twilio + OpenAI Realtime) |
+| [X-to-Brain](recipes/x-to-brain.md) | — | Twitter → brain pages (timeline + mentions + deletions) |
+| [Meeting Sync](recipes/meeting-sync.md) | — | Circleback transcripts → brain pages with attendees |
+| ~~[Credential Gateway](recipes/credential-gateway.md)~~ | — | ~~Gmail + Calendar access~~ *Deprecated — use Google Tools MCP* |
+| ~~[Email-to-Brain](recipes/email-to-brain.md)~~ | ~~credential-gateway~~ | ~~Gmail → entity pages~~ *Deprecated — use Google Tools MCP* |
+| ~~[Calendar-to-Brain](recipes/calendar-to-brain.md)~~ | ~~credential-gateway~~ | ~~Google Calendar → searchable daily pages~~ *Deprecated — use Google Tools MCP* |
 
 **Data research recipes** extract structured data from email into tracked brain pages. Built-in recipes for investor updates (MRR, ARR, runway, headcount), expense tracking, and company metrics. Create your own with `gbrain research init`.
 
