@@ -9,8 +9,11 @@
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const MODEL = process.env.GBRAIN_EMBEDDING_MODEL || 'text-embedding-3-large';
+const DIMENSIONS = Number.parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS || '1536', 10);
+const DISABLE_DIMENSIONS =
+  process.env.GBRAIN_EMBEDDING_DISABLE_DIMENSIONS === '1'
+  || process.env.GBRAIN_EMBEDDING_DISABLE_DIMENSIONS === 'true';
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
@@ -21,9 +24,33 @@ let client: OpenAI | null = null;
 
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI();
+    const apiKey = process.env.GBRAIN_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    const baseURL =
+      process.env.GBRAIN_OPENAI_BASE_URL ||
+      process.env.OPENAI_BASE_URL ||
+      process.env.OPENAI_API_BASE;
+
+    const opts: Record<string, unknown> = {};
+    if (apiKey) opts.apiKey = apiKey;
+    if (baseURL) opts.baseURL = baseURL;
+
+    client = new OpenAI(opts);
   }
   return client;
+}
+
+function getDimensions(): number {
+  if (!Number.isFinite(DIMENSIONS) || DIMENSIONS <= 0) {
+    throw new Error(`Invalid GBRAIN_EMBEDDING_DIMENSIONS: ${process.env.GBRAIN_EMBEDDING_DIMENSIONS}`);
+  }
+
+  // The schema is currently pinned to vector(1536). Failing fast here avoids
+  // silently writing incompatible vectors that will break search.
+  if (process.env.GBRAIN_EMBEDDING_DIMENSIONS && DIMENSIONS !== 1536) {
+    throw new Error(`GBRAIN_EMBEDDING_DIMENSIONS must be 1536 (schema is vector(1536)), got ${DIMENSIONS}`);
+  }
+
+  return DIMENSIONS;
 }
 
 export async function embed(text: string): Promise<Float32Array> {
@@ -49,11 +76,13 @@ export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
 async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await getClient().embeddings.create({
+      const req: Record<string, unknown> = {
         model: MODEL,
         input: texts,
-        dimensions: DIMENSIONS,
-      });
+      };
+      if (!DISABLE_DIMENSIONS) req.dimensions = getDimensions();
+
+      const response = await getClient().embeddings.create(req as any);
 
       // Sort by index to maintain order
       const sorted = response.data.sort((a, b) => a.index - b.index);

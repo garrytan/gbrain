@@ -28,6 +28,7 @@ export function loadConfig(): GBrainConfig | null {
 
   // Try env vars
   const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  const openaiKey = process.env.GBRAIN_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
 
   if (!fileConfig && !dbUrl) return null;
 
@@ -40,7 +41,7 @@ export function loadConfig(): GBrainConfig | null {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
-    ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(openaiKey ? { openai_api_key: openaiKey } : {}),
   };
   return merged as GBrainConfig;
 }
