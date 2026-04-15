@@ -2,9 +2,11 @@
 
 Your AI agent is smart but forgetful. GBrain gives it a brain.
 
-Meetings, emails, tweets, calendar events, voice calls, original ideas... all of it flows into a searchable knowledge base that your agent reads before every response and writes to after every conversation. 25 skills handle signal detection, content ingestion, entity enrichment, task management, cron scheduling, access control, and voice. The agent gets smarter every day.
+The production brain that powers this project: **17,888 pages, 4,383 people, 723 companies, 526 meeting transcripts**, 21 cron jobs running autonomously, built in 12 days. The agent ingests meetings, emails, tweets, voice calls, and original ideas while you sleep. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight. You wake up and the brain is smarter than when you went to bed.
 
-> **~30 minutes to a fully working brain.** Your agent does the work. Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
+GBrain is those patterns, generalized. 25 skills. Install in 30 minutes. Your agent does the work.
+
+> **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
 ## Install
 
@@ -31,6 +33,20 @@ git clone https://github.com/garrytan/gbrain.git && cd gbrain && bun install && 
 gbrain init                     # local brain, ready in 2 seconds
 gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
+```
+
+```
+3 results (hybrid search, 0.12s):
+
+1. concepts/do-things-that-dont-scale (score: 0.94)
+   PG's argument that unscalable effort teaches you what users want.
+   [Source: paulgraham.com, 2013-07-01]
+
+2. originals/founder-mode-observation (score: 0.87)
+   Deep involvement isn't micromanagement if it expands the team's thinking.
+
+3. concepts/build-something-people-want (score: 0.81)
+   The YC motto. Connected to 12 other brain pages.
 ```
 
 ### MCP server (Claude Code, Cursor, Windsurf)
@@ -133,6 +149,8 @@ Signal arrives (meeting, email, tweet, link)
 
 Every cycle adds knowledge. The agent enriches a person page after a meeting. Next time that person comes up, the agent already has context. The difference compounds daily.
 
+The system gets smarter on its own. Entity enrichment auto-escalates: a person mentioned once gets a stub page (Tier 3). After 3 mentions across different sources, they get web + social enrichment (Tier 2). After a meeting or 8+ mentions, full pipeline (Tier 1). The brain learns who matters without being told. Deterministic classifiers improve over time via a fail-improve loop that logs every LLM fallback and generates better regex patterns from the failures. `gbrain doctor` shows the trajectory: "intent classifier: 87% deterministic, up from 40% in week 1."
+
 > "Prep me for my meeting with Jordan in 30 minutes"
 > ... pulls dossier, shared history, recent activity, open threads
 
@@ -152,6 +170,8 @@ GBrain ships integration recipes that your agent sets up for you. Each recipe te
 | [X-to-Brain](recipes/x-to-brain.md) | — | Twitter timeline + mentions + deletions |
 | [Calendar-to-Brain](recipes/calendar-to-brain.md) | credential-gateway | Google Calendar to searchable daily pages |
 | [Meeting Sync](recipes/meeting-sync.md) | — | Circleback transcripts to brain pages with attendees |
+
+**Data research recipes** extract structured data from email into tracked brain pages. Built-in recipes for investor updates (MRR, ARR, runway, headcount), political donations, and company metrics. Create your own with `gbrain research init`.
 
 Run `gbrain integrations` to see status.
 
@@ -223,7 +243,7 @@ Query
   -> Results
 ```
 
-Keyword alone misses conceptual matches. Vector alone misses exact phrases. RRF gets both. Search quality is benchmarked: `gbrain eval --qrels queries.json`.
+Keyword alone misses conceptual matches. Vector alone misses exact phrases. RRF gets both. Search quality is benchmarked and reproducible: `gbrain eval --qrels queries.json` measures P@k, Recall@k, MRR, and nDCG@k. A/B test config changes before deploying them.
 
 ## Voice
 
@@ -306,12 +326,16 @@ LINKS + GRAPH
   gbrain link|unlink|backlinks|graph    Cross-reference management
 
 ADMIN
-  gbrain doctor [--json]                Health checks
+  gbrain doctor [--json] [--fast]       Health checks (resolver, skills, DB, embeddings)
+  gbrain doctor --fix                   Auto-fix resolver issues
   gbrain stats                          Brain statistics
   gbrain serve                          MCP server (stdio)
   gbrain integrations                   Integration recipe dashboard
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
+  gbrain transcribe <audio>             Transcribe audio (Groq Whisper)
+  gbrain research init <name>           Scaffold a data-research recipe
+  gbrain research list                  Show available recipes
 ```
 
 Run `gbrain --help` for the full reference.
@@ -328,7 +352,7 @@ The skills in this repo are those patterns, generalized. What took 11 days to bu
 
 **For agents:**
 - **[skills/RESOLVER.md](skills/RESOLVER.md)** ... Start here. The skill dispatcher.
-- [Individual skill files](skills/) ... 24 standalone instruction sets
+- [Individual skill files](skills/) ... 25 standalone instruction sets
 - [GBRAIN_SKILLPACK.md](docs/GBRAIN_SKILLPACK.md) ... Legacy reference architecture
 - [Getting Data In](docs/integrations/README.md) ... Integration recipes and data flow
 - [GBRAIN_VERIFY.md](docs/GBRAIN_VERIFY.md) ... Installation verification
