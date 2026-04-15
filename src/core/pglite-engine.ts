@@ -5,8 +5,9 @@ import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { pgliteSchemaSql } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
+import { EMBEDDING_MODEL } from './embedding.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
@@ -61,7 +62,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+    await this.db.exec(pgliteSchemaSql());
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {
@@ -263,10 +264,10 @@ export class PGLiteEngine implements BrainEngine {
 
       if (embeddingStr) {
         rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || EMBEDDING_MODEL, chunk.token_count || null);
       } else {
         rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || EMBEDDING_MODEL, chunk.token_count || null);
       }
     }
 

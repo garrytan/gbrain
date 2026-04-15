@@ -2,7 +2,7 @@
  * Embedding Service
  * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * Default: OpenAI text-embedding-3-large at 1536 dimensions.
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
@@ -43,13 +43,6 @@ function getDimensions(): number {
   if (!Number.isFinite(DIMENSIONS) || DIMENSIONS <= 0) {
     throw new Error(`Invalid GBRAIN_EMBEDDING_DIMENSIONS: ${process.env.GBRAIN_EMBEDDING_DIMENSIONS}`);
   }
-
-  // The schema is currently pinned to vector(1536). Failing fast here avoids
-  // silently writing incompatible vectors that will break search.
-  if (process.env.GBRAIN_EMBEDDING_DIMENSIONS && DIMENSIONS !== 1536) {
-    throw new Error(`GBRAIN_EMBEDDING_DIMENSIONS must be 1536 (schema is vector(1536)), got ${DIMENSIONS}`);
-  }
-
   return DIMENSIONS;
 }
 
@@ -86,7 +79,14 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
 
       // Sort by index to maintain order
       const sorted = response.data.sort((a, b) => a.index - b.index);
-      return sorted.map(d => new Float32Array(d.embedding));
+      const expected = getDimensions();
+      return sorted.map(d => {
+        const emb = new Float32Array(d.embedding);
+        if (emb.length !== expected) {
+          throw new Error(`Embedding dimension mismatch (expected ${expected}, got ${emb.length})`);
+        }
+        return emb;
+      });
     } catch (e: unknown) {
       if (attempt === MAX_RETRIES - 1) throw e;
 

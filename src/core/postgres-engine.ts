@@ -18,6 +18,7 @@ import type {
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { EMBEDDING_MODEL } from './embedding.ts';
 
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
@@ -293,10 +294,10 @@ export class PostgresEngine implements BrainEngine {
 
       if (embeddingStr) {
         rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || EMBEDDING_MODEL, chunk.token_count || null);
       } else {
         rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || EMBEDDING_MODEL, chunk.token_count || null);
       }
     }
 

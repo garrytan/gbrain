@@ -13,7 +13,29 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
-export const PGLITE_SCHEMA_SQL = `
+function embeddingModelDefault(): string {
+  return process.env.GBRAIN_EMBEDDING_MODEL || 'text-embedding-3-large';
+}
+
+function embeddingDimensionsDefault(): number {
+  const raw = process.env.GBRAIN_EMBEDDING_DIMENSIONS || '1536';
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid GBRAIN_EMBEDDING_DIMENSIONS: ${raw}`);
+  }
+  return parsed;
+}
+
+function sqlQuoteLiteral(s: string): string {
+  return `'${s.replaceAll("'", "''")}'`;
+}
+
+export function pgliteSchemaSql(): string {
+  const dims = embeddingDimensionsDefault();
+  const model = embeddingModelDefault();
+
+  // Note: changing dims for an existing DB requires rebuilding or a manual migration.
+  return `
 -- GBrain PGLite schema (local embedded Postgres)
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -48,8 +70,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  embedding     vector(${dims}),
+  model         TEXT    NOT NULL DEFAULT ${sqlQuoteLiteral(model)},
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -154,8 +176,8 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
   ('engine', 'pglite'),
-  ('embedding_model', 'text-embedding-3-large'),
-  ('embedding_dimensions', '1536'),
+  ('embedding_model', ${sqlQuoteLiteral(model)}),
+  ('embedding_dimensions', ${sqlQuoteLiteral(String(dims))}),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
 
@@ -207,3 +229,6 @@ CREATE TRIGGER trg_timeline_search_vector
   FOR EACH ROW
   EXECUTE FUNCTION update_page_search_vector_from_timeline();
 `;
+}
+
+export const PGLITE_SCHEMA_SQL = pgliteSchemaSql();
