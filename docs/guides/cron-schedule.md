@@ -18,10 +18,10 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 
 | Frequency | Job | Brain Interaction | Recipe |
 |-----------|-----|-------------------|--------|
-| On demand | Email monitoring | `list_messages` + `get_message` via google-tools-mcp, then entity enrichment | [google-tools-mcp](../../recipes/google-tools-mcp.md) |
+| Every 30 min | Email monitoring | Search sender, update people pages | [google-tools-mcp](../../recipes/google-tools-mcp.md) |
 | Every 30 min | X/Twitter collection | Create/update media pages, entity extraction | [x-to-brain](../../recipes/x-to-brain.md) |
 | 3x/day (weekdays) | Meeting sync | Full ingestion + attendee propagation | [meeting-sync](../../recipes/meeting-sync.md) |
-| On demand | Calendar context | `get_events` via google-tools-mcp, attendee enrichment | [google-tools-mcp](../../recipes/google-tools-mcp.md) |
+| Weekly | Calendar sync | Daily files + attendee enrichment | [google-tools-mcp](../../recipes/google-tools-mcp.md) |
 | Daily AM | Morning briefing | Search calendar attendees, deal status, active threads | [briefing skill](../../skills/briefing/SKILL.md) |
 | Weekly | Brain maintenance | `gbrain doctor`, embed stale, orphan detection | [maintain skill](../../skills/maintain/SKILL.md) |
 | Nightly | Dream cycle | Entity sweep, enrich thin spots, fix citations | See below |
@@ -29,14 +29,17 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 ## Implementation: Setting Up Cron Jobs
 
 ```bash
-# Email + Calendar: now handled on-demand via google-tools-mcp MCP tools
-# (list_messages, get_message, get_events, etc.) — no cron needed
+# Email collector — every 30 minutes
+*/30 * * * * cd /path/to/email-collector && node email-collector.mjs collect && node email-collector.mjs digest
 
 # X/Twitter collector — every 30 minutes
 */30 * * * * cd /path/to/x-collector && node x-collector.mjs collect >> /tmp/x-collector.log 2>&1
 
 # Meeting sync — 10 AM, 4 PM, 9 PM on weekdays
 0 10,16,21 * * 1-5 cd /path/to/meeting-sync && node meeting-sync.mjs >> /tmp/meeting-sync.log 2>&1
+
+# Calendar sync — Sundays at 10 AM
+0 10 * * 0 cd /path/to/calendar-sync && node calendar-sync.mjs --start $(date -v-7d +%Y-%m-%d) --end $(date +%Y-%m-%d)
 
 # Brain health — weekly Mondays at 6 AM
 0 6 * * 1 gbrain doctor --json >> /tmp/gbrain-health.log 2>&1 && gbrain embed --stale
@@ -181,7 +184,7 @@ echo "Dream cycle complete at $(date)"
    Verify output went to `/tmp/cron-held/`, not to messaging.
 2. **Dream cycle:** Run the dream cycle manually. Check that thin entity pages
    got enriched and broken citations were fixed.
-3. **Email access:** Call `list_messages` via google-tools-mcp. Verify recent emails returned.
+3. **Email collector cron:** Wait 30 minutes. Check `data/digests/` for new digest.
 4. **Morning briefing:** Check that held messages appear in the briefing.
 5. **Health check:** Run `gbrain doctor --json`. All checks should pass.
 
