@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.10.2] - 2026-04-16
+
+### Fixed
+
+- **`openai_api_key` and `anthropic_api_key` in `~/.gbrain/config.json` now actually work.** Both fields were declared on `GBrainConfig` but neither was consumed at runtime — `new OpenAI()` in `embedding.ts:24` and `new Anthropic()` in `search/expansion.ts:19` both instantiate without an explicit `apiKey`, so they rely on the SDK's ambient `*_API_KEY` env var lookup. Writing a key to the config file had no effect. `loadConfig()` now propagates both config values into `process.env` before the SDKs are instantiated, and adds the missing `ANTHROPIC_API_KEY` env-merge line so the merged config stays consistent with the `OPENAI_API_KEY` path. Env vars still win when both env and config are set.
+
 ## [0.10.1] - 2026-04-15
 
 ### Fixed
