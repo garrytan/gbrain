@@ -394,6 +394,19 @@ describe('executeHealthCheck', () => {
     expect(result.status).toBe('fail');
   });
 
+  test('command blocked for non-embedded recipes', async () => {
+    // A CWD recipe (isEmbedded=false) must not be allowed to execute
+    // arbitrary commands via the typed DSL. Only first-party embedded
+    // recipes get command execution.
+    const result = await executeHealthCheck(
+      { type: 'command', argv: ['whoami'], label: 'whoami' },
+      'test-id',
+      false, // non-embedded
+    );
+    expect(result.status).toBe('blocked');
+    expect(result.output).toContain('only allowed in embedded');
+  });
+
   test('any_of returns ok if first check passes', async () => {
     process.env.TEST_ANYOF = 'yes';
     const result = await executeHealthCheck({
