@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -287,6 +287,24 @@ async function handleCliOnly(command: string, args: string[]) {
     await runReport(args);
     return;
   }
+  if (command === 'doctor') {
+    // Doctor runs filesystem checks first (no DB needed), then DB checks.
+    // --fast skips DB checks entirely.
+    const { runDoctor } = await import('./commands/doctor.ts');
+    if (args.includes('--fast')) {
+      await runDoctor(null, args);
+    } else {
+      try {
+        const eng = await connectEngine();
+        await runDoctor(eng, args);
+        await eng.disconnect();
+      } catch {
+        // DB unavailable — still run filesystem checks
+        await runDoctor(null, args);
+      }
+    }
+    return;
+  }
 
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
@@ -327,14 +345,15 @@ async function handleCliOnly(command: string, args: string[]) {
         await runConfig(engine, args);
         break;
       }
-      case 'doctor': {
-        const { runDoctor } = await import('./commands/doctor.ts');
-        await runDoctor(engine, args);
-        break;
-      }
+      // doctor is handled before connectEngine() above
       case 'migrate': {
         const { runMigrateEngine } = await import('./commands/migrate-engine.ts');
         await runMigrateEngine(engine, args);
+        break;
+      }
+      case 'eval': {
+        const { runEvalCommand } = await import('./commands/eval.ts');
+        await runEvalCommand(engine, args);
         break;
       }
     }
@@ -387,7 +406,7 @@ SETUP
   migrate --to <supabase|pglite>     Transfer brain between engines
   upgrade                            Self-update
   check-update [--json]              Check for new versions
-  doctor [--json]                    Health check (pgvector, RLS, schema, embeddings)
+  doctor [--json] [--fast]            Health check (resolver, skills, pgvector, RLS, embeddings)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
 
 PAGES

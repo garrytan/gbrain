@@ -1,8 +1,11 @@
 # CLAUDE.md
 
-GBrain is a personal knowledge brain. Pluggable engines: PGLite (embedded Postgres
-via WASM, zero-config default) or Postgres + pgvector + hybrid search in a managed
-Supabase instance. `gbrain init` defaults to PGLite; suggests Supabase for 1000+ files.
+GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable
+engines: PGLite (embedded Postgres via WASM, zero-config default) or Postgres + pgvector
++ hybrid search in a managed Supabase instance. `gbrain init` defaults to PGLite;
+suggests Supabase for 1000+ files. GStack teaches agents how to code. GBrain teaches
+agents everything else: brain ops, signal detection, content ingestion, enrichment,
+cron scheduling, reports, identity, and access control.
 
 ## Architecture
 
@@ -29,7 +32,16 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 - `src/core/file-resolver.ts` — File resolution with fallback chain (local -> .redirect.yaml -> .redirect -> .supabase)
 - `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided)
 - `src/core/search/` — Hybrid search: vector + keyword + RRF + multi-query expansion + dedup
+- `src/core/search/intent.ts` — Query intent classifier (entity/temporal/event/general → auto-selects detail level)
+- `src/core/search/eval.ts` — Retrieval eval harness: P@k, R@k, MRR, nDCG@k metrics + runEval() orchestrator
+- `src/commands/eval.ts` — `gbrain eval` command: single-run table + A/B config comparison
 - `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff
+- `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects
+- `src/core/backoff.ts` — Adaptive load-aware throttling: CPU/memory checks, exponential backoff, active hours multiplier
+- `src/core/fail-improve.ts` — Deterministic-first, LLM-fallback loop with JSONL failure logging and auto-test generation
+- `src/core/transcription.ts` — Audio transcription: Groq Whisper (default), OpenAI fallback, ffmpeg segmentation for >25MB
+- `src/core/enrichment-service.ts` — Global enrichment service: entity slug generation, tier auto-escalation, batch throttling
+- `src/core/data-research.ts` — Recipe validation, field extraction (MRR/ARR regex), dedup, tracker parsing, HTML stripping
 - `src/mcp/server.ts` — MCP stdio server (generated from operations)
 - `src/commands/auth.ts` — Standalone token management (create/list/revoke/test)
 - `src/commands/upgrade.ts` — Self-update CLI with post-upgrade feature discovery
@@ -50,7 +62,29 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 - `docs/guides/diligence-ingestion.md` — Data room to brain pages pipeline
 - `docs/designs/HOMEBREW_FOR_PERSONAL_AI.md` — 10-star vision for integration system
 - `docs/mcp/` — Per-client setup guides (Claude Desktop, Code, Cowork, Perplexity)
+- `docs/benchmarks/` — Search quality benchmark results (reproducible, fictional data)
 - `skills/_brain-filing-rules.md` — Cross-cutting brain filing rules (referenced by all brain-writing skills)
+- `skills/RESOLVER.md` — Skill routing table (modeled on Wintermute's AGENTS.md)
+- `skills/conventions/` — Cross-cutting rules (quality, brain-first, model-routing, test-before-bulk, cross-modal)
+- `skills/_output-rules.md` — Output quality standards (deterministic links, no slop, exact phrasing)
+- `skills/signal-detector/SKILL.md` — Always-on idea+entity capture on every message
+- `skills/brain-ops/SKILL.md` — Brain-first lookup, read-enrich-write loop, source attribution
+- `skills/idea-ingest/SKILL.md` — Links/articles/tweets with author people page mandatory
+- `skills/media-ingest/SKILL.md` — Video/audio/PDF/book with entity extraction
+- `skills/meeting-ingestion/SKILL.md` — Transcripts with attendee enrichment chaining
+- `skills/citation-fixer/SKILL.md` — Citation format auditing and fixing
+- `skills/repo-architecture/SKILL.md` — Filing rules by primary subject
+- `skills/skill-creator/SKILL.md` — Create conforming skills with MECE check
+- `skills/daily-task-manager/SKILL.md` — Task lifecycle with priority levels
+- `skills/daily-task-prep/SKILL.md` — Morning prep with calendar context
+- `skills/cross-modal-review/SKILL.md` — Quality gate via second model
+- `skills/cron-scheduler/SKILL.md` — Schedule staggering, quiet hours, idempotency
+- `skills/reports/SKILL.md` — Timestamped reports with keyword routing
+- `skills/testing/SKILL.md` — Skill validation framework
+- `skills/soul-audit/SKILL.md` — 6-phase interview for SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md
+- `skills/webhook-transforms/SKILL.md` — External events to brain signals
+- `skills/data-research/SKILL.md` — Structured data research: email-to-tracker pipeline with parameterized YAML recipes
+- `templates/` — SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md templates
 - `skills/migrations/` — Version migration files with feature_pitch YAML frontmatter
 - `src/commands/publish.ts` — Deterministic brain page publisher (code+skill pair, zero LLM calls)
 - `src/commands/backlinks.ts` — Back-link checker and fixer (enforces Iron Law)
@@ -68,7 +102,7 @@ Key commands added in v0.7:
 
 ## Testing
 
-`bun test` runs all tests (23 unit test files + 4 E2E test files). Unit tests run
+`bun test` runs all tests (34 unit test files + 5 E2E test files). Unit tests run
 without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
 
 Unit tests: `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts`
@@ -87,10 +121,23 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/publish.test.ts` (content stripping, encryption, password generation, HTML output),
 `test/backlinks.test.ts` (entity extraction, back-link detection, timeline entry generation),
 `test/lint.test.ts` (LLM artifact detection, code fence stripping, frontmatter validation),
-`test/report.test.ts` (report format, directory structure).
+`test/report.test.ts` (report format, directory structure),
+`test/skills-conformance.test.ts` (skill frontmatter + required sections validation),
+`test/resolver.test.ts` (RESOLVER.md coverage, routing validation),
+`test/search.test.ts` (RRF normalization, compiled truth boost, cosine similarity, dedup key),
+`test/dedup.test.ts` (source-aware dedup, compiled truth guarantee, layer interactions),
+`test/intent.test.ts` (query intent classification: entity/temporal/event/general),
+`test/eval.test.ts` (retrieval metrics: precisionAtK, recallAtK, mrr, ndcgAtK, parseQrels),
+`test/check-resolvable.test.ts` (resolver reachability, MECE overlap, gap detection, DRY checks),
+`test/backoff.test.ts` (load-aware throttling, concurrency limits, active hours),
+`test/fail-improve.test.ts` (deterministic/LLM cascade, JSONL logging, test generation, rotation),
+`test/transcription.test.ts` (provider detection, format validation, API key errors),
+`test/enrichment-service.test.ts` (entity slugification, extraction, tier escalation),
+`test/data-research.test.ts` (recipe validation, MRR/ARR extraction, dedup, tracker parsing, HTML stripping).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys)
+- `test/e2e/search-quality.test.ts` runs search quality E2E against PGLite (no API keys, in-memory)
 - `test/e2e/upgrade.test.ts` runs check-update E2E against real GitHub API (network required)
 - Tier 2 (`skills.test.ts`) requires OpenClaw + API keys, runs nightly in CI
 - If `.env.testing` doesn't exist in this directory, check sibling worktrees for one:
@@ -143,10 +190,21 @@ stop and remove it before starting a new one.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. They contain the
-workflows, heuristics, and quality rules for ingestion, querying, maintenance,
-enrichment, and setup. 7 skills: ingest, query, maintain, enrich, briefing,
-migrate, setup.
+Read the skill files in `skills/` before doing brain operations. GBrain ships 25 skills
+organized by `skills/RESOLVER.md`:
+
+**Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
+briefing, migrate, setup, publish.
+
+**Brain skills (from Wintermute):** signal-detector, brain-ops, idea-ingest, media-ingest,
+meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
+
+**Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
+testing, soul-audit, webhook-transforms.
+
+**Conventions:** `skills/conventions/` has cross-cutting rules (quality, brain-first,
+model-routing, test-before-bulk, cross-modal). `skills/_brain-filing-rules.md` and
+`skills/_output-rules.md` are shared references.
 
 ## Build
 
@@ -194,6 +252,9 @@ upgrade, not document the implementation.
   silent sync failures and stale embeddings before they bite you"
 - Bad: "Setup skill Phase H and Phase I added"
 - Good: "New installs automatically set up live sync so your brain never falls behind"
+- **Always credit community contributions.** When a CHANGELOG entry includes work from
+  a community PR, name the contributor with `Contributed by @username`. Contributors
+  did real work. Thank them publicly every time, no exceptions.
 
 ## Version migrations
 

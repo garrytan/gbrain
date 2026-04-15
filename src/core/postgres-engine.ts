@@ -216,6 +216,8 @@ export class PostgresEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
+    const detailLow = opts?.detail === 'low';
+
     // Search-only timeout: prevents DoS via expensive queries without
     // affecting long-running operations like embed --all or bulk import
     await sql`SET statement_timeout = '8s'`;
@@ -236,12 +238,13 @@ export class PostgresEngine implements BrainEngine {
         best_chunks AS (
           SELECT DISTINCT ON (rp.slug)
             rp.slug, rp.id as page_id, rp.title, rp.type, rp.score,
-            cc.chunk_text, cc.chunk_source
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
           FROM ranked_pages rp
           JOIN content_chunks cc ON cc.page_id = rp.id
+          ${detailLow ? sql`WHERE cc.chunk_source = 'compiled_truth'` : sql``}
           ORDER BY rp.slug, cc.chunk_index
         )
-        SELECT slug, page_id, title, type, chunk_text, chunk_source, score,
+        SELECT slug, page_id, title, type, chunk_id, chunk_index, chunk_text, chunk_source, score,
           false AS stale
         FROM best_chunks
         ORDER BY score DESC
@@ -258,6 +261,7 @@ export class PostgresEngine implements BrainEngine {
     const offset = opts?.offset || 0;
     const type = opts?.type;
     const excludeSlugs = opts?.exclude_slugs;
+    const detailLow = opts?.detail === 'low';
 
     if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
@@ -271,12 +275,13 @@ export class PostgresEngine implements BrainEngine {
       const rows = await sql`
         SELECT
           p.slug, p.id as page_id, p.title, p.type,
-          cc.chunk_text, cc.chunk_source,
+          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
           1 - (cc.embedding <=> ${vecStr}::vector) AS score,
           false AS stale
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE cc.embedding IS NOT NULL
+          ${detailLow ? sql`AND cc.chunk_source = 'compiled_truth'` : sql``}
           ${type ? sql`AND p.type = ${type}` : sql``}
           ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
         ORDER BY cc.embedding <=> ${vecStr}::vector
@@ -287,6 +292,20 @@ export class PostgresEngine implements BrainEngine {
     } finally {
       await sql`SET statement_timeout = '0'`;
     }
+  }
+
+  async getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>> {
+    if (ids.length === 0) return new Map();
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, embedding FROM content_chunks
+      WHERE id = ANY(${ids}::int[]) AND embedding IS NOT NULL
+    `;
+    const result = new Map<number, Float32Array>();
+    for (const row of rows) {
+      if (row.embedding) result.set(row.id as number, row.embedding as Float32Array);
+    }
+    return result;
   }
 
   // Chunks

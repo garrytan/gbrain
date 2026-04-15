@@ -1,6 +1,39 @@
+---
+name: enrich
+version: 1.0.0
+description: |
+  Enrich brain pages with tiered enrichment protocol. Creates and updates
+  person/company pages with compiled truth, timeline, and cross-links.
+  Use when a new entity is mentioned or an existing page needs updating.
+triggers:
+  - "enrich"
+  - "create person page"
+  - "update company page"
+  - "who is this person"
+  - "look up this company"
+tools:
+  - get_page
+  - put_page
+  - search
+  - query
+  - add_link
+  - add_timeline_entry
+  - get_backlinks
+mutating: true
+---
+
 # Enrich Skill
 
 Enrich person and company pages from external sources. Scale effort to importance.
+
+## Contract
+
+This skill guarantees:
+- Every enriched page has compiled truth (State section) with inline citations
+- Every enriched page has a timeline with dated entries
+- Back-links are created bidirectionally
+- Tiered enrichment: Tier 1 (full), Tier 2 (medium), Tier 3 (minimal) based on notability
+- No stubs: every new page has meaningful content from web search or existing brain context
 
 > **Filing rule:** Read `skills/_brain-filing-rules.md` before creating any new page.
 
@@ -276,6 +309,34 @@ After enrichment sweeps, save a report:
 - Validation flags or API failures
 
 This creates an audit trail for brain enrichment over time.
+
+## Anti-Patterns
+
+- Creating stub pages with no content
+- Enriching without checking brain first
+- Overwriting user's direct statements with API data
+- Creating pages for non-notable entities
+
+## Output Format
+
+An enriched person page contains:
+- **Frontmatter** with type, tags, company, relationship, and contact fields
+- **Executive summary** (1 paragraph: how you know them, why they matter, relationship state)
+- **State** section with hard facts and inline `[Source: ...]` citations
+- **Texture sections** (What They Believe, What They're Building, What Motivates Them, Hobby Horses)
+- **Assessment** with trajectory read
+- **Relationship** history and contact info
+- **Network** connections and mutual contacts
+- **Timeline** in reverse chronological order, every entry dated with source citation
+
+An enriched company page contains:
+- **Frontmatter** with type and tags
+- **Executive summary** (1 paragraph)
+- **State** section (what they do, stage, key people, metrics, your connection)
+- **Open Threads** (active items, pending decisions)
+- **Timeline** in reverse chronological order with dated, cited entries
+
+Both page types have bidirectional back-links to every entity they mention.
 
 ## Tools Used
 

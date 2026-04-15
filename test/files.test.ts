@@ -1,8 +1,10 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, mkdirSync, rmSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync, mkdirSync, rmSync, symlinkSync, mkdtempSync } from 'fs';
+import { join, basename } from 'path';
 import { createHash } from 'crypto';
 import { extname } from 'path';
+import { tmpdir } from 'os';
+import { collectFiles } from '../src/commands/files.ts';
 
 const TMP = join(import.meta.dir, '.tmp-files-test');
 
@@ -122,31 +124,10 @@ describe('fileHash', () => {
   });
 });
 
-describe('collectFiles pattern (non-markdown, skip hidden)', () => {
-  // Reimplementing collectFiles logic to test the pattern
-  const { readdirSync, statSync } = require('fs');
-
-  function collectFiles(dir: string): string[] {
-    const files: string[] = [];
-    function walk(d: string) {
-      for (const entry of readdirSync(d)) {
-        if (entry.startsWith('.')) continue;
-        const full = join(d, entry);
-        const stat = statSync(full);
-        if (stat.isDirectory()) {
-          walk(full);
-        } else if (!entry.endsWith('.md')) {
-          files.push(full);
-        }
-      }
-    }
-    walk(dir);
-    return files.sort();
-  }
-
+describe('collectFiles (production import)', () => {
   test('finds non-markdown files', () => {
     const files = collectFiles(TMP);
-    const basenames = files.map(f => f.split('/').pop());
+    const basenames = files.map(f => basename(f));
     expect(basenames).toContain('photo.jpg');
     expect(basenames).toContain('doc.pdf');
     expect(basenames).toContain('data.csv');
@@ -174,5 +155,45 @@ describe('collectFiles pattern (non-markdown, skip hidden)', () => {
     const files = collectFiles(TMP);
     const sorted = [...files].sort();
     expect(files).toEqual(sorted);
+  });
+
+  test('collectFiles skips symlinks', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-symlink-'));
+    try {
+      writeFileSync(join(tmpDir, 'real.txt'), 'content');
+      symlinkSync('/etc/passwd', join(tmpDir, 'evil.txt'));
+      const files = collectFiles(tmpDir);
+      expect(files.map(f => basename(f))).toContain('real.txt');
+      expect(files.map(f => basename(f))).not.toContain('evil.txt');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('collectFiles skips broken symlinks', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-broken-'));
+    try {
+      writeFileSync(join(tmpDir, 'real.txt'), 'content');
+      symlinkSync('/nonexistent/path', join(tmpDir, 'broken.txt'));
+      const files = collectFiles(tmpDir);
+      expect(files.map(f => basename(f))).toContain('real.txt');
+      expect(files.map(f => basename(f))).not.toContain('broken.txt');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('collectFiles skips node_modules', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-nodemod-'));
+    try {
+      mkdirSync(join(tmpDir, 'node_modules'));
+      writeFileSync(join(tmpDir, 'node_modules', 'pkg.js'), 'x');
+      writeFileSync(join(tmpDir, 'real.txt'), 'content');
+      const files = collectFiles(tmpDir);
+      expect(files.map(f => basename(f))).toContain('real.txt');
+      expect(files.map(f => basename(f))).not.toContain('pkg.js');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
   });
 });

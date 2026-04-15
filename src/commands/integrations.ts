@@ -41,7 +41,7 @@ interface RecipeFrontmatter {
   category: 'infra' | 'sense' | 'reflex';
   requires: string[];
   secrets: RecipeSecret[];
-  health_checks: string[];
+  health_checks: HealthCheck[];
   setup_time: string;
   cost_estimate?: string;
 }
@@ -50,6 +50,7 @@ interface ParsedRecipe {
   frontmatter: RecipeFrontmatter;
   body: string;
   filename: string;
+  embedded: boolean;
 }
 
 interface HeartbeatEntry {
@@ -59,6 +60,169 @@ interface HeartbeatEntry {
   status: string;
   details?: Record<string, unknown>;
   error?: string;
+}
+
+// --- Health Check DSL Types ---
+
+interface HttpCheck {
+  type: 'http';
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  auth?: 'basic' | 'bearer';
+  auth_user?: string;
+  auth_pass?: string;
+  auth_token?: string;
+  label?: string;
+}
+
+interface EnvExistsCheck {
+  type: 'env_exists';
+  name: string;
+  label?: string;
+}
+
+interface CommandCheck {
+  type: 'command';
+  argv: string[];
+  label?: string;
+}
+
+interface AnyOfCheck {
+  type: 'any_of';
+  label?: string;
+  checks: HealthCheck[];
+}
+
+type HealthCheck = string | HttpCheck | EnvExistsCheck | CommandCheck | AnyOfCheck;
+
+interface CheckResult {
+  integration: string;
+  check: string;
+  status: 'ok' | 'fail' | 'timeout' | 'blocked';
+  output: string;
+}
+
+/**
+ * Returns true if a string health_check contains shell metacharacters.
+ * Only applied to user-created (non-embedded) recipes.
+ */
+export function isUnsafeHealthCheck(check: string): boolean {
+  return /[;&|`$(){}\\<>\n]/.test(check);
+}
+
+/** Expand $VAR references with process.env values */
+export function expandVars(s: string): string {
+  return s.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => process.env[name] || '');
+}
+
+export async function executeHealthCheck(
+  check: HealthCheck,
+  integrationId: string,
+  isEmbedded: boolean,
+): Promise<CheckResult> {
+  const label = typeof check === 'string' ? check : (check as any).label || JSON.stringify(check);
+  const base = { integration: integrationId, check: label };
+
+  // String health checks (deprecated path)
+  if (typeof check === 'string') {
+    if (!isEmbedded && isUnsafeHealthCheck(check)) {
+      return { ...base, status: 'blocked', output: 'Blocked: contains unsafe shell characters. Migrate to typed health_check DSL.' };
+    }
+    try {
+      const output = execSync(check, { timeout: 10000, encoding: 'utf-8', env: process.env }).trim();
+      if (!isEmbedded) {
+        console.error(`  Warning: string health_check is deprecated. Migrate to typed DSL format.`);
+      }
+      return { ...base, status: output.includes('FAIL') ? 'fail' : 'ok', output };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ...base, status: msg.includes('TIMEDOUT') ? 'timeout' : 'fail', output: msg };
+    }
+  }
+
+  // Typed DSL checks
+  switch (check.type) {
+    case 'http': {
+      try {
+        const url = expandVars(check.url);
+        if (!url || url.includes('undefined')) {
+          return { ...base, status: 'fail', output: `Missing env var in URL: ${check.url}` };
+        }
+        const headers: Record<string, string> = {};
+        if (check.headers) {
+          for (const [k, v] of Object.entries(check.headers)) {
+            headers[k] = expandVars(v);
+          }
+        }
+        if (check.auth === 'basic' && check.auth_user && check.auth_pass) {
+          const user = expandVars(check.auth_user);
+          const pass = expandVars(check.auth_pass);
+          headers['Authorization'] = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+        } else if (check.auth === 'bearer' && check.auth_token) {
+          headers['Authorization'] = 'Bearer ' + expandVars(check.auth_token);
+        }
+        const fetchOpts: RequestInit = {
+          method: check.method || 'GET',
+          headers,
+          signal: AbortSignal.timeout(10000),
+        };
+        if (check.body) {
+          fetchOpts.body = expandVars(check.body);
+          if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+        }
+        const resp = await fetch(url, fetchOpts);
+        const ok = resp.status >= 200 && resp.status < 400;
+        return { ...base, status: ok ? 'ok' : 'fail', output: `${check.label || 'HTTP'}: ${ok ? 'OK' : `HTTP ${resp.status}`}` };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('TimeoutError') || msg.includes('abort')) {
+          return { ...base, status: 'timeout', output: `${check.label || 'HTTP'}: timeout` };
+        }
+        return { ...base, status: 'fail', output: `${check.label || 'HTTP'}: ${msg}` };
+      }
+    }
+
+    case 'env_exists': {
+      const val = process.env[check.name];
+      return {
+        ...base,
+        status: val ? 'ok' : 'fail',
+        output: `${check.label || check.name}: ${val ? 'set' : 'NOT SET'}`,
+      };
+    }
+
+    case 'command': {
+      try {
+        const { spawnSync } = await import('child_process');
+        const result = spawnSync(check.argv[0], check.argv.slice(1), {
+          timeout: 10000,
+          encoding: 'utf-8',
+          env: process.env,
+        });
+        const ok = result.status === 0;
+        const output = (result.stdout || '').trim() || (ok ? 'OK' : 'FAIL');
+        return { ...base, status: ok ? 'ok' : 'fail', output: `${check.label || check.argv[0]}: ${output}` };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { ...base, status: 'fail', output: `${check.label || check.argv[0]}: ${msg}` };
+      }
+    }
+
+    case 'any_of': {
+      for (const sub of check.checks) {
+        const result = await executeHealthCheck(sub, integrationId, isEmbedded);
+        if (result.status === 'ok') {
+          return { ...base, status: 'ok', output: `${check.label || 'any_of'}: ${result.output}` };
+        }
+      }
+      return { ...base, status: 'fail', output: `${check.label || 'any_of'}: all checks failed` };
+    }
+
+    default:
+      return { ...base, status: 'fail', output: `Unknown check type: ${(check as any).type}` };
+  }
 }
 
 // --- Recipe Parsing ---
@@ -81,12 +245,13 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
         category: data.category || 'sense',
         requires: data.requires || [],
         secrets: data.secrets || [],
-        health_checks: data.health_checks || [],
+        health_checks: (data.health_checks || []) as HealthCheck[],
         setup_time: data.setup_time || 'unknown',
         cost_estimate: data.cost_estimate,
       },
       body: body.trim(),
       filename,
+      embedded: false,
     };
   } catch {
     return null;
@@ -127,6 +292,7 @@ function loadAllRecipes(): ParsedRecipe[] {
       const content = readFileSync(join(dir, file), 'utf-8');
       const recipe = parseRecipe(content, file);
       if (recipe) {
+        recipe.embedded = true;
         recipes.push(recipe);
       } else {
         console.error(`Warning: skipping ${file} (invalid or missing 'id' in frontmatter)`);
@@ -440,7 +606,7 @@ function cmdStatus(args: string[]): void {
   console.log('');
 }
 
-function cmdDoctor(args: string[]): void {
+async function cmdDoctor(args: string[]): Promise<void> {
   const jsonMode = args.includes('--json');
   const recipes = loadAllRecipes();
   const configured = recipes.filter(r => getStatus(r) !== 'available');
@@ -454,37 +620,12 @@ function cmdDoctor(args: string[]): void {
     return;
   }
 
-  interface CheckResult {
-    integration: string;
-    check: string;
-    status: 'ok' | 'fail' | 'timeout';
-    output: string;
-  }
   const results: CheckResult[] = [];
 
   for (const recipe of configured) {
     for (const check of recipe.frontmatter.health_checks) {
-      try {
-        const output = execSync(check, {
-          timeout: 10000,
-          encoding: 'utf-8',
-          env: process.env,
-        }).trim();
-        results.push({
-          integration: recipe.frontmatter.id,
-          check,
-          status: output.includes('FAIL') ? 'fail' : 'ok',
-          output,
-        });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        results.push({
-          integration: recipe.frontmatter.id,
-          check,
-          status: msg.includes('TIMEDOUT') ? 'timeout' : 'fail',
-          output: msg,
-        });
-      }
+      const result = await executeHealthCheck(check, recipe.frontmatter.id, recipe.embedded);
+      results.push(result);
     }
   }
 
@@ -502,7 +643,7 @@ function cmdDoctor(args: string[]): void {
     const allOk = checks.every(c => c.status === 'ok');
     console.log(`  ${recipe.frontmatter.id}: ${allOk ? 'OK' : 'ISSUES'}`);
     for (const c of checks) {
-      const icon = c.status === 'ok' ? '  ✓' : c.status === 'timeout' ? '  ⏱' : '  ✗';
+      const icon = c.status === 'ok' ? '  \u2713' : c.status === 'timeout' ? '  \u23F1' : '  \u2717';
       console.log(`${icon} ${c.output}`);
     }
   }
@@ -670,7 +811,7 @@ export async function runIntegrations(args: string[]): Promise<void> {
       cmdStatus(subArgs);
       break;
     case 'doctor':
-      cmdDoctor(subArgs);
+      await cmdDoctor(subArgs);
       break;
     case 'stats':
       cmdStats(subArgs);

@@ -10,7 +10,14 @@ secrets:
     description: Circleback API token for meeting data access
     where: https://app.circleback.ai — Settings > API > generate token
 health_checks:
-  - "curl -sf -H \"Authorization: Bearer $CIRCLEBACK_TOKEN\" \"https://app.circleback.ai/api/mcp\" -X POST -H \"Content-Type: application/json\" -d '{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1}' > /dev/null && echo 'Circleback: OK' || echo 'Circleback: FAIL'"
+  - type: http
+    url: "https://app.circleback.ai/api/mcp"
+    method: POST
+    headers:
+      Authorization: "Bearer $CIRCLEBACK_TOKEN"
+      Content-Type: "application/json"
+    body: '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+    label: "Circleback API"
 setup_time: 15 min
 cost_estimate: "$0-17/mo (Circleback free for 10 meetings/mo, Pro $17/mo unlimited)"
 ---

@@ -56,6 +56,46 @@ describe('file-resolver', () => {
 
     expect(resolveFile('people/no-storage.json', brainRoot)).rejects.toThrow('no storage backend');
   });
+
+  test('blocks resolveFile path traversal at root level', async () => {
+    await expect(
+      resolveFile('../../etc/passwd', brainRoot, storage)
+    ).rejects.toThrow('Path traversal blocked');
+  });
+
+  test('blocks .supabase marker with traversal prefix', async () => {
+    const subDir = join(brainRoot, 'poisoned');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, '.supabase'),
+      'synced_at: 2026-04-12\nbucket: brain-files\nprefix: ../../etc/\nfile_count: 1\n'
+    );
+    await expect(
+      resolveFile('poisoned/secret.json', brainRoot, storage)
+    ).rejects.toThrow('marker prefix contains path traversal');
+  });
+
+  test('blocks .supabase marker with absolute path prefix', async () => {
+    const subDir = join(brainRoot, 'abs');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, '.supabase'),
+      'synced_at: 2026-04-12\nbucket: brain-files\nprefix: /etc/\nfile_count: 1\n'
+    );
+    await expect(
+      resolveFile('abs/passwd', brainRoot, storage)
+    ).rejects.toThrow('marker prefix contains path traversal');
+  });
+
+  test('allows .supabase marker with clean prefix', async () => {
+    const subDir = join(brainRoot, 'media');
+    mkdirSync(subDir, { recursive: true });
+    await storage.upload('media/.raw/photo.jpg', Buffer.from('jpeg-data'));
+    writeFileSync(join(subDir, '.supabase'),
+      'synced_at: 2026-04-12\nbucket: brain-files\nprefix: media/.raw/\nfile_count: 1\n'
+    );
+    const result = await resolveFile('media/photo.jpg', brainRoot, storage);
+    expect(result.source).toBe('storage');
+    expect(result.data.toString()).toBe('jpeg-data');
+  });
 });
 
 describe('parseRedirect', () => {

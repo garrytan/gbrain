@@ -1,8 +1,42 @@
+---
+name: maintain
+version: 1.0.0
+description: |
+  Brain health checks: back-link enforcement, citation audit, filing validation,
+  stale info detection, orphan pages, and benchmarks. Use when asked to check
+  brain health, run maintenance, or audit quality.
+triggers:
+  - "brain health"
+  - "check backlinks"
+  - "citation audit"
+  - "maintenance"
+  - "orphan pages"
+  - "stale pages"
+tools:
+  - get_health
+  - get_page
+  - put_page
+  - list_pages
+  - get_backlinks
+  - add_link
+  - search
+mutating: true
+---
+
 # Maintain Skill
 
 Periodic brain health checks and cleanup.
 
-## Workflow
+## Contract
+
+This skill guarantees:
+- All health dimensions are checked (stale, orphan, dead links, cross-refs, backlinks, citations, filing, tags)
+- Each issue found has a specific fix action
+- Back-link iron law is enforced
+- Citation format is validated against the standard
+- Results are reported with counts per dimension
+
+## Phases
 
 1. **Run health check.** Check gbrain health to get the dashboard.
 2. **Check each dimension:**
@@ -145,6 +179,50 @@ This creates an audit trail for brain health over time.
 - Never delete pages without confirmation
 - Log all changes via timeline entries
 - Check gbrain health before and after to show improvement
+
+## Anti-Patterns
+
+- Fixing pages without reading them first -- you must understand context before editing
+- Silently skipping dimensions -- every dimension must be checked and reported, even if clean
+- Deleting orphan pages without checking if they should be linked instead
+- Running embedding refresh during peak usage hours
+- Batch-fixing back-links without verifying the relationship is real
+- Marking a dimension "clean" without actually querying it
+- Rewriting compiled truth without reading the full timeline first
+- Removing tags without checking if other pages use the same tag consistently
+
+## Output Format
+
+The maintenance report follows this structure:
+
+```
+## Brain Health Report — YYYY-MM-DD
+
+| Dimension           | Issues Found | Fixed | Remaining |
+|----------------------|-------------|-------|-----------|
+| Stale pages          | N           | N     | N         |
+| Orphan pages         | N           | N     | N         |
+| Dead links           | N           | N     | N         |
+| Missing cross-refs   | N           | N     | N         |
+| Back-link violations | N           | N     | N         |
+| Citation gaps        | N           | N     | N         |
+| Filing violations    | N           | N     | N         |
+| Tag inconsistencies  | N           | N     | N         |
+| Embedding staleness  | N           | N     | N         |
+| Security (RLS)       | N           | N     | N         |
+| Schema health        | N           | N     | N         |
+| File storage         | N           | N     | N         |
+| Open threads         | N           | N     | N         |
+
+### Details
+[Per-dimension breakdown with specific pages and actions taken]
+
+### Benchmark Results (if run)
+[Tier 1-4 query results with pass/fail]
+
+### Outstanding Issues
+[Items requiring user attention or confirmation]
+```
 
 ## Tools Used
 

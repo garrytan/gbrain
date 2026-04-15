@@ -65,6 +65,8 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
     type: row.type as PageType,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
+    chunk_id: row.chunk_id as number,
+    chunk_index: row.chunk_index as number,
     score: Number(row.score),
     stale: Boolean(row.stale),
   };

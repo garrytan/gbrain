@@ -38,6 +38,7 @@ export interface BrainEngine {
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
   searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]>;
+  getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>>;
 
   // Chunks
   upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;

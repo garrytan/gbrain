@@ -1,7 +1,11 @@
 import { execSync } from 'child_process';
-import { readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { readdirSync, lstatSync, existsSync, copyFileSync, mkdirSync, readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { homedir } from 'os';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 import { saveConfig, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 
@@ -81,6 +85,7 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
     console.log('Next: gbrain import <dir>');
     console.log('');
     console.log('When you outgrow local: gbrain migrate --to supabase');
+    reportModStatus();
   }
 }
 
@@ -150,6 +155,7 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
   } else {
     console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
     console.log('Next: gbrain import <dir>');
+    reportModStatus();
   }
 }
 
@@ -166,7 +172,11 @@ function countMarkdownFiles(dir: string, maxScan = 1500): number {
         if (entry.startsWith('.') || entry === 'node_modules') continue;
         const full = join(d, entry);
         try {
-          const stat = statSync(full);
+          let stat;
+          try {
+            stat = lstatSync(full);
+          } catch { continue; }
+          if (stat.isSymbolicLink()) continue;
           if (stat.isDirectory()) scan(full);
           else if (entry.endsWith('.md')) count++;
         } catch { /* skip unreadable */ }
@@ -211,4 +221,97 @@ function readLine(prompt: string): Promise<string> {
     });
     process.stdin.resume();
   });
+}
+
+/**
+ * Detect GStack installation across known host paths.
+ * Uses gstack-global-discover if available, falls back to path checking.
+ */
+export function detectGStack(): { found: boolean; path: string | null; host: string | null } {
+  // Try gstack's own discovery tool first (DRY: don't reimplement host detection)
+  try {
+    const result = execSync(
+      `${join(homedir(), '.claude', 'skills', 'gstack', 'bin', 'gstack-global-discover')} 2>/dev/null`,
+      { encoding: 'utf-8', timeout: 5000 }
+    ).trim();
+    if (result) {
+      return { found: true, path: result.split('\n')[0], host: 'auto-detected' };
+    }
+  } catch { /* binary not available */ }
+
+  // Fallback: check known host paths
+  const hostPaths = [
+    { path: join(homedir(), '.claude', 'skills', 'gstack'), host: 'claude' },
+    { path: join(homedir(), '.openclaw', 'skills', 'gstack'), host: 'openclaw' },
+    { path: join(homedir(), '.codex', 'skills', 'gstack'), host: 'codex' },
+    { path: join(homedir(), '.factory', 'skills', 'gstack'), host: 'factory' },
+    { path: join(homedir(), '.kiro', 'skills', 'gstack'), host: 'kiro' },
+  ];
+
+  for (const { path, host } of hostPaths) {
+    if (existsSync(join(path, 'SKILL.md')) || existsSync(join(path, 'setup'))) {
+      return { found: true, path, host };
+    }
+  }
+
+  return { found: false, path: null, host: null };
+}
+
+/**
+ * Install default identity templates (SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md)
+ * into the agent workspace. Uses minimal defaults, not the soul-audit interview.
+ */
+export function installDefaultTemplates(workspaceDir: string): string[] {
+  const gbrainRoot = dirname(dirname(__dirname)); // up from src/commands/ to repo root
+  const templatesDir = join(gbrainRoot, 'templates');
+  const installed: string[] = [];
+
+  const templates = [
+    { src: 'SOUL.md.template', dest: 'SOUL.md' },
+    { src: 'USER.md.template', dest: 'USER.md' },
+    { src: 'ACCESS_POLICY.md.template', dest: 'ACCESS_POLICY.md' },
+    { src: 'HEARTBEAT.md.template', dest: 'HEARTBEAT.md' },
+  ];
+
+  for (const { src, dest } of templates) {
+    const srcPath = join(templatesDir, src);
+    const destPath = join(workspaceDir, dest);
+    if (existsSync(srcPath) && !existsSync(destPath)) {
+      mkdirSync(dirname(destPath), { recursive: true });
+      copyFileSync(srcPath, destPath);
+      installed.push(dest);
+    }
+  }
+
+  return installed;
+}
+
+/**
+ * Report post-init status including GStack detection and skill count.
+ */
+export function reportModStatus(): void {
+  const gstack = detectGStack();
+  const gbrainRoot = dirname(dirname(__dirname));
+  const skillsDir = join(gbrainRoot, 'skills');
+
+  let skillCount = 0;
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(skillsDir, 'manifest.json'), 'utf-8')
+    );
+    skillCount = manifest.skills?.length || 0;
+  } catch { /* manifest not found */ }
+
+  console.log('');
+  console.log('--- GBrain Mod Status ---');
+  console.log(`Skills: ${skillCount} loaded`);
+  console.log(`GStack: ${gstack.found ? `found (${gstack.host})` : 'not found'}`);
+  if (!gstack.found) {
+    console.log('  Install GStack for coding skills:');
+    console.log('  git clone https://github.com/garrytan/gstack.git ~/.claude/skills/gstack');
+    console.log('  cd ~/.claude/skills/gstack && ./setup');
+  }
+  console.log('Resolver: skills/RESOLVER.md');
+  console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
+  console.log('');
 }

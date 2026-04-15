@@ -1,12 +1,13 @@
 {
   "name": "gbrain",
-  "version": "0.9.0",
-  "description": "Personal knowledge brain with hybrid RAG search",
+  "version": "0.10.0",
+  "conformance_version": "1.0.0",
+  "description": "Personal knowledge brain with hybrid RAG search — GStack mod for agent platforms",
   "skills": [
     {
       "name": "ingest",
       "path": "ingest/SKILL.md",
-      "description": "Ingest meetings, media, articles, and documents with back-linking, filing rules, and citation requirements"
+      "description": "Route content to specialized ingestion skills. Detects input type and delegates."
     },
     {
       "name": "query",
@@ -42,6 +43,91 @@
       "name": "publish",
       "path": "publish/SKILL.md",
       "description": "Share brain pages as beautiful password-protected HTML (code + skill pair, zero LLM calls)"
+    },
+    {
+      "name": "signal-detector",
+      "path": "signal-detector/SKILL.md",
+      "description": "Always-on ambient signal capture. Fires on every message to detect original thinking and entity mentions."
+    },
+    {
+      "name": "brain-ops",
+      "path": "brain-ops/SKILL.md",
+      "description": "Brain-first lookup, read-enrich-write loop, source attribution, ambient enrichment. The core read/write cycle."
+    },
+    {
+      "name": "idea-ingest",
+      "path": "idea-ingest/SKILL.md",
+      "description": "Ingest links, articles, tweets, and ideas into the brain with analysis and entity cross-linking."
+    },
+    {
+      "name": "media-ingest",
+      "path": "media-ingest/SKILL.md",
+      "description": "Ingest video, audio, PDF, book, screenshot, and repo content with entity extraction."
+    },
+    {
+      "name": "meeting-ingestion",
+      "path": "meeting-ingestion/SKILL.md",
+      "description": "Ingest meeting transcripts with attendee enrichment, entity propagation, and timeline merge."
+    },
+    {
+      "name": "citation-fixer",
+      "path": "citation-fixer/SKILL.md",
+      "description": "Audit and fix citation formatting across brain pages."
+    },
+    {
+      "name": "repo-architecture",
+      "path": "repo-architecture/SKILL.md",
+      "description": "Where new brain files go. Filing rules and directory conventions."
+    },
+    {
+      "name": "skill-creator",
+      "path": "skill-creator/SKILL.md",
+      "description": "Create new skills following the conformance standard with MECE validation."
+    },
+    {
+      "name": "daily-task-manager",
+      "path": "daily-task-manager/SKILL.md",
+      "description": "Task lifecycle: add, complete, defer, remove, review with priority levels."
+    },
+    {
+      "name": "daily-task-prep",
+      "path": "daily-task-prep/SKILL.md",
+      "description": "Morning preparation with calendar context, open threads, and task review."
+    },
+    {
+      "name": "cross-modal-review",
+      "path": "cross-modal-review/SKILL.md",
+      "description": "Quality gate via second model with refusal routing chain."
+    },
+    {
+      "name": "cron-scheduler",
+      "path": "cron-scheduler/SKILL.md",
+      "description": "Schedule management with staggering, quiet hours, and wake-up override."
+    },
+    {
+      "name": "reports",
+      "path": "reports/SKILL.md",
+      "description": "Save and load timestamped reports with keyword routing for fast lookup."
+    },
+    {
+      "name": "testing",
+      "path": "testing/SKILL.md",
+      "description": "Skill validation framework: frontmatter, sections, manifest coverage, MECE checks."
+    },
+    {
+      "name": "soul-audit",
+      "path": "soul-audit/SKILL.md",
+      "description": "6-phase interactive interview generating SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md."
+    },
+    {
+      "name": "webhook-transforms",
+      "path": "webhook-transforms/SKILL.md",
+      "description": "Convert external events into brain-ingestible signals with entity extraction."
+    },
+    {
+      "name": "data-research",
+      "path": "data-research/SKILL.md",
+      "description": "Structured data research: search, extract, archive, deduplicate, track. Parameterized YAML recipes for investor updates, donations, company metrics."
     }
   ],
   "dependencies": {
@@ -50,7 +136,10 @@
   },
   "setup": {
     "skill": "setup",
-    "description": "Auto-provision Supabase and configure GBrain (< 2 min)"
+    "description": "Auto-provision Supabase or PGLite and configure GBrain (< 2 min)"
   },
-  "recipes_dir": "recipes/"
+  "recipes_dir": "recipes/",
+  "resolver": "RESOLVER.md",
+  "conventions_dir": "conventions/",
+  "templates_dir": "../templates/"
 }

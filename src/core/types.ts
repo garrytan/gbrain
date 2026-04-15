@@ -62,6 +62,8 @@ export interface SearchResult {
   type: PageType;
   chunk_text: string;
   chunk_source: 'compiled_truth' | 'timeline';
+  chunk_id: number;
+  chunk_index: number;
   score: number;
   stale: boolean;
 }
@@ -71,6 +73,7 @@ export interface SearchOpts {
   offset?: number;
   type?: PageType;
   exclude_slugs?: string[];
+  detail?: 'low' | 'medium' | 'high';
 }
 
 // Links

@@ -1,0 +1,91 @@
+# GBrain Skill Resolver
+
+This is the dispatcher. Skills are the implementation. **Read the skill file before acting.** If two skills could match, read both. They are designed to chain (e.g., ingest then enrich for each entity).
+
+## Always-on (every message)
+
+| Trigger | Skill |
+|---------|-------|
+| Every inbound message (spawn parallel, don't block) | `skills/signal-detector/SKILL.md` |
+| Any brain read/write/lookup/citation | `skills/brain-ops/SKILL.md` |
+
+## Brain operations
+
+| Trigger | Skill |
+|---------|-------|
+| "What do we know about", "tell me about", "search for" | `skills/query/SKILL.md` |
+| Creating/enriching a person or company page | `skills/enrich/SKILL.md` |
+| Where does a new file go? Filing rules | `skills/repo-architecture/SKILL.md` |
+| Fix broken citations in brain pages | `skills/citation-fixer/SKILL.md` |
+| "Research", "track", "extract from email", "investor updates", "donations" | `skills/data-research/SKILL.md` |
+| Share a brain page as a link | `skills/publish/SKILL.md` |
+
+## Content & media ingestion
+
+| Trigger | Skill |
+|---------|-------|
+| User shares a link, article, tweet, or idea | `skills/idea-ingest/SKILL.md` |
+| Video, audio, PDF, book, YouTube, screenshot | `skills/media-ingest/SKILL.md` |
+| Meeting transcript received | `skills/meeting-ingestion/SKILL.md` |
+| Generic "ingest this" (auto-routes to above) | `skills/ingest/SKILL.md` |
+
+## Thinking skills (from GStack)
+
+| Trigger | Skill |
+|---------|-------|
+| "Brainstorm", "I have an idea", "office hours" | GStack: office-hours |
+| "Review this plan", "CEO review", "poke holes" | GStack: ceo-review |
+| "Debug", "fix", "broken", "investigate" | GStack: investigate |
+| "Retro", "what shipped", "retrospective" | GStack: retro |
+
+> These skills come from GStack. If GStack is installed, the agent reads them directly.
+> If not, brain-only mode still works (brain skills function without thinking skills).
+
+## Operational
+
+| Trigger | Skill |
+|---------|-------|
+| Task add/remove/complete/defer/review | `skills/daily-task-manager/SKILL.md` |
+| Morning prep, meeting context, day planning | `skills/daily-task-prep/SKILL.md` |
+| Daily briefing, "what's happening today" | `skills/briefing/SKILL.md` |
+| Cron scheduling, quiet hours, job staggering | `skills/cron-scheduler/SKILL.md` |
+| Save or load reports | `skills/reports/SKILL.md` |
+| "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
+| Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
+| "Validate skills", skill health check | `skills/testing/SKILL.md` |
+| Webhook setup, external event processing | `skills/webhook-transforms/SKILL.md` |
+
+## Setup & migration
+
+| Trigger | Skill |
+|---------|-------|
+| "Set up GBrain", first boot | `skills/setup/SKILL.md` |
+| "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
+| Brain health check, maintenance run | `skills/maintain/SKILL.md` |
+| Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |
+
+## Identity & access (always-on)
+
+| Trigger | Skill |
+|---------|-------|
+| Non-owner sends a message | Check `ACCESS_POLICY.md` before responding |
+| Agent needs to know its identity/vibe | Read `SOUL.md` |
+| Agent needs user context | Read `USER.md` |
+| Operational cadence (what to check and when) | Read `HEARTBEAT.md` |
+
+## Disambiguation rules
+
+When multiple skills could match:
+1. Prefer the most specific skill (meeting-ingestion over ingest)
+2. If the user mentions a URL, route by content type (link → idea-ingest, video → media-ingest)
+3. If the user mentions a person/company, check if enrich or query fits better
+4. Chaining is explicit in each skill's Phases section
+5. When in doubt, ask the user
+
+## Conventions (cross-cutting)
+
+These apply to ALL brain-writing skills:
+- `skills/conventions/quality.md` — citations, back-links, notability gate
+- `skills/conventions/brain-first.md` — check brain before external APIs
+- `skills/_brain-filing-rules.md` — where files go
+- `skills/_output-rules.md` — output quality standards

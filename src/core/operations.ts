@@ -8,6 +8,7 @@ import type { GBrainConfig } from './config.ts';
 import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
+import { dedupResults } from './search/dedup.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -191,10 +192,11 @@ const search: Operation = {
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.searchKeyword(p.query as string, {
+    const results = await ctx.engine.searchKeyword(p.query as string, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
     });
+    return dedupResults(results);
   },
   cliHints: { name: 'search', positional: ['query'] },
 };
@@ -207,14 +209,17 @@ const query: Operation = {
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
+    detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
   },
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
+    const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
     return hybridSearch(ctx.engine, p.query as string, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
+      detail,
     });
   },
   cliHints: { name: 'query', positional: ['query'] },
@@ -547,6 +552,11 @@ const get_ingest_log: Operation = {
 
 // --- File Operations ---
 
+// Both branches need a LIMIT. Without one, the slug-filtered branch materializes
+// every file for that slug — an MCP caller can force unbounded memory consumption
+// by targeting a page with many attachments.
+const FILE_LIST_LIMIT = 100;
+
 const file_list: Operation = {
   name: 'file_list',
   description: 'List stored files',
@@ -557,9 +567,9 @@ const file_list: Operation = {
     const sql = db.getConnection();
     const slug = p.slug as string | undefined;
     if (slug) {
-      return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename`;
+      return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`;
     }
-    return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT 100`;
+    return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT ${FILE_LIST_LIMIT}`;
   },
 };
 

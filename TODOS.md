@@ -45,27 +45,30 @@
 
 **Depends on:** `gbrain serve --http` (not yet implemented).
 
+### Runtime MCP access control
+**What:** Add sender identity checking to MCP operations. Brain ops return filtered data based on access tier (Full/Work/Family/None).
+
+**Why:** ACCESS_POLICY.md is prompt-layer enforcement (agent reads policy before responding). A direct MCP caller can bypass it. Runtime enforcement in the MCP server is the real security boundary for multi-user and remote deployments.
+
+**Pros:** Real security boundary. ACCESS_POLICY.md becomes enforceable, not advisory.
+
+**Cons:** Requires adding `sender_id` or `access_tier` to `OperationContext`. Each mutating operation needs a permission check. Medium implementation effort.
+
+**Context:** From CEO review + Codex outside voice (2026-04-13). Prompt-layer access control works in practice (same model as Wintermute) but is not sufficient for remote MCP where direct tool calls bypass the agent's prompt.
+
+**Depends on:** v0.10.0 GStackBrain skill layer (shipped).
+
 ## P1 (new from v0.7.0)
 
-### Constrained health_check DSL for third-party recipes
-**What:** Replace shell command health_checks with a typed DSL: `{type: "env_exists", name: "KEY"}`, `{type: "url_responds", url: "..."}`, `{type: "heartbeat_fresh", max_age: "24h"}`.
-
-**Why:** Shell commands in recipe frontmatter = arbitrary code execution from markdown. Currently trusted because recipes are first-party only. This DSL is the mandatory gate before opening community recipe submissions.
-
-**Pros:** Eliminates RCE risk from third-party recipes. Health checks become machine-parseable.
-
-**Cons:** Less flexible than shell commands for novel checks. Need to define enough check types to cover common cases.
-
-**Context:** From CEO review + Codex outside voice (2026-04-11). User approved shell commands for first-party but explicitly requested constrained DSL before third-party recipes.
-
-**Depends on:** v0.7.0 recipe format (shipped).
+### ~~Constrained health_check DSL for third-party recipes~~
+**Completed:** v0.9.3 (2026-04-12). Typed DSL with 4 check types (`http`, `env_exists`, `command`, `any_of`). All 7 first-party recipes migrated. String health checks accepted with deprecation warning + metachar validation for non-embedded recipes.
 
 ## P2
 
 ### Community recipe submission (`gbrain integrations submit`)
 **What:** Package a user's custom integration recipe as a PR to the GBrain repo. Validates frontmatter, checks constrained DSL health_checks, creates PR with template.
 
-**Why:** Turns GBrain from "Garry's integrations" into a community ecosystem. The recipe format IS the contribution format.
+**Why:** Turns GBrain from a single-author integration set into a community ecosystem. The recipe format IS the contribution format.
 
 **Pros:** Community-driven integration library. Users build Slack-to-brain, RSS-to-brain, Discord-to-brain.
 
@@ -73,7 +76,7 @@
 
 **Context:** From CEO review (2026-04-11). User explicitly deferred due to bandwidth constraints. Target v0.9.0.
 
-**Depends on:** Constrained health_check DSL (P1).
+**Depends on:** Constrained health_check DSL (P1) — **SHIPPED in v0.9.3.**
 
 ### Always-on deployment recipes (Fly.io, Railway)
 **What:** Alternative deployment recipes for voice-to-brain and future integrations that run on cloud servers instead of local + ngrok.
@@ -97,7 +100,7 @@
 
 **Cons:** Users need ngrok ($8/mo) or a cloud host (Fly.io $5/mo, Railway $5/mo). Not zero-infra.
 
-**Context:** The production deployment at wintermute uses a custom Hono server wrapping `gbrain serve`. This TODO would formalize that pattern into the CLI. ChatGPT OAuth 2.1 support depends on this.
+**Context:** Production deployments use a custom Hono server wrapping `gbrain serve`. This TODO would formalize that pattern into the CLI. ChatGPT OAuth 2.1 support depends on this.
 
 **Depends on:** v0.8.0 (Edge Function removal shipped).
 

@@ -10,7 +10,11 @@ secrets:
     description: X API v2 Bearer token (Basic tier minimum, $200/mo for full archive search)
     where: https://developer.x.com/en/portal/dashboard — create a project + app, copy the Bearer Token from "Keys and tokens"
 health_checks:
-  - "curl -sf -H \"Authorization: Bearer $X_BEARER_TOKEN\" \"https://api.x.com/2/users/me\" > /dev/null && echo 'X API: OK' || echo 'X API: FAIL'"
+  - type: http
+    url: "https://api.x.com/2/users/me"
+    auth: bearer
+    auth_token: "$X_BEARER_TOKEN"
+    label: "X API"
 setup_time: 15 min
 cost_estimate: "$0-200/mo (Free tier: 1 app, read-only. Basic: $200/mo for search + higher limits)"
 ---

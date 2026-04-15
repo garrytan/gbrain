@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { readFileSync, readdirSync, statSync, lstatSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join, relative, extname, basename, dirname } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
@@ -102,7 +102,7 @@ async function listFiles(slug?: string) {
   const sql = db.getConnection();
   let rows;
   if (slug) {
-    rows = await sql`SELECT * FROM files WHERE page_slug = ${slug} ORDER BY filename`;
+    rows = await sql`SELECT * FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT 100`;
   } else {
     rows = await sql`SELECT * FROM files ORDER BY page_slug, filename LIMIT 100`;
   }
@@ -348,7 +348,7 @@ async function syncFiles(dir?: string) {
 
 async function verifyFiles() {
   const sql = db.getConnection();
-  const rows = await sql`SELECT * FROM files ORDER BY storage_path`;
+  const rows = await sql`SELECT * FROM files ORDER BY storage_path LIMIT 1000`;
 
   if (rows.length === 0) {
     console.log('No files to verify.');
@@ -526,7 +526,14 @@ async function restoreFiles(args: string[]) {
     for (const entry of readdirSync(d)) {
       if (entry.startsWith('.')) continue;
       const full = join(d, entry);
-      if (statSync(full).isDirectory()) findRedirects(full);
+      let stat;
+      try {
+        stat = lstatSync(full);
+      } catch {
+        continue; // Broken symlink or permission error
+      }
+      if (stat.isSymbolicLink()) continue;
+      if (stat.isDirectory()) findRedirects(full);
       else if (entry.endsWith('.redirect.yaml') || entry.endsWith('.redirect')) redirectFiles.push(full);
     }
   }
@@ -571,7 +578,14 @@ async function cleanFiles(args: string[]) {
     for (const entry of readdirSync(d)) {
       if (entry.startsWith('.')) continue;
       const full = join(d, entry);
-      if (statSync(full).isDirectory()) findAndClean(full);
+      let stat;
+      try {
+        stat = lstatSync(full);
+      } catch {
+        continue; // Broken symlink or permission error
+      }
+      if (stat.isSymbolicLink()) continue;
+      if (stat.isDirectory()) findAndClean(full);
       else if (entry.endsWith('.redirect.yaml') || entry.endsWith('.redirect')) { unlinkSync(full); cleaned++; }
     }
   }
@@ -590,7 +604,14 @@ async function filesStatus(args: string[]) {
       if (entry.startsWith('.') && entry !== '.supabase') continue;
       const full = join(d, entry);
       if (entry === '.supabase') { mirrored++; continue; }
-      if (statSync(full).isDirectory()) scan(full);
+      let stat;
+      try {
+        stat = lstatSync(full);
+      } catch {
+        continue; // Broken symlink or permission error
+      }
+      if (stat.isSymbolicLink()) continue;
+      if (stat.isDirectory()) scan(full);
       else if (entry.endsWith('.redirect.yaml') || entry.endsWith('.redirect')) redirected++;
       else if (!entry.endsWith('.md')) local++;
     }
@@ -609,15 +630,22 @@ async function filesStatus(args: string[]) {
   }
 }
 
-function collectFiles(dir: string): string[] {
+export function collectFiles(dir: string): string[] {
   const files: string[] = [];
 
   function walk(d: string) {
     for (const entry of readdirSync(d)) {
       if (entry.startsWith('.')) continue;
+      if (entry === 'node_modules') continue;
 
       const full = join(d, entry);
-      const stat = statSync(full);
+      let stat;
+      try {
+        stat = lstatSync(full);
+      } catch {
+        continue; // Broken symlink or permission error
+      }
+      if (stat.isSymbolicLink()) continue;
 
       if (stat.isDirectory()) {
         walk(full);
