@@ -14,7 +14,7 @@ GBrain is those patterns, generalized. 25 skills. Install in 30 minutes. Your ag
 
 GBrain is designed to be installed and operated by an AI agent. If you don't have one running yet:
 
-- **[OpenClaw](https://openclaw.ai)** ... Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
+- **[OpenClaw](https://openclaw.ai)** ... Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/openclaw-render-template) (one click, 8GB+ RAM)
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** ... Deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
 
 Paste this into your agent:
