@@ -203,29 +203,29 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     pagesAffected.push(newSlug);
   }
 
-  // Process adds and modifies
-  const useTransaction = (filtered.added.length + filtered.modified.length) > 10;
-  const processAddsModifies = async () => {
-    for (const path of [...filtered.added, ...filtered.modified]) {
-      const filePath = join(repoPath, path);
-      if (!existsSync(filePath)) continue;
-      try {
-        const result = await importFile(engine, filePath, path, { noEmbed });
-        if (result.status === 'imported') {
-          chunksCreated += result.chunks;
-          pagesAffected.push(result.slug);
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`  Warning: skipped ${path}: ${msg}`);
+  // Process adds and modifies.
+  //
+  // NOTE: do NOT wrap this loop in engine.transaction(). importFromContent
+  // already opens its own inner transaction per file, and PGLite transactions
+  // are not reentrant — they acquire the same _runExclusiveTransaction mutex,
+  // so a nested call from inside a user callback queues forever on the mutex
+  // the outer transaction is still holding. Result: incremental sync hangs in
+  // ep_poll whenever the diff crosses the old > 10 threshold that used to
+  // trigger the outer wrap. Per-file atomicity is also the right granularity:
+  // one file's failure should not roll back the others' successful imports.
+  for (const path of [...filtered.added, ...filtered.modified]) {
+    const filePath = join(repoPath, path);
+    if (!existsSync(filePath)) continue;
+    try {
+      const result = await importFile(engine, filePath, path, { noEmbed });
+      if (result.status === 'imported') {
+        chunksCreated += result.chunks;
+        pagesAffected.push(result.slug);
       }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`  Warning: skipped ${path}: ${msg}`);
     }
-  };
-
-  if (useTransaction) {
-    await engine.transaction(async () => { await processAddsModifies(); });
-  } else {
-    await processAddsModifies();
   }
 
   const elapsed = Date.now() - start;
