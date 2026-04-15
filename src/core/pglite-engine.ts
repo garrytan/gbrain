@@ -19,7 +19,7 @@ import type {
   IngestLogEntry, IngestLogInput,
   EngineConfig,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, coerceEmbeddingVector } from './utils.ts';
 
 type PGLiteDB = PGlite;
 
@@ -237,12 +237,8 @@ export class PGLiteEngine implements BrainEngine {
     );
     const result = new Map<number, Float32Array>();
     for (const row of rows as Record<string, unknown>[]) {
-      if (row.embedding) {
-        const emb = typeof row.embedding === 'string'
-          ? new Float32Array(JSON.parse(row.embedding))
-          : row.embedding as Float32Array;
-        result.set(row.id as number, emb);
-      }
+      const emb = coerceEmbeddingVector(row.embedding);
+      if (emb) result.set(row.id as number, emb);
     }
     return result;
   }

@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'bun:test';
+import { mkdtempSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import {
   extractMarkdownLinks,
   extractLinksFromFile,
+  extractLinksForSlugs,
   extractTimelineFromContent,
   walkMarkdownFiles,
 } from '../src/commands/extract.ts';
@@ -79,6 +83,36 @@ describe('extractLinksFromFile', () => {
     const links = extractLinksFromFile(content, 'deals/seed.md', allSlugs);
     expect(links[0].link_type).toBe('deal_for');
   });
+
+  it('extracts Obsidian wikilinks with aliases', () => {
+    const content = 'See [[knowledge/agents/gbrain|GBrain]] and [[knowledge/agents/hermes|Hermes]].';
+    const allSlugs = new Set(['knowledge/agents/gbrain', 'knowledge/agents/hermes', 'agents']);
+    const links = extractLinksFromFile(content, 'agents.md', allSlugs);
+    expect(links.map(l => l.to_slug)).toContain('knowledge/agents/gbrain');
+    expect(links.map(l => l.to_slug)).toContain('knowledge/agents/hermes');
+  });
+
+  it('extracts Obsidian wikilinks relative to the current directory', () => {
+    const content = 'Latest summary: [[weekly-2026-04-12]]';
+    const allSlugs = new Set(['briefs/weekly-kaizen-2026-04-13', 'briefs/weekly-2026-04-12']);
+    const links = extractLinksFromFile(content, 'briefs/weekly-kaizen-2026-04-13.md', allSlugs);
+    expect(links.map(l => l.to_slug)).toContain('briefs/weekly-2026-04-12');
+  });
+
+  it('extracts Obsidian wikilinks with escaped pipe aliases', () => {
+    const content = 'See [[knowledge/agents/winston\\|Winston]].';
+    const allSlugs = new Set(['knowledge/agents/winston', 'agents']);
+    const links = extractLinksFromFile(content, 'agents.md', allSlugs);
+    expect(links.map(l => l.to_slug)).toContain('knowledge/agents/winston');
+  });
+
+  it('slugifies uppercase filenames to match imported page slugs', () => {
+    const content = 'See [[knowledge/agents/gbrain|GBrain]].';
+    const allSlugs = new Set(['agents', 'knowledge/agents/gbrain']);
+    const links = extractLinksFromFile(content, 'AGENTS.md', allSlugs);
+    expect(links.map(l => l.from_slug)).toContain('agents');
+    expect(links.map(l => l.to_slug)).toContain('knowledge/agents/gbrain');
+  });
 });
 
 describe('extractTimelineFromContent', () => {
@@ -121,5 +155,23 @@ describe('extractTimelineFromContent', () => {
 describe('walkMarkdownFiles', () => {
   it('is a function', () => {
     expect(typeof walkMarkdownFiles).toBe('function');
+  });
+});
+
+describe('extractLinksForSlugs', () => {
+  it('finds files whose filenames differ from slug casing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-extract-'));
+    mkdirSync(join(root, 'knowledge', 'agents'), { recursive: true });
+    writeFileSync(join(root, 'AGENTS.md'), 'See [[knowledge/agents/gbrain|GBrain]].');
+    writeFileSync(join(root, 'knowledge', 'agents', 'gbrain.md'), '# GBrain');
+
+    const added: Array<{ from: string; to: string }> = [];
+    const engine = {
+      addLink: async (from: string, to: string) => { added.push({ from, to }); },
+    } as any;
+
+    const created = await extractLinksForSlugs(engine, root, ['agents']);
+    expect(created).toBe(1);
+    expect(added).toEqual([{ from: 'agents', to: 'knowledge/agents/gbrain' }]);
   });
 });

@@ -11,6 +11,7 @@ import { readFileSync, readdirSync, lstatSync, existsSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { parseMarkdown } from '../core/markdown.ts';
+import { slugifyPath } from '../core/sync.ts';
 
 // --- Types ---
 
@@ -71,6 +72,26 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
   return results;
 }
 
+/** Extract Obsidian-style wikilinks like [[slug]] or [[slug|Alias]] */
+export function extractObsidianWikilinks(content: string): { name: string; target: string }[] {
+  const results: { name: string; target: string }[] = [];
+  const pattern = /\[\[([^\]]+)\]\]/g;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const raw = match[1].replace(/\\\|/g, '|').trim();
+    const pipeIdx = raw.indexOf('|');
+    const label = pipeIdx >= 0 ? raw.slice(pipeIdx + 1).trim() : raw;
+    const target = (pipeIdx >= 0 ? raw.slice(0, pipeIdx) : raw)
+      .split('#')[0]
+      .split('^')[0]
+      .trim()
+      .replace(/\.md$/i, '');
+    if (!target) continue;
+    results.push({ name: label || target, target });
+  }
+  return results;
+}
+
 /** Infer link type from directory structure */
 function inferLinkType(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
   const from = fromDir.split('/')[0];
@@ -123,17 +144,28 @@ export function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
 ): ExtractedLink[] {
   const links: ExtractedLink[] = [];
-  const slug = relPath.replace('.md', '');
+  const slug = slugifyPath(relPath);
   const fileDir = dirname(relPath);
   const fm = parseFrontmatterFromContent(content, relPath);
 
   for (const { name, relTarget } of extractMarkdownLinks(content)) {
-    const resolved = join(fileDir, relTarget).replace('.md', '');
+    const resolved = slugifyPath(join(fileDir, relTarget));
     if (allSlugs.has(resolved)) {
       links.push({
         from_slug: slug, to_slug: resolved,
         link_type: inferLinkType(fileDir, dirname(resolved), fm),
         context: `markdown link: [${name}]`,
+      });
+    }
+  }
+
+  for (const { name, target } of extractObsidianWikilinks(content)) {
+    const resolved = slugifyPath(target.includes('/') ? target : join(fileDir, target));
+    if (allSlugs.has(resolved)) {
+      links.push({
+        from_slug: slug, to_slug: resolved,
+        link_type: inferLinkType(fileDir, dirname(resolved), fm),
+        context: `wikilink: [[${name}]]`,
       });
     }
   }
@@ -215,7 +247,7 @@ async function extractLinksFromDir(
   engine: BrainEngine, brainDir: string, dryRun: boolean, jsonMode: boolean,
 ): Promise<{ created: number; pages: number }> {
   const files = walkMarkdownFiles(brainDir);
-  const allSlugs = new Set(files.map(f => f.relPath.replace('.md', '')));
+  const allSlugs = new Set(files.map(f => slugifyPath(f.relPath)));
 
   // Load existing links for O(1) dedup
   const existing = new Set<string>();
@@ -312,7 +344,7 @@ async function extractTimelineFromDir(
 
 export async function extractLinksForSlugs(engine: BrainEngine, repoPath: string, slugs: string[]): Promise<number> {
   const allFiles = walkMarkdownFiles(repoPath);
-  const allSlugs = new Set(allFiles.map(f => f.relPath.replace('.md', '')));
+  const allSlugs = new Set(allFiles.map(f => slugifyPath(f.relPath)));
   let created = 0;
   for (const slug of slugs) {
     const filePath = join(repoPath, slug + '.md');

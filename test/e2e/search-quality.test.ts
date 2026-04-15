@@ -10,6 +10,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -102,6 +103,62 @@ beforeAll(async () => {
     },
   ];
   await engine.upsertChunks('concepts/ai-philosophy', aiChunks);
+
+  await engine.putPage('knowledge/people/roger-gimbel/summary', {
+    type: 'people-profile' as any,
+    title: 'Summary',
+    compiled_truth: 'Roger Gimbel is the technical founder/operator behind Rodaco and SelfGrowth.',
+    timeline: '',
+  });
+  await engine.upsertChunks('knowledge/people/roger-gimbel/summary', [{
+    chunk_index: 0,
+    chunk_text: 'Roger Gimbel is the technical founder/operator behind Rodaco and SelfGrowth.',
+    chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(6),
+    token_count: 12,
+  }]);
+
+  await engine.putPage('2026-03-20', {
+    type: 'concept',
+    title: '2026 03 20',
+    compiled_truth: 'Current progress for review from Roger Gimbel about project work and inbox items.',
+    timeline: '',
+  });
+  await engine.upsertChunks('2026-03-20', [{
+    chunk_index: 0,
+    chunk_text: 'Current progress for review from Roger Gimbel about project work and inbox items.',
+    chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(7),
+    token_count: 14,
+  }]);
+
+  await engine.putPage('projects/control/project-status/selfgrowth', {
+    type: 'project-status' as any,
+    title: 'Selfgrowth',
+    compiled_truth: 'SelfGrowth status page covering current state, smoke checkpoints, and next steps.',
+    timeline: '',
+  });
+  await engine.upsertChunks('projects/control/project-status/selfgrowth', [{
+    chunk_index: 0,
+    chunk_text: 'SelfGrowth status page covering current state, smoke checkpoints, and next steps.',
+    chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(8),
+    token_count: 12,
+  }]);
+
+  await engine.putPage('knowledge/projects/selfgrowth-knowledge-pilot/raw/imported-selfgrowth', {
+    type: 'project',
+    title: 'selfgrowth',
+    compiled_truth: 'Raw imported selfgrowth source material from a file import lane.',
+    timeline: '',
+  });
+  await engine.upsertChunks('knowledge/projects/selfgrowth-knowledge-pilot/raw/imported-selfgrowth', [{
+    chunk_index: 0,
+    chunk_text: 'Raw imported selfgrowth source material from a file import lane.',
+    chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(9),
+    token_count: 11,
+  }]);
 });
 
 afterAll(async () => {
@@ -213,5 +270,31 @@ describe('compiled truth boost (vector search validates ordering)', () => {
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].chunk_source).toBe('timeline');
     expect(results[0].slug).toBe('people/pedro');
+  });
+});
+
+describe('hybridSearch canonical ordering', () => {
+  test('exact person lookup prefers canonical page over digest-like note', async () => {
+    const original = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const results = await hybridSearch(engine, 'Roger Gimbel', { limit: 5 });
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].slug).toBe('knowledge/people/roger-gimbel/summary');
+    } finally {
+      if (original) process.env.OPENAI_API_KEY = original;
+    }
+  });
+
+  test('exact project lookup prefers project-status over imported raw page', async () => {
+    const original = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const results = await hybridSearch(engine, 'SelfGrowth', { limit: 5 });
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].slug).toBe('projects/control/project-status/selfgrowth');
+    } finally {
+      if (original) process.env.OPENAI_API_KEY = original;
+    }
   });
 });

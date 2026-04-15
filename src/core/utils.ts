@@ -43,6 +43,26 @@ export function rowToPage(row: Record<string, unknown>): Page {
   };
 }
 
+export function coerceEmbeddingVector(value: unknown): Float32Array | null {
+  if (!value) return null;
+  if (value instanceof Float32Array) return value;
+  if (Array.isArray(value)) return new Float32Array(value.map(Number));
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return new Float32Array(parsed.map(Number));
+    } catch {
+      const trimmed = value.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        const nums = trimmed.slice(1, -1).split(',').map(s => Number(s.trim()));
+        if (nums.every(n => Number.isFinite(n))) return new Float32Array(nums);
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 export function rowToChunk(row: Record<string, unknown>, includeEmbedding = false): Chunk {
   return {
     id: row.id as number,
@@ -50,7 +70,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     chunk_index: row.chunk_index as number,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
-    embedding: includeEmbedding && row.embedding ? row.embedding as Float32Array : null,
+    embedding: includeEmbedding ? coerceEmbeddingVector(row.embedding) : null,
     model: row.model as string,
     token_count: row.token_count as number | null,
     embedded_at: row.embedded_at ? new Date(row.embedded_at as string) : null,

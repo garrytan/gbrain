@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { rrfFusion, cosineSimilarity } from '../src/core/search/hybrid.ts';
+import { rrfFusion, cosineSimilarity, applyQueryAwareBoosts } from '../src/core/search/hybrid.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -106,6 +106,62 @@ describe('rrfFusion', () => {
     // Both have single result, normalized to 1.0
     expect(k30[0].score).toBe(1.0);
     expect(k90[0].score).toBe(1.0);
+  });
+});
+
+describe('applyQueryAwareBoosts', () => {
+  test('promotes canonical entity pages above digest noise for exact-name queries', () => {
+    const digest = makeResult({
+      slug: '2026-03-20',
+      title: '2026 03 20',
+      type: 'concept',
+      chunk_text: 'Current progress for review from Roger Gimbel',
+      score: 1.0,
+    });
+    const canonical = makeResult({
+      slug: 'knowledge/people/roger-gimbel/summary',
+      title: 'Summary',
+      type: 'people-profile' as any,
+      chunk_text: '# Roger Gimbel',
+      score: 0.7,
+    });
+    const boosted = applyQueryAwareBoosts([digest, canonical], 'Roger Gimbel');
+    expect(boosted[0].slug).toBe('knowledge/people/roger-gimbel/summary');
+    expect(boosted[0].score).toBeGreaterThan(boosted[1].score);
+  });
+
+  test('promotes project-status pages when slug matches the query', () => {
+    const pilot = makeResult({
+      slug: 'knowledge/projects/selfgrowth-knowledge-pilot/readme',
+      title: 'SelfGrowth Knowledge Pilot',
+      type: 'project',
+      score: 1.0,
+    });
+    const status = makeResult({
+      slug: 'projects/control/project-status/selfgrowth',
+      title: 'Selfgrowth',
+      type: 'project-status' as any,
+      score: 0.8,
+    });
+    const boosted = applyQueryAwareBoosts([pilot, status], 'SelfGrowth');
+    expect(boosted[0].slug).toBe('projects/control/project-status/selfgrowth');
+  });
+
+  test('demotes raw imported pages below structured canonical pages for exact entity queries', () => {
+    const rawImport = makeResult({
+      slug: 'knowledge/projects/selfgrowth-knowledge-pilot/raw/imported-selfgrowth',
+      title: 'selfgrowth',
+      type: 'project',
+      score: 1.0,
+    });
+    const status = makeResult({
+      slug: 'projects/control/project-status/selfgrowth',
+      title: 'Selfgrowth',
+      type: 'project-status' as any,
+      score: 0.8,
+    });
+    const boosted = applyQueryAwareBoosts([rawImport, status], 'SelfGrowth');
+    expect(boosted[0].slug).toBe('projects/control/project-status/selfgrowth');
   });
 });
 

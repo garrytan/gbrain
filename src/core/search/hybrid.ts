@@ -18,6 +18,18 @@ import { autoDetectDetail } from './intent.ts';
 
 const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
+const STRUCTURED_ENTITY_TYPES = new Set([
+  'people-profile',
+  'person',
+  'company',
+  'agent-profile',
+  'service-profile',
+  'project-status',
+  'project-summary',
+  'company-summary',
+  'infrastructure-summary',
+  'infra-status',
+]);
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 
 export interface HybridSearchOpts extends SearchOpts {
@@ -55,7 +67,7 @@ export async function hybridSearch(
 
   // Skip vector search entirely if no OpenAI key is configured
   if (!process.env.OPENAI_API_KEY) {
-    return dedupResults(keywordResults).slice(offset, offset + limit);
+    return applyQueryAwareBoosts(dedupResults(keywordResults), query).slice(offset, offset + limit);
   }
 
   // Determine query variants (optionally with expansion)
@@ -85,7 +97,7 @@ export async function hybridSearch(
   }
 
   if (vectorLists.length === 0) {
-    return dedupResults(keywordResults).slice(offset, offset + limit);
+    return applyQueryAwareBoosts(dedupResults(keywordResults), query).slice(offset, offset + limit);
   }
 
   // Merge all result lists via RRF (includes normalization + boost)
@@ -106,7 +118,7 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
-  return deduped.slice(offset, offset + limit);
+  return applyQueryAwareBoosts(deduped, query).slice(offset, offset + limit);
 }
 
 /**
@@ -156,6 +168,56 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
   return entries
     .sort((a, b) => b.score - a.score)
     .map(({ result, score }) => ({ ...result, score }));
+}
+
+function normalizeMatchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\.md$/i, '')
+    .replace(/[\\/_-]+/g, ' ')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function deriveSlugKeys(slug: string): string[] {
+  const parts = slug.split('/').filter(Boolean);
+  if (parts.length === 0) return [];
+  const last = parts[parts.length - 1] || '';
+  const parent = parts[parts.length - 2] || '';
+  const keys = new Set<string>();
+  keys.add(normalizeMatchText(last));
+  if (['summary', 'readme', 'index', 'status'].includes(last) && parent) {
+    keys.add(normalizeMatchText(parent));
+  }
+  keys.add(normalizeMatchText(slug));
+  return Array.from(keys).filter(Boolean);
+}
+
+function queryAwareBoost(result: SearchResult, normalizedQuery: string): number {
+  if (!normalizedQuery) return 1;
+
+  const title = normalizeMatchText(result.title || '');
+  const slugKeys = deriveSlugKeys(result.slug || '');
+  const type = String(result.type || '');
+  const exactTitle = title === normalizedQuery;
+  const exactSlug = slugKeys.includes(normalizedQuery);
+  const structured = STRUCTURED_ENTITY_TYPES.has(type);
+
+  let boost = 1;
+  if (exactTitle) boost *= 2.5;
+  if (exactSlug) boost *= 3.0;
+  if ((exactTitle || exactSlug) && structured) boost *= 1.5;
+  return boost;
+}
+
+export function applyQueryAwareBoosts(results: SearchResult[], query: string): SearchResult[] {
+  const normalizedQuery = normalizeMatchText(query);
+  if (!normalizedQuery) return results;
+
+  return results
+    .map(result => ({ ...result, score: result.score * queryAwareBoost(result, normalizedQuery) }))
+    .sort((a, b) => b.score - a.score);
 }
 
 /**
