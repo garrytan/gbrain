@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { getEmbeddingConfig } from '../src/core/embedding.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 // Mock the embedding module BEFORE importing runEmbed, so runEmbed picks up
@@ -51,6 +52,32 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.GBRAIN_EMBED_CONCURRENCY;
+  delete process.env.EMBEDDING_PROVIDER;
+  delete process.env.EMBEDDING_MODEL;
+  delete process.env.EMBEDDING_DIMENSIONS;
+  delete process.env.VOYAGE_API_KEY;
+});
+
+describe('embedding config', () => {
+  test('defaults to OpenAI text-embedding-3-large at 1536 dims', () => {
+    expect(getEmbeddingConfig()).toEqual({
+      provider: 'openai',
+      model: 'text-embedding-3-large',
+      dimensions: 1536,
+    });
+  });
+
+  test('reads Voyage provider overrides from env', () => {
+    process.env.EMBEDDING_PROVIDER = 'voyage';
+    process.env.EMBEDDING_MODEL = 'voyage-4-large';
+    process.env.EMBEDDING_DIMENSIONS = '1024';
+
+    expect(getEmbeddingConfig()).toEqual({
+      provider: 'voyage',
+      model: 'voyage-4-large',
+      dimensions: 1024,
+    });
+  });
 });
 
 describe('runEmbed --all (parallel)', () => {

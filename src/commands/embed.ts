@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { embedBatch } from '../core/embedding.ts';
+import { embedBatch, getEmbeddingConfig } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 
@@ -30,6 +30,7 @@ export async function runEmbed(engine: BrainEngine, args: string[]) {
 }
 
 async function embedPage(engine: BrainEngine, slug: string) {
+  const embeddingConfig = getEmbeddingConfig();
   const page = await engine.getPage(slug);
   if (!page) {
     throw new Error(`Page not found: ${slug}`);
@@ -73,6 +74,7 @@ async function embedPage(engine: BrainEngine, slug: string) {
     chunk_text: c.chunk_text,
     chunk_source: c.chunk_source,
     embedding: embeddingMap.get(c.chunk_index),
+    model: embeddingConfig.model,
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
@@ -81,6 +83,7 @@ async function embedPage(engine: BrainEngine, slug: string) {
 }
 
 async function embedAll(engine: BrainEngine, staleOnly: boolean) {
+  const embeddingConfig = getEmbeddingConfig();
   const pages = await engine.listPages({ limit: 100000 });
   let total = 0;
   let embedded = 0;
@@ -121,6 +124,7 @@ async function embedAll(engine: BrainEngine, staleOnly: boolean) {
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
+        model: embeddingConfig.model,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(page.slug, updated);

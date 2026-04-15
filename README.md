@@ -322,7 +322,7 @@ FILES
   gbrain files list|upload|sync|verify  File storage operations
 
 EMBEDDINGS
-  gbrain embed [<slug>|--all|--stale]   Generate/refresh embeddings
+  gbrain embed [<slug>|--all|--stale]   Generate/refresh embeddings (provider via EMBEDDING_PROVIDER/EMBEDDING_MODEL/EMBEDDING_DIMENSIONS)
 
 LINKS + GRAPH
   gbrain link|unlink|backlinks|graph    Cross-reference management
