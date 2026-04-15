@@ -5,23 +5,20 @@ version: 1.0.0
 description: Unified Google Workspace access via MCP — Gmail, Calendar, Drive, Docs, Sheets, Forms, and Slides. 153 tools, single OAuth, one-command install. Replaces credential-gateway + email-to-brain + calendar-to-brain.
 category: infra
 requires: []
-secrets:
-  - name: GOOGLE_CLIENT_ID
-    description: Google OAuth2 client ID for google-tools-mcp
-    where: https://console.cloud.google.com/apis/credentials — create OAuth 2.0 Client ID (Desktop app)
-  - name: GOOGLE_CLIENT_SECRET
-    description: Google OAuth2 client secret for google-tools-mcp
-    where: https://console.cloud.google.com/apis/credentials — same page as client ID
+secrets: []
 health_checks:
   - type: command
     argv: ["npx", "-y", "google-tools-mcp", "--help"]
     label: "google-tools-mcp available"
   - type: any_of
-    label: "Google OAuth credentials"
+    label: "Google OAuth credentials configured"
     checks:
       - type: env_exists
         name: GOOGLE_CLIENT_ID
-        label: "GOOGLE_CLIENT_ID"
+        label: "GOOGLE_CLIENT_ID (env var)"
+      - type: command
+        argv: ["sh", "-c", "test -f \"/c/Users/2supe/.config/google-tools-mcp/credentials.json\" || test -f \"/c/Users/2supe/.config/google-tools-mcp/.env\""]
+        label: "google-tools-mcp credentials file"
 setup_time: 5 min
 cost_estimate: "$0 (Google APIs free tier)"
 ---
@@ -60,16 +57,16 @@ detection, brain enrichment, classification) is unchanged.
 
 ## What You Get
 
-| Service | Tool Count | Key Tools |
-|---------|-----------|-----------|
-| Gmail | 69 | `list_messages`, `get_message`, `send_message`, `reply_message`, `create_draft`, `list_threads`, `get_thread`, `list_labels`, `create_filter` |
-| Calendar | 8 | `get_events`, `list_calendars`, `manage_event`, `get_busy`, `get_free`, `move_event` |
-| Drive | 18 | `listDriveFiles`, `searchDocuments`, `getFileInfo`, `downloadFile`, `readFile`, `uploadFile`, `createFolder`, `moveFile` |
-| Docs | 22 | `readDocument`, `appendText`, `modifyText`, `insertTable`, `appendMarkdown`, `replaceDocumentWithMarkdown`, `addComment` |
-| Sheets | 29 | `readSpreadsheet`, `writeSpreadsheet`, `appendRows`, `createSpreadsheet`, `formatCells`, `insertChart` |
-| Forms | 6 | `create_form`, `get_form`, `batch_update_form`, `list_form_responses` |
-| Slides | 16 | `createPresentation`, `getPresentation`, `createSlidesTextBox`, `updateSpeakerNotes` |
-| Utility | 3 | `help`, `troubleshoot`, `feedback` |
+| Service | Key Tools |
+|---------|-----------|
+| Gmail | `list_messages`, `get_message`, `send_message`, `reply_message`, `create_draft`, `list_threads`, `get_thread`, `list_labels`, `create_filter` |
+| Calendar | `get_events`, `list_calendars`, `manage_event`, `get_busy`, `get_free`, `move_event` |
+| Drive | `listDriveFiles`, `searchDocuments`, `getFileInfo`, `downloadFile`, `readFile`, `uploadFile`, `createFolder`, `moveFile` |
+| Docs | `readDocument`, `appendText`, `modifyText`, `insertTable`, `appendMarkdown`, `replaceDocumentWithMarkdown`, `addComment` |
+| Sheets | `readSpreadsheet`, `writeSpreadsheet`, `appendRows`, `createSpreadsheet`, `formatCells`, `insertChart` |
+| Forms | `create_form`, `get_form`, `batch_update_form`, `list_form_responses` |
+| Slides | `createPresentation`, `getPresentation`, `createSlidesTextBox`, `updateSpeakerNotes` |
+| Utility | `help`, `troubleshoot`, `feedback` |
 
 **Total: 153 tools.** All available the moment the server starts.
 
