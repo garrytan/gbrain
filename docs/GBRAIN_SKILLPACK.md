@@ -71,12 +71,13 @@ Wiring up your life.
 
 | Guide | What It Covers |
 |-------|---------------|
-| [Credential Gateway](integrations/credential-gateway.md) | ClawVisor / Hermes for Gmail, Calendar, Contacts |
+| [Google Tools MCP](../recipes/google-tools-mcp.md) | Unified Google Workspace — Gmail, Calendar, Drive, Docs, Sheets, Forms, Slides via MCP (153 tools). Replaces credential-gateway + email-to-brain + calendar-to-brain |
+| ~~[Credential Gateway](integrations/credential-gateway.md)~~ | ~~ClawVisor / Hermes for Gmail, Calendar, Contacts~~ *Deprecated — use Google Tools MCP* |
 | [Meeting & Call Webhooks](integrations/meeting-webhooks.md) | Circleback transcripts + Quo/OpenPhone SMS/calls |
 | [Voice-to-Brain](../recipes/twilio-voice-brain.md) | Phone calls + WebRTC browser calls create brain pages. 25 production patterns: identity separation, bid system, conversation timing, proactive advisor, prompt compression, caller routing, dynamic VAD, real-time logging, belt-and-suspenders post-call |
-| [Email-to-Brain](../recipes/email-to-brain.md) | Gmail messages flow into entity pages via deterministic collector |
+| ~~[Email-to-Brain](../recipes/email-to-brain.md)~~ | ~~Gmail messages flow into entity pages via deterministic collector~~ *Deprecated — use Google Tools MCP* |
 | [X-to-Brain](../recipes/x-to-brain.md) | Twitter monitoring with deletion detection + engagement velocity |
-| [Calendar-to-Brain](../recipes/calendar-to-brain.md) | Google Calendar events become searchable daily brain pages |
+| ~~[Calendar-to-Brain](../recipes/calendar-to-brain.md)~~ | ~~Google Calendar events become searchable daily brain pages~~ *Deprecated — use Google Tools MCP* |
 | [Meeting Sync](../recipes/meeting-sync.md) | Circleback transcripts auto-import with attendee propagation |
 
 ## Administration
