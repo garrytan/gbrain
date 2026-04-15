@@ -246,6 +246,7 @@ const put_page: Operation = {
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
+    no_embed: { type: 'boolean', description: 'Skip embedding generation (faster, embeddings backfilled later)' },
   },
   mutating: true,
   handler: async (ctx, p) => {
@@ -275,7 +276,7 @@ const put_page: Operation = {
     // try/catch around embed only catches; without a key the OpenAI client would
     // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
     // giving up. Detect early.
-    const noEmbed = !process.env.OPENAI_API_KEY;
+    const noEmbed = (p.no_embed as boolean) || !process.env.OPENAI_API_KEY;
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
@@ -363,6 +364,7 @@ const put_page: Operation = {
       ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
       ...(writerLint ? { writer_lint: writerLint } : {}),
     };
+
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
