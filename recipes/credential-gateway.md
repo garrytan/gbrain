@@ -2,7 +2,7 @@
 id: credential-gateway
 name: Credential Gateway
 version: 0.7.0
-description: Secure access to Gmail, Google Calendar, and other Google services. ClawVisor (recommended) or direct Google OAuth.
+description: "[DEPRECATED — use google-tools-mcp] Secure access to Gmail, Google Calendar, and other Google services. ClawVisor (recommended) or direct Google OAuth."
 category: infra
 requires: []
 secrets:
@@ -31,6 +31,12 @@ health_checks:
 setup_time: 15 min
 cost_estimate: "$0 (both options are free)"
 ---
+
+> **DEPRECATED:** This recipe is superseded by [google-tools-mcp](google-tools-mcp.md),
+> which provides unified access to Gmail, Calendar, Drive, Docs, Sheets, Forms, and
+> Slides with a single OAuth flow and 153 tools. See [google-tools-mcp](google-tools-mcp.md)
+> for the recommended setup. This recipe remains available for users who prefer
+> ClawVisor or need the legacy approach.
 
 # Credential Gateway: Secure Access to Google Services
 

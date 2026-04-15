@@ -2,7 +2,7 @@
 id: calendar-to-brain
 name: Calendar-to-Brain
 version: 0.7.0
-description: Google Calendar events become searchable brain pages. Daily files with attendees, locations, and meeting prep context.
+description: "[DEPRECATED — use google-tools-mcp] Google Calendar events become searchable brain pages. Daily files with attendees, locations, and meeting prep context."
 category: sense
 requires: [credential-gateway]
 secrets:
@@ -31,6 +31,12 @@ health_checks:
 setup_time: 20 min
 cost_estimate: "$0 (both options are free)"
 ---
+
+> **DEPRECATED:** This recipe is superseded by [google-tools-mcp](google-tools-mcp.md),
+> which provides Calendar access (8 tools including create/update/delete events, free/busy,
+> recurring instances) as part of a unified Google Workspace MCP server. No custom sync
+> scripts or cron jobs needed. See [google-tools-mcp](google-tools-mcp.md). This recipe
+> remains available for users who prefer the deterministic collector with historical backfill.
 
 # Calendar-to-Brain: Your Schedule Becomes Searchable Memory
 

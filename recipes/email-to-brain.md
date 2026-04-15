@@ -2,7 +2,7 @@
 id: email-to-brain
 name: Email-to-Brain
 version: 0.7.0
-description: Gmail messages flow into brain pages. Deterministic collector pulls emails, agent analyzes and enriches entities.
+description: "[DEPRECATED — use google-tools-mcp] Gmail messages flow into brain pages. Deterministic collector pulls emails, agent analyzes and enriches entities."
 category: sense
 requires: [credential-gateway]
 secrets:
@@ -31,6 +31,12 @@ health_checks:
 setup_time: 20 min
 cost_estimate: "$0 (both options are free)"
 ---
+
+> **DEPRECATED:** This recipe is superseded by [google-tools-mcp](google-tools-mcp.md),
+> which provides Gmail access (69 tools including send, read, drafts, labels, filters,
+> threads) as part of a unified Google Workspace MCP server. No custom collector scripts
+> or cron jobs needed. See [google-tools-mcp](google-tools-mcp.md). This recipe remains
+> available for users who prefer the deterministic collector pattern with ClawVisor.
 
 # Email-to-Brain: Gmail Messages That Update Your Brain
 
