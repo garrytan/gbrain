@@ -13,6 +13,7 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  minimax_api_key?: string;
 }
 
 /**
@@ -41,6 +42,7 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.MINIMAX_API_KEY ? { minimax_api_key: process.env.MINIMAX_API_KEY } : {}),
   };
   return merged as GBrainConfig;
 }
