@@ -148,6 +148,7 @@ export interface BrainHealth {
   orphan_pages: number;
   dead_links: number;
   missing_embeddings: number;
+  brain_score: number;
 }
 
 // Ingest log

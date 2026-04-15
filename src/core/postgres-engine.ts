@@ -633,16 +633,36 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
-        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings
+        (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
+        (SELECT count(*) FROM links) as link_count,
+        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline
     `;
 
+    const pageCount = Number(h.page_count);
+    const embedCoverage = Number(h.embed_coverage);
+    const orphanPages = Number(h.orphan_pages);
+    const deadLinks = Number(h.dead_links);
+    const linkCount = Number(h.link_count);
+    const pagesWithTimeline = Number(h.pages_with_timeline);
+
+    // brain_score: 0-100 weighted average
+    const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
+    const timelineCoverage = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
+    const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
+    const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
+    const brainScore = pageCount === 0 ? 0 : Math.round(
+      (embedCoverage * 0.35 + linkDensity * 0.25 + timelineCoverage * 0.15 +
+       noOrphans * 0.15 + noDeadLinks * 0.10) * 100
+    );
+
     return {
-      page_count: Number(h.page_count),
-      embed_coverage: Number(h.embed_coverage),
+      page_count: pageCount,
+      embed_coverage: embedCoverage,
       stale_pages: Number(h.stale_pages),
-      orphan_pages: Number(h.orphan_pages),
-      dead_links: Number(h.dead_links),
+      orphan_pages: orphanPages,
+      dead_links: deadLinks,
       missing_embeddings: Number(h.missing_embeddings),
+      brain_score: brainScore,
     };
   }
 
