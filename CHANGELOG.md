@@ -2,6 +2,22 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.11.0] - 2026-04-15
+
+### Added
+
+- **`gbrain ingest:bookmarks` — turn your X bookmarks into a searchable knowledge base.** Point it at a text file of X status URLs, and it fetches every tweet with Playwright (browser auth, no API key), compiles them into subject-first GBrain markdown, and imports everything into your brain in one command. People get their own pages. Concepts get their own pages. Threads are stitched together. Cross-links are fixed automatically. Run `gbrain ingest:bookmarks --input inputs/my-cluster.txt`.
+
+- **`x:sync` alias** for `ingest:bookmarks` — shorter to type.
+
+- **`--compile-only` / `--no-import` mode** stops after writing markdown to disk. Useful for reviewing the compiled output before committing it to your brain, or for using the compiled vault directly with Obsidian.
+
+- **Bookmark compiler (`src/bookmarks/compiler.ts`)** extracts themes from tweet text, groups posts by concept, and generates people pages, concept pages, and a collection index page — all with inline source citations and cross-links. Dataset-specific title overrides supported via `--title-overrides`.
+
+- **Resilient batch fetch** — if a single tweet fails to load, the rest of the batch continues. No more aborted runs because one tweet was deleted.
+
+- **Utility scripts** in `scripts/` for manual pipeline steps: `fetch-x-url-list.mjs`, `extract-self-threads.mjs`, `build-vault.mjs`, `login-x.mjs`, `refresh-cluster.mjs`, `fetch-x-tweet.mjs`.
+
 ## [0.10.1] - 2026-04-15
 
 ### Fixed

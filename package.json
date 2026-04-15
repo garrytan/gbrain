@@ -36,6 +36,7 @@
     "gray-matter": "^4.0.3",
     "marked": "^18.0.0",
     "openai": "^4.0.0",
+    "playwright": "^1.54.2",
     "pgvector": "^0.2.0",
     "playwright": "^1.59.1",
     "postgres": "^3.4.0"

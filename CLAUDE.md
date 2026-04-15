@@ -59,6 +59,10 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 - `src/commands/upgrade.ts` — Self-update CLI with post-upgrade feature discovery + features hook
 - `src/core/schema-embedded.ts` — AUTO-GENERATED from schema.sql (run `bun run build:schema`)
 - `src/schema.sql` — Full Postgres + pgvector DDL (source of truth, generates schema-embedded.ts)
+- `src/commands/ingest-bookmarks.ts` — `gbrain ingest:bookmarks` command: fetch, compile, and import X bookmarks into the brain
+- `src/bookmarks/compiler.ts` — Bookmark compiler: raw tweet/thread JSON → subject-first brain pages (markdown)
+- `src/bookmarks/pipeline.ts` — Bookmark pipeline: workspace resolution, URL list fetch, self-thread extraction via X browser session
+- `src/x/` — X (Twitter) browser automation: fetchTweet, login, session management (Playwright-based, no API key)
 - `src/commands/integrations.ts` — Standalone integration recipe management (no DB needed)
 - `recipes/` — Integration recipe files (YAML frontmatter + markdown setup instructions)
 - `docs/guides/` — Individual SKILLPACK guides (broken out from monolith)
@@ -112,9 +116,12 @@ Key commands added in v0.7:
 - `gbrain init` — defaults to PGLite (no Supabase needed), scans repo size, suggests Supabase for 1000+ files
 - `gbrain migrate --to supabase` / `gbrain migrate --to pglite` — bidirectional engine migration
 
+Key commands added in v0.11:
+- `gbrain ingest:bookmarks [opts] [urls...]` (alias: `x:sync`) — fetch X bookmarks via browser session, compile to markdown, import into brain
+
 ## Testing
 
-`bun test` runs all tests (34 unit test files + 5 E2E test files). Unit tests run
+`bun test` runs all tests (35 unit test files + 5 E2E test files). Unit tests run
 without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
 
 Unit tests: `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts`
@@ -147,7 +154,8 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/enrichment-service.test.ts` (entity slugification, extraction, tier escalation),
 `test/data-research.test.ts` (recipe validation, MRR/ARR extraction, dedup, tracker parsing, HTML stripping),
 `test/extract.test.ts` (link extraction, timeline extraction, frontmatter parsing, directory type inference),
-`test/features.test.ts` (feature scanning, brain_score calculation, CLI routing, persistence).
+`test/features.test.ts` (feature scanning, brain_score calculation, CLI routing, persistence),
+`test/bookmarks-compiler.test.ts` (bookmark compiler: raw tweet/thread JSON → subject-first brain pages).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys)
