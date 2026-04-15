@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",

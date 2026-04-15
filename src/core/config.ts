@@ -41,7 +41,21 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
   };
+
+  // Propagate API keys from config file into the environment so the SDKs'
+  // ambient lookups pick them up. new OpenAI() (embedding.ts:24) and
+  // new Anthropic() (search/expansion.ts:19) both instantiate without an
+  // explicit apiKey, so without this block the user writes a key to
+  // ~/.gbrain/config.json and the SDK reads process.env — silent failure.
+  if (merged.openai_api_key && !process.env.OPENAI_API_KEY) {
+    process.env.OPENAI_API_KEY = merged.openai_api_key;
+  }
+  if (merged.anthropic_api_key && !process.env.ANTHROPIC_API_KEY) {
+    process.env.ANTHROPIC_API_KEY = merged.anthropic_api_key;
+  }
+
   return merged as GBrainConfig;
 }
 
