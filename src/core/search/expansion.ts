@@ -21,6 +21,25 @@ function getClient(): Anthropic {
   return anthropicClient;
 }
 
+/**
+ * Sanitize a user query before interpolating into an LLM prompt.
+ * Strips common prompt injection patterns and caps length so a
+ * crafted search query cannot hijack the expansion model.
+ */
+export function sanitizeQueryForPrompt(query: string): string {
+  let q = query.trim();
+  // Cap length: expansion prompts don't need more than a sentence
+  if (q.length > 500) q = q.slice(0, 500);
+  // Strip markdown/XML structural markers that could reframe the prompt
+  q = q.replace(/```[\s\S]*?```/g, '');
+  q = q.replace(/<\/?[a-z][^>]*>/gi, '');
+  // Strip common injection prefixes
+  q = q.replace(/^(ignore|disregard|forget|override|system|assistant|human)[\s:]+/gi, '');
+  // Collapse whitespace
+  q = q.replace(/\s+/g, ' ').trim();
+  return q;
+}
+
 export async function expandQuery(query: string): Promise<string[]> {
   // CJK text is not space-delimited — count characters instead of whitespace-separated tokens
   const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(query);
@@ -28,7 +47,7 @@ export async function expandQuery(query: string): Promise<string[]> {
   if (wordCount < MIN_WORDS) return [query];
 
   try {
-    const alternatives = await callHaikuForExpansion(query);
+    const alternatives = await callHaikuForExpansion(sanitizeQueryForPrompt(query));
     const all = [query, ...alternatives];
     // Deduplicate
     const unique = [...new Set(all.map(q => q.toLowerCase().trim()))];
