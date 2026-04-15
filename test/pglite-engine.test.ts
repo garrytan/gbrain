@@ -276,6 +276,11 @@ describe('PGLiteEngine: Links', () => {
     expect(links.length).toBe(0);
   });
 
+  test('addLink throws for missing source or target page', async () => {
+    await expect(engine.addLink('people/missing', 'companies/acme')).rejects.toThrow('addLink failed');
+    await expect(engine.addLink('people/alice', 'companies/missing')).rejects.toThrow('addLink failed');
+  });
+
   test('traverseGraph with depth', async () => {
     await engine.addLink('people/alice', 'companies/acme');
     await engine.addLink('companies/acme', 'companies/beta');
@@ -347,6 +352,12 @@ describe('PGLiteEngine: Timeline', () => {
     });
     expect(filtered.length).toBe(1);
     expect(filtered[0].summary).toBe('Jun');
+  });
+
+  test('addTimelineEntry throws for missing page', async () => {
+    await expect(
+      engine.addTimelineEntry('test/missing', { date: '2024-01-01', summary: 'Ghost entry' })
+    ).rejects.toThrow('addTimelineEntry failed');
   });
 });
 
