@@ -19,13 +19,27 @@ restart the shell or add the PATH export to the shell profile.
 
 Ask the user for these:
 
+**IMPORTANT: Do NOT ask the user to paste API keys into the agent chat.** Keys pasted
+in chat are stored in conversation logs. Instead, instruct the user to set keys in a
+**separate terminal** (not the agent session):
+
 ```bash
-export OPENAI_API_KEY=sk-...          # required for vector search
-export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
+# Run this in a regular terminal, NOT in the agent chat:
+echo 'export OPENAI_API_KEY="sk-..."' >> ~/.zshenv
+echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshenv
+source ~/.zshenv
 ```
 
-Save to shell profile or `.env`. Without OpenAI, keyword search still works.
-Without Anthropic, search works but skips query expansion.
+The agent should then verify the keys are available (without printing them):
+
+```bash
+[ -n "$OPENAI_API_KEY" ] && echo "OpenAI key: set" || echo "OpenAI key: missing"
+[ -n "$ANTHROPIC_API_KEY" ] && echo "Anthropic key: set" || echo "Anthropic key: missing"
+```
+
+OpenAI is required for vector search. Anthropic is optional (improves search quality).
+Without OpenAI, keyword search still works. Without Anthropic, search works but skips
+query expansion.
 
 ## Step 3: Create the Brain
 
