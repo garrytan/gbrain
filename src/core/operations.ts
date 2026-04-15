@@ -4,6 +4,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
@@ -157,7 +158,7 @@ const list_pages: Operation = {
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
-      limit: (p.limit as number) || 50,
+      limit: clampSearchLimit(p.limit as number | undefined, 50),
     });
     return pages.map(pg => ({
       slug: pg.slug,
@@ -534,7 +535,7 @@ const get_ingest_log: Operation = {
     limit: { type: 'number', description: 'Max entries (default 20)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getIngestLog({ limit: (p.limit as number) || 20 });
+    return ctx.engine.getIngestLog({ limit: clampSearchLimit(p.limit as number | undefined, 20) });
   },
 };
 
