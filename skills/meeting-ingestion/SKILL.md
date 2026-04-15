@@ -32,12 +32,7 @@ This skill guarantees:
 - EVERY company discussed gets entity propagation
 - Timeline entries on ALL mentioned entities (timeline merge)
 - Meeting is NOT fully ingested until enrich runs for every entity
-- Back-links created bidirectionally
-
-## Iron Law: Back-Linking (MANDATORY)
-
-Every attendee and company mentioned MUST get a back-link from their page to
-the meeting page. An unlinked mention is a broken brain.
+- Follow `skills/conventions/quality.md` for citations, back-links, and notability
 
 ## Phases
 

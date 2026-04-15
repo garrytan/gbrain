@@ -24,6 +24,7 @@ Set up GBrain from scratch. Target: working brain in under 5 minutes.
 - Live sync is configured and verified (a test change pushed and found via search).
 - Schema state is tracked in `~/.gbrain/update-state.json` so future upgrades know what the user adopted or declined.
 - No Supabase anon key is requested; GBrain uses only the database connection string.
+- Follow `skills/conventions/quality.md` for any brain pages created during setup.
 
 ## Install (if not already installed)
 
