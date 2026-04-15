@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'x']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -297,6 +297,24 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  if (command === 'x') {
+    const { runX } = await import('./commands/x.ts');
+    const sub = args[0];
+    // auth, fetch, threads don't need DB; ingest does
+    if (sub === 'ingest' && !args.includes('--dry-run')) {
+      try {
+        const eng = await connectEngine();
+        await runX(eng, args);
+        await eng.disconnect();
+      } catch {
+        await runX(null, args);
+      }
+    } else {
+      await runX(null, args);
+    }
+    return;
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
@@ -463,6 +481,14 @@ TAGS
 TIMELINE
   timeline [<slug>]                  View timeline
   timeline-add <slug> <date> <text>  Add timeline entry
+
+X/TWITTER
+  x auth                             Login to X via browser, save session
+  x fetch <url>                      Fetch a single tweet via GraphQL interception
+  x fetch --file <path>              Batch fetch from URL list
+  x threads --input <json>           Extract same-author thread continuations
+  x ingest <url>                     Full pipeline: fetch → compile → import
+  x ingest --file <path>             Batch: fetch → threads → compile → import
 
 TOOLS
   extract <links|timeline|all> [dir] Extract links/timeline from markdown into DB
