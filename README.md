@@ -97,13 +97,14 @@ Once GBrain is installed, your agent needs data flowing in. GBrain ships integra
 
 | Recipe | Requires | What It Does |
 |--------|----------|-------------|
+| [Google Tools MCP](recipes/google-tools-mcp.md) | — | **Unified Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets, Forms, Slides via MCP (153 tools) |
 | [Public Tunnel](recipes/ngrok-tunnel.md) | — | Fixed URL for MCP + voice (ngrok Hobby $8/mo) |
-| [Credential Gateway](recipes/credential-gateway.md) | — | Gmail + Calendar access (ClawVisor or Google OAuth) |
 | [Voice-to-Brain](recipes/twilio-voice-brain.md) | ngrok-tunnel | Phone calls → brain pages (Twilio + OpenAI Realtime) |
-| [Email-to-Brain](recipes/email-to-brain.md) | credential-gateway | Gmail → entity pages (deterministic collector) |
 | [X-to-Brain](recipes/x-to-brain.md) | — | Twitter → brain pages (timeline + mentions + deletions) |
-| [Calendar-to-Brain](recipes/calendar-to-brain.md) | credential-gateway | Google Calendar → searchable daily pages |
 | [Meeting Sync](recipes/meeting-sync.md) | — | Circleback transcripts → brain pages with attendees |
+| ~~[Credential Gateway](recipes/credential-gateway.md)~~ | — | ~~Gmail + Calendar access~~ *Deprecated — use Google Tools MCP* |
+| ~~[Email-to-Brain](recipes/email-to-brain.md)~~ | ~~credential-gateway~~ | ~~Gmail → entity pages~~ *Deprecated — use Google Tools MCP* |
+| ~~[Calendar-to-Brain](recipes/calendar-to-brain.md)~~ | ~~credential-gateway~~ | ~~Google Calendar → searchable daily pages~~ *Deprecated — use Google Tools MCP* |
 
 Run `gbrain integrations` to see status. Dependencies resolve automatically. See [Getting Data In](docs/integrations/README.md) for the full guide.
 
