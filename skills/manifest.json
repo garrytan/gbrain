@@ -42,6 +42,11 @@
       "name": "setup",
       "path": "setup/SKILL.md",
       "description": "Set up GBrain: auto-provision Supabase, AGENTS.md injection, first import"
+    },
+    {
+      "name": "publish",
+      "path": "publish/SKILL.md",
+      "description": "Share brain pages as beautiful password-protected HTML (code + skill pair, zero LLM calls)"
     }
   ],
   "dependencies": {

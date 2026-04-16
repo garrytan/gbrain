@@ -25,6 +25,10 @@ const CLI_ONLY = new Set([
   'post-upgrade',
   'check-update',
   'integrations',
+  'publish',
+  'check-backlinks',
+  'lint',
+  'report',
   'import',
   'export',
   'files',
@@ -261,6 +265,26 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'integrations') {
     const { runIntegrations } = await import('./commands/integrations.ts');
     await runIntegrations(args);
+    return;
+  }
+  if (command === 'publish') {
+    const { runPublish } = await import('./commands/publish.ts');
+    await runPublish(args);
+    return;
+  }
+  if (command === 'check-backlinks') {
+    const { runBacklinks } = await import('./commands/backlinks.ts');
+    await runBacklinks(args);
+    return;
+  }
+  if (command === 'lint') {
+    const { runLint } = await import('./commands/lint.ts');
+    await runLint(args);
+    return;
+  }
+  if (command === 'report') {
+    const { runReport } = await import('./commands/report.ts');
+    await runReport(args);
     return;
   }
 

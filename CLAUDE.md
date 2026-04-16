@@ -49,6 +49,8 @@ available in local mode versus what must fail with honest guidance.
 
 Run `gbrain --help` or `gbrain --tools-json` for full command reference. For local/offline contributors: `gbrain init --local` writes the SQLite/offline profile, `gbrain serve` is the stdio MCP entrypoint both Codex and Claude Code consume, and `gbrain setup-agent` auto-detects installed AI clients, registers the MCP server, and injects behavioral rules. User-facing local setup docs now live in both `docs/local-offline.md` and `docs/local-offline.ko.md`.
 
+Deterministic brain-quality tools (no LLM calls, no DB connection, engine-agnostic): `gbrain publish` renders a brain page as a self-contained HTML (optionally AES-256-GCM encrypted behind a password), `gbrain check-backlinks check|fix` enforces the Iron Law of Back-Linking across a brain directory, `gbrain lint` flags LLM preambles, broken frontmatter, and placeholder dates (use `--fix` to auto-clean), and `gbrain report --type <name>` saves a timestamped report into `brain/reports/{type}/YYYY-MM-DD-HHMM.md`.
+
 ## Testing
 
 `bun test` runs the repo test suite. Unit tests run without a database. Postgres-backed E2E coverage skips gracefully when `DATABASE_URL` is not set.
