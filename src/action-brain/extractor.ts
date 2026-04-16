@@ -132,8 +132,10 @@ export async function extractCommitments(
     );
     const rawCommitments = parseCommitmentsFromResponse(response);
     return normalizeCommitments(rawCommitments);
-  } catch {
+  } catch (err) {
     // Queueing/retry behavior lives in pipeline orchestration; extractor never throws on model failures.
+    // Log so operators can distinguish "no commitments found" from "extraction failed".
+    console.error('[action-brain] Extraction failed:', err instanceof Error ? err.message : String(err));
     return [];
   }
 }
@@ -391,6 +393,13 @@ function normalizeTimestamp(value: unknown): string | null {
 
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  // Reject implausible LLM-generated timestamps (>5 years from now in either direction)
+  const now = Date.now();
+  const fiveYears = 5 * 365.25 * 24 * 60 * 60 * 1000;
+  if (date.getTime() < now - fiveYears || date.getTime() > now + fiveYears) {
     return null;
   }
 
