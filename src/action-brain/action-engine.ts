@@ -178,7 +178,12 @@ export class ActionEngine {
     if (typeof filters.stale === 'boolean') {
       const activeExpression = `status NOT IN ('resolved', 'dropped')`;
       const staleAgeExpression = `(now() - updated_at) > make_interval(hours => stale_after_hours)`;
-      where.push(filters.stale ? `${activeExpression} AND ${staleAgeExpression}` : `${activeExpression} AND NOT ${staleAgeExpression}`);
+      const staleLifecycleExpression = `(status = 'stale' OR ${staleAgeExpression})`;
+      where.push(
+        filters.stale
+          ? `${activeExpression} AND ${staleLifecycleExpression}`
+          : `${activeExpression} AND NOT ${staleLifecycleExpression}`
+      );
     }
 
     const limit = filters.limit ?? 100;

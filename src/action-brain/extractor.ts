@@ -16,6 +16,7 @@ export interface StructuredCommitment {
   by_when: string | null;
   confidence: number;
   type: ActionType;
+  source_message_id?: string | null;
 }
 
 export interface ExtractCommitmentsOptions {
@@ -251,6 +252,9 @@ function buildExtractionRequest(model: string, messages: WhatsAppMessage[]): Ant
                   by_when: {
                     type: ['string', 'null'],
                   },
+                  source_message_id: {
+                    type: ['string', 'null'],
+                  },
                   confidence: {
                     type: 'number',
                   },
@@ -276,6 +280,7 @@ function buildExtractionRequest(model: string, messages: WhatsAppMessage[]): Ant
         content: [
           'Extract commitments from this WhatsApp message batch.',
           'Return only commitments that imply an obligation, follow-up, decision, question, or delegation.',
+          'Set source_message_id to the exact MsgID of the message that supports each commitment.',
           'Use null for unknown who or due date fields.',
           JSON.stringify({ messages }),
         ].join('\n\n'),
@@ -349,6 +354,7 @@ function normalizeCommitment(raw: unknown): StructuredCommitment | null {
     by_when: normalizeTimestamp(raw.by_when),
     confidence: normalizeConfidence(raw.confidence),
     type: normalizeActionType(raw.type),
+    source_message_id: readNullableString(raw.source_message_id),
   };
 }
 

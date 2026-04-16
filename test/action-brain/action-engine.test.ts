@@ -204,7 +204,15 @@ describe('ActionEngine', () => {
       owner: 'nichol',
     });
 
+    const staleByStatus = await engine.createItem({
+      title: 'Freshly marked stale item',
+      type: 'follow_up',
+      source_message_id: 'msg-list-004',
+      owner: 'abhi',
+    });
+
     await engine.updateItemStatus(waitingOn.id, 'waiting_on', { actor: 'reconciler' });
+    await engine.updateItemStatus(staleByStatus.id, 'stale', { actor: 'reconciler' });
     await localDb.query(
       `UPDATE action_items
        SET updated_at = now() - interval '72 hours'
@@ -222,6 +230,10 @@ describe('ActionEngine', () => {
     expect(ownedIds.has(someoneElse.id)).toBe(false);
 
     expect(waiting.map((item) => item.id)).toEqual([waitingOn.id]);
-    expect(stale.map((item) => item.id)).toEqual([staleCandidate.id]);
+    expect(stale.map((item) => item.id)).toEqual([staleByStatus.id, staleCandidate.id]);
+
+    const nonStale = await engine.listItems({ stale: false });
+    const nonStaleIds = new Set(nonStale.map((item) => item.id));
+    expect(nonStaleIds.has(staleByStatus.id)).toBe(false);
   });
 });

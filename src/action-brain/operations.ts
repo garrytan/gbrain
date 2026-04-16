@@ -184,8 +184,11 @@ export const actionBrainOperations: Operation[] = [
       const items = [];
       for (let i = 0; i < extracted.length; i += 1) {
         const commitment = extracted[i];
-        const sourceMessageId = buildCommitmentSourceId(messages, commitment, i);
-        const message = pickSourceMessage(messages, i);
+        const message = resolveSourceMessage(messages, commitment);
+        const sourceMessageId = buildCommitmentSourceId(
+          resolveSourceMessageId(messages, commitment, message),
+          commitment
+        );
         const dueAt = parseOptionalDate(commitment.by_when, 'by_when');
 
         const item = await engine.createItem(
@@ -318,6 +321,7 @@ function parseCommitmentsParam(value: unknown): StructuredCommitment[] {
       by_when: asOptionalNonEmptyString(entry.by_when) ?? null,
       confidence: clampConfidence(entry.confidence),
       type,
+      source_message_id: asOptionalNonEmptyString(entry.source_message_id),
     });
   }
 
@@ -353,26 +357,56 @@ function parseJsonArrayInput(value: unknown): unknown[] {
   return [];
 }
 
-function pickSourceMessage(messages: WhatsAppMessage[], index: number): WhatsAppMessage | null {
+function resolveSourceMessage(messages: WhatsAppMessage[], commitment: StructuredCommitment): WhatsAppMessage | null {
   if (messages.length === 0) {
     return null;
   }
-  return messages[index] ?? messages[0];
+
+  const explicitSourceMessageId = asOptionalNonEmptyString(commitment.source_message_id);
+  if (explicitSourceMessageId) {
+    const matched = messages.find((message) => message.MsgID === explicitSourceMessageId);
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return messages.length === 1 ? messages[0] : null;
 }
 
-function buildCommitmentSourceId(messages: WhatsAppMessage[], commitment: StructuredCommitment, index: number): string {
-  const baseMsgId = messages[index]?.MsgID ?? messages[0]?.MsgID ?? 'batch';
+function resolveSourceMessageId(
+  messages: WhatsAppMessage[],
+  commitment: StructuredCommitment,
+  message: WhatsAppMessage | null
+): string | null {
+  if (message) {
+    return message.MsgID;
+  }
+
+  // Only trust direct source ids when no message batch is available to validate against.
+  if (messages.length === 0) {
+    return asOptionalNonEmptyString(commitment.source_message_id);
+  }
+
+  return null;
+}
+
+function buildCommitmentSourceId(sourceMessageId: string | null, commitment: StructuredCommitment): string {
+  const baseMsgId = asOptionalNonEmptyString(sourceMessageId) ?? 'batch';
   const seed = [
     baseMsgId,
-    commitment.who ?? '',
-    commitment.owes_what,
-    commitment.to_whom ?? '',
-    commitment.by_when ?? '',
+    normalizeCommitmentField(commitment.who),
+    normalizeCommitmentField(commitment.owes_what),
+    normalizeCommitmentField(commitment.to_whom),
+    normalizeCommitmentField(commitment.by_when),
     commitment.type,
-    String(index),
   ].join('|');
   const digest = createHash('sha256').update(seed).digest('hex').slice(0, 16);
   return `${baseMsgId}:ab:${digest}`;
+}
+
+function normalizeCommitmentField(value: string | null | undefined): string {
+  if (!value) return '';
+  return value.trim().toLowerCase();
 }
 
 function toActionTitle(owesWhat: string): string {
