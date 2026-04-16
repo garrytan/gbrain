@@ -148,6 +148,32 @@ describe('CLI dispatch integration', () => {
     expect(tools[0]).toHaveProperty('parameters');
   });
 
+  test('get_skillpack can load technical knowledge section by number from the current skillpack index', async () => {
+    const initProc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'init', '--local', '--json'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    await initProc.exited;
+
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'call', 'get_skillpack', '{"section":"19"}'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    const result = JSON.parse(stdout);
+
+    expect(exitCode).toBe(0);
+    expect(result.error).toBeUndefined();
+    expect(result.section).toBe(19);
+    expect(result.content).toContain('Technical Knowledge Maps');
+    expect(result.content).toContain('System Pages');
+  });
+
   test('bootstrap rejects invalid engine/provider config before attempting a database connection', async () => {
     writeUserConfig({
       engine: 'postgres',

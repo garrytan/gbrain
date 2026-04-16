@@ -689,9 +689,9 @@ const get_skillpack: Operation = {
     const lines = fullContent.split('\n');
     const matchingSections: Array<{ num: number; title: string }> = [];
     for (const line of lines) {
-      const match = line.match(/^## (\d+[a-z]?)[\.\s]+(.+)/);
-      if (match && (match[2].toLowerCase().includes(keyword) || match[0].toLowerCase().includes(keyword))) {
-        matchingSections.push({ num: parseInt(match[1], 10), title: match[2].trim() });
+      const match = parseSkillpackSectionHeader(line);
+      if (match && (match.title.toLowerCase().includes(keyword) || line.toLowerCase().includes(keyword))) {
+        matchingSections.push(match);
       }
     }
 
@@ -727,9 +727,9 @@ function extractSection(content: string, sectionNum: number): string | null {
   let end = lines.length;
 
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^## (\d+)[a-z]?[\.\s]/);
+    const match = parseSkillpackSectionHeader(lines[i]);
     if (match) {
-      const num = parseInt(match[1], 10);
+      const num = match.num;
       if (num === sectionNum && start === -1) {
         start = i;
       } else if (start !== -1 && num > sectionNum) {
@@ -746,12 +746,18 @@ function extractSection(content: string, sectionNum: number): string | null {
 function listSections(content: string): Array<{ num: number; title: string }> {
   const sections: Array<{ num: number; title: string }> = [];
   for (const line of content.split('\n')) {
-    const match = line.match(/^## (\d+[a-z]?)[\.\s]+(.+)/);
+    const match = parseSkillpackSectionHeader(line);
     if (match) {
-      sections.push({ num: parseInt(match[1], 10), title: match[2].replace(/\s*--\s*/, ' - ').trim() });
+      sections.push({ num: match.num, title: match.title.replace(/\s*--\s*/, ' - ').trim() });
     }
   }
   return sections;
+}
+
+function parseSkillpackSectionHeader(line: string): { num: number; title: string } | null {
+  const match = line.match(/^## (?:(?:Section )?(\d+)[a-z]?[:.\s]+)(.+)$/i);
+  if (!match) return null;
+  return { num: parseInt(match[1], 10), title: match[2].trim() };
 }
 
 // --- Exports ---
