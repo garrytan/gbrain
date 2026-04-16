@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.10.0] - 2026-04-16
+
+### Added
+
+- **GBrain now tracks your obligations, not just your knowledge.** Action Brain is a new commitment-tracking engine built into GBrain. It extracts commitments from WhatsApp message batches, stores them as structured action items, and generates a daily priority brief — so important operational loops don't die in your message threads. Perfect for operators who run businesses through WhatsApp.
+- **LLM-powered commitment extraction with quality gates.** `extractCommitments()` uses structured tool-use to pull out who owes what to whom by when. A two-tier quality gate (Haiku + Sonnet fallback) ensures 90%+ extraction accuracy before trusting results. Includes timeout handling, stable source IDs, and field normalization for idempotent re-extraction.
+- **`gbrain action` CLI commands.** Create, list, update, and resolve action items from the terminal. `gbrain action add --title "Send Joe the contract" --type owed_by_me` — done. Each item links back to its source WhatsApp message for full traceability.
+- **Morning priority brief.** `generateBrief()` scores your open action items (urgency × confidence × recency × relationship weight) and outputs a ranked priority list. Your agent can deliver this via Telegram or any output channel. No more mentally stitching your inbox every morning.
+- **Action Brain available over MCP.** All action operations exposed as MCP tools — your AI assistant can read, create, and update action items in the same session where it's also answering questions about your knowledge base.
+
 ## [0.9.3] - 2026-04-12
 
 ### Added
