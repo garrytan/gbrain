@@ -44,6 +44,10 @@ source ~/.zshenv
 If keys are missing, remind the user to set them in a separate terminal and restart
 the agent session (new sessions inherit shell environment variables).
 
+**If the user pastes an API key directly in the chat**, immediately warn them:
+"That key is now in the conversation log. Please rotate it (delete and create a new one)
+at platform.openai.com → API Keys, then set the new key in a separate terminal."
+
 OpenAI is required for vector search. Anthropic is optional (improves search quality).
 Without OpenAI, keyword search still works. Without Anthropic, search works but skips
 query expansion.
