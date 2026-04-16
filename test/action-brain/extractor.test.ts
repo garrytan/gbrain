@@ -78,6 +78,7 @@ function commitment(fields: Partial<StructuredCommitment> & Pick<StructuredCommi
     by_when: fields.by_when ?? null,
     confidence: fields.confidence ?? 0.8,
     type: fields.type ?? 'commitment',
+    source_message_id: fields.source_message_id ?? null,
   };
 }
 
@@ -124,6 +125,7 @@ describe('extractCommitments', () => {
         by_when: '2026-04-17T00:00:00.000Z',
         confidence: 1,
         type: 'follow_up',
+        source_message_id: null,
       },
       {
         who: 'Nichol',
@@ -132,6 +134,7 @@ describe('extractCommitments', () => {
         by_when: null,
         confidence: 0,
         type: 'commitment',
+        source_message_id: null,
       },
     ]);
   });
@@ -157,6 +160,7 @@ describe('extractCommitments', () => {
         by_when: null,
         confidence: 0.63,
         type: 'commitment',
+        source_message_id: null,
       },
     ]);
   });
@@ -218,6 +222,7 @@ describe('extractCommitments', () => {
         by_when: '2026-04-20T09:00:00.000Z',
         confidence: 0.92,
         type: 'follow_up',
+        source_message_id: null,
       },
     ]);
   });
