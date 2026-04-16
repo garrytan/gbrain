@@ -1,6 +1,7 @@
 import postgres from 'postgres';
 import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import { getEmbeddingDimensions, getEmbeddingProvider, EMBEDDING_MODEL } from './embedding.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -73,7 +74,15 @@ export async function initSchema(): Promise<void> {
   // Advisory lock prevents concurrent initSchema() calls from deadlocking
   await conn`SELECT pg_advisory_lock(42)`;
   try {
-    await conn.unsafe(SCHEMA_SQL);
+    // Substitute vector dimensions based on embedding provider.
+    // OpenAI text-embedding-3-large = 1536, E5 multilingual-e5-small = 384.
+    const dims = getEmbeddingDimensions();
+    const model = getEmbeddingProvider() === 'e5' ? 'e5' : EMBEDDING_MODEL;
+    const schema = SCHEMA_SQL
+      .replace(/vector\(1536\)/g, `vector(${dims})`)
+      .replace(/text-embedding-3-large/g, model)
+      .replace(/'1536'/g, `'${dims}'`);
+    await conn.unsafe(schema);
   } finally {
     await conn`SELECT pg_advisory_unlock(42)`;
   }

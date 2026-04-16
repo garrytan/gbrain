@@ -6,6 +6,7 @@ import type { BrainEngine } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { getEmbeddingDimensions, getEmbeddingProvider, EMBEDDING_MODEL } from './embedding.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -61,7 +62,13 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+    const dims = getEmbeddingDimensions();
+    const model = getEmbeddingProvider() === 'e5' ? 'e5' : EMBEDDING_MODEL;
+    const schema = PGLITE_SCHEMA_SQL
+      .replace(/vector\(1536\)/g, `vector(${dims})`)
+      .replace(/text-embedding-3-large/g, model)
+      .replace(/'1536'/g, `'${dims}'`);
+    await this.db.exec(schema);
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {
