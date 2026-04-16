@@ -1,5 +1,12 @@
 # TODOS
 
+## P0
+
+### Fix pre-existing ingest:arxiv --help CLI test failure
+**What:** `test/cli.test.ts:133` — `ingest:arxiv --help` spawns the CLI but receives empty stdout instead of `Usage: gbrain ingest:arxiv`.
+**Why:** Noticed on branch `google-workspace-brain-sync`. Failure exists on master. The `--help` flag for the arxiv command likely doesn't print to stdout correctly.
+**Fix:** Check `src/commands/ingest-arxiv.ts` — ensure `--help` output goes to stdout, not stderr, and that the commander help handler is registered.
+
 ## P1
 
 ### Batch embedding queue across files

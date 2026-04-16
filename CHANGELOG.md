@@ -2,6 +2,30 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.13.0] - 2026-04-15
+
+### Added
+
+- **Google Drive is now searchable from the brain.** `scripts/gdrive-sync.mjs` syncs Google Docs, Sheets, and Slides into kbrain. Meeting notes, GTM docs, standup notes, and client call summaries all become queryable brain pages — "what did we tell client A about pricing?" now has an answer.
+
+- **Allowlist-driven sync — no Drive noise.** You explicitly add files and folders you care about (`--add-file ID`, `--add-folder ID`). The script only touches what you allow. Config lives in `~/.gbrain/gdrive-config.json`.
+
+- **Section-level splitting for eternally-updated docs.** Docs with `##` headings get split into one brain page per section. A meeting doc with 200 entries becomes 200 individually searchable pages. Only sections that changed since last sync get rewritten.
+
+- **Full Google Workspace multi-tab support.** Docs with tabs (via Google Docs API `includeTabsContent=true`), Sheets with multiple tabs, and Slides all export correctly. Each tab becomes its own subdirectory. Output: `gdocs/{doc-slug}/{tab-slug}/{date}-{section-slug}.md`.
+
+- **Shared Drive support.** Files in Google Workspace Shared Drives (team drives) sync correctly — all Drive API calls include `supportsAllDrives=true`.
+
+- **OAuth flow via local loopback server.** No stdin paste needed. The sync script starts a local HTTP server on port 8765, opens the browser, receives the OAuth callback automatically. Works with "Desktop app" OAuth clients.
+
+- **Idempotency.** `modifiedTime` as fast gate + per-section content hash as delta layer. Re-syncing 500 unchanged sections takes seconds and writes nothing.
+
+- **`recipes/gdrive-to-brain.md`** — step-by-step setup recipe for Google Drive sync, covering both ClawVisor (Option A) and direct Google OAuth (Option B).
+
+### Changed
+
+- **`scripts/gdrive-sync.mjs`** exports pure functions (`docsApiToText`, `splitDocSections`, `buildDocPage`, `buildSectionPage`, `csvToMarkdownTable`, etc.) for testability. 80 unit tests cover all exporters and edge cases.
+
 ## [0.12.0] - 2026-04-15
 
 ### Added
