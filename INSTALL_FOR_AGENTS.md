@@ -44,7 +44,12 @@ source ~/.zshenv
 If keys are missing, remind the user to set them in a separate terminal and restart
 the agent session (new sessions inherit shell environment variables).
 
-**If the user pastes an API key directly in the chat**, immediately warn them:
+**If the user asks why:** "Everything you type in an AI agent chat is stored in
+conversation logs on the provider's servers. An API key in the chat is like writing
+your password on a whiteboard in a shared office — it's probably fine, but you
+wouldn't do it on purpose."
+
+**If the user pastes an API key directly in the chat anyway**, immediately warn them:
 "That key is now in the conversation log. Please rotate it (delete and create a new one)
 at platform.openai.com → API Keys, then set the new key in a separate terminal."
 
