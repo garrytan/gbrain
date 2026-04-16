@@ -35,20 +35,19 @@ Signal arrives (message, meeting, email, link)
 
 ---
 
-## 2. Brain-First Lookup (before every entity or technical question)
+## 2. Brain-First Lookup Protocol
 
-Before calling ANY external API or broad code search to research a person,
-company, concept, system, or topic:
+When using GBrain for lookup (triggered by the MCP server instructions):
 
 ```
 1. gbrain search "name"          -- keyword match, fast, always works
 2. gbrain query "what do we know about name"  -- hybrid search (needs embeddings)
 3. gbrain get <slug>             -- direct page read when you know the slug
-4. External APIs as FALLBACK only
 ```
 
-Stop at the first step that gives you what you need. The brain almost always has
-something. External APIs fill gaps -- they don't start from scratch.
+Stop at the first step that gives you what you need. External APIs and web
+search fill gaps the brain does not have -- they are fallbacks, not starting
+points.
 
 ---
 

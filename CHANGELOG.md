@@ -4,6 +4,12 @@ All notable changes to GBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Sub-agents now know when to use your brain.** The MCP server ships an `instructions` string that tells every connected agent — main or sub-agent — when to prefer GBrain over web search or codebase grep, and when not to. The old reliance on CLAUDE.md triggers alone was fragile for spawned sub-agents; the trigger now travels with the protocol.
+- **Core tool descriptions now say WHY, not just WHAT.** `search`, `query`, `get_page`, and `put_page` descriptions are rewritten with trigger context ("use BEFORE Grep or WebSearch when the question involves a named entity", "compiled truth + timeline"), so agents pick the right tool at the decision point instead of defaulting to grep.
+- **Agent rules trimmed to protocol only.** `GBRAIN_AGENT_RULES.md` Section 2 no longer duplicates the "when to use" trigger now served by MCP instructions — it keeps only the step-by-step lookup protocol, cutting noise in the injected ruleset.
+
 ## [0.9.0] - 2026-04-16
 
 ### Added

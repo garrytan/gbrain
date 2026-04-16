@@ -14,7 +14,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import postgres from 'postgres';
 import { createHash } from 'crypto';
-import { operations, OperationError, PostgresEngine, VERSION } from './gbrain-core.js';
+import { operations, OperationError, PostgresEngine, VERSION, MCP_INSTRUCTIONS } from './gbrain-core.js';
 import type { OperationContext } from './gbrain-core.js';
 
 // Operations excluded from remote (may exceed 60s Edge Function timeout)
@@ -135,7 +135,10 @@ async function logRequest(tokenName: string, operation: string, latencyMs: numbe
 function createMcpServer(eng: PostgresEngine): Server {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
-    { capabilities: { tools: {} } },
+    {
+      capabilities: { tools: {} },
+      instructions: MCP_INSTRUCTIONS,
+    },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({

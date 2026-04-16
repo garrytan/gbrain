@@ -2,7 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError } from '../core/operations.ts';
+import { operations, OperationError, MCP_INSTRUCTIONS } from '../core/operations.ts';
 import type { OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
@@ -11,7 +11,10 @@ import { VERSION } from '../version.ts';
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
-    { capabilities: { tools: {} } },
+    {
+      capabilities: { tools: {} },
+      instructions: MCP_INSTRUCTIONS,
+    },
   );
 
   // Generate tool definitions from operations

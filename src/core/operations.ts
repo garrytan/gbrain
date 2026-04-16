@@ -13,6 +13,17 @@ import { expandQuery } from './search/expansion.ts';
 import * as db from './db.ts';
 import { getUnsupportedCapabilityReason } from './offline-profile.ts';
 
+// --- MCP server instructions ---
+//
+// Returned to MCP clients in the `instructions` field of `InitializeResult`.
+// Clients render this near the top of the agent's system prompt, so agents see
+// it before they decide which tools to call. See docs/MCP_INSTRUCTIONS.md and
+// docs/rfcs/2026-04-16-mcp-server-instructions-rfc.md for the design rationale.
+export const MCP_INSTRUCTIONS = [
+  'Use this server to look up knowledge about people, companies, technical concepts, internal systems, and organizational context. Prefer this over web search or codebase grep when the question involves a named entity, domain concept, or cross-system architecture. The brain contains compiled truth, relationship history, and technical maps that external search cannot provide.',
+  'Do not use for: code editing, git operations, file management, library documentation, or general programming.',
+].join('\n\n');
+
 // --- Types ---
 
 export type ErrorCode =
@@ -89,7 +100,7 @@ const runtimeImport = new Function('specifier', 'return import(specifier)') as (
 
 const get_page: Operation = {
   name: 'get_page',
-  description: 'Read a page by slug (supports optional fuzzy matching)',
+  description: 'Read a specific knowledge page by slug. Use after search or query returns a relevant slug. Pages contain compiled truth (current understanding) and timeline (evidence history).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
@@ -123,7 +134,7 @@ const get_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, and reconciles tags.',
+  description: 'Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Chunks, embeds, and reconciles tags.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
@@ -180,7 +191,7 @@ const list_pages: Operation = {
 
 const search: Operation = {
   name: 'search',
-  description: 'Keyword search using full-text search',
+  description: 'Search the knowledge graph for people, companies, concepts, systems, and organizational context by keyword. Use this BEFORE Grep or WebSearch when the question involves a named entity or domain-specific topic. Returns matching pages with relevance scores.',
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
@@ -193,7 +204,7 @@ const search: Operation = {
 
 const query: Operation = {
   name: 'query',
-  description: 'Hybrid search with vector + keyword + multi-query expansion',
+  description: 'Semantic search across the knowledge graph. Use when the question is conceptual, cross-cutting, or when keyword search returned no results. Combines vector similarity with keyword matching and multi-query expansion for best recall.',
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
