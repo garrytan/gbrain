@@ -35,7 +35,9 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 - `src/core/search/intent.ts` — Query intent classifier (entity/temporal/event/general → auto-selects detail level)
 - `src/core/search/eval.ts` — Retrieval eval harness: P@k, R@k, MRR, nDCG@k metrics + runEval() orchestrator
 - `src/commands/eval.ts` — `gbrain eval` command: single-run table + A/B config comparison
-- `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff
+- `src/core/embedding.ts` — Provider router (GBRAIN_EMBEDDING_PROVIDER=e5|openai), dispatches to embedding-e5.ts or embedding-openai.ts
+- `src/core/embedding-e5.ts` — Self-hosted E5 adapter (multilingual-e5-small, 384d, auto-dimension detection)
+- `src/core/embedding-openai.ts` — OpenAI text-embedding-3-large (1536d), batch, retry, backoff
 - `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects
 - `src/core/backoff.ts` — Adaptive load-aware throttling: CPU/memory checks, exponential backoff, active hours multiplier
 - `src/core/fail-improve.ts` — Deterministic-first, LLM-fallback loop with JSONL failure logging and auto-test generation
@@ -105,7 +107,7 @@ Key commands added in v0.7:
 
 ## Testing
 
-`bun test` runs all tests (34 unit test files + 5 E2E test files). Unit tests run
+`bun test` runs all tests (35 unit test files + 5 E2E test files). Unit tests run
 without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
 
 Unit tests: `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts`
@@ -138,7 +140,8 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/enrichment-service.test.ts` (entity slugification, extraction, tier escalation),
 `test/data-research.test.ts` (recipe validation, MRR/ARR extraction, dedup, tracker parsing, HTML stripping),
 `test/extract.test.ts` (link extraction, timeline extraction, frontmatter parsing, directory type inference),
-`test/features.test.ts` (feature scanning, brain_score calculation, CLI routing, persistence).
+`test/features.test.ts` (feature scanning, brain_score calculation, CLI routing, persistence),
+`test/embedding.test.ts` (provider router, E5 adapter, OpenAI adapter, schema dimension substitution).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys)

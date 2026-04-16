@@ -3,6 +3,7 @@ import type { BrainEngine } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import { getEmbeddingDimensions, getEmbeddingProvider, EMBEDDING_MODEL } from './embedding.ts';
 import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
@@ -62,7 +63,14 @@ export class PostgresEngine implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      // Substitute vector dimensions based on embedding provider
+      const dims = getEmbeddingDimensions();
+      const model = getEmbeddingProvider() === 'e5' ? 'e5' : EMBEDDING_MODEL;
+      const schema = SCHEMA_SQL
+        .replace(/vector\(1536\)/g, `vector(${dims})`)
+        .replace(/text-embedding-3-large/g, model)
+        .replace(/'1536'/g, `'${dims}'`);
+      await conn.unsafe(schema);
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this);
