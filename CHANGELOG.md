@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.10.2] - 2026-04-16
+
+### Added
+
+- **Your brain now works without OpenAI.** Pluggable embedding providers: set `GBRAIN_EMBEDDING_PROVIDER=e5` and point `GBRAIN_E5_URL` at your self-hosted E5 container. Zero-cost embeddings using your own infrastructure. OpenAI remains the default — nothing changes unless you opt in.
+
+- **Embedding provider auto-detects vector dimensions.** E5 at 384d, OpenAI at 1536d. Schema creation, PGLite, and Postgres engines all adapt automatically. No manual configuration needed.
+
+- **OpenAI embedding code extracted cleanly.** `embedding-openai.ts` is now a standalone module with its own retry logic and Retry-After handling. Same behavior, better separation for future providers.
+
 ## [0.10.1] - 2026-04-15
 
 ### Fixed
