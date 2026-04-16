@@ -110,7 +110,9 @@ Tell the user:
 4. Inside the project, create a new App
 5. Go to the app's 'Keys and tokens' tab
 6. Under 'Bearer Token', click 'Generate' (or 'Regenerate')
-7. Copy the Bearer Token and paste it to me
+7. In a **separate terminal** (not this chat), run:
+   `echo 'export X_BEARER_TOKEN=\"your-token\"' >> ~/.zshenv && source ~/.zshenv`
+   Then come back here — I'll verify it's set.
 
 Note: Free tier gives read-only access with low limits. Basic tier ($200/mo)
 gives search/recent endpoint and higher limits. Pro tier gets full archive search."

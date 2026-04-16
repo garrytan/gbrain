@@ -164,7 +164,11 @@ Tell the user:
 2. After logging in, you'll see your **Account SID** right on the main dashboard
    (it starts with 'AC' followed by 32 characters)
 3. Below it you'll see **Auth Token** — click **'Show'** to reveal it
-4. Copy both values and paste them to me"
+4. In a **separate terminal** (not this chat), run:
+   `echo 'export TWILIO_ACCOUNT_SID=\"your-sid\"' >> ~/.zshenv`
+   `echo 'export TWILIO_AUTH_TOKEN=\"your-token\"' >> ~/.zshenv`
+   `source ~/.zshenv`
+   Then come back here — I'll verify they're set."
 
 After the user provides them, validate immediately:
 
@@ -224,7 +228,8 @@ your URL changes every time ngrok restarts, breaking Twilio and Claude Desktop.
 3. If you upgraded: go to https://dashboard.ngrok.com/domains and click
    **'+ New Domain'**. Choose a name (e.g., `your-brain-voice.ngrok.app`).
 4. Go to https://dashboard.ngrok.com/get-started/your-authtoken
-5. Copy your **Authtoken** and paste it to me
+5. In a **separate terminal** (not this chat), run:
+   `echo 'export NGROK_AUTHTOKEN=\"your-token\"' >> ~/.zshenv && source ~/.zshenv`
 6. Also tell me your fixed domain name (if you created one)"
 
 ```bash

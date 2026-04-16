@@ -44,6 +44,10 @@ source ~/.zshenv
 If keys are missing, remind the user to set them in a separate terminal and restart
 the agent session (new sessions inherit shell environment variables).
 
+**If the user asks "should I just paste it here?"** — say NO. Explain:
+"This chat logs everything to the provider's servers. Set the key in a separate
+terminal instead so it never enters the conversation."
+
 **If the user asks why:** "Everything you type in an AI agent chat is stored in
 conversation logs on the provider's servers. An API key in the chat is like writing
 your password on a whiteboard in a shared office — it's probably fine, but you
