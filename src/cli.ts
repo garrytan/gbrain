@@ -25,6 +25,10 @@ const CLI_ONLY = new Set([
   'post-upgrade',
   'check-update',
   'integrations',
+  'publish',
+  'check-backlinks',
+  'lint',
+  'report',
   'import',
   'export',
   'files',
@@ -263,6 +267,26 @@ async function handleCliOnly(command: string, args: string[]) {
     await runIntegrations(args);
     return;
   }
+  if (command === 'publish') {
+    const { runPublish } = await import('./commands/publish.ts');
+    await runPublish(args);
+    return;
+  }
+  if (command === 'check-backlinks') {
+    const { runBacklinks } = await import('./commands/backlinks.ts');
+    await runBacklinks(args);
+    return;
+  }
+  if (command === 'lint') {
+    const { runLint } = await import('./commands/lint.ts');
+    await runLint(args);
+    return;
+  }
+  if (command === 'report') {
+    const { runReport } = await import('./commands/report.ts');
+    await runReport(args);
+    return;
+  }
 
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
@@ -399,6 +423,12 @@ TAGS
 TIMELINE
   timeline [<slug>]                  View timeline
   timeline-add <slug> <date> <text>  Add timeline entry
+
+TOOLS (deterministic, no DB / no LLM)
+  publish <page.md> [--password]     Share a page as self-contained HTML
+  check-backlinks <check|fix>        Enforce the Iron Law of Back-Linking
+  lint <dir|file> [--fix]            Flag LLM slop, broken frontmatter, stale dates
+  report --type <name> [--title]     Save timestamped report under brain/reports/
 
 ADMIN
   stats                              Brain statistics

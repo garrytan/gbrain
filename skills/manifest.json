@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.8.0",
+  "version": "0.10.1",
   "description": "Personal knowledge brain with hybrid RAG search",
   "skills": [
     {
@@ -42,6 +42,11 @@
       "name": "setup",
       "path": "setup/SKILL.md",
       "description": "Set up GBrain: auto-provision Supabase, AGENTS.md injection, first import"
+    },
+    {
+      "name": "publish",
+      "path": "publish/SKILL.md",
+      "description": "Share brain pages as beautiful password-protected HTML (code + skill pair, zero LLM calls)"
     }
   ],
   "dependencies": {

@@ -71,6 +71,23 @@ When multiple sources provide conflicting information, follow this precedence:
 When sources conflict, note the contradiction with both citations. Don't silently
 pick one.
 
+## Citation in Answers
+
+When referencing brain pages in your answer, propagate inline citations:
+- Cite the page: "According to [Source: people/jane-doe, compiled truth]..."
+- When brain pages have inline `[Source: ...]` citations, propagate them so
+  the user can trace facts to their origin
+- When you synthesize across multiple pages, cite all sources
+
+## Search Quality Awareness
+
+If search results seem off (wrong results, missing known pages, irrelevant hits):
+- Run `gbrain doctor --json` to check index health
+- Check embedding coverage -- partial embeddings degrade hybrid search
+- Compare keyword search (`gbrain search`) vs hybrid search (`gbrain query`)
+  for the same query to isolate whether the issue is embedding-related
+- Report search quality issues in the maintain workflow (see maintain skill)
+
 ## Tools Used
 
 - Keyword search gbrain (search)

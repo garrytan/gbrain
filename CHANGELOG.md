@@ -4,12 +4,41 @@ All notable changes to GBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-04-17
+
+Version number aligned with upstream `garrytan/gbrain` v0.10.1 per the
+fork's version policy. This release does NOT include upstream's v0.10
+GStackBrain skill architecture, v0.10.1 autopilot/extract/features, or
+the v0.9.x smart-file-storage / community fix wave. Those are tracked
+as deferred or skipped in `docs/UPSTREAM_SYNC.md` so future syncs know
+exactly where this fork stands relative to upstream.
+
+### Added
+
+- **Four deterministic brain-quality tools, engine-agnostic.** `gbrain publish` renders a brain page as a self-contained, password-protectable (AES-256-GCM) HTML share. `gbrain check-backlinks check|fix` enforces the Iron Law of Back-Linking across a brain directory. `gbrain lint` flags LLM preambles, stray code fences, placeholder dates, and missing frontmatter (`--fix` auto-cleans). `gbrain report --type` saves timestamped reports to `brain/reports/{type}/YYYY-MM-DD-HHMM.md`. All four need no database connection and work identically on SQLite, PGLite, and Postgres. Ported from upstream with security hardening already rolled in.
+- **Cross-cutting brain filing rules.** New `skills/_brain-filing-rules.md` is now referenced from every brain-writing skill — file by primary subject, not format; bulk data to `sources/`, analysis to the subject directory; notability gate before creating entities; iron law of back-linking.
+- **Upstream sync log.** `docs/UPSTREAM_SYNC.md` records which upstream commits this fork has adopted, explicitly skipped (and why), or deferred. Future sync attempts start here.
+
 ### Changed
 
 - **Sub-agents now know when to use your brain.** The MCP server ships an `instructions` string that tells every connected agent — main or sub-agent — when to prefer GBrain over web search or codebase grep, and when not to. The old reliance on CLAUDE.md triggers alone was fragile for spawned sub-agents; the trigger now travels with the protocol.
 - **Core tool descriptions now say WHY, not just WHAT.** `search`, `query`, `get_page`, and `put_page` descriptions are rewritten with trigger context ("use BEFORE Grep or WebSearch when the question involves a named entity", "compiled truth + timeline"), so agents pick the right tool at the decision point instead of defaulting to grep.
 - **Agent rules trimmed to protocol only.** `GBRAIN_AGENT_RULES.md` Section 2 no longer duplicates the "when to use" trigger now served by MCP instructions — it keeps only the step-by-step lookup protocol, cutting noise in the injected ruleset.
 - **`add_link` now advertises its full link-type surface.** The MCP description and `link_type` param doc list both people/deal types (`invested_in`, `works_at`, `founded`) and the technical types introduced by the knowledge-map RFC (`implements`, `depends_on`, `extends`, `contradicts`, `layer_of`, `prerequisite_for`), so agents linking a concept to a system at the decision point see technical types as first-class instead of guessing.
+- **Battle-tested skill patterns from production.** `skills/enrich`, `skills/ingest`, `skills/maintain`, `skills/briefing`, and `skills/query` pulled in the 7-step enrichment protocol, citation precedence rules, media ingest flows, back-link enforcement prompts, and search-quality diagnostics from upstream's v0.8.1 era. The fork's Technical Concept Queries section in `query/SKILL.md` is preserved and now sits alongside the new Citation in Answers + Search Quality Awareness guidance.
+- **Voice and X-to-Brain recipes refreshed with production lessons.** `recipes/twilio-voice-brain.md` and `recipes/x-to-brain.md` now document unicode-crash fix, PII scrubbing, identity-first prompts, Filtered Stream integration, tweet rating rubric, and cron staggering.
+- **Version files aligned with upstream.** `VERSION`, `package.json`, and `skills/manifest.json` all report `0.10.1` so `gbrain --version` and the skills manifest reflect the fork's upstream-tracking policy.
+
+### Source attribution
+
+This release backports the following upstream commits verbatim or by file:
+
+- `1e6d7e3` (upstream v0.8.1 era) — battle-tested skill patterns
+- `80d00e7` — add `_brain-filing-rules.md` to CLAUDE.md key files
+- `edc2174` + `87bb2a5` — `gbrain publish` + XSS/TUS/path-traversal hardening
+- `13fca37` + `54fdd4b` + `87bb2a5` — `check-backlinks`, `lint`, `report` + hardening
+
+Full classification (what was skipped, why) lives in `docs/UPSTREAM_SYNC.md`.
 
 ## [0.9.0] - 2026-04-16
 

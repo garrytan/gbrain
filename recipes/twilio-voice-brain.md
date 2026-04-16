@@ -1,8 +1,8 @@
 ---
 id: twilio-voice-brain
 name: Voice-to-Brain
-version: 0.8.0
-description: Phone calls create brain pages via Twilio + OpenAI Realtime + GBrain MCP. Callers talk, brain pages appear.
+version: 0.8.1
+description: Phone calls create brain pages via Twilio + voice pipeline + GBrain MCP. Two architectures -- OpenAI Realtime (turnkey) or DIY STT+LLM+TTS (full control). Callers talk, brain pages appear.
 category: sense
 requires: [ngrok-tunnel]
 secrets:
@@ -52,6 +52,9 @@ auth token is incorrect. Let's re-enter it."
 
 ## Architecture
 
+Two pipeline options:
+
+### Option A: OpenAI Realtime (turnkey, simpler)
 ```
 Caller (phone)
   ↓ Twilio (WebSocket, g711_ulaw audio — no transcoding)
@@ -63,6 +66,33 @@ GBrain MCP (semantic search, page reads, page writes)
 Brain page created (meetings/YYYY-MM-DD-call-{caller}.md)
 Summary posted to messaging app (Telegram/Slack/Discord)
 ```
+
+### Option B: DIY STT+LLM+TTS (full control, production-grade)
+```
+Caller (phone or WebRTC browser)
+  ↓ Twilio WebSocket OR WebRTC
+Voice Server (Node.js)
+  ↓ Deepgram STT (streaming speech-to-text, speaker diarization)
+  ↓ Claude API (streaming SSE, sentence-boundary dispatch)
+  ↓ Cartesia / OpenAI TTS (text-to-speech, low latency)
+  ↓ Function calls during conversation
+GBrain MCP (semantic search, page reads, page writes)
+  ↓ Post-call
+Brain page + audio upload + transcript storage
+```
+
+**Why v2 (Option B)?** OpenAI Realtime is a black box — you can't control STT
+quality, swap LLMs, or debug audio issues. The DIY stack gives you transparent
+Deepgram+Claude+TTS with full control over each stage. Trade-off: more integration
+work, but you own the pipeline.
+
+**Production-tested v2 architecture (pipeline.mjs, ~250 lines):**
+- Streaming SSE from Claude with sentence-boundary TTS dispatch
+- 20-turn conversation history cap (prevents context bloat)
+- Reconnect logic with exponential backoff on STT/TTS disconnects
+- Periodic keepalives to prevent WebSocket timeout
+- Audio endpointing for natural turn-taking
+- Smart VAD (Silero) as default with push-to-talk fallback
 
 ## Opinionated Defaults
 
@@ -428,7 +458,7 @@ fi
 
 ```bash
 mkdir -p ~/.gbrain/integrations/twilio-voice-brain
-echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.7.0","status":"ok","details":{"phone":"TWILIO_NUMBER","deployment":"local+ngrok"}}' >> ~/.gbrain/integrations/twilio-voice-brain/heartbeat.jsonl
+echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.8.1","status":"ok","details":{"phone":"TWILIO_NUMBER","deployment":"local+ngrok"}}' >> ~/.gbrain/integrations/twilio-voice-brain/heartbeat.jsonl
 ```
 
 Tell the user: "Voice-to-brain is fully set up. Your number is [NUMBER]. Here's
@@ -472,6 +502,95 @@ The watchdog restarts the server if it crashes."
 - The watchdog (Step 9) handles this automatically
 - For a permanent URL: upgrade to ngrok paid ($8/mo) for a static domain, or deploy to Fly.io/Railway instead
 
+**Note on Option B credentials:** If using the DIY pipeline (Option B), you will
+also need API keys for your chosen STT provider (e.g., Deepgram) and TTS provider
+(e.g., Cartesia, OpenAI TTS). Collect and validate these during Step 2 alongside
+the Twilio and OpenAI credentials listed above.
+
+## Critical Production Fixes (v0.8.1)
+
+These are NOT optional. They prevent real production failures discovered in a
+deployment handling daily calls.
+
+### Unicode Crash Fix (CRITICAL)
+
+**Problem:** Em dashes (--), arrows (->), and other non-ASCII characters in the
+prompt context cause broken surrogate pairs that crash the Twilio WebSocket
+connection. Phone calls drop silently.
+
+**Fix:** Replace ALL non-ASCII characters with ASCII equivalents throughout the
+entire prompt file before sending to Twilio. This is invisible in development
+(browsers handle unicode fine) and catastrophic in production.
+
+```javascript
+function sanitizeForTwilio(text) {
+  return text
+    .replace(/[\u2014\u2013]/g, '--')   // em/en dash
+    .replace(/[\u2018\u2019]/g, "'")     // smart quotes
+    .replace(/[\u201C\u201D]/g, '"')     // smart double quotes
+    .replace(/\u2192/g, '->')              // right arrow
+    .replace(/\u2190/g, '<-')              // left arrow
+    .replace(/[\u2026]/g, '...')         // ellipsis
+    .replace(/[^\x00-\x7F]/g, '')        // strip remaining non-ASCII
+}
+```
+
+### PII Scrub from Voice Context (CRITICAL)
+
+**Problem:** Brain context loaded into the voice prompt may contain phone numbers,
+email addresses, and other PII. The voice agent reads these aloud to callers.
+
+**Fix:** Regex-strip PII from all voice context before injecting into the prompt:
+- Phone numbers: `/\+?\d[\d\s\-().]{7,}\d/g`
+- Email addresses: `/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g`
+- URLs with auth tokens or API keys
+- Any string matching common credential patterns
+
+### Identity-First Prompt (IMPORTANT)
+
+**Problem:** Voice agents lose their identity mid-conversation. Saying "You are NOT
+Claude" doesn't stick. The model reverts to its base persona.
+
+**Fix:** Put identity FIRST in the system prompt, before any context or rules:
+```
+# You ARE [Agent Name]
+You are [Name], a voice assistant who works with [Brain Name].
+You are NOT Claude. You are NOT a general AI assistant.
+[Name] has their own personality: [traits].
+
+# Context
+[... brain context, calendar, tasks ...]
+
+# Rules
+[... behavioral rules ...]
+```
+
+Positioning identity before context ensures the model sees it first and
+maintains it throughout the conversation.
+
+### Auto-Upload Call Audio (RECOMMENDED)
+
+**Problem:** If post-call processing fails, the call audio is lost forever.
+
+**Fix:** Auto-upload ALL call audio immediately on call end:
+- Twilio calls: download the MP3 recording URL from Twilio
+- WebRTC calls: capture via MediaRecorder (webm/opus format)
+- Upload to cloud storage (Supabase Storage, S3, etc.)
+- Store `.redirect.yaml` pointer in brain repo if >= 100 MB
+- This ensures every call has a recoverable audio source regardless
+  of whether the transcript or brain page was created successfully
+
+### Smart VAD as Default
+
+**Problem:** Push-to-talk is unnatural on phone calls. Server-side VAD has
+variable quality.
+
+**Fix:** Default to Smart VAD (Silero VAD) for voice activity detection:
+- Better endpointing than server-side VAD
+- Fewer false triggers in noisy environments
+- PTT available as fallback (UI toggle for WebRTC clients)
+- Presets: quiet (0.7 threshold), normal (0.85), noisy (0.95), very_noisy (0.98)
+
 ## Production Patterns (Recommended)
 
 These patterns come from a production voice deployment handling real calls daily.
@@ -488,13 +607,13 @@ AI brain. "I work with [Brain], [Owner]'s AI." Lighter, more playful, more curio
 #### Pre-Computed Bid System
 **Problem:** Dead air kills engagement. Voice agents wait passively.
 **Pattern:** At call start, scan live context and pre-compute up to 10 engagement bids.
-Two types: informative (tasks, calendar, social radar) and relational (curiosity templates).
+Two types: informative (tasks, calendar, social monitoring) and relational (curiosity templates).
 Bids go INTO the prompt so the agent picks from a list. Use bids #1 and #2 for greeting,
 cycle the rest during conversation. Never ask "anything else?" — bring up the next bid.
 
 #### Context-First Prompt
 **Problem:** Voice agent greets generically because it doesn't know what's happening today.
-**Pattern:** Load live context at call start: tasks, calendar, location, social radar,
+**Pattern:** Load live context at call start: tasks, calendar, location, social monitoring,
 morning briefing. Position context FIRST in the prompt (before rules) so the model sees
 it immediately and uses it in the greeting. Try/catch per section. Cap 500-1000 chars each.
 
@@ -658,7 +777,7 @@ over WebRTC data channel — use Whisper post-call instead.
 | Keyword | Report Loaded |
 |---------|--------------|
 | email, inbox, mail | inbox sweep report |
-| social, twitter, mentions | social radar report |
+| social, twitter, mentions | social engagement report |
 | briefing, morning | morning briefing |
 | meeting | meeting sync report |
 | slack | slack scan report |

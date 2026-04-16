@@ -25,6 +25,29 @@ Links pointing to pages that don't exist.
 Pages that mention entity names but don't have formal links.
 - Read compiled_truth from gbrain, extract entity mentions, create links in gbrain
 
+### Back-link enforcement
+Check that the back-linking iron law is being followed:
+- For each recently updated page, check if entities mentioned in it have
+  corresponding back-links FROM those entity pages
+- A mention without a back-link is a broken brain
+- Fix: add the missing back-link to the entity's Timeline or See Also section
+- Format: `- **YYYY-MM-DD** | Referenced in [page title](path) -- brief context`
+
+### Filing rule violations
+Check for common misfiling patterns (see `skills/_brain-filing-rules.md`):
+- Content with clear primary subjects filed in `sources/` instead of the
+  appropriate directory (people/, companies/, concepts/, etc.)
+- Use gbrain search to find pages in `sources/` that reference specific
+  people, companies, or concepts -- these may be misfiled
+- Flag misfiled pages for review or re-filing
+
+### Citation audit
+Spot-check pages for missing `[Source: ...]` citations:
+- Read 5-10 recently updated pages
+- Check that compiled truth (above the line) has inline citations
+- Check that timeline entries have source attribution
+- Flag pages where facts appear without provenance
+
 ### Tag consistency
 Inconsistent tagging (e.g., "vc" vs "venture-capital", "ai" vs "artificial-intelligence").
 - Standardize to the most common variant using gbrain tag operations
@@ -47,6 +70,25 @@ automatically.
 ### Open threads
 Timeline items older than 30 days with unresolved action items.
 - Flag for review
+
+## Benchmark Testing
+
+Periodically verify search quality hasn't regressed. Run a battery of test
+queries across difficulty tiers:
+
+- **Tier 1 (entity lookup):** known names -- should always resolve
+- **Tier 2 (topic recall):** concepts, topics -- keyword search should handle
+- **Tier 3 (semantic):** queries with no exact keyword match -- needs embeddings
+- **Tier 4 (cross-domain):** relational/connection queries -- only semantic handles
+
+Compare results from `gbrain search` (keyword) vs `gbrain query` (hybrid).
+Quality matters more than speed (2.5s right > 200ms wrong).
+
+When to run benchmarks:
+- After major brain imports or re-imports
+- After gbrain version upgrades
+- After embedding regeneration
+- Monthly to track quality drift
 
 ## Heartbeat Integration
 
@@ -77,6 +119,18 @@ the last 24 hours. If sync has stopped, the brain is drifting from the repo.
 Flag pages where compiled truth is >30 days old but the timeline has recent entries.
 This means new evidence exists that hasn't been synthesized. These pages need a
 compiled truth rewrite (see the maintain workflow above).
+
+## Report Storage
+
+After maintenance runs, save a report:
+- Health check results (before/after scores for each dimension)
+- Back-link violations found and fixed
+- Filing rule violations found
+- Citation gaps flagged
+- Benchmark results (if run)
+- Outstanding issues requiring user attention
+
+This creates an audit trail for brain health over time.
 
 ## Quality Rules
 
