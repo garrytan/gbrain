@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.10.1] - 2026-04-16
+
+### Added
+
+- **Wacli collector with checkpoint store.** `collector.ts` reads your WhatsApp export files from the wacli local store and maintains a checkpoint so the ingest pipeline only processes new messages since the last run. Deterministic parsing, dedup-safe, and cron-friendly — no duplicate ingestion on re-runs.
+
 ## [0.10.0] - 2026-04-16
 
 ### Added
