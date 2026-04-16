@@ -6,7 +6,7 @@ Target: ~30 minutes to a fully working brain.
 ## Step 1: Install GBrain
 
 ```bash
-git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
+git clone https://github.com/24601/gbrain-omni.git ~/gbrain && cd ~/gbrain
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"
 bun install && bun link
@@ -109,7 +109,7 @@ actually works) is the most important.
 ## Upgrade
 
 ```bash
-cd ~/gbrain && git pull origin main && bun install
+cd ~/gbrain && git pull origin master && bun install
 ```
 
 Then run `gbrain init` to apply any schema migrations (idempotent, safe to re-run).
