@@ -19,23 +19,30 @@ restart the shell or add the PATH export to the shell profile.
 
 Ask the user for these:
 
-**IMPORTANT: Do NOT ask the user to paste API keys into the agent chat.** Keys pasted
-in chat are stored in conversation logs. Instead, instruct the user to set keys in a
-**separate terminal** (not the agent session):
+**SECURITY: Do NOT collect API keys inside the agent chat.** Any command the user runs
+in an agent session (Claude Code, OpenClaw, Hermes) is stored in conversation logs.
+If the agent tells the user to run `export OPENAI_API_KEY="sk-..."` in the chat, the
+key ends up in the logs. This is a conflict: gbrain needs the keys, but the agent
+session is not a safe place to enter them.
+
+**Instead, tell the user to set keys in a separate terminal:**
 
 ```bash
-# Run this in a regular terminal, NOT in the agent chat:
+# Tell the user: "Open a separate terminal (not this chat) and run:"
 echo 'export OPENAI_API_KEY="sk-..."' >> ~/.zshenv
 echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshenv
 source ~/.zshenv
 ```
 
-The agent should then verify the keys are available (without printing them):
+**Then verify keys are available without printing them:**
 
 ```bash
 [ -n "$OPENAI_API_KEY" ] && echo "OpenAI key: set" || echo "OpenAI key: missing"
 [ -n "$ANTHROPIC_API_KEY" ] && echo "Anthropic key: set" || echo "Anthropic key: missing"
 ```
+
+If keys are missing, remind the user to set them in a separate terminal and restart
+the agent session (new sessions inherit shell environment variables).
 
 OpenAI is required for vector search. Anthropic is optional (improves search quality).
 Without OpenAI, keyword search still works. Without Anthropic, search works but skips
