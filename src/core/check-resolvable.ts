@@ -11,7 +11,23 @@
  */
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
-import { join, relative } from 'path';
+import { join, relative, resolve, sep } from 'path';
+
+// resolveInsideSkills returns an absolute path iff `candidate`, joined
+// under skillsDir, stays within skillsDir. Otherwise null. Used to guard
+// every filesystem op against path-traversal payloads in manifest.json or
+// RESOLVER.md — both of which are string sources that can carry `../`.
+//
+// The separator-terminated prefix check avoids the "/foo vs /foobar"
+// false accept where `path.resolve(baseResolved, candidate).startsWith(baseResolved)`
+// would otherwise succeed for `skillsDir-sibling/...`.
+function resolveInsideSkills(skillsDir: string, candidate: string): string | null {
+  const baseResolved = resolve(skillsDir);
+  const joinedResolved = resolve(baseResolved, candidate);
+  if (joinedResolved === baseResolved) return joinedResolved;
+  if (!joinedResolved.startsWith(baseResolved + sep)) return null;
+  return joinedResolved;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,7 +41,7 @@ export interface ResolvableFix {
 }
 
 export interface ResolvableIssue {
-  type: 'unreachable' | 'mece_overlap' | 'mece_gap' | 'dry_violation' | 'missing_file' | 'orphan_trigger';
+  type: 'unreachable' | 'mece_overlap' | 'mece_gap' | 'dry_violation' | 'missing_file' | 'orphan_trigger' | 'invalid_path';
   severity: 'error' | 'warning';
   skill: string;
   message: string;
@@ -225,7 +241,18 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
     // Resolver uses 'skills/query/SKILL.md', manifest uses 'query/SKILL.md'
     // The file on disk is at skillsDir + 'query/SKILL.md'
     const relPath = entry.skillPath.replace(/^skills\//, '');
-    const fullPath = join(skillsDir, relPath);
+    const fullPath = resolveInsideSkills(skillsDir, relPath);
+
+    if (fullPath === null) {
+      issues.push({
+        type: 'invalid_path',
+        severity: 'error',
+        skill: entry.skillPath,
+        message: `RESOLVER.md entry '${entry.skillPath}' escapes the skills directory`,
+        action: `Remove the entry or replace the path with one under '${skillsDir}'`,
+      });
+      continue;
+    }
 
     if (!existsSync(fullPath)) {
       issues.push({
@@ -258,7 +285,17 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
   // Build trigger→skill map from SKILL.md frontmatter triggers
   const triggerMap = new Map<string, string[]>();
   for (const skill of manifest) {
-    const skillPath = join(skillsDir, skill.path);
+    const skillPath = resolveInsideSkills(skillsDir, skill.path);
+    if (skillPath === null) {
+      issues.push({
+        type: 'invalid_path',
+        severity: 'error',
+        skill: skill.name,
+        message: `manifest.json entry for '${skill.name}' escapes the skills directory (path: '${skill.path}')`,
+        action: `Remove the entry or use a path relative to '${skillsDir}' without '..'`,
+      });
+      continue;
+    }
     if (!existsSync(skillPath)) continue;
     try {
       const content = readFileSync(skillPath, 'utf-8');
@@ -292,7 +329,8 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
   let gaps = 0;
   for (const skill of manifest) {
     if (OVERLAP_WHITELIST.has(skill.name)) continue; // always-on don't need triggers
-    const skillPath = join(skillsDir, skill.path);
+    const skillPath = resolveInsideSkills(skillsDir, skill.path);
+    if (skillPath === null) continue; // already reported in pass 3
     if (!existsSync(skillPath)) continue;
     try {
       const content = readFileSync(skillPath, 'utf-8');
@@ -319,7 +357,8 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
 
   // 5. DRY detection — inlined cross-cutting rules
   for (const skill of manifest) {
-    const skillPath = join(skillsDir, skill.path);
+    const skillPath = resolveInsideSkills(skillsDir, skill.path);
+    if (skillPath === null) continue; // already reported in pass 3
     if (!existsSync(skillPath)) continue;
     try {
       const content = readFileSync(skillPath, 'utf-8');
