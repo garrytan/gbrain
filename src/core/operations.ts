@@ -271,11 +271,11 @@ const get_tags: Operation = {
 
 const add_link: Operation = {
   name: 'add_link',
-  description: 'Create link between pages',
+  description: 'Create a typed link between two pages in the knowledge graph. Use to connect entities and technical concepts: people/companies (invested_in, works_at, founded), or systems/concepts (implements, depends_on, extends, contradicts, layer_of, prerequisite_for). Links are bidirectional in traversal and power cross-system navigation.',
   params: {
     from: { type: 'string', required: true },
     to: { type: 'string', required: true },
-    link_type: { type: 'string', description: 'Link type (e.g., invested_in, works_at)' },
+    link_type: { type: 'string', description: 'Link type. People/deal: invested_in, works_at, founded, mentioned_in. Technical: implements, depends_on, extends, contradicts, layer_of, prerequisite_for. Free-text; no allowlist enforced.' },
     context: { type: 'string', description: 'Context for the link' },
   },
   mutating: true,

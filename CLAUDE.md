@@ -34,6 +34,7 @@ available in local mode versus what must fail with honest guidance.
 - `src/commands/auth.ts` — Standalone token management (create/list/revoke/test)
 - `src/commands/setup-agent.ts` — Auto-detect Claude Code/Codex, register MCP, inject agent rules
 - `docs/GBRAIN_AGENT_RULES.md` — Compact behavioral rules for AI agents (injected by setup-agent)
+- `docs/MCP_INSTRUCTIONS.md` — Documentation copy of the `MCP_INSTRUCTIONS` constant returned by the server in `InitializeResult` (runtime source: `src/core/operations.ts`)
 - `skills/codemap-ingest/SKILL.md` — Technical knowledge map workflow for system pages + codemap-backed concepts
 - `src/core/schema-embedded.ts` — AUTO-GENERATED from schema.sql (run `bun run build:schema`)
 - `src/schema.sql` — Full Postgres + pgvector DDL (source of truth, generates schema-embedded.ts)

@@ -56,4 +56,18 @@ describe('core tool descriptions include trigger context', () => {
     expect(putPage!.description).toContain('record new information');
     expect(putPage!.description).toContain('compiled truth + timeline');
   });
+
+  test('add_link description surfaces both people/deal and technical link types', () => {
+    const addLink = operations.find(op => op.name === 'add_link');
+    expect(addLink).toBeDefined();
+    // Knowledge-map RFC §7.3 introduces technical link types; they must be
+    // discoverable at the MCP decision point, not only in skills.
+    expect(addLink!.description).toContain('implements');
+    expect(addLink!.description).toContain('depends_on');
+    // People/deal examples are still first-class.
+    expect(addLink!.description).toMatch(/invested_in|works_at/);
+    // link_type param description also lists both families.
+    expect(addLink!.params.link_type.description).toContain('implements');
+    expect(addLink!.params.link_type.description).toContain('layer_of');
+  });
 });
