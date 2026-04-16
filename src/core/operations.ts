@@ -10,6 +10,7 @@ import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import * as db from './db.ts';
+import { actionBrainOperations } from '../action-brain/operations.ts';
 
 // --- Types ---
 
@@ -652,7 +653,7 @@ const file_url: Operation = {
 
 // --- Exports ---
 
-export const operations: Operation[] = [
+const coreOperations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
   // Search
@@ -676,6 +677,37 @@ export const operations: Operation[] = [
   // Files
   file_list, file_upload, file_url,
 ];
+
+export function mergeOperationSets(...groups: ReadonlyArray<ReadonlyArray<Operation>>): Operation[] {
+  const merged: Operation[] = [];
+  const names = new Map<string, string>();
+  const cliNames = new Map<string, string>();
+
+  for (const group of groups) {
+    for (const op of group) {
+      const existingNameSource = names.get(op.name);
+      if (existingNameSource) {
+        throw new Error(`Duplicate operation name "${op.name}" detected (${existingNameSource} and ${op.name})`);
+      }
+      names.set(op.name, op.name);
+
+      const cliName = op.cliHints?.name;
+      if (cliName) {
+        const existingCliSource = cliNames.get(cliName);
+        if (existingCliSource) {
+          throw new Error(`Duplicate CLI command name "${cliName}" detected (${existingCliSource} and ${op.name})`);
+        }
+        cliNames.set(cliName, op.name);
+      }
+
+      merged.push(op);
+    }
+  }
+
+  return merged;
+}
+
+export const operations: Operation[] = mergeOperationSets(coreOperations, actionBrainOperations);
 
 export const operationsByName = Object.fromEntries(
   operations.map(op => [op.name, op]),

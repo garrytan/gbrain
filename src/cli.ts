@@ -19,10 +19,18 @@ for (const op of operations) {
 
 // CLI-only commands that bypass the operation layer
 const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval']);
+const ACTION_SUBCOMMANDS = new Map<string, string>([
+  ['list', 'action-list'],
+  ['brief', 'action-brief'],
+  ['resolve', 'action-resolve'],
+  ['mark-fp', 'action-mark-fp'],
+  ['ingest', 'action-ingest'],
+]);
 
 async function main() {
   const args = process.argv.slice(2);
   let command = args[0];
+  let subArgs = args.slice(1);
 
   if (!command || command === '--help' || command === '-h') {
     printHelp();
@@ -40,7 +48,22 @@ async function main() {
     return;
   }
 
-  const subArgs = args.slice(1);
+  if (command === 'action') {
+    if (subArgs.length === 0 || subArgs[0] === '--help' || subArgs[0] === '-h') {
+      printActionHelp();
+      return;
+    }
+
+    const mapped = ACTION_SUBCOMMANDS.get(subArgs[0]);
+    if (!mapped) {
+      console.error(`Unknown action command: ${subArgs[0]}`);
+      console.error('Run gbrain action --help for available subcommands.');
+      process.exit(1);
+    }
+
+    command = mapped;
+    subArgs = subArgs.slice(1);
+  }
 
   // DX alias: `ask` is a natural-language alias for `query`
   if (command === 'ask') {
@@ -80,7 +103,7 @@ async function main() {
         const cliName = op.cliHints?.name || op.name;
         const positional = op.cliHints?.positional || [];
         const usage = positional.map(p => `<${p}>`).join(' ');
-        console.error(`Usage: gbrain ${cliName} ${usage}`);
+        console.error(`Usage: gbrain ${displayCliCommandName(cliName)} ${usage}`);
         process.exit(1);
       }
     }
@@ -226,6 +249,11 @@ function formatResult(opName: string, result: unknown): string {
         `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${v.compiled_truth?.slice(0, 60) || ''}...`,
       ).join('\n') + '\n';
     }
+    case 'action_brief': {
+      const brief = (result as { brief?: string })?.brief;
+      if (!brief) return 'No brief generated.\n';
+      return brief.endsWith('\n') ? brief : `${brief}\n`;
+    }
     default:
       return JSON.stringify(result, null, 2) + '\n';
   }
@@ -354,7 +382,7 @@ async function connectEngine(): Promise<BrainEngine> {
 function printOpHelp(op: Operation) {
   const positional = (op.cliHints?.positional || []).map(p => `<${p}>`).join(' ');
   const name = op.cliHints?.name || op.name;
-  console.log(`Usage: gbrain ${name} ${positional} [options]\n`);
+  console.log(`Usage: gbrain ${displayCliCommandName(name)} ${positional} [options]\n`);
   console.log(op.description + '\n');
   const entries = Object.entries(op.params);
   if (entries.length > 0) {
@@ -428,6 +456,13 @@ TIMELINE
   timeline [<slug>]                  View timeline
   timeline-add <slug> <date> <text>  Add timeline entry
 
+ACTION
+  action list [--status S --owner O]  List Action Brain commitments
+  action brief                         Generate Action Brain morning brief
+  action resolve <id>                  Mark an action item resolved
+  action mark-fp <id>                  Mark extraction as false positive
+  action ingest [--messages-json J]    Extract and ingest commitments from a message batch
+
 TOOLS
   publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
@@ -447,6 +482,25 @@ ADMIN
 
 Run gbrain <command> --help for command-specific help.
 `);
+}
+
+function printActionHelp() {
+  console.log(`Usage: gbrain action <subcommand> [options]
+
+Subcommands:
+  list [--status S --owner O --stale]
+  brief [--now <iso>] [--last-sync-at <iso>] [--timezone-offset-minutes <minutes>]
+  resolve <id>
+  mark-fp <id>
+  ingest [--messages-json <json>] [--model <model>] [--timeout-ms <ms>]
+`);
+}
+
+function displayCliCommandName(name: string): string {
+  if (name.startsWith('action-')) {
+    return `action ${name.slice('action-'.length)}`;
+  }
+  return name;
 }
 
 main().catch(e => {
