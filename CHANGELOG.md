@@ -12,6 +12,11 @@ All notable changes to GBrain will be documented in this file.
 - **Morning priority brief.** `generateBrief()` scores your open action items (urgency × confidence × recency × relationship weight) and outputs a ranked priority list. Your agent can deliver this via Telegram or any output channel. No more mentally stitching your inbox every morning.
 - **Action Brain available over MCP.** All action operations exposed as MCP tools — your AI assistant can read, create, and update action items in the same session where it's also answering questions about your knowledge base.
 
+### Fixed
+
+- **Action Brain can't be hijacked by malicious message content.** WhatsApp message batches are now wrapped in XML delimiters before being passed to the LLM extractor. A message saying "Ignore previous instructions" stays data — it can't escape its boundary and redirect the extraction. Defense-in-depth against prompt injection via user-controlled message text.
+- **Action Brain won't starve your connection pool under load.** The Postgres path was holding a reserved connection for the lifetime of each operation (`sql.reserve()`). Replaced with standard pool checkout per query — connections return to the pool immediately after each statement.
+
 ## [0.9.3] - 2026-04-12
 
 ### Added

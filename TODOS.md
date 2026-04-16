@@ -91,6 +91,17 @@
 
 **Depends on:** v0.8.0 (Edge Function removal shipped).
 
+## P2
+
+### Action Brain: harden prompt injection defense with XML escaping
+**What:** Escape `<`, `>`, and `&` in WhatsApp message content before wrapping in `<messages>` XML tags in `src/action-brain/extractor.ts`. A message containing `</messages>` can currently close the tag early and escape the data boundary.
+
+**Why:** The current XML wrapper is defense-in-depth but bypassable via tag closure. Proper escaping makes the boundary robust.
+
+**Complexity:** Low — 3-line change in `buildExtractionRequest()`.
+
+**Context:** Identified by adversarial review during v0.10.0 ship.
+
 ## Completed
 
 ### Implement AWS Signature V4 for S3 storage backend
