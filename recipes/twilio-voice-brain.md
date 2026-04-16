@@ -170,7 +170,7 @@ Tell the user:
    `source ~/.zshenv`
    Then come back here — I'll verify they're set."
 
-After the user provides them, validate immediately:
+After the user confirms they've set the keys, validate immediately:
 
 ```bash
 curl -s -u "$TWILIO_ACCOUNT_SID:$TWILIO_AUTH_TOKEN" \
