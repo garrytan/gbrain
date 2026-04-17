@@ -168,6 +168,13 @@ function inferType(filePath?: string): PageType {
   if (lower.includes('/projects/') || lower.includes('/project/')) return 'project';
   if (lower.includes('/sources/') || lower.includes('/source/')) return 'source';
   if (lower.includes('/media/')) return 'media';
+  // Wiki subdirectory types — checked after generic types so /wiki/projects/ still
+  // resolves to 'project' via the generic rule above, but wiki-specific subtypes win.
+  if (lower.includes('/wiki/analysis/')) return 'analysis';
+  if (lower.includes('/wiki/guides/') || lower.includes('/wiki/guide/')) return 'guide';
+  if (lower.includes('/wiki/hardware/')) return 'hardware';
+  if (lower.includes('/wiki/architecture/')) return 'architecture';
+  if (lower.includes('/wiki/concepts/') || lower.includes('/wiki/concept/')) return 'concept';
   return 'concept';
 }
 
