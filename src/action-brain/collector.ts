@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_LIMIT = 200;
 const DEFAULT_STALE_AFTER_HOURS = 24;
 const CHECKPOINT_VERSION = 1;
+const MAX_IDS_AT_AFTER = 5000;
 
 export type WacliStoreKey = 'personal' | 'business' | string;
 
@@ -280,6 +281,25 @@ export function summarizeWacliHealth(
   const disconnectedStoreKeys: string[] = [];
   const alerts: string[] = [];
 
+  // The collector checkpoint is global, not per-store. When it fails to read,
+  // every store gets stamped with checkpoint_read_failed. Collapse those into a
+  // single top-level alert instead of N identical per-store alerts.
+  const checkpointFailedStore = stores.find(
+    (store) => store.degradedReason === 'checkpoint_read_failed'
+  );
+  if (checkpointFailedStore) {
+    const detail = checkpointFailedStore.error
+      ? checkpointFailedStore.error
+      : 'collector checkpoint unreadable';
+    return {
+      status: 'failed',
+      lastSyncAt: latestWacliSyncAt(stores),
+      staleStoreKeys: [],
+      disconnectedStoreKeys: stores.map((store) => store.storeKey),
+      alerts: [detail],
+    };
+  }
+
   for (const store of stores) {
     if (!store.degraded || !store.degradedReason) {
       continue;
@@ -531,13 +551,15 @@ function normalizeStoreCheckpoint(checkpoint: unknown): WacliStoreCheckpoint {
       ? record.ids
       : [];
 
+  // Preserve insertion order — the FIFO cap in advanceCheckpoint relies on it
+  // to drop the oldest-seen IDs first, not the lexicographically-smallest ones.
   const ids = Array.from(
     new Set(
       idsRaw
         .map((value) => asNonEmpty(value))
         .filter((value): value is string => Boolean(value))
     )
-  ).sort();
+  );
 
   return {
     after,
@@ -589,8 +611,18 @@ function parseCheckpointStateStrict(raw: string): WacliCollectorCheckpointState 
   if (!isRecord(parsed)) {
     throw new Error('checkpoint payload must be a JSON object');
   }
-  const version = Number.isInteger(parsed.version) ? Number(parsed.version) : CHECKPOINT_VERSION;
-  const stores = normalizeCheckpointStores(isRecord(parsed.stores) ? (parsed.stores as Record<string, WacliStoreCheckpoint>) : {});
+  if (!Number.isInteger(parsed.version)) {
+    throw new Error('checkpoint payload missing or invalid version field');
+  }
+  const version = Number(parsed.version);
+  if (version > CHECKPOINT_VERSION) {
+    throw new Error(
+      `checkpoint version ${version} is newer than supported version ${CHECKPOINT_VERSION}`
+    );
+  }
+  const stores = normalizeCheckpointStores(
+    isRecord(parsed.stores) ? (parsed.stores as Record<string, WacliStoreCheckpoint>) : {}
+  );
   return {
     version,
     stores,
@@ -651,11 +683,24 @@ function advanceCheckpoint(
 
   const nextIdsAtAfter = sorted
     .filter((message) => message.Timestamp === after)
-    .map((message) => message.MsgID)
-    .sort();
-  const idsAtAfter = after === existing.after
-    ? Array.from(new Set([...existing.message_ids_at_after, ...nextIdsAtAfter])).sort()
-    : nextIdsAtAfter;
+    .map((message) => message.MsgID);
+  // Preserve insertion order so the FIFO cap below drops the *oldest* IDs we've seen
+  // rather than the lexicographically-smallest ones — MsgIDs are not chronological.
+  const existingIds = after === existing.after ? existing.message_ids_at_after : [];
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const id of [...existingIds, ...nextIdsAtAfter]) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(id);
+  }
+  // Cap the per-timestamp ID set so a chat burst pinned to one second cannot grow
+  // the checkpoint without bound. We drop oldest-first; if wacli re-returns a dropped
+  // ID on the next poll the action engine dedupes by source_id, but extraction LLM
+  // cost is paid again, so the cap should be high enough to never trigger in practice.
+  const idsAtAfter = ordered.length > MAX_IDS_AT_AFTER
+    ? ordered.slice(ordered.length - MAX_IDS_AT_AFTER)
+    : ordered;
 
   return {
     after,

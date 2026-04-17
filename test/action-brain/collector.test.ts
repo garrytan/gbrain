@@ -443,6 +443,123 @@ describe('collectWacliMessages', () => {
     expect(result.lastSyncAt).toBe('2026-04-15T10:00:00.000Z');
     expect(result.alerts[0]).toContain('stale');
   });
+
+  test('collapses checkpoint_read_failed into a single global alert across stores', async () => {
+    const result = summarizeWacliHealth(
+      [
+        {
+          storeKey: 'personal',
+          storePath: '/stores/personal',
+          checkpointBefore: null,
+          checkpointAfter: null,
+          batchSize: 0,
+          lastSyncAt: null,
+          degraded: true,
+          degradedReason: 'checkpoint_read_failed',
+          error: 'Unable to read collector checkpoint (/x/wacli-checkpoint.json): bad json',
+          messages: [],
+        },
+        {
+          storeKey: 'business',
+          storePath: '/stores/business',
+          checkpointBefore: null,
+          checkpointAfter: null,
+          batchSize: 0,
+          lastSyncAt: null,
+          degraded: true,
+          degradedReason: 'checkpoint_read_failed',
+          error: 'Unable to read collector checkpoint (/x/wacli-checkpoint.json): bad json',
+          messages: [],
+        },
+      ],
+      { now: new Date('2026-04-16T12:00:00.000Z') }
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.alerts.length).toBe(1);
+    expect(result.alerts[0]).toContain('Unable to read collector checkpoint');
+    expect(result.disconnectedStoreKeys).toEqual(['personal', 'business']);
+    expect(result.staleStoreKeys).toEqual([]);
+  });
+
+  test('rejects checkpoints whose version is newer than supported', async () => {
+    const root = createTempDir();
+    const checkpointPath = join(root, 'wacli-checkpoint.json');
+    await Bun.write(
+      checkpointPath,
+      JSON.stringify({ version: 9999, stores: {} })
+    );
+
+    const runner: WacliListMessagesRunner = async () => ({
+      success: true,
+      data: { messages: [] },
+      error: null,
+    });
+
+    const result = await collectWacliMessages({
+      checkpointPath,
+      stores: [{ key: 'personal', storePath: '/stores/personal' }],
+      now: new Date('2026-04-16T12:00:00.000Z'),
+      runner,
+    });
+
+    expect(result.degraded).toBe(true);
+    expect(result.stores[0]?.degradedReason).toBe('checkpoint_read_failed');
+    expect(result.stores[0]?.error).toContain('newer than supported');
+  });
+
+  test('caps merged same-timestamp ID set to prevent unbounded growth', async () => {
+    const root = createTempDir();
+    const checkpointPath = join(root, 'wacli-checkpoint.json');
+    const sameTs = '2026-04-16T00:00:00.000Z';
+    const existingIds = Array.from({ length: 5000 }, (_, i) => `existing-${String(i).padStart(5, '0')}`);
+    await writeWacliCollectorCheckpoint(checkpointPath, {
+      version: 1,
+      stores: {
+        personal: {
+          after: sameTs,
+          message_ids_at_after: existingIds,
+          updated_at: '2026-04-16T00:01:00.000Z',
+        },
+      },
+    });
+
+    const newMessages = Array.from({ length: 100 }, (_, i) => ({
+      MsgID: `new-${String(i).padStart(5, '0')}`,
+      ChatName: 'Ops',
+      SenderJID: 'sender@jid',
+      Timestamp: sameTs,
+      FromMe: false,
+      Text: `new message ${i}`,
+    }));
+
+    const runner: WacliListMessagesRunner = async () => ({
+      success: true,
+      data: { messages: newMessages },
+      error: null,
+    });
+
+    await collectWacliMessages({
+      checkpointPath,
+      stores: [{ key: 'personal', storePath: '/stores/personal' }],
+      now: new Date('2026-04-16T00:30:00.000Z'),
+      runner,
+    });
+
+    const stored = await readWacliCollectorCheckpoint(checkpointPath);
+    const storedIds = stored.stores.personal?.message_ids_at_after ?? [];
+    expect(storedIds.length).toBe(5000);
+    // FIFO: oldest existing IDs dropped from the front, newly-seen IDs preserved at the tail.
+    // Without this, slice(-N) on a sort()'d list would keep lex-largest "existing-04999..." and
+    // drop every "new-*" ID (they sort lower), causing repeated re-extraction on every poll.
+    for (let i = 0; i < 100; i += 1) {
+      expect(storedIds).toContain(`new-${String(i).padStart(5, '0')}`);
+    }
+    // First 100 of the original existing-* IDs must have rolled off the front.
+    expect(storedIds).not.toContain('existing-00000');
+    expect(storedIds).not.toContain('existing-00099');
+    expect(storedIds).toContain('existing-00100');
+  });
 });
 
 function createTempDir(): string {
