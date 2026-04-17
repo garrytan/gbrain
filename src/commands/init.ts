@@ -13,10 +13,17 @@ import type { EmbeddingProvider, ProviderConfig } from '../core/embedding/index.
 
 /**
  * Parse --provider / --model / --dimensions / --base-url flags.
+ * Supports both `--flag value` (space) and `--flag=value` (equals) forms.
  * Falls back to EMBEDDING_* env vars (handled inside resolveEmbeddingConfig).
  */
 function parseEmbeddingFlags(args: string[]): Partial<ProviderConfig> {
   const flag = (name: string): string | undefined => {
+    // `--flag=value` form
+    const prefix = name + '=';
+    for (const a of args) {
+      if (a.startsWith(prefix)) return a.slice(prefix.length);
+    }
+    // `--flag value` form
     const i = args.indexOf(name);
     return i !== -1 ? args[i + 1] : undefined;
   };
