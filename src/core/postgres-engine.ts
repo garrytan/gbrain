@@ -2,7 +2,7 @@ import postgres from 'postgres';
 import type { BrainEngine } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { SCHEMA_SQL } from './schema-embedded.ts';
+import { postgresSchema } from './schema-embedded.ts';
 import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
@@ -56,13 +56,13 @@ export class PostgresEngine implements BrainEngine {
     }
   }
 
-  async initSchema(): Promise<void> {
+  async initSchema(opts?: { dimensions?: number; defaultModel?: string }): Promise<void> {
     const conn = this.sql;
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      await conn.unsafe(postgresSchema(opts));
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this);

@@ -13,6 +13,23 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  /**
+   * Embedding provider config, persisted at `gbrain init` and frozen for the
+   * brain's life. Presence indicates a provider was chosen explicitly; absence
+   * means legacy behavior (OpenAI text-embedding-3-large 1536d via env vars).
+   */
+  embedding?: EmbeddingConfig;
+}
+
+export interface EmbeddingConfig {
+  /** Provider name. Currently 'openai' or 'ollama'. */
+  provider: string;
+  /** Model identifier. */
+  model: string;
+  /** Output vector dimension — MUST match the pgvector schema column. */
+  dimensions: number;
+  /** Optional base URL override for OpenAI-compatible endpoints. */
+  base_url?: string;
 }
 
 /**

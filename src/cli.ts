@@ -31,6 +31,17 @@ async function main() {
 
   if (command === '--version' || command === 'version') {
     console.log(`gbrain ${VERSION}`);
+    // Surface the active embedding provider so users running in multiple shells
+    // notice when they're on a non-default brain (local Ollama vs OpenAI).
+    try {
+      const cfg = loadConfig();
+      if (cfg?.embedding) {
+        const { provider, model, dimensions } = cfg.embedding;
+        console.log(`embedding: ${provider} / ${model} (${dimensions}d)`);
+      }
+    } catch {
+      // Config not readable — fine, --version shouldn't fail on that
+    }
     return;
   }
 

@@ -6,8 +6,50 @@ import { homedir } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { saveConfig, type GBrainConfig } from '../core/config.ts';
+import { loadConfig, saveConfig, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
+import { createProvider, resolveConfig as resolveEmbeddingConfig } from '../core/embedding/index.ts';
+import type { EmbeddingProvider, ProviderConfig } from '../core/embedding/index.ts';
+
+/**
+ * Parse --provider / --model / --dimensions / --base-url flags.
+ * Falls back to EMBEDDING_* env vars (handled inside resolveEmbeddingConfig).
+ */
+function parseEmbeddingFlags(args: string[]): Partial<ProviderConfig> {
+  const flag = (name: string): string | undefined => {
+    const i = args.indexOf(name);
+    return i !== -1 ? args[i + 1] : undefined;
+  };
+  const dims = flag('--dimensions');
+  return {
+    provider: flag('--provider'),
+    model: flag('--model'),
+    dimensions: dims ? parseInt(dims, 10) : undefined,
+    baseUrl: flag('--base-url'),
+  };
+}
+
+/**
+ * Resolve the embedding provider for this init, and guard against dim-mismatch
+ * with any existing brain config. Returns the instantiated provider.
+ */
+function resolveProviderWithGuard(args: string[]): { provider: EmbeddingProvider; resolved: ProviderConfig } {
+  const resolved = resolveEmbeddingConfig(parseEmbeddingFlags(args));
+  const provider = createProvider(resolved); // validates config + infers dims
+
+  const existing = loadConfig();
+  if (existing?.embedding && existing.embedding.dimensions !== provider.dimensions) {
+    console.error('');
+    console.error('Cannot re-init: existing brain has a different embedding dimension.');
+    console.error(`  Existing: ${existing.embedding.provider} / ${existing.embedding.model} (${existing.embedding.dimensions}d)`);
+    console.error(`  Requested: ${provider.name} / ${provider.model} (${provider.dimensions}d)`);
+    console.error('');
+    console.error('Switching providers requires regenerating all embeddings.');
+    console.error('To start fresh: delete ~/.gbrain/config.json and the brain data directory, then rerun gbrain init.');
+    process.exit(1);
+  }
+  return { provider, resolved };
+}
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -20,6 +62,10 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+
+  // Resolve embedding provider up front. Fails fast on bad provider/model/dims
+  // or dim-mismatch with an existing brain — before any engine state is created.
+  const { provider, resolved: providerResolved } = resolveProviderWithGuard(args);
 
   // Explicit PGLite mode
   if (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)) {
@@ -37,7 +83,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath });
+    return initPGLite({ jsonOutput, apiKey, customPath, provider, providerResolved });
   }
 
   // Supabase/Postgres mode
@@ -56,20 +102,33 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, provider, providerResolved });
 }
 
-async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
+async function initPGLite(opts: {
+  jsonOutput: boolean;
+  apiKey: string | null;
+  customPath: string | null;
+  provider: EmbeddingProvider;
+  providerResolved: ProviderConfig;
+}) {
   const dbPath = opts.customPath || join(homedir(), '.gbrain', 'brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
+  console.log(`Embedding: ${opts.provider.name} / ${opts.provider.model} (${opts.provider.dimensions}d)`);
 
   const engine = await createEngine({ engine: 'pglite' });
   await engine.connect({ database_path: dbPath, engine: 'pglite' });
-  await engine.initSchema();
+  await engine.initSchema({ dimensions: opts.provider.dimensions, defaultModel: opts.provider.model });
 
   const config: GBrainConfig = {
     engine: 'pglite',
     database_path: dbPath,
+    embedding: {
+      provider: opts.provider.name,
+      model: opts.provider.model,
+      dimensions: opts.provider.dimensions,
+      ...(opts.providerResolved.baseUrl ? { base_url: opts.providerResolved.baseUrl } : {}),
+    },
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
   };
   saveConfig(config);
@@ -78,7 +137,13 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   await engine.disconnect();
 
   if (opts.jsonOutput) {
-    console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count }));
+    console.log(JSON.stringify({
+      status: 'success',
+      engine: 'pglite',
+      path: dbPath,
+      pages: stats.page_count,
+      embedding: config.embedding,
+    }));
   } else {
     console.log(`\nBrain ready at ${dbPath}`);
     console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
@@ -89,7 +154,13 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   }
 }
 
-async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null }) {
+async function initPostgres(opts: {
+  databaseUrl: string;
+  jsonOutput: boolean;
+  apiKey: string | null;
+  provider: EmbeddingProvider;
+  providerResolved: ProviderConfig;
+}) {
   const { databaseUrl } = opts;
 
   // Detect Supabase direct connection URLs and warn about IPv6
@@ -137,11 +208,18 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
   }
 
   console.log('Running schema migration...');
-  await engine.initSchema();
+  console.log(`Embedding: ${opts.provider.name} / ${opts.provider.model} (${opts.provider.dimensions}d)`);
+  await engine.initSchema({ dimensions: opts.provider.dimensions, defaultModel: opts.provider.model });
 
   const config: GBrainConfig = {
     engine: 'postgres',
     database_url: databaseUrl,
+    embedding: {
+      provider: opts.provider.name,
+      model: opts.provider.model,
+      dimensions: opts.provider.dimensions,
+      ...(opts.providerResolved.baseUrl ? { base_url: opts.providerResolved.baseUrl } : {}),
+    },
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
   };
   saveConfig(config);
@@ -151,7 +229,12 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
   await engine.disconnect();
 
   if (opts.jsonOutput) {
-    console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count }));
+    console.log(JSON.stringify({
+      status: 'success',
+      engine: 'postgres',
+      pages: stats.page_count,
+      embedding: config.embedding,
+    }));
   } else {
     console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
     console.log('Next: gbrain import <dir>');

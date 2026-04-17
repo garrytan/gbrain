@@ -25,7 +25,7 @@ export interface BrainEngine {
   // Lifecycle
   connect(config: EngineConfig): Promise<void>;
   disconnect(): Promise<void>;
-  initSchema(): Promise<void>;
+  initSchema(opts?: { dimensions?: number; defaultModel?: string }): Promise<void>;
   transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
 
   // Pages CRUD
