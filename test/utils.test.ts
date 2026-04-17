@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from '../src/core/utils.ts';
+import { validateSlug, contentHash, parseEmbedding, rowToPage, rowToChunk, rowToSearchResult } from '../src/core/utils.ts';
 
 describe('validateSlug', () => {
   test('accepts valid slugs', () => {
@@ -97,6 +97,40 @@ describe('rowToChunk', () => {
       model: 'test', token_count: 5, embedded_at: '2024-01-01',
     }, true);
     expect(chunk.embedding).not.toBeNull();
+  });
+
+  test('parses pgvector string embeddings when requested', () => {
+    const chunk = rowToChunk({
+      id: 1, page_id: 1, chunk_index: 0, chunk_text: 'text',
+      chunk_source: 'compiled_truth', embedding: '[0.1, 0.2, 0.3]',
+      model: 'test', token_count: 5, embedded_at: '2024-01-01',
+    }, true);
+    expect(chunk.embedding).toBeInstanceOf(Float32Array);
+    expect(Array.from(chunk.embedding || [])).toHaveLength(3);
+    expect(chunk.embedding?.[0]).toBeCloseTo(0.1, 6);
+    expect(chunk.embedding?.[1]).toBeCloseTo(0.2, 6);
+    expect(chunk.embedding?.[2]).toBeCloseTo(0.3, 6);
+  });
+});
+
+describe('parseEmbedding', () => {
+  test('returns Float32Array unchanged', () => {
+    const emb = new Float32Array([0.1, 0.2]);
+    expect(parseEmbedding(emb)).toBe(emb);
+  });
+
+  test('parses pgvector text into Float32Array', () => {
+    const parsed = parseEmbedding('[0.1, 0.2, 0.3]');
+    expect(parsed).toBeInstanceOf(Float32Array);
+    expect(Array.from(parsed || [])).toHaveLength(3);
+    expect(parsed?.[0]).toBeCloseTo(0.1, 6);
+    expect(parsed?.[1]).toBeCloseTo(0.2, 6);
+    expect(parsed?.[2]).toBeCloseTo(0.3, 6);
+  });
+
+  test('returns null for unsupported embedding values', () => {
+    expect(parseEmbedding(null)).toBeNull();
+    expect(parseEmbedding('not-a-vector')).toBeNull();
   });
 });
 

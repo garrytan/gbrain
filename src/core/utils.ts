@@ -1,6 +1,26 @@
 import { createHash } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult } from './types.ts';
 
+export function parseEmbedding(value: unknown): Float32Array | null {
+  if (!value) return null;
+
+  if (value instanceof Float32Array) return value;
+
+  if (Array.isArray(value)) {
+    return new Float32Array(value.map(Number));
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
+    const body = trimmed.slice(1, -1).trim();
+    if (!body) return new Float32Array();
+    return new Float32Array(body.split(',').map(part => Number(part.trim())));
+  }
+
+  return null;
+}
+
 /**
  * Validate and normalize a slug. Slugs are lowercased repo-relative paths.
  * Rejects empty slugs, path traversal (..), and leading /.
@@ -50,7 +70,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     chunk_index: row.chunk_index as number,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
-    embedding: includeEmbedding && row.embedding ? row.embedding as Float32Array : null,
+    embedding: includeEmbedding ? parseEmbedding(row.embedding) : null,
     model: row.model as string,
     token_count: row.token_count as number | null,
     embedded_at: row.embedded_at ? new Date(row.embedded_at as string) : null,
