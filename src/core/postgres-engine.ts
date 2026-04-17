@@ -104,7 +104,7 @@ export class PostgresEngine implements BrainEngine {
 
     const rows = await sql`
       INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${JSON.stringify(frontmatter)}::jsonb, ${hash}, now())
+      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${this.sql.json(frontmatter)}, ${hash}, now())
       ON CONFLICT (slug) DO UPDATE SET
         type = EXCLUDED.type,
         title = EXCLUDED.title,
@@ -665,7 +665,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const result = await sql`
       INSERT INTO raw_data (page_id, source, data)
-      SELECT id, ${source}, ${JSON.stringify(data)}::jsonb
+      SELECT id, ${source}, ${this.sql.json(data)}
       FROM pages WHERE slug = ${slug}
       ON CONFLICT (page_id, source) DO UPDATE SET
         data = EXCLUDED.data,
@@ -843,7 +843,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     await sql`
       INSERT INTO ingest_log (source_type, source_ref, pages_updated, summary)
-      VALUES (${entry.source_type}, ${entry.source_ref}, ${JSON.stringify(entry.pages_updated)}::jsonb, ${entry.summary})
+      VALUES (${entry.source_type}, ${entry.source_ref}, ${this.sql.json(entry.pages_updated)}, ${entry.summary})
     `;
   }
 
