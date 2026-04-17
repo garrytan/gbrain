@@ -22,15 +22,17 @@
 ### Fix `bun build --compile` WASM embedding for PGLite
 **What:** Submit PR to oven-sh/bun fixing WASM file embedding in `bun build --compile` (issue oven-sh/bun#15032).
 
-**Why:** PGLite's WASM files (~3MB) can't be embedded in the compiled binary. Users who install via `bun install -g gbrain` are fine (WASM resolves from node_modules), but the compiled binary can't use PGLite. Jarred Sumner (Bun founder, YC W22) would likely be receptive.
+**Status:** Worked around in v0.10.3 — `src/core/pglite-engine.ts` embeds tarballs and WASM via `with { type: 'file' }` and passes them through `PGlite.create()`'s `pgliteWasmModule` / `initdbWasmModule` / `fsBundle` options. Compiled binaries work. An upstream Bun fix would let us delete that workaround and let other WASM packages Just Work.
 
-**Pros:** Single-binary distribution includes PGLite. No sidecar files needed.
+**Why:** The workaround is 80 lines of glue. An upstream fix would generalize to every package that uses `new URL("./asset.ext", import.meta.url)` for data files, not just PGLite. Jarred Sumner (Bun founder, YC W22) would likely be receptive.
+
+**Pros:** Single-binary distribution stays zero-config for the next WASM-dependent package we pull in.
 
 **Cons:** Requires understanding Bun's bundler internals. May be a large PR.
 
 **Context:** Issue has been open since Nov 2024. The root cause is that `bun build --compile` generates virtual filesystem paths (`/$bunfs/root/...`) that PGLite can't resolve. Multiple users have reported this. A fix would benefit any WASM-dependent package, not just PGLite.
 
-**Depends on:** PGLite engine shipping (to have a real use case for the PR).
+**Depends on:** PGLite engine shipping (to have a real use case for the PR). DONE.
 
 ### ChatGPT MCP support (OAuth 2.1)
 **What:** Add OAuth 2.1 with Dynamic Client Registration to the self-hosted MCP server so ChatGPT can connect.

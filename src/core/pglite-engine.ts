@@ -2,6 +2,20 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
+import { pathToFileURL } from 'node:url';
+// Embed extension tarballs into the compiled binary. PGLite's extensions
+// resolve bundlePath via `new URL("../vector.tar.gz", import.meta.url)` in
+// node_modules, which `bun build --compile` does NOT auto-embed — the binary
+// crashes at runtime with "Extension bundle not found". These imports force
+// Bun to embed the files and return a path we can feed back to PGLite.
+import vectorBundlePath from '../../node_modules/@electric-sql/pglite/dist/vector.tar.gz' with { type: 'file' };
+import pgTrgmBundlePath from '../../node_modules/@electric-sql/pglite/dist/pg_trgm.tar.gz' with { type: 'file' };
+import pgliteWasmPath from '../../node_modules/@electric-sql/pglite/dist/pglite.wasm' with { type: 'file' };
+import initdbWasmPath from '../../node_modules/@electric-sql/pglite/dist/initdb.wasm' with { type: 'file' };
+import pgliteDataPath from '../../node_modules/@electric-sql/pglite/dist/pglite.data' with { type: 'file' };
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
@@ -23,6 +37,69 @@ import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } f
 
 type PGLiteDB = PGlite;
 
+function withEmbeddedBundle<T extends { name: string; setup: (...args: any[]) => Promise<{ bundlePath: URL }> }>(
+  ext: T,
+  bundlePath: string,
+): T {
+  const url = pathToFileURL(bundlePath);
+  return {
+    ...ext,
+    setup: async (...args: Parameters<T['setup']>) => ({
+      ...(await ext.setup(...args)),
+      bundlePath: url,
+    }),
+  } as T;
+}
+
+// Extension tarballs must live on the real filesystem because PGLite loads them
+// via fs.createReadStream + zlib.createGunzip, which cannot traverse Bun's
+// embedded virtual FS. Copy the embedded bytes to tmpdir once per process.
+let _materializedExtPaths: { vector: string; pg_trgm: string } | null = null;
+
+function materializeExtensions() {
+  if (_materializedExtPaths) return _materializedExtPaths;
+  const dir = join(tmpdir(), 'gbrain-pglite-ext');
+  mkdirSync(dir, { recursive: true });
+  const pairs = [
+    { name: 'vector.tar.gz', src: vectorBundlePath },
+    { name: 'pg_trgm.tar.gz', src: pgTrgmBundlePath },
+  ];
+  for (const { name, src } of pairs) {
+    const out = join(dir, name);
+    // Rewrite every time — the embedded bytes are stable, but a stale/corrupt
+    // file from a prior crashed run would otherwise fail silently.
+    writeFileSync(out, readFileSync(src));
+  }
+  _materializedExtPaths = {
+    vector: join(dir, 'vector.tar.gz'),
+    pg_trgm: join(dir, 'pg_trgm.tar.gz'),
+  };
+  return _materializedExtPaths;
+}
+
+const EXT_PATHS = materializeExtensions();
+const VECTOR_EXT = withEmbeddedBundle(vector, EXT_PATHS.vector);
+const PG_TRGM_EXT = withEmbeddedBundle(pg_trgm, EXT_PATHS.pg_trgm);
+
+let _cachedCoreAssets: {
+  pgliteWasmModule: WebAssembly.Module;
+  initdbWasmModule: WebAssembly.Module;
+  fsBundle: Blob;
+} | null = null;
+
+function loadCoreAssets() {
+  if (_cachedCoreAssets) return _cachedCoreAssets;
+  const pgliteWasmBytes = readFileSync(pgliteWasmPath);
+  const initdbWasmBytes = readFileSync(initdbWasmPath);
+  const fsBundleBytes = readFileSync(pgliteDataPath);
+  _cachedCoreAssets = {
+    pgliteWasmModule: new WebAssembly.Module(pgliteWasmBytes),
+    initdbWasmModule: new WebAssembly.Module(initdbWasmBytes),
+    fsBundle: new Blob([new Uint8Array(fsBundleBytes)]),
+  };
+  return _cachedCoreAssets;
+}
+
 export class PGLiteEngine implements BrainEngine {
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
@@ -43,9 +120,13 @@ export class PGLiteEngine implements BrainEngine {
       throw new Error('Could not acquire PGLite lock. Another gbrain process is using the database.');
     }
 
+    const { pgliteWasmModule, initdbWasmModule, fsBundle } = loadCoreAssets();
     this._db = await PGlite.create({
       dataDir,
-      extensions: { vector, pg_trgm },
+      extensions: { vector: VECTOR_EXT, pg_trgm: PG_TRGM_EXT },
+      pgliteWasmModule,
+      initdbWasmModule,
+      fsBundle,
     });
   }
 
