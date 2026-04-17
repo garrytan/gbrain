@@ -118,6 +118,48 @@ beforeAll(async () => {
     token_count: 12,
   }]);
 
+  await engine.putPage('knowledge/people/roger-gimbel', {
+    type: 'people-profile' as any,
+    title: 'Roger Gimbel',
+    compiled_truth: 'Legacy compatibility note. Use the foldered summary as the source of truth.',
+    timeline: '',
+  });
+  await engine.upsertChunks('knowledge/people/roger-gimbel', [{
+    chunk_index: 0,
+    chunk_text: 'Legacy compatibility note. Use the foldered summary as the source of truth.',
+    chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(10),
+    token_count: 12,
+  }]);
+
+  await engine.putPage('knowledge/companies/rodaco/summary', {
+    type: 'company-summary' as any,
+    title: 'Summary',
+    compiled_truth: 'Rodaco is Roger\'s company focused on products, advisory, and app development.',
+    timeline: '',
+  });
+  await engine.upsertChunks('knowledge/companies/rodaco/summary', [{
+    chunk_index: 0,
+    chunk_text: 'Rodaco is Roger\'s company focused on products, advisory, and app development.',
+    chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(11),
+    token_count: 12,
+  }]);
+
+  await engine.putPage('knowledge/agents/rodaco', {
+    type: 'agent-profile' as any,
+    title: 'Rodaco',
+    compiled_truth: 'Rodaco is the backup OpenClaw agent running on the Intel Mac.',
+    timeline: '',
+  });
+  await engine.upsertChunks('knowledge/agents/rodaco', [{
+    chunk_index: 0,
+    chunk_text: 'Rodaco is the backup OpenClaw agent running on the Intel Mac.',
+    chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(12),
+    token_count: 12,
+  }]);
+
   await engine.putPage('2026-03-20', {
     type: 'concept',
     title: '2026 03 20',
@@ -293,6 +335,32 @@ describe('hybridSearch canonical ordering', () => {
       const results = await hybridSearch(engine, 'SelfGrowth', { limit: 5 });
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].slug).toBe('projects/control/project-status/selfgrowth');
+    } finally {
+      if (original) process.env.OPENAI_API_KEY = original;
+    }
+  });
+
+  test('exact person lookup prefers maintained summary over compatibility stub', async () => {
+    const original = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const results = await hybridSearch(engine, 'Roger Gimbel', { limit: 5 });
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].slug).toBe('knowledge/people/roger-gimbel/summary');
+      expect(results.some(r => r.slug === 'knowledge/people/roger-gimbel')).toBe(true);
+    } finally {
+      if (original) process.env.OPENAI_API_KEY = original;
+    }
+  });
+
+  test('exact company lookup prefers company summary over same-name agent page', async () => {
+    const original = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const results = await hybridSearch(engine, 'Rodaco', { limit: 5 });
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].slug).toBe('knowledge/companies/rodaco/summary');
+      expect(results.some(r => r.slug === 'knowledge/agents/rodaco')).toBe(true);
     } finally {
       if (original) process.env.OPENAI_API_KEY = original;
     }

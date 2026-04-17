@@ -110,6 +110,46 @@ describe('rrfFusion', () => {
 });
 
 describe('applyQueryAwareBoosts', () => {
+  test('prefers maintained summary pages over compatibility stubs for exact entity queries', () => {
+    const compatibility = makeResult({
+      slug: 'knowledge/people/roger-gimbel',
+      title: 'Roger Gimbel',
+      type: 'people-profile' as any,
+      chunk_text: 'Legacy compatibility note.',
+      score: 1.0,
+    });
+    const summary = makeResult({
+      slug: 'knowledge/people/roger-gimbel/summary',
+      title: 'Summary',
+      type: 'people-profile' as any,
+      chunk_text: '# Roger Gimbel',
+      score: 0.7,
+    });
+    const boosted = applyQueryAwareBoosts([compatibility, summary], 'Roger Gimbel');
+    expect(boosted[0].slug).toBe('knowledge/people/roger-gimbel/summary');
+    expect(boosted[0].score).toBeGreaterThan(boosted[1].score);
+  });
+
+  test('prefers company summary pages over same-name agent pages for exact company queries', () => {
+    const agent = makeResult({
+      slug: 'knowledge/agents/rodaco',
+      title: 'Rodaco',
+      type: 'agent-profile' as any,
+      chunk_text: 'Backup agent on Intel Mac.',
+      score: 1.0,
+    });
+    const company = makeResult({
+      slug: 'knowledge/companies/rodaco/summary',
+      title: 'Summary',
+      type: 'company-summary' as any,
+      chunk_text: '# Rodaco',
+      score: 0.7,
+    });
+    const boosted = applyQueryAwareBoosts([agent, company], 'Rodaco');
+    expect(boosted[0].slug).toBe('knowledge/companies/rodaco/summary');
+    expect(boosted[0].score).toBeGreaterThan(boosted[1].score);
+  });
+
   test('promotes canonical entity pages above digest noise for exact-name queries', () => {
     const digest = makeResult({
       slug: '2026-03-20',

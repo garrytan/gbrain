@@ -30,6 +30,8 @@ const STRUCTURED_ENTITY_TYPES = new Set([
   'infrastructure-summary',
   'infra-status',
 ]);
+const CANONICAL_PAGE_SUFFIXES = new Set(['summary', 'status', 'readme', 'index']);
+const EXACT_CANONICAL_PATH_BOOST = 8.0;
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 
 export interface HybridSearchOpts extends SearchOpts {
@@ -198,16 +200,22 @@ function queryAwareBoost(result: SearchResult, normalizedQuery: string): number 
   if (!normalizedQuery) return 1;
 
   const title = normalizeMatchText(result.title || '');
+  const slugParts = (result.slug || '').split('/').filter(Boolean);
   const slugKeys = deriveSlugKeys(result.slug || '');
   const type = String(result.type || '');
   const exactTitle = title === normalizedQuery;
   const exactSlug = slugKeys.includes(normalizedQuery);
   const structured = STRUCTURED_ENTITY_TYPES.has(type);
+  const lastPart = slugParts[slugParts.length - 1] || '';
+  const parentPart = slugParts[slugParts.length - 2] || '';
+  const canonicalPathMatch = CANONICAL_PAGE_SUFFIXES.has(lastPart)
+    && normalizeMatchText(parentPart) === normalizedQuery;
 
   let boost = 1;
   if (exactTitle) boost *= 2.5;
   if (exactSlug) boost *= 3.0;
   if ((exactTitle || exactSlug) && structured) boost *= 1.5;
+  if (canonicalPathMatch && structured) boost *= EXACT_CANONICAL_PATH_BOOST;
   return boost;
 }
 
