@@ -80,7 +80,7 @@ Key commands added in v0.7:
 
 ## Testing
 
-`bun test` runs all tests (33 unit test files + 5 E2E test files). Unit tests run
+`bun test` runs all tests (42 unit test files + 6 E2E test files). Unit tests run
 without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
 
 Unit tests: `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts`
@@ -101,9 +101,13 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/lint.test.ts` (LLM artifact detection, code fence stripping, frontmatter validation),
 `test/report.test.ts` (report format, directory structure),
 `test/search.test.ts` (RRF normalization, compiled truth boost, cosine similarity, dedup key),
+`test/search-limit.test.ts` (MAX_SEARCH_LIMIT constant, clampSearchLimit bounds),
 `test/dedup.test.ts` (source-aware dedup, compiled truth guarantee, layer interactions),
 `test/intent.test.ts` (query intent classification: entity/temporal/event/general),
 `test/eval.test.ts` (retrieval metrics: precisionAtK, recallAtK, mrr, ndcgAtK, parseQrels),
+`test/embed.test.ts` (embedding interface contract),
+`test/import-walker.test.ts` (directory walker, symlink handling, file filtering),
+`test/pglite-lock.test.ts` (PGLite concurrent access and lock behavior),
 `test/action-brain/action-schema.test.ts` (Action Brain DDL + idempotent init),
 `test/action-brain/action-engine.test.ts` (CRUD, scoring, PGLite lifecycle),
 `test/action-brain/extractor.test.ts` (extraction, source ID stability, injection defense, timestamp bounds),
