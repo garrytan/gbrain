@@ -390,6 +390,20 @@ async function connectEngine(): Promise<BrainEngine> {
     console.error('No brain configured. Run: gbrain init');
     process.exit(1);
   }
+
+  // Hydrate the embedding provider from the brain's persisted config so all
+  // commands (embed, import, query) use the provider the brain was initialized
+  // with — not whatever EMBEDDING_* env vars happen to be set.
+  if (config.embedding) {
+    const { createProvider, setProvider } = await import('./core/embedding/index.ts');
+    setProvider(createProvider({
+      provider: config.embedding.provider,
+      model: config.embedding.model,
+      dimensions: config.embedding.dimensions,
+      baseUrl: config.embedding.base_url,
+    }));
+  }
+
   const { createEngine } = await import('./core/engine-factory.ts');
   const engine = await createEngine(toEngineConfig(config));
   await engine.connect(toEngineConfig(config));
