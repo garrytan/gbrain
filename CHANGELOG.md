@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.10.3] - 2026-04-17
+
+### Fixed
+
+- **Compiled `gbrain` binaries can actually open your brain now.** Every PGLite command (`list`, `search`, `doctor`, anything that touches the DB) was crashing with `Extension bundle not found: file:///.../vector.tar.gz` in compiled mode. Bun's `--compile` bundles JavaScript but silently drops data files referenced via `new URL("...", import.meta.url)` — and PGLite needs five of them (pgvector tarball, pg_trgm tarball, pglite.wasm, initdb.wasm, pglite.data). Source mode (`bun run src/cli.ts`) worked, so the gap hid in plain sight until someone actually ran the shipped binary. Fix embeds all five via `with { type: 'file' }`, materializes the extension tarballs to `$TMPDIR/gbrain-pglite-ext/` (PGLite's stream loader can't traverse Bun's virtual FS), and hands the WASM modules + `pglite.data` Blob directly to `PGlite.create()` so URL resolution is bypassed entirely. New E2E test `test/e2e/compiled-binary.test.ts` compiles a fresh binary, runs `init` + `list` + `search` against a scratch dir, and fails loudly if any embedded asset drops out of the compile again.
+
 ## [0.10.2] - 2026-04-17
 
 ### Security — Wave 3 (9 vulnerabilities closed)
