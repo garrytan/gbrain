@@ -145,6 +145,9 @@ function makeContext(engine: BrainEngine, params: Record<string, unknown>): Oper
     config: loadConfig() || { engine: 'postgres' },
     logger: { info: console.log, warn: console.warn, error: console.error },
     dryRun: (params.dry_run as boolean) || false,
+    // Local CLI invocation — the user owns the machine; do not apply remote-caller
+    // confinement (e.g., cwd-locked file_upload).
+    remote: false,
   };
 }
 

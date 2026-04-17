@@ -117,6 +117,133 @@ export function expandVars(s: string): string {
   return s.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => process.env[name] || '');
 }
 
+// --- SSRF Protection ---
+
+/** Parse an IPv4 octet from decimal, hex (0x prefix), or octal (leading 0) notation. */
+export function parseOctet(s: string): number {
+  if (s.length === 0) return NaN;
+  if (s.startsWith('0x') || s.startsWith('0X')) {
+    if (!/^0[xX][0-9a-fA-F]+$/.test(s)) return NaN;
+    return parseInt(s, 16);
+  }
+  if (s.length > 1 && s.startsWith('0')) {
+    if (!/^0[0-7]+$/.test(s)) return NaN;
+    return parseInt(s, 8);
+  }
+  if (!/^\d+$/.test(s)) return NaN;
+  return parseInt(s, 10);
+}
+
+/**
+ * Convert an IPv4 hostname to 4 octets. Handles bypass encodings:
+ *   - Dotted decimal: 127.0.0.1
+ *   - Single decimal: 2130706433 (= 0x7f000001)
+ *   - Hex: 0x7f000001
+ *   - Per-octet hex/octal: 0x7f.0.0.1, 0177.0.0.1
+ * Returns null for non-IP hostnames (fall through to hostname-based checks).
+ */
+export function hostnameToOctets(hostname: string): number[] | null {
+  // Single integer form
+  if (/^\d+$/.test(hostname)) {
+    const n = parseInt(hostname, 10);
+    if (Number.isFinite(n) && n >= 0 && n <= 0xFFFFFFFF) {
+      return [(n >>> 24) & 0xFF, (n >>> 16) & 0xFF, (n >>> 8) & 0xFF, n & 0xFF];
+    }
+    return null;
+  }
+  // Hex integer form (0x prefix, no dots)
+  if (/^0[xX][0-9a-fA-F]+$/.test(hostname)) {
+    const n = parseInt(hostname, 16);
+    if (Number.isFinite(n) && n >= 0 && n <= 0xFFFFFFFF) {
+      return [(n >>> 24) & 0xFF, (n >>> 16) & 0xFF, (n >>> 8) & 0xFF, n & 0xFF];
+    }
+    return null;
+  }
+  // Dotted notation with possible octal/hex per octet
+  const parts = hostname.split('.');
+  if (parts.length === 4) {
+    const octets = parts.map(parseOctet);
+    if (octets.every(o => Number.isFinite(o) && o >= 0 && o <= 255)) return octets;
+  }
+  return null;
+}
+
+/** Classify an IPv4 address as internal/private/reserved. */
+export function isPrivateIpv4(octets: number[]): boolean {
+  const [a, b] = octets;
+  if (a === 127) return true;              // 127.0.0.0/8 loopback
+  if (a === 10) return true;               // 10.0.0.0/8 RFC1918
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 RFC1918
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16 RFC1918
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local (incl. AWS metadata)
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
+  if (a === 0) return true;                // 0.0.0.0/8 unspecified
+  return false;
+}
+
+/** Returns true if the URL targets an internal/metadata endpoint or uses a non-http(s) scheme. Fail-closed on parse errors. */
+export function isInternalUrl(urlStr: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(urlStr);
+  } catch {
+    return true; // malformed → block
+  }
+  // B4: scheme allowlist — block file:, data:, blob:, ftp:, gopher:, javascript:, etc.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return true;
+
+  let host = url.hostname.toLowerCase();
+
+  // Block known metadata hostnames
+  const metadataHostnames = new Set([
+    'metadata.google.internal',
+    'metadata.google',
+    'metadata',
+    'instance-data',
+    'instance-data.ec2.internal',
+  ]);
+  if (metadataHostnames.has(host)) return true;
+
+  // localhost aliases
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+
+  // Strip IPv6 brackets if present (WHATWG URL returns hostname with brackets for IPv6)
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+
+  // IPv6 loopback (and any all-zeros form that resolves to loopback-adjacent)
+  if (host === '::1' || host === '::') return true;
+
+  // Handle IPv4-mapped IPv6. WHATWG URL canonicalizes `::ffff:127.0.0.1` to `::ffff:7f00:1`
+  // (two hex hextets), so we must parse hex hextets back to IPv4 octets.
+  if (host.startsWith('::ffff:')) {
+    const tail = host.slice(7);
+    // Mixed form: ::ffff:A.B.C.D (if parser preserved dotted notation)
+    const dotted = hostnameToOctets(tail);
+    if (dotted && isPrivateIpv4(dotted)) return true;
+    // Hex-compressed form: ::ffff:XXXX:YYYY → two 16-bit hextets
+    const hextets = tail.split(':');
+    if (hextets.length === 2 && hextets.every(h => /^[0-9a-f]{1,4}$/.test(h))) {
+      const hi = parseInt(hextets[0], 16);
+      const lo = parseInt(hextets[1], 16);
+      const octets = [(hi >> 8) & 0xff, hi & 0xff, (lo >> 8) & 0xff, lo & 0xff];
+      if (isPrivateIpv4(octets)) return true;
+    }
+  }
+
+  // IPv4 range check (handles hex, octal, single decimal bypass forms)
+  const octets = hostnameToOctets(host);
+  if (octets && isPrivateIpv4(octets)) return true;
+
+  // Trailing dot on numeric-looking hostname — strip and re-check
+  if (host.endsWith('.')) {
+    const stripped = host.slice(0, -1);
+    const strippedOctets = hostnameToOctets(stripped);
+    if (strippedOctets && isPrivateIpv4(strippedOctets)) return true;
+  }
+
+  return false;
+}
+
 export async function executeHealthCheck(
   check: HealthCheck,
   integrationId: string,
@@ -127,14 +254,17 @@ export async function executeHealthCheck(
 
   // String health checks (deprecated path)
   if (typeof check === 'string') {
-    if (!isEmbedded && isUnsafeHealthCheck(check)) {
+    // B2: Hard-block string health_checks for non-embedded recipes. User-provided
+    // recipes must use the typed DSL; string health_checks are a known exec/SSRF bypass.
+    if (!isEmbedded) {
+      return { ...base, status: 'blocked', output: 'Blocked: string health_checks are restricted to embedded recipes. Migrate to typed health_check DSL (http, command, env_exists, any_of).' };
+    }
+    // Defense-in-depth for embedded recipes: still reject obviously dangerous shell metachars.
+    if (isUnsafeHealthCheck(check)) {
       return { ...base, status: 'blocked', output: 'Blocked: contains unsafe shell characters. Migrate to typed health_check DSL.' };
     }
     try {
       const output = execSync(check, { timeout: 10000, encoding: 'utf-8', env: process.env }).trim();
-      if (!isEmbedded) {
-        console.error(`  Warning: string health_check is deprecated. Migrate to typed DSL format.`);
-      }
       return { ...base, status: output.includes('FAIL') ? 'fail' : 'ok', output };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -145,10 +275,19 @@ export async function executeHealthCheck(
   // Typed DSL checks
   switch (check.type) {
     case 'http': {
+      // Fix 4: gate http health_checks on embedded trust. User-provided recipes
+      // must NOT be able to make arbitrary outbound HTTP (SSRF / internal reconnaissance).
+      if (!isEmbedded) {
+        return { ...base, status: 'blocked', output: `Blocked: http health_checks are restricted to embedded recipes. (${check.label || check.url})` };
+      }
       try {
         const url = expandVars(check.url);
         if (!url || url.includes('undefined')) {
           return { ...base, status: 'fail', output: `Missing env var in URL: ${check.url}` };
+        }
+        // B4: scheme allowlist. B3: manual redirect with per-hop re-validation.
+        if (isInternalUrl(url)) {
+          return { ...base, status: 'blocked', output: `Blocked: URL targets internal/private network or uses non-http(s) scheme: ${check.url}` };
         }
         const headers: Record<string, string> = {};
         if (check.headers) {
@@ -163,16 +302,44 @@ export async function executeHealthCheck(
         } else if (check.auth === 'bearer' && check.auth_token) {
           headers['Authorization'] = 'Bearer ' + expandVars(check.auth_token);
         }
-        const fetchOpts: RequestInit = {
-          method: check.method || 'GET',
-          headers,
-          signal: AbortSignal.timeout(10000),
-        };
-        if (check.body) {
-          fetchOpts.body = expandVars(check.body);
-          if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+        const method = check.method || 'GET';
+        const body = check.body ? expandVars(check.body) : undefined;
+        if (body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+
+        // B3: manual redirect handling. Follow up to 3 hops, re-validating each Location.
+        const MAX_REDIRECTS = 3;
+        let currentUrl = url;
+        let resp: Response | null = null;
+        for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+          const fetchOpts: RequestInit = {
+            method,
+            headers,
+            redirect: 'manual',
+            signal: AbortSignal.timeout(10000),
+          };
+          if (body) fetchOpts.body = body;
+          resp = await fetch(currentUrl, fetchOpts);
+          if (resp.status < 300 || resp.status >= 400) break; // terminal
+          const location = resp.headers.get('location');
+          if (!location) break;
+          // Resolve relative redirects against the current URL
+          let next: string;
+          try {
+            next = new URL(location, currentUrl).toString();
+          } catch {
+            return { ...base, status: 'blocked', output: `Blocked: malformed redirect Location header from ${currentUrl}` };
+          }
+          if (isInternalUrl(next)) {
+            return { ...base, status: 'blocked', output: `Blocked: redirect hop ${hop + 1} targets internal URL: ${next}` };
+          }
+          if (hop === MAX_REDIRECTS) {
+            return { ...base, status: 'fail', output: `${check.label || 'HTTP'}: exceeded ${MAX_REDIRECTS} redirect hops` };
+          }
+          currentUrl = next;
         }
-        const resp = await fetch(url, fetchOpts);
+        if (!resp) {
+          return { ...base, status: 'fail', output: `${check.label || 'HTTP'}: no response` };
+        }
         const ok = resp.status >= 200 && resp.status < 400;
         return { ...base, status: ok ? 'ok' : 'fail', output: `${check.label || 'HTTP'}: ${ok ? 'OK' : `HTTP ${resp.status}`}` };
       } catch (e: unknown) {
@@ -194,6 +361,11 @@ export async function executeHealthCheck(
     }
 
     case 'command': {
+      // Fix 2: Gate command execution on embedded trust. Non-embedded recipes
+      // (from $GBRAIN_RECIPES_DIR or ./recipes) must NOT be able to spawn arbitrary binaries.
+      if (!isEmbedded) {
+        return { ...base, status: 'blocked', output: `Blocked: command health_checks are restricted to embedded recipes. (${check.argv[0]})` };
+      }
       try {
         const { spawnSync } = await import('child_process');
         const result = spawnSync(check.argv[0], check.argv.slice(1), {
@@ -260,45 +432,51 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
 
 // --- Embedded Recipes ---
 
-// Recipes are loaded from the recipes/ directory at runtime.
-// For compiled binaries, these should be embedded at build time.
-// For source installs (bun run), they're read from disk.
-function getRecipesDir(): string {
-  // Explicit override (for compiled binaries or custom installs)
-  if (process.env.GBRAIN_RECIPES_DIR && existsSync(process.env.GBRAIN_RECIPES_DIR)) {
-    return process.env.GBRAIN_RECIPES_DIR;
-  }
-  // Try relative to this file (source install via bun)
+// Recipes are loaded from multiple tiers with an explicit trust boundary:
+//   TRUSTED (embedded=true):  package-bundled recipes shipped with gbrain
+//     - source install: ../../recipes relative to this file
+//     - global install: ~/.bun/install/global/node_modules/gbrain/recipes
+//   UNTRUSTED (embedded=false): user-provided recipes discovered at runtime
+//     - $GBRAIN_RECIPES_DIR
+//     - ./recipes in process cwd
+// The trust flag gates command/http health_checks and deprecated string health_checks.
+// An attacker who drops a malicious recipe in ./recipes/ MUST NOT get embedded=true.
+export function getRecipeDirs(): Array<{ dir: string; trusted: boolean }> {
+  const dirs: Array<{ dir: string; trusted: boolean }> = [];
   const sourceDir = join(import.meta.dir, '../../recipes');
-  if (existsSync(sourceDir)) return sourceDir;
-  // Try relative to CWD (development)
-  const cwdDir = join(process.cwd(), 'recipes');
-  if (existsSync(cwdDir)) return cwdDir;
-  // Try global install path (bun add -g)
+  if (existsSync(sourceDir)) dirs.push({ dir: sourceDir, trusted: true });
   const globalDir = join(homedir(), '.bun', 'install', 'global', 'node_modules', 'gbrain', 'recipes');
-  if (existsSync(globalDir)) return globalDir;
-  return '';
+  if (existsSync(globalDir)) dirs.push({ dir: globalDir, trusted: true });
+  if (process.env.GBRAIN_RECIPES_DIR && existsSync(process.env.GBRAIN_RECIPES_DIR)) {
+    dirs.push({ dir: process.env.GBRAIN_RECIPES_DIR, trusted: false });
+  }
+  const cwdDir = join(process.cwd(), 'recipes');
+  if (existsSync(cwdDir)) dirs.push({ dir: cwdDir, trusted: false });
+  return dirs;
 }
 
 function loadAllRecipes(): ParsedRecipe[] {
-  const dir = getRecipesDir();
-  if (!dir || !existsSync(dir)) return [];
-
-  const files = readdirSync(dir).filter(f => f.endsWith('.md'));
+  const dirs = getRecipeDirs();
   const recipes: ParsedRecipe[] = [];
+  const seen = new Set<string>();
 
-  for (const file of files) {
-    try {
-      const content = readFileSync(join(dir, file), 'utf-8');
-      const recipe = parseRecipe(content, file);
-      if (recipe) {
-        recipe.embedded = true;
-        recipes.push(recipe);
-      } else {
-        console.error(`Warning: skipping ${file} (invalid or missing 'id' in frontmatter)`);
+  for (const { dir, trusted } of dirs) {
+    const files = readdirSync(dir).filter(f => f.endsWith('.md'));
+    for (const file of files) {
+      if (seen.has(file)) continue;
+      try {
+        const content = readFileSync(join(dir, file), 'utf-8');
+        const recipe = parseRecipe(content, file);
+        if (recipe) {
+          recipe.embedded = trusted;
+          recipes.push(recipe);
+          seen.add(file);
+        } else {
+          console.error(`Warning: skipping ${file} (invalid or missing 'id' in frontmatter)`);
+        }
+      } catch {
+        console.error(`Warning: skipping ${file} (unreadable)`);
       }
-    } catch {
-      console.error(`Warning: skipping ${file} (unreadable)`);
     }
   }
 

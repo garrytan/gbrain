@@ -24,12 +24,14 @@ import { importFromContent } from '../../src/core/import-file.ts';
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
 
-function makeCtx(): OperationContext {
+function makeCtx(opts: { remote?: boolean } = {}): OperationContext {
   return {
     engine: getEngine(),
     config: { engine: 'postgres', database_url: process.env.DATABASE_URL! },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
+    // Default: trusted local invocation (matches `gbrain call` semantics).
+    remote: opts.remote ?? false,
   };
 }
 
@@ -452,6 +454,31 @@ describeE2E('E2E: Files', () => {
       // Verify file_url returns URI format
       const url = await callOp('file_url', { storage_path: result.storage_path }) as any;
       expect(url.url).toContain('gbrain:files/');
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  // Security-wave-3 regression: MCP/remote callers MUST be confined to cwd
+  // (Issue #139). Local CLI callers are unrestricted — different trust model.
+  test('file_upload rejects outside-cwd paths for remote (MCP) callers', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-e2e-ssrf-'));
+    const tmpFile = join(tmpDir, 'stealable.txt');
+    writeFileSync(tmpFile, 'sensitive');
+
+    try {
+      const op = operationsByName['file_upload'];
+      let threw = false;
+      try {
+        await op.handler(makeCtx({ remote: true }), {
+          path: tmpFile,
+          page_slug: 'people/sarah-chen',
+        });
+      } catch (e: any) {
+        threw = true;
+        expect(String(e.message || e)).toMatch(/within the working directory/i);
+      }
+      expect(threw).toBe(true);
     } finally {
       rmSync(tmpDir, { recursive: true });
     }

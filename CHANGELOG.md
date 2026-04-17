@@ -2,6 +2,29 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.10.2] - 2026-04-17
+
+### Security — Wave 3 (9 vulnerabilities closed)
+
+This wave closes a high-severity arbitrary-file-read in `file_upload`, fixes a fake trust boundary that let any cwd-local recipe execute arbitrary commands, and lays down real SSRF defense for HTTP health checks. If you ran `gbrain` in a directory where someone could drop a `recipes/` folder, this matters.
+
+- **Arbitrary file read via `file_upload` is closed.** Remote (MCP) callers were able to read `/etc/passwd` or any other host file. Path validation now uses `realpathSync` + `path.relative` to catch symlinked-parent traversal, plus an allowlist regex for slugs and filenames (control chars, backslashes, RTL-override Unicode all rejected). Local CLI users still upload from anywhere — only remote callers are confined. Fixes Issue #139, contributed by @Hybirdss; original fix #105 by @garagon.
+- **Recipe trust boundary is real now.** `loadAllRecipes()` previously marked every recipe as `embedded=true`, including ones from `./recipes/` in your cwd or `$GBRAIN_RECIPES_DIR`. Anyone who could drop a recipe in cwd could bypass every health-check gate. Now only package-bundled recipes (source install + global install) are trusted. Original fixes #106, #108 by @garagon.
+- **String health_checks blocked for untrusted recipes.** Even with the recipe trust fix, the string health_check path ran `execSync` before reaching the typed-DSL switch — a malicious "embedded" recipe could `curl http://169.254.169.254/metadata` and exfiltrate cloud credentials. Non-embedded recipes are now hard-blocked from string health_checks; embedded recipes still get the `isUnsafeHealthCheck` defense-in-depth guard.
+- **SSRF defense for HTTP health_checks.** New `isInternalUrl()` blocks loopback, RFC1918, link-local (incl. AWS metadata 169.254.169.254), CGNAT, IPv6 loopback, and IPv4-mapped IPv6 (`[::ffff:127.0.0.1]` canonicalized to hex hextets — both forms blocked). Bypass encodings handled: hex IPs (`0x7f000001`), octal (`0177.0.0.1`), single decimal (`2130706433`). Scheme allowlist rejects `file:`, `data:`, `blob:`, `ftp:`, `javascript:`. `fetch` runs with `redirect: 'manual'` and re-validates every Location header up to 3 hops. Original fix #108 by @garagon.
+- **Prompt injection hardening for query expansion.** Restructured the LLM prompt with a system instruction that declares the query as untrusted data, plus an XML-tagged `<user_query>` boundary. Layered with regex sanitization (strips code fences, tags, injection prefixes) and output-side validation on the model's `alternative_queries` array (cap length, strip control chars, dedup, drop empties). The `console.warn` on stripped content never logs the query text itself. Original fix #107 by @garagon.
+- **`list_pages` and `get_ingest_log` actually cap now.** Wave 3 found that `clampSearchLimit(limit, default)` was always allowing up to 100 — the second arg was the default, not the cap. Added a third `cap` parameter so `list_pages` caps at 100 and `get_ingest_log` caps at 50. Internal bulk commands (embed --all, export, migrate-engine) bypass the operation layer entirely and remain uncapped. Original fix #109 by @garagon.
+
+### Added
+
+- `OperationContext.remote` flag distinguishes trusted local CLI callers from untrusted MCP callers. Security-sensitive operations (currently `file_upload`) tighten their behavior when `remote=true`. Defaults to strict (treat as remote) when unset.
+- Exported security helpers for testing and reuse: `validateUploadPath`, `validatePageSlug`, `validateFilename`, `parseOctet`, `hostnameToOctets`, `isPrivateIpv4`, `isInternalUrl`, `getRecipeDirs`, `sanitizeQueryForPrompt`, `sanitizeExpansionOutput`.
+- 49 new tests covering symlink traversal, scheme allowlist, IPv4 bypass forms, IPv6 mapped addresses, prompt injection patterns, and recipe trust boundaries. Plus an E2E regression proving remote callers can't escape cwd.
+
+### Contributors
+
+Wave 3 fixes were contributed by **@garagon** (PRs #105-#109) and **@Hybirdss** (Issue #139). The collector branch re-implemented each fix with additional hardening for the residuals Codex caught during outside-voice review (parent-symlink traversal, fake `isEmbedded` boundary, redirect-following SSRF, scheme bypasses, `clampSearchLimit` semantics).
+
 ## [0.10.1] - 2026-04-15
 
 ### Fixed

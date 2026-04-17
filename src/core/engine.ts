@@ -15,10 +15,10 @@ import type {
 export const MAX_SEARCH_LIMIT = 100;
 
 /** Clamp a user-provided search limit to a safe range. */
-export function clampSearchLimit(limit: number | undefined, defaultLimit = 20): number {
+export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, cap = MAX_SEARCH_LIMIT): number {
   if (limit === undefined || limit === null || !Number.isFinite(limit) || Number.isNaN(limit)) return defaultLimit;
   if (limit <= 0) return defaultLimit;
-  return Math.min(Math.floor(limit), MAX_SEARCH_LIMIT);
+  return Math.min(Math.floor(limit), cap);
 }
 
 export interface BrainEngine {
