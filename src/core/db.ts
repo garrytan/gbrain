@@ -1,6 +1,6 @@
 import postgres from 'postgres';
 import { GBrainError, type EngineConfig } from './types.ts';
-import { SCHEMA_SQL } from './schema-embedded.ts';
+import { postgresSchema } from './schema-embedded.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -68,12 +68,12 @@ export async function disconnect(): Promise<void> {
   }
 }
 
-export async function initSchema(): Promise<void> {
+export async function initSchema(opts?: { dimensions?: number; defaultModel?: string }): Promise<void> {
   const conn = getConnection();
   // Advisory lock prevents concurrent initSchema() calls from deadlocking
   await conn`SELECT pg_advisory_lock(42)`;
   try {
-    await conn.unsafe(SCHEMA_SQL);
+    await conn.unsafe(postgresSchema(opts));
   } finally {
     await conn`SELECT pg_advisory_unlock(42)`;
   }

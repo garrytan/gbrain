@@ -31,6 +31,17 @@ async function main() {
 
   if (command === '--version' || command === 'version') {
     console.log(`gbrain ${VERSION}`);
+    // Surface the active embedding provider so users running in multiple shells
+    // notice when they're on a non-default brain (local Ollama vs OpenAI).
+    try {
+      const cfg = loadConfig();
+      if (cfg?.embedding) {
+        const { provider, model, dimensions } = cfg.embedding;
+        console.log(`embedding: ${provider} / ${model} (${dimensions}d)`);
+      }
+    } catch {
+      // Config not readable — fine, --version shouldn't fail on that
+    }
     return;
   }
 
@@ -379,6 +390,20 @@ async function connectEngine(): Promise<BrainEngine> {
     console.error('No brain configured. Run: gbrain init');
     process.exit(1);
   }
+
+  // Hydrate the embedding provider from the brain's persisted config so all
+  // commands (embed, import, query) use the provider the brain was initialized
+  // with — not whatever EMBEDDING_* env vars happen to be set.
+  if (config.embedding) {
+    const { createProvider, setProvider } = await import('./core/embedding/index.ts');
+    setProvider(createProvider({
+      provider: config.embedding.provider,
+      model: config.embedding.model,
+      dimensions: config.embedding.dimensions,
+      baseUrl: config.embedding.base_url,
+    }));
+  }
+
   const { createEngine } = await import('./core/engine-factory.ts');
   const engine = await createEngine(toEngineConfig(config));
   await engine.connect(toEngineConfig(config));

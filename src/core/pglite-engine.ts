@@ -5,7 +5,7 @@ import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { pgliteSchema } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -60,8 +60,8 @@ export class PGLiteEngine implements BrainEngine {
     }
   }
 
-  async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+  async initSchema(opts?: { dimensions?: number; defaultModel?: string }): Promise<void> {
+    await this.db.exec(pgliteSchema(opts));
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {
