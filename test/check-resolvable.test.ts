@@ -1,5 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { join } from "path";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "fs";
+import { tmpdir } from "os";
 import { checkResolvable, parseResolverEntries } from "../src/core/check-resolvable.ts";
 
 const SKILLS_DIR = join(import.meta.dir, "..", "skills");
@@ -124,5 +126,152 @@ describe("checkResolvable — real skills directory", () => {
 
   test("summary counts are consistent", () => {
     expect(report.summary.reachable + report.summary.unreachable).toBe(report.summary.total_skills);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression: path traversal in manifest.json / RESOLVER.md
+//
+// checkResolvable takes skillsDir from the caller and joins it with string
+// values from manifest.json and RESOLVER.md. Those inputs can be edited in
+// a PR, in a committed file, or by a downstream consumer of the library.
+// A payload like `"path": "../../../etc/passwd"` or a RESOLVER.md row with
+// `skills/../../etc/hosts/SKILL.md` must not cause the function to read
+// (or even stat) files outside skillsDir.
+// ---------------------------------------------------------------------------
+
+describe("checkResolvable — path traversal containment", () => {
+  function makeSandbox(): string {
+    const sandbox = mkdtempSync(join(tmpdir(), "gbrain-pt-"));
+    const skillsDir = join(sandbox, "skills");
+    mkdirSync(skillsDir, { recursive: true });
+    // Minimal legitimate skill so the report is comparable against real runs
+    mkdirSync(join(skillsDir, "query"), { recursive: true });
+    writeFileSync(
+      join(skillsDir, "query", "SKILL.md"),
+      "---\ntriggers:\n  - foo\n---\n# query\n"
+    );
+    writeFileSync(
+      join(skillsDir, "RESOLVER.md"),
+      "## Brain\n| Trigger | Skill |\n|---|---|\n| foo | `skills/query/SKILL.md` |\n"
+    );
+    return sandbox;
+  }
+
+  test("malicious manifest path is rejected as invalid_path, not read", () => {
+    const sandbox = makeSandbox();
+    const skillsDir = join(sandbox, "skills");
+
+    // Pre-seed an outside-of-skills sentinel file that a traversal would hit
+    // if the check were missing. We never expect the code to read it.
+    const sentinel = join(sandbox, "SECRET.md");
+    writeFileSync(sentinel, "---\ntriggers:\n  - ohno\n---\n# DO NOT READ\n");
+
+    writeFileSync(
+      join(skillsDir, "manifest.json"),
+      JSON.stringify({
+        skills: [
+          { name: "query", path: "query/SKILL.md" },
+          { name: "evil", path: "../SECRET.md" },
+        ],
+      })
+    );
+
+    try {
+      const report = checkResolvable(skillsDir);
+
+      const invalid = report.issues.filter(i => i.type === "invalid_path");
+      expect(invalid.length).toBeGreaterThan(0);
+      expect(invalid.some(i => i.skill === "evil")).toBe(true);
+
+      // The sentinel file's unique trigger must NOT have made it into the
+      // report's trigger analysis — if it did, the code read it.
+      const overlap = report.issues.find(i =>
+        i.type === "mece_overlap" && i.message.includes("ohno")
+      );
+      expect(overlap).toBeUndefined();
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  test("absolute path in manifest is rejected", () => {
+    const sandbox = makeSandbox();
+    const skillsDir = join(sandbox, "skills");
+
+    writeFileSync(
+      join(skillsDir, "manifest.json"),
+      JSON.stringify({
+        skills: [
+          { name: "absolute", path: "/etc/hosts" },
+        ],
+      })
+    );
+
+    try {
+      const report = checkResolvable(skillsDir);
+      const invalid = report.issues.filter(i => i.type === "invalid_path");
+      expect(invalid.some(i => i.skill === "absolute")).toBe(true);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  test("malicious RESOLVER.md entry is rejected, no stat on outside path", () => {
+    const sandbox = makeSandbox();
+    const skillsDir = join(sandbox, "skills");
+
+    // Empty manifest so we only exercise the RESOLVER code path
+    writeFileSync(join(skillsDir, "manifest.json"), JSON.stringify({ skills: [] }));
+
+    // Overwrite RESOLVER.md with a traversal row. The parser's regex
+    // (`skills/[^`]+/SKILL\.md`) still matches, but the resolver must
+    // refuse to stat the resulting path.
+    writeFileSync(
+      join(skillsDir, "RESOLVER.md"),
+      "## Evil\n| Trigger | Skill |\n|---|---|\n" +
+      "| bad | `skills/../../etc/hosts/SKILL.md` |\n"
+    );
+
+    try {
+      const report = checkResolvable(skillsDir);
+
+      // The resolver row should surface as invalid_path, not missing_file —
+      // missing_file would imply we did an existsSync on /etc/hosts/SKILL.md.
+      const invalid = report.issues.filter(i => i.type === "invalid_path");
+      expect(invalid.length).toBeGreaterThan(0);
+      expect(invalid.some(i => i.message.includes("escapes the skills directory"))).toBe(true);
+
+      const missing = report.issues.filter(i => i.type === "missing_file");
+      expect(missing.some(m => m.skill.includes("/etc/hosts"))).toBe(false);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  test("benign normalized paths still resolve (e.g. foo/../query)", () => {
+    const sandbox = makeSandbox();
+    const skillsDir = join(sandbox, "skills");
+
+    writeFileSync(
+      join(skillsDir, "manifest.json"),
+      JSON.stringify({
+        skills: [
+          // Legit skill expressed via a normalized-to-inside path
+          { name: "query", path: "tmp/../query/SKILL.md" },
+        ],
+      })
+    );
+
+    try {
+      const report = checkResolvable(skillsDir);
+      // Must NOT treat this as invalid — it resolves inside skillsDir
+      const invalidForQuery = report.issues.filter(
+        i => i.type === "invalid_path" && i.skill === "query"
+      );
+      expect(invalidForQuery.length).toBe(0);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 });

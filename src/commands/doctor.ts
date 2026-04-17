@@ -2,8 +2,19 @@ import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
+
+// resolveInsideSkills — see src/core/check-resolvable.ts for the
+// identical helper and rationale. Duplicated here (not exported) to
+// keep doctor's public surface stable.
+function resolveInsideSkills(skillsDir: string, candidate: string): string | null {
+  const baseResolved = resolve(skillsDir);
+  const joinedResolved = resolve(baseResolved, candidate);
+  if (joinedResolved === baseResolved) return joinedResolved;
+  if (!joinedResolved.startsWith(baseResolved + sep)) return null;
+  return joinedResolved;
+}
 
 export interface Check {
   name: string;
@@ -203,7 +214,11 @@ function checkSkillConformance(skillsDir: string): Check {
     const failing: string[] = [];
 
     for (const skill of skills) {
-      const skillPath = join(skillsDir, skill.path);
+      const skillPath = resolveInsideSkills(skillsDir, skill.path);
+      if (skillPath === null) {
+        failing.push(`${skill.name}: path escapes skills directory`);
+        continue;
+      }
       if (!existsSync(skillPath)) {
         failing.push(`${skill.name}: file missing`);
         continue;
