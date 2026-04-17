@@ -21,7 +21,7 @@ let client: OpenAI | null = null;
 
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI();
+    client = new OpenAI({ apiKey: process.env.GBRAIN_OPENAI_API_KEY });
   }
   return client;
 }

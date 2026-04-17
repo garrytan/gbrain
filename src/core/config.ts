@@ -40,7 +40,7 @@ export function loadConfig(): GBrainConfig | null {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
-    ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.GBRAIN_OPENAI_API_KEY ? { openai_api_key: process.env.GBRAIN_OPENAI_API_KEY } : {}),
   };
   return merged as GBrainConfig;
 }

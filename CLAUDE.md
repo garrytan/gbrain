@@ -168,7 +168,7 @@ ALWAYS source the user's shell profile before running tests:
 source ~/.zshrc 2>/dev/null || true
 ```
 
-This loads `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Without these, Tier 2 tests
+This loads `GBRAIN_OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Without these, Tier 2 tests
 skip silently. Do NOT skip Tier 2 tests just because they require API keys — load
 the keys and run them.
 

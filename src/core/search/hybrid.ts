@@ -54,7 +54,7 @@ export async function hybridSearch(
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
   // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.GBRAIN_OPENAI_API_KEY) {
     return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
