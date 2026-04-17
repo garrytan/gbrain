@@ -2,8 +2,9 @@ import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 export interface Check {
   name: string;
@@ -177,12 +178,49 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Find the GBrain repo root by walking up from cwd looking for skills/RESOLVER.md */
+/**
+ * Find the GBrain repo root containing skills/RESOLVER.md.
+ *
+ * Resolution order (first hit wins):
+ *   1. `GBRAIN_SKILLS_DIR` env var — explicit override (must contain RESOLVER.md)
+ *   2. Walk up from cwd — the canonical "I'm inside a brain repo" case
+ *   3. Walk up from this module's install location — for hosted/CLI-only setups
+ *      where the user runs `gbrain` from `~` but the bundled skills live under
+ *      `node_modules/gbrain/skills/`
+ *
+ * Returns the directory that CONTAINS the `skills/` subdirectory, not the
+ * skills directory itself (callers do `join(root, 'skills')`).
+ */
 function findRepoRoot(): string | null {
-  let dir = process.cwd();
+  // 1. Explicit override
+  const envDir = process.env.GBRAIN_SKILLS_DIR;
+  if (envDir && existsSync(join(envDir, 'RESOLVER.md'))) {
+    // env var points at the skills/ dir itself; return its parent
+    return dirname(envDir);
+  }
+
+  // 2. Walk up from cwd
+  const fromCwd = walkUpFor(process.cwd(), 'skills/RESOLVER.md');
+  if (fromCwd) return fromCwd;
+
+  // 3. Walk up from this module's install path
+  try {
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    const fromInstall = walkUpFor(moduleDir, 'skills/RESOLVER.md');
+    if (fromInstall) return fromInstall;
+  } catch {
+    // fileURLToPath failures are non-fatal; just means we can't fall back here
+  }
+
+  return null;
+}
+
+/** Walk up from `start` looking for a relative path. Returns the containing dir or null. */
+function walkUpFor(start: string, relPath: string): string | null {
+  let dir = start;
   for (let i = 0; i < 10; i++) {
-    if (existsSync(join(dir, 'skills', 'RESOLVER.md'))) return dir;
-    const parent = join(dir, '..');
+    if (existsSync(join(dir, relPath))) return dir;
+    const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
