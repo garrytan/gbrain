@@ -8,6 +8,7 @@
  */
 
 import OpenAI from 'openai';
+import { loadConfig } from './config.ts';
 
 const MODEL = 'text-embedding-3-large';
 const DIMENSIONS = 1536;
@@ -18,10 +19,17 @@ const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
 
 let client: OpenAI | null = null;
+let clientApiKey: string | undefined;
+
+export function resolveApiKey(): string | undefined {
+  return process.env.OPENAI_API_KEY || loadConfig()?.openai_api_key;
+}
 
 function getClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI();
+  const apiKey = resolveApiKey();
+  if (!client || clientApiKey !== apiKey) {
+    client = apiKey ? new OpenAI({ apiKey }) : new OpenAI();
+    clientApiKey = apiKey;
   }
   return client;
 }
