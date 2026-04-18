@@ -17,32 +17,36 @@ restart the shell or add the PATH export to the shell profile.
 
 ## Step 2: API Keys
 
-Ask the user for these:
+**Ask the user which provider they prefer before proceeding:**
+
+### Option A: OpenAI + Anthropic (default)
 
 ```bash
-export OPENAI_API_KEY=sk-...          # required for vector search (default provider)
-export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
+export OPENAI_API_KEY=sk-...          # required for vector search
+export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search via query expansion
 ```
 
-Save to shell profile or `.env`. Without OpenAI, keyword search still works.
-Without Anthropic, search works but skips query expansion.
+Without `OPENAI_API_KEY`, keyword search still works but no vector search.
+Without `ANTHROPIC_API_KEY`, search works but skips query expansion.
 
-**Gemini alternative (fork extension):** Both the embedding model and the query expansion
-LLM are swappable via env vars. To use Gemini instead of OpenAI/Anthropic:
+### Option B: Gemini only (fork extension — no OpenAI/Anthropic required)
+
+Both the embedding model and query expansion LLM are swappable. Use this if the
+user has a Google AI key but not OpenAI/Anthropic:
 
 ```bash
-export GOOGLE_API_KEY=AIza...         # or GEMINI_API_KEY=AIza...
+export GOOGLE_API_KEY=AIza...         # or: export GEMINI_API_KEY=AIza...
 
-# Embeddings: use Gemini instead of OpenAI
 export GBRAIN_EMBEDDING_PROVIDER=gemini
 export GBRAIN_EMBEDDING_DIMENSIONS=768   # 1–3072; use 1536 to match OpenAI schema
 
-# Query expansion: use Gemini Flash instead of Claude Haiku
 export GBRAIN_EXPANSION_PROVIDER=gemini
 ```
 
 Set `GBRAIN_EMBEDDING_DIMENSIONS=1536` when migrating an existing OpenAI brain to Gemini —
-same vector size, no schema change, just re-embed with `gbrain embed --all`.
+same vector size, no schema change needed, just re-embed with `gbrain embed --all`.
+
+Save the chosen keys to the shell profile or `.env`.
 
 ## Step 3: Create the Brain
 
