@@ -122,6 +122,12 @@ describe('getActiveProvider factory', () => {
     expect(p1).not.toBe(p2);
     expect(p2).toBeInstanceOf(GeminiEmbedder);
   });
+
+  it('unknown provider value falls through to OpenAI (safe default)', () => {
+    process.env.GBRAIN_EMBEDDING_PROVIDER = 'ollama';
+    const p = getActiveProvider();
+    expect(p).toBeInstanceOf(OpenAIEmbedder);
+  });
 });
 
 // ─── Live API integration tests (skip when no key) ──────────────────────────
