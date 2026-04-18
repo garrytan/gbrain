@@ -137,38 +137,69 @@ describe('getActiveProvider factory', () => {
   });
 });
 
-// ─── Live API integration tests (skip when no key) ──────────────────────────
+// ─── GeminiEmbedder behaviour (mock-based, no API key required) ─────────────
 
-describe('GeminiEmbedder live API', () => {
-  const hasKey = !!(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY);
-  const geminiIt = hasKey ? it : it.skip;
-
-  geminiIt('produces a 768-dim Float32Array for a real text', async () => {
+describe('GeminiEmbedder embed behaviour', () => {
+  it('embed() returns a Float32Array of the requested dimension', async () => {
     const p = new GeminiEmbedder(768);
-    const vec = await p.embed('gbrain is a personal knowledge brain');
-    expect(vec).toBeInstanceOf(Float32Array);
-    expect(vec.length).toBe(768);
-    const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
-    expect(norm).toBeGreaterThan(0);
-  }, 15000);
+    // Inject a mock client so no real API call is made
+    const fakeVec = new Array(768).fill(0).map((_, i) => i / 768);
+    (p as unknown as Record<string, unknown>)['client'] = {
+      getGenerativeModel: () => ({
+        batchEmbedContents: async () => ({
+          embeddings: [{ values: fakeVec }],
+        }),
+      }),
+    };
+    const result = await p.embed('test text');
+    expect(result).toBeInstanceOf(Float32Array);
+    expect(result.length).toBe(768);
+    expect(result[1]).toBeCloseTo(1 / 768);
+  });
 
-  geminiIt('produces 1536-dim vectors (OpenAI-compat mode)', async () => {
-    const p = new GeminiEmbedder(1536);
-    const vec = await p.embed('test');
-    expect(vec.length).toBe(1536);
-  }, 15000);
-
-  geminiIt('batchEmbedContents returns one vector per text', async () => {
+  it('embedBatch() returns one Float32Array per input text', async () => {
     const p = new GeminiEmbedder(768);
+    const make = (seed: number) => new Array(768).fill(seed);
+    (p as unknown as Record<string, unknown>)['client'] = {
+      getGenerativeModel: () => ({
+        batchEmbedContents: async ({ requests }: { requests: unknown[] }) => ({
+          embeddings: requests.map((_, i) => ({ values: make(i) })),
+        }),
+      }),
+    };
     const vecs = await p.embedBatch(['hello', 'world', 'gbrain']);
     expect(vecs.length).toBe(3);
     for (const v of vecs) {
       expect(v).toBeInstanceOf(Float32Array);
       expect(v.length).toBe(768);
     }
-    // Vectors should be distinct
     expect(vecs[0][0]).not.toBe(vecs[1][0]);
-  }, 15000);
+  });
+
+  it('embed() with 1536 dims (OpenAI-compat mode) returns correct length', async () => {
+    const p = new GeminiEmbedder(1536);
+    const fakeVec = new Array(1536).fill(0.1);
+    (p as unknown as Record<string, unknown>)['client'] = {
+      getGenerativeModel: () => ({
+        batchEmbedContents: async () => ({ embeddings: [{ values: fakeVec }] }),
+      }),
+    };
+    const result = await p.embed('test');
+    expect(result.length).toBe(1536);
+  });
+
+  it('throws a clear error when no API key is set', async () => {
+    const saved = { g: process.env.GOOGLE_API_KEY, gem: process.env.GEMINI_API_KEY };
+    delete process.env.GOOGLE_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    try {
+      const p = new GeminiEmbedder(768);
+      await expect(p.embed('test')).rejects.toThrow(/GOOGLE_API_KEY|GEMINI_API_KEY/);
+    } finally {
+      if (saved.g !== undefined) process.env.GOOGLE_API_KEY = saved.g;
+      if (saved.gem !== undefined) process.env.GEMINI_API_KEY = saved.gem;
+    }
+  });
 });
 
 // ─── isEmbeddingAvailable ───────────────────────────────────────────────────

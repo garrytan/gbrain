@@ -101,6 +101,26 @@ describe('isExpansionAvailable', () => {
   });
 });
 
+
+describe('AnthropicExpander.expand', () => {
+  it('throws with a clear message when ANTHROPIC_API_KEY is not set', async () => {
+    // Save and restore ANTHROPIC_API_KEY inline — the file-level beforeEach/afterEach
+    // restores it too, but explicit save here guards against parallel test file races.
+    const savedKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.GBRAIN_EXPANSION_PROVIDER;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const provider = getActiveExpansionProvider();
+      await expect(provider.expand('test query string')).rejects.toThrow(
+        /ANTHROPIC_API_KEY/
+      );
+    } finally {
+      if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+    }
+  });
+});
+
+
 describe('GeminiExpander.expand', () => {
   it('throws with a clear message when no Gemini API key is set', async () => {
     process.env.GBRAIN_EXPANSION_PROVIDER = 'gemini';
