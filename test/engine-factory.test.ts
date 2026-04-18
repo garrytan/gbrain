@@ -148,6 +148,50 @@ describe('engine factory', () => {
     }
   });
 
+  test('db.disconnect tears down the compatibility owner even after a later direct PostgresEngine.connect', async () => {
+    let connectCount = 0;
+    const sqlFor = new Map<PostgresEngine, ReturnType<typeof db.getConnection>>();
+    const disconnectInstances: PostgresEngine[] = [];
+
+    const connectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function () {
+      connectCount += 1;
+      const fakeSql = Object.assign(async () => [], { label: `sql-${connectCount}` }) as unknown as ReturnType<typeof db.getConnection>;
+      (this as PostgresEngine & { _sql: typeof fakeSql })._sql = fakeSql;
+      sqlFor.set(this as PostgresEngine, fakeSql);
+    });
+    const disconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function () {
+      disconnectInstances.push(this as PostgresEngine);
+      (this as PostgresEngine & { _sql: ReturnType<typeof db.getConnection> | null })._sql = null;
+    });
+
+    try {
+      await db.connect({
+        engine: 'postgres',
+        database_url: 'postgresql://user:pass@localhost:5432/mbrain',
+      });
+
+      const compatibilityOwner = sqlFor.keys().next().value as PostgresEngine;
+      const compatibilitySql = db.getConnection();
+
+      const explicitEngine = new PostgresEngine();
+      await explicitEngine.connect({
+        engine: 'postgres',
+        database_url: 'postgresql://user:pass@localhost:5432/mbrain',
+      });
+
+      expect(db.getConnection()).toBe(compatibilitySql);
+
+      await db.disconnect();
+
+      expect(disconnectInstances).toEqual([compatibilityOwner]);
+      expect(explicitEngine.sql).toBe(sqlFor.get(explicitEngine));
+      await explicitEngine.disconnect();
+    } finally {
+      connectSpy.mockRestore();
+      disconnectSpy.mockRestore();
+    }
+  });
+
   test('createEngine throws for unknown engines', async () => {
     const { createEngine } = await import('../src/core/engine-factory.ts');
     await expect(createEngine({ engine: 'mysql' as any })).rejects.toThrow('Unknown engine');

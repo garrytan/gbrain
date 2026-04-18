@@ -7,15 +7,29 @@ type ConnectedPostgresEngine = {
   disconnect(): Promise<void>;
 };
 
-let connectionOwner: ConnectedPostgresEngine | null = null;
+const connectionOwners: ConnectedPostgresEngine[] = [];
+let activeConnectionOwner: ConnectedPostgresEngine | null = null;
 
 export function registerConnectionOwner(engine: ConnectedPostgresEngine): void {
-  connectionOwner = engine;
+  if (!connectionOwners.includes(engine)) {
+    connectionOwners.push(engine);
+  }
+  activeConnectionOwner = engine;
 }
 
 export function clearConnectionOwner(engine?: ConnectedPostgresEngine): void {
-  if (!engine || connectionOwner === engine) {
-    connectionOwner = null;
+  if (!engine) {
+    activeConnectionOwner = null;
+    return;
+  }
+
+  const index = connectionOwners.indexOf(engine);
+  if (index !== -1) {
+    connectionOwners.splice(index, 1);
+  }
+
+  if (activeConnectionOwner === engine) {
+    activeConnectionOwner = connectionOwners.at(-1) ?? null;
   }
 }
 
@@ -28,19 +42,20 @@ export function unsupportedGlobalConnectionAccess(): never {
 }
 
 export function getConnection(): ReturnType<typeof postgres> {
-  if (!connectionOwner) {
+  if (!activeConnectionOwner) {
     unsupportedGlobalConnectionAccess();
   }
-  return connectionOwner.sql;
+  return activeConnectionOwner.sql;
 }
 
 export async function connect(config: EngineConfig): Promise<void> {
-  if (connectionOwner) return;
+  if (activeConnectionOwner) return;
 
   const { PostgresEngine } = await import('./postgres-engine.ts');
   const engine = new PostgresEngine();
   try {
     await engine.connect(config);
+    registerConnectionOwner(engine);
   } catch (e) {
     clearConnectionOwner(engine);
     throw e;
@@ -48,9 +63,11 @@ export async function connect(config: EngineConfig): Promise<void> {
 }
 
 export async function disconnect(): Promise<void> {
-  const engine = connectionOwner;
-  connectionOwner = null;
-  if (engine) {
+  const owners = [...connectionOwners];
+  connectionOwners.length = 0;
+  activeConnectionOwner = null;
+
+  for (const engine of owners.reverse()) {
     await engine.disconnect();
   }
 }

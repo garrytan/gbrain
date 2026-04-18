@@ -15,7 +15,7 @@ import type {
   EngineConfig,
 } from './types.ts';
 import { MBrainError } from './types.ts';
-import { clearConnectionOwner, registerConnectionOwner } from './db.ts';
+import { clearConnectionOwner } from './db.ts';
 import { buildFrontmatterSearchText } from './markdown.ts';
 import { ensurePageChunks } from './page-chunks.ts';
 import { validateSlug, contentHash, importContentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
@@ -57,9 +57,6 @@ export class PostgresEngine implements BrainEngine {
       });
       await sql`SELECT 1`;
       this._sql = sql;
-      if (!config.poolSize) {
-        registerConnectionOwner(this);
-      }
     } catch (e: unknown) {
       if (sql) {
         await sql.end({ timeout: 0 }).catch(() => undefined);
