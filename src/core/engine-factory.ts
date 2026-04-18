@@ -6,6 +6,7 @@ import type {
   MBrainConfig,
 } from './config.ts';
 import { toEngineConfig, validateResolvedConfig } from './config.ts';
+import { getEngineCapabilities } from './engine-capabilities.ts';
 
 export { resolveConfig, toEngineConfig } from './config.ts';
 
@@ -69,9 +70,9 @@ export async function createConnectedEngine(
 }
 
 export function supportsParallelWorkers(config: MBrainConfig): boolean {
-  return config.engine === 'postgres';
+  return getEngineCapabilities(config).parallelWorkers;
 }
 
 export function supportsRawPostgresAccess(config: MBrainConfig): boolean {
-  return config.engine === 'postgres';
+  return getEngineCapabilities(config).rawPostgresAccess;
 }

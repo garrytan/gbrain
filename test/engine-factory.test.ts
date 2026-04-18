@@ -27,6 +27,22 @@ afterEach(() => {
 });
 
 describe('engine factory', () => {
+  test('capability helpers delegate to the shared engine capability policy', async () => {
+    const { getEngineCapabilities } = await import('../src/core/engine-capabilities.ts');
+    const {
+      supportsParallelWorkers,
+      supportsRawPostgresAccess,
+    } = await import('../src/core/engine-factory.ts');
+
+    for (const engine of ['postgres', 'sqlite', 'pglite'] as const) {
+      const config = { engine } as const;
+      const capabilities = getEngineCapabilities(config as any);
+
+      expect(supportsParallelWorkers(config as any)).toBe(capabilities.parallelWorkers);
+      expect(supportsRawPostgresAccess(config as any)).toBe(capabilities.rawPostgresAccess);
+    }
+  });
+
   test('creates a Postgres engine for legacy configs with no engine key', async () => {
     writeConfig({
       database_url: 'postgresql://user:pass@localhost:5432/mbrain',

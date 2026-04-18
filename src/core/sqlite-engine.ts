@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS pages (
   timeline TEXT NOT NULL DEFAULT '',
   search_text TEXT NOT NULL DEFAULT '',
   frontmatter TEXT NOT NULL DEFAULT '{}',
+  page_embedding BLOB,
   content_hash TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -217,6 +218,7 @@ export class SQLiteEngine implements BrainEngine {
   async initSchema(): Promise<void> {
     const db = this.database;
     db.exec(SCHEMA_SQL);
+    ensurePageEmbeddingColumn(db);
     db.run(
       `INSERT OR IGNORE INTO config (key, value) VALUES
         ('version', ?),
@@ -553,6 +555,39 @@ export class SQLiteEngine implements BrainEngine {
     const pageId = this.getPageId(slug);
     if (pageId === null) return;
     this.database.run(`DELETE FROM content_chunks WHERE page_id = ?`, [pageId]);
+  }
+
+  async getPageEmbeddings(type?: PageType): Promise<Array<{
+    page_id: number;
+    slug: string;
+    embedding: Float32Array | null;
+  }>> {
+    const params: unknown[] = [];
+    let sql = `
+      SELECT id AS page_id, slug, page_embedding
+      FROM pages
+    `;
+
+    if (type) {
+      sql += ` WHERE type = ?`;
+      params.push(type);
+    }
+
+    sql += ` ORDER BY slug`;
+
+    return this.database.query(sql).all(...params).map((row) => ({
+      page_id: Number((row as Record<string, unknown>).page_id),
+      slug: String((row as Record<string, unknown>).slug),
+      embedding: blobToFloat32((row as Record<string, unknown>).page_embedding),
+    }));
+  }
+
+  async updatePageEmbedding(slug: string, embedding: Float32Array | null): Promise<void> {
+    const pageId = this.getPageIdOrThrow(slug);
+    this.database.run(
+      `UPDATE pages SET page_embedding = ? WHERE id = ?`,
+      [embedding ? float32ToBlob(embedding) : null, pageId],
+    );
   }
 
   async addLink(from: string, to: string, context?: string, linkType?: string): Promise<void> {
@@ -1077,6 +1112,13 @@ function prepareFtsQuery(query: string): string {
 
 function float32ToBlob(value: Float32Array): Uint8Array {
   return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+}
+
+function ensurePageEmbeddingColumn(db: Database): void {
+  const columns = db.query(`PRAGMA table_info(pages)`).all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === 'page_embedding')) {
+    db.exec(`ALTER TABLE pages ADD COLUMN page_embedding BLOB`);
+  }
 }
 
 function blobToFloat32(value: unknown): Float32Array | null {

@@ -64,6 +64,7 @@ export class PostgresEngine implements BrainEngine {
     await conn`SELECT pg_advisory_lock(42)`;
     try {
       await conn.unsafe(SCHEMA_SQL);
+      await conn`ALTER TABLE pages ADD COLUMN IF NOT EXISTS page_embedding vector(768)`;
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this);
@@ -381,6 +382,53 @@ export class PostgresEngine implements BrainEngine {
       DELETE FROM content_chunks
       WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
     `;
+  }
+
+  async getPageEmbeddings(type?: PageType): Promise<Array<{
+    page_id: number;
+    slug: string;
+    embedding: Float32Array | null;
+  }>> {
+    const sql = this.sql;
+    const rows = type
+      ? await sql`
+        SELECT p.id AS page_id, p.slug, p.page_embedding AS embedding
+        FROM pages p
+        WHERE p.type = ${type}
+        ORDER BY p.slug
+      `
+      : await sql`
+        SELECT p.id AS page_id, p.slug, p.page_embedding AS embedding
+        FROM pages p
+        ORDER BY p.slug
+      `;
+
+    return rows.map((row: Record<string, unknown>) => ({
+      page_id: Number(row.page_id),
+      slug: String(row.slug),
+      embedding: vectorValueToFloat32(row.embedding),
+    }));
+  }
+
+  async updatePageEmbedding(slug: string, embedding: Float32Array | null): Promise<void> {
+    const sql = this.sql;
+    const rows = embedding
+      ? await sql`
+        UPDATE pages
+        SET page_embedding = ${vectorLiteral(embedding)}::vector(768)
+        WHERE slug = ${slug}
+        RETURNING id
+      `
+      : await sql`
+        UPDATE pages
+        SET page_embedding = NULL
+        WHERE slug = ${slug}
+        RETURNING id
+      `;
+
+    if (rows.length === 0) {
+      throw new Error(`Page not found: ${validateSlug(slug)}`);
+    }
   }
 
   // Links
@@ -767,4 +815,28 @@ export class PostgresEngine implements BrainEngine {
     `;
     return rows.map((r: Record<string, unknown>) => rowToChunk(r, true));
   }
+}
+
+function vectorLiteral(embedding: Float32Array): string {
+  return `[${Array.from(embedding).join(',')}]`;
+}
+
+function vectorValueToFloat32(value: unknown): Float32Array | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Float32Array) return value;
+  if (Array.isArray(value)) return new Float32Array(value.map((entry) => Number(entry)));
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const body = trimmed.startsWith('[') && trimmed.endsWith(']')
+      ? trimmed.slice(1, -1)
+      : trimmed;
+    if (body.length === 0) return new Float32Array(0);
+
+    const parts = body.split(',').map((entry) => Number(entry.trim()));
+    if (parts.some((entry) => Number.isNaN(entry))) return null;
+    return new Float32Array(parts);
+  }
+
+  return null;
 }

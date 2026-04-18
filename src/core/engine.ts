@@ -33,6 +33,12 @@ export interface BrainEngine {
   upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
   getChunks(slug: string): Promise<Chunk[]>;
   deleteChunks(slug: string): Promise<void>;
+  getPageEmbeddings(type?: Page['type']): Promise<Array<{
+    page_id: number;
+    slug: string;
+    embedding: Float32Array | null;
+  }>>;
+  updatePageEmbedding(slug: string, embedding: Float32Array | null): Promise<void>;
 
   // Links
   addLink(from: string, to: string, context?: string, linkType?: string): Promise<void>;
