@@ -7,7 +7,7 @@ import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
-  Link, GraphNode,
+  Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -436,6 +436,126 @@ export class PostgresEngine implements BrainEngine {
       depth: r.depth as number,
       links: (typeof r.links === 'string' ? JSON.parse(r.links) : r.links) as { to_slug: string; link_type: string }[],
     }));
+  }
+
+  async traversePaths(
+    slug: string,
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+  ): Promise<GraphPath[]> {
+    const sql = this.sql;
+    const depth = opts?.depth ?? 5;
+    const direction = opts?.direction ?? 'out';
+    const linkType = opts?.linkType ?? null;
+    const linkTypeMatches = linkType !== null;
+
+    let rows;
+    if (direction === 'out') {
+      rows = await sql`
+        WITH RECURSIVE walk AS (
+          SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
+          FROM pages p WHERE p.slug = ${slug}
+          UNION ALL
+          SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
+          FROM walk w
+          JOIN links l ON l.from_page_id = w.id
+          JOIN pages p2 ON p2.id = l.to_page_id
+          WHERE w.depth < ${depth}
+            AND NOT (p2.id = ANY(w.visited))
+            AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        )
+        SELECT w.slug as from_slug, p2.slug as to_slug,
+               l.link_type, l.context, w.depth + 1 as depth
+        FROM walk w
+        JOIN links l ON l.from_page_id = w.id
+        JOIN pages p2 ON p2.id = l.to_page_id
+        WHERE w.depth < ${depth}
+          AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        ORDER BY depth, from_slug, to_slug
+      `;
+    } else if (direction === 'in') {
+      rows = await sql`
+        WITH RECURSIVE walk AS (
+          SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
+          FROM pages p WHERE p.slug = ${slug}
+          UNION ALL
+          SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
+          FROM walk w
+          JOIN links l ON l.to_page_id = w.id
+          JOIN pages p2 ON p2.id = l.from_page_id
+          WHERE w.depth < ${depth}
+            AND NOT (p2.id = ANY(w.visited))
+            AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        )
+        SELECT p2.slug as from_slug, w.slug as to_slug,
+               l.link_type, l.context, w.depth + 1 as depth
+        FROM walk w
+        JOIN links l ON l.to_page_id = w.id
+        JOIN pages p2 ON p2.id = l.from_page_id
+        WHERE w.depth < ${depth}
+          AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        ORDER BY depth, from_slug, to_slug
+      `;
+    } else {
+      rows = await sql`
+        WITH RECURSIVE walk AS (
+          SELECT p.id, 0::int as depth, ARRAY[p.id] as visited
+          FROM pages p WHERE p.slug = ${slug}
+          UNION ALL
+          SELECT p2.id, w.depth + 1, w.visited || p2.id
+          FROM walk w
+          JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
+          JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
+          WHERE w.depth < ${depth}
+            AND NOT (p2.id = ANY(w.visited))
+            AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        )
+        SELECT pf.slug as from_slug, pt.slug as to_slug,
+               l.link_type, l.context, w.depth + 1 as depth
+        FROM walk w
+        JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
+        JOIN pages pf ON pf.id = l.from_page_id
+        JOIN pages pt ON pt.id = l.to_page_id
+        WHERE w.depth < ${depth}
+          AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        ORDER BY depth, from_slug, to_slug
+      `;
+    }
+
+    const seen = new Set<string>();
+    const result: GraphPath[] = [];
+    for (const r of rows as Record<string, unknown>[]) {
+      const key = `${r.from_slug}|${r.to_slug}|${r.link_type}|${r.depth}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({
+        from_slug: r.from_slug as string,
+        to_slug: r.to_slug as string,
+        link_type: r.link_type as string,
+        context: (r.context as string) || '',
+        depth: Number(r.depth),
+      });
+    }
+    return result;
+  }
+
+  async getBacklinkCounts(slugs: string[]): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (slugs.length === 0) return result;
+    for (const slug of slugs) result.set(slug, 0);
+
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT p.slug as slug, COUNT(l.id)::int as cnt
+      FROM pages p
+      LEFT JOIN links l ON l.to_page_id = p.id
+      WHERE p.slug = ANY(${slugs}::text[])
+      GROUP BY p.slug
+    `;
+
+    for (const row of rows as { slug: string; cnt: number }[]) {
+      result.set(row.slug, Number(row.cnt));
+    }
+    return result;
   }
 
   // Tags

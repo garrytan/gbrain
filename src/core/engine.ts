@@ -2,7 +2,7 @@ import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
-  Link, GraphNode,
+  Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -51,6 +51,11 @@ export interface BrainEngine {
   getLinks(slug: string): Promise<Link[]>;
   getBacklinks(slug: string): Promise<Link[]>;
   traverseGraph(slug: string, depth?: number): Promise<GraphNode[]>;
+  traversePaths(
+    slug: string,
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+  ): Promise<GraphPath[]>;
+  getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
 
   // Tags
   addTag(slug: string, tag: string): Promise<void>;

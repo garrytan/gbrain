@@ -30,8 +30,55 @@ const STRUCTURED_ENTITY_TYPES = new Set([
   'infrastructure-summary',
   'infra-status',
 ]);
+const TYPE_HINTS_BY_TYPE: Record<string, string[]> = {
+  'agent-profile': ['agent', 'bot'],
+  'service-profile': ['service', 'tool', 'system'],
+  'company': ['company', 'business'],
+  'company-summary': ['company', 'business'],
+  'person': ['person', 'profile'],
+  'people-profile': ['person', 'profile'],
+  'project-status': ['project', 'status'],
+  'project-summary': ['project', 'summary'],
+  'infrastructure-summary': ['infrastructure', 'machine', 'server', 'host'],
+  'infra-status': ['infrastructure', 'machine', 'server', 'host', 'status'],
+};
+const BRAND_ALIAS_SUFFIXES = new Set(['ai']);
 const CANONICAL_PAGE_SUFFIXES = new Set(['summary', 'status', 'readme', 'index']);
 const EXACT_CANONICAL_PATH_BOOST = 8.0;
+const EXPLICIT_QUERY_PREFERENCE_BOOST = 12.0;
+const EXPLICIT_QUERY_PREFERENCES: Array<{ preferredSlug: string; aliases: string[] }> = [
+  {
+    preferredSlug: 'knowledge/companies/rodaco/summary',
+    aliases: ['rodaco', 'rodaco ai', 'rodaco company'],
+  },
+  {
+    preferredSlug: 'knowledge/agents/rodaco',
+    aliases: ['rodaco agent', 'rodaco bot', 'rodaco assistant'],
+  },
+  {
+    preferredSlug: 'knowledge/agents/hermes',
+    aliases: ['hermes', 'hermes agent', 'hermes bot', 'hermes assistant'],
+  },
+  {
+    preferredSlug: 'knowledge/agents/atlas',
+    aliases: ['atlas', 'atlas agent', 'atlas bot', 'atlas assistant'],
+  },
+  {
+    preferredSlug: 'knowledge/agents/winston',
+    aliases: ['winston', 'winston agent', 'winston bot', 'winston assistant'],
+  },
+  {
+    preferredSlug: 'knowledge/agents/jeeves',
+    aliases: ['jeeves', 'jeeves agent', 'jeeves bot', 'jeeves assistant'],
+  },
+  {
+    preferredSlug: 'knowledge/agents/gbrain',
+    aliases: ['gbrain', 'gbrain service', 'gbrain system', 'gbrain tool'],
+  },
+];
+const EXPLICIT_QUERY_PREFERENCE_MAP = new Map(
+  EXPLICIT_QUERY_PREFERENCES.flatMap(({ preferredSlug, aliases }) => aliases.map(alias => [alias, preferredSlug] as const)),
+);
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 
 export interface HybridSearchOpts extends SearchOpts {
@@ -54,7 +101,7 @@ export async function hybridSearch(
 ): Promise<SearchResult[]> {
   const limit = opts?.limit || 20;
   const offset = opts?.offset || 0;
-  const innerLimit = Math.min(limit * 2, MAX_SEARCH_LIMIT);
+  const innerLimit = computeCandidateLimit(query, limit);
 
   // Auto-detect detail level from query intent when caller doesn't specify
   const detail = opts?.detail ?? autoDetectDetail(query);
@@ -196,6 +243,61 @@ function deriveSlugKeys(slug: string): string[] {
   return Array.from(keys).filter(Boolean);
 }
 
+function isExactEntityLikeQuery(query: string): boolean {
+  const normalized = normalizeMatchText(query);
+  if (!normalized) return false;
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 4) return false;
+  if (normalized.length < 2 || normalized.length > 80) return false;
+  if (/[?*]/.test(query)) return false;
+  return true;
+}
+
+function computeCandidateLimit(query: string, limit: number): number {
+  const base = Math.min(limit * 2, MAX_SEARCH_LIMIT);
+  if (!isExactEntityLikeQuery(query)) return base;
+  return clampSearchLimit(Math.max(base, 100));
+}
+
+function matchesQueryTypeHint(result: SearchResult, normalizedQuery: string): boolean {
+  const title = normalizeMatchText(result.title || '');
+  if (!title || !normalizedQuery.startsWith(title)) return false;
+  const remainder = normalizedQuery.slice(title.length).trim();
+  if (!remainder) return false;
+  const hints = TYPE_HINTS_BY_TYPE[String(result.type || '')] || [];
+  if (hints.length === 0) return false;
+  const tokens = remainder.split(/\s+/).filter(Boolean);
+  return tokens.length > 0 && tokens.every(token => hints.includes(token));
+}
+
+function primaryEntityKey(result: SearchResult): string {
+  const slugParts = (result.slug || '').split('/').filter(Boolean);
+  if (slugParts.length === 0) return '';
+  const lastPart = slugParts[slugParts.length - 1] || '';
+  const parentPart = slugParts[slugParts.length - 2] || '';
+  if (CANONICAL_PAGE_SUFFIXES.has(lastPart) && parentPart) {
+    return normalizeMatchText(parentPart);
+  }
+  return normalizeMatchText(lastPart);
+}
+
+function matchesBrandAliasSuffix(result: SearchResult, normalizedQuery: string): boolean {
+  const type = String(result.type || '');
+  if (type !== 'company' && type !== 'company-summary') return false;
+  const entityKey = primaryEntityKey(result);
+  if (!entityKey || !normalizedQuery.startsWith(`${entityKey} `)) return false;
+  const remainder = normalizedQuery.slice(entityKey.length).trim();
+  if (!remainder) return false;
+  const tokens = remainder.split(/\s+/).filter(Boolean);
+  return tokens.length > 0 && tokens.every(token => BRAND_ALIAS_SUFFIXES.has(token));
+}
+
+function matchesExplicitQueryPreference(result: SearchResult, normalizedQuery: string): boolean {
+  const preferredSlug = EXPLICIT_QUERY_PREFERENCE_MAP.get(normalizedQuery);
+  if (!preferredSlug) return false;
+  return result.slug === preferredSlug;
+}
+
 function queryAwareBoost(result: SearchResult, normalizedQuery: string): number {
   if (!normalizedQuery) return 1;
 
@@ -206,6 +308,9 @@ function queryAwareBoost(result: SearchResult, normalizedQuery: string): number 
   const exactTitle = title === normalizedQuery;
   const exactSlug = slugKeys.includes(normalizedQuery);
   const structured = STRUCTURED_ENTITY_TYPES.has(type);
+  const queryTypeHint = matchesQueryTypeHint(result, normalizedQuery);
+  const brandAliasSuffix = matchesBrandAliasSuffix(result, normalizedQuery);
+  const explicitQueryPreference = matchesExplicitQueryPreference(result, normalizedQuery);
   const lastPart = slugParts[slugParts.length - 1] || '';
   const parentPart = slugParts[slugParts.length - 2] || '';
   const canonicalPathMatch = CANONICAL_PAGE_SUFFIXES.has(lastPart)
@@ -215,6 +320,10 @@ function queryAwareBoost(result: SearchResult, normalizedQuery: string): number 
   if (exactTitle) boost *= 2.5;
   if (exactSlug) boost *= 3.0;
   if ((exactTitle || exactSlug) && structured) boost *= 1.5;
+  if (queryTypeHint) boost *= 3.5;
+  if (queryTypeHint && structured) boost *= 1.5;
+  if (brandAliasSuffix && structured) boost *= 2.5;
+  if (explicitQueryPreference) boost *= EXPLICIT_QUERY_PREFERENCE_BOOST;
   if (canonicalPathMatch && structured) boost *= EXACT_CANONICAL_PATH_BOOST;
   return boost;
 }

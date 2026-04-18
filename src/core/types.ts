@@ -1,5 +1,5 @@
 // Page types
-export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media';
+export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media' | 'meeting';
 
 export interface Page {
   id: number;
@@ -88,6 +88,14 @@ export interface GraphNode {
   type: PageType;
   depth: number;
   links: { to_slug: string; link_type: string }[];
+}
+
+export interface GraphPath {
+  from_slug: string;
+  to_slug: string;
+  link_type: string;
+  context: string;
+  depth: number;
 }
 
 // Timeline

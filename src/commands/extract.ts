@@ -10,8 +10,10 @@
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
+import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import { slugifyPath } from '../core/sync.ts';
+import { extractPageLinks, parseTimelineEntries } from '../core/link-extraction.ts';
 
 // --- Types ---
 
@@ -34,6 +36,12 @@ interface ExtractResult {
   links_created: number;
   timeline_entries_created: number;
   pages_processed: number;
+}
+
+function normalizeDateKey(date: unknown): string {
+  if (typeof date === 'string') return date.slice(0, 10);
+  if (date instanceof Date) return date.toISOString().slice(0, 10);
+  return String(date).slice(0, 10);
 }
 
 // --- Shared walker ---
@@ -210,30 +218,62 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
   const subcommand = args[0];
   const dirIdx = args.indexOf('--dir');
   const brainDir = (dirIdx >= 0 && dirIdx + 1 < args.length) ? args[dirIdx + 1] : '.';
+  const sourceIdx = args.indexOf('--source');
+  const source = (sourceIdx >= 0 && sourceIdx + 1 < args.length) ? args[sourceIdx + 1] : 'fs';
+  const typeIdx = args.indexOf('--type');
+  const typeFilter = (typeIdx >= 0 && typeIdx + 1 < args.length) ? (args[typeIdx + 1] as PageType) : undefined;
+  const sinceIdx = args.indexOf('--since');
+  const since = (sinceIdx >= 0 && sinceIdx + 1 < args.length) ? args[sinceIdx + 1] : undefined;
   const dryRun = args.includes('--dry-run');
   const jsonMode = args.includes('--json');
 
   if (!subcommand || !['links', 'timeline', 'all'].includes(subcommand)) {
-    console.error('Usage: gbrain extract <links|timeline|all> [--dir <brain-dir>] [--dry-run] [--json]');
+    console.error('Usage: gbrain extract <links|timeline|all> [--source fs|db] [--dir <brain-dir>] [--dry-run] [--json] [--type T] [--since DATE]');
     process.exit(1);
   }
 
-  if (!existsSync(brainDir)) {
+  if (source !== 'fs' && source !== 'db') {
+    console.error(`Invalid --source: ${source}. Must be 'fs' or 'db'.`);
+    process.exit(1);
+  }
+
+  if (since !== undefined) {
+    const sinceMs = new Date(since).getTime();
+    if (!Number.isFinite(sinceMs)) {
+      console.error(`Invalid --since date: "${since}". Must be a parseable date.`);
+      process.exit(1);
+    }
+  }
+
+  if (source === 'fs' && !existsSync(brainDir)) {
     console.error(`Directory not found: ${brainDir}`);
     process.exit(1);
   }
 
   const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
 
-  if (subcommand === 'links' || subcommand === 'all') {
-    const r = await extractLinksFromDir(engine, brainDir, dryRun, jsonMode);
-    result.links_created = r.created;
-    result.pages_processed = r.pages;
-  }
-  if (subcommand === 'timeline' || subcommand === 'all') {
-    const r = await extractTimelineFromDir(engine, brainDir, dryRun, jsonMode);
-    result.timeline_entries_created = r.created;
-    result.pages_processed = Math.max(result.pages_processed, r.pages);
+  if (source === 'db') {
+    if (subcommand === 'links' || subcommand === 'all') {
+      const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since);
+      result.links_created = r.created;
+      result.pages_processed = r.pages;
+    }
+    if (subcommand === 'timeline' || subcommand === 'all') {
+      const r = await extractTimelineFromDB(engine, dryRun, jsonMode, typeFilter, since);
+      result.timeline_entries_created = r.created;
+      result.pages_processed = Math.max(result.pages_processed, r.pages);
+    }
+  } else {
+    if (subcommand === 'links' || subcommand === 'all') {
+      const r = await extractLinksFromDir(engine, brainDir, dryRun, jsonMode);
+      result.links_created = r.created;
+      result.pages_processed = r.pages;
+    }
+    if (subcommand === 'timeline' || subcommand === 'all') {
+      const r = await extractTimelineFromDir(engine, brainDir, dryRun, jsonMode);
+      result.timeline_entries_created = r.created;
+      result.pages_processed = Math.max(result.pages_processed, r.pages);
+    }
   }
 
   if (jsonMode) {
@@ -303,7 +343,7 @@ async function extractTimelineFromDir(
     const pages = await engine.listPages({ limit: 100000 });
     for (const page of pages) {
       for (const entry of await engine.getTimeline(page.slug)) {
-        existing.add(`${page.slug}::${entry.date}::${entry.summary}`);
+        existing.add(`${page.slug}::${normalizeDateKey(entry.date)}::${entry.summary}`);
       }
     }
   } catch { /* fresh brain */ }
@@ -338,6 +378,138 @@ async function extractTimelineFromDir(
     console.log(`Timeline: ${label} ${created} entries from ${files.length} pages`);
   }
   return { created, pages: files.length };
+}
+
+async function extractLinksFromDB(
+  engine: BrainEngine,
+  dryRun: boolean,
+  jsonMode: boolean,
+  typeFilter: PageType | undefined,
+  since: string | undefined,
+): Promise<{ created: number; pages: number }> {
+  const pages = await engine.listPages({ limit: 100000 });
+  const allSlugs = new Set(pages.map(page => page.slug));
+  let processed = 0;
+  let created = 0;
+
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    if (typeFilter && page.type !== typeFilter) continue;
+    if (since) {
+      const updatedMs = new Date(page.updated_at).getTime();
+      const sinceMs = new Date(since).getTime();
+      if (updatedMs <= sinceMs) continue;
+    }
+
+    const fullContent = `${page.compiled_truth}\n${page.timeline || ''}`;
+    const candidates = extractPageLinks(fullContent, page.frontmatter || {}, page.type as PageType, page.slug);
+    for (const candidate of candidates) {
+      if (!allSlugs.has(candidate.targetSlug)) continue;
+      if (dryRun) {
+        if (jsonMode) {
+          process.stdout.write(JSON.stringify({
+            action: 'add_link',
+            from: page.slug,
+            to: candidate.targetSlug,
+            type: candidate.linkType,
+            context: candidate.context,
+          }) + '\n');
+        } else {
+          console.log(`  ${page.slug} → ${candidate.targetSlug} (${candidate.linkType})`);
+        }
+        created++;
+      } else {
+        try {
+          await engine.addLink(page.slug, candidate.targetSlug, candidate.context, candidate.linkType);
+          created++;
+        } catch {
+          /* skip */
+        }
+      }
+    }
+    processed++;
+    if (jsonMode && !dryRun && (processed % 500 === 0 || i === pages.length - 1)) {
+      process.stderr.write(JSON.stringify({ event: 'progress', phase: 'extracting_links_db', done: processed, total: pages.length }) + '\n');
+    }
+  }
+
+  if (!jsonMode) {
+    const label = dryRun ? '(dry run) would create' : 'created';
+    console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
+  }
+  return { created, pages: processed };
+}
+
+async function extractTimelineFromDB(
+  engine: BrainEngine,
+  dryRun: boolean,
+  jsonMode: boolean,
+  typeFilter: PageType | undefined,
+  since: string | undefined,
+): Promise<{ created: number; pages: number }> {
+  const pages = await engine.listPages({ limit: 100000 });
+  const existing = new Set<string>();
+  for (const page of pages) {
+    for (const entry of await engine.getTimeline(page.slug)) {
+      existing.add(`${page.slug}::${normalizeDateKey(entry.date)}::${entry.summary}`);
+    }
+  }
+
+  let processed = 0;
+  let created = 0;
+
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    if (typeFilter && page.type !== typeFilter) continue;
+    if (since) {
+      const updatedMs = new Date(page.updated_at).getTime();
+      const sinceMs = new Date(since).getTime();
+      if (updatedMs <= sinceMs) continue;
+    }
+
+    const fullContent = `${page.compiled_truth}\n${page.timeline || ''}`;
+    const entries = parseTimelineEntries(fullContent);
+    for (const entry of entries) {
+      const key = `${page.slug}::${entry.date}::${entry.summary}`;
+      if (existing.has(key)) continue;
+      existing.add(key);
+      if (dryRun) {
+        if (jsonMode) {
+          process.stdout.write(JSON.stringify({
+            action: 'add_timeline',
+            slug: page.slug,
+            date: entry.date,
+            summary: entry.summary,
+            ...(entry.detail ? { detail: entry.detail } : {}),
+          }) + '\n');
+        } else {
+          console.log(`  ${page.slug}: ${entry.date} — ${entry.summary}`);
+        }
+        created++;
+      } else {
+        try {
+          await engine.addTimelineEntry(page.slug, {
+            date: entry.date,
+            summary: entry.summary,
+            detail: entry.detail || '',
+          });
+          created++;
+        } catch {
+          /* skip */
+        }
+      }
+    }
+    processed++;
+    if (jsonMode && !dryRun && (processed % 500 === 0 || i === pages.length - 1)) {
+      process.stderr.write(JSON.stringify({ event: 'progress', phase: 'extracting_timeline_db', done: processed, total: pages.length }) + '\n');
+    }
+  }
+
+  if (!jsonMode) {
+    const label = dryRun ? '(dry run) would create' : 'created';
+    console.log(`Timeline: ${label} ${created} entries from ${processed} pages (db source)`);
+  }
+  return { created, pages: processed };
 }
 
 // --- Sync integration hooks ---

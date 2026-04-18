@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { rrfFusion, cosineSimilarity, applyQueryAwareBoosts } from '../src/core/search/hybrid.ts';
+import { rrfFusion, cosineSimilarity, applyQueryAwareBoosts, hybridSearch } from '../src/core/search/hybrid.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -202,6 +202,171 @@ describe('applyQueryAwareBoosts', () => {
     });
     const boosted = applyQueryAwareBoosts([rawImport, status], 'SelfGrowth');
     expect(boosted[0].slug).toBe('projects/control/project-status/selfgrowth');
+  });
+
+  test('prefers canonical agent pages when the query adds an explicit type hint', () => {
+    const article = makeResult({
+      slug: 'clippings/how-to-build-smart-stress-tested-openclaw-hermes-agents-for-under-30',
+      title: 'How to Build Smart, Stress-Tested OpenClaw + Hermes Agents for Under $30',
+      type: 'concept',
+      score: 1.0,
+    });
+    const agent = makeResult({
+      slug: 'knowledge/agents/hermes',
+      title: 'Hermes',
+      type: 'agent-profile' as any,
+      chunk_text: '# Hermes',
+      score: 0.75,
+    });
+    const boosted = applyQueryAwareBoosts([article, agent], 'Hermes Agent');
+    expect(boosted[0].slug).toBe('knowledge/agents/hermes');
+  });
+
+  test('prefers canonical company summaries when the query adds a brand-style ai suffix', () => {
+    const noisy = makeResult({
+      slug: 'claude-memory/feedback_obsidian_vaults',
+      title: 'Feedback Obsidian Vaults',
+      type: 'feedback',
+      chunk_text: 'Winston and Rodaco have separate Obsidian vaults. Two AI agents with different identities.',
+      score: 1.0,
+    });
+    const company = makeResult({
+      slug: 'knowledge/companies/rodaco/summary',
+      title: 'Summary',
+      type: 'company-summary' as any,
+      chunk_text: '# Rodaco',
+      score: 0.7,
+    });
+    const boosted = applyQueryAwareBoosts([noisy, company], 'Rodaco AI');
+    expect(boosted[0].slug).toBe('knowledge/companies/rodaco/summary');
+  });
+
+  test('does not treat unspaced prefixes as ai suffix aliases', () => {
+    const noisy = makeResult({
+      slug: 'knowledge/companies/openai/summary',
+      title: 'Summary',
+      type: 'company-summary' as any,
+      chunk_text: '# OpenAI',
+      score: 1.0,
+    });
+    const wrongPrefix = makeResult({
+      slug: 'knowledge/companies/open/summary',
+      title: 'Summary',
+      type: 'company-summary' as any,
+      chunk_text: '# Open',
+      score: 0.7,
+    });
+    const boosted = applyQueryAwareBoosts([noisy, wrongPrefix], 'OpenAI');
+    expect(boosted[0].slug).toBe('knowledge/companies/openai/summary');
+  });
+
+  test('prefers the explicit company canonical page for ambiguous company disambiguators', () => {
+    const agent = makeResult({
+      slug: 'knowledge/agents/rodaco',
+      title: 'Rodaco',
+      type: 'agent-profile' as any,
+      chunk_text: '# Rodaco',
+      score: 1.0,
+    });
+    const company = makeResult({
+      slug: 'knowledge/companies/rodaco/summary',
+      title: 'Summary',
+      type: 'company-summary' as any,
+      chunk_text: '# Rodaco',
+      score: 0.2,
+    });
+    const boosted = applyQueryAwareBoosts([agent, company], 'Rodaco Company');
+    expect(boosted[0].slug).toBe('knowledge/companies/rodaco/summary');
+  });
+
+  test('prefers the explicit agent canonical page for ambiguous agent disambiguators', () => {
+    const company = makeResult({
+      slug: 'knowledge/companies/rodaco/summary',
+      title: 'Summary',
+      type: 'company-summary' as any,
+      chunk_text: '# Rodaco',
+      score: 1.0,
+    });
+    const agent = makeResult({
+      slug: 'knowledge/agents/rodaco',
+      title: 'Rodaco',
+      type: 'agent-profile' as any,
+      chunk_text: '# Rodaco',
+      score: 0.15,
+    });
+    const boosted = applyQueryAwareBoosts([company, agent], 'Rodaco Agent');
+    expect(boosted[0].slug).toBe('knowledge/agents/rodaco');
+  });
+
+  test('prefers the explicit Hermes agent canonical page for assistant-style aliases', () => {
+    const installNote = makeResult({
+      slug: 'claude-memory/project_hermes_m5',
+      title: 'Project Hermes M5',
+      type: 'project',
+      chunk_text: 'Hermes Agent on the M5 Mac.',
+      score: 1.0,
+    });
+    const agent = makeResult({
+      slug: 'knowledge/agents/hermes',
+      title: 'Hermes',
+      type: 'agent-profile' as any,
+      chunk_text: '# Hermes',
+      score: 0.15,
+    });
+    const boosted = applyQueryAwareBoosts([installNote, agent], 'Hermes Assistant');
+    expect(boosted[0].slug).toBe('knowledge/agents/hermes');
+  });
+});
+
+describe('hybridSearch exact-query candidate rescue', () => {
+  test('widens the keyword candidate pool so exact canonical company pages are not missed behind noisy lexical matches', async () => {
+    const originalKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const dataset: SearchResult[] = [
+        makeResult({
+          slug: 'knowledge/agents/rodaco',
+          title: 'Rodaco',
+          type: 'agent-profile' as any,
+          chunk_text: 'Backup agent on Intel Mac.',
+          chunk_source: 'compiled_truth',
+          chunk_id: 1,
+          score: 0.710937,
+        }),
+      ];
+
+      for (let i = 0; i < 56; i++) {
+        dataset.push(makeResult({
+          slug: `noise/page-${i}`,
+          title: `Noise ${i}`,
+          type: 'project',
+          chunk_text: `Rodaco mention ${i}`,
+          chunk_source: 'compiled_truth',
+          chunk_id: i + 2,
+          score: 0.35 - i * 0.001,
+        }));
+      }
+
+      dataset.push(makeResult({
+        slug: 'knowledge/companies/rodaco/summary',
+        title: 'Summary',
+        type: 'company-summary' as any,
+        chunk_text: '# Rodaco',
+        chunk_source: 'compiled_truth',
+        chunk_id: 1000,
+        score: 0.33098254,
+      }));
+
+      const engine = {
+        searchKeyword: async (_query: string, opts?: { limit?: number }) => dataset.slice(0, opts?.limit ?? dataset.length),
+      } as any;
+
+      const results = await hybridSearch(engine, 'Rodaco', { limit: 10, expansion: false, detail: 'medium' });
+      expect(results[0].slug).toBe('knowledge/companies/rodaco/summary');
+    } finally {
+      if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = originalKey;
+    }
   });
 });
 

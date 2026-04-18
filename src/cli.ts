@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -367,6 +367,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runAutopilot(engine, args);
         return; // autopilot doesn't disconnect (long-running)
       }
+      case 'graph-query': {
+        const { runGraphQuery } = await import('./commands/graph-query.ts');
+        await runGraphQuery(engine, args);
+        break;
+      }
     }
   } finally {
     if (command !== 'serve') await engine.disconnect();
@@ -454,6 +459,8 @@ LINKS
   unlink <from> <to>                 Remove link
   backlinks <slug>                   Incoming links
   graph <slug> [--depth N]           Traverse link graph
+  graph-query <slug> [--type T]      Edge-based traversal with type/direction filters
+        [--depth N] [--direction in|out|both]
 
 TAGS
   tags <slug>                        List tags

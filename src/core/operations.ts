@@ -5,10 +5,13 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
+import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
+import { parseMarkdown } from './markdown.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
+import { extractPageLinks, isAutoLinkEnabled } from './link-extraction.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -124,11 +127,78 @@ const put_page: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    const result = await importFromContent(ctx.engine, p.slug as string, p.content as string);
-    return { slug: result.slug, status: result.status === 'imported' ? 'created_or_updated' : result.status, chunks: result.chunks };
+    const slug = p.slug as string;
+    const content = p.content as string;
+    const noEmbed = !process.env.OPENAI_API_KEY;
+    const result = await importFromContent(ctx.engine, slug, content, { noEmbed });
+
+    let autoLinks: { created: number; removed: number; errors: number } | { error: string } | undefined;
+    try {
+      const enabled = await isAutoLinkEnabled(ctx.engine);
+      if (enabled) {
+        const parsed = parseMarkdown(content, `${slug}.md`);
+        autoLinks = await runAutoLink(ctx.engine, slug, {
+          type: parsed.type as PageType,
+          compiled_truth: parsed.compiled_truth,
+          timeline: parsed.timeline || '',
+          frontmatter: parsed.frontmatter,
+        });
+      }
+    } catch (e) {
+      autoLinks = { error: e instanceof Error ? e.message : String(e) };
+    }
+
+    return {
+      slug: result.slug,
+      status: result.status === 'imported' ? 'created_or_updated' : result.status,
+      chunks: result.chunks,
+      ...(autoLinks ? { auto_links: autoLinks } : {}),
+    };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
+
+async function runAutoLink(
+  engine: BrainEngine,
+  slug: string,
+  parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },
+): Promise<{ created: number; removed: number; errors: number }> {
+  const fullContent = `${parsed.compiled_truth}\n${parsed.timeline || ''}`;
+  const pages = await engine.listPages({ limit: 100000 });
+  const allSlugs = new Set(pages.map(page => page.slug));
+  const candidates = extractPageLinks(fullContent, parsed.frontmatter, parsed.type, slug);
+  const valid = candidates.filter(candidate => allSlugs.has(candidate.targetSlug));
+  const existing = await engine.getLinks(slug);
+  const desiredKeys = new Set(valid.map(candidate => `${candidate.targetSlug}\u0000${candidate.linkType}`));
+  const existingKeys = new Set(existing.map(link => `${link.to_slug}\u0000${link.link_type}`));
+
+  let created = 0;
+  let removed = 0;
+  let errors = 0;
+
+  for (const candidate of valid) {
+    try {
+      await engine.addLink(slug, candidate.targetSlug, candidate.context, candidate.linkType);
+      if (!existingKeys.has(`${candidate.targetSlug}\u0000${candidate.linkType}`)) created++;
+    } catch {
+      errors++;
+    }
+  }
+
+  for (const link of existing) {
+    const key = `${link.to_slug}\u0000${link.link_type}`;
+    if (!desiredKeys.has(key)) {
+      try {
+        await engine.removeLink(slug, link.to_slug);
+        removed++;
+      } catch {
+        errors++;
+      }
+    }
+  }
+
+  return { created, removed, errors };
+}
 
 const delete_page: Operation = {
   name: 'delete_page',
