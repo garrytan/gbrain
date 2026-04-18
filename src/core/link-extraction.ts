@@ -439,3 +439,61 @@ export async function isAutoLinkEnabled(engine: BrainEngine): Promise<boolean> {
   const normalized = val.trim().toLowerCase();
   return !['false', '0', 'no', 'off'].includes(normalized);
 }
+
+/** Regex that validates an entity-dir name. Matches slug shape. */
+const ENTITY_DIR_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Resolve the effective entity-dir list from engine config.
+ *
+ * Reads two config keys:
+ *   - `entity_dirs`: comma-separated list of custom dir names (optional).
+ *   - `entity_dirs_mode`: `"union"` (default) or `"replace"`.
+ *
+ * Modes:
+ *   - `union` (default): custom dirs are ADDED to DEFAULT_ENTITY_DIRS.
+ *     Duplicates are deduped; defaults come first, custom dirs append.
+ *   - `replace`: ONLY the custom list is used. If the custom list is empty,
+ *     falls back to defaults (empty replace is meaningless).
+ *
+ * Validation:
+ *   Each custom entry must match `/^[a-z0-9][a-z0-9-]*$/`. On ANY invalid
+ *   entry, the function logs a warning via `console.warn` and returns
+ *   DEFAULT_ENTITY_DIRS. This fail-safe prevents malformed config from
+ *   silently disabling all entity extraction.
+ *
+ * @returns A fresh string[] (mutable; callers may not mutate DEFAULT_ENTITY_DIRS).
+ */
+export async function getEntityDirs(engine: BrainEngine): Promise<string[]> {
+  const raw = await engine.getConfig('entity_dirs');
+  if (raw == null || raw.trim() === '') {
+    return [...DEFAULT_ENTITY_DIRS];
+  }
+
+  const entries = raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  for (const entry of entries) {
+    if (!ENTITY_DIR_NAME_RE.test(entry)) {
+      console.warn(
+        `[gbrain] entity_dirs rejected: ${entry} (must match [a-z0-9][a-z0-9-]*). Falling back to defaults.`,
+      );
+      return [...DEFAULT_ENTITY_DIRS];
+    }
+  }
+
+  const mode = (await engine.getConfig('entity_dirs_mode'))?.trim().toLowerCase();
+  if (mode === 'replace' && entries.length > 0) {
+    // Dedupe while preserving input order.
+    return Array.from(new Set(entries));
+  }
+
+  // Union mode: defaults first, then custom entries not already present.
+  const seen = new Set<string>(DEFAULT_ENTITY_DIRS);
+  const result: string[] = [...DEFAULT_ENTITY_DIRS];
+  for (const entry of entries) {
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      result.push(entry);
+    }
+  }
+  return result;
+}

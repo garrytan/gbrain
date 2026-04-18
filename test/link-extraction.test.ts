@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, spyOn } from 'bun:test';
 import {
   DEFAULT_ENTITY_DIRS,
   extractEntityRefs,
@@ -6,6 +6,7 @@ import {
   inferLinkType,
   parseTimelineEntries,
   isAutoLinkEnabled,
+  getEntityDirs,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -375,5 +376,105 @@ describe('isAutoLinkEnabled', () => {
   test('garbage value -> true (fail-safe to default)', async () => {
     const engine = makeFakeEngine(new Map([['auto_link', 'garbage']]));
     expect(await isAutoLinkEnabled(engine)).toBe(true);
+  });
+});
+
+// ─── getEntityDirs ─────────────────────────────────────────────
+
+describe('getEntityDirs', () => {
+  test('null config -> DEFAULT_ENTITY_DIRS', async () => {
+    const engine = makeFakeEngine(new Map());
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+  });
+
+  test('empty string config -> DEFAULT_ENTITY_DIRS', async () => {
+    const engine = makeFakeEngine(new Map([['entity_dirs', '']]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+  });
+
+  test('valid single custom dir -> union with defaults', async () => {
+    const engine = makeFakeEngine(new Map([['entity_dirs', '01-notes']]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toContain('01-notes');
+    // defaults preserved
+    for (const d of DEFAULT_ENTITY_DIRS) expect(dirs).toContain(d);
+  });
+
+  test('multiple comma-separated dirs with whitespace -> parsed and unioned', async () => {
+    const engine = makeFakeEngine(new Map([['entity_dirs', ' 01-notes , 02-projects ,03-archive']]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toContain('01-notes');
+    expect(dirs).toContain('02-projects');
+    expect(dirs).toContain('03-archive');
+  });
+
+  test('duplicate custom dir overlapping with defaults -> no duplicates', async () => {
+    const engine = makeFakeEngine(new Map([['entity_dirs', 'people,01-notes']]));
+    const dirs = await getEntityDirs(engine);
+    const peopleCount = dirs.filter(d => d === 'people').length;
+    expect(peopleCount).toBe(1);
+    expect(dirs).toContain('01-notes');
+  });
+
+  test('entity_dirs_mode=replace -> only custom list, no defaults', async () => {
+    const engine = makeFakeEngine(new Map([
+      ['entity_dirs', '01-notes,02-projects'],
+      ['entity_dirs_mode', 'replace'],
+    ]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toEqual(['01-notes', '02-projects']);
+    // defaults NOT included in replace mode
+    expect(dirs).not.toContain('people');
+    expect(dirs).not.toContain('companies');
+  });
+
+  test('entity_dirs_mode=replace with empty entity_dirs -> defaults (empty replace is meaningless)', async () => {
+    const engine = makeFakeEngine(new Map([
+      ['entity_dirs', ''],
+      ['entity_dirs_mode', 'replace'],
+    ]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+  });
+
+  test('invalid entry (uppercase) -> warn + return defaults', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const engine = makeFakeEngine(new Map([['entity_dirs', '01-notes,BAD_DIR']]));
+      const dirs = await getEntityDirs(engine);
+      expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+      expect(warnSpy).toHaveBeenCalled();
+      const firstCallArg = warnSpy.mock.calls[0]![0];
+      expect(firstCallArg).toContain('entity_dirs rejected');
+      expect(firstCallArg).toContain('BAD_DIR');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('invalid entry (starts with dash) -> warn + return defaults', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const engine = makeFakeEngine(new Map([['entity_dirs', '-bad']]));
+      const dirs = await getEntityDirs(engine);
+      expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('invalid entry (contains slash) -> warn + return defaults', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const engine = makeFakeEngine(new Map([['entity_dirs', 'people/extra']]));
+      const dirs = await getEntityDirs(engine);
+      expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
