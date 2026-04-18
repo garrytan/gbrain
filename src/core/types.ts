@@ -28,6 +28,8 @@ export interface PageFilters {
   tag?: string;
   limit?: number;
   offset?: number;
+  /** ISO date string (YYYY-MM-DD or full ISO timestamp). Filter to pages updated_at > value. */
+  updated_after?: string;
 }
 
 // Chunks
@@ -90,6 +92,20 @@ export interface GraphNode {
   links: { to_slug: string; link_type: string }[];
 }
 
+/**
+ * Edge in a graph traversal. Used by traversePaths() and graph-query.
+ * Unlike GraphNode (which only carries outgoing links), GraphPath represents an
+ * actual edge with direction, type, and depth from the root.
+ */
+export interface GraphPath {
+  from_slug: string;
+  to_slug: string;
+  link_type: string;
+  context: string;
+  /** Depth of `to_slug` from the root (1 for direct neighbors). */
+  depth: number;
+}
+
 // Timeline
 export interface TimelineEntry {
   id: number;
@@ -145,10 +161,17 @@ export interface BrainHealth {
   page_count: number;
   embed_coverage: number;
   stale_pages: number;
+  /** Pages with zero inbound links. Definition aligned across PGLite and Postgres. */
   orphan_pages: number;
-  dead_links: number;
   missing_embeddings: number;
+  /** Composite quality score (0-10). Computed from coverage, staleness, orphans. */
   brain_score: number;
+  /** Fraction of entity pages (person/company) with >= 1 inbound link. */
+  link_coverage: number;
+  /** Fraction of entity pages (person/company) with >= 1 structured timeline entry. */
+  timeline_coverage: number;
+  /** Top 5 entities by total link count (in + out). */
+  most_connected: Array<{ slug: string; link_count: number }>;
 }
 
 // Ingest log

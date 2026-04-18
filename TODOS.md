@@ -1,5 +1,87 @@
 # TODOS
 
+## P1 (BrainBench v1.1 — categories deferred from PR #188)
+
+### BrainBench Cat 5: Source Attribution / Provenance
+**What:** Eval that gbrain correctly cites the right page when claiming fact F, and resolves source-conflict cases (3 sources disagree on $5M raise — which wins?). 200 queries across citation/provenance/conflict sub-categories on a 300-entity dataset with deliberately-conflicting sources.
+
+**Why deferred from PR #188:** Needs ~$100-200 of Opus tokens to generate the conflict-graph dataset. v1 scope was procedural-only.
+
+**Threshold:** citation_recall > 90%, citation_precision > 85%, conflict_resolution > 70%.
+
+**Depends on:** Identity Resolution (Cat 3) shipped — uses same world generator pattern.
+
+### BrainBench Cat 6: Auto-link Precision under Prose (at scale)
+**What:** Cat 10 (Robustness/Adversarial) covered code-fence leak and false-positive substrings on 22 hand-crafted cases. v1.1 extends this to 500+ prose-heavy pages with realistic narrative noise. Tests link precision in the wild, not just edge cases.
+
+**Why deferred from PR #188:** Needs prose-heavy generated corpus (~$100-150 Opus). Existing 22-case eval already caught + fixed the code-fence leak bug.
+
+**Threshold:** link_precision > 95% on prose, type_accuracy > 80% on varied phrasing.
+
+### BrainBench Cat 8: Skill Behavior Compliance
+**What:** Replays 100 inbound signals through a real LLM agent loop with gbrain skills loaded. Measures: brain-first lookup compliance, back-link iron-law adherence, citation format compliance, tier escalation correctness.
+
+**Why deferred:** Needs real LLM API loop (~$2K total — most expensive single category).
+
+**Threshold:** brain_first_compliance > 95%, back_link_compliance > 90%, citation_format > 95%.
+
+### BrainBench Cat 9: End-to-End Workflows
+**What:** 50 end-to-end scenarios across meeting ingestion, email-to-brain, daily-task-prep, briefing generation, sync cycle. Rubric-graded (10-15 criteria each).
+
+**Why deferred:** Needs LLM agent loop (~$1K). Plus 50 hand-built rubrics.
+
+**Threshold:** 80% scenario pass rate per workflow.
+
+### BrainBench Cat 11: Multi-modal Ingestion
+**What:** PDF/image/audio/video ingestion accuracy. 50 PDFs, 30 images, 20 audio files, 10 videos, 30 HTML pages. Per-modality recall and fidelity metrics.
+
+**Why deferred:** Needs licensed real datasets (Common Voice for audio etc.). Dataset curation is the bulk of the work.
+
+**Threshold:** PDF text fidelity > 95% (text-based) / > 80% (scanned), audio WER < 15%, entity_recall > 80% post-ingestion.
+
+### BrainBench Cat 1+2 at full scale
+**What:** Existing benchmark-search-quality.ts (29 pages, 20 queries) and benchmark-graph-quality.ts (80 pages, 5 queries) currently pass at small scale. v1.1 extends both to 2-3K rich-prose pages generated via Opus to surface scale-dependent failures (tied keyword clusters, hub-node fan-out, prose-noise extraction precision).
+
+**Why deferred from PR #188:** Needs ~$200-300 of Opus tokens for the rich corpus. The 80-page version already proves algorithmic correctness; scale-up proves it survives real-world load.
+
+**Threshold:** maintain v1 metrics at 30x scale.
+
+### ~~v0.10.4: inferLinkType prose precision fix~~
+**Shipped in PR #188.** BrainBench Cat 2 rich-corpus type accuracy went from
+70.7% → 88.5%. Fix: widened verb regexes (added "led the seed/Series A",
+"early investor", "invests in", "portfolio company", etc.), tightened
+ADVISES_RE to require explicit advisor rooting (generic "board member"
+matches investors too), widened context window 80→240 chars, added
+person-page role prior (partner-bio language → invested_in for outbound
+company refs only). Per-type after fix: invested_in 91.7% (was 0%),
+mentions 100%, attended 100%. works_at 58% and advises 41% are next
+iteration's residuals.
+
+### v0.10.5: inferLinkType residuals (works_at, advises)
+**What:** After the v0.10.4 fix, two link types still under-perform on rich
+prose. Drive these to >85% type accuracy in next iteration.
+
+**works_at: 58% type accuracy.** Engineer/employee pages use varied phrasings
+the regex doesn't catch ("spent some time at", "joined the team", narrative
+"is currently at" without a verb). Approach: extend WORKS_AT_RE; consider
+employee-role page prior similar to partner prior.
+
+**advises: 41% type accuracy.** Advisor pages often describe board roles
+without using the word "advisor" explicitly ("on Beta Health's board",
+"joined Beta as a board member"). The v0.10.4 fix tightened ADVISES_RE to
+require "advisor" rooting to avoid false positives from investors. Need
+a tighter signal that distinguishes "advisor on board" from "investor on
+board" — likely an advisor-role page prior plus verb-pattern combinations.
+
+**Threshold:** Cat 2 rich-prose type accuracy > 92% (currently 88.5%).
+
+### v0.10.4: gbrain alias resolution feature (driven by Cat 3)
+**What:** Add an alias table to gbrain so "Sarah Chen" / "S. Chen" / "@schen" / "sarah.chen@example.com" resolve to one canonical entity. Schema: `aliases (id, slug, alias_text)` with a unique index. Search blends alias matches into hybrid scoring.
+
+**Why:** BrainBench Cat 3 measured 31% recall on undocumented aliases — that's the v0.10.x baseline. With alias table, should jump to 80%+.
+
+**Depends on:** Cat 3 baseline (shipped in PR #188).
+
 ## P1
 
 ### Batch embedding queue across files
@@ -63,6 +145,50 @@
 ### ~~Constrained health_check DSL for third-party recipes~~
 **Completed:** v0.9.3 (2026-04-12). Typed DSL with 4 check types (`http`, `env_exists`, `command`, `any_of`). All 7 first-party recipes migrated. String health checks accepted with deprecation warning + metachar validation for non-embedded recipes.
 
+## P1 (new from v0.11.0 — Minions)
+
+### Per-queue rate limiting for Minions
+**What:** Token-bucket rate limiting per queue via a new `minion_rate_limits` table (queue, capacity, refill_rate, tokens, updated_at), with acquire/release in `claim()`.
+
+**Why:** The #1 daily OpenClaw pain is spawn storms hitting OpenAI/Anthropic rate limits. `max_children` caps fan-out per parent, but a queue with 50 ready jobs will still slam the API. Every Minions consumer currently reinvents token-bucket in user code.
+
+**Pros:** First-class rate limiting means no consumer has to roll their own. Composes with `max_children` (which is per-parent) to give two orthogonal throttles.
+
+**Cons:** Adds a write hotspot on the rate-limit row. Mitigate by keeping it a simple `UPDATE ... WHERE tokens > 0 RETURNING` that fails fast and puts the claim back in the pool.
+
+**Effort:** ~2 hours. Deferred from v0.11.0 to keep the parity PR at a reviewable size.
+
+**Depends on:** Minions (shipped in v0.11.0).
+
+### Minions repeat/cron scheduler
+**What:** BullMQ-style repeatable jobs. `queue.add(name, data, { repeat: { cron: '0 * * * *' } })`.
+
+**Why:** Idempotency keys (shipped in v0.11.0) are the foundation. Consumers currently use launchd/cron to fire `gbrain jobs submit`, but a native scheduler inside the worker would be cleaner and portable across deployments.
+
+**Pros:** One mental model for both immediate and scheduled work. Idempotency prevents double-fire.
+
+**Cons:** Every cron library has edge cases (DST, missed intervals on worker restart). Use a battle-tested parser.
+
+**Effort:** ~1 day.
+
+**Depends on:** Idempotency keys (shipped in v0.11.0).
+
+### Minions worker event emitter
+**What:** `worker.on('job:completed', handler)` / `worker.on('job:failed', ...)` instead of polling.
+
+**Why:** Consumers currently poll `getJob(id)` to watch state changes. An event API is the ergonomic BullMQ has and Minions doesn't.
+
+**Effort:** ~4 hours.
+
+### `waitForChildren(parent_id, n)` / `collectResults(parent_id)` helpers
+**What:** Convenience wrappers over `readChildCompletions` for common fan-in patterns.
+
+**Why:** The `child_done` inbox primitive shipped in v0.11.0. Now add the ergonomic API on top so orchestrators don't have to write the polling loop.
+
+**Effort:** ~2 hours.
+
+**Depends on:** `child_done` inbox primitive (shipped in v0.11.0).
+
 ## P2
 
 ### Security hardening follow-ups (deferred from security-wave-3)
@@ -124,6 +250,38 @@
 **Context:** Production deployments use a custom Hono server wrapping `gbrain serve`. This TODO would formalize that pattern into the CLI. ChatGPT OAuth 2.1 support depends on this.
 
 **Depends on:** v0.8.0 (Edge Function removal shipped).
+
+## P2 (knowledge graph follow-ups)
+
+### Auto-link skipped writes generate redundant SQL
+**What:** When `gbrain put` is called with identical content (status=skipped), runAutoLink still does a full getLinks + per-candidate addLink loop. On N identical writes of a 50-entity page that's 50N round trips.
+
+**Why:** Defensive reconciliation catches drift between page text and links table, but on truly idempotent writes it's wasted work.
+
+**Pros:** Lower DB load on cron-style re-syncs. Keeps put_page latency tight under bulk MCP usage.
+
+**Cons:** Need to track whether links could have drifted independent of content (e.g., a target page was deleted). Conservative approach: only skip auto-link reconciliation if status=skipped AND existing links match desired set (which still requires the getLinks call).
+
+**Context:** Caught in /ship adversarial review (2026-04-18). Acceptable for v0.10.3 because auto-link runs in a transaction with row locks, so amplification cost is bounded.
+
+**Effort estimate:** S (CC: ~10min)
+**Priority:** P2
+**Depends on:** Nothing.
+
+### Audit `extract --source db` against auto_link config flag
+**What:** `gbrain extract links --source db` writes to the same `links` table that `auto_link=false` is supposed to opt out of. The two are conceptually distinct (extract is intentional batch op, auto_link is implicit on write), but a user who turned off auto_link expecting "no automatic link writes" might be surprised.
+
+**Why:** Either the behavior should match (extract checks auto_link too) or the docs should explicitly state extract is a superset.
+
+**Pros:** Less surprise for users who treat auto_link as a master switch.
+
+**Cons:** Some users want extract to work even when auto_link is off (e.g. one-time backfill).
+
+**Context:** Caught in /ship adversarial review (2026-04-18). Documenting for now.
+
+**Effort estimate:** S (CC: ~10min for docs OR ~20min for code change).
+**Priority:** P2
+**Depends on:** Nothing.
 
 ## Completed
 

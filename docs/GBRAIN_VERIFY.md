@@ -183,6 +183,47 @@ system context. See `skills/setup/SKILL.md` Phase D.
 
 ---
 
+## 7. Knowledge Graph Wired
+
+The v0.12.0 graph layer needs to be populated for existing brains. New writes are
+auto-linked, but historical pages need a one-time backfill.
+
+**Command:**
+
+```bash
+gbrain stats | grep -E 'links|timeline'
+```
+
+**Expected:** Both `links` and `timeline_entries` are non-zero (assuming the brain
+has content with entity references and dated markdown).
+
+**If it's zero on a brain with imported content:** Run the backfill.
+
+```bash
+gbrain extract links --source db --dry-run | head -5    # preview
+gbrain extract links --source db                         # commit
+gbrain extract timeline --source db
+gbrain stats                                             # confirm > 0
+```
+
+**Bonus check** — graph traversal works:
+
+```bash
+# Pick any well-connected slug from your brain
+gbrain graph-query people/<some-person-slug> --depth 2
+```
+
+**Expected:** Indented tree of typed edges (`--attended-->`, `--works_at-->`, etc.).
+If the slug has no inbound or outbound links, try a different one or run extract
+again.
+
+**If extract finds nothing:** Your pages may not use entity-reference syntax. The
+extractor matches `[Name](people/slug)`, `[Name](../people/slug.md)`, and bare
+`people/slug` references. If your brain uses a different format, the auto-link
+heuristics won't find them — file an issue with a sample page.
+
+---
+
 ## Quick Verification (all checks in one pass)
 
 ```bash
@@ -203,7 +244,10 @@ gbrain embed --stale
 
 # 6. Auto-update
 gbrain check-update --json
+
+# 7. Knowledge graph populated (links + timeline > 0)
+gbrain stats | grep -E 'links|timeline'
 ```
 
-If all six return successfully, the installation is healthy. For the full
+If all seven return successfully, the installation is healthy. For the full
 end-to-end sync test (4c), push a real change and verify it appears in search.

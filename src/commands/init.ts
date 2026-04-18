@@ -6,13 +6,14 @@ import { homedir } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { saveConfig, type GBrainConfig } from '../core/config.ts';
+import { saveConfig, loadConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
   const isNonInteractive = args.includes('--non-interactive');
+  const isMigrateOnly = args.includes('--migrate-only');
   const jsonOutput = args.includes('--json');
   const urlIndex = args.indexOf('--url');
   const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : null;
@@ -20,6 +21,15 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+
+  // Schema-only path: apply initSchema against the already-configured engine
+  // without ever calling saveConfig. Used by apply-migrations, the stopgap
+  // script, and the postinstall hook. Bare `gbrain init` defaults to PGLite
+  // and overwrites any existing Postgres config — we must never take that
+  // branch from a migration orchestrator.
+  if (isMigrateOnly) {
+    return initMigrateOnly({ jsonOutput });
+  }
 
   // Explicit PGLite mode
   if (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)) {
@@ -59,6 +69,39 @@ export async function runInit(args: string[]) {
   return initPostgres({ databaseUrl, jsonOutput, apiKey });
 }
 
+/**
+ * Apply the schema against the already-configured engine. No saveConfig.
+ * No PGLite fallback when no config exists. Used by migration orchestrators
+ * to bump an existing brain's schema to the latest version without
+ * clobbering the user's chosen engine.
+ */
+async function initMigrateOnly(opts: { jsonOutput: boolean }) {
+  const config = loadConfig();
+  if (!config) {
+    const msg = 'No brain configured. Run `gbrain init` (interactive) or `gbrain init --pglite` / `gbrain init --supabase` first.';
+    if (opts.jsonOutput) {
+      console.log(JSON.stringify({ status: 'error', reason: 'no_config', message: msg }));
+    } else {
+      console.error(msg);
+    }
+    process.exit(1);
+  }
+
+  const engine = await createEngine(toEngineConfig(config));
+  try {
+    await engine.connect(toEngineConfig(config));
+    await engine.initSchema();
+  } finally {
+    try { await engine.disconnect(); } catch { /* best-effort */ }
+  }
+
+  if (opts.jsonOutput) {
+    console.log(JSON.stringify({ status: 'success', engine: config.engine, mode: 'migrate-only' }));
+  } else {
+    console.log(`Schema up to date (engine: ${config.engine}).`);
+  }
+}
+
 async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
   const dbPath = opts.customPath || join(homedir(), '.gbrain', 'brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
@@ -82,7 +125,15 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   } else {
     console.log(`\nBrain ready at ${dbPath}`);
     console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
-    console.log('Next: gbrain import <dir>');
+    if (stats.page_count > 0) {
+      console.log('');
+      console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
+      console.log('  gbrain extract links --source db        (typed link backfill)');
+      console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
+      console.log('  gbrain stats                            (verify links > 0)');
+    } else {
+      console.log('Next: gbrain import <dir>');
+    }
     console.log('');
     console.log('When you outgrow local: gbrain migrate --to supabase');
     reportModStatus();
@@ -154,7 +205,15 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
     console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count }));
   } else {
     console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
-    console.log('Next: gbrain import <dir>');
+    if (stats.page_count > 0) {
+      console.log('');
+      console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
+      console.log('  gbrain extract links --source db        (typed link backfill)');
+      console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
+      console.log('  gbrain stats                            (verify links > 0)');
+    } else {
+      console.log('Next: gbrain import <dir>');
+    }
     reportModStatus();
   }
 }

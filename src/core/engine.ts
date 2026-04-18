@@ -2,7 +2,7 @@ import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
-  Link, GraphNode,
+  Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -34,6 +34,12 @@ export interface BrainEngine {
   deletePage(slug: string): Promise<void>;
   listPages(filters?: PageFilters): Promise<Page[]>;
   resolveSlugs(partial: string): Promise<string[]>;
+  /**
+   * Returns the slug of every page in the brain. Used by batch commands as a
+   * mutation-immune iteration source (alternative to listPages OFFSET pagination,
+   * which is unstable when ordering by updated_at and writes are happening).
+   */
+  getAllSlugs(): Promise<Set<string>>;
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
@@ -47,10 +53,33 @@ export interface BrainEngine {
 
   // Links
   addLink(from: string, to: string, context?: string, linkType?: string): Promise<void>;
-  removeLink(from: string, to: string): Promise<void>;
+  /**
+   * Remove links from `from` to `to`. If linkType is provided, only that specific
+   * (from, to, type) row is removed. If omitted, ALL link types between the pair
+   * are removed (matches pre-multi-type-link behavior).
+   */
+  removeLink(from: string, to: string, linkType?: string): Promise<void>;
   getLinks(slug: string): Promise<Link[]>;
   getBacklinks(slug: string): Promise<Link[]>;
   traverseGraph(slug: string, depth?: number): Promise<GraphNode[]>;
+  /**
+   * Edge-based graph traversal with optional type and direction filters.
+   * Returns a list of edges (GraphPath[]) instead of nodes. Supports:
+   * - linkType: per-edge filter, only follows matching edges (per-edge semantics)
+   * - direction: 'in' (follow to->from), 'out' (follow from->to), 'both'
+   * - depth: max depth from root (default 5)
+   * Uses cycle prevention (visited array in recursive CTE).
+   */
+  traversePaths(
+    slug: string,
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+  ): Promise<GraphPath[]>;
+  /**
+   * For a list of slugs, return how many inbound links each has.
+   * Used by hybrid search backlink boost. Single SQL query, not N+1.
+   * Slugs with zero inbound links are present in the map with value 0.
+   */
+  getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
 
   // Tags
   addTag(slug: string, tag: string): Promise<void>;
@@ -58,7 +87,17 @@ export interface BrainEngine {
   getTags(slug: string): Promise<string[]>;
 
   // Timeline
-  addTimelineEntry(slug: string, entry: TimelineInput): Promise<void>;
+  /**
+   * Insert a timeline entry. By default verifies the page exists and throws if not.
+   * Pass opts.skipExistenceCheck=true for batch operations where the slug is already
+   * known to exist (e.g., from a getAllSlugs() snapshot). Duplicates are silently
+   * deduplicated by the (page_id, date, summary) UNIQUE index (ON CONFLICT DO NOTHING).
+   */
+  addTimelineEntry(
+    slug: string,
+    entry: TimelineInput,
+    opts?: { skipExistenceCheck?: boolean },
+  ): Promise<void>;
   getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]>;
 
   // Raw data
@@ -89,4 +128,7 @@ export interface BrainEngine {
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;
   getChunksWithEmbeddings(slug: string): Promise<Chunk[]>;
+
+  // Raw SQL (for Minions job queue and other internal modules)
+  executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 }
