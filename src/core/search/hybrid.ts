@@ -15,6 +15,7 @@ import type { SearchResult, SearchOpts } from '../types.ts';
 import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 import { autoDetectDetail } from './intent.ts';
+import { loadConfig } from '../config.ts';
 
 const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -53,8 +54,11 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
-  // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
+  // Skip vector search entirely if no OpenAI key is available anywhere.
+  // Check both env (legacy) and config file so gbrain works as a
+  // self-contained subprocess for callers without env-var propagation.
+  const hasOpenAIKey = !!(process.env.OPENAI_API_KEY || loadConfig()?.openai_api_key);
+  if (!hasOpenAIKey) {
     return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
