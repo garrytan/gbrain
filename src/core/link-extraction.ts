@@ -50,16 +50,38 @@ export const DEFAULT_ENTITY_DIRS: readonly string[] = Object.freeze([
 ]);
 
 /**
- * Match `[Name](path)` markdown links pointing to `people/` or `companies/`
- * (and other entity directories). Accepts both filesystem-relative format
- * (`[Name](../people/slug.md)`) AND engine-slug format (`[Name](people/slug)`).
- *
- * Captures: name, dir (people/companies/...), slug.
- *
- * The regex permits an optional `../` prefix (any number) and an optional
- * `.md` suffix so the same function works for both filesystem and DB content.
+ * Escape regex metacharacters so a value can be embedded inside a larger
+ * regex without changing its structure. Defense-in-depth: `getEntityDirs`
+ * already validates entries against `/^[a-z0-9][a-z0-9-]*$/`, so no metachar
+ * should ever reach here — this is belt-and-braces for future callers.
  */
-const ENTITY_REF_RE = /\[([^\]]+)\]\((?:\.\.\/)*((?:people|companies|meetings|concepts|deal|civic|project|source|media|yc)\/([^)\s]+?))(?:\.md)?\)/g;
+function escapeRegexChars(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build the `[Name](dir/slug)` entity-ref regex from a dir list. Accepts both
+ * filesystem-relative format (`[Name](../people/slug.md)`) AND engine-slug
+ * format (`[Name](people/slug)`).
+ *
+ * Captures: name, full `dir/slug` path, slug segment alone.
+ *
+ * Internal — callers use `extractEntityRefs(content, dirs?)` which threads the
+ * dir list through. Keeping this private limits API surface.
+ */
+function buildEntityRefRegex(dirs: readonly string[]): RegExp {
+  const alternation = dirs.map(escapeRegexChars).join('|');
+  return new RegExp(
+    `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*((?:${alternation})\\/([^)\\s]+?))(?:\\.md)?\\)`,
+    'g',
+  );
+}
+
+/**
+ * Default entity-ref regex built once from DEFAULT_ENTITY_DIRS. Callers that
+ * don't pass a custom dir list get this fast-path (no per-call regex compile).
+ */
+const ENTITY_REF_RE = buildEntityRefRegex(DEFAULT_ENTITY_DIRS);
 
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
