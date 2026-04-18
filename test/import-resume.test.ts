@@ -61,6 +61,30 @@ describe('import resume checkpoint', () => {
     expect(plan.resumed).toBe(true);
   });
 
+  test('resume continues from processedIndex even when completedFiles is higher', () => {
+    const checkpoint = {
+      dir: '/data/brain',
+      totalFiles: 100,
+      processedIndex: 40,
+      completedFiles: 95,
+      timestamp: new Date().toISOString(),
+    };
+
+    mkdirSync(join(homedir(), '.mbrain'), { recursive: true });
+    writeFileSync(CHECKPOINT_PATH, JSON.stringify(checkpoint));
+
+    const plan = resolveImportPlan({
+      rootDir: '/data/brain',
+      allFiles: Array.from({ length: 100 }, (_, index) => `/data/brain/${index}.md`),
+      fresh: false,
+      checkpoint: readImportCheckpoint(CHECKPOINT_PATH),
+    });
+
+    expect(plan.resumeIndex).toBe(40);
+    expect(plan.files[0]).toBe('/data/brain/40.md');
+    expect(plan.resumed).toBe(true);
+  });
+
   test('checkpoint with different dir does NOT resume', () => {
     const checkpoint = {
       dir: '/data/other-brain',

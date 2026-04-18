@@ -13,7 +13,12 @@ import { dirname, join, relative } from 'path';
 import type { BrainEngine } from '../engine.ts';
 import { loadConfig } from '../config.ts';
 import { createConnectedEngine, supportsParallelWorkers } from '../engine-factory.ts';
-import { importFile } from '../import-file.ts';
+import { getEngineCapabilities } from '../engine-capabilities.ts';
+import { buildPageChunks, importFile } from '../import-file.ts';
+import { parseMarkdown, type ParsedMarkdown } from '../markdown.ts';
+import { slugifyPath } from '../sync.ts';
+import type { ChunkInput } from '../types.ts';
+import { importContentHash, validateSlug } from '../utils.ts';
 
 export interface ImportRunOptions {
   rootDir: string;
@@ -55,19 +60,153 @@ export interface ImportPlan {
   resumed: boolean;
 }
 
+type PreparedImport =
+  | {
+      status: 'ready';
+      filePath: string;
+      relativePath: string;
+      slug: string;
+      parsed: ParsedMarkdown;
+      hash: string;
+      chunks: ChunkInput[];
+    }
+  | {
+      status: 'skipped';
+      filePath: string;
+      relativePath: string;
+      slug: string;
+      error?: string;
+      prepareFailed?: boolean;
+    };
+
 interface ImportServiceDeps {
   createConnectedEngine: typeof createConnectedEngine;
   importFile: typeof importFile;
+  prepareImportFile: typeof prepareImportFile;
+  commitPreparedImport: typeof commitPreparedImport;
   loadConfig: typeof loadConfig;
+  getEngineCapabilities: typeof getEngineCapabilities;
   supportsParallelWorkers: typeof supportsParallelWorkers;
 }
 
 const DEFAULT_DEPS: ImportServiceDeps = {
   createConnectedEngine,
   importFile,
+  prepareImportFile,
+  commitPreparedImport,
   loadConfig,
+  getEngineCapabilities,
   supportsParallelWorkers,
 };
+
+const MAX_FILE_SIZE = 5_000_000;
+
+async function prepareImportFile(
+  filePath: string,
+  relativePath: string,
+): Promise<PreparedImport> {
+  const lstat = lstatSync(filePath);
+  if (lstat.isSymbolicLink()) {
+    return { status: 'skipped', filePath, relativePath, slug: relativePath, error: `Skipping symlink: ${filePath}` };
+  }
+
+  const stat = lstatSync(filePath);
+  if (stat.size > MAX_FILE_SIZE) {
+    return {
+      status: 'skipped',
+      filePath,
+      relativePath,
+      slug: relativePath,
+      error: `File too large (${stat.size} bytes)`,
+    };
+  }
+
+  const content = readFileSync(filePath, 'utf-8');
+  const parsed = parseMarkdown(content, relativePath);
+  const expectedSlug = slugifyPath(relativePath);
+  let canonicalParsedSlug: string;
+  try {
+    canonicalParsedSlug = slugifyPath(validateSlug(parsed.slug));
+  } catch {
+    canonicalParsedSlug = parsed.slug;
+  }
+
+  if (canonicalParsedSlug !== expectedSlug) {
+    return {
+      status: 'skipped',
+      filePath,
+      relativePath,
+      slug: expectedSlug,
+      error:
+        `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expectedSlug}" ` +
+        `(from ${relativePath}). Remove the frontmatter "slug:" line or move the file.`,
+    };
+  }
+
+  return {
+    status: 'ready',
+    filePath,
+    relativePath,
+    slug: expectedSlug,
+    parsed,
+    hash: importContentHash(parsed),
+    chunks: buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter),
+  };
+}
+
+async function commitPreparedImport(
+  engine: BrainEngine,
+  prepared: PreparedImport,
+): Promise<Awaited<ReturnType<typeof importFile>>> {
+  if (prepared.status !== 'ready') {
+    return {
+      slug: prepared.slug,
+      status: 'skipped',
+      chunks: 0,
+      error: prepared.error,
+    };
+  }
+
+  const existing = await engine.getPage(prepared.slug);
+  if (existing?.content_hash === prepared.hash) {
+    return { slug: prepared.slug, status: 'skipped', chunks: 0 };
+  }
+
+  await engine.transaction(async (tx) => {
+    if (existing) {
+      await tx.createVersion(prepared.slug);
+    }
+
+    await tx.putPage(prepared.slug, {
+      type: prepared.parsed.type,
+      title: prepared.parsed.title,
+      compiled_truth: prepared.parsed.compiled_truth,
+      timeline: prepared.parsed.timeline || '',
+      frontmatter: prepared.parsed.frontmatter,
+      content_hash: prepared.hash,
+    });
+
+    const existingTags = await tx.getTags(prepared.slug);
+    const newTags = new Set(prepared.parsed.tags);
+    for (const old of existingTags) {
+      if (!newTags.has(old)) {
+        await tx.removeTag(prepared.slug, old);
+      }
+    }
+    for (const tag of prepared.parsed.tags) {
+      await tx.addTag(prepared.slug, tag);
+    }
+
+    await tx.deleteChunks(prepared.slug);
+    await tx.upsertChunks(prepared.slug, prepared.chunks);
+  });
+
+  return {
+    slug: prepared.slug,
+    status: 'imported',
+    chunks: prepared.chunks.length,
+  };
+}
 
 export function defaultImportWorkers(): number {
   const cpuCount = cpus().length;
@@ -184,9 +323,6 @@ export async function runImportService(
   }
 
   const actualWorkers = Math.max(1, options.workers ?? defaultImportWorkers());
-  if (actualWorkers > 1) {
-    logger.log(`Using ${actualWorkers} parallel workers`);
-  }
 
   let imported = 0;
   let skipped = 0;
@@ -225,31 +361,16 @@ export async function runImportService(
     }
   };
 
-  const processFile = async (activeEngine: BrainEngine, filePath: string) => {
-    const relativePath = relative(options.rootDir, filePath);
-    try {
-      const result = await deps.importFile(activeEngine, filePath, relativePath, { noEmbed: options.noEmbed });
-      if (result.status === 'imported') {
-        imported++;
-        chunksCreated += result.chunks;
-        importedSlugs.push(result.slug);
-      } else {
-        skipped++;
-        if (result.error && result.error !== 'unchanged') {
-          logger.error(`  Skipped ${relativePath}: ${result.error}`);
-        }
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      const errorKey = message.replace(/"[^"]*"/g, '""');
-      errorCounts[errorKey] = (errorCounts[errorKey] || 0) + 1;
-      if (errorCounts[errorKey] <= 5) {
-        logger.error(`  Warning: skipped ${relativePath}: ${message}`);
-      } else if (errorCounts[errorKey] === 6) {
-        logger.error(`  (suppressing further "${errorKey.slice(0, 60)}..." errors)`);
-      }
-      errors++;
+  const finalizeImportResult = (relativePath: string, result: Awaited<ReturnType<typeof importFile>>) => {
+    if (result.status === 'imported') {
+      imported++;
+      chunksCreated += result.chunks;
+      importedSlugs.push(result.slug);
+    } else {
       skipped++;
+      if (result.error && result.error !== 'unchanged') {
+        logger.error(`  Skipped ${relativePath}: ${result.error}`);
+      }
     }
 
     processed++;
@@ -261,17 +382,47 @@ export async function runImportService(
     }
   };
 
+  const finalizeImportError = (relativePath: string, message: string) => {
+    const errorKey = message.replace(/"[^"]*"/g, '""');
+    errorCounts[errorKey] = (errorCounts[errorKey] || 0) + 1;
+    if (errorCounts[errorKey] <= 5) {
+      logger.error(`  Warning: skipped ${relativePath}: ${message}`);
+    } else if (errorCounts[errorKey] === 6) {
+      logger.error(`  (suppressing further "${errorKey.slice(0, 60)}..." errors)`);
+    }
+    errors++;
+    skipped++;
+
+    processed++;
+    if (processed % 100 === 0 || processed === plan.files.length) {
+      logProgress();
+      if (processed % 100 === 0) {
+        writeCheckpoint();
+      }
+    }
+  };
+
+  const processFile = async (activeEngine: BrainEngine, filePath: string) => {
+    const relativePath = relative(options.rootDir, filePath);
+    try {
+      const result = await deps.importFile(activeEngine, filePath, relativePath, { noEmbed: options.noEmbed });
+      finalizeImportResult(relativePath, result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      finalizeImportError(relativePath, message);
+    }
+  };
+
   if (actualWorkers > 1) {
     const config = deps.loadConfig();
     if (!config) {
       throw new Error('No brain configured. Run: mbrain init or set MBRAIN_DATABASE_URL / DATABASE_URL.');
     }
 
-    if (!deps.supportsParallelWorkers(config)) {
-      for (const filePath of plan.files) {
-        await processFile(engine, filePath);
-      }
-    } else {
+    const capabilities = deps.getEngineCapabilities(config);
+
+    if (capabilities.parallelWorkers) {
+      logger.log(`Using ${actualWorkers} parallel workers`);
       const workerEngines = await Promise.all(
         Array.from({ length: actualWorkers }, async () => deps.createConnectedEngine(config, { poolSize: 2 })),
       );
@@ -286,6 +437,67 @@ export async function runImportService(
       }));
 
       await Promise.all(workerEngines.map(async (workerEngine) => workerEngine.disconnect()));
+    } else if (capabilities.stagedImportConcurrency) {
+      logger.log(`Using ${actualWorkers} staged import workers`);
+      for (let batchStart = 0; batchStart < plan.files.length; batchStart += actualWorkers) {
+        const batchFiles = plan.files.slice(batchStart, batchStart + actualWorkers);
+        const preparedResults = new Array<PreparedImport>(batchFiles.length);
+        let queueIndex = 0;
+        await Promise.all(
+          Array.from({ length: Math.min(actualWorkers, batchFiles.length) }, async () => {
+            while (true) {
+              const index = queueIndex++;
+              if (index >= batchFiles.length) {
+                break;
+              }
+              const filePath = batchFiles[index];
+              const relativePath = relative(options.rootDir, filePath);
+              try {
+                preparedResults[index] = await deps.prepareImportFile(filePath, relativePath);
+              } catch (error: unknown) {
+                const message = error instanceof Error ? error.message : String(error);
+                preparedResults[index] = {
+                  status: 'skipped',
+                  filePath,
+                  relativePath,
+                  slug: relativePath,
+                  error: message,
+                  prepareFailed: true,
+                };
+              }
+            }
+          }),
+        );
+
+        for (let index = 0; index < preparedResults.length; index++) {
+          const prepared = preparedResults[index];
+          const relativePath = relative(options.rootDir, batchFiles[index]);
+          if (prepared.status !== 'ready') {
+            if (prepared.prepareFailed) {
+              finalizeImportError(relativePath, prepared.error ?? 'prepare failed');
+            } else {
+              finalizeImportResult(relativePath, {
+                slug: prepared.slug,
+                status: 'skipped',
+                chunks: 0,
+                error: prepared.error,
+              });
+            }
+            continue;
+          }
+          try {
+            const result = await deps.commitPreparedImport(engine, prepared);
+            finalizeImportResult(relativePath, result);
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            finalizeImportError(relativePath, message);
+          }
+        }
+      }
+    } else {
+      for (const filePath of plan.files) {
+        await processFile(engine, filePath);
+      }
     }
   } else {
     for (const filePath of plan.files) {

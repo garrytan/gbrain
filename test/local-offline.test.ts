@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { runEmbed } from '../src/commands/embed.ts';
 import { embedChunks, getEmbeddingProvider, resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
+import { getEngineCapabilities } from '../src/core/engine-capabilities.ts';
 import { importFile } from '../src/core/import-file.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
@@ -142,6 +143,13 @@ afterEach(async () => {
 });
 
 describe('local/offline profile semantics', () => {
+  test('sqlite capability policy allows staged import concurrency without multi-writer fanout', () => {
+    expect(getEngineCapabilities({ engine: 'sqlite' } as any)).toMatchObject({
+      parallelWorkers: false,
+      stagedImportConcurrency: true,
+    });
+  });
+
   test('offline profile marks cloud-only capabilities unsupported in local mode', async () => {
     const { resolveOfflineProfile } = await import('../src/core/offline-profile.ts');
 

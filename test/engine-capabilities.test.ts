@@ -6,6 +6,7 @@ describe('engine capabilities', () => {
     expect(getEngineCapabilities({ engine: 'sqlite' } as any)).toEqual({
       rawPostgresAccess: false,
       parallelWorkers: false,
+      stagedImportConcurrency: true,
       localVectorPrefilter: 'page-centroid',
     });
   });
@@ -14,6 +15,7 @@ describe('engine capabilities', () => {
     expect(getEngineCapabilities({ engine: 'pglite' } as any)).toEqual({
       rawPostgresAccess: false,
       parallelWorkers: false,
+      stagedImportConcurrency: true,
       localVectorPrefilter: 'page-centroid',
     });
   });
@@ -22,6 +24,7 @@ describe('engine capabilities', () => {
     expect(getEngineCapabilities({ engine: 'postgres' } as any)).toEqual({
       rawPostgresAccess: true,
       parallelWorkers: true,
+      stagedImportConcurrency: true,
       localVectorPrefilter: 'none',
     });
   });

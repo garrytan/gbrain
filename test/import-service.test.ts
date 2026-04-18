@@ -23,6 +23,10 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe('import service', () => {
   test('collectImportSummary tracks imported, skipped, errors, and unchanged files', () => {
     const summary = collectImportSummary({
@@ -97,6 +101,142 @@ describe('import service', () => {
     expect(checkpoint.dir).toBe(rootDir);
     expect(checkpoint.totalFiles).toBe(100);
     expect(checkpoint.processedIndex).toBe(100);
+  });
+
+  test('runImportService uses staged local concurrency for prepare work but commits in file order', async () => {
+    const rootDir = makeTempDir('mbrain-import-staged-');
+    for (const name of ['a.md', 'b.md', 'c.md']) {
+      writeFileSync(join(rootDir, name), `# ${name}\n`);
+    }
+
+    let prepareActive = 0;
+    let maxPrepareActive = 0;
+    let commitActive = 0;
+    let maxCommitActive = 0;
+    const commitOrder: string[] = [];
+
+    const summary = await runImportService(
+      {
+        setConfig: async () => undefined,
+      } as any,
+      { rootDir, workers: 3 },
+      {
+        createConnectedEngine: async () => {
+          throw new Error('multi-writer engines should not be created for staged local imports');
+        },
+        importFile: async () => {
+          throw new Error('legacy per-file import path should not run for staged local imports');
+        },
+        loadConfig: () => ({
+          engine: 'sqlite',
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+          database_path: join(rootDir, 'brain.db'),
+        }),
+        supportsParallelWorkers: () => false,
+        getEngineCapabilities: () => ({
+          rawPostgresAccess: false,
+          parallelWorkers: false,
+          stagedImportConcurrency: true,
+          localVectorPrefilter: 'page-centroid',
+        }),
+        prepareImportFile: async (filePath: string, relativePath: string) => {
+          prepareActive++;
+          maxPrepareActive = Math.max(maxPrepareActive, prepareActive);
+          const delay = relativePath === 'a.md' ? 30 : relativePath === 'b.md' ? 10 : 0;
+          await wait(delay);
+          prepareActive--;
+          return {
+            status: 'ready' as const,
+            filePath,
+            relativePath,
+            slug: relativePath.replace(/\.md$/, ''),
+            chunks: [{ chunk_index: 0, chunk_source: 'compiled_truth' as const, chunk_text: relativePath }],
+          };
+        },
+        commitPreparedImport: async (_engine: unknown, prepared: { relativePath: string; slug: string; chunks: unknown[] }) => {
+          commitActive++;
+          maxCommitActive = Math.max(maxCommitActive, commitActive);
+          commitOrder.push(prepared.relativePath);
+          await wait(1);
+          commitActive--;
+          return {
+            slug: prepared.slug,
+            status: 'imported' as const,
+            chunks: prepared.chunks.length,
+          };
+        },
+      } as any,
+    );
+
+    expect(summary.imported).toBe(3);
+    expect(maxPrepareActive).toBeGreaterThan(1);
+    expect(maxCommitActive).toBe(1);
+    expect(commitOrder).toEqual(['a.md', 'b.md', 'c.md']);
+  });
+
+  test('runImportService isolates staged prepare failures and continues committing later files in order', async () => {
+    const rootDir = makeTempDir('mbrain-import-staged-prepare-error-');
+    for (const name of ['a.md', 'b.md', 'c.md', 'd.md']) {
+      writeFileSync(join(rootDir, name), `# ${name}\n`);
+    }
+
+    const commitOrder: string[] = [];
+
+    const summary = await runImportService(
+      {
+        setConfig: async () => undefined,
+      } as any,
+      { rootDir, workers: 3 },
+      {
+        createConnectedEngine: async () => {
+          throw new Error('multi-writer engines should not be created for staged local imports');
+        },
+        importFile: async () => {
+          throw new Error('legacy per-file import path should not run for staged local imports');
+        },
+        loadConfig: () => ({
+          engine: 'sqlite',
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+          database_path: join(rootDir, 'brain.db'),
+        }),
+        supportsParallelWorkers: () => false,
+        getEngineCapabilities: () => ({
+          rawPostgresAccess: false,
+          parallelWorkers: false,
+          stagedImportConcurrency: true,
+          localVectorPrefilter: 'page-centroid',
+        }),
+        prepareImportFile: async (filePath: string, relativePath: string) => {
+          if (relativePath === 'b.md') {
+            throw new Error('prepare exploded');
+          }
+          return {
+            status: 'ready' as const,
+            filePath,
+            relativePath,
+            slug: relativePath.replace(/\.md$/, ''),
+            chunks: [{ chunk_index: 0, chunk_source: 'compiled_truth' as const, chunk_text: relativePath }],
+          };
+        },
+        commitPreparedImport: async (_engine: unknown, prepared: { relativePath: string; slug: string; chunks: unknown[] }) => {
+          commitOrder.push(prepared.relativePath);
+          return {
+            slug: prepared.slug,
+            status: 'imported' as const,
+            chunks: prepared.chunks.length,
+          };
+        },
+      } as any,
+    );
+
+    expect(summary.imported).toBe(3);
+    expect(summary.errors).toBe(1);
+    expect(summary.skipped).toBe(1);
+    expect(commitOrder).toEqual(['a.md', 'c.md', 'd.md']);
   });
 
   test('runImport prints the final summary before ingest logging errors surface', async () => {
