@@ -304,7 +304,9 @@ export class PostgresEngine implements BrainEngine {
 
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
-        ? '[' + Array.from(chunk.embedding).join(',') + ']'
+        ? (typeof chunk.embedding === 'string'
+            ? chunk.embedding
+            : '[' + Array.from(chunk.embedding).join(',') + ']')
         : null;
 
       if (embeddingStr) {

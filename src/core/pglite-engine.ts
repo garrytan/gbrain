@@ -861,7 +861,18 @@ export class PGLiteEngine implements BrainEngine {
        ORDER BY cc.chunk_index`,
       [slug]
     );
-    return (rows as Record<string, unknown>[]).map(r => rowToChunk(r, true));
+    return (rows as Record<string, unknown>[]).map(r => {
+      const chunk = rowToChunk(r, true);
+      // PGLite returns vector columns as JSON-stringified arrays. Parse to Float32Array
+      // so downstream code (e.g. postgres-engine.upsertChunks during migrate) can iterate.
+      // Mirrors the same defensive parse already in getEmbeddingsByChunkIds.
+      if (typeof chunk.embedding === 'string') {
+        try {
+          chunk.embedding = new Float32Array(JSON.parse(chunk.embedding));
+        } catch { /* leave as-is if unparseable */ }
+      }
+      return chunk;
+    });
   }
 
   async executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
