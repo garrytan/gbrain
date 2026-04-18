@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, test, expect, mock } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { buildDoctorReport } from '../src/core/services/doctor-service.ts';
 
 
 const originalEnv = { ...process.env };
@@ -24,6 +25,63 @@ function writeConfig(config: Record<string, unknown>) {
 }
 
 describe('doctor command', () => {
+  test('buildDoctorReport marks sqlite local profile honestly', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 10,
+        chunk_count: 20,
+        embedded_count: 5,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'sqlite',
+        database_path: '/tmp/brain.db',
+        offline: true,
+        embedding_provider: 'local',
+        query_rewrite_provider: 'heuristic',
+      },
+      profile: {
+        status: 'local_offline',
+        offline: true,
+        engine: { type: 'sqlite' },
+        embedding: {
+          mode: 'local',
+          available: true,
+          implementation: 'local-http',
+          model: 'nomic-embed-text',
+        },
+        rewrite: {
+          mode: 'heuristic',
+          available: true,
+          implementation: 'heuristic',
+          model: null,
+        },
+        capabilities: {
+          check_update: { supported: false, reason: 'disabled locally' },
+          files: { supported: false, reason: 'no raw postgres access' },
+        },
+      },
+      rawPostgresChecksSupported: false,
+      schemaVersion: '4',
+      latestVersion: 4,
+      health: {
+        page_count: 10,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+    });
+
+    expect(report.status).toBe('healthy');
+    expect(report.checks.some((check) => check.name === 'offline_profile')).toBe(true);
+  });
+
   test('doctor module exports runDoctor', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
     expect(typeof runDoctor).toBe('function');

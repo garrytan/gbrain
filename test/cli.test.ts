@@ -45,6 +45,11 @@ describe('CLI source shape', () => {
     expect(cliSource).toContain('function formatResult');
   });
 
+  test('CLI uses shared command loader registries for CLI-only commands', () => {
+    expect(cliSource).toContain('CLI_NO_ENGINE_COMMANDS');
+    expect(cliSource).toContain('CLI_ENGINE_COMMANDS');
+  });
+
   test('init guidance keeps pgvector troubleshooting backend-neutral', () => {
     expect(initSource).toContain('Run this on your Postgres database');
     expect(initSource).not.toContain('Run in Supabase SQL Editor');

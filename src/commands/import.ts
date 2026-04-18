@@ -1,28 +1,15 @@
-import { readdirSync, lstatSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
-import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
-import { cpus, totalmem, homedir } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
-import { importFile } from '../core/import-file.ts';
-import { loadConfig } from '../core/config.ts';
-import { createConnectedEngine, supportsParallelWorkers } from '../core/engine-factory.ts';
-
-function defaultWorkers(): number {
-  const cpuCount = cpus().length;
-  const memGB = totalmem() / (1024 ** 3);
-  const byPool = 8;
-  const byCpu = Math.max(2, cpuCount);
-  const byMem = Math.floor(memGB * 2);
-  return Math.min(byPool, byCpu, byMem);
-}
+import {
+  collectMarkdownFiles,
+  defaultImportWorkers,
+  runImportService,
+  type ImportRunSummary,
+} from '../core/services/import-service.ts';
 
 export async function runImport(engine: BrainEngine, args: string[]) {
-  const noEmbed = args.includes('--no-embed');
-  const fresh = args.includes('--fresh');
-  const jsonOutput = args.includes('--json');
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
-  const workerCount = workersArg ? parseInt(workersArg, 10) : defaultWorkers();
+  const workerCount = workersArg ? parseInt(workersArg, 10) : defaultImportWorkers();
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
   const dir = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
@@ -32,219 +19,33 @@ export async function runImport(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
-  const allFiles = collectMarkdownFiles(dir);
-  console.log(`Found ${allFiles.length} markdown files`);
+  const summary = await runImportService(engine, {
+    rootDir: dir,
+    noEmbed: args.includes('--no-embed'),
+    fresh: args.includes('--fresh'),
+    workers: workerCount,
+  });
+  printImportSummary(summary, args.includes('--json'));
+}
 
-  const checkpointPath = join(homedir(), '.mbrain', 'import-checkpoint.json');
-  let files = allFiles;
-  let resumeIndex = 0;
-
-  if (!fresh && existsSync(checkpointPath)) {
-    try {
-      const cp = JSON.parse(readFileSync(checkpointPath, 'utf-8'));
-      if (cp.dir === dir && cp.totalFiles === allFiles.length) {
-        resumeIndex = cp.processedIndex;
-        files = allFiles.slice(resumeIndex);
-        console.log(`Resuming from checkpoint: skipping ${resumeIndex} already-processed files`);
-      }
-    } catch {
-      // Invalid checkpoint, start fresh.
-    }
-  }
-
-  const actualWorkers = Math.max(1, workerCount);
-  if (actualWorkers > 1) {
-    console.log(`Using ${actualWorkers} parallel workers`);
-  }
-
-  let imported = 0;
-  let skipped = 0;
-  let errors = 0;
-  let processed = 0;
-  let chunksCreated = 0;
-  const importedSlugs: string[] = [];
-  const errorCounts: Record<string, number> = {};
-  const startTime = Date.now();
-
-  function logProgress() {
-    const elapsed = (Date.now() - startTime) / 1000;
-    const rate = elapsed > 0 ? Math.round(processed / elapsed) : 0;
-    const remaining = rate > 0 ? Math.round((files.length - processed) / rate) : 0;
-    const pct = Math.round((processed / files.length) * 100);
-    console.log(`[mbrain import] ${processed}/${files.length} (${pct}%) | ${rate} files/sec | imported: ${imported} | skipped: ${skipped} | errors: ${errors} | ETA: ${remaining}s`);
-  }
-
-  async function processFile(eng: BrainEngine, filePath: string) {
-    const relativePath = relative(dir, filePath);
-    try {
-      const result = await importFile(eng, filePath, relativePath, { noEmbed });
-      if (result.status === 'imported') {
-        imported++;
-        chunksCreated += result.chunks;
-        importedSlugs.push(result.slug);
-      } else {
-        skipped++;
-        if (result.error && result.error !== 'unchanged') {
-          console.error(`  Skipped ${relativePath}: ${result.error}`);
-        }
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const errorKey = msg.replace(/"[^"]*"/g, '""');
-      errorCounts[errorKey] = (errorCounts[errorKey] || 0) + 1;
-      if (errorCounts[errorKey] <= 5) {
-        console.error(`  Warning: skipped ${relativePath}: ${msg}`);
-      } else if (errorCounts[errorKey] === 6) {
-        console.error(`  (suppressing further "${errorKey.slice(0, 60)}..." errors)`);
-      }
-      errors++;
-      skipped++;
-    }
-    processed++;
-    if (processed % 100 === 0 || processed === files.length) {
-      logProgress();
-      if (processed % 100 === 0) {
-        try {
-          const cpDir = join(homedir(), '.mbrain');
-          if (!existsSync(cpDir)) {
-            const { mkdirSync } = await import('fs');
-            mkdirSync(cpDir, { recursive: true });
-          }
-          writeFileSync(checkpointPath, JSON.stringify({
-            dir,
-            totalFiles: allFiles.length,
-            processedIndex: resumeIndex + processed,
-            completedFiles: importedSlugs.length + skipped,
-            timestamp: new Date().toISOString(),
-          }));
-        } catch {
-          // Non-fatal.
-        }
-      }
-    }
-  }
-
-  if (actualWorkers > 1) {
-    const config = loadConfig();
-    if (!config) {
-      throw new Error('No brain configured. Run: mbrain init or set MBRAIN_DATABASE_URL / DATABASE_URL.');
-    }
-
-    if (!supportsParallelWorkers(config)) {
-      for (const filePath of files) {
-        await processFile(engine, filePath);
-      }
-    } else {
-      const workerEngines = await Promise.all(
-        Array.from({ length: actualWorkers }, async () => createConnectedEngine(config, { poolSize: 2 })),
-      );
-
-      let queueIndex = 0;
-      await Promise.all(workerEngines.map(async (eng) => {
-        while (true) {
-          const idx = queueIndex++;
-          if (idx >= files.length) break;
-          await processFile(eng, files[idx]);
-        }
-      }));
-
-      await Promise.all(workerEngines.map(e => e.disconnect()));
-    }
-  } else {
-    for (const filePath of files) {
-      await processFile(engine, filePath);
-    }
-  }
-
-  for (const [err, count] of Object.entries(errorCounts)) {
-    if (count > 5) {
-      console.error(`  ${count} files failed: ${err.slice(0, 100)}`);
-    }
-  }
-
-  if (errors === 0 && existsSync(checkpointPath)) {
-    try {
-      unlinkSync(checkpointPath);
-    } catch {
-      // Non-fatal.
-    }
-  } else if (errors > 0 && existsSync(checkpointPath)) {
-    console.log(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
-  }
-
-  const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+function printImportSummary(summary: ImportRunSummary, jsonOutput: boolean) {
   if (jsonOutput) {
     console.log(JSON.stringify({
       status: 'success',
-      duration_s: parseFloat(totalTime),
-      imported,
-      skipped,
-      errors,
-      chunks: chunksCreated,
-      total_files: allFiles.length,
+      duration_s: summary.durationSeconds,
+      imported: summary.imported,
+      skipped: summary.skipped,
+      errors: summary.errors,
+      chunks: summary.chunksCreated,
+      total_files: summary.totalFiles,
     }));
-  } else {
-    console.log(`\nImport complete (${totalTime}s):`);
-    console.log(`  ${imported} pages imported`);
-    console.log(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
-    console.log(`  ${chunksCreated} chunks created`);
+    return;
   }
 
-  await engine.logIngest({
-    source_type: 'directory',
-    source_ref: dir,
-    pages_updated: importedSlugs,
-    summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
-  });
-
-  try {
-    if (existsSync(join(dir, '.git'))) {
-      const head = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
-      await engine.setConfig('sync.last_commit', head);
-      await engine.setConfig('sync.last_run', new Date().toISOString());
-      await engine.setConfig('sync.repo_path', dir);
-    }
-  } catch {
-    // Not a git repo or git not available, skip checkpoint.
-  }
+  console.log(`\nImport complete (${summary.durationSeconds.toFixed(1)}s):`);
+  console.log(`  ${summary.imported} pages imported`);
+  console.log(`  ${summary.skipped} pages skipped (${summary.unchanged} unchanged, ${summary.errors} errors)`);
+  console.log(`  ${summary.chunksCreated} chunks created`);
 }
 
-export function collectMarkdownFiles(dir: string): string[] {
-  const files: string[] = [];
-
-  const rootStat = lstatSync(dir);
-  if (rootStat.isSymbolicLink()) {
-    console.warn(`[mbrain import] Skipping symlinked import root: ${dir}`);
-    return files;
-  }
-
-  function walk(d: string) {
-    for (const entry of readdirSync(d)) {
-      if (entry.startsWith('.')) continue;
-      if (entry === 'node_modules') continue;
-
-      const full = join(d, entry);
-      let stat;
-      try {
-        stat = lstatSync(full);
-      } catch {
-        console.warn(`[mbrain import] Skipping unreadable path: ${full}`);
-        continue;
-      }
-
-      if (stat.isSymbolicLink()) {
-        console.warn(`[mbrain import] Skipping symlink: ${full}`);
-        continue;
-      }
-
-      if (stat.isDirectory()) {
-        walk(full);
-      } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
-        files.push(full);
-      }
-    }
-  }
-
-  walk(dir);
-  return files.sort();
-}
+export { collectMarkdownFiles };

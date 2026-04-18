@@ -1,0 +1,386 @@
+import { execFileSync } from 'child_process';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
+import { cpus, homedir, totalmem } from 'os';
+import { join, relative } from 'path';
+import type { BrainEngine } from '../engine.ts';
+import { loadConfig } from '../config.ts';
+import { createConnectedEngine, supportsParallelWorkers } from '../engine-factory.ts';
+import { importFile } from '../import-file.ts';
+
+export interface ImportRunOptions {
+  rootDir: string;
+  noEmbed?: boolean;
+  workers?: number;
+  fresh?: boolean;
+  checkpointPath?: string;
+  logger?: Pick<Console, 'log' | 'warn' | 'error'>;
+}
+
+export interface ImportCheckpoint {
+  dir: string;
+  totalFiles: number;
+  processedIndex: number;
+  completedFiles?: number;
+  timestamp: string;
+}
+
+export type ImportEvent =
+  | { type: 'imported'; slug: string; chunks: number }
+  | { type: 'skipped'; reason?: string }
+  | { type: 'error'; message: string };
+
+export interface ImportRunSummary {
+  durationSeconds: number;
+  imported: number;
+  skipped: number;
+  errors: number;
+  unchanged: number;
+  chunksCreated: number;
+  totalFiles: number;
+  importedSlugs: string[];
+}
+
+export interface ImportPlan {
+  allFiles: string[];
+  files: string[];
+  resumeIndex: number;
+  resumed: boolean;
+}
+
+interface ImportServiceDeps {
+  createConnectedEngine: typeof createConnectedEngine;
+  importFile: typeof importFile;
+  loadConfig: typeof loadConfig;
+  supportsParallelWorkers: typeof supportsParallelWorkers;
+}
+
+const DEFAULT_DEPS: ImportServiceDeps = {
+  createConnectedEngine,
+  importFile,
+  loadConfig,
+  supportsParallelWorkers,
+};
+
+export function defaultImportWorkers(): number {
+  const cpuCount = cpus().length;
+  const memGB = totalmem() / (1024 ** 3);
+  const byPool = 8;
+  const byCpu = Math.max(2, cpuCount);
+  const byMem = Math.floor(memGB * 2);
+  return Math.min(byPool, byCpu, byMem);
+}
+
+export function defaultImportCheckpointPath(): string {
+  return join(homedir(), '.mbrain', 'import-checkpoint.json');
+}
+
+export function readImportCheckpoint(checkpointPath = defaultImportCheckpointPath()): ImportCheckpoint | null {
+  if (!existsSync(checkpointPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(readFileSync(checkpointPath, 'utf-8')) as ImportCheckpoint;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveImportPlan(input: {
+  rootDir: string;
+  allFiles: string[];
+  fresh?: boolean;
+  checkpoint?: ImportCheckpoint | null;
+}): ImportPlan {
+  const { rootDir, allFiles, fresh = false, checkpoint } = input;
+
+  if (
+    !fresh &&
+    checkpoint &&
+    checkpoint.dir === rootDir &&
+    checkpoint.totalFiles === allFiles.length
+  ) {
+    const resumeIndex = Math.max(0, Math.min(checkpoint.processedIndex, allFiles.length));
+    return {
+      allFiles,
+      files: allFiles.slice(resumeIndex),
+      resumeIndex,
+      resumed: true,
+    };
+  }
+
+  return {
+    allFiles,
+    files: allFiles,
+    resumeIndex: 0,
+    resumed: false,
+  };
+}
+
+export function collectImportSummary(input: {
+  totalFiles: number;
+  events: ImportEvent[];
+}): ImportRunSummary {
+  let imported = 0;
+  let skipped = 0;
+  let errors = 0;
+  let chunksCreated = 0;
+  const importedSlugs: string[] = [];
+
+  for (const event of input.events) {
+    if (event.type === 'imported') {
+      imported++;
+      chunksCreated += event.chunks;
+      importedSlugs.push(event.slug);
+      continue;
+    }
+
+    skipped++;
+    if (event.type === 'error') {
+      errors++;
+    }
+  }
+
+  return {
+    durationSeconds: 0,
+    imported,
+    skipped,
+    errors,
+    unchanged: skipped - errors,
+    chunksCreated,
+    totalFiles: input.totalFiles,
+    importedSlugs,
+  };
+}
+
+export async function runImportService(
+  engine: BrainEngine,
+  options: ImportRunOptions,
+  deps: ImportServiceDeps = DEFAULT_DEPS,
+): Promise<ImportRunSummary> {
+  const logger = options.logger ?? console;
+  const allFiles = collectMarkdownFiles(options.rootDir);
+  logger.log(`Found ${allFiles.length} markdown files`);
+
+  const checkpointPath = options.checkpointPath ?? defaultImportCheckpointPath();
+  const checkpoint = options.fresh ? null : readImportCheckpoint(checkpointPath);
+  const plan = resolveImportPlan({
+    rootDir: options.rootDir,
+    allFiles,
+    fresh: options.fresh,
+    checkpoint,
+  });
+
+  if (plan.resumed) {
+    logger.log(`Resuming from checkpoint: skipping ${plan.resumeIndex} already-processed files`);
+  }
+
+  const actualWorkers = Math.max(1, options.workers ?? defaultImportWorkers());
+  if (actualWorkers > 1) {
+    logger.log(`Using ${actualWorkers} parallel workers`);
+  }
+
+  let imported = 0;
+  let skipped = 0;
+  let errors = 0;
+  let processed = 0;
+  let chunksCreated = 0;
+  const importedSlugs: string[] = [];
+  const errorCounts: Record<string, number> = {};
+  const startTime = Date.now();
+
+  const logProgress = () => {
+    const elapsed = (Date.now() - startTime) / 1000;
+    const rate = elapsed > 0 ? Math.round(processed / elapsed) : 0;
+    const remaining = rate > 0 ? Math.round((plan.files.length - processed) / rate) : 0;
+    const pct = plan.files.length === 0 ? 100 : Math.round((processed / plan.files.length) * 100);
+    logger.log(
+      `[mbrain import] ${processed}/${plan.files.length} (${pct}%) | ${rate} files/sec | imported: ${imported} | skipped: ${skipped} | errors: ${errors} | ETA: ${remaining}s`,
+    );
+  };
+
+  const writeCheckpoint = () => {
+    try {
+      const cpDir = join(homedir(), '.mbrain');
+      if (!existsSync(cpDir)) {
+        mkdirSync(cpDir, { recursive: true });
+      }
+      writeFileSync(checkpointPath, JSON.stringify({
+        dir: options.rootDir,
+        totalFiles: allFiles.length,
+        processedIndex: plan.resumeIndex + processed,
+        completedFiles: importedSlugs.length + skipped,
+        timestamp: new Date().toISOString(),
+      }));
+    } catch {
+      // Non-fatal.
+    }
+  };
+
+  const processFile = async (activeEngine: BrainEngine, filePath: string) => {
+    const relativePath = relative(options.rootDir, filePath);
+    try {
+      const result = await deps.importFile(activeEngine, filePath, relativePath, { noEmbed: options.noEmbed });
+      if (result.status === 'imported') {
+        imported++;
+        chunksCreated += result.chunks;
+        importedSlugs.push(result.slug);
+      } else {
+        skipped++;
+        if (result.error && result.error !== 'unchanged') {
+          logger.error(`  Skipped ${relativePath}: ${result.error}`);
+        }
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const errorKey = message.replace(/"[^"]*"/g, '""');
+      errorCounts[errorKey] = (errorCounts[errorKey] || 0) + 1;
+      if (errorCounts[errorKey] <= 5) {
+        logger.error(`  Warning: skipped ${relativePath}: ${message}`);
+      } else if (errorCounts[errorKey] === 6) {
+        logger.error(`  (suppressing further "${errorKey.slice(0, 60)}..." errors)`);
+      }
+      errors++;
+      skipped++;
+    }
+
+    processed++;
+    if (processed % 100 === 0 || processed === plan.files.length) {
+      logProgress();
+      if (processed % 100 === 0) {
+        writeCheckpoint();
+      }
+    }
+  };
+
+  if (actualWorkers > 1) {
+    const config = deps.loadConfig();
+    if (!config) {
+      throw new Error('No brain configured. Run: mbrain init or set MBRAIN_DATABASE_URL / DATABASE_URL.');
+    }
+
+    if (!deps.supportsParallelWorkers(config)) {
+      for (const filePath of plan.files) {
+        await processFile(engine, filePath);
+      }
+    } else {
+      const workerEngines = await Promise.all(
+        Array.from({ length: actualWorkers }, async () => deps.createConnectedEngine(config, { poolSize: 2 })),
+      );
+
+      let queueIndex = 0;
+      await Promise.all(workerEngines.map(async (workerEngine) => {
+        while (true) {
+          const index = queueIndex++;
+          if (index >= plan.files.length) break;
+          await processFile(workerEngine, plan.files[index]);
+        }
+      }));
+
+      await Promise.all(workerEngines.map(async (workerEngine) => workerEngine.disconnect()));
+    }
+  } else {
+    for (const filePath of plan.files) {
+      await processFile(engine, filePath);
+    }
+  }
+
+  for (const [errorMessage, count] of Object.entries(errorCounts)) {
+    if (count > 5) {
+      logger.error(`  ${count} files failed: ${errorMessage.slice(0, 100)}`);
+    }
+  }
+
+  if (errors === 0 && existsSync(checkpointPath)) {
+    try {
+      unlinkSync(checkpointPath);
+    } catch {
+      // Non-fatal.
+    }
+  } else if (errors > 0 && existsSync(checkpointPath)) {
+    logger.log(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
+  }
+
+  await engine.logIngest({
+    source_type: 'directory',
+    source_ref: options.rootDir,
+    pages_updated: importedSlugs,
+    summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
+  });
+
+  await updateImportGitState(engine, options.rootDir);
+
+  return {
+    durationSeconds: Number(((Date.now() - startTime) / 1000).toFixed(1)),
+    imported,
+    skipped,
+    errors,
+    unchanged: skipped - errors,
+    chunksCreated,
+    totalFiles: allFiles.length,
+    importedSlugs,
+  };
+}
+
+async function updateImportGitState(engine: BrainEngine, rootDir: string) {
+  try {
+    if (!existsSync(join(rootDir, '.git'))) {
+      return;
+    }
+
+    const head = execFileSync('git', ['-C', rootDir, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+    await engine.setConfig('sync.last_commit', head);
+    await engine.setConfig('sync.last_run', new Date().toISOString());
+    await engine.setConfig('sync.repo_path', rootDir);
+  } catch {
+    // Not a git repo or git not available, skip sync metadata.
+  }
+}
+
+export function collectMarkdownFiles(dir: string): string[] {
+  const files: string[] = [];
+
+  const rootStat = lstatSync(dir);
+  if (rootStat.isSymbolicLink()) {
+    console.warn(`[mbrain import] Skipping symlinked import root: ${dir}`);
+    return files;
+  }
+
+  const walk = (currentDir: string) => {
+    for (const entry of readdirSync(currentDir)) {
+      if (entry.startsWith('.')) continue;
+      if (entry === 'node_modules') continue;
+
+      const fullPath = join(currentDir, entry);
+      let stat;
+      try {
+        stat = lstatSync(fullPath);
+      } catch {
+        console.warn(`[mbrain import] Skipping unreadable path: ${fullPath}`);
+        continue;
+      }
+
+      if (stat.isSymbolicLink()) {
+        console.warn(`[mbrain import] Skipping symlink: ${fullPath}`);
+        continue;
+      }
+
+      if (stat.isDirectory()) {
+        walk(fullPath);
+      } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
+        files.push(fullPath);
+      }
+    }
+  };
+
+  walk(dir);
+  return files.sort();
+}

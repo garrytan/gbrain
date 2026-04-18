@@ -18,27 +18,45 @@ for (const op of operations) {
   }
 }
 
-// CLI-only commands that bypass the operation layer
+type CliNoEngineHandler = (args: string[]) => Promise<void> | void;
+type CliEngineHandler = (engine: BrainEngine, args: string[]) => Promise<void> | void;
+type CliNoEngineLoader = () => Promise<CliNoEngineHandler>;
+type CliEngineLoader = () => Promise<CliEngineHandler>;
+
+const CLI_NO_ENGINE_COMMANDS: Record<string, CliNoEngineLoader> = {
+  init: async () => (await import('./commands/init.ts')).runInit,
+  upgrade: async () => (await import('./commands/upgrade.ts')).runUpgrade,
+  'post-upgrade': async () => {
+    const { runPostUpgrade } = await import('./commands/upgrade.ts');
+    return () => runPostUpgrade();
+  },
+  'check-update': async () => (await import('./commands/check-update.ts')).runCheckUpdate,
+  integrations: async () => (await import('./commands/integrations.ts')).runIntegrations,
+  publish: async () => (await import('./commands/publish.ts')).runPublish,
+  'check-backlinks': async () => (await import('./commands/backlinks.ts')).runBacklinks,
+  lint: async () => (await import('./commands/lint.ts')).runLint,
+  report: async () => (await import('./commands/report.ts')).runReport,
+  'setup-agent': async () => (await import('./commands/setup-agent.ts')).runSetupAgent,
+};
+
+const CLI_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
+  import: async () => (await import('./commands/import.ts')).runImport,
+  export: async () => (await import('./commands/export.ts')).runExport,
+  files: async () => (await import('./commands/files.ts')).runFiles,
+  embed: async () => (await import('./commands/embed.ts')).runEmbed,
+  serve: async () => {
+    const { runServe } = await import('./commands/serve.ts');
+    return (engine) => runServe(engine);
+  },
+  call: async () => (await import('./commands/call.ts')).runCall,
+  config: async () => (await import('./commands/config.ts')).runConfig,
+  doctor: async () => (await import('./commands/doctor.ts')).runDoctor,
+  migrate: async () => (await import('./commands/migrate-engine.ts')).runMigrateEngine,
+};
+
 const CLI_ONLY = new Set([
-  'init',
-  'upgrade',
-  'post-upgrade',
-  'check-update',
-  'integrations',
-  'publish',
-  'check-backlinks',
-  'lint',
-  'report',
-  'import',
-  'export',
-  'files',
-  'embed',
-  'serve',
-  'call',
-  'config',
-  'doctor',
-  'setup-agent',
-  'migrate',
+  ...Object.keys(CLI_NO_ENGINE_COMMANDS),
+  ...Object.keys(CLI_ENGINE_COMMANDS),
 ]);
 
 async function main() {
@@ -308,107 +326,22 @@ export function formatResult(opName: string, result: unknown, params: Record<str
 }
 
 async function handleCliOnly(command: string, args: string[]) {
-  if (command === 'init') {
-    const { runInit } = await import('./commands/init.ts');
-    await runInit(args);
-    return;
-  }
-  if (command === 'setup-agent') {
-    const { runSetupAgent } = await import('./commands/setup-agent.ts');
-    await runSetupAgent(args);
-    return;
-  }
-  if (command === 'upgrade') {
-    const { runUpgrade } = await import('./commands/upgrade.ts');
-    await runUpgrade(args);
-    return;
-  }
-  if (command === 'post-upgrade') {
-    const { runPostUpgrade } = await import('./commands/upgrade.ts');
-    runPostUpgrade();
-    return;
-  }
-  if (command === 'check-update') {
-    const { runCheckUpdate } = await import('./commands/check-update.ts');
-    await runCheckUpdate(args);
-    return;
-  }
-  if (command === 'integrations') {
-    const { runIntegrations } = await import('./commands/integrations.ts');
-    await runIntegrations(args);
-    return;
-  }
-  if (command === 'publish') {
-    const { runPublish } = await import('./commands/publish.ts');
-    await runPublish(args);
-    return;
-  }
-  if (command === 'check-backlinks') {
-    const { runBacklinks } = await import('./commands/backlinks.ts');
-    await runBacklinks(args);
-    return;
-  }
-  if (command === 'lint') {
-    const { runLint } = await import('./commands/lint.ts');
-    await runLint(args);
-    return;
-  }
-  if (command === 'report') {
-    const { runReport } = await import('./commands/report.ts');
-    await runReport(args);
+  const noEngineLoader = CLI_NO_ENGINE_COMMANDS[command];
+  if (noEngineLoader) {
+    const runCommand = await noEngineLoader();
+    await runCommand(args);
     return;
   }
 
-  // All remaining CLI-only commands need a DB connection
+  const engineLoader = CLI_ENGINE_COMMANDS[command];
+  if (!engineLoader) {
+    return;
+  }
+
   const engine = await connectEngine();
   try {
-    switch (command) {
-      case 'import': {
-        const { runImport } = await import('./commands/import.ts');
-        await runImport(engine, args);
-        break;
-      }
-      case 'export': {
-        const { runExport } = await import('./commands/export.ts');
-        await runExport(engine, args);
-        break;
-      }
-      case 'files': {
-        const { runFiles } = await import('./commands/files.ts');
-        await runFiles(engine, args);
-        break;
-      }
-      case 'embed': {
-        const { runEmbed } = await import('./commands/embed.ts');
-        await runEmbed(engine, args);
-        break;
-      }
-      case 'serve': {
-        const { runServe } = await import('./commands/serve.ts');
-        await runServe(engine);
-        return;
-      }
-      case 'call': {
-        const { runCall } = await import('./commands/call.ts');
-        await runCall(engine, args);
-        break;
-      }
-      case 'config': {
-        const { runConfig } = await import('./commands/config.ts');
-        await runConfig(engine, args);
-        break;
-      }
-      case 'doctor': {
-        const { runDoctor } = await import('./commands/doctor.ts');
-        await runDoctor(engine, args);
-        break;
-      }
-      case 'migrate': {
-        const { runMigrateEngine } = await import('./commands/migrate-engine.ts');
-        await runMigrateEngine(engine, args);
-        break;
-      }
-    }
+    const runCommand = await engineLoader();
+    await runCommand(engine, args);
   } finally {
     if (command !== 'serve') await engine.disconnect();
   }
