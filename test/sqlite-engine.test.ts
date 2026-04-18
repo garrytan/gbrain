@@ -602,7 +602,7 @@ describe('SQLiteEngine migrations', () => {
 
     const db = (engine as any).database as Database;
     db.run(`UPDATE pages SET search_text = ''`);
-    db.run(`UPDATE config SET value = ? WHERE key = 'version'`, [String(LATEST_VERSION - 1)]);
+    db.run(`UPDATE config SET value = ? WHERE key = 'version'`, ['5']);
 
     await engine.initSchema();
 

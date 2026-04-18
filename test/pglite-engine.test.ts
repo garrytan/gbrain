@@ -324,6 +324,33 @@ describe('PGLiteEngine: Search', () => {
     expect(chunks[1]?.chunk_text).toContain('LegacyPassBuilder::rebuildPipeline()');
   });
 
+  test('rerunning initSchema upgrades version 6 databases missing page_embedding', async () => {
+    await engine.putPage('systems/page-embedding-upgrade', {
+      type: 'system',
+      title: 'Page Embedding Upgrade',
+      compiled_truth: 'Upgrade coverage for page embeddings.',
+    });
+
+    await (engine as any).db.exec(`ALTER TABLE pages DROP COLUMN page_embedding`);
+    await engine.setConfig('version', '6');
+
+    await engine.initSchema();
+
+    const embedding = new Float32Array(768);
+    embedding[0] = 1;
+    embedding[1] = 2;
+    embedding[2] = 3;
+
+    await engine.updatePageEmbedding('systems/page-embedding-upgrade', embedding);
+
+    const pageEmbeddings = await engine.getPageEmbeddings('system');
+    const upgraded = pageEmbeddings.find((entry) => entry.slug === 'systems/page-embedding-upgrade');
+
+    expect(await engine.getConfig('version')).toBe('7');
+    expect(upgraded).toBeDefined();
+    expect(Array.from(upgraded!.embedding!.slice(0, 3))).toEqual([1, 2, 3]);
+  });
+
   test('searchVector honors type and exclude_slugs filters', async () => {
     const personEmbedding = new Float32Array(768);
     personEmbedding[0] = 1;

@@ -121,6 +121,14 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 7,
+    name: 'page_embedding_upgrade',
+    sql: '',
+    handler: async (engine) => {
+      await ensurePageEmbeddingColumn(engine);
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -173,6 +181,24 @@ async function backfillSearchText(engine: BrainEngine, pageId: number, searchTex
   }
 
   throw new Error('search_text backfill requires a SQL-capable engine');
+}
+
+async function ensurePageEmbeddingColumn(engine: BrainEngine): Promise<void> {
+  const candidate = engine as BrainEngine & {
+    sql?: (TemplateStringsArray | any);
+    db?: { query: (query: string, values?: unknown[]) => Promise<unknown> };
+  };
+
+  if ('sql' in candidate && candidate.sql) {
+    await candidate.sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS page_embedding vector(768)`;
+    return;
+  }
+
+  if ('db' in candidate && candidate.db) {
+    await candidate.db.query(
+      'ALTER TABLE pages ADD COLUMN IF NOT EXISTS page_embedding vector(768)'
+    );
+  }
 }
 
 async function listAllPages(engine: BrainEngine, batchSize = 1000): Promise<Page[]> {

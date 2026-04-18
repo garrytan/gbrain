@@ -30,7 +30,7 @@ afterEach(() => {
 describe('migrate', () => {
   test('LATEST_VERSION includes the nomic pgvector migration', () => {
     expect(typeof LATEST_VERSION).toBe('number');
-    expect(LATEST_VERSION).toBeGreaterThan(4);
+    expect(LATEST_VERSION).toBeGreaterThan(6);
   });
 
   test('runMigrations is exported and callable', async () => {
@@ -71,6 +71,7 @@ describe('migrate', () => {
     );
 
     expect(migrateSource).toContain('pgvector_768_for_nomic');
+    expect(migrateSource).toContain('page_embedding_upgrade');
     expect(migrateSource).toContain('vector(768)');
   });
 
