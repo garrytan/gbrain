@@ -156,19 +156,7 @@ export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<st
   return null;
 }
 
-/** Infer link type from directory structure */
-function inferLinkType(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
-  const from = fromDir.split('/')[0];
-  const to = toDir.split('/')[0];
-  if (from === 'people' && to === 'companies') {
-    if (Array.isArray(frontmatter?.founded)) return 'founded';
-    return 'works_at';
-  }
-  if (from === 'people' && to === 'deals') return 'involved_in';
-  if (from === 'deals' && to === 'companies') return 'deal_for';
-  if (from === 'meetings' && to === 'people') return 'attendee';
-  return 'mention';
-}
+// inferLinkType is now imported from ../core/link-extraction.ts (v0.12.0 canonical extractor)
 
 /** Extract links from frontmatter fields */
 function extractFrontmatterLinks(slug: string, fm: Record<string, unknown>): ExtractedLink[] {
