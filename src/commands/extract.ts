@@ -11,6 +11,7 @@ import { readFileSync, readdirSync, lstatSync, existsSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { parseMarkdown } from '../core/markdown.ts';
+import { slugifyPath } from '../core/sync.ts';
 
 // --- Types ---
 
@@ -123,16 +124,17 @@ export function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
 ): ExtractedLink[] {
   const links: ExtractedLink[] = [];
-  const slug = relPath.replace('.md', '');
+  const slug = slugifyPath(relPath);
   const fileDir = dirname(relPath);
   const fm = parseFrontmatterFromContent(content, relPath);
 
   for (const { name, relTarget } of extractMarkdownLinks(content)) {
-    const resolved = join(fileDir, relTarget).replace('.md', '');
+    const resolved = slugifyPath(join(fileDir, relTarget));
     if (allSlugs.has(resolved)) {
       links.push({
-        from_slug: slug, to_slug: resolved,
-        link_type: inferLinkType(fileDir, dirname(resolved), fm),
+        from_slug: slug,
+        to_slug: resolved,
+        link_type: inferLinkType(dirname(slug), dirname(resolved), fm),
         context: `markdown link: [${name}]`,
       });
     }
@@ -220,7 +222,9 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
 export async function runExtract(engine: BrainEngine, args: string[]) {
   const subcommand = args[0];
   const dirIdx = args.indexOf('--dir');
-  const brainDir = (dirIdx >= 0 && dirIdx + 1 < args.length) ? args[dirIdx + 1] : '.';
+  const dirValueIdx = dirIdx >= 0 ? dirIdx + 1 : -1;
+  const positionalDir = args.find((arg, idx) => idx > 0 && !arg.startsWith('--') && idx !== dirValueIdx);
+  const brainDir = (dirIdx >= 0 && dirValueIdx < args.length) ? args[dirValueIdx] : (positionalDir || '.');
   const dryRun = args.includes('--dry-run');
   const jsonMode = args.includes('--json');
 
@@ -253,7 +257,7 @@ async function extractLinksFromDir(
   engine: BrainEngine, brainDir: string, dryRun: boolean, jsonMode: boolean,
 ): Promise<{ created: number; pages: number }> {
   const files = walkMarkdownFiles(brainDir);
-  const allSlugs = new Set(files.map(f => f.relPath.replace('.md', '')));
+  const allSlugs = new Set(files.map(f => slugifyPath(f.relPath)));
 
   // Load existing links for O(1) dedup
   const existing = new Set<string>();
@@ -318,7 +322,7 @@ async function extractTimelineFromDir(
   for (let i = 0; i < files.length; i++) {
     try {
       const content = readFileSync(files[i].path, 'utf-8');
-      const slug = files[i].relPath.replace('.md', '');
+      const slug = slugifyPath(files[i].relPath);
       for (const entry of extractTimelineFromContent(content, slug)) {
         const key = `${entry.slug}::${entry.date}::${entry.summary}`;
         if (existing.has(key)) continue;
@@ -350,14 +354,15 @@ async function extractTimelineFromDir(
 
 export async function extractLinksForSlugs(engine: BrainEngine, repoPath: string, slugs: string[]): Promise<number> {
   const allFiles = walkMarkdownFiles(repoPath);
-  const allSlugs = new Set(allFiles.map(f => f.relPath.replace('.md', '')));
+  const allSlugs = new Set(allFiles.map(f => slugifyPath(f.relPath)));
+  const fileBySlug = new Map(allFiles.map(f => [slugifyPath(f.relPath), f.path]));
   let created = 0;
   for (const slug of slugs) {
-    const filePath = join(repoPath, slug + '.md');
-    if (!existsSync(filePath)) continue;
+    const filePath = fileBySlug.get(slug);
+    if (!filePath) continue;
     try {
       const content = readFileSync(filePath, 'utf-8');
-      for (const link of extractLinksFromFile(content, slug + '.md', allSlugs)) {
+      for (const link of extractLinksFromFile(content, relative(repoPath, filePath), allSlugs)) {
         try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type); created++; } catch { /* skip */ }
       }
     } catch { /* skip */ }
@@ -366,10 +371,12 @@ export async function extractLinksForSlugs(engine: BrainEngine, repoPath: string
 }
 
 export async function extractTimelineForSlugs(engine: BrainEngine, repoPath: string, slugs: string[]): Promise<number> {
+  const allFiles = walkMarkdownFiles(repoPath);
+  const fileBySlug = new Map(allFiles.map(f => [slugifyPath(f.relPath), f.path]));
   let created = 0;
   for (const slug of slugs) {
-    const filePath = join(repoPath, slug + '.md');
-    if (!existsSync(filePath)) continue;
+    const filePath = fileBySlug.get(slug);
+    if (!filePath) continue;
     try {
       const content = readFileSync(filePath, 'utf-8');
       for (const entry of extractTimelineFromContent(content, slug)) {

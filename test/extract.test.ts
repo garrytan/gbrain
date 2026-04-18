@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import {
   extractMarkdownLinks,
   extractLinksFromFile,
+  extractLinksForSlugs,
   extractTimelineFromContent,
+  runExtract,
   walkMarkdownFiles,
 } from '../src/commands/extract.ts';
 
@@ -78,6 +83,58 @@ describe('extractLinksFromFile', () => {
     const allSlugs = new Set(['deals/seed', 'companies/brex']);
     const links = extractLinksFromFile(content, 'deals/seed.md', allSlugs);
     expect(links[0].link_type).toBe('deal_for');
+  });
+
+  it('slugifies from/to paths the same way import does', () => {
+    const content = 'See [Readme](README.md).';
+    const allSlugs = new Set(['folder/index', 'folder/readme']);
+    const links = extractLinksFromFile(content, 'Folder/INDEX.md', allSlugs);
+    expect(links).toHaveLength(1);
+    expect(links[0].from_slug).toBe('folder/index');
+    expect(links[0].to_slug).toBe('folder/readme');
+  });
+});
+
+describe('extractLinksForSlugs', () => {
+  it('finds files by slugified path during sync extraction', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-extract-'));
+    try {
+      mkdirSync(join(dir, 'Folder'), { recursive: true });
+      writeFileSync(join(dir, 'Folder', 'README.md'), '# Readme\n');
+      writeFileSync(join(dir, 'Folder', 'INDEX.md'), 'See [Readme](README.md).\n');
+
+      const links: Array<{ from: string; to: string }> = [];
+      const engine = {
+        addLink: async (from: string, to: string) => { links.push({ from, to }); },
+      } as any;
+
+      const created = await extractLinksForSlugs(engine, dir, ['folder/index']);
+      expect(created).toBe(1);
+      expect(links).toEqual([{ from: 'folder/index', to: 'folder/readme' }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a positional dir argument in runExtract', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-runextract-'));
+    try {
+      mkdirSync(join(dir, 'Folder'), { recursive: true });
+      writeFileSync(join(dir, 'Folder', 'README.md'), '# Readme\n');
+      writeFileSync(join(dir, 'Folder', 'INDEX.md'), 'See [Readme](README.md).\n');
+
+      const links: Array<{ from: string; to: string }> = [];
+      const engine = {
+        listPages: async () => [],
+        getLinks: async () => [],
+        addLink: async (from: string, to: string) => { links.push({ from, to }); },
+      } as any;
+
+      await runExtract(engine, ['links', dir]);
+      expect(links).toEqual([{ from: 'folder/index', to: 'folder/readme' }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
