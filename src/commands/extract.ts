@@ -136,17 +136,67 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
 export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<string>): string | null {
   const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
 
-  const s1 = join(fileDir, targetNoExt);
+  const normalize = (value: string) => pathToSlug(value.endsWith('.md') ? value : value + '.md');
+
+  const s1 = normalize(join(fileDir, targetNoExt));
   if (allSlugs.has(s1)) return s1;
+
+  const direct = normalize(targetNoExt);
+  if (allSlugs.has(direct)) return direct;
 
   const parts = fileDir.split('/').filter(Boolean);
   for (let strip = 1; strip <= parts.length; strip++) {
     const ancestor = parts.slice(0, parts.length - strip).join('/');
-    const candidate = ancestor ? join(ancestor, targetNoExt) : targetNoExt;
+    const candidate = normalize(ancestor ? join(ancestor, targetNoExt) : targetNoExt);
     if (allSlugs.has(candidate)) return candidate;
   }
 
   return null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractSectionBody(content: string, heading: string): string {
+  const header = new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'm');
+  const match = header.exec(content);
+  if (!match) return '';
+  const start = match.index + match[0].length;
+  const rest = content.slice(start);
+  const nextHeading = /^##\s+/m.exec(rest);
+  return (nextHeading ? rest.slice(0, nextHeading.index) : rest).trim();
+}
+
+function buildBasenameMap(allSlugs: Set<string>): Map<string, string> {
+  const bucket = new Map<string, string[]>();
+  for (const slug of allSlugs) {
+    const basename = slug.split('/').pop() || slug;
+    bucket.set(basename, [...(bucket.get(basename) || []), slug]);
+  }
+  const unique = new Map<string, string>();
+  for (const [basename, slugs] of bucket.entries()) {
+    if (slugs.length === 1) unique.set(basename, slugs[0]);
+  }
+  return unique;
+}
+
+function resolveReference(ref: string, basenameMap: Map<string, string>, allSlugs: Set<string>): string | null {
+  const normalized = ref.trim().replace(/\.md$/, '').replace(/^\.\//, '');
+  if (!normalized) return null;
+  const slugified = pathToSlug(normalized.endsWith('.md') ? normalized : normalized + '.md');
+  if (allSlugs.has(slugified)) return slugified;
+  return basenameMap.get(slugified.split('/').pop() || slugified) || null;
+}
+
+function extractBacktickRefs(content: string): string[] {
+  const refs: string[] = [];
+  const pattern = /`([^`\n]+)`/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(content)) !== null) {
+    refs.push(match[1].trim());
+  }
+  return refs;
 }
 
 /**
@@ -201,16 +251,38 @@ export async function extractLinksFromFile(
   const slug = pathToSlug(relPath);
   const fileDir = dirname(relPath);
   const fm = parseFrontmatterFromContent(content, relPath);
+  const basenameMap = buildBasenameMap(allSlugs);
+  const seen = new Set<string>();
+  const addLink = (link: ExtractedLink) => {
+    if (!link.to_slug || link.to_slug === slug) return;
+    const key = `${link.from_slug}::${link.to_slug}::${link.link_type}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    links.push(link);
+  };
 
   for (const { name, relTarget } of extractMarkdownLinks(content)) {
-    const resolved = resolveSlug(fileDir, relTarget, allSlugs);
+    const resolved = resolveSlug(fileDir, relTarget, allSlugs)
+      ?? resolveReference(relTarget, basenameMap, allSlugs);
     if (resolved !== null) {
-      links.push({
+      addLink({
         from_slug: slug, to_slug: resolved,
         link_type: inferTypeByDir(fileDir, dirname(resolved), fm),
         context: `markdown link: [${name}]`,
       });
     }
+  }
+
+  const linksSection = extractSectionBody(content, 'Links');
+  for (const ref of extractBacktickRefs(linksSection)) {
+    const resolved = resolveReference(ref, basenameMap, allSlugs);
+    if (!resolved) continue;
+    addLink({
+      from_slug: slug,
+      to_slug: resolved,
+      link_type: 'mentions',
+      context: `links section ref: ${ref}`,
+    });
   }
 
   if (opts?.includeFrontmatter) {
@@ -224,6 +296,8 @@ export async function extractLinksFromFile(
         if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(trimmed) && allSlugs.has(trimmed)) {
           return trimmed;
         }
+        const direct = resolveReference(trimmed, basenameMap, allSlugs);
+        if (direct) return direct;
         const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
         for (const hint of hints) {
           if (!hint) continue;
@@ -240,10 +314,9 @@ export async function extractLinksFromFile(
       : topDir === 'deals' || topDir === 'deal' ? 'deal'
       : topDir === 'meetings' ? 'meeting'
       : 'concept';
-    const fm = parseFrontmatterFromContent(content, relPath);
     const fmLinks = await extractFrontmatterLinks(slug, pageType as never, fm, fsResolver);
     for (const c of fmLinks.candidates) {
-      links.push({
+      addLink({
         from_slug: c.fromSlug ?? slug,
         to_slug: c.targetSlug,
         link_type: c.linkType,
@@ -260,25 +333,32 @@ export async function extractLinksFromFile(
 /** Extract timeline entries from markdown content */
 export function extractTimelineFromContent(content: string, slug: string): ExtractedTimelineEntry[] {
   const entries: ExtractedTimelineEntry[] = [];
+  const scope = extractSectionBody(content, 'Timeline') || content;
 
   // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
   const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*[—–-]\s*(.+)$/gm;
-  let match;
-  while ((match = bulletPattern.exec(content)) !== null) {
+  let match: RegExpExecArray | null;
+  while ((match = bulletPattern.exec(scope)) !== null) {
     entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });
+  }
+
+  // Format 1b: Bullet — - YYYY-MM-DD — Summary
+  const plainBulletPattern = /^-\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+)$/gm;
+  while ((match = plainBulletPattern.exec(scope)) !== null) {
+    entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim() });
   }
 
   // Format 2: Header — ### YYYY-MM-DD — Title
   const headerPattern = /^###\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+)$/gm;
-  while ((match = headerPattern.exec(content)) !== null) {
+  while ((match = headerPattern.exec(scope)) !== null) {
     const afterIdx = match.index + match[0].length;
-    const nextHeader = content.indexOf('\n### ', afterIdx);
-    const nextSection = content.indexOf('\n## ', afterIdx);
+    const nextHeader = scope.indexOf('\n### ', afterIdx);
+    const nextSection = scope.indexOf('\n## ', afterIdx);
     const endIdx = Math.min(
-      nextHeader >= 0 ? nextHeader : content.length,
-      nextSection >= 0 ? nextSection : content.length,
+      nextHeader >= 0 ? nextHeader : scope.length,
+      nextSection >= 0 ? nextSection : scope.length,
     );
-    const detail = content.slice(afterIdx, endIdx).trim();
+    const detail = scope.slice(afterIdx, endIdx).trim();
     entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim(), detail: detail || undefined });
   }
 
