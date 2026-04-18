@@ -1200,10 +1200,10 @@ export class PGLiteEngine implements BrainEngine {
         : null;
       const modality = chunk.modality ?? 'text';
 
-      // Inline ::vector NULL literals to avoid a per-branch placeholder.
       const embeddingPh = embeddingStr ? `$${paramIdx++}::vector` : 'NULL';
       const embeddedAtPh = embeddingStr ? 'now()' : 'NULL';
       const embeddingImagePh = embeddingImageStr ? `$${paramIdx++}::vector` : 'NULL';
+      const model = chunk.model || process.env.GBRAIN_EMBEDDING_MODEL || 'text-embedding-3-large';
 
       rowParts.push(
         `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
@@ -1220,7 +1220,7 @@ export class PGLiteEngine implements BrainEngine {
       if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-        chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+        model, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,

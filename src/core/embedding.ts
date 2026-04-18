@@ -1,8 +1,11 @@
 /**
  * Embedding Service — v0.14+ thin delegation to src/core/ai/gateway.ts.
  *
- * The gateway handles provider resolution, retry, error normalization, and
- * dimension-parameter passthrough (preserving existing 1536-dim brains).
+ * The gateway handles provider resolution, retry, error normalization,
+ * character truncation, and dimension-parameter passthrough (preserving
+ * existing 1536-dim brains). Local runtime can still override the configured
+ * model/dimensions via GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS
+ * through loadConfig() before the gateway is configured.
  */
 
 import {
@@ -67,9 +70,11 @@ export function getEmbeddingDimensions(): number {
   return gatewayGetDims();
 }
 
-// Back-compat exports for tests that imported these from v0.13.
-export const EMBEDDING_MODEL = 'text-embedding-3-large';
-export const EMBEDDING_DIMENSIONS = 1536;
+// Back-compat exports for legacy callers that imported these from v0.13.
+// Keep the local env override so operator-configured Qwen/OpenAI-compatible
+// paths label chunks/previews with the same model used by loadConfig().
+export const EMBEDDING_MODEL = process.env.GBRAIN_EMBEDDING_MODEL || 'text-embedding-3-large';
+export const EMBEDDING_DIMENSIONS = parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS || '1536', 10);
 
 /**
  * USD cost per 1k tokens for text-embedding-3-large. Used by

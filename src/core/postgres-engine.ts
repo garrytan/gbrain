@@ -1194,6 +1194,7 @@ export class PostgresEngine implements BrainEngine {
       const embeddingPh = embeddingStr ? `$${paramIdx++}::vector` : 'NULL';
       const embeddedAtPh = embeddingStr ? 'now()' : 'NULL';
       const embeddingImagePh = embeddingImageStr ? `$${paramIdx++}::vector` : 'NULL';
+      const model = chunk.model || process.env.GBRAIN_EMBEDDING_MODEL || 'text-embedding-3-large';
 
       rows.push(
         `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
@@ -1203,12 +1204,14 @@ export class PostgresEngine implements BrainEngine {
         `$${paramIdx++}, ${embeddingImagePh})`,
       );
 
-      // Param push order MUST match placeholder allocation order.
+      // Param push order MUST match placeholder allocation order. Both
+      // embedding placeholders (when present) are allocated BEFORE the
+      // bulk row placeholders, so their values must be pushed first.
       if (embeddingStr) params.push(embeddingStr);
       if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-        chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+        model, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
