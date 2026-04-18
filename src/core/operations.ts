@@ -13,7 +13,7 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
-import { extractPageLinks, isAutoLinkEnabled } from './link-extraction.ts';
+import { extractPageLinks, getEntityDirs, isAutoLinkEnabled } from './link-extraction.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -288,7 +288,11 @@ async function runAutoLink(
   parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },
 ): Promise<{ created: number; removed: number; errors: number }> {
   const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
-  const candidates = extractPageLinks(fullContent, parsed.frontmatter, parsed.type);
+  // Resolve the effective entity-dir list from config once per put_page. This
+  // reads `entity_dirs` + `entity_dirs_mode` and validates entries. On invalid
+  // config, getEntityDirs logs and returns defaults — the hook keeps running.
+  const dirs = await getEntityDirs(engine);
+  const candidates = extractPageLinks(fullContent, parsed.frontmatter, parsed.type, dirs);
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
   // violation churn in addLink). One getAllSlugs call upfront, O(1) lookup.

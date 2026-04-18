@@ -350,6 +350,51 @@ gbrain extract timeline --source db     # extract dated events from markdown tim
 
 Then ask graph questions or watch the search ranking improve. Benchmarked: **Recall@5 jumps from 83% to 95%, Precision@5 from 39% to 45%, +30 more correct answers in the agent's top-5 reads** on a 240-page Opus-generated rich-prose corpus. Graph-only F1 hits 86.6% vs grep's 57.8% (+28.8 pts). See [docs/benchmarks/2026-04-18-brainbench-v1.md](docs/benchmarks/2026-04-18-brainbench-v1.md).
 
+### Configuring entity directories
+
+By default the extractor recognises these top-level slug prefixes as entities:
+`people`, `companies`, `meetings`, `concepts`, `deal`, `civic`, `project`,
+`source`, `media`, `yc`. Any `[Name](people/alice)` or `[[people/alice]]`
+reference becomes a typed link.
+
+If you organise your vault differently — Johnny Decimal, PARA, a custom
+taxonomy — you can extend or replace the list via two config keys:
+
+```bash
+# Union mode (default): custom dirs are ADDED to the defaults.
+gbrain config set entity_dirs "01-notes,02-projects,03-archive"
+
+# Replace mode: ONLY the custom list is used. Defaults are dropped.
+gbrain config set entity_dirs "01-notes,02-projects"
+gbrain config set entity_dirs_mode "replace"
+```
+
+Rules:
+
+- Each dir name must match `/^[a-z0-9][a-z0-9-]*/` (lowercase letters, digits,
+  hyphens; must start with a letter or digit). Invalid entries cause the
+  whole list to be rejected and extraction falls back to defaults with a
+  `console.warn`. This fail-safe prevents a typo from silently disabling the
+  graph layer.
+- Comma-separated, whitespace around entries is trimmed.
+- Empty / unset `entity_dirs` -> defaults, regardless of mode.
+- Dedupes overlap with defaults in union mode.
+
+### Wikilink scope
+
+GBrain extracts **explicit-path** wikilinks:
+
+```markdown
+[[people/alice]]                  -> links to people/alice
+[[people/alice|Alice Chen]]       -> same slug; alias consumed but ignored
+[[01-notes/rushi]]                -> works if 01-notes is a configured dir
+```
+
+**Bare `[[alice]]` wikilinks are not supported.** Resolving them requires
+engine-side slug lookup (which page named "alice" — `people/alice-chen` or
+`media/alice-in-wonderland`?), which breaks the pure-function contract of
+the extractor. Use `[Alice](people/alice)` or `[[people/alice]]` instead.
+
 ## Search
 
 Hybrid search: vector + keyword + RRF fusion + multi-query expansion + 4-layer dedup.

@@ -27,16 +27,90 @@ export interface EntityRef {
 }
 
 /**
- * Match `[Name](path)` markdown links pointing to `people/` or `companies/`
- * (and other entity directories). Accepts both filesystem-relative format
- * (`[Name](../people/slug.md)`) AND engine-slug format (`[Name](people/slug)`).
+ * Canonical entity directory list. Each directory name is a top-level slug
+ * prefix that extractors recognise as an "entity" (e.g. `people/alice`,
+ * `companies/acme`, `meetings/2026-01-15`). Frozen so downstream callers can
+ * treat it as immutable.
  *
- * Captures: name, dir (people/companies/...), slug.
- *
- * The regex permits an optional `../` prefix (any number) and an optional
- * `.md` suffix so the same function works for both filesystem and DB content.
+ * Users can extend or replace this list via the `entity_dirs` config key
+ * (see `getEntityDirs`). Custom dirs follow the same slug shape:
+ * `/^[a-z0-9][a-z0-9-]*$/`.
  */
-const ENTITY_REF_RE = /\[([^\]]+)\]\((?:\.\.\/)*((?:people|companies|meetings|concepts|deal|civic|project|source|media|yc)\/([^)\s]+?))(?:\.md)?\)/g;
+export const DEFAULT_ENTITY_DIRS: readonly string[] = Object.freeze([
+  'people',
+  'companies',
+  'meetings',
+  'concepts',
+  'deal',
+  'civic',
+  'project',
+  'source',
+  'media',
+  'yc',
+]);
+
+/**
+ * Escape regex metacharacters so a value can be embedded inside a larger
+ * regex without changing its structure. Defense-in-depth: `getEntityDirs`
+ * already validates entries against `/^[a-z0-9][a-z0-9-]*$/`, so no metachar
+ * should ever reach here — this is belt-and-braces for future callers.
+ */
+function escapeRegexChars(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Build the `[Name](dir/slug)` entity-ref regex from a dir list. Accepts both
+ * filesystem-relative format (`[Name](../people/slug.md)`) AND engine-slug
+ * format (`[Name](people/slug)`).
+ *
+ * Captures: name, full `dir/slug` path, slug segment alone.
+ *
+ * Internal — callers use `extractEntityRefs(content, dirs?)` which threads the
+ * dir list through. Keeping this private limits API surface.
+ */
+function buildEntityRefRegex(dirs: readonly string[]): RegExp {
+  const alternation = dirs.map(escapeRegexChars).join('|');
+  return new RegExp(
+    `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*((?:${alternation})\\/([^)\\s]+?))(?:\\.md)?\\)`,
+    'g',
+  );
+}
+
+/**
+ * Default entity-ref regex built once from DEFAULT_ENTITY_DIRS. Callers that
+ * don't pass a custom dir list get this fast-path (no per-call regex compile).
+ */
+const ENTITY_REF_RE = buildEntityRefRegex(DEFAULT_ENTITY_DIRS);
+
+/**
+ * Build the explicit-path wikilink regex (`[[dir/slug]]` and
+ * `[[dir/slug|alias]]`) from a dir list.
+ *
+ * Scope: ONLY explicit `[[dir/slug]]` form is matched. Bare `[[name]]`
+ * wikilinks are intentionally out of scope — resolving them requires engine
+ * page-lookup (walk the slug table, disambiguate aliases), which breaks the
+ * pure-function contract of extractEntityRefs. See README > entity_dirs for
+ * the design rationale.
+ *
+ * Captures:
+ *   - group 1: full `dir/slug` path
+ *   - alias segment `|display` is consumed but not captured.
+ *
+ * Safety: the slug segment is bounded (`[a-z0-9][a-z0-9-]*`) so there is no
+ * unbounded backtracking. The optional alias is bounded at 100 chars to cap
+ * worst-case regex cost.
+ */
+function buildWikilinkRegex(dirs: readonly string[]): RegExp {
+  const alternation = dirs.map(escapeRegexChars).join('|');
+  return new RegExp(
+    `\\[\\[((?:${alternation})\\/[a-z0-9][a-z0-9-]*)(?:\\|[^\\]|\\n]{1,100})?\\]\\]`,
+    'g',
+  );
+}
+
+/** Default wikilink regex built once from DEFAULT_ENTITY_DIRS (fast path). */
+const WIKILINK_RE = buildWikilinkRegex(DEFAULT_ENTITY_DIRS);
 
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
@@ -75,25 +149,52 @@ function stripCodeBlocks(content: string): string {
 }
 
 /**
- * Extract `[Name](path-to-people-or-company)` references from arbitrary content.
- * Both filesystem-relative paths (with `../` and `.md`) and bare engine-style
- * slugs (`people/slug`) are matched. Returns one EntityRef per match (no dedup
- * here; caller dedups). Slugs appearing inside fenced or inline code blocks
- * are excluded — those are typically code samples, not real entity references.
+ * Extract entity references from arbitrary content.
+ *
+ * Two ref forms are matched:
+ *   1. Markdown links: `[Name](people/slug)` — both filesystem-relative paths
+ *      (with `../` and `.md`) and bare engine-style slugs are accepted.
+ *   2. Explicit-path wikilinks: `[[dir/slug]]` and `[[dir/slug|alias]]` where
+ *      `dir` is in the configured dir list. For wikilinks, `name` is the slug's
+ *      last path segment (no display name is available).
+ *
+ * Bare `[[name]]` wikilinks (no dir prefix) are OUT OF SCOPE — resolving them
+ * requires engine page lookup, which breaks the pure-function contract.
+ *
+ * Returns one EntityRef per match (no dedup here; caller dedups). Slugs
+ * appearing inside fenced or inline code blocks are excluded.
+ *
+ * @param content Markdown text to scan.
+ * @param dirs Optional entity-dir list. When omitted, uses DEFAULT_ENTITY_DIRS.
+ *   When provided, ONLY those dirs are matched — callers that want to extend
+ *   the defaults should pass the union (see `getEntityDirs`).
  */
-export function extractEntityRefs(content: string): EntityRef[] {
+export function extractEntityRefs(content: string, dirs?: readonly string[]): EntityRef[] {
   const stripped = stripCodeBlocks(content);
   const refs: EntityRef[] = [];
+
+  // 1. Markdown-style refs: [Name](dir/slug)
+  const mdBase = dirs ? buildEntityRefRegex(dirs) : ENTITY_REF_RE;
+  const mdRe = new RegExp(mdBase.source, mdBase.flags);
   let m: RegExpExecArray | null;
-  // Fresh regex per call (g-flag state is per-instance).
-  const re = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
-  while ((m = re.exec(stripped)) !== null) {
+  while ((m = mdRe.exec(stripped)) !== null) {
     const name = m[1];
     const fullPath = m[2];
     const slug = fullPath; // dir/slug
     const dir = fullPath.split('/')[0];
     refs.push({ name, slug, dir });
   }
+
+  // 2. Explicit-path wikilinks: [[dir/slug]] and [[dir/slug|alias]]
+  const wikiBase = dirs ? buildWikilinkRegex(dirs) : WIKILINK_RE;
+  const wikiRe = new RegExp(wikiBase.source, wikiBase.flags);
+  while ((m = wikiRe.exec(stripped)) !== null) {
+    const fullPath = m[1]; // dir/slug
+    const [dir, ...rest] = fullPath.split('/');
+    const lastSegment = rest[rest.length - 1] ?? '';
+    refs.push({ name: lastSegment, slug: fullPath, dir });
+  }
+
   return refs;
 }
 
@@ -109,6 +210,19 @@ export interface LinkCandidate {
 }
 
 /**
+ * Build the bare-slug regex (`dir/slug` appearing anywhere in text) from the
+ * same dir list as the markdown-ref regex. Keeps the two extractors in sync
+ * so callers who pass custom dirs see consistent behavior in both paths.
+ */
+function buildBareSlugRegex(dirs: readonly string[]): RegExp {
+  const alternation = dirs.map(escapeRegexChars).join('|');
+  return new RegExp(`\\b((?:${alternation})\\/[a-z0-9][a-z0-9-]*)\\b`, 'g');
+}
+
+/** Default bare-slug regex, built once from DEFAULT_ENTITY_DIRS. */
+const BARE_SLUG_RE = buildBareSlugRegex(DEFAULT_ENTITY_DIRS);
+
+/**
  * Extract all link candidates from a page.
  *
  * Sources:
@@ -118,16 +232,22 @@ export interface LinkCandidate {
  *
  * Within-page dedup: multiple mentions of the same (targetSlug, linkType)
  * collapse to one candidate. The first occurrence's context wins.
+ *
+ * @param dirs Optional entity-dir list. When omitted, uses DEFAULT_ENTITY_DIRS
+ *   for both the markdown-ref extractor and the bare-slug regex. When provided,
+ *   ONLY those dirs are matched — callers wanting union-with-defaults must pass
+ *   the union themselves (see `getEntityDirs`).
  */
 export function extractPageLinks(
   content: string,
   frontmatter: Record<string, unknown>,
   pageType: PageType,
+  dirs?: readonly string[],
 ): LinkCandidate[] {
   const candidates: LinkCandidate[] = [];
 
   // 1. Markdown entity refs.
-  for (const ref of extractEntityRefs(content)) {
+  for (const ref of extractEntityRefs(content, dirs)) {
     const idx = content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that
     // appear at sentence-or-paragraph distance from the slug — common in
@@ -142,10 +262,11 @@ export function extractPageLinks(
   }
 
   // 2. Bare slug references (e.g. "see people/alice-chen for context").
-  // Limited to the same entity directories ENTITY_REF_RE covers.
+  // Same dir list as the markdown extractor to keep behavior consistent.
   // Code blocks are stripped first — slugs in code samples are not real refs.
   const strippedContent = stripCodeBlocks(content);
-  const bareRe = /\b((?:people|companies|meetings|concepts|deal|civic|project|source|media|yc)\/[a-z0-9][a-z0-9-]*)\b/g;
+  const bareBase = dirs ? buildBareSlugRegex(dirs) : BARE_SLUG_RE;
+  const bareRe = new RegExp(bareBase.source, bareBase.flags);
   let m: RegExpExecArray | null;
   while ((m = bareRe.exec(strippedContent)) !== null) {
     // Skip matches that are part of a markdown link (already handled above).
@@ -365,4 +486,62 @@ export async function isAutoLinkEnabled(engine: BrainEngine): Promise<boolean> {
   if (val == null) return true;
   const normalized = val.trim().toLowerCase();
   return !['false', '0', 'no', 'off'].includes(normalized);
+}
+
+/** Regex that validates an entity-dir name. Matches slug shape. */
+const ENTITY_DIR_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Resolve the effective entity-dir list from engine config.
+ *
+ * Reads two config keys:
+ *   - `entity_dirs`: comma-separated list of custom dir names (optional).
+ *   - `entity_dirs_mode`: `"union"` (default) or `"replace"`.
+ *
+ * Modes:
+ *   - `union` (default): custom dirs are ADDED to DEFAULT_ENTITY_DIRS.
+ *     Duplicates are deduped; defaults come first, custom dirs append.
+ *   - `replace`: ONLY the custom list is used. If the custom list is empty,
+ *     falls back to defaults (empty replace is meaningless).
+ *
+ * Validation:
+ *   Each custom entry must match `/^[a-z0-9][a-z0-9-]*$/`. On ANY invalid
+ *   entry, the function logs a warning via `console.warn` and returns
+ *   DEFAULT_ENTITY_DIRS. This fail-safe prevents malformed config from
+ *   silently disabling all entity extraction.
+ *
+ * @returns A fresh string[] (mutable; callers may not mutate DEFAULT_ENTITY_DIRS).
+ */
+export async function getEntityDirs(engine: BrainEngine): Promise<string[]> {
+  const raw = await engine.getConfig('entity_dirs');
+  if (raw == null || raw.trim() === '') {
+    return [...DEFAULT_ENTITY_DIRS];
+  }
+
+  const entries = raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  for (const entry of entries) {
+    if (!ENTITY_DIR_NAME_RE.test(entry)) {
+      console.warn(
+        `[gbrain] entity_dirs rejected: ${entry} (must match [a-z0-9][a-z0-9-]*). Falling back to defaults.`,
+      );
+      return [...DEFAULT_ENTITY_DIRS];
+    }
+  }
+
+  const mode = (await engine.getConfig('entity_dirs_mode'))?.trim().toLowerCase();
+  if (mode === 'replace' && entries.length > 0) {
+    // Dedupe while preserving input order.
+    return Array.from(new Set(entries));
+  }
+
+  // Union mode: defaults first, then custom entries not already present.
+  const seen = new Set<string>(DEFAULT_ENTITY_DIRS);
+  const result: string[] = [...DEFAULT_ENTITY_DIRS];
+  for (const entry of entries) {
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      result.push(entry);
+    }
+  }
+  return result;
 }

@@ -1,12 +1,35 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, spyOn } from 'bun:test';
 import {
+  DEFAULT_ENTITY_DIRS,
   extractEntityRefs,
   extractPageLinks,
   inferLinkType,
   parseTimelineEntries,
   isAutoLinkEnabled,
+  getEntityDirs,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+
+// ─── DEFAULT_ENTITY_DIRS ───────────────────────────────────────
+
+describe('DEFAULT_ENTITY_DIRS', () => {
+  test('is exported and contains the canonical entity dirs', () => {
+    expect(DEFAULT_ENTITY_DIRS).toContain('people');
+    expect(DEFAULT_ENTITY_DIRS).toContain('companies');
+    expect(DEFAULT_ENTITY_DIRS).toContain('meetings');
+    expect(DEFAULT_ENTITY_DIRS).toContain('concepts');
+    expect(DEFAULT_ENTITY_DIRS).toContain('deal');
+    expect(DEFAULT_ENTITY_DIRS).toContain('civic');
+    expect(DEFAULT_ENTITY_DIRS).toContain('project');
+    expect(DEFAULT_ENTITY_DIRS).toContain('source');
+    expect(DEFAULT_ENTITY_DIRS).toContain('media');
+    expect(DEFAULT_ENTITY_DIRS).toContain('yc');
+  });
+
+  test('is frozen (readonly at runtime)', () => {
+    expect(Object.isFrozen(DEFAULT_ENTITY_DIRS)).toBe(true);
+  });
+});
 
 // ─── extractEntityRefs ─────────────────────────────────────────
 
@@ -67,6 +90,95 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
   });
+
+  test('custom dirs: Johnny Decimal style ([Rushi](01-notes/rushi)) matches when dir is configured', () => {
+    const refs = extractEntityRefs('Met [Rushi](01-notes/rushi) for coffee.', ['01-notes']);
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toEqual({ name: 'Rushi', slug: '01-notes/rushi', dir: '01-notes' });
+  });
+
+  test('custom-only dir list replaces defaults — default dirs do not match', () => {
+    // When caller supplies an explicit dirs list, only those dirs are used.
+    // The default `people/` dir does NOT match.
+    const refs = extractEntityRefs('[Alice](people/alice)', ['01-notes']);
+    expect(refs).toEqual([]);
+  });
+
+  test('omitting dirs uses default list (backwards compatible)', () => {
+    const refs = extractEntityRefs('[Alice](people/alice)');
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('people/alice');
+  });
+
+  // ── Explicit-path wikilinks [[dir/slug]] ──
+  //
+  // Scope note: only `[[dir/slug]]` and `[[dir/slug|alias]]` are in scope.
+  // Bare `[[name]]` wikilinks would need engine page-lookup to resolve,
+  // which breaks the pure-function contract of extractEntityRefs. See
+  // README for full explanation.
+
+  test('extracts explicit-path wikilinks [[dir/slug]]', () => {
+    const refs = extractEntityRefs('See [[people/alice]] for context.');
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toEqual({ name: 'alice', slug: 'people/alice', dir: 'people' });
+  });
+
+  test('extracts wikilinks with alias [[dir/slug|Display Name]]', () => {
+    const refs = extractEntityRefs('Met [[people/alice-chen|Alice Chen]] today.');
+    expect(refs.length).toBe(1);
+    // Display is ignored; name falls back to the last slug segment.
+    expect(refs[0].slug).toBe('people/alice-chen');
+    expect(refs[0].dir).toBe('people');
+    expect(refs[0].name).toBe('alice-chen');
+  });
+
+  test('ignores wikilinks when dir is NOT in configured list', () => {
+    // `notes/` is not a default entity dir, so [[notes/foo]] is ignored.
+    const refs = extractEntityRefs('See [[notes/foo]] for context.');
+    expect(refs).toEqual([]);
+  });
+
+  test('wikilink dir honors custom dirs param', () => {
+    const refs = extractEntityRefs('See [[01-notes/rushi]] for details.', ['01-notes']);
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('01-notes/rushi');
+    expect(refs[0].dir).toBe('01-notes');
+  });
+
+  test('does NOT extract bare [[name]] wikilinks (out of scope)', () => {
+    // Bare wikilinks require engine page-lookup to resolve — out of scope
+    // for the pure-function extractor.
+    const refs = extractEntityRefs('See [[alice]] for context.');
+    expect(refs).toEqual([]);
+  });
+
+  test('skips wikilinks inside fenced code blocks', () => {
+    const content = [
+      'Prose with [[people/alice]].',
+      '```',
+      '[[people/bob]]',
+      '```',
+    ].join('\n');
+    const refs = extractEntityRefs(content);
+    const slugs = refs.map(r => r.slug);
+    expect(slugs).toContain('people/alice');
+    expect(slugs).not.toContain('people/bob');
+  });
+
+  test('skips wikilinks inside inline code', () => {
+    const refs = extractEntityRefs('Literal `[[people/ghost]]` in code vs [[people/alice]] real.');
+    const slugs = refs.map(r => r.slug);
+    expect(slugs).toContain('people/alice');
+    expect(slugs).not.toContain('people/ghost');
+  });
+
+  test('dedupes markdown-ref and wikilink for the same slug (within extractEntityRefs returns both, caller dedups)', () => {
+    // extractEntityRefs does NOT dedupe (documented contract — caller dedups).
+    // Both forms should match and return 2 entries.
+    const refs = extractEntityRefs('[Alice](people/alice) and [[people/alice]]');
+    expect(refs.length).toBe(2);
+    expect(refs.map(r => r.slug)).toEqual(['people/alice', 'people/alice']);
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────
@@ -112,6 +224,39 @@ describe('extractPageLinks', () => {
     const candidates = extractPageLinks('Attendees: [Alice](people/alice), [Bob](people/bob).', {}, 'meeting');
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
     expect(aliceLink!.linkType).toBe('attended');
+  });
+
+  test('custom dirs: [Name](custom-dir/slug) extracted when dir is configured', () => {
+    const candidates = extractPageLinks(
+      'Met [Rushi](01-notes/rushi) yesterday.',
+      {},
+      'concept',
+      ['01-notes'],
+    );
+    const rushi = candidates.find(c => c.targetSlug === '01-notes/rushi');
+    expect(rushi).toBeDefined();
+  });
+
+  test('custom dirs: bare slug references use same dir list', () => {
+    const candidates = extractPageLinks(
+      'See 01-notes/rushi for details.',
+      {},
+      'concept',
+      ['01-notes'],
+    );
+    const rushi = candidates.find(c => c.targetSlug === '01-notes/rushi');
+    expect(rushi).toBeDefined();
+  });
+
+  test('custom-only dir list excludes default dirs from bare slug match', () => {
+    // With dirs=['01-notes'], a bare `people/alice` token is NOT extracted.
+    const candidates = extractPageLinks(
+      'See people/alice for details.',
+      {},
+      'concept',
+      ['01-notes'],
+    );
+    expect(candidates.find(c => c.targetSlug === 'people/alice')).toBeUndefined();
   });
 });
 
@@ -301,5 +446,105 @@ describe('isAutoLinkEnabled', () => {
   test('garbage value -> true (fail-safe to default)', async () => {
     const engine = makeFakeEngine(new Map([['auto_link', 'garbage']]));
     expect(await isAutoLinkEnabled(engine)).toBe(true);
+  });
+});
+
+// ─── getEntityDirs ─────────────────────────────────────────────
+
+describe('getEntityDirs', () => {
+  test('null config -> DEFAULT_ENTITY_DIRS', async () => {
+    const engine = makeFakeEngine(new Map());
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+  });
+
+  test('empty string config -> DEFAULT_ENTITY_DIRS', async () => {
+    const engine = makeFakeEngine(new Map([['entity_dirs', '']]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+  });
+
+  test('valid single custom dir -> union with defaults', async () => {
+    const engine = makeFakeEngine(new Map([['entity_dirs', '01-notes']]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toContain('01-notes');
+    // defaults preserved
+    for (const d of DEFAULT_ENTITY_DIRS) expect(dirs).toContain(d);
+  });
+
+  test('multiple comma-separated dirs with whitespace -> parsed and unioned', async () => {
+    const engine = makeFakeEngine(new Map([['entity_dirs', ' 01-notes , 02-projects ,03-archive']]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toContain('01-notes');
+    expect(dirs).toContain('02-projects');
+    expect(dirs).toContain('03-archive');
+  });
+
+  test('duplicate custom dir overlapping with defaults -> no duplicates', async () => {
+    const engine = makeFakeEngine(new Map([['entity_dirs', 'people,01-notes']]));
+    const dirs = await getEntityDirs(engine);
+    const peopleCount = dirs.filter(d => d === 'people').length;
+    expect(peopleCount).toBe(1);
+    expect(dirs).toContain('01-notes');
+  });
+
+  test('entity_dirs_mode=replace -> only custom list, no defaults', async () => {
+    const engine = makeFakeEngine(new Map([
+      ['entity_dirs', '01-notes,02-projects'],
+      ['entity_dirs_mode', 'replace'],
+    ]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toEqual(['01-notes', '02-projects']);
+    // defaults NOT included in replace mode
+    expect(dirs).not.toContain('people');
+    expect(dirs).not.toContain('companies');
+  });
+
+  test('entity_dirs_mode=replace with empty entity_dirs -> defaults (empty replace is meaningless)', async () => {
+    const engine = makeFakeEngine(new Map([
+      ['entity_dirs', ''],
+      ['entity_dirs_mode', 'replace'],
+    ]));
+    const dirs = await getEntityDirs(engine);
+    expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+  });
+
+  test('invalid entry (uppercase) -> warn + return defaults', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const engine = makeFakeEngine(new Map([['entity_dirs', '01-notes,BAD_DIR']]));
+      const dirs = await getEntityDirs(engine);
+      expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+      expect(warnSpy).toHaveBeenCalled();
+      const firstCallArg = warnSpy.mock.calls[0]![0];
+      expect(firstCallArg).toContain('entity_dirs rejected');
+      expect(firstCallArg).toContain('BAD_DIR');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('invalid entry (starts with dash) -> warn + return defaults', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const engine = makeFakeEngine(new Map([['entity_dirs', '-bad']]));
+      const dirs = await getEntityDirs(engine);
+      expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('invalid entry (contains slash) -> warn + return defaults', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const engine = makeFakeEngine(new Map([['entity_dirs', 'people/extra']]));
+      const dirs = await getEntityDirs(engine);
+      expect(dirs).toEqual([...DEFAULT_ENTITY_DIRS]);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
