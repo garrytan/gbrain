@@ -17,7 +17,7 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { validateSlug, contentHash, parseEmbedding, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
 
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
@@ -272,7 +272,8 @@ export class PostgresEngine implements BrainEngine {
     `;
     const result = new Map<number, Float32Array>();
     for (const row of rows) {
-      if (row.embedding) result.set(row.id as number, row.embedding as Float32Array);
+      const embedding = parseEmbedding(row.embedding);
+      if (embedding) result.set(row.id as number, embedding);
     }
     return result;
   }

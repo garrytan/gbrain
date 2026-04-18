@@ -11,10 +11,10 @@ secrets:
     where: https://developer.x.com/en/portal/dashboard — create a project + app, copy the Bearer Token from "Keys and tokens"
 health_checks:
   - type: http
-    url: "https://api.x.com/2/users/me"
+    url: "https://api.x.com/2/users/by/username/X"
     auth: bearer
     auth_token: "$X_BEARER_TOKEN"
-    label: "X API"
+    label: "X API bearer auth"
 setup_time: 15 min
 cost_estimate: "$0-200/mo (Free tier: 1 app, read-only. Basic: $200/mo for search + higher limits)"
 ---
