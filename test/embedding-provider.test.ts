@@ -123,6 +123,53 @@ describe('getActiveProvider factory', () => {
   });
 });
 
+// ─── Live API integration tests (skip when no key) ──────────────────────────
+
+describe('GeminiEmbedder live API', () => {
+  const hasKey = !!(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY);
+
+  it('produces a 768-dim Float32Array for a real text', async () => {
+    if (!hasKey) {
+      console.log('  skipped (no GOOGLE_API_KEY / GEMINI_API_KEY)');
+      return;
+    }
+    const p = new GeminiEmbedder(768);
+    const vec = await p.embed('gbrain is a personal knowledge brain');
+    expect(vec).toBeInstanceOf(Float32Array);
+    expect(vec.length).toBe(768);
+    // Sanity: vector should have non-zero values
+    const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
+    expect(norm).toBeGreaterThan(0);
+  });
+
+  it('produces correct dims when custom output_dimensionality is set', async () => {
+    if (!hasKey) {
+      console.log('  skipped (no GOOGLE_API_KEY / GEMINI_API_KEY)');
+      return;
+    }
+    const p = new GeminiEmbedder(256);
+    const vec = await p.embed('test');
+    expect(vec.length).toBe(256);
+  });
+
+  it('batchEmbedContents returns one vector per text', async () => {
+    if (!hasKey) {
+      console.log('  skipped (no GOOGLE_API_KEY / GEMINI_API_KEY)');
+      return;
+    }
+    const p = new GeminiEmbedder(768);
+    const vecs = await p.embedBatch(['hello', 'world', 'gbrain']);
+    expect(vecs.length).toBe(3);
+    for (const v of vecs) {
+      expect(v).toBeInstanceOf(Float32Array);
+      expect(v.length).toBe(768);
+    }
+    // Verify the vectors are distinct (not all zeros or identical)
+    const diff = vecs[0][0] !== vecs[1][0];
+    expect(diff).toBe(true);
+  });
+});
+
 // ─── isEmbeddingAvailable ───────────────────────────────────────────────────
 
 describe('isEmbeddingAvailable', () => {
