@@ -30,6 +30,13 @@ export class PostgresEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig & { poolSize?: number }): Promise<void> {
+    if (!config) {
+      throw new GBrainError(
+        'PostgresEngine.connect() called without config',
+        'The config argument is required but was undefined',
+        'Pass an EngineConfig with at least database_url',
+      );
+    }
     if (config.poolSize) {
       // Instance-level connection for worker isolation
       const url = config.database_url;

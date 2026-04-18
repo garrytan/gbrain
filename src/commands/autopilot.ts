@@ -15,6 +15,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } fr
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
+import { loadConfig, toEngineConfig } from '../core/config.ts';
 
 function parseArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -98,7 +99,16 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     } catch {
       try {
         await engine.disconnect();
-        await (engine as any).connect?.();
+        // Re-load config from disk so reconnect gets the database URL and engine
+        // type.  Previous code called connect() with no arguments, which crashed
+        // the Postgres engine with "undefined is not an object (evaluating
+        // 'config.poolSize')" (#167 / #164).
+        const freshConfig = loadConfig();
+        if (freshConfig) {
+          await engine.connect(toEngineConfig(freshConfig));
+        } else {
+          logError('reconnect', new Error('No brain configuration found — cannot reconnect'));
+        }
       } catch (e) { logError('reconnect', e); }
     }
 
