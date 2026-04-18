@@ -685,4 +685,9 @@ export class PGLiteEngine implements BrainEngine {
     );
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r, true));
   }
+
+  async executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
+    const { rows } = await this.db.query(sql, params);
+    return rows as T[];
+  }
 }

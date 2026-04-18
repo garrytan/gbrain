@@ -168,6 +168,40 @@ echo "=== Discovery Complete ==="
 If no markdown repos are found, create a starter brain with a few template pages
 (a person page, a company page, a concept page) from docs/GBRAIN_RECOMMENDED_SCHEMA.md.
 
+## Phase C.5: One-step autopilot + Minions install (v0.11.1+)
+
+Run the migration runner once, then install autopilot. Two commands, done:
+
+```bash
+gbrain apply-migrations --yes       # applies any pending migrations; idempotent on healthy installs
+gbrain autopilot --install          # supervises itself + forks the Minions worker; env-aware
+```
+
+What `gbrain autopilot --install` does:
+
+- On **macOS**: writes a launchd plist at `~/Library/LaunchAgents/com.gbrain.autopilot.plist`.
+- On **Linux with systemd**: writes `~/.config/systemd/user/gbrain-autopilot.service`
+  with `Restart=on-failure`.
+- On **ephemeral containers** (Render / Railway / Fly / Docker): writes
+  `~/.gbrain/start-autopilot.sh` and prints the one-line your agent's
+  bootstrap should source to launch autopilot on every container start.
+  Auto-injects into OpenClaw's `hooks/bootstrap/ensure-services.sh` if
+  detected (use `--no-inject` to opt out).
+- On **Linux without systemd**: installs a crontab entry (every 5 min).
+
+Autopilot then supervises the Minions worker as a child process. Users get
+sync + extract + embed + backlinks + durable Postgres-backed job processing
+from ONE install step. No separate `gbrain jobs work` daemon to manage.
+
+On PGLite, autopilot runs inline (PGLite's exclusive file lock blocks a
+separate worker process). Everything else still works.
+
+If `apply-migrations` prints "N host-specific items need your agent's
+attention," read `~/.gbrain/migrations/pending-host-work.jsonl` + walk
+`skills/migrations/v0.11.0.md` + `docs/guides/plugin-handlers.md` to
+register host-specific handlers. Re-run `apply-migrations` after each
+batch.
+
 ## Phase D: Brain-First Lookup Protocol
 
 Inject the brain-first lookup protocol into the project's AGENTS.md (or equivalent).

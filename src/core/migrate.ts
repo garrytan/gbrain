@@ -82,6 +82,143 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 5,
+    name: 'minion_jobs_table',
+    sql: `
+      CREATE TABLE IF NOT EXISTS minion_jobs (
+        id               SERIAL PRIMARY KEY,
+        name             TEXT        NOT NULL,
+        queue            TEXT        NOT NULL DEFAULT 'default',
+        status           TEXT        NOT NULL DEFAULT 'waiting',
+        priority         INTEGER     NOT NULL DEFAULT 0,
+        data             JSONB       NOT NULL DEFAULT '{}',
+        max_attempts     INTEGER     NOT NULL DEFAULT 3,
+        attempts_made    INTEGER     NOT NULL DEFAULT 0,
+        attempts_started INTEGER     NOT NULL DEFAULT 0,
+        backoff_type     TEXT        NOT NULL DEFAULT 'exponential',
+        backoff_delay    INTEGER     NOT NULL DEFAULT 1000,
+        backoff_jitter   REAL        NOT NULL DEFAULT 0.2,
+        stalled_counter  INTEGER     NOT NULL DEFAULT 0,
+        max_stalled      INTEGER     NOT NULL DEFAULT 1,
+        lock_token       TEXT,
+        lock_until       TIMESTAMPTZ,
+        delay_until      TIMESTAMPTZ,
+        parent_job_id    INTEGER     REFERENCES minion_jobs(id) ON DELETE SET NULL,
+        on_child_fail    TEXT        NOT NULL DEFAULT 'fail_parent',
+        result           JSONB,
+        progress         JSONB,
+        error_text       TEXT,
+        stacktrace       JSONB       DEFAULT '[]',
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+        started_at       TIMESTAMPTZ,
+        finished_at      TIMESTAMPTZ,
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT chk_status CHECK (status IN ('waiting','active','completed','failed','delayed','dead','cancelled','waiting-children')),
+        CONSTRAINT chk_backoff_type CHECK (backoff_type IN ('fixed','exponential')),
+        CONSTRAINT chk_on_child_fail CHECK (on_child_fail IN ('fail_parent','remove_dep','ignore','continue')),
+        CONSTRAINT chk_jitter_range CHECK (backoff_jitter >= 0.0 AND backoff_jitter <= 1.0),
+        CONSTRAINT chk_attempts_order CHECK (attempts_made <= attempts_started),
+        CONSTRAINT chk_nonnegative CHECK (attempts_made >= 0 AND attempts_started >= 0 AND stalled_counter >= 0 AND max_attempts >= 1 AND max_stalled >= 0)
+      );
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_claim ON minion_jobs (queue, priority ASC, created_at ASC) WHERE status = 'waiting';
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_status ON minion_jobs(status);
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_stalled ON minion_jobs (lock_until) WHERE status = 'active';
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_delayed ON minion_jobs (delay_until) WHERE status = 'delayed';
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent ON minion_jobs(parent_job_id);
+    `,
+  },
+  {
+    version: 6,
+    name: 'agent_orchestration_primitives',
+    sql: `
+      -- Token accounting columns
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS tokens_input INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS tokens_output INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS tokens_cache_read INTEGER NOT NULL DEFAULT 0;
+
+      -- Update status constraint to include 'paused'
+      ALTER TABLE minion_jobs DROP CONSTRAINT IF EXISTS chk_status;
+      ALTER TABLE minion_jobs ADD CONSTRAINT chk_status
+        CHECK (status IN ('waiting','active','completed','failed','delayed','dead','cancelled','waiting-children','paused'));
+
+      -- Inbox table (separate from job row for clean concurrency)
+      CREATE TABLE IF NOT EXISTS minion_inbox (
+        id          SERIAL PRIMARY KEY,
+        job_id      INTEGER NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+        sender      TEXT NOT NULL,
+        payload     JSONB NOT NULL,
+        sent_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        read_at     TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_minion_inbox_unread ON minion_inbox (job_id) WHERE read_at IS NULL;
+    `,
+  },
+  {
+    version: 7,
+    name: 'agent_parity_layer',
+    sql: `
+      -- Subagent primitives + BullMQ parity columns
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS depth INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS max_children INTEGER;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS timeout_ms INTEGER;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS timeout_at TIMESTAMPTZ;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS remove_on_complete BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS remove_on_fail BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+
+      -- Tighten constraints (drop-then-add for idempotency)
+      ALTER TABLE minion_jobs DROP CONSTRAINT IF EXISTS chk_depth_nonnegative;
+      ALTER TABLE minion_jobs ADD CONSTRAINT chk_depth_nonnegative CHECK (depth >= 0);
+      ALTER TABLE minion_jobs DROP CONSTRAINT IF EXISTS chk_max_children_positive;
+      ALTER TABLE minion_jobs ADD CONSTRAINT chk_max_children_positive CHECK (max_children IS NULL OR max_children > 0);
+      ALTER TABLE minion_jobs DROP CONSTRAINT IF EXISTS chk_timeout_positive;
+      ALTER TABLE minion_jobs ADD CONSTRAINT chk_timeout_positive CHECK (timeout_ms IS NULL OR timeout_ms > 0);
+
+      -- Bounded scan for handleTimeouts
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_timeout ON minion_jobs (timeout_at)
+        WHERE status = 'active' AND timeout_at IS NOT NULL;
+
+      -- O(children) child-count check in add()
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent_status ON minion_jobs (parent_job_id, status)
+        WHERE parent_job_id IS NOT NULL;
+
+      -- Idempotency: enforce "only one job per key" at the DB layer
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_minion_jobs_idempotency ON minion_jobs (idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+
+      -- Fast lookup of child_done messages for readChildCompletions
+      CREATE INDEX IF NOT EXISTS idx_minion_inbox_child_done ON minion_inbox (job_id, sent_at)
+        WHERE (payload->>'type') = 'child_done';
+
+      -- Attachment manifest (BYTEA inline + forward-compat storage_uri)
+      CREATE TABLE IF NOT EXISTS minion_attachments (
+        id            SERIAL PRIMARY KEY,
+        job_id        INTEGER NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+        filename      TEXT NOT NULL,
+        content_type  TEXT NOT NULL,
+        content       BYTEA,
+        storage_uri   TEXT,
+        size_bytes    INTEGER NOT NULL,
+        sha256        TEXT NOT NULL,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT uniq_minion_attachments_job_filename UNIQUE (job_id, filename),
+        CONSTRAINT chk_attachment_storage CHECK (content IS NOT NULL OR storage_uri IS NOT NULL),
+        CONSTRAINT chk_attachment_size CHECK (size_bytes >= 0)
+      );
+      CREATE INDEX IF NOT EXISTS idx_minion_attachments_job ON minion_attachments (job_id);
+
+      -- TOAST tuning: store attachment bytes out-of-line, skip compression.
+      -- Attachments are usually already-compressed formats; compression burns CPU for no win.
+      DO $$
+      BEGIN
+        ALTER TABLE minion_attachments ALTER COLUMN content SET STORAGE EXTERNAL;
+      EXCEPTION WHEN OTHERS THEN
+        -- PGLite may not support SET STORAGE EXTERNAL. Storage tuning is an optimization, not correctness.
+        NULL;
+      END $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

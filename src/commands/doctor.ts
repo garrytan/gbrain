@@ -2,6 +2,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
+import { loadCompletedMigrations } from '../core/preferences.ts';
 import { join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 
@@ -63,6 +64,39 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
     checks.push(conformanceResult);
   }
 
+  // 3. Half-migrated Minions detection (filesystem-only).
+  // If completed.jsonl has any status:"partial" entry with no later
+  // status:"complete" for the same version, the install is mid-migration.
+  // Typical cause: v0.11.0 stopgap wrote a partial record but nobody ran
+  // `gbrain apply-migrations --yes` afterward. This check fires on every
+  // `gbrain doctor` invocation so Wintermute's health skill catches it.
+  try {
+    const completed = loadCompletedMigrations();
+    const byVersion = new Map<string, { complete: boolean; partial: boolean }>();
+    for (const entry of completed) {
+      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false };
+      if (entry.status === 'complete') seen.complete = true;
+      if (entry.status === 'partial') seen.partial = true;
+      byVersion.set(entry.version, seen);
+    }
+    const stuck = Array.from(byVersion.entries())
+      .filter(([, s]) => s.partial && !s.complete)
+      .map(([v]) => v);
+    if (stuck.length > 0) {
+      checks.push({
+        name: 'minions_migration',
+        status: 'fail',
+        message: `MINIONS HALF-INSTALLED (partial migration: ${stuck.join(', ')}). Run: gbrain apply-migrations --yes`,
+      });
+    }
+    // Note: the "no preferences.json but schema is v7+" case is detected
+    // in the DB section below (needs schema version).
+  } catch (e) {
+    // completed.jsonl read/parse failure is non-fatal — probably a fresh
+    // install with no record yet. Don't warn here; the DB check below
+    // handles the "schema v7+ but no prefs" case.
+  }
+
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {
@@ -120,17 +154,25 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
   }
 
   // 6. Schema version
+  let schemaVersion = 0;
   try {
     const version = await engine.getConfig('version');
-    const v = parseInt(version || '0', 10);
-    if (v >= LATEST_VERSION) {
-      checks.push({ name: 'schema_version', status: 'ok', message: `Version ${v} (latest: ${LATEST_VERSION})` });
+    schemaVersion = parseInt(version || '0', 10);
+    if (schemaVersion >= LATEST_VERSION) {
+      checks.push({ name: 'schema_version', status: 'ok', message: `Version ${schemaVersion} (latest: ${LATEST_VERSION})` });
     } else {
-      checks.push({ name: 'schema_version', status: 'warn', message: `Version ${v}, latest is ${LATEST_VERSION}. Run gbrain init to migrate.` });
+      checks.push({ name: 'schema_version', status: 'warn', message: `Version ${schemaVersion}, latest is ${LATEST_VERSION}. Run gbrain init to migrate.` });
     }
   } catch {
     checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
   }
+
+  // Note: we intentionally DO NOT fail on "schema v7+ but no preferences.json".
+  // That's a valid fresh-install state after `gbrain init` — the migration
+  // orchestrator writes preferences, but `init` alone doesn't run it. The
+  // partial-completed.jsonl check in the filesystem section (step 3) is
+  // the canonical half-migration signal and fires when the stopgap ran
+  // but `apply-migrations` didn't follow up.
 
   // 7. Embedding health
   try {

@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'jobs', 'apply-migrations', 'skillpack-check']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -248,7 +248,7 @@ async function handleCliOnly(command: string, args: string[]) {
   }
   if (command === 'post-upgrade') {
     const { runPostUpgrade } = await import('./commands/upgrade.ts');
-    runPostUpgrade();
+    await runPostUpgrade();
     return;
   }
   if (command === 'check-update') {
@@ -279,6 +279,22 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'report') {
     const { runReport } = await import('./commands/report.ts');
     await runReport(args);
+    return;
+  }
+  if (command === 'apply-migrations') {
+    // Does not need connectEngine — each phase (schema, smoke, host-rewrite)
+    // manages its own subprocess or file-layer access directly. Avoids
+    // connecting a second time when the orchestrator shells out to
+    // `gbrain init --migrate-only` and `gbrain jobs smoke`.
+    const { runApplyMigrations } = await import('./commands/apply-migrations.ts');
+    await runApplyMigrations(args);
+    return;
+  }
+  if (command === 'skillpack-check') {
+    // Agent-readable health report. Shells out to doctor + apply-migrations
+    // internally; does not need its own DB connection.
+    const { runSkillpackCheck } = await import('./commands/skillpack-check.ts');
+    await runSkillpackCheck(args);
     return;
   }
   if (command === 'doctor') {
@@ -348,6 +364,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'eval': {
         const { runEvalCommand } = await import('./commands/eval.ts');
         await runEvalCommand(engine, args);
+        break;
+      }
+      case 'jobs': {
+        const { runJobs } = await import('./commands/jobs.ts');
+        await runJobs(engine, args);
         break;
       }
       case 'sync': {
@@ -473,6 +494,16 @@ TOOLS
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
   report --type <name> --content ... Save timestamped report to brain/reports/
+
+JOBS (Minions)
+  jobs submit <name> [--params JSON]  Submit background job [--follow] [--dry-run]
+  jobs list [--status S] [--limit N]  List jobs
+  jobs get <id>                       Job details + history
+  jobs cancel <id>                    Cancel job
+  jobs retry <id>                     Re-queue failed/dead job
+  jobs prune [--older-than 30d]       Clean old jobs
+  jobs stats                          Job health dashboard
+  jobs work [--queue Q]               Start worker daemon (Postgres only)
 
 ADMIN
   stats                              Brain statistics

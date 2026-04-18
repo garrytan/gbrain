@@ -45,6 +45,9 @@ const ALL_TABLES = [
   'files',
   'pages',       // last because of foreign keys
   'config',
+  'minion_attachments',
+  'minion_inbox',
+  'minion_jobs',
 ];
 
 /**

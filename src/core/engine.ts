@@ -89,4 +89,7 @@ export interface BrainEngine {
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;
   getChunksWithEmbeddings(slug: string): Promise<Chunk[]>;
+
+  // Raw SQL (for Minions job queue and other internal modules)
+  executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 }

@@ -2,6 +2,113 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.11.1] - 2026-04-18
+
+### Fixed — the v0.11.0 migration mega-bug
+
+Your v0.11.0 upgrade shipped the Minions schema, worker, queue, and migration skill. It didn't ship the actual migration running on upgrade. If you upgraded and ended up with no `~/.gbrain/preferences.json`, autopilot still running inline, and cron jobs still hitting `agentTurn`'s 300s timeout — that's the bug. This release fixes it and auto-repairs on your next `gbrain upgrade`.
+
+- **`gbrain apply-migrations` is the canonical repair.** Reads `~/.gbrain/migrations/completed.jsonl`, diffs against the TS migration registry, runs any pending orchestrators. Idempotent: rerunning on a healthy install is cheap and silent.
+- **`gbrain upgrade` and `postinstall` now invoke it.** `runPostUpgrade` tail-calls `apply-migrations --yes` unconditionally (Codex caught that the earlier early-return on missing upgrade-state.json left broken-v0.11.0 installs broken forever). `package.json`'s new `postinstall` hook runs it after `bun update gbrain` / `npm i gbrain`. First-install guard keeps postinstall silent when no brain is configured yet.
+- **Stopgap for v0.11.0 binaries without this release:** paste `curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/v0.11.1/scripts/fix-v0.11.0.sh | bash`. It writes `preferences.json` + a `status: "partial"` record so the eventual `apply-migrations --yes` run picks up where it left off — the stopgap does not poison the permanent migration path.
+
+### Added — autopilot supervises Minions itself, one install step
+
+Before this release, autopilot + `gbrain jobs work` were two separate processes you had to manage. Now autopilot is the one install step, and it forks the Minions worker as a child with 10s-backoff restart + 5-crash cap + async SIGTERM drain that waits up to 35s for the worker to commit in-flight work before SIGKILL.
+
+- **Autopilot dispatches each cycle as a single `autopilot-cycle` Minion job** with `idempotency_key: autopilot-cycle:<slot>`. A 5-min autopilot + 8-min embed no longer stacks 4 overlapping runs — the queue's unique partial index dedupes at the DB layer. Codex caught that the earlier "parent/child DAG" plan was a category error (parent/child in Minions flips the parent to `waiting-children`, not the child to `waiting-for-parent`, so extract would have run before sync).
+- **Per-step partial-failure handling.** Each of sync / extract / embed / backlinks is wrapped in its own try/catch. Handler returns `{ partial: true, failed_steps: [...] }` when any step fails; never throws. An intermittent extract bug no longer blocks every future cycle via Minion retry.
+- **Env-aware `gbrain autopilot --install`** picks the right supervisor: launchd on macOS, systemd user unit on Linux-with-systemd (with a stricter `systemctl --user is-system-running` probe — the naive `/run/systemd/system` check was a false-positive magnet), bootstrap hook on ephemeral containers (Render / Railway / Fly / Docker — auto-injects into OpenClaw's `hooks/bootstrap/ensure-services.sh` when detected, use `--no-inject` to opt out), crontab otherwise. `--target` overrides detection. Uninstall mirrors all four targets.
+- **Worker child spawn uses `resolveGbrainCliPath()`** — never blindly uses `process.execPath` (on source installs that's the Bun runtime, not `gbrain`). Resolution tries argv[1], then execPath ending `/gbrain`, then `which gbrain`.
+
+### Added — library-level Core fns so handlers don't kill workers
+
+Reusing CLI entry-point functions (`runExtract`, `runEmbed`, etc.) as Minion handler bodies was wrong — any `process.exit(1)` on bad args would kill the entire worker process and every in-flight job. New Core fns throw instead:
+
+- `runExtractCore(engine, opts)` — wraps extract-links + extract-timeline.
+- `runEmbedCore(engine, opts)` — accepts `{ slug, slugs, all, stale }`.
+- `runBacklinksCore(opts)` — `{ action: 'check' | 'fix', dir, dryRun }`.
+- `runLintCore(opts)` — returns counts, doesn't print human detail (CLI wrapper does that).
+
+CLI wrappers (`runExtract`, `runEmbed`, etc.) stay as thin arg-parsers that catch + `process.exit(1)`. Handlers in `jobs.ts` import the Core fns directly.
+
+### Added — skillify ships as a first-class gbrain skill
+
+Ported from Wintermute, proven in production. Paired with `gbrain check-resolvable` gives a user-controllable equivalent of Hermes' auto-skill-creation — you decide when and what, the tooling keeps the 10-item checklist honest.
+
+- `skills/skillify/SKILL.md` — the meta skill. Triggers: "skillify this", "is this a skill?", "make this proper".
+- `scripts/skillify-check.ts` — machine-readable audit. `--json` for CI, `--recent` to check files modified in the last 7 days.
+- README now has a short section explaining the Skillify + check-resolvable pair and why user-controlled beats auto-generated.
+
+### Added — host-agnostic plugin contract (replaces handlers.json)
+
+An earlier design draft shipped `~/.claude/gbrain-handlers.json` where each entry was a shell command the worker would exec. Codex flagged this as a durable RCE surface. Dropped in favor of a code-level plugin contract:
+
+- `docs/guides/plugin-handlers.md` — the full contract. Host imports `gbrain/minions`, constructs a `MinionWorker`, calls `worker.register(name, fn)` for every custom handler, calls `worker.start()`. Ships the bootstrap as code in the host repo, same trust model as any other code.
+- `skills/conventions/cron-via-minions.md` — the rewrite convention for cron manifests. PGLite branch keeps `--follow` (inline); Postgres branch drops `--follow` + uses `--idempotency-key` on the cycle slot.
+- `skills/migrations/v0.11.0.md` — body restored as the host-agent instruction manual. Walks the host through every JSONL TODO using the 10-item skillify checklist.
+
+### Added — `gbrain init --migrate-only` (the Codex H1 fix)
+
+Running bare `gbrain init` with no flags defaulted to PGLite and called `saveConfig` — silently clobbering any existing Postgres config. The migration orchestrator now calls `gbrain init --migrate-only` which only applies the schema against the configured engine and NEVER writes a new config. Apply-migrations + stopgap + postinstall all use this flag. Bare `gbrain init` still exists and still defaults to PGLite when you want a fresh install.
+
+### Changed
+
+- `runPostUpgrade` is now async + runs `apply-migrations --yes` unconditionally (Codex H8).
+- `gbrain upgrade`'s subprocess timeout for `post-upgrade` bumped 30s → 300s so the migration has room to do real work like autopilot install (Codex H7).
+- Migration enumeration uses a TS registry at `src/commands/migrations/index.ts` instead of walking `skills/migrations/*.md` on disk — compiled binaries see the same set source installs do (Codex K).
+- Migration diff rule: apply when no `status: "complete"` entry exists in `completed.jsonl` AND `version ≤ installed VERSION`. Earlier proposed "version > currentVersion" would have SKIPPED v0.11.0 when running v0.11.1 (Codex H9).
+- Autopilot refreshes its lock-file mtime every cycle so a long-lived autopilot doesn't get declared "stale" by the next cron-fired invocation after 10 minutes (Codex C).
+- CLAUDE.md gained a new "Migration is canonical, not advisory" section pinning the design principle.
+
+### Tests
+
+34 new unit tests across preferences, init-migrate-only, apply-migrations, v0.11.0 orchestrator, handlers, autopilot-resolve-cli, autopilot-install, skillify-check. All 1177 existing tests still green.
+
+## [0.11.0] - 2026-04-18
+
+### Added — Minions (agent orchestration primitives)
+
+Minions was a job queue. Now it's an agent runtime. Everything your orchestrator needs to fan out work across sub-agents without turning them into orphans or rate-limit disasters.
+
+- **Depth tracking and `max_spawn_depth`.** Runaway recursion is a real prod failure. Children inherit `depth = parent.depth + 1` and submit rejects past a configurable cap (default 5). Your orchestrator can no longer spawn itself into an infinite tree by accident.
+
+- **Per-parent child cap (`max_children`).** Stop spawn storms before they hit OpenAI's rate limit. Set `max_children: 10` on a parent job and the 11th submit throws. Enforced via `SELECT ... FOR UPDATE` on the parent row so concurrent submits can't both slip through.
+
+- **Per-job wall-clock timeout (`timeout_ms`).** The #2 daily OpenClaw pain is "agent stops responding" ... long handler, token bloat, no clock. Now every job can declare a ceiling. `handleTimeouts()` dead-letters expired rows; a per-job `setTimeout` fires AbortSignal as a best-effort handler interrupt. No retry on timeout, terminal by design.
+
+- **Cascade cancel via recursive CTE.** `cancelJob()` walks the full descendant tree in a single statement and cancels everything. Grandchild orphan bug is gone. Re-parented descendants (via `removeChildDependency`) are naturally excluded. Depth cap of 100 on the CTE as runaway safety.
+
+- **Idempotency keys.** Add `idempotency_key: 'sync:2026-04-18'` to your submit and only one job per key ever runs. PG unique partial index enforces it at the DB layer, two concurrent pods submitting the same key collapse to one row. No more "did my cron fire twice?" anxiety.
+
+- **Child to parent `child_done` inbox.** When a child completes, the parent gets `{type:'child_done', child_id, job_name, result}` posted to its inbox in the same transaction as the token rollup. Fan-in for free. `readChildCompletions(parent_id)` filters the inbox by message type with an optional `since` cursor. Works as the primitive for future `waitForChildren(n)` helpers.
+
+- **`removeOnComplete` / `removeOnFail`.** BullMQ convenience. Completed jobs don't bloat your `minion_jobs` table forever. Opt in per-job, the `child_done` message survives because it lives in the *parent's* inbox, not the child's.
+
+- **Attachment manifest.** New `minion_attachments` table for binary payloads attached to jobs. Validation catches path traversal (`../`, `/`, `\`, null byte), oversize (5 MiB default, raiseable), invalid base64, and duplicate filenames per job. DB-level `UNIQUE (job_id, filename)` defends against concurrent addAttachment races. `storage_uri TEXT` column forward-compat for future S3 offload.
+
+- **Cooperative AbortSignal.** Pause or cascade-cancel clears the job's `lock_token`, the running handler's next lock renewal fails and fires `ctx.signal.abort()`. Handlers that respect AbortSignal stop cleanly. Handlers that ignore it get dead-lettered by the DB-side `handleTimeouts`, either way, the row status is correct.
+
+- **Transactional correctness fixes.** `completeJob()` and `failJob()` now wrap in `engine.transaction()`. Parent hook invocations (`resolveParent`, `failParent`, `removeChildDependency`) fold into the same transaction so a process crash between child-update and parent-update can't strand the parent in `waiting-children`. Fixed a pre-existing bug where `add()` was inverting child/parent status (child got `waiting-children`, parent stayed `waiting`, making the child unclaimable until a manual UPDATE). Tests that worked around it are now cleaned up.
+
+- **Migration v7 (`agent_parity_layer`).** Additive schema: new columns on `minion_jobs` (all defaulted, nullable where appropriate), new `minion_attachments` table, 3 partial indexes for bounded scans (`idx_minion_jobs_timeout`, `idx_minion_jobs_parent_status`, `uniq_minion_jobs_idempotency`). Existing installs pick it up on next `gbrain init`, no manual action required.
+
+### Fixed
+
+- **JSONB double-encode bug.** When writing to JSONB columns via `engine.executeRaw(sql, params)`, postgres.js auto-JSON-encodes parameters. Calling `JSON.stringify(obj)` first stored a JSON string literal, making `jsonb_typeof = string` and breaking `payload->>'key'` queries silently. Fixed in three call sites (`child_done` inbox post, `updateProgress`, `sendMessage`). PGLite tolerated both forms so the unit tests missed it, only a real-Postgres E2E with the `payload->>` operator caught it.
+
+- **Sibling completion race.** Under READ COMMITTED, two grandchildren completing concurrently each saw the other as still-active in their pre-commit snapshot, so neither flipped the parent out of `waiting-children`. Fixed by taking `SELECT ... FOR UPDATE` on the parent row at the start of `completeJob` and `failJob` transactions. Siblings now serialize on the parent lock, second commit sees the first as completed and correctly advances the parent.
+
+### Tests
+
+- **~33 new tests in `test/minions.test.ts`** covering depth cap, per-parent child cap, timeout dead-letter, cascade cancel (including the re-parent edge case), `removeOnComplete` / `removeOnFail`, idempotency (single + concurrent), `child_done` inbox (posted in txn + survives child removeOnComplete + since cursor), attachment validation (oversize, path traversal, null byte, duplicates, base64), AbortSignal firing on pause mid-handler, catch-block skipping `failJob` when aborted, worker in-flight bookkeeping, token-rollup guard when parent already terminal, setTimeout safety-net cleanup.
+
+- **`test/e2e/minions-concurrency.test.ts`** ... two worker instances against real Postgres, 20 jobs, zero double-claims. The only test that actually verifies `FOR UPDATE SKIP LOCKED` under real concurrency. PGLite can't prove this.
+
+- **`test/e2e/minions-resilience.test.ts`** ... 5 tests covering the 6 OpenClaw daily pains: spawn storms, agent stall, forgotten dispatches, cascade cancel, deep tree fan-in with grandchild completions. Every pain has a test that fails if the primitive regresses.
+
+- **1066 unit + 105 E2E = 1171 tests passing** before this ship. The parity layer isn't just planned, it's pinned down.
+
 ## [0.10.2] - 2026-04-17
 
 ### Security — Wave 3 (9 vulnerabilities closed)
@@ -56,6 +163,8 @@ Wave 3 fixes were contributed by **@garagon** (PRs #105-#109) and **@Hybirdss** 
 ## [0.10.0] - 2026-04-14
 
 ### Added
+
+- **Background jobs that don't die.** Minions is a BullMQ-inspired job queue built directly into GBrain. No Redis. No external dependencies. Submit `gbrain jobs submit embed --follow` and it runs with automatic retry, exponential backoff, and stall detection. Kill the process mid-job? Stall detection catches it and requeues. Run `gbrain jobs work` to start a persistent worker daemon that processes jobs from the queue. Jobs are first-class: submit, list, cancel, retry, prune, stats, all from the CLI or MCP. Your agent can now run long operations (14K+ page embeds, bulk enrichment) as durable background jobs instead of fragile inline commands.
 
 - **Your agent now has 24 skills, not 8.** 16 new brain skills generalized from a production deployment with 14,700+ pages. Signal detection, brain-first lookup, content ingestion (articles, video, meetings), entity enrichment, task management, cron scheduling, reports, and cross-modal review. All shipped as fat markdown files your agent reads on demand.
 

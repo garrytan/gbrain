@@ -9,7 +9,7 @@ cron scheduling, reports, identity, and access control.
 
 ## Architecture
 
-Contract-first: `src/core/operations.ts` defines ~30 shared operations. CLI and MCP
+Contract-first: `src/core/operations.ts` defines ~36 shared operations. CLI and MCP
 server are both generated from this single source. Engine factory (`src/core/engine-factory.ts`)
 dynamically imports the configured engine (`'pglite'` or `'postgres'`). Skills are fat
 markdown files (tool-agnostic, work with both CLI and plugin contexts).
@@ -25,7 +25,7 @@ strict behavior when unset.
 - `src/core/operations.ts` — Contract-first operation definitions (the foundation). Also exports upload validators: `validateUploadPath`, `validatePageSlug`, `validateFilename`. `OperationContext.remote` flags untrusted callers.
 - `src/core/engine.ts` — Pluggable engine interface (BrainEngine). `clampSearchLimit(limit, default, cap)` takes an explicit cap so per-operation caps can be tighter than `MAX_SEARCH_LIMIT`.
 - `src/core/engine-factory.ts` — Engine factory with dynamic imports (`'pglite'` | `'postgres'`)
-- `src/core/pglite-engine.ts` — PGLite (embedded Postgres 17.5 via WASM) implementation, all 37 BrainEngine methods
+- `src/core/pglite-engine.ts` — PGLite (embedded Postgres 17.5 via WASM) implementation, all 38 BrainEngine methods
 - `src/core/pglite-schema.ts` — PGLite-specific DDL (pgvector, pg_trgm, triggers)
 - `src/core/postgres-engine.ts` — Postgres + pgvector implementation (Supabase / self-hosted)
 - `src/core/utils.ts` — Shared SQL utilities extracted from postgres-engine.ts
@@ -48,6 +48,11 @@ strict behavior when unset.
 - `src/core/transcription.ts` — Audio transcription: Groq Whisper (default), OpenAI fallback, ffmpeg segmentation for >25MB
 - `src/core/enrichment-service.ts` — Global enrichment service: entity slug generation, tier auto-escalation, batch throttling
 - `src/core/data-research.ts` — Recipe validation, field extraction (MRR/ARR regex), dedup, tracker parsing, HTML stripping
+- `src/core/minions/` — Minions job queue: BullMQ-inspired, Postgres-native (queue, worker, backoff, types)
+- `src/core/minions/queue.ts` — MinionQueue class (submit, claim, complete, fail, stall detection, parent-child, depth/child-cap, per-job timeouts, cascade-kill, attachments, idempotency keys, child_done inbox, removeOnComplete/Fail)
+- `src/core/minions/worker.ts` — MinionWorker class (handler registry, lock renewal, graceful shutdown, timeout safety net)
+- `src/core/minions/attachments.ts` — Attachment validation (path traversal, null byte, oversize, base64, duplicate detection)
+- `src/commands/jobs.ts` — `gbrain jobs` CLI subcommands + `gbrain jobs work` daemon
 - `src/commands/extract.ts` — `gbrain extract links|timeline|all`: batch link/timeline extraction from markdown
 - `src/commands/features.ts` — `gbrain features --json --auto-fix`: usage scan + feature adoption salesman
 - `src/commands/autopilot.ts` — `gbrain autopilot --install`: self-maintaining brain daemon (sync+extract+embed)
@@ -94,6 +99,7 @@ strict behavior when unset.
 - `skills/soul-audit/SKILL.md` — 6-phase interview for SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md
 - `skills/webhook-transforms/SKILL.md` — External events to brain signals
 - `skills/data-research/SKILL.md` — Structured data research: email-to-tracker pipeline with parameterized YAML recipes
+- `skills/minion-orchestrator/SKILL.md` — Background job orchestration: submit, fan out children with depth/cap/timeouts, collect results via child_done inbox
 - `templates/` — SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md templates
 - `skills/migrations/` — Version migration files with feature_pitch YAML frontmatter
 - `src/commands/publish.ts` — Deterministic brain page publisher (code+skill pair, zero LLM calls)
@@ -110,9 +116,18 @@ Key commands added in v0.7:
 - `gbrain init` — defaults to PGLite (no Supabase needed), scans repo size, suggests Supabase for 1000+ files
 - `gbrain migrate --to supabase` / `gbrain migrate --to pglite` — bidirectional engine migration
 
+Key commands added for Minions (job queue):
+- `gbrain jobs submit <name> [--params JSON] [--follow] [--dry-run]` — submit a background job
+- `gbrain jobs list [--status S] [--queue Q]` — list jobs with filters
+- `gbrain jobs get <id>` — job details with attempt history
+- `gbrain jobs cancel/retry/delete <id>` — manage job lifecycle
+- `gbrain jobs prune [--older-than 30d]` — clean old completed/dead jobs
+- `gbrain jobs stats` — job health dashboard
+- `gbrain jobs work [--queue Q] [--concurrency N]` — start worker daemon (Postgres only)
+
 ## Testing
 
-`bun test` runs all tests (47 unit test files + 6 E2E test files). Unit tests run
+`bun test` runs all tests (49 unit test files + 8 E2E test files). Unit tests run
 without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
 
 Unit tests: `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts`
@@ -144,6 +159,7 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/transcription.test.ts` (provider detection, format validation, API key errors),
 `test/enrichment-service.test.ts` (entity slugification, extraction, tier escalation),
 `test/data-research.test.ts` (recipe validation, MRR/ARR extraction, dedup, tracker parsing, HTML stripping),
+`test/minions.test.ts` (Minions job queue v7: CRUD, state machine, backoff, stall detection, dependencies, worker lifecycle, lock management, claim mechanics, depth/child-cap, timeouts, cascade kill, idempotency, child_done inbox, attachments, removeOnComplete/Fail),
 `test/extract.test.ts` (link extraction, timeline extraction, frontmatter parsing, directory type inference),
 `test/features.test.ts` (feature scanning, brain_score calculation, CLI routing, persistence),
 `test/file-upload-security.test.ts` (symlink traversal, cwd confinement, slug + filename allowlists, remote vs local trust),
@@ -205,7 +221,7 @@ stop and remove it before starting a new one.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 25 skills
+Read the skill files in `skills/` before doing brain operations. GBrain ships 26 skills
 organized by `skills/RESOLVER.md`:
 
 **Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
@@ -215,7 +231,7 @@ briefing, migrate, setup, publish.
 meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
 
 **Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
-testing, soul-audit, webhook-transforms.
+testing, soul-audit, webhook-transforms, data-research, minion-orchestrator.
 
 **Conventions:** `skills/conventions/` has cross-cutting rules (quality, brain-first,
 model-routing, test-before-bulk, cross-modal). `skills/_brain-filing-rules.md` and
@@ -299,6 +315,30 @@ brain work worse than before? If yes, migration file. If no, skip it.
 Write migration files as agent instructions, not technical notes. Tell the agent
 what to do, step by step, with exact commands. See `skills/migrations/v0.5.0.md`
 for the pattern.
+
+## Migration is canonical, not advisory
+
+GBrain's job is to deliver a canonical, working setup to every user on upgrade.
+Anything that looks like a "host-repo change" — AGENTS.md, cron manifests,
+launchctl units, config files outside `~/.gbrain/` — is a GBrain migration
+step, not a nudge we leave for the host-repo maintainer. Migrations edit host
+files (with backups) to make the canonical setup real. Exceptions: changes
+that require human judgment (content edits, renames that break semantics,
+host-specific handler registration where shell-exec would be an RCE surface).
+Everything mechanical ships in the migration.
+
+**Test:** if shipping a feature requires a sentence that starts with "in
+your AGENTS.md, add…" or "in your cron/jobs.json, rewrite…", the migration
+orchestrator should be doing that edit, not the user.
+
+**The exception is host-specific code.** For custom Minion handlers
+(`ea-inbox-sweep`, `frameio-scan`, etc. on Wintermute), shipping them as a
+data file the worker would exec is an RCE surface. Those get registered in
+the host's own repo via the plugin contract (`docs/guides/plugin-handlers.md`);
+the migration orchestrator emits a structured TODO to
+`~/.gbrain/migrations/pending-host-work.jsonl` + the host agent walks the
+TODOs using `skills/migrations/v0.11.0.md` — stays host-agnostic, still
+canonical.
 
 ## Schema state tracking
 

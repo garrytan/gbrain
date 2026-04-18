@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.10.2",
+  "version": "0.11.1",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -11,7 +11,9 @@
     ".": "./src/core/index.ts",
     "./engine": "./src/core/engine.ts",
     "./types": "./src/core/types.ts",
-    "./operations": "./src/core/operations.ts"
+    "./operations": "./src/core/operations.ts",
+    "./minions": "./src/core/minions/index.ts",
+    "./engine-factory": "./src/core/engine-factory.ts"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
@@ -20,6 +22,7 @@
     "build:schema": "bash scripts/build-schema.sh",
     "test": "bun test",
     "test:e2e": "bun test test/e2e/",
+    "postinstall": "gbrain --version >/dev/null 2>&1 && gbrain apply-migrations --yes --non-interactive 2>/dev/null || true",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin"
   },

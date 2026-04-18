@@ -128,6 +128,21 @@
       "name": "data-research",
       "path": "data-research/SKILL.md",
       "description": "Structured data research: search, extract, archive, deduplicate, track. Parameterized YAML recipes for investor updates, donations, company metrics."
+    },
+    {
+      "name": "minion-orchestrator",
+      "path": "minion-orchestrator/SKILL.md",
+      "description": "Manage background agents via Minions job queue. Submit, monitor, steer, pause/resume, replay. Replaces sessions_spawn for durable observable agents."
+    },
+    {
+      "name": "skillify",
+      "path": "skillify/SKILL.md",
+      "description": "Meta skill. Turn any raw feature into a properly-skilled, tested, resolvable, evaled unit. Paired with gbrain check-resolvable gives user-controllable auto-skill-creation."
+    },
+    {
+      "name": "skillpack-check",
+      "path": "skillpack-check/SKILL.md",
+      "description": "Agent-readable gbrain health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
     }
   ],
   "dependencies": {

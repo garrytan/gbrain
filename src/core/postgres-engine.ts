@@ -731,4 +731,9 @@ export class PostgresEngine implements BrainEngine {
     `;
     return rows.map((r: Record<string, unknown>) => rowToChunk(r, true));
   }
+
+  async executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
+    const conn = this.sql;
+    return conn.unsafe(sql, params) as unknown as T[];
+  }
 }

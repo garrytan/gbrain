@@ -85,6 +85,29 @@ If not running, install it:
 gbrain autopilot --install --repo ~/brain
 ```
 Autopilot runs sync, extract, and embed in a continuous loop with adaptive scheduling.
+In v0.11.1+, autopilot dispatches each cycle as a single `autopilot-cycle`
+Minion job and supervises the worker child — one install step gives you
+sync + extract + embed + backlinks + durable job processing.
+
+### Fix a half-migrated install
+A v0.11.0 install where the migration skill never fired leaves Minions
+partially set up: schema is applied, but `~/.gbrain/preferences.json`
+doesn't exist, autopilot runs inline, host manifests still reference
+`agentTurn`. Repair:
+
+```bash
+# Check migration status
+gbrain apply-migrations --list
+
+# Apply pending migrations (idempotent; safe on healthy installs)
+gbrain apply-migrations --yes
+
+# If host-specific handlers are flagged in ~/.gbrain/migrations/pending-host-work.jsonl:
+# walk them per skills/migrations/v0.11.0.md + docs/guides/plugin-handlers.md,
+# ship handler registrations in the host repo, then re-run apply-migrations.
+```
+
+Full troubleshooting guide: `docs/guides/minions-fix.md`.
 
 ### Back-link enforcement
 Check that the back-linking iron law is being followed:

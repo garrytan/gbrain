@@ -63,6 +63,50 @@
 ### ~~Constrained health_check DSL for third-party recipes~~
 **Completed:** v0.9.3 (2026-04-12). Typed DSL with 4 check types (`http`, `env_exists`, `command`, `any_of`). All 7 first-party recipes migrated. String health checks accepted with deprecation warning + metachar validation for non-embedded recipes.
 
+## P1 (new from v0.11.0 — Minions)
+
+### Per-queue rate limiting for Minions
+**What:** Token-bucket rate limiting per queue via a new `minion_rate_limits` table (queue, capacity, refill_rate, tokens, updated_at), with acquire/release in `claim()`.
+
+**Why:** The #1 daily OpenClaw pain is spawn storms hitting OpenAI/Anthropic rate limits. `max_children` caps fan-out per parent, but a queue with 50 ready jobs will still slam the API. Every Minions consumer currently reinvents token-bucket in user code.
+
+**Pros:** First-class rate limiting means no consumer has to roll their own. Composes with `max_children` (which is per-parent) to give two orthogonal throttles.
+
+**Cons:** Adds a write hotspot on the rate-limit row. Mitigate by keeping it a simple `UPDATE ... WHERE tokens > 0 RETURNING` that fails fast and puts the claim back in the pool.
+
+**Effort:** ~2 hours. Deferred from v0.11.0 to keep the parity PR at a reviewable size.
+
+**Depends on:** Minions (shipped in v0.11.0).
+
+### Minions repeat/cron scheduler
+**What:** BullMQ-style repeatable jobs. `queue.add(name, data, { repeat: { cron: '0 * * * *' } })`.
+
+**Why:** Idempotency keys (shipped in v0.11.0) are the foundation. Consumers currently use launchd/cron to fire `gbrain jobs submit`, but a native scheduler inside the worker would be cleaner and portable across deployments.
+
+**Pros:** One mental model for both immediate and scheduled work. Idempotency prevents double-fire.
+
+**Cons:** Every cron library has edge cases (DST, missed intervals on worker restart). Use a battle-tested parser.
+
+**Effort:** ~1 day.
+
+**Depends on:** Idempotency keys (shipped in v0.11.0).
+
+### Minions worker event emitter
+**What:** `worker.on('job:completed', handler)` / `worker.on('job:failed', ...)` instead of polling.
+
+**Why:** Consumers currently poll `getJob(id)` to watch state changes. An event API is the ergonomic BullMQ has and Minions doesn't.
+
+**Effort:** ~4 hours.
+
+### `waitForChildren(parent_id, n)` / `collectResults(parent_id)` helpers
+**What:** Convenience wrappers over `readChildCompletions` for common fan-in patterns.
+
+**Why:** The `child_done` inbox primitive shipped in v0.11.0. Now add the ergonomic API on top so orchestrators don't have to write the polling loop.
+
+**Effort:** ~2 hours.
+
+**Depends on:** `child_done` inbox primitive (shipped in v0.11.0).
+
 ## P2
 
 ### Security hardening follow-ups (deferred from security-wave-3)

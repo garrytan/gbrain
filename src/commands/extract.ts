@@ -174,6 +174,49 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
 
 // --- Main command ---
 
+export interface ExtractOpts {
+  /** What to extract: 'links' (wiki-style refs), 'timeline' (date entries), or 'all'. */
+  mode: 'links' | 'timeline' | 'all';
+  /** Brain directory to walk. */
+  dir: string;
+  /** Report what would change without writing. */
+  dryRun?: boolean;
+  /** Emit JSON (progress to stderr, result to stdout) instead of human text. */
+  jsonMode?: boolean;
+}
+
+/**
+ * Library-level extract. Throws on error; prints nothing unless jsonMode or
+ * explicit output is warranted. Safe to call from Minions handlers because it
+ * never calls process.exit — a bad mode or missing dir throws through, which
+ * the handler wrapper turns into a failed job (NOT a killed worker).
+ */
+export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Promise<ExtractResult> {
+  if (!['links', 'timeline', 'all'].includes(opts.mode)) {
+    throw new Error(`Invalid extract mode "${opts.mode}". Allowed: links, timeline, all.`);
+  }
+  if (!existsSync(opts.dir)) {
+    throw new Error(`Directory not found: ${opts.dir}`);
+  }
+
+  const dryRun = !!opts.dryRun;
+  const jsonMode = !!opts.jsonMode;
+  const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
+
+  if (opts.mode === 'links' || opts.mode === 'all') {
+    const r = await extractLinksFromDir(engine, opts.dir, dryRun, jsonMode);
+    result.links_created = r.created;
+    result.pages_processed = r.pages;
+  }
+  if (opts.mode === 'timeline' || opts.mode === 'all') {
+    const r = await extractTimelineFromDir(engine, opts.dir, dryRun, jsonMode);
+    result.timeline_entries_created = r.created;
+    result.pages_processed = Math.max(result.pages_processed, r.pages);
+  }
+
+  return result;
+}
+
 export async function runExtract(engine: BrainEngine, args: string[]) {
   const subcommand = args[0];
   const dirIdx = args.indexOf('--dir');
@@ -186,22 +229,17 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
-  if (!existsSync(brainDir)) {
-    console.error(`Directory not found: ${brainDir}`);
+  let result: ExtractResult;
+  try {
+    result = await runExtractCore(engine, {
+      mode: subcommand as 'links' | 'timeline' | 'all',
+      dir: brainDir,
+      dryRun,
+      jsonMode,
+    });
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
-  }
-
-  const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
-
-  if (subcommand === 'links' || subcommand === 'all') {
-    const r = await extractLinksFromDir(engine, brainDir, dryRun, jsonMode);
-    result.links_created = r.created;
-    result.pages_processed = r.pages;
-  }
-  if (subcommand === 'timeline' || subcommand === 'all') {
-    const r = await extractTimelineFromDir(engine, brainDir, dryRun, jsonMode);
-    result.timeline_entries_created = r.created;
-    result.pages_processed = Math.max(result.pages_processed, r.pages);
   }
 
   if (jsonMode) {

@@ -1,6 +1,6 @@
 import { execSync } from 'child_process';
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'fs';
-import { join, resolve } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import { VERSION } from '../version.ts';
 
 export async function runUpgrade(args: string[]) {
@@ -55,9 +55,12 @@ export async function runUpgrade(args: string[]) {
     const newVersion = verifyUpgrade();
     // Save old version for post-upgrade migration detection
     saveUpgradeState(oldVersion, newVersion);
-    // Run post-upgrade feature discovery (reads migration files from the NEW binary)
+    // Run post-upgrade feature discovery (reads migration files from the NEW binary).
+    // Timeout bumped 30s → 300s because runPostUpgrade now tail-calls
+    // apply-migrations, which can do long work (schema, smoke, host-rewrite,
+    // autopilot install) on a v0.11.0→v0.11.1 jump. Codex H7.
     try {
-      execSync('gbrain post-upgrade', { stdio: 'inherit', timeout: 30_000 });
+      execSync('gbrain post-upgrade', { stdio: 'inherit', timeout: 300_000 });
     } catch {
       // post-upgrade is best-effort, don't fail the upgrade
     }
@@ -101,78 +104,71 @@ function saveUpgradeState(oldVersion: string, newVersion: string) {
 }
 
 /**
- * Post-upgrade feature discovery. Reads migration files between old and new version,
- * prints feature pitches from YAML frontmatter. Called by `gbrain post-upgrade` which
- * runs the NEW binary after upgrade completes.
+ * Post-upgrade feature discovery + migration application.
+ *
+ * Two responsibilities:
+ *   1. Print feature_pitch headlines for migrations newer than the prior
+ *      binary (cosmetic; runs only when upgrade-state.json is readable and
+ *      has a from/to pair).
+ *   2. Invoke `gbrain apply-migrations --yes` so the mechanical side of
+ *      every outstanding migration actually executes (schema, smoke, prefs,
+ *      host rewrites, autopilot install). This is the Codex H8 fix:
+ *      previously runPostUpgrade early-returned when upgrade-state.json
+ *      was missing, which meant every broken-v0.11.0 install stayed broken.
+ *      apply-migrations now runs unconditionally (idempotent; cheap when
+ *      nothing is pending).
+ *
+ * Migration enumeration uses the TS registry at
+ * src/commands/migrations/index.ts (Codex K) — no filesystem walk of
+ * skills/migrations/*.md, so compiled binaries see the same set source
+ * installs do.
  */
-export function runPostUpgrade() {
+export async function runPostUpgrade(): Promise<void> {
+  // Cosmetic: print feature pitches for migrations newer than the prior binary.
   try {
     const statePath = join(process.env.HOME || '', '.gbrain', 'upgrade-state.json');
-    if (!existsSync(statePath)) return;
-    const state = JSON.parse(readFileSync(statePath, 'utf-8'));
-    const lastUpgrade = state.last_upgrade;
-    if (!lastUpgrade?.from || !lastUpgrade?.to) return;
-
-    // Find migration files in version range
-    const migrationsDir = findMigrationsDir();
-    if (!migrationsDir) return;
-
-    const files = readdirSync(migrationsDir)
-      .filter(f => f.match(/^v\d+\.\d+\.\d+\.md$/))
-      .sort();
-
-    for (const file of files) {
-      const version = file.replace(/^v/, '').replace(/\.md$/, '');
-      if (isNewerThan(version, lastUpgrade.from)) {
-        const content = readFileSync(join(migrationsDir, file), 'utf-8');
-        const pitch = extractFeaturePitch(content);
-        if (pitch) {
-          console.log('');
-          console.log(`NEW: ${pitch.headline}`);
-          if (pitch.description) console.log(pitch.description);
-          if (pitch.recipe) {
-            console.log(`Run \`gbrain integrations show ${pitch.recipe}\` to set it up.`);
+    if (existsSync(statePath)) {
+      const state = JSON.parse(readFileSync(statePath, 'utf-8'));
+      const from = state?.last_upgrade?.from;
+      if (from) {
+        const { migrations } = await import('./migrations/index.ts');
+        for (const m of migrations) {
+          if (isNewerThan(m.version, from)) {
+            console.log('');
+            console.log(`NEW: ${m.featurePitch.headline}`);
+            if (m.featurePitch.description) console.log(m.featurePitch.description);
+            if (m.featurePitch.recipe) {
+              console.log(`Run \`gbrain integrations show ${m.featurePitch.recipe}\` to set it up.`);
+            }
+            console.log('');
           }
-          console.log('');
         }
       }
     }
   } catch {
-    // post-upgrade is best-effort
+    // Pitch printing is cosmetic — don't gate migrations on it.
+  }
+
+  // Mechanical: run every outstanding migration. Idempotent; exits 0 quickly
+  // when nothing is pending. Stays inside the same process so a long Phase F
+  // (autopilot install) doesn't hit a subprocess boundary.
+  try {
+    const { runApplyMigrations } = await import('./apply-migrations.ts');
+    await runApplyMigrations(['--yes', '--non-interactive']);
+  } catch (e) {
+    // Surface the error but don't throw — post-upgrade is best-effort.
+    // Users can re-run `gbrain apply-migrations` manually if they want
+    // to retry.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`\napply-migrations failed: ${msg}`);
+    console.error('Run `gbrain apply-migrations --yes` manually to retry.');
   }
 }
 
-function findMigrationsDir(): string | null {
-  // Try relative to this file (source install)
-  const candidates = [
-    resolve(__dirname, '../../skills/migrations'),
-    resolve(process.cwd(), 'skills/migrations'),
-    resolve(process.cwd(), 'node_modules/gbrain/skills/migrations'),
-  ];
-  for (const dir of candidates) {
-    if (existsSync(dir)) return dir;
-  }
-  return null;
-}
-
-function extractFeaturePitch(content: string): { headline: string; description?: string; recipe?: string } | null {
-  // Parse YAML frontmatter for feature_pitch
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return null;
-  const fm = fmMatch[1];
-
-  const headlineMatch = fm.match(/headline:\s*["']?(.+?)["']?\s*$/m);
-  if (!headlineMatch) return null;
-
-  const descMatch = fm.match(/description:\s*["']?(.+?)["']?\s*$/m);
-  const recipeMatch = fm.match(/recipe:\s*["']?(.+?)["']?\s*$/m);
-
-  return {
-    headline: headlineMatch[1],
-    description: descMatch?.[1],
-    recipe: recipeMatch?.[1],
-  };
-}
+// findMigrationsDir + extractFeaturePitch removed in v0.11.1: migration data
+// now lives in the TS registry at src/commands/migrations/index.ts so
+// compiled binaries don't depend on filesystem skills/migrations/*.md
+// (Codex K).
 
 function isNewerThan(version: string, baseline: string): boolean {
   const v = version.split('.').map(Number);
