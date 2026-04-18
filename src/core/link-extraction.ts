@@ -162,6 +162,19 @@ export interface LinkCandidate {
 }
 
 /**
+ * Build the bare-slug regex (`dir/slug` appearing anywhere in text) from the
+ * same dir list as the markdown-ref regex. Keeps the two extractors in sync
+ * so callers who pass custom dirs see consistent behavior in both paths.
+ */
+function buildBareSlugRegex(dirs: readonly string[]): RegExp {
+  const alternation = dirs.map(escapeRegexChars).join('|');
+  return new RegExp(`\\b((?:${alternation})\\/[a-z0-9][a-z0-9-]*)\\b`, 'g');
+}
+
+/** Default bare-slug regex, built once from DEFAULT_ENTITY_DIRS. */
+const BARE_SLUG_RE = buildBareSlugRegex(DEFAULT_ENTITY_DIRS);
+
+/**
  * Extract all link candidates from a page.
  *
  * Sources:
@@ -171,16 +184,22 @@ export interface LinkCandidate {
  *
  * Within-page dedup: multiple mentions of the same (targetSlug, linkType)
  * collapse to one candidate. The first occurrence's context wins.
+ *
+ * @param dirs Optional entity-dir list. When omitted, uses DEFAULT_ENTITY_DIRS
+ *   for both the markdown-ref extractor and the bare-slug regex. When provided,
+ *   ONLY those dirs are matched — callers wanting union-with-defaults must pass
+ *   the union themselves (see `getEntityDirs`).
  */
 export function extractPageLinks(
   content: string,
   frontmatter: Record<string, unknown>,
   pageType: PageType,
+  dirs?: readonly string[],
 ): LinkCandidate[] {
   const candidates: LinkCandidate[] = [];
 
   // 1. Markdown entity refs.
-  for (const ref of extractEntityRefs(content)) {
+  for (const ref of extractEntityRefs(content, dirs)) {
     const idx = content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that
     // appear at sentence-or-paragraph distance from the slug — common in
@@ -195,10 +214,11 @@ export function extractPageLinks(
   }
 
   // 2. Bare slug references (e.g. "see people/alice-chen for context").
-  // Limited to the same entity directories ENTITY_REF_RE covers.
+  // Same dir list as the markdown extractor to keep behavior consistent.
   // Code blocks are stripped first — slugs in code samples are not real refs.
   const strippedContent = stripCodeBlocks(content);
-  const bareRe = /\b((?:people|companies|meetings|concepts|deal|civic|project|source|media|yc)\/[a-z0-9][a-z0-9-]*)\b/g;
+  const bareBase = dirs ? buildBareSlugRegex(dirs) : BARE_SLUG_RE;
+  const bareRe = new RegExp(bareBase.source, bareBase.flags);
   let m: RegExpExecArray | null;
   while ((m = bareRe.exec(strippedContent)) !== null) {
     // Skip matches that are part of a markdown link (already handled above).

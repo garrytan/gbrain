@@ -154,6 +154,39 @@ describe('extractPageLinks', () => {
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
     expect(aliceLink!.linkType).toBe('attended');
   });
+
+  test('custom dirs: [Name](custom-dir/slug) extracted when dir is configured', () => {
+    const candidates = extractPageLinks(
+      'Met [Rushi](01-notes/rushi) yesterday.',
+      {},
+      'concept',
+      ['01-notes'],
+    );
+    const rushi = candidates.find(c => c.targetSlug === '01-notes/rushi');
+    expect(rushi).toBeDefined();
+  });
+
+  test('custom dirs: bare slug references use same dir list', () => {
+    const candidates = extractPageLinks(
+      'See 01-notes/rushi for details.',
+      {},
+      'concept',
+      ['01-notes'],
+    );
+    const rushi = candidates.find(c => c.targetSlug === '01-notes/rushi');
+    expect(rushi).toBeDefined();
+  });
+
+  test('custom-only dir list excludes default dirs from bare slug match', () => {
+    // With dirs=['01-notes'], a bare `people/alice` token is NOT extracted.
+    const candidates = extractPageLinks(
+      'See people/alice for details.',
+      {},
+      'concept',
+      ['01-notes'],
+    );
+    expect(candidates.find(c => c.targetSlug === 'people/alice')).toBeUndefined();
+  });
 });
 
 // ─── inferLinkType ─────────────────────────────────────────────
