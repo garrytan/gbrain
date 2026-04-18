@@ -13,6 +13,14 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
+// and config table values for the active embedding provider.
+export function getPGLiteSchema(dims = 1536, model = 'text-embedding-3-large'): string {
+  return PGLITE_SCHEMA_SQL
+    .replace('vector(1536)', `vector(${dims})`)
+    .replace("'embedding_model', 'text-embedding-3-large'", `'embedding_model', '${model}'`)
+    .replace("'embedding_dimensions', '1536'", `'embedding_dimensions', '${dims}'`);
+}
+
 export const PGLITE_SCHEMA_SQL = `
 -- GBrain PGLite schema (local embedded Postgres)
 

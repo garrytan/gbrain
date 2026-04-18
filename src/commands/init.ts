@@ -21,6 +21,14 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  const providerIndex = args.indexOf('--provider');
+  const embeddingProvider = providerIndex !== -1 ? args[providerIndex + 1] as 'openai' | 'gemini' : undefined;
+  const dimsIndex = args.indexOf('--dimensions');
+  const embeddingDimensions = dimsIndex !== -1 ? parseInt(args[dimsIndex + 1], 10) : undefined;
+  if (embeddingProvider) {
+    process.env.GBRAIN_EMBEDDING_PROVIDER = embeddingProvider;
+    if (embeddingDimensions !== undefined) process.env.GBRAIN_EMBEDDING_DIMENSIONS = String(embeddingDimensions);
+  }
 
   // Schema-only path: apply initSchema against the already-configured engine
   // without ever calling saveConfig. Used by apply-migrations, the stopgap
@@ -47,7 +55,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath });
+    return initPGLite({ jsonOutput, apiKey, customPath, embeddingProvider, embeddingDimensions });
   }
 
   // Supabase/Postgres mode
@@ -66,7 +74,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, embeddingProvider, embeddingDimensions });
 }
 
 /**
@@ -102,9 +110,10 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
   }
 }
 
-async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
+async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null; embeddingProvider?: 'openai' | 'gemini'; embeddingDimensions?: number }) {
   const dbPath = opts.customPath || join(homedir(), '.gbrain', 'brain.pglite');
-  console.log(`Setting up local brain with PGLite (no server needed)...`);
+  const providerLabel = opts.embeddingProvider ? ` (provider: ${opts.embeddingProvider})` : '';
+  console.log(`Setting up local brain with PGLite (no server needed)${providerLabel}...`);
 
   const engine = await createEngine({ engine: 'pglite' });
   await engine.connect({ database_path: dbPath, engine: 'pglite' });
@@ -114,6 +123,8 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
     engine: 'pglite',
     database_path: dbPath,
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+    ...(opts.embeddingProvider ? { embedding_provider: opts.embeddingProvider } : {}),
+    ...(opts.embeddingDimensions ? { embedding_dimensions: opts.embeddingDimensions } : {}),
   };
   saveConfig(config);
 
@@ -140,7 +151,7 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   }
 }
 
-async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null }) {
+async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null; embeddingProvider?: 'openai' | 'gemini'; embeddingDimensions?: number }) {
   const { databaseUrl } = opts;
 
   // Detect Supabase direct connection URLs and warn about IPv6
@@ -194,6 +205,8 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
     engine: 'postgres',
     database_url: databaseUrl,
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+    ...(opts.embeddingProvider ? { embedding_provider: opts.embeddingProvider } : {}),
+    ...(opts.embeddingDimensions ? { embedding_dimensions: opts.embeddingDimensions } : {}),
   };
   saveConfig(config);
   console.log('Config saved to ~/.gbrain/config.json');

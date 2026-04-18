@@ -373,8 +373,13 @@ async function handleCliOnly(command: string, args: string[]) {
       }
       // doctor is handled before connectEngine() above
       case 'migrate': {
-        const { runMigrateEngine } = await import('./commands/migrate-engine.ts');
-        await runMigrateEngine(engine, args);
+        if (args.includes('--provider')) {
+          const { runMigrateProvider } = await import('./commands/migrate-provider.ts');
+          await runMigrateProvider(engine, args);
+        } else {
+          const { runMigrateEngine } = await import('./commands/migrate-engine.ts');
+          await runMigrateEngine(engine, args);
+        }
         break;
       }
       case 'eval': {

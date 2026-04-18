@@ -3,6 +3,7 @@ import type { BrainEngine } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import { getActiveProvider } from './embedding-provider.ts';
 import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
@@ -58,11 +59,16 @@ export class PostgresEngine implements BrainEngine {
 
   async initSchema(): Promise<void> {
     const conn = this.sql;
+    const p = getActiveProvider();
+    const schemaSql = SCHEMA_SQL
+      .replace(/vector\(1536\)/g, `vector(${p.dimensions})`)
+      .replace("'embedding_model', 'text-embedding-3-large'", `'embedding_model', '${p.model}'`)
+      .replace("'embedding_dimensions', '1536'", `'embedding_dimensions', '${p.dimensions}'`);
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      await conn.unsafe(schemaSql);
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this);
