@@ -39,7 +39,10 @@ import { appendCompletedMigration } from '../../core/preferences.ts';
 function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 60_000, env: process.env });
+    // 10-minute budget. Migrations v8/v9 dedup with helper-index should be sub-second
+    // even on 80K-duplicate brains, but the outer wall-clock cap shouldn't be the
+    // failure mode (the prior 60s ceiling tripped Garry's production upgrade).
+    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 600_000, env: process.env });
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
