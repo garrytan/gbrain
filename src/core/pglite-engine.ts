@@ -26,6 +26,7 @@ type PGLiteDB = PGlite;
 export class PGLiteEngine implements BrainEngine {
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
+  private _vectorParsers: Record<number, (v: string) => Float32Array> = {};
 
   get db(): PGLiteDB {
     if (!this._db) throw new Error('PGLite not connected. Call connect() first.');
@@ -62,6 +63,15 @@ export class PGLiteEngine implements BrainEngine {
 
   async initSchema(): Promise<void> {
     await this.db.exec(PGLITE_SCHEMA_SQL);
+
+    // Resolve pgvector's dynamic OID so we can parse vector columns as Float32Array
+    const oidRes = await this.db.query(`SELECT oid FROM pg_type WHERE typname = 'vector'`);
+    if (oidRes.rows.length > 0) {
+      const oid = (oidRes.rows[0] as { oid: number }).oid;
+      this._vectorParsers = {
+        [oid]: (v: string) => new Float32Array(v.slice(1, -1).split(',').map(Number)),
+      };
+    }
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {
@@ -859,7 +869,8 @@ export class PGLiteEngine implements BrainEngine {
        JOIN pages p ON p.id = cc.page_id
        WHERE p.slug = $1
        ORDER BY cc.chunk_index`,
-      [slug]
+      [slug],
+      { parsers: this._vectorParsers },
     );
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r, true));
   }
