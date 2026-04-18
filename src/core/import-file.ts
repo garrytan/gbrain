@@ -55,6 +55,12 @@ export async function importFromContent(
   content: string,
   opts: { noEmbed?: boolean } = {},
 ): Promise<ImportResult> {
+  // Normalize slug to lowercase to match engine-level validateSlug behavior.
+  // Without this, putPage stores the page at the lowercased slug while the
+  // followup tx.upsertChunks/getTags/addTag lookups use the caller's raw
+  // (possibly uppercase) slug and fail with "Page not found: <slug>".
+  slug = slug.toLowerCase();
+
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
