@@ -169,14 +169,26 @@ async function transcribeLargeFile(
     );
   }
 
-  // Segment into ~20MB chunks (with some overlap for better joining)
-  const { execSync } = await import('child_process');
-  const tmpDir = execSync('mktemp -d').toString().trim();
+  // Segment into ~20MB chunks (with some overlap for better joining).
+  // Uses execFileSync with argv arrays (no shell) because audioPath is
+  // caller-supplied and extname-based allow-listing is bypassable with
+  // filenames like `evil"$(id).mp3` (extname still returns '.mp3').
+  const { execFileSync } = await import('child_process');
+  const { mkdtempSync, rmSync } = await import('fs');
+  const { tmpdir } = await import('os');
+  const { join } = await import('path');
+  const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-transcribe-'));
 
   try {
     // Get audio duration
-    const durationStr = execSync(
-      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`,
+    const durationStr = execFileSync(
+      'ffprobe',
+      [
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        audioPath,
+      ],
       { encoding: 'utf-8' }
     ).trim();
     const totalDuration = parseFloat(durationStr) || 0;
@@ -186,10 +198,19 @@ async function transcribeLargeFile(
     const bytesPerSecond = stat.size / Math.max(totalDuration, 1);
     const segmentSeconds = Math.floor((20 * 1024 * 1024) / bytesPerSecond);
 
-    // Split audio
+    // Split audio. segmentSeconds is numeric (Math.floor); extname result
+    // is stringified separately in the output pattern so neither argv
+    // value can be confused with a flag.
     const ext = extname(audioPath);
-    execSync(
-      `ffmpeg -i "${audioPath}" -f segment -segment_time ${segmentSeconds} -c copy "${tmpDir}/segment_%03d${ext}"`,
+    execFileSync(
+      'ffmpeg',
+      [
+        '-i', audioPath,
+        '-f', 'segment',
+        '-segment_time', String(segmentSeconds),
+        '-c', 'copy',
+        join(tmpDir, `segment_%03d${ext}`),
+      ],
       { stdio: 'pipe' }
     );
 
@@ -221,15 +242,15 @@ async function transcribeLargeFile(
       provider,
     };
   } finally {
-    // Cleanup temp directory
-    try { execSync(`rm -rf "${tmpDir}"`); } catch {}
+    // Cleanup temp directory with fs.rmSync — no shell invocation needed.
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 }
 
 async function checkFfmpeg(): Promise<boolean> {
   try {
-    const { execSync } = await import('child_process');
-    execSync('ffmpeg -version', { stdio: 'pipe' });
+    const { execFileSync } = await import('child_process');
+    execFileSync('ffmpeg', ['-version'], { stdio: 'pipe' });
     return true;
   } catch {
     return false;
