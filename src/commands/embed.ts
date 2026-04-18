@@ -3,29 +3,66 @@ import { embedBatch } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 
+export interface EmbedOpts {
+  /** Embed ALL pages (every chunk). */
+  all?: boolean;
+  /** Embed only stale chunks (missing embedding). */
+  stale?: boolean;
+  /** Embed specific pages by slug. */
+  slugs?: string[];
+  /** Embed a single page. */
+  slug?: string;
+}
+
+/**
+ * Library-level embed. Throws on validation errors; per-page embed failures
+ * are logged to stderr but do not throw (matches the existing CLI semantics
+ * for batch runs). Safe to call from Minions handlers — no process.exit.
+ */
+export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promise<void> {
+  if (opts.slugs && opts.slugs.length > 0) {
+    for (const s of opts.slugs) {
+      try { await embedPage(engine, s); } catch (e: unknown) {
+        console.error(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    return;
+  }
+  if (opts.all || opts.stale) {
+    await embedAll(engine, !!opts.stale);
+    return;
+  }
+  if (opts.slug) {
+    await embedPage(engine, opts.slug);
+    return;
+  }
+  throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
+}
+
 export async function runEmbed(engine: BrainEngine, args: string[]) {
   const slugsIdx = args.indexOf('--slugs');
   const all = args.includes('--all');
   const stale = args.includes('--stale');
 
+  let opts: EmbedOpts;
   if (slugsIdx >= 0) {
-    // --slugs slug1 slug2 ... (embed specific pages)
-    const slugs = args.slice(slugsIdx + 1).filter(a => !a.startsWith('--'));
-    for (const s of slugs) {
-      try { await embedPage(engine, s); } catch (e: unknown) {
-        console.error(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
-      }
-    }
+    opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')) };
   } else if (all || stale) {
-    await embedAll(engine, stale);
+    opts = { all, stale };
   } else {
     const slug = args.find(a => !a.startsWith('--'));
-    if (slug) {
-      await embedPage(engine, slug);
-    } else {
+    if (!slug) {
       console.error('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...]');
       process.exit(1);
     }
+    opts = { slug };
+  }
+
+  try {
+    await runEmbedCore(engine, opts);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
   }
 }
 

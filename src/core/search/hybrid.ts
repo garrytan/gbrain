@@ -18,7 +18,31 @@ import { autoDetectDetail } from './intent.ts';
 
 const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
+/**
+ * Backlink boost coefficient. Score is multiplied by (1 + BACKLINK_BOOST_COEF * log(1 + count)).
+ * - 0 backlinks: factor = 1.0 (no boost).
+ * - 1 backlink:  factor ~= 1.035.
+ * - 10 backlinks: factor ~= 1.12.
+ * - 100 backlinks: factor ~= 1.23.
+ * Applied AFTER cosine re-score so it survives normalization, BEFORE dedup so the
+ * boosted ranking determines which chunks per page are kept.
+ */
+const BACKLINK_BOOST_COEF = 0.05;
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
+
+/**
+ * Apply backlink boost to a result list in place. Mutates each result's score
+ * by (1 + BACKLINK_BOOST_COEF * log(1 + count)). Pure data transform; no DB call.
+ * Caller fetches counts via engine.getBacklinkCounts.
+ */
+export function applyBacklinkBoost(results: SearchResult[], counts: Map<string, number>): void {
+  for (const r of results) {
+    const count = counts.get(r.slug) ?? 0;
+    if (count > 0) {
+      r.score *= (1.0 + BACKLINK_BOOST_COEF * Math.log(1 + count));
+    }
+  }
+}
 
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
@@ -55,6 +79,18 @@ export async function hybridSearch(
 
   // Skip vector search entirely if no OpenAI key is configured
   if (!process.env.OPENAI_API_KEY) {
+    // Apply backlink boost in keyword-only path too. One getBacklinkCounts query
+    // per search request; not N+1.
+    if (keywordResults.length > 0) {
+      try {
+        const slugs = Array.from(new Set(keywordResults.map(r => r.slug)));
+        const counts = await engine.getBacklinkCounts(slugs);
+        applyBacklinkBoost(keywordResults, counts);
+        keywordResults.sort((a, b) => b.score - a.score);
+      } catch {
+        // Boost failure is non-fatal: keep unboosted ranking.
+      }
+    }
     return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
@@ -96,6 +132,20 @@ export async function hybridSearch(
   // Cosine re-scoring before dedup so semantically better chunks survive
   if (queryEmbedding) {
     fused = await cosineReScore(engine, fused, queryEmbedding);
+  }
+
+  // Apply backlink boost AFTER cosine re-score so the boost survives normalization,
+  // and BEFORE dedup so it influences which chunks per page survive deduplication.
+  // One DB query for the whole result set (not N+1).
+  if (fused.length > 0) {
+    try {
+      const slugs = Array.from(new Set(fused.map(r => r.slug)));
+      const counts = await engine.getBacklinkCounts(slugs);
+      applyBacklinkBoost(fused, counts);
+      fused.sort((a, b) => b.score - a.score);
+    } catch {
+      // Boost failure is non-fatal: keep blended cosine ranking.
+    }
   }
 
   // Dedup

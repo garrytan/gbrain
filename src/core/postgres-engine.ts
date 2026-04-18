@@ -7,7 +7,7 @@ import type {
   Page, PageInput, PageFilters,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
-  Link, GraphNode,
+  Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
   PageVersion,
@@ -127,6 +127,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const limit = filters?.limit || 100;
     const offset = filters?.offset || 0;
+    const updatedAfter = filters?.updated_after;
 
     // Normalize single `tag` into `tags_all` so all tag filters share one code path.
     const tagsAll: string[] = [
@@ -137,15 +138,13 @@ export class PostgresEngine implements BrainEngine {
 
     // Fast path: no tag filters -> plain query (no joins).
     if (tagsAll.length === 0 && tagsAny.length === 0) {
-      const rows = filters?.type
-        ? await sql`
-            SELECT * FROM pages WHERE type = ${filters.type}
-            ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}
-          `
-        : await sql`
-            SELECT * FROM pages
-            ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}
-          `;
+      const typeCondition = filters?.type ? sql`AND type = ${filters.type}` : sql``;
+      const updatedCondition = updatedAfter ? sql`AND updated_at > ${updatedAfter}::timestamptz` : sql``;
+      const rows = await sql`
+        SELECT * FROM pages
+        WHERE 1=1 ${typeCondition} ${updatedCondition}
+        ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}
+      `;
       return rows.map(rowToPage);
     }
 
@@ -164,6 +163,10 @@ export class PostgresEngine implements BrainEngine {
       ? sql`AND p.type = ${filters.type}`
       : sql``;
 
+    const updatedClause = updatedAfter
+      ? sql`AND p.updated_at > ${updatedAfter}::timestamptz`
+      : sql``;
+
     const havingAll = tagsAll.length > 0
       ? sql`COUNT(DISTINCT t.tag) FILTER (WHERE t.tag = ANY(${tagsAll})) = ${tagsAll.length}`
       : sql`TRUE`;
@@ -177,6 +180,7 @@ export class PostgresEngine implements BrainEngine {
       JOIN tags t ON t.page_id = p.id
       WHERE t.tag = ANY(${candidate})
       ${typeClause}
+      ${updatedClause}
       GROUP BY p.id
       HAVING ${havingAll} ${havingAny}
       ORDER BY p.updated_at DESC
@@ -184,6 +188,12 @@ export class PostgresEngine implements BrainEngine {
     `;
 
     return rows.map(rowToPage);
+  }
+
+  async getAllSlugs(): Promise<Set<string>> {
+    const sql = this.sql;
+    const rows = await sql`SELECT slug FROM pages`;
+    return new Set(rows.map((r: { slug: string }) => r.slug));
   }
 
   async resolveSlugs(partial: string): Promise<string[]> {
@@ -383,26 +393,42 @@ export class PostgresEngine implements BrainEngine {
   // Links
   async addLink(from: string, to: string, context?: string, linkType?: string): Promise<void> {
     const sql = this.sql;
-    const result = await sql`
+    // Pre-check existence so we can throw a clear error (ON CONFLICT DO UPDATE
+    // returns 0 rows when source SELECT is empty, indistinguishable from missing page).
+    const exists = await sql`
+      SELECT 1 FROM pages WHERE slug = ${from}
+      INTERSECT
+      SELECT 1 FROM pages WHERE slug = ${to}
+    `;
+    if (exists.length === 0) {
+      throw new Error(`addLink failed: page "${from}" or "${to}" not found`);
+    }
+    await sql`
       INSERT INTO links (from_page_id, to_page_id, link_type, context)
       SELECT f.id, t.id, ${linkType || ''}, ${context || ''}
       FROM pages f, pages t
       WHERE f.slug = ${from} AND t.slug = ${to}
-      ON CONFLICT (from_page_id, to_page_id) DO UPDATE SET
-        link_type = EXCLUDED.link_type,
+      ON CONFLICT (from_page_id, to_page_id, link_type) DO UPDATE SET
         context = EXCLUDED.context
-      RETURNING id
     `;
-    if (result.length === 0) throw new Error(`addLink failed: page "${from}" or "${to}" not found`);
   }
 
-  async removeLink(from: string, to: string): Promise<void> {
+  async removeLink(from: string, to: string, linkType?: string): Promise<void> {
     const sql = this.sql;
-    await sql`
-      DELETE FROM links
-      WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-        AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
-    `;
+    if (linkType !== undefined) {
+      await sql`
+        DELETE FROM links
+        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
+          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
+          AND link_type = ${linkType}
+      `;
+    } else {
+      await sql`
+        DELETE FROM links
+        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
+          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
+      `;
+    }
   }
 
   async getLinks(slug: string): Promise<Link[]> {
@@ -431,18 +457,20 @@ export class PostgresEngine implements BrainEngine {
 
   async traverseGraph(slug: string, depth: number = 5): Promise<GraphNode[]> {
     const sql = this.sql;
+    // Cycle prevention: visited array tracks page IDs already in the path.
     const rows = await sql`
       WITH RECURSIVE graph AS (
-        SELECT p.id, p.slug, p.title, p.type, 0 as depth
+        SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
         FROM pages p WHERE p.slug = ${slug}
 
-        UNION
+        UNION ALL
 
-        SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1
+        SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id
         FROM graph g
         JOIN links l ON l.from_page_id = g.id
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE g.depth < ${depth}
+          AND NOT (p2.id = ANY(g.visited))
       )
       SELECT DISTINCT g.slug, g.title, g.type, g.depth,
         coalesce(
@@ -463,6 +491,126 @@ export class PostgresEngine implements BrainEngine {
       depth: r.depth as number,
       links: (typeof r.links === 'string' ? JSON.parse(r.links) : r.links) as { to_slug: string; link_type: string }[],
     }));
+  }
+
+  async traversePaths(
+    slug: string,
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+  ): Promise<GraphPath[]> {
+    const sql = this.sql;
+    const depth = opts?.depth ?? 5;
+    const direction = opts?.direction ?? 'out';
+    const linkType = opts?.linkType ?? null;
+    const linkTypeMatches = linkType !== null;
+
+    let rows;
+    if (direction === 'out') {
+      rows = await sql`
+        WITH RECURSIVE walk AS (
+          SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
+          FROM pages p WHERE p.slug = ${slug}
+          UNION ALL
+          SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
+          FROM walk w
+          JOIN links l ON l.from_page_id = w.id
+          JOIN pages p2 ON p2.id = l.to_page_id
+          WHERE w.depth < ${depth}
+            AND NOT (p2.id = ANY(w.visited))
+            AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        )
+        SELECT w.slug as from_slug, p2.slug as to_slug,
+               l.link_type, l.context, w.depth + 1 as depth
+        FROM walk w
+        JOIN links l ON l.from_page_id = w.id
+        JOIN pages p2 ON p2.id = l.to_page_id
+        WHERE w.depth < ${depth}
+          AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        ORDER BY depth, from_slug, to_slug
+      `;
+    } else if (direction === 'in') {
+      rows = await sql`
+        WITH RECURSIVE walk AS (
+          SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
+          FROM pages p WHERE p.slug = ${slug}
+          UNION ALL
+          SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
+          FROM walk w
+          JOIN links l ON l.to_page_id = w.id
+          JOIN pages p2 ON p2.id = l.from_page_id
+          WHERE w.depth < ${depth}
+            AND NOT (p2.id = ANY(w.visited))
+            AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        )
+        SELECT p2.slug as from_slug, w.slug as to_slug,
+               l.link_type, l.context, w.depth + 1 as depth
+        FROM walk w
+        JOIN links l ON l.to_page_id = w.id
+        JOIN pages p2 ON p2.id = l.from_page_id
+        WHERE w.depth < ${depth}
+          AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        ORDER BY depth, from_slug, to_slug
+      `;
+    } else {
+      rows = await sql`
+        WITH RECURSIVE walk AS (
+          SELECT p.id, 0::int as depth, ARRAY[p.id] as visited
+          FROM pages p WHERE p.slug = ${slug}
+          UNION ALL
+          SELECT p2.id, w.depth + 1, w.visited || p2.id
+          FROM walk w
+          JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
+          JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
+          WHERE w.depth < ${depth}
+            AND NOT (p2.id = ANY(w.visited))
+            AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        )
+        SELECT pf.slug as from_slug, pt.slug as to_slug,
+               l.link_type, l.context, w.depth + 1 as depth
+        FROM walk w
+        JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
+        JOIN pages pf ON pf.id = l.from_page_id
+        JOIN pages pt ON pt.id = l.to_page_id
+        WHERE w.depth < ${depth}
+          AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+        ORDER BY depth, from_slug, to_slug
+      `;
+    }
+
+    // Dedup edges (same edge can appear via multiple visited paths).
+    const seen = new Set<string>();
+    const result: GraphPath[] = [];
+    for (const r of rows as Record<string, unknown>[]) {
+      const key = `${r.from_slug}|${r.to_slug}|${r.link_type}|${r.depth}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({
+        from_slug: r.from_slug as string,
+        to_slug: r.to_slug as string,
+        link_type: r.link_type as string,
+        context: (r.context as string) || '',
+        depth: Number(r.depth),
+      });
+    }
+    return result;
+  }
+
+  async getBacklinkCounts(slugs: string[]): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (slugs.length === 0) return result;
+    for (const s of slugs) result.set(s, 0);
+
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT p.slug as slug, COUNT(l.id)::int as cnt
+      FROM pages p
+      LEFT JOIN links l ON l.to_page_id = p.id
+      WHERE p.slug = ANY(${slugs}::text[])
+      GROUP BY p.slug
+    `;
+    for (const r of rows as { slug: string; cnt: number }[]) {
+      result.set(r.slug, Number(r.cnt));
+    }
+    return result;
   }
 
   // Tags
@@ -499,15 +647,27 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Timeline
-  async addTimelineEntry(slug: string, entry: TimelineInput): Promise<void> {
+  async addTimelineEntry(
+    slug: string,
+    entry: TimelineInput,
+    opts?: { skipExistenceCheck?: boolean },
+  ): Promise<void> {
     const sql = this.sql;
-    const result = await sql`
+    if (!opts?.skipExistenceCheck) {
+      const exists = await sql`SELECT 1 FROM pages WHERE slug = ${slug}`;
+      if (exists.length === 0) {
+        throw new Error(`addTimelineEntry failed: page "${slug}" not found`);
+      }
+    }
+    // ON CONFLICT DO NOTHING via the (page_id, date, summary) unique index.
+    // Returning 0 rows means either page missing OR duplicate; skipExistenceCheck
+    // makes that ambiguity safe (caller asserts page exists).
+    await sql`
       INSERT INTO timeline_entries (page_id, date, source, summary, detail)
       SELECT id, ${entry.date}::date, ${entry.source || ''}, ${entry.summary}, ${entry.detail || ''}
       FROM pages WHERE slug = ${slug}
-      RETURNING id
+      ON CONFLICT (page_id, date, summary) DO NOTHING
     `;
-    if (result.length === 0) throw new Error(`addTimelineEntry failed: page "${slug}" not found`);
   }
 
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
@@ -645,14 +805,19 @@ export class PostgresEngine implements BrainEngine {
 
   async getHealth(): Promise<BrainHealth> {
     const sql = this.sql;
+    // dead_links omitted (always 0 under ON DELETE CASCADE on link FKs).
+    // orphan_pages now matches PGLite definition: no inbound links (regardless of outbound).
+    // stale_pages aligned to PGLite definition (page updated_at < latest timeline entry).
     const [h] = await sql`
+      WITH entity_pages AS (
+        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+      )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
-         WHERE (p.compiled_truth != '' OR p.timeline != '')
-           AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
+         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
@@ -663,7 +828,22 @@ export class PostgresEngine implements BrainEngine {
         ) as dead_links,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
-        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline
+        (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
+        (SELECT count(*) FROM entity_pages e
+         WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
+          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
+        (SELECT count(*) FROM entity_pages e
+         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
+          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
+    `;
+
+    const connected = await sql`
+      SELECT p.slug,
+             (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
+      FROM pages p
+      WHERE p.type IN ('person', 'company')
+      ORDER BY link_count DESC
+      LIMIT 5
     `;
 
     const pageCount = Number(h.page_count);
@@ -688,9 +868,14 @@ export class PostgresEngine implements BrainEngine {
       embed_coverage: embedCoverage,
       stale_pages: Number(h.stale_pages),
       orphan_pages: orphanPages,
-      dead_links: deadLinks,
       missing_embeddings: Number(h.missing_embeddings),
       brain_score: brainScore,
+      link_coverage: Number(h.link_coverage),
+      timeline_coverage: Number(h.timeline_coverage),
+      most_connected: (connected as { slug: string; link_count: number }[]).map(c => ({
+        slug: c.slug,
+        link_count: Number(c.link_count),
+      })),
     };
   }
 
@@ -756,5 +941,10 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY cc.chunk_index
     `;
     return rows.map((r: Record<string, unknown>) => rowToChunk(r, true));
+  }
+
+  async executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
+    const conn = this.sql;
+    return conn.unsafe(sql, params) as unknown as T[];
   }
 }

@@ -1,16 +1,27 @@
 /**
- * gbrain extract — Extract links and timeline entries from brain markdown files.
+ * gbrain extract — Extract links and timeline entries from brain content.
+ *
+ * Two data sources:
+ *   --source fs  (default): walk markdown files on disk
+ *   --source db           : iterate pages from the engine (works for brains
+ *                           with no local checkout, e.g. live MCP servers)
  *
  * Subcommands:
- *   gbrain extract links [--dir <brain>] [--dry-run] [--json]
- *   gbrain extract timeline [--dir <brain>] [--dry-run] [--json]
- *   gbrain extract all [--dir <brain>] [--dry-run] [--json]
+ *   gbrain extract links    [--source fs|db] [--dir <brain>] [--dry-run] [--json] [--type T] [--since DATE]
+ *   gbrain extract timeline [--source fs|db] [--dir <brain>] [--dry-run] [--json] [--type T] [--since DATE]
+ *   gbrain extract all      [--source fs|db] [--dir <brain>] [--dry-run] [--json] [--type T] [--since DATE]
+ *
+ * The DB-source path uses the v0.10.3 graph extractor (typed link inference,
+ * within-page dedup, snapshot iteration so concurrent writes don't corrupt
+ * pagination). FS-source preserves the original v0.10.1 walker behavior.
  */
 
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
+import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
+import { extractPageLinks, parseTimelineEntries, inferLinkType } from '../core/link-extraction.ts';
 
 // --- Types ---
 
@@ -174,34 +185,118 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
 
 // --- Main command ---
 
+export interface ExtractOpts {
+  /** What to extract: 'links' (wiki-style refs), 'timeline' (date entries), or 'all'. */
+  mode: 'links' | 'timeline' | 'all';
+  /** Brain directory to walk. */
+  dir: string;
+  /** Report what would change without writing. */
+  dryRun?: boolean;
+  /** Emit JSON (progress to stderr, result to stdout) instead of human text. */
+  jsonMode?: boolean;
+}
+
+/**
+ * Library-level extract. Throws on error; prints nothing unless jsonMode or
+ * explicit output is warranted. Safe to call from Minions handlers because it
+ * never calls process.exit — a bad mode or missing dir throws through, which
+ * the handler wrapper turns into a failed job (NOT a killed worker).
+ */
+export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Promise<ExtractResult> {
+  if (!['links', 'timeline', 'all'].includes(opts.mode)) {
+    throw new Error(`Invalid extract mode "${opts.mode}". Allowed: links, timeline, all.`);
+  }
+  if (!existsSync(opts.dir)) {
+    throw new Error(`Directory not found: ${opts.dir}`);
+  }
+
+  const dryRun = !!opts.dryRun;
+  const jsonMode = !!opts.jsonMode;
+  const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
+
+  if (opts.mode === 'links' || opts.mode === 'all') {
+    const r = await extractLinksFromDir(engine, opts.dir, dryRun, jsonMode);
+    result.links_created = r.created;
+    result.pages_processed = r.pages;
+  }
+  if (opts.mode === 'timeline' || opts.mode === 'all') {
+    const r = await extractTimelineFromDir(engine, opts.dir, dryRun, jsonMode);
+    result.timeline_entries_created = r.created;
+    result.pages_processed = Math.max(result.pages_processed, r.pages);
+  }
+
+  return result;
+}
+
 export async function runExtract(engine: BrainEngine, args: string[]) {
   const subcommand = args[0];
   const dirIdx = args.indexOf('--dir');
   const brainDir = (dirIdx >= 0 && dirIdx + 1 < args.length) ? args[dirIdx + 1] : '.';
+  const sourceIdx = args.indexOf('--source');
+  const source = (sourceIdx >= 0 && sourceIdx + 1 < args.length) ? args[sourceIdx + 1] : 'fs';
+  const typeIdx = args.indexOf('--type');
+  const typeFilter = (typeIdx >= 0 && typeIdx + 1 < args.length) ? (args[typeIdx + 1] as PageType) : undefined;
+  const sinceIdx = args.indexOf('--since');
+  const since = (sinceIdx >= 0 && sinceIdx + 1 < args.length) ? args[sinceIdx + 1] : undefined;
   const dryRun = args.includes('--dry-run');
   const jsonMode = args.includes('--json');
 
+  // Validate --since upfront. Without this, an invalid date like
+  // `--since yesterday` produces NaN which silently passes the filter check
+  // (Number.isFinite(NaN) === false), so the user thinks they ran an
+  // incremental extract but actually reprocessed the whole brain.
+  if (since !== undefined) {
+    const sinceMs = new Date(since).getTime();
+    if (!Number.isFinite(sinceMs)) {
+      console.error(`Invalid --since date: "${since}". Must be a parseable date (e.g., "2026-01-15" or full ISO timestamp).`);
+      process.exit(1);
+    }
+  }
+
   if (!subcommand || !['links', 'timeline', 'all'].includes(subcommand)) {
-    console.error('Usage: gbrain extract <links|timeline|all> [--dir <brain-dir>] [--dry-run] [--json]');
+    console.error('Usage: gbrain extract <links|timeline|all> [--source fs|db] [--dir <brain-dir>] [--dry-run] [--json] [--type T] [--since DATE]');
     process.exit(1);
   }
 
-  if (!existsSync(brainDir)) {
+  if (source !== 'fs' && source !== 'db') {
+    console.error(`Invalid --source: ${source}. Must be 'fs' or 'db'.`);
+    process.exit(1);
+  }
+
+  // FS source needs a brain dir; DB source ignores --dir.
+  if (source === 'fs' && !existsSync(brainDir)) {
     console.error(`Directory not found: ${brainDir}`);
     process.exit(1);
   }
 
-  const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
-
-  if (subcommand === 'links' || subcommand === 'all') {
-    const r = await extractLinksFromDir(engine, brainDir, dryRun, jsonMode);
-    result.links_created = r.created;
-    result.pages_processed = r.pages;
-  }
-  if (subcommand === 'timeline' || subcommand === 'all') {
-    const r = await extractTimelineFromDir(engine, brainDir, dryRun, jsonMode);
-    result.timeline_entries_created = r.created;
-    result.pages_processed = Math.max(result.pages_processed, r.pages);
+  let result: ExtractResult;
+  try {
+    if (source === 'db') {
+      // DB source: walk pages from the engine. The unified runExtractCore
+      // is fs-only; we keep the dual codepath here so Minions handlers
+      // can opt in via mode + source.
+      result = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
+      if (subcommand === 'links' || subcommand === 'all') {
+        const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since);
+        result.links_created = r.created;
+        result.pages_processed = r.pages;
+      }
+      if (subcommand === 'timeline' || subcommand === 'all') {
+        const r = await extractTimelineFromDB(engine, dryRun, jsonMode, typeFilter, since);
+        result.timeline_entries_created = r.created;
+        result.pages_processed = Math.max(result.pages_processed, r.pages);
+      }
+    } else {
+      result = await runExtractCore(engine, {
+        mode: subcommand as 'links' | 'timeline' | 'all',
+        dir: brainDir,
+        dryRun,
+        jsonMode,
+      });
+    }
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
   }
 
   if (jsonMode) {
@@ -340,4 +435,128 @@ export async function extractTimelineForSlugs(engine: BrainEngine, repoPath: str
     } catch { /* skip */ }
   }
   return created;
+}
+
+// ─── DB-source extractors (v0.10.3 graph layer) ────────────────────────────
+//
+// Iterate pages from engine.getAllSlugs() and engine.getPage() instead of
+// walking files on disk. Mutation-immune (snapshot) and works for brains with
+// no local checkout (e.g. live MCP servers). Uses the typed link inference and
+// timeline parser from src/core/link-extraction.ts.
+
+async function extractLinksFromDB(
+  engine: BrainEngine,
+  dryRun: boolean,
+  jsonMode: boolean,
+  typeFilter: PageType | undefined,
+  since: string | undefined,
+): Promise<{ created: number; pages: number }> {
+  const allSlugs = await engine.getAllSlugs();
+  const slugList = Array.from(allSlugs);
+  let processed = 0, created = 0;
+
+  for (let i = 0; i < slugList.length; i++) {
+    const slug = slugList[i];
+    const page = await engine.getPage(slug);
+    if (!page) continue;
+    if (typeFilter && page.type !== typeFilter) continue;
+    if (since) {
+      const updatedMs = new Date(page.updated_at).getTime();
+      const sinceMs = new Date(since).getTime();
+      if (Number.isFinite(sinceMs) && updatedMs <= sinceMs) continue;
+    }
+
+    const fullContent = page.compiled_truth + '\n' + page.timeline;
+    const candidates = extractPageLinks(fullContent, page.frontmatter, page.type);
+
+    for (const c of candidates) {
+      if (!allSlugs.has(c.targetSlug)) continue;
+      if (dryRun) {
+        if (jsonMode) {
+          process.stdout.write(JSON.stringify({
+            action: 'add_link', from: slug, to: c.targetSlug,
+            type: c.linkType, context: c.context,
+          }) + '\n');
+        } else {
+          console.log(`  ${slug} → ${c.targetSlug} (${c.linkType})`);
+        }
+        created++;
+      } else {
+        try {
+          await engine.addLink(slug, c.targetSlug, c.context, c.linkType);
+          created++;
+        } catch { /* FK violation or other */ }
+      }
+    }
+    processed++;
+    if (jsonMode && !dryRun && (processed % 500 === 0 || i === slugList.length - 1)) {
+      process.stderr.write(JSON.stringify({ event: 'progress', phase: 'extracting_links_db', done: processed, total: slugList.length }) + '\n');
+    }
+  }
+
+  if (!jsonMode) {
+    const label = dryRun ? '(dry run) would create' : 'created';
+    console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
+  }
+  return { created, pages: processed };
+}
+
+async function extractTimelineFromDB(
+  engine: BrainEngine,
+  dryRun: boolean,
+  jsonMode: boolean,
+  typeFilter: PageType | undefined,
+  since: string | undefined,
+): Promise<{ created: number; pages: number }> {
+  const allSlugs = await engine.getAllSlugs();
+  const slugList = Array.from(allSlugs);
+  let processed = 0, created = 0;
+
+  for (let i = 0; i < slugList.length; i++) {
+    const slug = slugList[i];
+    const page = await engine.getPage(slug);
+    if (!page) continue;
+    if (typeFilter && page.type !== typeFilter) continue;
+    if (since) {
+      const updatedMs = new Date(page.updated_at).getTime();
+      const sinceMs = new Date(since).getTime();
+      if (Number.isFinite(sinceMs) && updatedMs <= sinceMs) continue;
+    }
+
+    const fullContent = page.compiled_truth + '\n' + page.timeline;
+    const entries = parseTimelineEntries(fullContent);
+
+    for (const entry of entries) {
+      if (dryRun) {
+        if (jsonMode) {
+          process.stdout.write(JSON.stringify({
+            action: 'add_timeline', slug, date: entry.date,
+            summary: entry.summary, ...(entry.detail ? { detail: entry.detail } : {}),
+          }) + '\n');
+        } else {
+          console.log(`  ${slug}: ${entry.date} — ${entry.summary}`);
+        }
+        created++;
+      } else {
+        try {
+          await engine.addTimelineEntry(
+            slug,
+            { date: entry.date, summary: entry.summary, detail: entry.detail || '' },
+            { skipExistenceCheck: true },
+          );
+          created++;
+        } catch { /* dedup constraint or other */ }
+      }
+    }
+    processed++;
+    if (jsonMode && !dryRun && (processed % 500 === 0 || i === slugList.length - 1)) {
+      process.stderr.write(JSON.stringify({ event: 'progress', phase: 'extracting_timeline_db', done: processed, total: slugList.length }) + '\n');
+    }
+  }
+
+  if (!jsonMode) {
+    const label = dryRun ? '(dry run) would create' : 'created';
+    console.log(`Timeline: ${label} ${created} entries from ${processed} pages (db source)`);
+  }
+  return { created, pages: processed };
 }

@@ -8,10 +8,12 @@ import { resolve, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
+import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
+import { extractPageLinks, isAutoLinkEnabled } from './link-extraction.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -219,7 +221,7 @@ const get_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, and reconciles tags.',
+  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link is enabled) extracts + reconciles graph links.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
@@ -227,11 +229,110 @@ const put_page: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    const result = await importFromContent(ctx.engine, p.slug as string, p.content as string);
-    return { slug: result.slug, status: result.status === 'imported' ? 'created_or_updated' : result.status, chunks: result.chunks };
+    const slug = p.slug as string;
+    // Skip embedding when no OpenAI key is configured. importFromContent's existing
+    // try/catch around embed only catches; without a key the OpenAI client would
+    // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
+    // giving up. Detect early.
+    const noEmbed = !process.env.OPENAI_API_KEY;
+    const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
+
+    // Auto-link post-hook: runs AFTER importFromContent (which is its own
+    // transaction). Runs even on status='skipped' so reconciliation catches drift
+    // between the page text and the links table. Failures are non-blocking.
+    //
+    // SECURITY: skipped for remote (MCP) callers. Auto-link's bare-slug regex
+    // matches `people/X` etc. anywhere in page text, including code fences,
+    // quoted strings, and prompt-injected content. An untrusted page can plant
+    // arbitrary outbound links by including `see meetings/board-q1` in its body.
+    // Combined with the backlink boost in hybridSearch, attacker-placed targets
+    // would surface higher in search. Local CLI users (ctx.remote=false) opt
+    // into this behavior; MCP/remote writes do not.
+    let autoLinks: { created: number; removed: number; errors: number } | { error: string } | { skipped: 'remote' } | undefined;
+    if (ctx.remote === true) {
+      autoLinks = { skipped: 'remote' };
+    } else if (result.parsedPage) {
+      try {
+        const enabled = await isAutoLinkEnabled(ctx.engine);
+        if (enabled) {
+          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage);
+        }
+      } catch (e) {
+        autoLinks = { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+
+    return {
+      slug: result.slug,
+      status: result.status === 'imported' ? 'created_or_updated' : result.status,
+      chunks: result.chunks,
+      ...(autoLinks ? { auto_links: autoLinks } : {}),
+    };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
+
+/**
+ * Extract entity refs from a freshly-written page, sync the links table to match.
+ * Creates new links via addLink, removes stale ones (links present in DB but no
+ * longer referenced in content) via removeLink. Returns counts.
+ *
+ * Runs OUTSIDE importFromContent's transaction so it doesn't block the page write
+ * or get rolled back if a single link operation fails. Per-link failures are
+ * counted; the overall function never throws (catch in put_page handler covers
+ * extraction errors).
+ */
+async function runAutoLink(
+  engine: BrainEngine,
+  slug: string,
+  parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },
+): Promise<{ created: number; removed: number; errors: number }> {
+  const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
+  const candidates = extractPageLinks(fullContent, parsed.frontmatter, parsed.type);
+
+  // Resolve which targets exist (skip refs to non-existent pages to avoid FK
+  // violation churn in addLink). One getAllSlugs call upfront, O(1) lookup.
+  const allSlugs = await engine.getAllSlugs();
+  const valid = candidates.filter(c => allSlugs.has(c.targetSlug));
+
+  // Run getLinks + addLink/removeLink loops inside a single transaction so that
+  // concurrent put_page calls on the same slug can't race the reconciliation:
+  // without this, two simultaneous writes both read stale `existingKeys` and
+  // re-create links the other side just removed (lost-update). The transaction
+  // serializes via row-level locks on `links` rows touched by addLink/removeLink.
+  return await engine.transaction(async (tx) => {
+    const existing = await tx.getLinks(slug);
+    const desiredKeys = new Set(valid.map(c => `${c.targetSlug}\u0000${c.linkType}`));
+    const existingKeys = new Set(existing.map(l => `${l.to_slug}\u0000${l.link_type}`));
+
+    let created = 0, removed = 0, errors = 0;
+
+    // Add new + update existing.
+    for (const c of valid) {
+      try {
+        await tx.addLink(slug, c.targetSlug, c.context, c.linkType);
+        if (!existingKeys.has(`${c.targetSlug}\u0000${c.linkType}`)) created++;
+      } catch {
+        errors++;
+      }
+    }
+
+    // Remove stale (in DB but not in desired set).
+    for (const l of existing) {
+      const key = `${l.to_slug}\u0000${l.link_type}`;
+      if (!desiredKeys.has(key)) {
+        try {
+          await tx.removeLink(slug, l.to_slug, l.link_type);
+          removed++;
+        } catch {
+          errors++;
+        }
+      }
+    }
+
+    return { created, removed, errors };
+  });
+}
 
 const delete_page: Operation = {
   name: 'delete_page',
@@ -436,15 +537,40 @@ const get_backlinks: Operation = {
   cliHints: { name: 'backlinks', positional: ['slug'] },
 };
 
+/**
+ * Hard cap on traverse_graph depth from MCP callers. Each recursive CTE iteration
+ * grows a `visited` array per path; in `direction=both` the join is `OR`-based and
+ * fans out exponentially. Without a cap, a remote MCP caller can pass depth=1e6
+ * and burn memory/CPU on the database. 10 hops is well beyond any realistic
+ * relationship query (Wintermute's "people who attended meetings with Alice"
+ * is 2 hops; the deepest meaningful chain in our test data is 4).
+ */
+const TRAVERSE_DEPTH_CAP = 10;
+
 const traverse_graph: Operation = {
   name: 'traverse_graph',
-  description: 'Traverse link graph from a page',
+  description: 'Traverse link graph from a page. With link_type/direction, returns edges (GraphPath[]) instead of nodes.',
   params: {
     slug: { type: 'string', required: true },
-    depth: { type: 'number', description: 'Max traversal depth (default 5)' },
+    depth: { type: 'number', description: `Max traversal depth (default 5, capped at ${TRAVERSE_DEPTH_CAP})` },
+    link_type: { type: 'string', description: 'Filter to one link type (per-edge filter, traversal only follows matching edges)' },
+    direction: { type: 'string', enum: ['in', 'out', 'both'], description: 'Traversal direction (default out)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.traverseGraph(p.slug as string, (p.depth as number) || 5);
+    const slug = p.slug as string;
+    const requestedDepth = (p.depth as number) || 5;
+    if (requestedDepth > TRAVERSE_DEPTH_CAP) {
+      ctx.logger.warn(`[gbrain] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
+    }
+    const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
+    const linkType = p.link_type as string | undefined;
+    const direction = p.direction as 'in' | 'out' | 'both' | undefined;
+    // Backward compat: when neither link_type nor direction is provided, return
+    // the legacy GraphNode[] shape. Once either is set, switch to GraphPath[].
+    if (linkType === undefined && direction === undefined) {
+      return ctx.engine.traverseGraph(slug, depth);
+    }
+    return ctx.engine.traversePaths(slug, { depth, linkType, direction });
   },
   cliHints: { name: 'graph', positional: ['slug'] },
 };
@@ -464,8 +590,24 @@ const add_timeline_entry: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
+    const date = p.date as string;
+    // Reject anything that isn't a strict YYYY-MM-DD with year 1900-2199 and
+    // a real calendar day. PG DATE accepts year 5874897 silently — that's a
+    // semantic bug nobody actually wants.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new Error(`Invalid date format "${date}" (expected YYYY-MM-DD)`);
+    }
+    const [y, m, d] = date.split('-').map(Number);
+    if (y < 1900 || y > 2199 || m < 1 || m > 12 || d < 1 || d > 31) {
+      throw new Error(`Invalid date "${date}" (year 1900-2199, month 1-12, day 1-31)`);
+    }
+    // Round-trip through Date to catch e.g. Feb 30.
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+      throw new Error(`Invalid calendar date "${date}"`);
+    }
     await ctx.engine.addTimelineEntry(p.slug as string, {
-      date: p.date as string,
+      date,
       source: (p.source as string) || '',
       summary: p.summary as string,
       detail: (p.detail as string) || '',
@@ -775,6 +917,183 @@ const file_url: Operation = {
   },
 };
 
+// --- Jobs (Minions) ---
+
+const submit_job: Operation = {
+  name: 'submit_job',
+  description: 'Submit a background job to the Minions queue',
+  params: {
+    name: { type: 'string', required: true, description: 'Job type (sync, embed, lint, import)' },
+    data: { type: 'object', description: 'Job payload (JSON)' },
+    queue: { type: 'string', description: 'Queue name (default: "default")' },
+    priority: { type: 'number', description: 'Priority (0 = highest, default: 0)' },
+    max_attempts: { type: 'number', description: 'Max retry attempts (default: 3)' },
+    delay: { type: 'number', description: 'Delay in ms before eligible' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'submit_job', name: p.name };
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    return queue.add(p.name as string, (p.data as Record<string, unknown>) || {}, {
+      queue: (p.queue as string) || 'default',
+      priority: (p.priority as number) || 0,
+      max_attempts: (p.max_attempts as number) || 3,
+      delay: (p.delay as number) || undefined,
+    });
+  },
+};
+
+const get_job: Operation = {
+  name: 'get_job',
+  description: 'Get job status and details by ID',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  handler: async (ctx, p) => {
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const job = await queue.getJob(p.id as number);
+    if (!job) throw new OperationError('invalid_params', `Job not found: ${p.id}`);
+    return job;
+  },
+};
+
+const list_jobs: Operation = {
+  name: 'list_jobs',
+  description: 'List jobs with optional filters',
+  params: {
+    status: { type: 'string', description: 'Filter by status (waiting, active, completed, failed, delayed, dead, cancelled)' },
+    queue: { type: 'string', description: 'Filter by queue name' },
+    name: { type: 'string', description: 'Filter by job type' },
+    limit: { type: 'number', description: 'Max results (default: 50)' },
+  },
+  handler: async (ctx, p) => {
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    return queue.getJobs({
+      status: p.status as string | undefined,
+      queue: p.queue as string | undefined,
+      name: p.name as string | undefined,
+      limit: (p.limit as number) || 50,
+    } as Parameters<typeof queue.getJobs>[0]);
+  },
+};
+
+const cancel_job: Operation = {
+  name: 'cancel_job',
+  description: 'Cancel a waiting, active, or delayed job',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'cancel_job', id: p.id };
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const cancelled = await queue.cancelJob(p.id as number);
+    if (!cancelled) throw new OperationError('invalid_params', `Cannot cancel job ${p.id} (may already be in terminal status)`);
+    return cancelled;
+  },
+};
+
+const retry_job: Operation = {
+  name: 'retry_job',
+  description: 'Re-queue a failed or dead job for retry',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'retry_job', id: p.id };
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const retried = await queue.retryJob(p.id as number);
+    if (!retried) throw new OperationError('invalid_params', `Cannot retry job ${p.id} (must be failed or dead)`);
+    return retried;
+  },
+};
+
+const get_job_progress: Operation = {
+  name: 'get_job_progress',
+  description: 'Get structured progress for a running job',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  handler: async (ctx, p) => {
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const job = await queue.getJob(p.id as number);
+    if (!job) throw new OperationError('invalid_params', `Job not found: ${p.id}`);
+    return { id: job.id, name: job.name, status: job.status, progress: job.progress };
+  },
+};
+
+const pause_job: Operation = {
+  name: 'pause_job',
+  description: 'Pause a waiting, active, or delayed job',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  handler: async (ctx, p) => {
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const job = await queue.pauseJob(p.id as number);
+    if (!job) throw new OperationError('invalid_params', `Job not found or not pausable: ${p.id}`);
+    return { id: job.id, status: job.status };
+  },
+};
+
+const resume_job: Operation = {
+  name: 'resume_job',
+  description: 'Resume a paused job back to waiting',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  handler: async (ctx, p) => {
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const job = await queue.resumeJob(p.id as number);
+    if (!job) throw new OperationError('invalid_params', `Job not found or not paused: ${p.id}`);
+    return { id: job.id, status: job.status };
+  },
+};
+
+const replay_job: Operation = {
+  name: 'replay_job',
+  description: 'Replay a completed/failed/dead job, optionally with modified data',
+  params: {
+    id: { type: 'number', required: true, description: 'Source job ID to replay' },
+    data_overrides: { type: 'object', required: false, description: 'Data fields to override (merged with original)' },
+  },
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'replay_job', id: p.id };
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const job = await queue.replayJob(p.id as number, p.data_overrides as Record<string, unknown> | undefined);
+    if (!job) throw new OperationError('invalid_params', `Job not found or not in terminal state: ${p.id}`);
+    return { id: job.id, name: job.name, status: job.status, source_id: p.id };
+  },
+};
+
+const send_job_message: Operation = {
+  name: 'send_job_message',
+  description: 'Send a sidechannel message to a running job\'s inbox',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID to message' },
+    payload: { type: 'object', required: true, description: 'Message payload (arbitrary JSON)' },
+    sender: { type: 'string', required: false, description: 'Sender identity (default: admin)' },
+  },
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'send_job_message', id: p.id };
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const msg = await queue.sendMessage(p.id as number, p.payload, (p.sender as string) ?? 'admin');
+    if (!msg) throw new OperationError('invalid_params', `Job not found, not messageable, or sender unauthorized: ${p.id}`);
+    return { sent: true, message_id: msg.id, job_id: p.id };
+  },
+};
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -800,6 +1119,9 @@ export const operations: Operation[] = [
   log_ingest, get_ingest_log,
   // Files
   file_list, file_upload, file_url,
+  // Jobs (Minions)
+  submit_job, get_job, list_jobs, cancel_job, retry_job, get_job_progress,
+  pause_job, resume_job, replay_job, send_job_message,
 ];
 
 export const operationsByName = Object.fromEntries(

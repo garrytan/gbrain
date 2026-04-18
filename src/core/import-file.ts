@@ -5,13 +5,34 @@ import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { embedBatch } from './embedding.ts';
 import { slugifyPath } from './sync.ts';
-import type { ChunkInput } from './types.ts';
+import type { ChunkInput, PageType } from './types.ts';
+
+/**
+ * The parsed page metadata returned by importFromContent. Callers (specifically
+ * the put_page operation handler running auto-link post-hook) can reuse this to
+ * avoid re-parsing the same content.
+ */
+export interface ParsedPage {
+  type: PageType;
+  title: string;
+  compiled_truth: string;
+  timeline: string;
+  frontmatter: Record<string, unknown>;
+  tags: string[];
+}
 
 export interface ImportResult {
   slug: string;
   status: 'imported' | 'skipped' | 'error';
   chunks: number;
   error?: string;
+  /**
+   * Parsed page content. Present for status='imported' AND status='skipped'
+   * (skip happens when content is identical to existing page; auto-link still
+   * needs to run for reconciliation in case links table drifted from page text).
+   * Absent only on status='error' (early payload-size rejection).
+   */
+  parsedPage?: ParsedPage;
 }
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB
@@ -61,9 +82,18 @@ export async function importFromContent(
     }))
     .digest('hex');
 
+  const parsedPage: ParsedPage = {
+    type: parsed.type,
+    title: parsed.title,
+    compiled_truth: parsed.compiled_truth,
+    timeline: parsed.timeline || '',
+    frontmatter: parsed.frontmatter,
+    tags: parsed.tags,
+  };
+
   const existing = await engine.getPage(slug);
   if (existing?.content_hash === hash) {
-    return { slug, status: 'skipped', chunks: 0 };
+    return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
 
   // Chunk compiled_truth and timeline
@@ -123,7 +153,7 @@ export async function importFromContent(
     }
   });
 
-  return { slug, status: 'imported', chunks: chunks.length };
+  return { slug, status: 'imported', chunks: chunks.length, parsedPage };
 }
 
 /**

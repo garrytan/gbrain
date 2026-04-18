@@ -53,6 +53,30 @@ gbrain embed --stale                  # generate vector embeddings
 gbrain query "key themes across these documents?"
 ```
 
+## Step 4.5: Wire the Knowledge Graph
+
+If the user already had a brain repo (Step 3 imported existing markdown), backfill
+the typed-link graph and structured timeline. This populates the `links` and
+`timeline_entries` tables that future writes will maintain automatically.
+
+```bash
+gbrain extract links --source db --dry-run | head -20    # preview
+gbrain extract links --source db                         # commit
+gbrain extract timeline --source db                      # dated events
+gbrain stats                                             # verify links > 0
+```
+
+For brand-new empty brains, skip this step — auto-link populates the graph as the
+agent writes pages going forward. There is nothing to backfill yet.
+
+After this step:
+- `gbrain graph-query <slug> --depth 2` works (relationship traversal)
+- Search ranks well-connected entities higher (backlink boost)
+- Every future `put_page` auto-creates typed links and reconciles stale ones
+
+If a user has a very large brain (>10K pages), `extract --source db` is idempotent
+and supports `--since YYYY-MM-DD` for incremental runs.
+
 ## Step 5: Load Skills
 
 Read `~/gbrain/skills/RESOLVER.md`. This is the skill dispatcher. It tells you which
@@ -110,6 +134,14 @@ actually works) is the most important.
 
 ```bash
 cd ~/gbrain && git pull origin main && bun install
+gbrain init                           # apply schema migrations (idempotent)
+gbrain post-upgrade                   # show migration notes for the version range
 ```
 
-Then run `gbrain init` to apply any schema migrations (idempotent, safe to re-run).
+Then read `~/gbrain/skills/migrations/v<NEW_VERSION>.md` (and any intermediate
+versions you skipped) and run any backfill or verification steps it lists. Skipping
+this is how features ship in the binary but stay dormant in the user's brain.
+
+For v0.12.0+ specifically: if your brain was created before v0.12.0, run
+`gbrain extract links --source db && gbrain extract timeline --source db` to
+backfill the new graph layer (see Step 4.5 above).

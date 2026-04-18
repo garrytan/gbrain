@@ -279,8 +279,14 @@ Active items, pending decisions, things to track.
 
 - Update company pages from person enrichment (and vice versa)
 - Update related project/deal pages if relevant context surfaced
-- Add back-links from every entity mentioned (MANDATORY)
 - Check index files if the brain uses them
+
+**Note (v0.10.1):** Links between brain pages are auto-created on every
+`put_page` call (auto-link post-hook). Step 7 focuses on content
+cross-references (updating related pages' compiled truth with new signal
+from this enrichment), not on creating links. Verify via the `auto_links`
+field in the put_page response (`{ created, removed, errors }`).
+Timeline entries still need explicit `gbrain timeline-add` calls.
 
 ## Bulk Enrichment Rules
 
