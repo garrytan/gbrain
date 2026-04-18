@@ -2,6 +2,33 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Configurable entity directories.** The link extractor now reads the
+  `entity_dirs` config key (comma-separated) and treats those top-level slug
+  prefixes as entities in addition to the built-in set (`people`, `companies`,
+  `meetings`, `concepts`, `deal`, `civic`, `project`, `source`, `media`, `yc`).
+  Set `entity_dirs_mode=replace` to drop the defaults entirely. Each entry is
+  validated against `/^[a-z0-9][a-z0-9-]*/`; invalid input logs a warning and
+  falls back to defaults. Unlocks Johnny Decimal, PARA, and other custom vault
+  taxonomies without forking the extractor.
+- **Explicit-path wikilink extraction.** `[[people/alice]]` and
+  `[[people/alice|Alice Chen]]` are now recognised alongside Markdown-style
+  `[Name](people/alice)` references. Honors the configured dir list, so
+  custom dirs match in both forms. Bare `[[alice]]` (no dir prefix) is
+  intentionally out of scope — resolving bare names requires engine page
+  lookup, which breaks the pure-function contract of the extractor.
+- `DEFAULT_ENTITY_DIRS` is now an exported frozen constant on
+  `src/core/link-extraction.ts`, for callers that want to reason about the
+  default set directly.
+- `getEntityDirs(engine)` helper resolves the effective dir list from config
+  (union or replace mode, with validation).
+- `extractEntityRefs(content, dirs?)` and `extractPageLinks(content, fm, type, dirs?)`
+  accept an optional dir list; existing callsites are unchanged (default
+  behavior preserved).
+
 ## [0.12.0] - 2026-04-18
 
 ## **The graph wires itself.**
