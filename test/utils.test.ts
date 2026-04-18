@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from '../src/core/utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, coerceEmbeddingVector } from '../src/core/utils.ts';
 
 describe('validateSlug', () => {
   test('accepts valid slugs', () => {
@@ -79,6 +79,32 @@ describe('rowToPage', () => {
   });
 });
 
+describe('coerceEmbeddingVector', () => {
+  test('returns Float32Array unchanged', () => {
+    const emb = new Float32Array([0.1, 0.2, 0.3]);
+    expect(coerceEmbeddingVector(emb)).toBe(emb);
+  });
+
+  test('parses postgres vector strings into Float32Array', () => {
+    const emb = coerceEmbeddingVector('[0.1,0.2,0.3]');
+    expect(emb).toBeInstanceOf(Float32Array);
+    expect(emb?.[0]).toBeCloseTo(0.1, 6);
+    expect(emb?.[1]).toBeCloseTo(0.2, 6);
+    expect(emb?.[2]).toBeCloseTo(0.3, 6);
+  });
+
+  test('parses JSON array strings into Float32Array', () => {
+    const emb = coerceEmbeddingVector('[1, 2, 3]');
+    expect(emb).toBeInstanceOf(Float32Array);
+    expect(Array.from(emb || [])).toEqual([1, 2, 3]);
+  });
+
+  test('returns null for invalid embedding values', () => {
+    expect(coerceEmbeddingVector('not-a-vector')).toBeNull();
+    expect(coerceEmbeddingVector(null)).toBeNull();
+  });
+});
+
 describe('rowToChunk', () => {
   test('nulls embedding by default', () => {
     const chunk = rowToChunk({
@@ -97,6 +123,18 @@ describe('rowToChunk', () => {
       model: 'test', token_count: 5, embedded_at: '2024-01-01',
     }, true);
     expect(chunk.embedding).not.toBeNull();
+  });
+
+  test('coerces string embeddings when requested', () => {
+    const chunk = rowToChunk({
+      id: 1, page_id: 1, chunk_index: 0, chunk_text: 'text',
+      chunk_source: 'compiled_truth', embedding: '[0.1,0.2,0.3]',
+      model: 'test', token_count: 5, embedded_at: '2024-01-01',
+    }, true);
+    expect(chunk.embedding).toBeInstanceOf(Float32Array);
+    expect(chunk.embedding?.[0]).toBeCloseTo(0.1, 6);
+    expect(chunk.embedding?.[1]).toBeCloseTo(0.2, 6);
+    expect(chunk.embedding?.[2]).toBeCloseTo(0.3, 6);
   });
 });
 

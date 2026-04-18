@@ -35,6 +35,11 @@ gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
 ```
 
+Short note for Roger's M5 + Intel Mac setup:
+- both machines keep a repo checkout at `~/Projects/gbrain`
+- the active `gbrain` runtime is symlinked to that repo, not edited directly inside Bun's install tree
+- run `~/.local/bin/gbrain-update.sh` on either machine to pull, rebuild, run the focused test suite, and verify `gbrain stats`
+
 ```
 3 results (hybrid search, 0.12s):
 
