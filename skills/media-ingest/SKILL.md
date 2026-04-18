@@ -35,13 +35,10 @@ Ingest video, audio, PDF, book, screenshot, and GitHub repo content into the bra
 This skill guarantees:
 - Every ingested media item has a brain page with analysis (not just a transcript dump)
 - Transcripts (video/audio) saved in raw and human-readable formats
-- Entity extraction: every person and company mentioned gets back-linked
+- Entity extraction propagates through the brain
 - Raw source files preserved via `gbrain files upload-raw`
+- Follow `skills/conventions/quality.md` for citations, back-links, and notability
 - Filing by primary subject, not by media format
-
-## Iron Law: Back-Linking (MANDATORY)
-
-Every mention of a person or company with a brain page MUST create a back-link.
 
 ## Phases
 

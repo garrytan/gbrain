@@ -29,19 +29,13 @@ Enrich person and company pages from external sources. Scale effort to importanc
 ## Contract
 
 This skill guarantees:
+- Follow `skills/conventions/quality.md` for citations, back-links, and the notability gate
 - Every enriched page has compiled truth (State section) with inline citations
 - Every enriched page has a timeline with dated entries
-- Back-links are created bidirectionally
 - Tiered enrichment: Tier 1 (full), Tier 2 (medium), Tier 3 (minimal) based on notability
 - No stubs: every new page has meaningful content from web search or existing brain context
 
 > **Filing rule:** Read `skills/_brain-filing-rules.md` before creating any new page.
-
-## Iron Law: Back-Linking (MANDATORY)
-
-Every mention of a person or company with a brain page MUST create a back-link
-FROM that entity's page TO the page mentioning them. An unlinked mention is a
-broken brain. See `skills/_brain-filing-rules.md` for format.
 
 ## Philosophy
 

@@ -36,16 +36,7 @@ This skill guarantees:
 - Captures ideas with the user's EXACT phrasing (no paraphrasing)
 - Detects entity mentions and creates/enriches brain pages
 - Logs a one-line summary of what was captured
-- Back-links all entity mentions (Iron Law)
-- Citations on every fact written
-
-## Iron Law: Back-Linking (MANDATORY)
-
-Every time this skill creates or updates a brain page that mentions a person or company:
-1. Check if that person/company has a brain page
-2. If yes → add a back-link FROM their page TO the page you just created/updated
-3. Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
-4. An unlinked mention is a broken brain.
+- Follows `skills/conventions/quality.md` for citations, back-links, and notability
 
 ## Phases
 

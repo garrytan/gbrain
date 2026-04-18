@@ -33,13 +33,8 @@ This skill guarantees:
 - The author gets a people page (MANDATORY for anyone whose thinking is worth ingesting)
 - Cross-links created bidirectionally (source ↔ author, source ↔ mentioned entities)
 - Raw source preserved for provenance via `gbrain files upload-raw`
-- Every fact has an inline `[Source: ...]` citation
+- Follow `skills/conventions/quality.md` for citations, back-links, and notability
 - Filing follows primary subject rules (not format-based)
-
-## Iron Law: Back-Linking (MANDATORY)
-
-Every mention of a person or company with a brain page MUST create a back-link.
-Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 
 ## Phases
 
