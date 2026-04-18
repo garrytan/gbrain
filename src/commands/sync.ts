@@ -203,8 +203,12 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     pagesAffected.push(newSlug);
   }
 
-  // Process adds and modifies
-  const useTransaction = (filtered.added.length + filtered.modified.length) > 10;
+  // Process adds and modifies.
+  // NOTE: importFile manages its own transaction internally. Wrapping all
+  // importFile() calls in an outer engine.transaction() causes nested
+  // db.transaction() calls that deadlock PGlite's event loop indefinitely
+  // (reproducible with >10 files in a single sync). Each file import is
+  // individually atomic — no outer wrapper needed.
   const processAddsModifies = async () => {
     for (const path of [...filtered.added, ...filtered.modified]) {
       const filePath = join(repoPath, path);
@@ -222,11 +226,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     }
   };
 
-  if (useTransaction) {
-    await engine.transaction(async () => { await processAddsModifies(); });
-  } else {
-    await processAddsModifies();
-  }
+  await processAddsModifies();
 
   const elapsed = Date.now() - start;
 
