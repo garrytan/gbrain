@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import {
+  DEFAULT_ENTITY_DIRS,
   extractEntityRefs,
   extractPageLinks,
   inferLinkType,
@@ -7,6 +8,27 @@ import {
   isAutoLinkEnabled,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+
+// ─── DEFAULT_ENTITY_DIRS ───────────────────────────────────────
+
+describe('DEFAULT_ENTITY_DIRS', () => {
+  test('is exported and contains the canonical entity dirs', () => {
+    expect(DEFAULT_ENTITY_DIRS).toContain('people');
+    expect(DEFAULT_ENTITY_DIRS).toContain('companies');
+    expect(DEFAULT_ENTITY_DIRS).toContain('meetings');
+    expect(DEFAULT_ENTITY_DIRS).toContain('concepts');
+    expect(DEFAULT_ENTITY_DIRS).toContain('deal');
+    expect(DEFAULT_ENTITY_DIRS).toContain('civic');
+    expect(DEFAULT_ENTITY_DIRS).toContain('project');
+    expect(DEFAULT_ENTITY_DIRS).toContain('source');
+    expect(DEFAULT_ENTITY_DIRS).toContain('media');
+    expect(DEFAULT_ENTITY_DIRS).toContain('yc');
+  });
+
+  test('is frozen (readonly at runtime)', () => {
+    expect(Object.isFrozen(DEFAULT_ENTITY_DIRS)).toBe(true);
+  });
+});
 
 // ─── extractEntityRefs ─────────────────────────────────────────
 

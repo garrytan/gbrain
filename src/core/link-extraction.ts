@@ -27,6 +27,29 @@ export interface EntityRef {
 }
 
 /**
+ * Canonical entity directory list. Each directory name is a top-level slug
+ * prefix that extractors recognise as an "entity" (e.g. `people/alice`,
+ * `companies/acme`, `meetings/2026-01-15`). Frozen so downstream callers can
+ * treat it as immutable.
+ *
+ * Users can extend or replace this list via the `entity_dirs` config key
+ * (see `getEntityDirs`). Custom dirs follow the same slug shape:
+ * `/^[a-z0-9][a-z0-9-]*$/`.
+ */
+export const DEFAULT_ENTITY_DIRS: readonly string[] = Object.freeze([
+  'people',
+  'companies',
+  'meetings',
+  'concepts',
+  'deal',
+  'civic',
+  'project',
+  'source',
+  'media',
+  'yc',
+]);
+
+/**
  * Match `[Name](path)` markdown links pointing to `people/` or `companies/`
  * (and other entity directories). Accepts both filesystem-relative format
  * (`[Name](../people/slug.md)`) AND engine-slug format (`[Name](people/slug)`).
