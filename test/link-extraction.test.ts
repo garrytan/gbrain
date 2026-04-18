@@ -89,6 +89,25 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
   });
+
+  test('custom dirs: Johnny Decimal style ([Rushi](01-notes/rushi)) matches when dir is configured', () => {
+    const refs = extractEntityRefs('Met [Rushi](01-notes/rushi) for coffee.', ['01-notes']);
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toEqual({ name: 'Rushi', slug: '01-notes/rushi', dir: '01-notes' });
+  });
+
+  test('custom-only dir list replaces defaults — default dirs do not match', () => {
+    // When caller supplies an explicit dirs list, only those dirs are used.
+    // The default `people/` dir does NOT match.
+    const refs = extractEntityRefs('[Alice](people/alice)', ['01-notes']);
+    expect(refs).toEqual([]);
+  });
+
+  test('omitting dirs uses default list (backwards compatible)', () => {
+    const refs = extractEntityRefs('[Alice](people/alice)');
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('people/alice');
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────

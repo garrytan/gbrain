@@ -125,13 +125,21 @@ function stripCodeBlocks(content: string): string {
  * slugs (`people/slug`) are matched. Returns one EntityRef per match (no dedup
  * here; caller dedups). Slugs appearing inside fenced or inline code blocks
  * are excluded — those are typically code samples, not real entity references.
+ *
+ * @param content Markdown text to scan.
+ * @param dirs Optional entity-dir list. When omitted, uses DEFAULT_ENTITY_DIRS.
+ *   When provided, ONLY those dirs are matched — callers that want to extend
+ *   the defaults should pass the union (see `getEntityDirs`).
  */
-export function extractEntityRefs(content: string): EntityRef[] {
+export function extractEntityRefs(content: string, dirs?: readonly string[]): EntityRef[] {
   const stripped = stripCodeBlocks(content);
   const refs: EntityRef[] = [];
   let m: RegExpExecArray | null;
+  // When dirs omitted, reuse the module-level regex (built from DEFAULT_ENTITY_DIRS).
+  // When dirs provided, build a scoped regex from the custom list.
   // Fresh regex per call (g-flag state is per-instance).
-  const re = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
+  const base = dirs ? buildEntityRefRegex(dirs) : ENTITY_REF_RE;
+  const re = new RegExp(base.source, base.flags);
   while ((m = re.exec(stripped)) !== null) {
     const name = m[1];
     const fullPath = m[2];
