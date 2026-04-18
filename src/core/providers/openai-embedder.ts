@@ -9,6 +9,7 @@
 
 import OpenAI from 'openai';
 import type { EmbeddingProvider } from '../embedding-provider.ts';
+import { exponentialDelay, sleep } from './retry-utils.ts';
 
 const MODEL = 'text-embedding-3-large';
 const DIMENSIONS = 1536;
@@ -58,7 +59,7 @@ export class OpenAIEmbedder implements EmbeddingProvider {
         return sorted.map(d => new Float32Array(d.embedding));
       } catch (e: unknown) {
         if (attempt === MAX_RETRIES - 1) throw e;
-        let delay = exponentialDelay(attempt);
+        let delay = exponentialDelay(attempt, BASE_DELAY_MS, MAX_DELAY_MS);
         if (e instanceof OpenAI.APIError && e.status === 429) {
           const retryAfter = e.headers?.['retry-after'];
           if (retryAfter) {
@@ -71,12 +72,4 @@ export class OpenAIEmbedder implements EmbeddingProvider {
     }
     throw new Error('OpenAI embedding failed after all retries');
   }
-}
-
-function exponentialDelay(attempt: number): number {
-  return Math.min(BASE_DELAY_MS * Math.pow(2, attempt), MAX_DELAY_MS);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }

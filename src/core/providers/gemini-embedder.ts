@@ -21,6 +21,7 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { EmbeddingProvider } from '../embedding-provider.ts';
+import { exponentialDelay, sleep } from './retry-utils.ts';
 
 const MODEL = 'gemini-embedding-001';
 const MAX_DIMS = 3072;
@@ -92,17 +93,9 @@ export class GeminiEmbedder implements EmbeddingProvider {
         return batchResult.embeddings.map(e => new Float32Array(e.values));
       } catch (e: unknown) {
         if (attempt === MAX_RETRIES - 1) throw e;
-        await sleep(exponentialDelay(attempt));
+        await sleep(exponentialDelay(attempt, BASE_DELAY_MS, MAX_DELAY_MS));
       }
     }
     throw new Error('Gemini embedding failed after all retries');
   }
-}
-
-function exponentialDelay(attempt: number): number {
-  return Math.min(BASE_DELAY_MS * Math.pow(2, attempt), MAX_DELAY_MS);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }

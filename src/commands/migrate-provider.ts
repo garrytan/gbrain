@@ -26,7 +26,19 @@ import { PostgresEngine } from '../core/postgres-engine.ts';
 
 const EMBED_BATCH = 50; // conservative for migration (avoids rate-limit spikes)
 
-export async function runMigrateProvider(engine: BrainEngine, args: string[]): Promise<void> {
+/**
+ * CLI-only command. Must never be called with remote=true (MCP context).
+ * This command does destructive DDL (ALTER TABLE, DROP COLUMN) and mutates
+ * process.env — both are unsafe in a multi-tenant or remote-caller context.
+ */
+export async function runMigrateProvider(
+  engine: BrainEngine,
+  args: string[],
+  remote = false,
+): Promise<void> {
+  if (remote) {
+    throw new Error('gbrain migrate --provider is a CLI-only command and cannot be called remotely.');
+  }
   const providerIdx = args.indexOf('--provider');
   if (providerIdx === -1 || !args[providerIdx + 1]) {
     console.error('Usage: gbrain migrate --provider <openai|gemini> [--dimensions N] [--dry-run]');
