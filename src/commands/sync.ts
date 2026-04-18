@@ -28,7 +28,12 @@ export interface SyncOpts {
 }
 
 function git(repoPath: string, ...args: string[]): string {
-  return execFileSync('git', ['-C', repoPath, ...args], {
+  // `-c core.quotepath=false` keeps CJK / unicode paths in git diff/log output
+  // as-is (UTF-8) instead of the default double-quoted octal-escaped form
+  // (e.g. `"inbox/\350\256\260\345\275\225.md"`). Without this, filenames
+  // containing non-ASCII characters produce diff entries that don't match
+  // anything on disk, and gbrain sync silently drops them from the manifest.
+  return execFileSync('git', ['-c', 'core.quotepath=false', '-C', repoPath, ...args], {
     encoding: 'utf-8',
     timeout: 30000,
   }).trim();
