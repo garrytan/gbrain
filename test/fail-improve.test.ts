@@ -172,3 +172,109 @@ describe('fail-improve', () => {
     expect(failures[failures.length - 1].input).toBe('entry-1009');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Regression: path traversal via the operation parameter
+//
+// FailImproveLoop is exported with method signatures typed as `string` on
+// the operation parameter. Every current in-tree caller passes a hard-coded
+// identifier ("extract_mrr", "rotation_test"), but the class is new and the
+// first consumer that forwards a request field — recipe name, webhook slug,
+// user-typed label — turns operation into an arbitrary-write primitive:
+// logFailure writes JSONL to `{logDir}/{operation}.jsonl` and logImprovement
+// writes JSON to `{logDir}/{operation}/improvements.json`. Without an input
+// check, `operation = '../../../../../tmp/owned'` escapes logDir entirely.
+//
+// The fix asserts operation matches a conservative charset (alnum + _ + -)
+// and is ≤64 chars. These tests lock that in so a future "let's allow dots"
+// loosening surfaces in review.
+// ---------------------------------------------------------------------------
+
+describe('fail-improve / operation name validation', () => {
+  let tempDir: string;
+  let loop: FailImproveLoop;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'gbrain-fail-improve-pt-'));
+    loop = new FailImproveLoop(tempDir);
+  });
+
+  afterAll(() => {
+    try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
+  });
+
+  const BAD: Array<{ label: string; op: string }> = [
+    { label: 'parent-dir traversal', op: '../../../tmp/owned' },
+    { label: 'single parent',        op: '../owned' },
+    { label: 'absolute path',        op: '/tmp/owned' },
+    { label: 'embedded slash',       op: 'a/b' },
+    { label: 'backslash',            op: 'a\\b' },
+    { label: 'null byte',            op: 'ok\u0000evil' },
+    { label: 'leading dot',          op: '.hidden' },
+    { label: 'empty string',         op: '' },
+    { label: 'only dots',            op: '...' },
+    { label: 'over length',          op: 'x'.repeat(65) },
+    // Non-ASCII attacks: confirm Unicode support did not open a hole.
+    { label: 'CJK with slash',       op: '田中/..' },
+    { label: 'CJK traversal',        op: '../田中' },
+    { label: 'arabic with null',     op: 'مَهَمَّة\u0000x' },
+    { label: 'cyrillic leading dot', op: '.иван' },
+    { label: 'emoji (not letter)',   op: '🚀_op' },
+    { label: 'RTL override',         op: 'ok\u202eevil' },
+    { label: 'whitespace',           op: 'has space' },
+  ];
+
+  for (const { label, op } of BAD) {
+    test(`rejects ${label}: '${op.slice(0, 40)}'`, async () => {
+      await expect(
+        loop.execute(op, 'in', () => null, async () => 'res')
+      ).rejects.toThrow(/invalid operation name/);
+    });
+  }
+
+  test('path-traversal payload does not create files outside logDir', async () => {
+    // Use a unique sentinel name so this test is robust against leftover
+    // pollution from prior test runs (or prior vulnerable-code sessions).
+    // If the operation check is missing, logFailure would normalize
+    // `../{sentinel}` against tempDir and write a .jsonl outside it.
+    const sentinel = `gbrain-escape-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const outsidePath = join(tempDir, '..', `${sentinel}.jsonl`);
+    try {
+      await expect(
+        loop.execute('../' + sentinel, 'x', () => null, async () => 'y')
+      ).rejects.toThrow(/invalid operation name/);
+      expect(existsSync(outsidePath)).toBe(false);
+    } finally {
+      try { rmSync(outsidePath, { force: true }); } catch {}
+    }
+  });
+
+  const GOOD = [
+    // ASCII identifiers already in use in-tree
+    'extract_mrr', 'rotation_test', 'op-1', 'ABC_123', 'a', 'x'.repeat(64),
+    // Non-ASCII scripts — callers that derive operation names from entity
+    // pages, recipe titles, or user labels in other languages must keep
+    // working. One test per script family, both mixed and pure.
+    '田中-enrich',           // CJK + ascii punctuation
+    'extract_タスク',         // katakana + underscore mix
+    'иван_stats',            // cyrillic
+    '抽出_mrr',              // CJK prefix
+    'مَهَمَّة',              // arabic
+    'mañana',                // latin-extended (ñ)
+    '任務1',                 // CJK + digit
+    'Δ_delta',               // greek
+  ];
+  for (const op of GOOD) {
+    test(`accepts '${op.slice(0, 40)}'`, async () => {
+      const result = await loop.execute(op, 'in', () => null, async () => 'ok');
+      expect(result).toBe('ok');
+      // File was written inside logDir, not outside
+      const expected = join(tempDir, `${op}.jsonl`);
+      expect(existsSync(expected)).toBe(true);
+    });
+  }
+
+  test('logImprovement also validates the operation name', () => {
+    expect(() => loop.logImprovement('../escape', 'test')).toThrow(/invalid operation name/);
+  });
+});
