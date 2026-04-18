@@ -392,8 +392,8 @@ Question
   │
   ├─ SEARCH PIPELINE (every query)
   │    ├─ Intent classifier (entity / temporal / event / general — auto-routes)
-  │    ├─ Multi-query expansion (Haiku rephrases the question 3 ways)
-  │    ├─ Vector search (HNSW cosine over OpenAI embeddings)
+  │    ├─ Multi-query expansion (Haiku or Gemini Flash — GBRAIN_EXPANSION_PROVIDER)
+  │    ├─ Vector search (HNSW cosine — OpenAI or Gemini embeddings — GBRAIN_EMBEDDING_PROVIDER)
   │    ├─ Keyword search (Postgres tsvector + websearch_to_tsquery)
   │    ├─ Reciprocal Rank Fusion (score = sum 1/(60+rank) across both)
   │    ├─ Cosine re-scoring (re-rank chunks against actual query embedding)
