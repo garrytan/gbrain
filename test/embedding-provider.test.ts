@@ -211,6 +211,15 @@ describe('isEmbeddingAvailable', () => {
     if (savedGoogle !== undefined) process.env.GOOGLE_API_KEY = savedGoogle;
   });
 
+  it('unknown provider falls through to OpenAI key check', () => {
+    process.env.GBRAIN_EMBEDDING_PROVIDER = 'ollama';
+    const saved = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-test';
+    expect(isEmbeddingAvailable()).toBe(true);
+    if (saved !== undefined) process.env.OPENAI_API_KEY = saved;
+    else delete process.env.OPENAI_API_KEY;
+  });
+
   it('returns false when no key is set (gemini provider)', () => {
     process.env.GBRAIN_EMBEDDING_PROVIDER = 'gemini';
     const savedG = process.env.GOOGLE_API_KEY;
