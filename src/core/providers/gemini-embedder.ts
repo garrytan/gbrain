@@ -1,25 +1,30 @@
 /**
  * FORK: Gemini embedding provider.
  *
- * Model: text-embedding-004 (stable, 768 dims max).
+ * Model: gemini-embedding-001 (3072 dims max, Matryoshka truncation supported).
  * API key: GOOGLE_API_KEY or GEMINI_API_KEY.
  * Batch: up to 100 texts per call (same as OpenAI provider).
  * Retry: exponential backoff matching OpenAI provider (4s base, 120s cap, 5 retries).
  *
- * Dimensions: configurable via constructor (1–768). Defaults to 768.
- *   - 768  → native quality, new brains only (schema must be vector(768))
- *   - lower → Matryoshka truncation, useful for space-constrained deployments
+ * Dimensions: configurable via constructor (1–3072). Defaults to 768.
+ *   - 3072 → full fidelity (new brains; schema must be vector(3072))
+ *   - 768  → compact, good quality, compatible with many existing setups
+ *   - 1536 → OpenAI-compatible dims; allows swapping provider without schema migration
  *
  * Schema compatibility note:
- *   OpenAI produces 1536-dim vectors; Gemini text-embedding-004 caps at 768.
- *   Mixing providers on the same brain requires a full re-embed migration.
- *   Run `gbrain migrate --provider gemini` (Phase 2) to handle this.
+ *   OpenAI produces 1536-dim vectors. To switch existing brains:
+ *   - Same dims (1536): run `gbrain migrate --provider gemini --dimensions 1536`
+ *     (re-embeds all chunks with Gemini, no ALTER TABLE needed)
+ *   - New dims (768 or 3072): run `gbrain migrate --provider gemini [--dimensions N]`
+ *     (ALTER TABLE + full re-embed)
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { EmbeddingProvider } from '../embedding-provider.ts';
 
-const MODEL = 'text-embedding-004';
+const MODEL = 'gemini-embedding-001';
+const MAX_DIMS = 3072;
+const DEFAULT_DIMS = 768;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
@@ -32,9 +37,9 @@ export class GeminiEmbedder implements EmbeddingProvider {
 
   private client: GoogleGenerativeAI | null = null;
 
-  constructor(dimensions = 768) {
-    if (dimensions < 1 || dimensions > 768) {
-      throw new Error(`GeminiEmbedder: dimensions must be 1–768, got ${dimensions}`);
+  constructor(dimensions = DEFAULT_DIMS) {
+    if (dimensions < 1 || dimensions > MAX_DIMS) {
+      throw new Error(`GeminiEmbedder: dimensions must be 1–${MAX_DIMS}, got ${dimensions}`);
     }
     this.dimensions = dimensions;
   }
