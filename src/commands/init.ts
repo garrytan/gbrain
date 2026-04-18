@@ -28,7 +28,8 @@ export async function runInit(args: string[]) {
   const embeddingDimensions = dimsIndex !== -1 ? parseInt(args[dimsIndex + 1], 10) : undefined;
   if (embeddingProvider) {
     process.env.GBRAIN_EMBEDDING_PROVIDER = embeddingProvider;
-    if (embeddingDimensions) process.env.GBRAIN_EMBEDDING_DIMENSIONS = String(embeddingDimensions);
+    // FORK: Use !== undefined (not truthiness) so dim=1 is not skipped
+    if (embeddingDimensions !== undefined) process.env.GBRAIN_EMBEDDING_DIMENSIONS = String(embeddingDimensions);
   }
 
   // Schema-only path: apply initSchema against the already-configured engine

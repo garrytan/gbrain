@@ -39,8 +39,8 @@ export class GeminiEmbedder implements EmbeddingProvider {
   private client: GoogleGenerativeAI | null = null;
 
   constructor(dimensions = DEFAULT_DIMS) {
-    if (dimensions < 1 || dimensions > MAX_DIMS) {
-      throw new Error(`GeminiEmbedder: dimensions must be 1–${MAX_DIMS}, got ${dimensions}`);
+    if (!Number.isInteger(dimensions) || dimensions < 1 || dimensions > MAX_DIMS) {
+      throw new Error(`GeminiEmbedder: dimensions must be an integer 1–${MAX_DIMS}, got ${dimensions}`);
     }
     this.dimensions = dimensions;
   }
