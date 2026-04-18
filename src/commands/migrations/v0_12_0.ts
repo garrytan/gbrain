@@ -89,7 +89,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // --source db is idempotent: the UNIQUE constraint on
     // (from_page_id, to_page_id, link_type) and ON CONFLICT DO NOTHING
     // make re-runs cheap. Empty brains return 0/0 quickly.
-    execSync('gbrain extract links --source db', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain extract links --source db', { stdio: 'inherit', timeout: 1_800_000, env: process.env });
     return { name: 'backfill_links', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -100,7 +100,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
 function phaseDBackfillTimeline(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'backfill_timeline', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain extract timeline --source db', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain extract timeline --source db', { stdio: 'inherit', timeout: 1_800_000, env: process.env });
     return { name: 'backfill_timeline', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
