@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+import * as db from '../src/core/db.ts';
+import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
 const originalEnv = { ...process.env };
 let tempHome: string;
@@ -21,8 +23,9 @@ beforeEach(() => {
   delete process.env.OPENAI_API_KEY;
 });
 
-afterEach(() => {
+afterEach(async () => {
   process.env = { ...originalEnv };
+  await db.disconnect();
   rmSync(tempHome, { recursive: true, force: true });
 });
 
@@ -115,6 +118,34 @@ describe('engine factory', () => {
     const defaultEngine = await createEngine({});
     expect(postgresEngine.constructor.name).toBe('PostgresEngine');
     expect(defaultEngine.constructor.name).toBe('PostgresEngine');
+  });
+
+  test('createConnectedEngine registers the explicit postgres engine for legacy db.getConnection callers', async () => {
+    const fakeSql = (() => []) as unknown as ReturnType<typeof db.getConnection>;
+    const connectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function () {
+      (this as PostgresEngine & { _sql: typeof fakeSql })._sql = fakeSql;
+    });
+    const disconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function () {
+      (this as PostgresEngine & { _sql: typeof fakeSql })._sql = null;
+    });
+
+    try {
+      const { createConnectedEngine } = await import('../src/core/engine-factory.ts');
+      const engine = await createConnectedEngine({
+        engine: 'postgres',
+        database_url: 'postgresql://user:pass@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      });
+
+      expect(engine).toBeInstanceOf(PostgresEngine);
+      expect(db.getConnection()).toBe(fakeSql);
+      await engine.disconnect();
+    } finally {
+      connectSpy.mockRestore();
+      disconnectSpy.mockRestore();
+    }
   });
 
   test('createEngine throws for unknown engines', async () => {

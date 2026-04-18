@@ -1,4 +1,5 @@
 import type { BrainEngine } from './engine.ts';
+import { clearConnectionOwner, registerConnectionOwner } from './db.ts';
 import { PostgresEngine } from './postgres-engine.ts';
 import { SQLiteEngine } from './sqlite-engine.ts';
 import { MBrainError, type EngineConfig } from './types.ts';
@@ -62,10 +63,16 @@ export async function createConnectedEngine(
   options?: { poolSize?: number },
 ): Promise<BrainEngine> {
   validateResolvedConfig(config);
+  const engineConfig = toEngineConfig(config, options);
   const engine = config.engine === 'pglite'
-    ? await createEngine(toEngineConfig(config, options))
+    ? await createEngine(engineConfig)
     : createEngineFromConfig(config);
-  await engine.connect(toEngineConfig(config, options));
+  await engine.connect(engineConfig);
+  if (config.engine === 'postgres' && !options?.poolSize && engine instanceof PostgresEngine) {
+    registerConnectionOwner(engine);
+  } else if (!options?.poolSize) {
+    clearConnectionOwner();
+  }
   return engine;
 }
 

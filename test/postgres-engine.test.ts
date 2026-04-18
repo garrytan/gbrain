@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
+import * as db from '../src/core/db.ts';
 
 type SqlCall =
   | { target: 'root' | 'reserved'; kind: 'tag'; text: string; values: unknown[] }
@@ -80,6 +81,24 @@ function createTransactionSqlMock(opts?: { unsafeResult?: Record<string, unknown
 
   return { sql, calls };
 }
+
+afterEach(async () => {
+  await db.disconnect();
+});
+
+describe('PostgresEngine connection ownership', () => {
+  test('throws when sql is accessed before connect even if the db shim has a connection', () => {
+    const fakeSql = (() => []) as unknown as ReturnType<typeof db.getConnection>;
+    const getConnectionSpy = spyOn(db, 'getConnection').mockImplementation(() => fakeSql);
+
+    try {
+      const engine = new PostgresEngine();
+      expect(() => engine.sql).toThrow('connect() has not been called');
+    } finally {
+      getConnectionSpy.mockRestore();
+    }
+  });
+});
 
 describe('PostgresEngine search wiring', () => {
   test('searchKeyword uses a reserved connection, preserves the previous timeout, and passes type/exclude filters', async () => {

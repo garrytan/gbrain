@@ -2,59 +2,56 @@ import postgres from 'postgres';
 import { MBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 
-let sql: ReturnType<typeof postgres> | null = null;
+type ConnectedPostgresEngine = {
+  sql: ReturnType<typeof postgres>;
+  disconnect(): Promise<void>;
+};
+
+let connectionOwner: ConnectedPostgresEngine | null = null;
+
+export function registerConnectionOwner(engine: ConnectedPostgresEngine): void {
+  connectionOwner = engine;
+}
+
+export function clearConnectionOwner(engine?: ConnectedPostgresEngine): void {
+  if (!engine || connectionOwner === engine) {
+    connectionOwner = null;
+  }
+}
+
+export function unsupportedGlobalConnectionAccess(): never {
+  throw new MBrainError(
+    'Global Postgres access removed',
+    'Use a connected PostgresEngine instance instead.',
+    'Create the engine through createConnectedEngine().',
+  );
+}
 
 export function getConnection(): ReturnType<typeof postgres> {
-  if (!sql) {
-    throw new MBrainError(
-      'No database connection',
-      'connect() has not been called',
-      'Run mbrain init --supabase or mbrain init --url <connection_string>',
-    );
+  if (!connectionOwner) {
+    unsupportedGlobalConnectionAccess();
   }
-  return sql;
+  return connectionOwner.sql;
 }
 
 export async function connect(config: EngineConfig): Promise<void> {
-  if (sql) return;
+  if (connectionOwner) return;
 
-  const url = config.database_url;
-  if (!url) {
-    throw new MBrainError(
-      'No database URL',
-      'database_url is missing from config',
-      'Run mbrain init --supabase or mbrain init --url <connection_string>',
-    );
-  }
-
+  const { PostgresEngine } = await import('./postgres-engine.ts');
+  const engine = new PostgresEngine();
   try {
-    sql = postgres(url, {
-      max: 10,
-      idle_timeout: 20,
-      connect_timeout: 10,
-      types: {
-        // Register pgvector type
-        bigint: postgres.BigInt,
-      },
-    });
-
-    // Test connection
-    await sql`SELECT 1`;
-  } catch (e: unknown) {
-    sql = null;
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new MBrainError(
-      'Cannot connect to database',
-      msg,
-      'Check your connection URL in ~/.mbrain/config.json',
-    );
+    await engine.connect(config);
+  } catch (e) {
+    clearConnectionOwner(engine);
+    throw e;
   }
 }
 
 export async function disconnect(): Promise<void> {
-  if (sql) {
-    await sql.end();
-    sql = null;
+  const engine = connectionOwner;
+  connectionOwner = null;
+  if (engine) {
+    await engine.disconnect();
   }
 }
 

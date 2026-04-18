@@ -15,7 +15,7 @@ import type {
   EngineConfig,
 } from './types.ts';
 import { MBrainError } from './types.ts';
-import * as db from './db.ts';
+import { clearConnectionOwner, registerConnectionOwner } from './db.ts';
 import { buildFrontmatterSearchText } from './markdown.ts';
 import { ensurePageChunks } from './page-chunks.ts';
 import { validateSlug, contentHash, importContentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
@@ -23,38 +23,63 @@ import { validateSlug, contentHash, importContentHash, rowToPage, rowToChunk, ro
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
 
-  // Instance connection (for workers) or fall back to module global (backward compat)
   get sql(): ReturnType<typeof postgres> {
-    if (this._sql) return this._sql;
-    return db.getConnection();
+    if (!this._sql) {
+      throw new MBrainError(
+        'No database connection',
+        'connect() has not been called',
+        'Create a connected engine first.',
+      );
+    }
+    return this._sql;
   }
 
   // Lifecycle
   async connect(config: EngineConfig & { poolSize?: number }): Promise<void> {
-    if (config.poolSize) {
-      // Instance-level connection for worker isolation
-      const url = config.database_url;
-      if (!url) throw new MBrainError('No database URL', 'database_url is missing', 'Provide --url');
-      this._sql = postgres(url, {
-        max: config.poolSize,
+    if (this._sql) return;
+
+    const url = config.database_url;
+    if (!url) {
+      throw new MBrainError(
+        'No database URL',
+        'database_url is missing from config',
+        'Run mbrain init --supabase or mbrain init --url <connection_string>',
+      );
+    }
+
+    let sql: ReturnType<typeof postgres> | null = null;
+    try {
+      sql = postgres(url, {
+        max: config.poolSize ?? 10,
         idle_timeout: 20,
         connect_timeout: 10,
         types: { bigint: postgres.BigInt },
       });
-      await this._sql`SELECT 1`;
-    } else {
-      // Module-level singleton (backward compat for CLI main engine)
-      await db.connect(config);
+      await sql`SELECT 1`;
+      this._sql = sql;
+      if (!config.poolSize) {
+        registerConnectionOwner(this);
+      }
+    } catch (e: unknown) {
+      if (sql) {
+        await sql.end({ timeout: 0 }).catch(() => undefined);
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new MBrainError(
+        'Cannot connect to database',
+        msg,
+        'Check your connection URL in ~/.mbrain/config.json',
+      );
     }
   }
 
   async disconnect(): Promise<void> {
-    if (this._sql) {
-      await this._sql.end();
-      this._sql = null;
-    } else {
-      await db.disconnect();
-    }
+    const sql = this._sql;
+    if (!sql) return;
+
+    this._sql = null;
+    clearConnectionOwner(this);
+    await sql.end();
   }
 
   async initSchema(): Promise<void> {
@@ -76,7 +101,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
-    const conn = this._sql || db.getConnection();
+    const conn = this.sql;
     return conn.begin(async (tx) => {
       // Create a scoped engine with tx as its connection, no shared state mutation
       const txEngine = Object.create(this) as PostgresEngine;
