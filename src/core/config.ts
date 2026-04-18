@@ -13,6 +13,10 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  embedding_base_url?: string;
+  embedding_api_key?: string;
+  embedding_model?: string;
+  embedding_dimensions?: number;
 }
 
 /**
@@ -28,6 +32,13 @@ export function loadConfig(): GBrainConfig | null {
 
   // Try env vars
   const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  const embeddingBaseUrl = process.env.GBRAIN_EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL;
+  const embeddingApiKey = process.env.GBRAIN_EMBEDDING_API_KEY;
+  const embeddingModel = process.env.GBRAIN_EMBEDDING_MODEL;
+  const embeddingDimensionsRaw = process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+  const embeddingDimensions = embeddingDimensionsRaw
+    ? parseInt(embeddingDimensionsRaw, 10)
+    : undefined;
 
   if (!fileConfig && !dbUrl) return null;
 
@@ -41,6 +52,12 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(embeddingBaseUrl ? { embedding_base_url: embeddingBaseUrl } : {}),
+    ...(embeddingApiKey ? { embedding_api_key: embeddingApiKey } : {}),
+    ...(embeddingModel ? { embedding_model: embeddingModel } : {}),
+    ...(embeddingDimensions !== undefined && !Number.isNaN(embeddingDimensions)
+      ? { embedding_dimensions: embeddingDimensions }
+      : {}),
   };
   return merged as GBrainConfig;
 }

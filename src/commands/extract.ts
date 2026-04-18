@@ -29,6 +29,17 @@ export interface ExtractedTimelineEntry {
   detail?: string;
 }
 
+export function normalizeTimelineDate(value: string | Date): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString().slice(0, 10);
+}
+
+export function timelineEntryKey(slug: string, date: string | Date, summary: string): string {
+  return `${slug}::${normalizeTimelineDate(date)}::${summary}`;
+}
+
 interface ExtractResult {
   links_created: number;
   timeline_entries_created: number;
@@ -309,7 +320,7 @@ async function extractTimelineFromDir(
     const pages = await engine.listPages({ limit: 100000 });
     for (const page of pages) {
       for (const entry of await engine.getTimeline(page.slug)) {
-        existing.add(`${page.slug}::${entry.date}::${entry.summary}`);
+        existing.add(timelineEntryKey(page.slug, entry.date, entry.summary));
       }
     }
   } catch { /* fresh brain */ }
@@ -320,7 +331,7 @@ async function extractTimelineFromDir(
       const content = readFileSync(files[i].path, 'utf-8');
       const slug = files[i].relPath.replace('.md', '');
       for (const entry of extractTimelineFromContent(content, slug)) {
-        const key = `${entry.slug}::${entry.date}::${entry.summary}`;
+        const key = timelineEntryKey(entry.slug, entry.date, entry.summary);
         if (existing.has(key)) continue;
         existing.add(key);
         if (dryRun) {
@@ -351,6 +362,15 @@ async function extractTimelineFromDir(
 export async function extractLinksForSlugs(engine: BrainEngine, repoPath: string, slugs: string[]): Promise<number> {
   const allFiles = walkMarkdownFiles(repoPath);
   const allSlugs = new Set(allFiles.map(f => f.relPath.replace('.md', '')));
+  const existing = new Set<string>();
+  for (const slug of slugs) {
+    try {
+      for (const link of await engine.getLinks(slug)) {
+        existing.add(`${link.from_slug}::${link.to_slug}`);
+      }
+    } catch { /* skip */ }
+  }
+
   let created = 0;
   for (const slug of slugs) {
     const filePath = join(repoPath, slug + '.md');
@@ -358,7 +378,13 @@ export async function extractLinksForSlugs(engine: BrainEngine, repoPath: string
     try {
       const content = readFileSync(filePath, 'utf-8');
       for (const link of extractLinksFromFile(content, slug + '.md', allSlugs)) {
-        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type); created++; } catch { /* skip */ }
+        const key = `${link.from_slug}::${link.to_slug}`;
+        if (existing.has(key)) continue;
+        try {
+          await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type);
+          existing.add(key);
+          created++;
+        } catch { /* skip */ }
       }
     } catch { /* skip */ }
   }
@@ -366,6 +392,15 @@ export async function extractLinksForSlugs(engine: BrainEngine, repoPath: string
 }
 
 export async function extractTimelineForSlugs(engine: BrainEngine, repoPath: string, slugs: string[]): Promise<number> {
+  const existing = new Set<string>();
+  for (const slug of slugs) {
+    try {
+      for (const entry of await engine.getTimeline(slug)) {
+        existing.add(timelineEntryKey(slug, entry.date, entry.summary));
+      }
+    } catch { /* skip */ }
+  }
+
   let created = 0;
   for (const slug of slugs) {
     const filePath = join(repoPath, slug + '.md');
@@ -373,7 +408,13 @@ export async function extractTimelineForSlugs(engine: BrainEngine, repoPath: str
     try {
       const content = readFileSync(filePath, 'utf-8');
       for (const entry of extractTimelineFromContent(content, slug)) {
-        try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }); created++; } catch { /* skip */ }
+        const key = timelineEntryKey(entry.slug, entry.date, entry.summary);
+        if (existing.has(key)) continue;
+        try {
+          await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail });
+          existing.add(key);
+          created++;
+        } catch { /* skip */ }
       }
     } catch { /* skip */ }
   }

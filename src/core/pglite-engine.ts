@@ -321,16 +321,20 @@ export class PGLiteEngine implements BrainEngine {
 
   // Links
   async addLink(from: string, to: string, context?: string, linkType?: string): Promise<void> {
-    await this.db.query(
+    const result = await this.db.query(
       `INSERT INTO links (from_page_id, to_page_id, link_type, context)
        SELECT f.id, t.id, $3, $4
        FROM pages f, pages t
        WHERE f.slug = $1 AND t.slug = $2
        ON CONFLICT (from_page_id, to_page_id) DO UPDATE SET
          link_type = EXCLUDED.link_type,
-         context = EXCLUDED.context`,
+         context = EXCLUDED.context
+       RETURNING id`,
       [from, to, linkType || '', context || '']
     );
+    if ((result.rows as unknown[]).length === 0) {
+      throw new Error(`addLink failed: page "${from}" or "${to}" not found`);
+    }
   }
 
   async removeLink(from: string, to: string): Promise<void> {
@@ -433,12 +437,16 @@ export class PGLiteEngine implements BrainEngine {
 
   // Timeline
   async addTimelineEntry(slug: string, entry: TimelineInput): Promise<void> {
-    await this.db.query(
+    const result = await this.db.query(
       `INSERT INTO timeline_entries (page_id, date, source, summary, detail)
        SELECT id, $2::date, $3, $4, $5
-       FROM pages WHERE slug = $1`,
+       FROM pages WHERE slug = $1
+       RETURNING id`,
       [slug, entry.date, entry.source || '', entry.summary, entry.detail || '']
     );
+    if ((result.rows as unknown[]).length === 0) {
+      throw new Error(`addTimelineEntry failed: page "${slug}" not found`);
+    }
   }
 
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {

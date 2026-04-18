@@ -3,6 +3,8 @@ import {
   extractMarkdownLinks,
   extractLinksFromFile,
   extractTimelineFromContent,
+  normalizeTimelineDate,
+  timelineEntryKey,
   walkMarkdownFiles,
 } from '../src/commands/extract.ts';
 
@@ -78,6 +80,15 @@ describe('extractLinksFromFile', () => {
     const allSlugs = new Set(['deals/seed', 'companies/brex']);
     const links = extractLinksFromFile(content, 'deals/seed.md', allSlugs);
     expect(links[0].link_type).toBe('deal_for');
+  });
+});
+
+describe('timelineEntryKey', () => {
+  it('normalizes Date and string dates to the same dedup key', () => {
+    const fromString = timelineEntryKey('projects/gbrain', '2026-04-16', 'Did thing');
+    const fromDate = timelineEntryKey('projects/gbrain', new Date('2026-04-16T00:00:00.000Z'), 'Did thing');
+    expect(fromString).toBe(fromDate);
+    expect(normalizeTimelineDate(new Date('2026-04-16T00:00:00.000Z'))).toBe('2026-04-16');
   });
 });
 
