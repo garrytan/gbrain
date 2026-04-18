@@ -62,39 +62,72 @@ export function parseMarkdown(content: string, filePath?: string): ParsedMarkdow
 }
 
 /**
- * Split body content at first standalone --- separator.
+ * Split body content at an explicit timeline sentinel.
  * Returns compiled_truth (before) and timeline (after).
+ *
+ * Recognized sentinels (in priority order):
+ *   1. `<!-- timeline -->` — explicit HTML comment marker (preferred, unambiguous)
+ *   2. `--- timeline ---`  — decorated separator (unambiguous)
+ *   3. A standalone `---` line whose NEXT non-empty line is `## Timeline` or `## History`
+ *      (heading-gated fallback for backward compatibility)
+ *
+ * Plain `---` horizontal rules in article bodies are NOT treated as sentinels.
+ * This avoids the truncation bug where wiki articles using `---` as section
+ * dividers had everything after the first divider incorrectly labelled as timeline.
  */
 export function splitBody(body: string): { compiled_truth: string; timeline: string } {
-  // Match a line that is only --- (with optional whitespace)
-  // Must not be at the very start (that would be frontmatter)
   const lines = body.split('\n');
-  let splitIndex = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
+
+    // Sentinel 1: explicit HTML comment marker
+    if (trimmed === '<!-- timeline -->') {
+      const compiled_truth = lines.slice(0, i).join('\n');
+      const timeline = lines.slice(i + 1).join('\n');
+      return { compiled_truth, timeline };
+    }
+
+    // Sentinel 2: decorated separator
+    if (trimmed === '--- timeline ---') {
+      const compiled_truth = lines.slice(0, i).join('\n');
+      const timeline = lines.slice(i + 1).join('\n');
+      return { compiled_truth, timeline };
+    }
+
+    // Sentinel 3: heading-gated --- (backward compat)
+    // Only split on plain `---` when the next non-empty line is a Timeline/History heading.
     if (trimmed === '---') {
-      // Skip if this is the very first non-empty line (leftover from frontmatter parsing)
       const beforeContent = lines.slice(0, i).join('\n').trim();
       if (beforeContent.length > 0) {
-        splitIndex = i;
-        break;
+        // Find next non-empty line after this separator
+        let nextNonEmpty = '';
+        for (let j = i + 1; j < lines.length; j++) {
+          if (lines[j].trim() !== '') {
+            nextNonEmpty = lines[j].trim();
+            break;
+          }
+        }
+        if (/^##\s+(Timeline|History)\b/i.test(nextNonEmpty)) {
+          const compiled_truth = lines.slice(0, i).join('\n');
+          const timeline = lines.slice(i + 1).join('\n');
+          return { compiled_truth, timeline };
+        }
+        // Plain --- not followed by Timeline/History heading — treat as horizontal rule,
+        // continue scanning for a proper sentinel.
       }
     }
   }
 
-  if (splitIndex === -1) {
-    return { compiled_truth: body, timeline: '' };
-  }
-
-  const compiled_truth = lines.slice(0, splitIndex).join('\n');
-  const timeline = lines.slice(splitIndex + 1).join('\n');
-  return { compiled_truth, timeline };
+  return { compiled_truth: body, timeline: '' };
 }
 
 /**
  * Serialize a page back to markdown format.
- * Produces: frontmatter + compiled_truth + --- + timeline
+ * Produces: frontmatter + compiled_truth + <!-- timeline --> + timeline
+ *
+ * Uses `<!-- timeline -->` as the explicit sentinel (not plain `---`) so that
+ * the output is parseable by `splitBody()` without ambiguity.
  */
 export function serializeMarkdown(
   frontmatter: Record<string, unknown>,
@@ -116,7 +149,7 @@ export function serializeMarkdown(
 
   let body = compiled_truth;
   if (timeline) {
-    body += '\n\n---\n\n' + timeline;
+    body += '\n\n<!-- timeline -->\n\n' + timeline;
   }
 
   return yamlContent + '\n\n' + body + '\n';
@@ -135,6 +168,13 @@ function inferType(filePath?: string): PageType {
   if (lower.includes('/projects/') || lower.includes('/project/')) return 'project';
   if (lower.includes('/sources/') || lower.includes('/source/')) return 'source';
   if (lower.includes('/media/')) return 'media';
+  // Wiki subdirectory types — checked after generic types so /wiki/projects/ still
+  // resolves to 'project' via the generic rule above, but wiki-specific subtypes win.
+  if (lower.includes('/wiki/analysis/')) return 'analysis';
+  if (lower.includes('/wiki/guides/') || lower.includes('/wiki/guide/')) return 'guide';
+  if (lower.includes('/wiki/hardware/')) return 'hardware';
+  if (lower.includes('/wiki/architecture/')) return 'architecture';
+  if (lower.includes('/wiki/concepts/') || lower.includes('/wiki/concept/')) return 'concept';
   return 'concept';
 }
 

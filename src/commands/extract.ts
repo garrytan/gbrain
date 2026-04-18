@@ -69,32 +69,94 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
 
 // --- Link extraction ---
 
-/** Extract markdown links to .md files (relative paths only) */
+/** Extract markdown links to .md files (relative paths only).
+ *
+ * Handles two syntaxes:
+ *   1. Standard markdown:  [text](relative/path.md)
+ *   2. Wikilinks:          [[relative/path]] or [[relative/path|Display Text]]
+ *
+ * Both are resolved relative to the file that contains them, so the caller
+ * receives a relTarget that can be joined with dirname(relPath) to get the
+ * absolute slug.  External URLs (containing ://) are always skipped.
+ */
 export function extractMarkdownLinks(content: string): { name: string; relTarget: string }[] {
   const results: { name: string; relTarget: string }[] = [];
-  const pattern = /\[([^\]]+)\]\(([^)]+\.md)\)/g;
+
+  // Standard markdown links: [text](relative/path.md)
+  const mdPattern = /\[([^\]]+)\]\(([^)]+\.md)\)/g;
   let match;
-  while ((match = pattern.exec(content)) !== null) {
+  while ((match = mdPattern.exec(content)) !== null) {
     const target = match[2];
     if (target.includes('://')) continue; // skip external URLs
     results.push({ name: match[1], relTarget: target });
   }
+
+  // Wikilinks: [[path/to/page]] or [[path/to/page|Display Text]]
+  // Path may or may not carry a .md suffix; normalise to include it.
+  // Skip external URLs like [[https://example.com|Title]].
+  // Strip section anchors: [[page#section|Title]] → page
+  const wikiPattern = /\[\[([^|\]]+?)(?:\|[^\]]*?)?\]\]/g;
+  while ((match = wikiPattern.exec(content)) !== null) {
+    const rawPath = match[1].trim();
+    if (rawPath.includes('://')) continue; // skip [[https://...]]
+    // Strip section anchors (#heading) — they're intra-page refs, not page slugs
+    const hashIdx = rawPath.indexOf('#');
+    const pagePath = hashIdx >= 0 ? rawPath.slice(0, hashIdx) : rawPath;
+    if (!pagePath) continue; // bare [[#anchor]] — same-page ref, skip
+    const relTarget = pagePath.endsWith('.md') ? pagePath : pagePath + '.md';
+    // Use the display text portion if present, otherwise the raw path
+    const pipeIdx = match[0].indexOf('|');
+    const displayName = pipeIdx >= 0
+      ? match[0].slice(pipeIdx + 1, -2).trim()
+      : rawPath;
+    results.push({ name: displayName, relTarget });
+  }
+
   return results;
 }
 
-/** Infer link type from directory structure */
-function inferLinkType(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
-  const from = fromDir.split('/')[0];
-  const to = toDir.split('/')[0];
-  if (from === 'people' && to === 'companies') {
-    if (Array.isArray(frontmatter?.founded)) return 'founded';
-    return 'works_at';
+/**
+ * Resolve a wikilink target (relative path from extractMarkdownLinks) to a
+ * canonical slug, given the directory of the containing page and the set of
+ * all known slugs in the brain.
+ *
+ * Wiki KBs often use inconsistent relative depths:
+ *   - Same-directory bare name: [[foo-bar]] from tech/wiki/analysis/ → tech/wiki/analysis/foo-bar  ✓
+ *   - Cross-type shorthand: [[analysis/foo]] from {domain}/wiki/guides/ → {domain}/wiki/analysis/foo
+ *     (author omits the leading ../ because they think in "wiki-root-relative" terms)
+ *   - Cross-domain with one-too-few ../: [[../../finance/wiki/...]] from {domain}/wiki/analysis/
+ *     resolves to {domain}/finance/wiki/... instead of finance/wiki/... because depth-3 dirs
+ *     need 3 × ../ to reach KB root, but authors only write 2 ×
+ *
+ * Resolution order (first match wins):
+ *   1. Standard join(fileDir, relTarget) — exact relative path as written
+ *   2. Progressively strip leading path components from fileDir (ancestor search):
+ *      tries parent dir, grandparent dir, … up to KB root.
+ *      Handles both cross-type and cross-domain under-specified paths.
+ *
+ * Returns null when no matching slug is found (dangling link).
+ */
+export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<string>): string | null {
+  const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
+
+  // Strategy 1: standard relative resolution
+  const s1 = join(fileDir, targetNoExt);
+  if (allSlugs.has(s1)) return s1;
+
+  // Strategy 2: ancestor search — try each parent directory in turn.
+  // This resolves links whose authors omitted one or more leading ../
+  // (common when targeting sibling subdirectories or cross-domain pages).
+  const parts = fileDir.split('/').filter(Boolean);
+  for (let strip = 1; strip <= parts.length; strip++) {
+    const ancestor = parts.slice(0, parts.length - strip).join('/');
+    const candidate = ancestor ? join(ancestor, targetNoExt) : targetNoExt;
+    if (allSlugs.has(candidate)) return candidate;
   }
-  if (from === 'people' && to === 'deals') return 'involved_in';
-  if (from === 'deals' && to === 'companies') return 'deal_for';
-  if (from === 'meetings' && to === 'people') return 'attendee';
-  return 'mention';
+
+  return null;
 }
+
+// inferLinkType is now imported from ../core/link-extraction.ts (v0.12.0 canonical extractor)
 
 /** Extract links from frontmatter fields */
 function extractFrontmatterLinks(slug: string, fm: Record<string, unknown>): ExtractedLink[] {
@@ -139,8 +201,8 @@ export function extractLinksFromFile(
   const fm = parseFrontmatterFromContent(content, relPath);
 
   for (const { name, relTarget } of extractMarkdownLinks(content)) {
-    const resolved = join(fileDir, relTarget).replace('.md', '');
-    if (allSlugs.has(resolved)) {
+    const resolved = resolveSlug(fileDir, relTarget, allSlugs);
+    if (resolved !== null) {
       links.push({
         from_slug: slug, to_slug: resolved,
         link_type: inferLinkType(fileDir, dirname(resolved), fm),
@@ -231,7 +293,15 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
 export async function runExtract(engine: BrainEngine, args: string[]) {
   const subcommand = args[0];
   const dirIdx = args.indexOf('--dir');
-  const brainDir = (dirIdx >= 0 && dirIdx + 1 < args.length) ? args[dirIdx + 1] : '.';
+  // Support --dir <path> flag, positional [dir] argument, or default to '.'
+  let brainDir: string;
+  if (dirIdx >= 0 && dirIdx + 1 < args.length) {
+    brainDir = args[dirIdx + 1];
+  } else if (args[1] && !args[1].startsWith('--')) {
+    brainDir = args[1];
+  } else {
+    brainDir = '.';
+  }
   const sourceIdx = args.indexOf('--source');
   const source = (sourceIdx >= 0 && sourceIdx + 1 < args.length) ? args[sourceIdx + 1] : 'fs';
   const typeIdx = args.indexOf('--type');

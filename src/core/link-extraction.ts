@@ -27,16 +27,41 @@ export interface EntityRef {
 }
 
 /**
- * Match `[Name](path)` markdown links pointing to `people/` or `companies/`
- * (and other entity directories). Accepts both filesystem-relative format
- * (`[Name](../people/slug.md)`) AND engine-slug format (`[Name](people/slug)`).
+ * Directory prefix whitelist. These are the top-level slug dirs the extractor
+ * recognizes as entity references. Upstream canonical + our extensions:
+ *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
+ *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
+ *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
+ */
+const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+
+/**
+ * Match `[Name](path)` markdown links pointing to entity directories.
+ * Accepts both filesystem-relative format (`[Name](../people/slug.md)`)
+ * AND engine-slug format (`[Name](people/slug)`).
  *
- * Captures: name, dir (people/companies/...), slug.
+ * Captures: name, slug (dir/name, possibly deeper).
  *
  * The regex permits an optional `../` prefix (any number) and an optional
  * `.md` suffix so the same function works for both filesystem and DB content.
  */
-const ENTITY_REF_RE = /\[([^\]]+)\]\((?:\.\.\/)*((?:people|companies|meetings|concepts|deal|civic|project|source|media|yc)\/([^)\s]+?))(?:\.md)?\)/g;
+const ENTITY_REF_RE = new RegExp(
+  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${DIR_PATTERN}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+  'g',
+);
+
+/**
+ * Match Obsidian-style `[[path]]` or `[[path|Display Text]]` wikilinks.
+ * Captures: slug (dir/...), displayName (optional).
+ *
+ * Same dir whitelist as ENTITY_REF_RE. Strips trailing `.md`, strips section
+ * anchors (`#heading`), skips external URLs. Wiki KBs use this format almost
+ * exclusively so missing it leaves the graph empty.
+ */
+const WIKILINK_RE = new RegExp(
+  `\\[\\[(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  'g',
+);
 
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
@@ -84,16 +109,30 @@ function stripCodeBlocks(content: string): string {
 export function extractEntityRefs(content: string): EntityRef[] {
   const stripped = stripCodeBlocks(content);
   const refs: EntityRef[] = [];
-  let m: RegExpExecArray | null;
-  // Fresh regex per call (g-flag state is per-instance).
-  const re = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
-  while ((m = re.exec(stripped)) !== null) {
-    const name = m[1];
-    const fullPath = m[2];
-    const slug = fullPath; // dir/slug
+  let match: RegExpExecArray | null;
+
+  // 1. Markdown links: [Name](path)
+  const mdPattern = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
+  while ((match = mdPattern.exec(stripped)) !== null) {
+    const name = match[1];
+    const fullPath = match[2];
+    const slug = fullPath;
     const dir = fullPath.split('/')[0];
     refs.push({ name, slug, dir });
   }
+
+  // 2. Obsidian wikilinks: [[path]] or [[path|Display Text]]
+  const wikiPattern = new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags);
+  while ((match = wikiPattern.exec(stripped)) !== null) {
+    let slug = match[1].trim();
+    if (!slug) continue;
+    if (slug.includes('://')) continue;
+    if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+    const displayName = (match[2] || slug).trim();
+    const dir = slug.split('/')[0];
+    refs.push({ name: displayName, slug, dir });
+  }
+
   return refs;
 }
 
@@ -145,7 +184,10 @@ export function extractPageLinks(
   // Limited to the same entity directories ENTITY_REF_RE covers.
   // Code blocks are stripped first — slugs in code samples are not real refs.
   const strippedContent = stripCodeBlocks(content);
-  const bareRe = /\b((?:people|companies|meetings|concepts|deal|civic|project|source|media|yc)\/[a-z0-9][a-z0-9-]*)\b/g;
+  const bareRe = new RegExp(
+    `\\b(${DIR_PATTERN}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
+    'g',
+  );
   let m: RegExpExecArray | null;
   while ((m = bareRe.exec(strippedContent)) !== null) {
     // Skip matches that are part of a markdown link (already handled above).
