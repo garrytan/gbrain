@@ -109,6 +109,76 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].slug).toBe('people/alice');
   });
+
+  // ── Explicit-path wikilinks [[dir/slug]] ──
+  //
+  // Scope note: only `[[dir/slug]]` and `[[dir/slug|alias]]` are in scope.
+  // Bare `[[name]]` wikilinks would need engine page-lookup to resolve,
+  // which breaks the pure-function contract of extractEntityRefs. See
+  // README for full explanation.
+
+  test('extracts explicit-path wikilinks [[dir/slug]]', () => {
+    const refs = extractEntityRefs('See [[people/alice]] for context.');
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toEqual({ name: 'alice', slug: 'people/alice', dir: 'people' });
+  });
+
+  test('extracts wikilinks with alias [[dir/slug|Display Name]]', () => {
+    const refs = extractEntityRefs('Met [[people/alice-chen|Alice Chen]] today.');
+    expect(refs.length).toBe(1);
+    // Display is ignored; name falls back to the last slug segment.
+    expect(refs[0].slug).toBe('people/alice-chen');
+    expect(refs[0].dir).toBe('people');
+    expect(refs[0].name).toBe('alice-chen');
+  });
+
+  test('ignores wikilinks when dir is NOT in configured list', () => {
+    // `notes/` is not a default entity dir, so [[notes/foo]] is ignored.
+    const refs = extractEntityRefs('See [[notes/foo]] for context.');
+    expect(refs).toEqual([]);
+  });
+
+  test('wikilink dir honors custom dirs param', () => {
+    const refs = extractEntityRefs('See [[01-notes/rushi]] for details.', ['01-notes']);
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('01-notes/rushi');
+    expect(refs[0].dir).toBe('01-notes');
+  });
+
+  test('does NOT extract bare [[name]] wikilinks (out of scope)', () => {
+    // Bare wikilinks require engine page-lookup to resolve — out of scope
+    // for the pure-function extractor.
+    const refs = extractEntityRefs('See [[alice]] for context.');
+    expect(refs).toEqual([]);
+  });
+
+  test('skips wikilinks inside fenced code blocks', () => {
+    const content = [
+      'Prose with [[people/alice]].',
+      '```',
+      '[[people/bob]]',
+      '```',
+    ].join('\n');
+    const refs = extractEntityRefs(content);
+    const slugs = refs.map(r => r.slug);
+    expect(slugs).toContain('people/alice');
+    expect(slugs).not.toContain('people/bob');
+  });
+
+  test('skips wikilinks inside inline code', () => {
+    const refs = extractEntityRefs('Literal `[[people/ghost]]` in code vs [[people/alice]] real.');
+    const slugs = refs.map(r => r.slug);
+    expect(slugs).toContain('people/alice');
+    expect(slugs).not.toContain('people/ghost');
+  });
+
+  test('dedupes markdown-ref and wikilink for the same slug (within extractEntityRefs returns both, caller dedups)', () => {
+    // extractEntityRefs does NOT dedupe (documented contract — caller dedups).
+    // Both forms should match and return 2 entries.
+    const refs = extractEntityRefs('[Alice](people/alice) and [[people/alice]]');
+    expect(refs.length).toBe(2);
+    expect(refs.map(r => r.slug)).toEqual(['people/alice', 'people/alice']);
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────

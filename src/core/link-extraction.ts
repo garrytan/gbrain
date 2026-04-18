@@ -84,6 +84,35 @@ function buildEntityRefRegex(dirs: readonly string[]): RegExp {
 const ENTITY_REF_RE = buildEntityRefRegex(DEFAULT_ENTITY_DIRS);
 
 /**
+ * Build the explicit-path wikilink regex (`[[dir/slug]]` and
+ * `[[dir/slug|alias]]`) from a dir list.
+ *
+ * Scope: ONLY explicit `[[dir/slug]]` form is matched. Bare `[[name]]`
+ * wikilinks are intentionally out of scope — resolving them requires engine
+ * page-lookup (walk the slug table, disambiguate aliases), which breaks the
+ * pure-function contract of extractEntityRefs. See README > entity_dirs for
+ * the design rationale.
+ *
+ * Captures:
+ *   - group 1: full `dir/slug` path
+ *   - alias segment `|display` is consumed but not captured.
+ *
+ * Safety: the slug segment is bounded (`[a-z0-9][a-z0-9-]*`) so there is no
+ * unbounded backtracking. The optional alias is bounded at 100 chars to cap
+ * worst-case regex cost.
+ */
+function buildWikilinkRegex(dirs: readonly string[]): RegExp {
+  const alternation = dirs.map(escapeRegexChars).join('|');
+  return new RegExp(
+    `\\[\\[((?:${alternation})\\/[a-z0-9][a-z0-9-]*)(?:\\|[^\\]|\\n]{1,100})?\\]\\]`,
+    'g',
+  );
+}
+
+/** Default wikilink regex built once from DEFAULT_ENTITY_DIRS (fast path). */
+const WIKILINK_RE = buildWikilinkRegex(DEFAULT_ENTITY_DIRS);
+
+/**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
  * replacing them with whitespace of equivalent length. Preserves byte offsets
  * for any caller that cares about positions; for our extractors this is just
@@ -120,11 +149,20 @@ function stripCodeBlocks(content: string): string {
 }
 
 /**
- * Extract `[Name](path-to-people-or-company)` references from arbitrary content.
- * Both filesystem-relative paths (with `../` and `.md`) and bare engine-style
- * slugs (`people/slug`) are matched. Returns one EntityRef per match (no dedup
- * here; caller dedups). Slugs appearing inside fenced or inline code blocks
- * are excluded — those are typically code samples, not real entity references.
+ * Extract entity references from arbitrary content.
+ *
+ * Two ref forms are matched:
+ *   1. Markdown links: `[Name](people/slug)` — both filesystem-relative paths
+ *      (with `../` and `.md`) and bare engine-style slugs are accepted.
+ *   2. Explicit-path wikilinks: `[[dir/slug]]` and `[[dir/slug|alias]]` where
+ *      `dir` is in the configured dir list. For wikilinks, `name` is the slug's
+ *      last path segment (no display name is available).
+ *
+ * Bare `[[name]]` wikilinks (no dir prefix) are OUT OF SCOPE — resolving them
+ * requires engine page lookup, which breaks the pure-function contract.
+ *
+ * Returns one EntityRef per match (no dedup here; caller dedups). Slugs
+ * appearing inside fenced or inline code blocks are excluded.
  *
  * @param content Markdown text to scan.
  * @param dirs Optional entity-dir list. When omitted, uses DEFAULT_ENTITY_DIRS.
@@ -134,19 +172,29 @@ function stripCodeBlocks(content: string): string {
 export function extractEntityRefs(content: string, dirs?: readonly string[]): EntityRef[] {
   const stripped = stripCodeBlocks(content);
   const refs: EntityRef[] = [];
+
+  // 1. Markdown-style refs: [Name](dir/slug)
+  const mdBase = dirs ? buildEntityRefRegex(dirs) : ENTITY_REF_RE;
+  const mdRe = new RegExp(mdBase.source, mdBase.flags);
   let m: RegExpExecArray | null;
-  // When dirs omitted, reuse the module-level regex (built from DEFAULT_ENTITY_DIRS).
-  // When dirs provided, build a scoped regex from the custom list.
-  // Fresh regex per call (g-flag state is per-instance).
-  const base = dirs ? buildEntityRefRegex(dirs) : ENTITY_REF_RE;
-  const re = new RegExp(base.source, base.flags);
-  while ((m = re.exec(stripped)) !== null) {
+  while ((m = mdRe.exec(stripped)) !== null) {
     const name = m[1];
     const fullPath = m[2];
     const slug = fullPath; // dir/slug
     const dir = fullPath.split('/')[0];
     refs.push({ name, slug, dir });
   }
+
+  // 2. Explicit-path wikilinks: [[dir/slug]] and [[dir/slug|alias]]
+  const wikiBase = dirs ? buildWikilinkRegex(dirs) : WIKILINK_RE;
+  const wikiRe = new RegExp(wikiBase.source, wikiBase.flags);
+  while ((m = wikiRe.exec(stripped)) !== null) {
+    const fullPath = m[1]; // dir/slug
+    const [dir, ...rest] = fullPath.split('/');
+    const lastSegment = rest[rest.length - 1] ?? '';
+    refs.push({ name: lastSegment, slug: fullPath, dir });
+  }
+
   return refs;
 }
 
