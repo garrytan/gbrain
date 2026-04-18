@@ -66,7 +66,9 @@ Twilio webhooks and Claude Desktop connection.
 1. Go to https://dashboard.ngrok.com/signup (sign up)
 2. Go to https://dashboard.ngrok.com/billing and upgrade to **Hobby** ($8/mo)
 3. Go to https://dashboard.ngrok.com/get-started/your-authtoken
-4. Copy your **Authtoken** and paste it to me"
+4. In a **separate terminal** (not this chat), run:
+   `echo 'export NGROK_AUTHTOKEN=\"your-token\"' >> ~/.zshenv && source ~/.zshenv`
+   Then come back here — I'll verify it's set."
 
 Validate:
 ```bash

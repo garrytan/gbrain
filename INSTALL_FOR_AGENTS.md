@@ -19,13 +19,47 @@ restart the shell or add the PATH export to the shell profile.
 
 Ask the user for these:
 
+**SECURITY: Do NOT collect API keys inside the agent chat.** Any command the user runs
+in an agent session (Claude Code, OpenClaw, Hermes) is stored in conversation logs.
+If the agent tells the user to run `export OPENAI_API_KEY="sk-..."` in the chat, the
+key ends up in the logs. This is a conflict: gbrain needs the keys, but the agent
+session is not a safe place to enter them.
+
+**Instead, tell the user to set keys in a separate terminal:**
+
 ```bash
-export OPENAI_API_KEY=sk-...          # required for vector search
-export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
+# Tell the user: "Open a separate terminal (not this chat) and run:"
+echo 'export OPENAI_API_KEY="sk-..."' >> ~/.zshenv
+echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.zshenv
+source ~/.zshenv
 ```
 
-Save to shell profile or `.env`. Without OpenAI, keyword search still works.
-Without Anthropic, search works but skips query expansion.
+**Then verify keys are available without printing them:**
+
+```bash
+[ -n "$OPENAI_API_KEY" ] && echo "OpenAI key: set" || echo "OpenAI key: missing"
+[ -n "$ANTHROPIC_API_KEY" ] && echo "Anthropic key: set" || echo "Anthropic key: missing"
+```
+
+If keys are missing, remind the user to set them in a separate terminal and restart
+the agent session (new sessions inherit shell environment variables).
+
+**If the user asks "should I just paste it here?"** — say NO. Explain:
+"This chat logs everything to the provider's servers. Set the key in a separate
+terminal instead so it never enters the conversation."
+
+**If the user asks why:** "Everything you type in an AI agent chat is stored in
+conversation logs on the provider's servers. An API key in the chat is like writing
+your password on a whiteboard in a shared office — it's probably fine, but you
+wouldn't do it on purpose."
+
+**If the user pastes an API key directly in the chat anyway**, immediately warn them:
+"That key is now in the conversation log. Please rotate it (delete and create a new one)
+at platform.openai.com → API Keys, then set the new key in a separate terminal."
+
+OpenAI is required for vector search. Anthropic is optional (improves search quality).
+Without OpenAI, keyword search still works. Without Anthropic, search works but skips
+query expansion.
 
 ## Step 3: Create the Brain
 

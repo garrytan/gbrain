@@ -84,7 +84,11 @@ Tell the user:
 
    Bad purpose: 'email triage' — too narrow, blocks legitimate requests.
 
-5. Copy the **Gateway URL** and **Agent Token** and paste them to me"
+5. In a **separate terminal** (not this chat), run:
+   `echo 'export CLAWVISOR_GATEWAY_URL=\"your-url\"' >> ~/.zshenv`
+   `echo 'export CLAWVISOR_AGENT_TOKEN=\"your-token\"' >> ~/.zshenv`
+   `source ~/.zshenv`
+   Then come back here — I'll verify they're set."
 
 Validate:
 ```bash
