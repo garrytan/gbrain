@@ -34,6 +34,12 @@ export class PGLiteEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
+    if (!config) {
+      throw new Error(
+        'PGLiteEngine.connect() called without config. ' +
+        'Pass an EngineConfig with at least database_path.',
+      );
+    }
     const dataDir = config.database_path || undefined; // undefined = in-memory
 
     // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
