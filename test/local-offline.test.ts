@@ -624,6 +624,11 @@ Original chunk content for the page.
 
     const embeddedBeforeRewrite = await engine.getChunks('concepts/rewritten');
     expect(embeddedBeforeRewrite.every(chunk => chunk.embedded_at instanceof Date)).toBe(true);
+    expect(await engine.getPageEmbeddings('concept')).toContainEqual({
+      page_id: expect.any(Number),
+      slug: 'concepts/rewritten',
+      embedding: new Float32Array([embeddedBeforeRewrite[0]!.chunk_text.length, 1, 1]),
+    });
 
     writeFileSync(filePath, `---
 type: concept
@@ -641,6 +646,11 @@ Updated chunk content for the same page.
     expect(chunksAfterRewrite[0].chunk_text).toContain('Updated chunk content');
     expect(chunksAfterRewrite[0].embedded_at).toBeNull();
     expect(chunksAfterRewrite[0].model).toBe('nomic-embed-text');
+    expect(await engine.getPageEmbeddings('concept')).toContainEqual({
+      page_id: expect.any(Number),
+      slug: 'concepts/rewritten',
+      embedding: null,
+    });
   });
 
   test('stale-only embedding repairs stale chunk layouts before embedding missing chunks', async () => {

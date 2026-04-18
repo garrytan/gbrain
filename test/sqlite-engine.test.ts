@@ -226,6 +226,239 @@ describe('SQLiteEngine', () => {
     expect(await engine.searchVector(new Float32Array([0.1, 0.2, 0.3]))).toEqual([]);
   });
 
+  test('searchVector keeps the page shortlist broader than the final result limit', async () => {
+    await putPage('concepts/top-centroid', {
+      type: 'concept',
+      title: 'Top Centroid',
+      compiled_truth: 'Top centroid page',
+      timeline: '',
+      frontmatter: {},
+    });
+    await putPage('concepts/best-chunk', {
+      type: 'concept',
+      title: 'Best Chunk',
+      compiled_truth: 'Best chunk page',
+      timeline: '',
+      frontmatter: {},
+    });
+    await putPage('concepts/irrelevant', {
+      type: 'concept',
+      title: 'Irrelevant',
+      compiled_truth: 'Irrelevant page',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    await putChunks('concepts/top-centroid', [
+      {
+        chunk_index: 0,
+        chunk_text: 'top centroid chunk',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([0.7, 0.7]),
+      },
+    ]);
+    await putChunks('concepts/best-chunk', [
+      {
+        chunk_index: 0,
+        chunk_text: 'best chunk match',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([1, 0]),
+      },
+    ]);
+    await putChunks('concepts/irrelevant', [
+      {
+        chunk_index: 0,
+        chunk_text: 'irrelevant chunk',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([0, 1]),
+      },
+    ]);
+
+    await engine.updatePageEmbedding('concepts/top-centroid', new Float32Array([1, 0]));
+    await engine.updatePageEmbedding('concepts/best-chunk', new Float32Array([0.97, 0.03]));
+    await engine.updatePageEmbedding('concepts/irrelevant', new Float32Array([0, 1]));
+
+    const results = await engine.searchVector(new Float32Array([1, 0]), {
+      type: 'concept',
+      limit: 1,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.slug).toBe('concepts/best-chunk');
+    expect(results[0]?.chunk_text).toBe('best chunk match');
+  });
+
+  test('searchVector falls back to chunk scoring when pages with embeddings are missing centroids', async () => {
+    await putPage('concepts/missing-centroid', {
+      type: 'concept',
+      title: 'Missing Centroid',
+      compiled_truth: 'Missing centroid page',
+      timeline: '',
+      frontmatter: {},
+    });
+    await putPage('concepts/centroid-present', {
+      type: 'concept',
+      title: 'Centroid Present',
+      compiled_truth: 'Centroid present page',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    await putChunks('concepts/missing-centroid', [
+      {
+        chunk_index: 0,
+        chunk_text: 'exact vector match',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([1, 0]),
+      },
+    ]);
+    await putChunks('concepts/centroid-present', [
+      {
+        chunk_index: 0,
+        chunk_text: 'weaker vector match',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([0.6, 0.8]),
+      },
+    ]);
+
+    await engine.updatePageEmbedding('concepts/missing-centroid', null);
+    await engine.updatePageEmbedding('concepts/centroid-present', new Float32Array([0.6, 0.8]));
+
+    const results = await engine.searchVector(new Float32Array([1, 0]), {
+      type: 'concept',
+      limit: 1,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.slug).toBe('concepts/missing-centroid');
+    expect(results[0]?.chunk_text).toBe('exact vector match');
+  });
+
+  test('searchVector narrows chunk scoring to a centroid-selected page set when centroids are available', async () => {
+    await putPage('concepts/prefilter-alpha', {
+      type: 'concept',
+      title: 'Prefilter Alpha',
+      compiled_truth: 'Prefilter alpha page',
+      timeline: '',
+      frontmatter: {},
+    });
+    await putPage('concepts/prefilter-beta', {
+      type: 'concept',
+      title: 'Prefilter Beta',
+      compiled_truth: 'Prefilter beta page',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    await putChunks('concepts/prefilter-alpha', [
+      {
+        chunk_index: 0,
+        chunk_text: 'prefilter alpha chunk',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([1, 0]),
+      },
+    ]);
+    await putChunks('concepts/prefilter-beta', [
+      {
+        chunk_index: 0,
+        chunk_text: 'prefilter beta chunk',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([0, 1]),
+      },
+    ]);
+
+    const db = (engine as any).database as Database;
+    const originalQuery = db.query.bind(db);
+    const seenSql: string[] = [];
+    (db as any).query = (sql: string) => {
+      seenSql.push(sql);
+      return originalQuery(sql);
+    };
+
+    try {
+      await engine.searchVector(new Float32Array([1, 0]), {
+        type: 'concept',
+        limit: 1,
+      });
+    } finally {
+      (db as any).query = originalQuery;
+    }
+
+    expect(seenSql.some((sql) => (
+      sql.includes('SELECT')
+      && sql.includes('p.id AS page_id')
+      && sql.includes('p.page_embedding')
+      && sql.includes('cc.embedding IS NOT NULL')
+    ))).toBe(true);
+    expect(seenSql.some((sql) => (
+      sql.includes('FROM content_chunks cc')
+      && sql.includes('cc.chunk_text')
+      && sql.includes('cc.page_id IN')
+    ))).toBe(true);
+    expect(seenSql.some((sql) => (
+      sql.includes('SELECT')
+      && sql.includes('cc.id AS chunk_id')
+      && sql.includes('cc.embedding')
+      && !sql.includes('cc.chunk_text')
+      && sql.includes('cc.page_id NOT IN')
+    ))).toBe(true);
+  });
+
+  test('searchVector rescues omitted diluted-centroid pages via lightweight embedding scan', async () => {
+    const query = new Float32Array([1, 0]);
+
+    await putPage('concepts/diluted-exact', {
+      type: 'concept',
+      title: 'Diluted Exact',
+      compiled_truth: 'Exact page hidden by a diluted centroid',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    await putChunks('concepts/diluted-exact', [
+      {
+        chunk_index: 0,
+        chunk_text: 'exact match chunk',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([1, 0]),
+      },
+      ...Array.from({ length: 4 }, (_, index) => ({
+        chunk_index: index + 1,
+        chunk_text: `diluting chunk ${index + 1}`,
+        chunk_source: 'compiled_truth' as const,
+        embedding: new Float32Array([0, 1]),
+      })),
+    ]);
+
+    for (let index = 0; index < 40; index++) {
+      const slug = `concepts/diluted-decoy-${index + 1}`;
+      await putPage(slug, {
+        type: 'concept',
+        title: `Diluted Decoy ${index + 1}`,
+        compiled_truth: 'Decoy page',
+        timeline: '',
+        frontmatter: {},
+      });
+      await putChunks(slug, [
+        ...Array.from({ length: 6 }, (_, chunkIndex) => ({
+          chunk_index: chunkIndex,
+          chunk_text: `decoy chunk ${index + 1}-${chunkIndex + 1}`,
+          chunk_source: 'compiled_truth' as const,
+          embedding: new Float32Array([0.2, 0.05]),
+        })),
+      ]);
+    }
+
+    const results = await engine.searchVector(query, {
+      type: 'concept',
+      limit: 1,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.slug).toBe('concepts/diluted-exact');
+    expect(results[0]?.chunk_text).toBe('exact match chunk');
+  });
+
   test('revertToVersion refreshes searchable codemap state', async () => {
     await putPage('systems/revert-test.md', {
       type: 'system',

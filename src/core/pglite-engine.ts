@@ -8,6 +8,7 @@ import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import { buildFrontmatterSearchText } from './markdown.ts';
 import { ensurePageChunks } from './page-chunks.ts';
+import { buildPageCentroid } from './services/page-embedding.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
@@ -293,6 +294,7 @@ export class PGLiteEngine implements BrainEngine {
       );
     } else {
       await this.db.query('DELETE FROM content_chunks WHERE page_id = $1', [pageId]);
+      await this.refreshPageEmbeddingFromChunks(pageId);
       return;
     }
 
@@ -327,6 +329,8 @@ export class PGLiteEngine implements BrainEngine {
          embedded_at = COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)`,
       params
     );
+
+    await this.refreshPageEmbeddingFromChunks(pageId);
   }
 
   async getChunks(slug: string): Promise<Chunk[]> {
@@ -341,11 +345,12 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async deleteChunks(slug: string): Promise<void> {
-    await this.db.query(
-      `DELETE FROM content_chunks
-       WHERE page_id = (SELECT id FROM pages WHERE slug = $1)`,
-      [slug]
-    );
+    const { rows } = await this.db.query('SELECT id FROM pages WHERE slug = $1', [slug]);
+    if (rows.length === 0) return;
+
+    const pageId = Number((rows[0] as { id: number }).id);
+    await this.db.query('DELETE FROM content_chunks WHERE page_id = $1', [pageId]);
+    await this.refreshPageEmbeddingFromChunks(pageId);
   }
 
   async getPageEmbeddings(type?: PageType): Promise<Array<{
@@ -773,6 +778,36 @@ export class PGLiteEngine implements BrainEngine {
       [slug]
     );
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r, true));
+  }
+
+  private async refreshPageEmbeddingFromChunks(pageId: number): Promise<void> {
+    const { rows } = await this.db.query(
+      `SELECT embedding
+       FROM content_chunks
+       WHERE page_id = $1 AND embedding IS NOT NULL
+       ORDER BY chunk_index`,
+      [pageId],
+    );
+    const centroid = buildPageCentroid(
+      (rows as Record<string, unknown>[]).map((row) => vectorValueToFloat32(row.embedding)),
+    );
+
+    if (centroid) {
+      await this.db.query(
+        `UPDATE pages
+         SET page_embedding = $1::vector(768)
+         WHERE id = $2`,
+        [vectorLiteral(centroid), pageId],
+      );
+      return;
+    }
+
+    await this.db.query(
+      `UPDATE pages
+       SET page_embedding = NULL
+       WHERE id = $1`,
+      [pageId],
+    );
   }
 }
 

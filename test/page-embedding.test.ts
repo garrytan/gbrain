@@ -82,6 +82,57 @@ describe('SQLiteEngine page embeddings', () => {
       },
     ]);
   });
+
+  test('recomputes page embeddings from persisted chunk state and clears them on delete', async () => {
+    await engine.putPage('people/persisted-centroid.md', {
+      type: 'person',
+      title: 'Persisted Centroid',
+      compiled_truth: 'Persisted centroid page',
+    });
+
+    await engine.upsertChunks('people/persisted-centroid.md', [
+      {
+        chunk_index: 0,
+        chunk_text: 'kept chunk',
+        chunk_source: 'compiled_truth',
+        embedding: makeVector(1, 0),
+      },
+      {
+        chunk_index: 1,
+        chunk_text: 'deleted chunk',
+        chunk_source: 'compiled_truth',
+        embedding: makeVector(0, 1),
+      },
+    ]);
+
+    expect(await engine.getPageEmbeddings('person')).toContainEqual({
+      page_id: expect.any(Number),
+      slug: 'people/persisted-centroid.md',
+      embedding: makeVector(0.5, 0.5),
+    });
+
+    await engine.upsertChunks('people/persisted-centroid.md', [
+      {
+        chunk_index: 0,
+        chunk_text: 'kept chunk',
+        chunk_source: 'compiled_truth',
+      },
+    ]);
+
+    expect(await engine.getPageEmbeddings('person')).toContainEqual({
+      page_id: expect.any(Number),
+      slug: 'people/persisted-centroid.md',
+      embedding: makeVector(1, 0),
+    });
+
+    await engine.deleteChunks('people/persisted-centroid.md');
+
+    expect(await engine.getPageEmbeddings('person')).toContainEqual({
+      page_id: expect.any(Number),
+      slug: 'people/persisted-centroid.md',
+      embedding: null,
+    });
+  });
 });
 
 describe('PGLiteEngine page embeddings', () => {
@@ -117,6 +168,63 @@ describe('PGLiteEngine page embeddings', () => {
         page_id: expect.any(Number),
         slug: 'projects/apollo.md',
         embedding: vector,
+      },
+    ]);
+  });
+
+  test('recomputes page embeddings from persisted chunk state and clears them on delete', async () => {
+    await engine.putPage('projects/persisted-centroid.md', {
+      type: 'project',
+      title: 'Persisted Centroid',
+      compiled_truth: 'Persisted centroid page',
+    });
+
+    await engine.upsertChunks('projects/persisted-centroid.md', [
+      {
+        chunk_index: 0,
+        chunk_text: 'kept chunk',
+        chunk_source: 'compiled_truth',
+        embedding: makeVector(1, 0),
+      },
+      {
+        chunk_index: 1,
+        chunk_text: 'deleted chunk',
+        chunk_source: 'compiled_truth',
+        embedding: makeVector(0, 1),
+      },
+    ]);
+
+    expect(await engine.getPageEmbeddings()).toEqual([
+      {
+        page_id: expect.any(Number),
+        slug: 'projects/persisted-centroid.md',
+        embedding: makeVector(0.5, 0.5),
+      },
+    ]);
+
+    await engine.upsertChunks('projects/persisted-centroid.md', [
+      {
+        chunk_index: 0,
+        chunk_text: 'kept chunk',
+        chunk_source: 'compiled_truth',
+      },
+    ]);
+
+    expect(await engine.getPageEmbeddings()).toEqual([
+      {
+        page_id: expect.any(Number),
+        slug: 'projects/persisted-centroid.md',
+        embedding: makeVector(1, 0),
+      },
+    ]);
+
+    await engine.deleteChunks('projects/persisted-centroid.md');
+
+    expect(await engine.getPageEmbeddings()).toEqual([
+      {
+        page_id: expect.any(Number),
+        slug: 'projects/persisted-centroid.md',
+        embedding: null,
       },
     ]);
   });

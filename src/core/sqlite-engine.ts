@@ -5,6 +5,8 @@ import { dirname, join } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { LATEST_VERSION } from './migrate.ts';
 import { ensurePageChunks } from './page-chunks.ts';
+import { buildPageCentroid } from './services/page-embedding.ts';
+import { selectLocalVectorChunkIds, selectLocalVectorPageIds } from './search/vector-prefilter.ts';
 import { searchLocalVectors } from './search/vector-local.ts';
 import { slugifyPath } from './sync.ts';
 import type {
@@ -447,40 +449,14 @@ export class SQLiteEngine implements BrainEngine {
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
     const limit = opts?.limit ?? 20;
-    const params: unknown[] = [];
-    let sql = `
-      SELECT
-        p.id AS page_id,
-        p.slug,
-        p.title,
-        p.type,
-        cc.chunk_text,
-        cc.chunk_source,
-        cc.embedding,
-        CASE WHEN EXISTS (
-          SELECT 1 FROM timeline_entries te
-          WHERE te.page_id = p.id AND p.updated_at < te.created_at
-        ) THEN 1 ELSE 0 END AS stale
-      FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL
-    `;
-
-    if (opts?.type) {
-      sql += ` AND p.type = ?`;
-      params.push(opts.type);
-    }
-
-    if (opts?.exclude_slugs?.length) {
-      sql += ` AND p.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
-      params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
-    }
-
-    const rows = this.database.query(sql).all(...params) as Record<string, unknown>[];
+    const candidatePageIds = this.getLocalVectorPrefilterPageIds(embedding, limit, opts);
+    const shortlistedRows = this.queryLocalVectorChunkRows(opts, candidatePageIds);
+    const omittedChunkIds = this.getOmittedLocalVectorChunkIds(embedding, limit, opts, candidatePageIds);
+    const omittedRows = this.queryLocalVectorChunkRowsByIds(omittedChunkIds);
 
     return searchLocalVectors(
       embedding,
-      rows.map(rowToLocalVectorCandidate),
+      [...shortlistedRows, ...omittedRows].map(rowToLocalVectorCandidate),
       limit,
     );
   }
@@ -491,6 +467,7 @@ export class SQLiteEngine implements BrainEngine {
 
     if (chunks.length === 0) {
       db.run(`DELETE FROM content_chunks WHERE page_id = ?`, [pageId]);
+      this.refreshPageEmbeddingFromChunks(pageId);
       return;
     }
 
@@ -527,6 +504,8 @@ export class SQLiteEngine implements BrainEngine {
         embedding ? nowIso() : null,
       ]);
     }
+
+    this.refreshPageEmbeddingFromChunks(pageId);
   }
 
   async getChunks(slug: string): Promise<Chunk[]> {
@@ -555,6 +534,7 @@ export class SQLiteEngine implements BrainEngine {
     const pageId = this.getPageId(slug);
     if (pageId === null) return;
     this.database.run(`DELETE FROM content_chunks WHERE page_id = ?`, [pageId]);
+    this.refreshPageEmbeddingFromChunks(pageId);
   }
 
   async getPageEmbeddings(type?: PageType): Promise<Array<{
@@ -1062,6 +1042,162 @@ export class SQLiteEngine implements BrainEngine {
     const page = await this.getPage(slug);
     if (!page) throw new Error(`Page not found: ${slug}`);
     return page;
+  }
+
+  private getLocalVectorPrefilterPageIds(
+    embedding: Float32Array,
+    limit: number,
+    opts?: SearchOpts,
+  ): number[] {
+    const params: unknown[] = [];
+    let sql = `
+      SELECT DISTINCT p.id AS page_id, p.slug, p.page_embedding
+      FROM pages p
+      JOIN content_chunks cc ON cc.page_id = p.id
+      WHERE cc.embedding IS NOT NULL AND p.page_embedding IS NOT NULL
+    `;
+
+    if (opts?.type) {
+      sql += ` AND p.type = ?`;
+      params.push(opts.type);
+    }
+
+    if (opts?.exclude_slugs?.length) {
+      sql += ` AND p.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
+      params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
+    }
+
+    const rows = this.database.query(sql).all(...params) as Record<string, unknown>[];
+    if (rows.length === 0) return [];
+
+    const candidates = rows.map((row) => ({
+      page_id: Number(row.page_id),
+      embedding: blobToFloat32(row.page_embedding),
+    }));
+    return selectLocalVectorPageIds(embedding, candidates, limit);
+  }
+
+  private queryLocalVectorChunkRows(
+    opts?: SearchOpts,
+    pageIds?: number[],
+  ): Record<string, unknown>[] {
+    if (pageIds && pageIds.length === 0) return [];
+
+    const params: unknown[] = [];
+    let sql = `
+      SELECT
+        cc.id AS chunk_id,
+        p.id AS page_id,
+        p.slug,
+        p.title,
+        p.type,
+        cc.chunk_text,
+        cc.chunk_source,
+        cc.embedding,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM timeline_entries te
+          WHERE te.page_id = p.id AND p.updated_at < te.created_at
+        ) THEN 1 ELSE 0 END AS stale
+      FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      WHERE cc.embedding IS NOT NULL
+    `;
+
+    if (opts?.type) {
+      sql += ` AND p.type = ?`;
+      params.push(opts.type);
+    }
+
+    if (opts?.exclude_slugs?.length) {
+      sql += ` AND p.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
+      params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
+    }
+
+    if (pageIds && pageIds.length > 0) {
+      sql += ` AND cc.page_id IN (${pageIds.map(() => '?').join(', ')})`;
+      params.push(...pageIds);
+    }
+
+    return this.database.query(sql).all(...params) as Record<string, unknown>[];
+  }
+
+  private getOmittedLocalVectorChunkIds(
+    embedding: Float32Array,
+    limit: number,
+    opts?: SearchOpts,
+    pageIds?: number[],
+  ): number[] {
+    const params: unknown[] = [];
+    let sql = `
+      SELECT
+        cc.id AS chunk_id,
+        cc.embedding
+      FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      WHERE cc.embedding IS NOT NULL
+    `;
+
+    if (opts?.type) {
+      sql += ` AND p.type = ?`;
+      params.push(opts.type);
+    }
+
+    if (opts?.exclude_slugs?.length) {
+      sql += ` AND p.slug NOT IN (${opts.exclude_slugs.map(() => '?').join(', ')})`;
+      params.push(...opts.exclude_slugs.map(slug => validateSlug(slug)));
+    }
+
+    if (pageIds && pageIds.length > 0) {
+      sql += ` AND cc.page_id NOT IN (${pageIds.map(() => '?').join(', ')})`;
+      params.push(...pageIds);
+    }
+
+    const rows = this.database.query(sql).all(...params) as Record<string, unknown>[];
+    return selectLocalVectorChunkIds(
+      embedding,
+      rows.map((row) => ({
+        chunk_id: Number(row.chunk_id),
+        embedding: blobToFloat32(row.embedding),
+      })),
+      limit,
+    );
+  }
+
+  private queryLocalVectorChunkRowsByIds(chunkIds: number[]): Record<string, unknown>[] {
+    if (chunkIds.length === 0) return [];
+
+    return this.database.query(`
+      SELECT
+        cc.id AS chunk_id,
+        p.id AS page_id,
+        p.slug,
+        p.title,
+        p.type,
+        cc.chunk_text,
+        cc.chunk_source,
+        cc.embedding,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM timeline_entries te
+          WHERE te.page_id = p.id AND p.updated_at < te.created_at
+        ) THEN 1 ELSE 0 END AS stale
+      FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      WHERE cc.id IN (${chunkIds.map(() => '?').join(', ')})
+    `).all(...chunkIds) as Record<string, unknown>[];
+  }
+
+  private refreshPageEmbeddingFromChunks(pageId: number): void {
+    const rows = this.database.query(`
+      SELECT embedding
+      FROM content_chunks
+      WHERE page_id = ? AND embedding IS NOT NULL
+      ORDER BY chunk_index
+    `).all(pageId) as Record<string, unknown>[];
+    const centroid = buildPageCentroid(rows.map((row) => blobToFloat32(row.embedding)));
+    this.database.run(
+      `UPDATE pages SET page_embedding = ? WHERE id = ?`,
+      [centroid ? float32ToBlob(centroid) : null, pageId],
+    );
   }
 
   private getPageId(slug: string): number | null {
