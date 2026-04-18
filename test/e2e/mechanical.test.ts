@@ -580,13 +580,31 @@ describeE2E('E2E: Idempotency', () => {
 // ─────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: Setup Journey', () => {
+  // Isolate HOME so `gbrain init --non-interactive --url ...` cannot clobber
+  // the developer's real ~/.gbrain/config.json when tests run against
+  // Supabase creds in CI, or against localhost in dev. See the pattern in
+  // test/e2e/migration-flow.test.ts for the canonical HOME-override setup.
+  let origHome: string | undefined;
+  let tempHome: string | undefined;
+
   beforeAll(async () => {
+    origHome = process.env.HOME;
+    tempHome = mkdtempSync(join(tmpdir(), 'gbrain-e2e-setup-home-'));
+    process.env.HOME = tempHome;
     await setupDB();
   });
-  afterAll(teardownDB);
+  afterAll(async () => {
+    await teardownDB();
+    if (origHome === undefined) delete process.env.HOME;
+    else process.env.HOME = origHome;
+    try { if (tempHome) rmSync(tempHome, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
 
   const cliCwd = join(import.meta.dir, '../..');
-  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL! });
+  // Pass HOME explicitly so subprocesses see the temp HOME, not the caller's
+  // real HOME. Without this, ...process.env would have already been captured
+  // at module load before the beforeAll override took effect.
+  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, HOME: process.env.HOME! });
 
   test('gbrain init --non-interactive connects and initializes', () => {
     const result = Bun.spawnSync({
@@ -650,10 +668,24 @@ describeE2E('E2E: Setup Journey', () => {
 // ─────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: Init Edge Cases', () => {
-  afterAll(teardownDB);
+  // Same HOME-isolation rationale as the Setup Journey block above.
+  let origHome: string | undefined;
+  let tempHome: string | undefined;
+
+  beforeAll(() => {
+    origHome = process.env.HOME;
+    tempHome = mkdtempSync(join(tmpdir(), 'gbrain-e2e-init-edge-home-'));
+    process.env.HOME = tempHome;
+  });
+  afterAll(async () => {
+    await teardownDB();
+    if (origHome === undefined) delete process.env.HOME;
+    else process.env.HOME = origHome;
+    try { if (tempHome) rmSync(tempHome, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
 
   test('init --non-interactive without URL fails gracefully', () => {
-    const env = { ...process.env };
+    const env = { ...process.env, HOME: process.env.HOME! };
     delete env.DATABASE_URL;
     delete env.GBRAIN_DATABASE_URL;
     const result = Bun.spawnSync({
