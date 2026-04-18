@@ -21,7 +21,7 @@ import { join, relative, dirname } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
-import { extractPageLinks, parseTimelineEntries, inferLinkType } from '../core/link-extraction.ts';
+import { extractPageLinks, parseTimelineEntries, inferLinkType, getEntityDirs } from '../core/link-extraction.ts';
 
 // --- Types ---
 
@@ -453,6 +453,10 @@ async function extractLinksFromDB(
 ): Promise<{ created: number; pages: number }> {
   const allSlugs = await engine.getAllSlugs();
   const slugList = Array.from(allSlugs);
+  // Load the effective entity-dir list once for the whole batch. Config
+  // doesn't change mid-run, so a single read is sufficient and cheaper than
+  // per-page lookup.
+  const dirs = await getEntityDirs(engine);
   let processed = 0, created = 0;
 
   for (let i = 0; i < slugList.length; i++) {
@@ -467,7 +471,7 @@ async function extractLinksFromDB(
     }
 
     const fullContent = page.compiled_truth + '\n' + page.timeline;
-    const candidates = extractPageLinks(fullContent, page.frontmatter, page.type);
+    const candidates = extractPageLinks(fullContent, page.frontmatter, page.type, dirs);
 
     for (const c of candidates) {
       if (!allSlugs.has(c.targetSlug)) continue;
