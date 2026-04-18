@@ -41,6 +41,13 @@ describe('GeminiEmbedder', () => {
     expect(() => new GeminiEmbedder(3073)).toThrow();
   });
 
+  it('accepts boundary dimensions 1 and 3072', () => {
+    expect(() => new GeminiEmbedder(1)).not.toThrow();
+    expect(() => new GeminiEmbedder(3072)).not.toThrow();
+    expect(new GeminiEmbedder(1).dimensions).toBe(1);
+    expect(new GeminiEmbedder(3072).dimensions).toBe(3072);
+  });
+
   it('throws when no API key is set', async () => {
     const saved = process.env.GOOGLE_API_KEY;
     const saved2 = process.env.GEMINI_API_KEY;
@@ -134,9 +141,9 @@ describe('getActiveProvider factory', () => {
 
 describe('GeminiEmbedder live API', () => {
   const hasKey = !!(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY);
+  const geminiIt = hasKey ? it : it.skip;
 
-  it('produces a 768-dim Float32Array for a real text', async () => {
-    if (!hasKey) { console.log('  skipped (no GOOGLE_API_KEY / GEMINI_API_KEY)'); return; }
+  geminiIt('produces a 768-dim Float32Array for a real text', async () => {
     const p = new GeminiEmbedder(768);
     const vec = await p.embed('gbrain is a personal knowledge brain');
     expect(vec).toBeInstanceOf(Float32Array);
@@ -145,15 +152,13 @@ describe('GeminiEmbedder live API', () => {
     expect(norm).toBeGreaterThan(0);
   }, 15000);
 
-  it('produces 1536-dim vectors (OpenAI-compat mode)', async () => {
-    if (!hasKey) { console.log('  skipped (no GOOGLE_API_KEY / GEMINI_API_KEY)'); return; }
+  geminiIt('produces 1536-dim vectors (OpenAI-compat mode)', async () => {
     const p = new GeminiEmbedder(1536);
     const vec = await p.embed('test');
     expect(vec.length).toBe(1536);
   }, 15000);
 
-  it('batchEmbedContents returns one vector per text', async () => {
-    if (!hasKey) { console.log('  skipped (no GOOGLE_API_KEY / GEMINI_API_KEY)'); return; }
+  geminiIt('batchEmbedContents returns one vector per text', async () => {
     const p = new GeminiEmbedder(768);
     const vecs = await p.embedBatch(['hello', 'world', 'gbrain']);
     expect(vecs.length).toBe(3);
@@ -169,9 +174,15 @@ describe('GeminiEmbedder live API', () => {
 // ─── isEmbeddingAvailable ───────────────────────────────────────────────────
 
 describe('isEmbeddingAvailable', () => {
-  const savedProvider = process.env.GBRAIN_EMBEDDING_PROVIDER;
+  let savedProvider: string | undefined;
+
+  beforeEach(() => {
+    savedProvider = process.env.GBRAIN_EMBEDDING_PROVIDER;
+    resetActiveProvider();
+  });
 
   afterEach(() => {
+    resetActiveProvider();
     if (savedProvider !== undefined) {
       process.env.GBRAIN_EMBEDDING_PROVIDER = savedProvider;
     } else {

@@ -40,12 +40,19 @@ export async function runMigrateProvider(engine: BrainEngine, args: string[]): P
   }
 
   const dimsIdx = args.indexOf('--dimensions');
-  const requestedDims = dimsIdx !== -1 ? parseInt(args[dimsIdx + 1], 10) : undefined;
+  let requestedDims: number | undefined;
+  if (dimsIdx !== -1) {
+    requestedDims = parseInt(args[dimsIdx + 1], 10);
+    if (!Number.isInteger(requestedDims) || requestedDims < 1 || requestedDims > 3072) {
+      console.error(`Invalid --dimensions "${args[dimsIdx + 1]}": must be an integer 1–3072`);
+      process.exit(1);
+    }
+  }
   const dryRun = args.includes('--dry-run');
 
-  // Build the new provider instance to get its defaults
+  // Build the new provider instance to get its defaults (GeminiEmbedder defaults to 768)
   const newProvider = newProviderName === 'gemini'
-    ? new GeminiEmbedder(requestedDims ?? 768)
+    ? new GeminiEmbedder(requestedDims)
     : new OpenAIEmbedder();
 
   // Read current state from config table
