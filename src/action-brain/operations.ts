@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import type { Operation } from '../core/operations.ts';
 import { ActionEngine, ActionItemNotFoundError, ActionTransitionError } from './action-engine.ts';
@@ -6,6 +6,7 @@ import { MorningBriefGenerator } from './brief.ts';
 import {
   createEmptyExtractionRunSummary,
   extractCommitmentsWithSummary,
+  HAIKU_MODEL,
   type StructuredCommitment,
   type WhatsAppMessage,
 } from './extractor.ts';
@@ -27,8 +28,44 @@ interface PostgresUnsafeConnection {
 }
 
 const STATUS_VALUES = ['open', 'waiting_on', 'in_progress', 'stale', 'resolved', 'dropped'] as const;
+const ACTION_LIST_FILTER_VALUES = ['low_confidence_dropped'] as const;
+const LOW_CONFIDENCE_THRESHOLD = 0.9;
+const SOURCE_EXCERPT_MAX_CHARS = 500;
+const ACTION_EXTRACTOR_VERSION = 'extractor.ts@v1';
 const initializedEngines = new WeakSet<object>();
 const postgresDbCache = new WeakMap<object, QueryableDb>();
+type ActionListFilter = typeof ACTION_LIST_FILTER_VALUES[number];
+type ActionDropReason = 'low_confidence' | 'schema_reject' | 'duplicate' | 'other';
+
+interface ActionDropRow {
+  id: number;
+  run_id: string;
+  source_id: string;
+  source_excerpt: string;
+  drop_reason: ActionDropReason;
+  confidence: number;
+  extractor_version: string;
+  model: string;
+  created_at: Date | string;
+}
+
+interface ActionDrop {
+  id: number;
+  run_id: string;
+  source_id: string;
+  source_excerpt: string;
+  drop_reason: ActionDropReason;
+  confidence: number;
+  extractor_version: string;
+  model: string;
+  created_at: Date;
+}
+
+interface ListActionDropFilters {
+  dropReason?: ActionDropReason;
+  limit?: number;
+  offset?: number;
+}
 
 export const actionBrainOperations: Operation[] = [
   {
@@ -38,6 +75,11 @@ export const actionBrainOperations: Operation[] = [
       status: { type: 'string', enum: [...STATUS_VALUES], description: 'Filter by lifecycle status' },
       owner: { type: 'string', description: 'Filter by owner' },
       stale: { type: 'boolean', description: 'Filter by stale state' },
+      filter: {
+        type: 'string',
+        enum: [...ACTION_LIST_FILTER_VALUES],
+        description: 'Filter by derived audit views (example: low_confidence_dropped)',
+      },
       limit: { type: 'number', description: 'Max results (default: 100)' },
       offset: { type: 'number', description: 'Pagination offset (default: 0)' },
     },
@@ -46,13 +88,24 @@ export const actionBrainOperations: Operation[] = [
       const db = await ensureActionBrainSchema(ctx.engine);
       const engine = new ActionEngine(db);
       const stale = parseOptionalBoolean(p.stale);
+      const filter = parseActionListFilter(p.filter);
+      const limit = asOptionalNumber(p.limit);
+      const offset = asOptionalNumber(p.offset);
+
+      if (filter === 'low_confidence_dropped') {
+        return listActionDrops(db, {
+          dropReason: 'low_confidence',
+          limit,
+          offset,
+        });
+      }
 
       return engine.listItems({
         status: p.status as any,
         owner: asOptionalNonEmptyString(p.owner) ?? undefined,
         stale,
-        limit: asOptionalNumber(p.limit),
-        offset: asOptionalNumber(p.offset),
+        limit,
+        offset,
       });
     },
   },
@@ -169,6 +222,11 @@ export const actionBrainOperations: Operation[] = [
       const messages = parseMessagesParam(p.messages ?? p.messages_json);
       const providedCommitments = parseCommitmentsParam(p.commitments);
       const actor = asOptionalNonEmptyString(p.actor) ?? 'extractor';
+      const extractionModel =
+        providedCommitments.length > 0
+          ? 'direct_commitments'
+          : asOptionalNonEmptyString(p.model) ?? HAIKU_MODEL;
+      const runId = randomUUID();
 
       if (messages.length === 0 && providedCommitments.length === 0) {
         throw new Error('action_ingest requires messages (or commitments for deterministic ingest).');
@@ -187,12 +245,38 @@ export const actionBrainOperations: Operation[] = [
       }
       extracted = filterLowConfidenceCommitments(extracted, minConfidence, runSummary);
 
+      const dropped: ActionDrop[] = [];
       if (ctx.dryRun) {
+        for (let i = 0; i < extracted.length; i += 1) {
+          const commitment = extracted[i];
+          if (!isLowConfidenceCommitment(commitment)) continue;
+
+          const message = resolveSourceMessage(messages, commitment);
+          const sourceId = buildCommitmentSourceId(
+            resolveSourceMessageId(messages, commitment, message),
+            commitment
+          );
+
+          dropped.push({
+            id: -1,
+            run_id: runId,
+            source_id: sourceId,
+            source_excerpt: buildDropSourceExcerpt(message),
+            drop_reason: 'low_confidence',
+            confidence: commitment.confidence,
+            extractor_version: ACTION_EXTRACTOR_VERSION,
+            model: extractionModel,
+            created_at: new Date(),
+          });
+        }
+
         return {
           dry_run: true,
           extracted_count: extracted.length,
+          dropped_count: dropped.length,
           extracted,
           run_summary: runSummary,
+          dropped,
         };
       }
 
@@ -204,6 +288,21 @@ export const actionBrainOperations: Operation[] = [
           resolveSourceMessageId(messages, commitment, message),
           commitment
         );
+
+        if (isLowConfidenceCommitment(commitment)) {
+          const droppedRow = await insertActionDrop(db, {
+            runId,
+            sourceId: sourceMessageId,
+            sourceExcerpt: buildDropSourceExcerpt(message),
+            dropReason: 'low_confidence',
+            confidence: commitment.confidence,
+            extractorVersion: ACTION_EXTRACTOR_VERSION,
+            model: extractionModel,
+          });
+          dropped.push(droppedRow);
+          continue;
+        }
+
         const dueAt = parseOptionalDate(commitment.by_when, 'by_when');
 
         const item = await engine.createItem(
@@ -231,9 +330,12 @@ export const actionBrainOperations: Operation[] = [
       }
 
       return {
+        run_id: runId,
         extracted_count: extracted.length,
         created_count: items.length,
         run_summary: runSummary,
+        dropped_count: dropped.length,
+        dropped,
         items,
       };
     },
@@ -525,4 +627,122 @@ function filterLowConfidenceCommitments(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseActionListFilter(value: unknown): ActionListFilter | undefined {
+  const parsed = asOptionalNonEmptyString(value);
+  if (!parsed) return undefined;
+  return parsed === 'low_confidence_dropped' ? parsed : undefined;
+}
+
+function isLowConfidenceCommitment(commitment: StructuredCommitment): boolean {
+  return commitment.confidence < LOW_CONFIDENCE_THRESHOLD;
+}
+
+function buildDropSourceExcerpt(message: WhatsAppMessage | null): string {
+  const sourceText = asOptionalNonEmptyString(message?.Text);
+  if (!sourceText) {
+    return '';
+  }
+  return redactAndBoundExcerpt(sourceText);
+}
+
+function redactAndBoundExcerpt(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  const redactedEmails = normalized.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted-email]');
+  const redactedPhones = redactedEmails.replace(/\+?\d[\d\s\-()]{6,}\d/g, '[redacted-number]');
+  if (redactedPhones.length <= SOURCE_EXCERPT_MAX_CHARS) {
+    return redactedPhones;
+  }
+  return redactedPhones.slice(0, SOURCE_EXCERPT_MAX_CHARS);
+}
+
+async function insertActionDrop(
+  db: QueryableDb,
+  input: {
+    runId: string;
+    sourceId: string;
+    sourceExcerpt: string;
+    dropReason: ActionDropReason;
+    confidence: number;
+    extractorVersion: string;
+    model: string;
+  }
+): Promise<ActionDrop> {
+  const result = await db.query<ActionDropRow>(
+    `INSERT INTO action_drops (
+       run_id,
+       source_id,
+       source_excerpt,
+       drop_reason,
+       confidence,
+       extractor_version,
+       model
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [
+      input.runId,
+      input.sourceId,
+      input.sourceExcerpt,
+      input.dropReason,
+      input.confidence,
+      input.extractorVersion,
+      input.model,
+    ]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error('Failed to persist action drop record.');
+  }
+  return mapActionDrop(row);
+}
+
+async function listActionDrops(db: QueryableDb, filters: ListActionDropFilters = {}): Promise<ActionDrop[]> {
+  const where: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters.dropReason) {
+    params.push(filters.dropReason);
+    where.push(`drop_reason = $${params.length}`);
+  }
+
+  const limit = filters.limit ?? 100;
+  const offset = filters.offset ?? 0;
+  params.push(limit);
+  const limitParam = `$${params.length}`;
+  params.push(offset);
+  const offsetParam = `$${params.length}`;
+
+  const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  const result = await db.query<ActionDropRow>(
+    `SELECT *
+     FROM action_drops
+     ${whereClause}
+     ORDER BY created_at DESC, id DESC
+     LIMIT ${limitParam}
+     OFFSET ${offsetParam}`,
+    params
+  );
+
+  return result.rows.map(mapActionDrop);
+}
+
+function mapActionDrop(row: ActionDropRow): ActionDrop {
+  return {
+    id: Number(row.id),
+    run_id: row.run_id,
+    source_id: row.source_id,
+    source_excerpt: row.source_excerpt,
+    drop_reason: row.drop_reason,
+    confidence: Number(row.confidence),
+    extractor_version: row.extractor_version,
+    model: row.model,
+    created_at: toDate(row.created_at),
+  };
+}
+
+function toDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
 }

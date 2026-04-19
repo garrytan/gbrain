@@ -35,6 +35,21 @@ CREATE TABLE IF NOT EXISTS action_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_action_history_item_id_timestamp ON action_history(item_id, timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS action_drops (
+  id                SERIAL PRIMARY KEY,
+  run_id            TEXT NOT NULL,
+  source_id         TEXT NOT NULL,
+  source_excerpt    TEXT NOT NULL DEFAULT '',
+  drop_reason       TEXT NOT NULL CHECK (drop_reason IN ('low_confidence', 'schema_reject', 'duplicate', 'other')),
+  confidence        DOUBLE PRECISION NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  extractor_version TEXT NOT NULL,
+  model             TEXT NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_drops_reason_created ON action_drops(drop_reason, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_action_drops_source_id ON action_drops(source_id);
 `;
 
 export async function initActionSchema(db: { exec: (sql: string) => Promise<unknown> }): Promise<void> {

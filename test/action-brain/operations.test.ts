@@ -28,6 +28,29 @@ function getActionOperation(name: string): Operation {
   return operation;
 }
 
+async function withActionContext<T>(
+  fn: (ctx: OperationContext, engine: PGLiteEngine) => Promise<T>
+): Promise<T> {
+  const engine = new PGLiteEngine();
+  await engine.connect({ engine: 'pglite' } as any);
+
+  const ctx: OperationContext = {
+    engine,
+    config: { engine: 'pglite' } as any,
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    dryRun: false,
+  };
+
+  // Ensure schema is initialized for each isolated test context.
+  await getActionOperation('action_list').handler(ctx, {});
+
+  try {
+    return await fn(ctx, engine);
+  } finally {
+    await engine.disconnect();
+  }
+}
+
 describe('Action Brain operation integration', () => {
   test('#22 registers Action Brain operations in the shared contract', () => {
     const names = new Set(operations.map((op) => op.name));
@@ -306,6 +329,139 @@ describe('Action Brain operation integration', () => {
       expect(rows.rows.length).toBe(1);
       expect(rows.rows[0].title).toBe('High confidence task');
       expect(rows.rows[0].confidence).toBe(0.95);
+    });
+  });
+
+  test('action_ingest persists low-confidence commitments into action_drops and excludes them from action_items', async () => {
+    await withActionContext(async (ctx, engine) => {
+      const actionIngest = getActionOperation('action_ingest');
+      const actionList = getActionOperation('action_list');
+      const messages = [
+        {
+          ChatName: 'Ops',
+          SenderName: 'Joe',
+          Timestamp: '2026-04-16T08:00:00.000Z',
+          Text: 'Low-confidence note. Reach me at joe@example.com or +1 415 555 0199',
+          MsgID: 'm1',
+        },
+      ];
+      const commitments = [
+        {
+          who: 'Joe',
+          owes_what: 'Share low confidence update',
+          to_whom: 'Abhi',
+          by_when: null,
+          confidence: 0.62,
+          type: 'commitment',
+          source_message_id: 'm1',
+        },
+        {
+          who: 'Joe',
+          owes_what: 'Share final docs',
+          to_whom: 'Abhi',
+          by_when: null,
+          confidence: 0.95,
+          type: 'commitment',
+          source_message_id: 'm1',
+        },
+      ];
+
+      const result = await actionIngest.handler(ctx, { messages, commitments });
+      expect(result.created_count).toBe(1);
+      expect(result.dropped_count).toBe(1);
+      expect(typeof result.run_id).toBe('string');
+
+      const db = (engine as unknown as EngineWithDb).db;
+      const items = await db.query(
+        `SELECT title
+         FROM action_items`
+      );
+      expect(items.rows.length).toBe(1);
+      expect(items.rows[0].title).toBe('Share final docs');
+
+      const drops = await db.query(
+        `SELECT run_id, source_id, source_excerpt, drop_reason, confidence, extractor_version, model
+         FROM action_drops`
+      );
+      expect(drops.rows.length).toBe(1);
+      expect(drops.rows[0].drop_reason).toBe('low_confidence');
+      expect(Number(drops.rows[0].confidence)).toBe(0.62);
+      expect(drops.rows[0].source_id).toMatch(/^m1:ab:/);
+      expect(drops.rows[0].source_excerpt).toContain('[redacted-email]');
+      expect(drops.rows[0].source_excerpt).toContain('[redacted-number]');
+      expect(drops.rows[0].model).toBe('direct_commitments');
+      expect(drops.rows[0].extractor_version).toBe('extractor.ts@v1');
+      expect(drops.rows[0].run_id).toBe(result.run_id);
+
+      const filtered = await actionList.handler(ctx, { filter: 'low_confidence_dropped' });
+      expect(Array.isArray(filtered)).toBe(true);
+      expect(filtered.length).toBe(1);
+      expect(filtered[0].drop_reason).toBe('low_confidence');
+      expect(filtered[0].source_id).toMatch(/^m1:ab:/);
+    });
+  });
+
+  test('low-confidence drop source excerpts are bounded to 500 chars', async () => {
+    await withActionContext(async (ctx, engine) => {
+      const actionIngest = getActionOperation('action_ingest');
+      const oversizedText = `${'x'.repeat(900)} joe@example.com +14155550199`;
+      const messages = [
+        {
+          ChatName: 'Ops',
+          SenderName: 'Joe',
+          Timestamp: '2026-04-16T08:00:00.000Z',
+          Text: oversizedText,
+          MsgID: 'm1',
+        },
+      ];
+      const commitments = [
+        {
+          who: 'Joe',
+          owes_what: 'Send docs',
+          to_whom: 'Abhi',
+          by_when: null,
+          confidence: 0.4,
+          type: 'commitment',
+          source_message_id: 'm1',
+        },
+      ];
+
+      await actionIngest.handler(ctx, { messages, commitments });
+
+      const db = (engine as unknown as EngineWithDb).db;
+      const rows = await db.query(`SELECT source_excerpt FROM action_drops`);
+      expect(rows.rows.length).toBe(1);
+      const excerpt = String(rows.rows[0].source_excerpt);
+      expect(excerpt.length).toBeLessThanOrEqual(500);
+    });
+  });
+
+  test('low-confidence drops do not use model-generated text when source message is unresolved', async () => {
+    await withActionContext(async (ctx, engine) => {
+      const actionIngest = getActionOperation('action_ingest');
+      const messages = [
+        { ChatName: 'Ops A', SenderName: 'Joe', Timestamp: '2026-04-16T08:00:00.000Z', Text: 'First msg', MsgID: 'm1' },
+        { ChatName: 'Ops B', SenderName: 'Mukesh', Timestamp: '2026-04-16T08:05:00.000Z', Text: 'Second msg', MsgID: 'm2' },
+      ];
+      const commitments = [
+        {
+          who: 'Joe',
+          owes_what: 'Model generated fallback text should not be persisted',
+          to_whom: 'Abhi',
+          by_when: null,
+          confidence: 0.4,
+          type: 'commitment',
+          source_message_id: 'hallucinated-id',
+        },
+      ];
+
+      await actionIngest.handler(ctx, { messages, commitments });
+
+      const db = (engine as unknown as EngineWithDb).db;
+      const rows = await db.query(`SELECT source_id, source_excerpt FROM action_drops`);
+      expect(rows.rows.length).toBe(1);
+      expect(rows.rows[0].source_id).toMatch(/^batch:ab:/);
+      expect(rows.rows[0].source_excerpt).toBe('');
     });
   });
 });

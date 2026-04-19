@@ -33,9 +33,15 @@ describe('Action Brain schema', () => {
        FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'action_history'`
     );
+    const actionDropsCols = await localDb.query(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'action_drops'`
+    );
 
     const itemColumns = new Set((actionItemsCols.rows as { column_name: string }[]).map((r) => r.column_name));
     const historyColumns = new Set((actionHistoryCols.rows as { column_name: string }[]).map((r) => r.column_name));
+    const dropColumns = new Set((actionDropsCols.rows as { column_name: string }[]).map((r) => r.column_name));
 
     const requiredItemColumns = [
       'id',
@@ -58,6 +64,17 @@ describe('Action Brain schema', () => {
     ];
 
     const requiredHistoryColumns = ['id', 'item_id', 'event_type', 'timestamp', 'actor', 'metadata'];
+    const requiredDropColumns = [
+      'id',
+      'run_id',
+      'source_id',
+      'source_excerpt',
+      'drop_reason',
+      'confidence',
+      'extractor_version',
+      'model',
+      'created_at',
+    ];
 
     for (const col of requiredItemColumns) {
       expect(itemColumns.has(col)).toBe(true);
@@ -65,6 +82,10 @@ describe('Action Brain schema', () => {
 
     for (const col of requiredHistoryColumns) {
       expect(historyColumns.has(col)).toBe(true);
+    }
+
+    for (const col of requiredDropColumns) {
+      expect(dropColumns.has(col)).toBe(true);
     }
 
     const inserted = await localDb.query(
@@ -91,7 +112,7 @@ describe('Action Brain schema', () => {
       `SELECT count(*)::int AS n
        FROM pg_indexes
        WHERE schemaname = 'public'
-         AND tablename IN ('action_items', 'action_history')`
+         AND tablename IN ('action_items', 'action_history', 'action_drops')`
     );
 
     await initActionSchema(localDb);
@@ -100,7 +121,7 @@ describe('Action Brain schema', () => {
       `SELECT count(*)::int AS n
        FROM pg_indexes
        WHERE schemaname = 'public'
-         AND tablename IN ('action_items', 'action_history')`
+         AND tablename IN ('action_items', 'action_history', 'action_drops')`
     );
 
     const rows = await localDb.query(`SELECT count(*)::int AS n FROM action_items`);
