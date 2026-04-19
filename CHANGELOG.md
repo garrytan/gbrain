@@ -2,6 +2,30 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.12.4] - 2026-04-19
+
+## **Self-host your brain as a remote MCP server in 30 minutes.**
+## **One Fly machine, one Supabase project, one GitHub repo of notes — your brain reachable from any AI client, with zero dependency on your laptop.**
+
+Until now, gbrain ran where your terminal ran. Close the laptop, the brain went to sleep. v0.12.4 lands `deploy/` — a self-contained recipe for hosting gbrain as a 24/7 remote MCP server. Claude Desktop, Claude Code remote, Perplexity, anything that speaks Streamable HTTP MCP can connect to your brain over the public internet, gated by a bearer token. The autopilot sync loop runs in the same container, so `git push` to your notes repo is the only step to keep the brain fresh.
+
+### What you can do now that you couldn't before
+
+- **Reach your brain from any AI client, anywhere.** Add `https://your-app.fly.dev/mcp` as a custom connector in Claude Desktop with a bearer token. Perplexity, Claude Code remote, ChatGPT custom connectors — same URL, same token. Your laptop can be off.
+- **Stop running gbrain locally.** The container clones your notes repo on boot, runs the HTTP MCP server, and runs autopilot in parallel. Fly restarts the machine if either dies.
+- **Follow the runbook end-to-end.** `deploy/README.md` walks you from "I have a GitHub account" to a working remote brain — Supabase Pro project setup, deploy key generation, Fly app create, secrets import, schema init, bearer token rotation, troubleshooting matrix, cost breakdown (~$28/mo).
+- **Trust the auth boundary.** Every request validates a SHA-256-hashed bearer token against the `access_tokens` table (same scheme as `gbrain auth`). Operations run with `OperationContext.remote = true`, which already tightens `file_upload` sandboxing.
+
+### What's in the recipe
+
+- `deploy/http-wrapper.ts` — Streamable HTTP MCP server. Bearer auth, stateless transport per request, all 30 operation handlers exposed.
+- `deploy/start.sh` — Container entrypoint. Decodes SSH deploy key, clones/pulls notes, spawns wrapper + autopilot in parallel, exits if either dies.
+- `deploy/Dockerfile` — `oven/bun:1.1-debian` + git + ssh client. Frozen lockfile install (no silent dependency drift).
+- `deploy/fly.toml` — `lhr` region, shared-cpu-1x 512MB, always-on, healthcheck on `/healthz`.
+- `deploy/README.md` — full runbook including Supabase pooler URL format, how to rotate tokens, what each error means.
+
+This is a recipe, not a hosted service. You own the Fly machine, the Supabase project, and the bearer tokens. Nothing gets routed through Anthropic or any third party.
+
 ## [0.12.3] - 2026-04-19
 
 ## **Reliability wave: the pieces v0.12.2 didn't cover.**
