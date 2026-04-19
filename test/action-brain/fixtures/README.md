@@ -12,4 +12,4 @@ Each line is a JSON object with:
 - `expectedCommitments`: `[{ who, action, type }]` where `type` is `owed_by_me` or `waiting_on`
 - `baselineCommitments`: `[{ who, owes_what, type, confidence?, source_message_id? }]`
 
-`baselineCommitments` are frozen deterministic outputs used by CI to compute explicit recall without external API calls.
+`baselineCommitments` are frozen deterministic model outputs fed through extractor tests via a stubbed client, so CI evaluates recall against extractor-normalized predictions without external API calls.

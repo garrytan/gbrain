@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import {
+  extractCommitments,
+  type StructuredCommitment,
+  type WhatsAppMessage as ExtractorWhatsAppMessage,
+} from '../../src/action-brain/extractor.ts';
 
 interface WhatsAppMessage {
   ChatName: string;
@@ -33,9 +38,67 @@ interface GoldSetRow {
   baselineCommitments: BaselineCommitment[];
 }
 
+interface FakeResponse {
+  content: Array<
+    | {
+        type: 'tool_use';
+        name: string;
+        input: unknown;
+      }
+    | {
+        type: 'text';
+        text: string;
+      }
+  >;
+}
+
 const OWNER_ALIASES = ['abhinav bansal', 'abbhinaav', 'abhi', 'abhinav'];
 const CHECKED_IN_GOLD_SET_PATH = resolve(import.meta.dir, 'fixtures/gold-set.jsonl');
 const PRIVATE_GOLD_SET_PATH = process.env.ACTION_BRAIN_PRIVATE_GOLD_SET_PATH;
+const EXTRACT_COMMITMENTS_TOOL = 'extract_commitments';
+
+class DeterministicGoldSetClient {
+  public readonly calls: Array<{ model: string; prompt: string; msgId: string }> = [];
+  private readonly rowsByMsgId: Map<string, GoldSetRow>;
+
+  constructor(
+    rows: GoldSetRow[],
+    private readonly options: { dropOneCommitmentFromRowId?: string } = {}
+  ) {
+    this.rowsByMsgId = new Map(rows.map((row) => [row.message.MsgID, row]));
+  }
+
+  messages = {
+    create: async (params: { model: string; messages: Array<{ content: string }> }): Promise<FakeResponse> => {
+      const prompt = params.messages[0]?.content ?? '';
+      const msgId = extractMsgId(prompt);
+      const row = this.rowsByMsgId.get(msgId);
+
+      if (!row) {
+        throw new Error(`No deterministic gold-set fixture row for MsgID ${msgId}`);
+      }
+
+      let baseline = row.baselineCommitments;
+      if (this.options.dropOneCommitmentFromRowId === row.id && baseline.length > 0) {
+        baseline = baseline.slice(1);
+      }
+
+      this.calls.push({ model: params.model, prompt, msgId });
+
+      return {
+        content: [
+          {
+            type: 'tool_use',
+            name: EXTRACT_COMMITMENTS_TOOL,
+            input: {
+              commitments: baseline.map(toStructuredCommitment),
+            },
+          },
+        ],
+      };
+    },
+  };
+}
 
 function loadGoldSet(path: string): GoldSetRow[] {
   const raw = readFileSync(path, 'utf8');
@@ -60,14 +123,34 @@ function normalizeText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function extractMsgId(prompt: string): string {
+  const match = prompt.match(/"MsgID":"([^"]+)"/);
+  if (!match) {
+    throw new Error(`Could not extract MsgID from prompt: ${prompt}`);
+  }
+  return match[1];
+}
+
+function toStructuredCommitment(commitment: BaselineCommitment): StructuredCommitment {
+  return {
+    who: commitment.who,
+    owes_what: commitment.owes_what,
+    to_whom: null,
+    by_when: null,
+    confidence: commitment.confidence ?? 0.9,
+    type: commitment.type,
+    source_message_id: commitment.source_message_id ?? null,
+  };
+}
+
 function isOwnerName(name: string): boolean {
   const normalized = normalizeText(name);
   return OWNER_ALIASES.some((alias) => normalized.includes(alias));
 }
 
-function responsibilityType(commitment: BaselineCommitment): ExpectedType {
-  const who = commitment.who ?? '';
-  return isOwnerName(who) ? 'owed_by_me' : 'waiting_on';
+function responsibilityType(who: string | null): ExpectedType {
+  const normalizedWho = who ?? '';
+  return isOwnerName(normalizedWho) ? 'owed_by_me' : 'waiting_on';
 }
 
 function namesMatch(expectedWho: string, predictedWho: string | null): boolean {
@@ -92,49 +175,65 @@ function actionsMatch(expectedAction: string, predictedAction: string): boolean 
   return predicted.includes(expected) || expected.includes(predicted);
 }
 
-function computeRecallMetrics(rows: GoldSetRow[]): {
+function asExtractorMessages(message: WhatsAppMessage): ExtractorWhatsAppMessage[] {
+  return [
+    {
+      ChatName: message.ChatName,
+      SenderName: message.SenderName,
+      Timestamp: message.Timestamp,
+      Text: message.Text,
+      MsgID: message.MsgID,
+    },
+  ];
+}
+
+async function computeRecallMetrics(
+  rows: GoldSetRow[],
+  options: { dropOneCommitmentFromRowId?: string } = {}
+): Promise<{
   totalExpected: number;
   totalMatched: number;
   totalPredicted: number;
   falsePositives: number;
   recall: number;
   precision: number;
-} {
+  extractorCalls: number;
+}> {
+  const deterministicClient = new DeterministicGoldSetClient(rows, options);
   let totalExpected = 0;
   let totalMatched = 0;
   let totalPredicted = 0;
   let falsePositives = 0;
 
   for (const row of rows) {
+    const predicted = await extractCommitments(asExtractorMessages(row.message), {
+      client: deterministicClient,
+      ownerName: 'Abhinav Bansal',
+      ownerAliases: ['Abbhinaav', 'Abhi', 'Abhinav'],
+    });
+
     const matchedPredictedIndexes = new Set<number>();
     totalExpected += row.expectedCommitments.length;
-    totalPredicted += row.baselineCommitments.length;
+    totalPredicted += predicted.length;
 
     for (const expected of row.expectedCommitments) {
-      let matched = false;
-
-      for (let i = 0; i < row.baselineCommitments.length; i += 1) {
+      for (let i = 0; i < predicted.length; i += 1) {
         if (matchedPredictedIndexes.has(i)) continue;
 
-        const predicted = row.baselineCommitments[i];
-        const whoMatch = namesMatch(expected.who, predicted.who);
-        const actionMatch = actionsMatch(expected.action, predicted.owes_what);
-        const typeMatch = responsibilityType(predicted) === expected.type;
+        const candidate = predicted[i];
+        const whoMatch = namesMatch(expected.who, candidate.who);
+        const actionMatch = actionsMatch(expected.action, candidate.owes_what);
+        const typeMatch = responsibilityType(candidate.who) === expected.type;
 
         if (whoMatch && actionMatch && typeMatch) {
           matchedPredictedIndexes.add(i);
           totalMatched += 1;
-          matched = true;
           break;
         }
       }
-
-      if (!matched) {
-        // Missed expected commitment, counted implicitly by recall denominator.
-      }
     }
 
-    falsePositives += row.baselineCommitments.length - matchedPredictedIndexes.size;
+    falsePositives += predicted.length - matchedPredictedIndexes.size;
   }
 
   const recall = totalExpected === 0 ? 1 : totalMatched / totalExpected;
@@ -147,7 +246,26 @@ function computeRecallMetrics(rows: GoldSetRow[]): {
     falsePositives,
     recall,
     precision,
+    extractorCalls: deterministicClient.calls.length,
   };
+}
+
+function hasBaselineCommitment(row: GoldSetRow): boolean {
+  return row.baselineCommitments.length > 0;
+}
+
+function pickRegressionDropRowId(rows: GoldSetRow[]): string {
+  const preferred = rows.find((row) => row.id === 'gold-008' && hasBaselineCommitment(row));
+  if (preferred) {
+    return preferred.id;
+  }
+
+  const fallback = rows.find(hasBaselineCommitment);
+  if (!fallback) {
+    throw new Error('Expected at least one row with baseline commitments for regression gate test');
+  }
+
+  return fallback.id;
 }
 
 describe('action-brain checked-in gold set recall gate', () => {
@@ -159,9 +277,9 @@ describe('action-brain checked-in gold set recall gate', () => {
     expect(expectedCount).toBeGreaterThan(0);
   });
 
-  test('enforces >=90% recall on the checked-in evaluation set', () => {
+  test('enforces >=90% recall on the checked-in evaluation set via extractor path', async () => {
     const rows = loadGoldSet(CHECKED_IN_GOLD_SET_PATH);
-    const metrics = computeRecallMetrics(rows);
+    const metrics = await computeRecallMetrics(rows);
 
     console.log(
       `[gold-set] expected=${metrics.totalExpected} matched=${metrics.totalMatched} ` +
@@ -169,8 +287,17 @@ describe('action-brain checked-in gold set recall gate', () => {
       `recall=${metrics.recall.toFixed(3)} precision=${metrics.precision.toFixed(3)}`
     );
 
+    expect(metrics.extractorCalls).toBe(rows.length);
     // CI gate for GIT-175: fail the unit lane when recall drops below 90%.
     expect(metrics.recall).toBeGreaterThanOrEqual(0.9);
+  });
+
+  test('fails the gate when one expected commitment is dropped', async () => {
+    const rows = loadGoldSet(CHECKED_IN_GOLD_SET_PATH);
+    const dropRowId = pickRegressionDropRowId(rows);
+    const metrics = await computeRecallMetrics(rows, { dropOneCommitmentFromRowId: dropRowId });
+
+    expect(metrics.recall).toBeLessThan(0.9);
   });
 
   test('validates private gold-set contract when ACTION_BRAIN_PRIVATE_GOLD_SET_PATH is set', () => {
