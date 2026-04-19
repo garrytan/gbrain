@@ -232,10 +232,6 @@ export const actionBrainOperations: Operation[] = [
         throw new Error('action_ingest requires messages (or commitments for deterministic ingest).');
       }
 
-      const extractionModel =
-        providedCommitments.length > 0
-          ? 'direct_commitments'
-          : asOptionalNonEmptyString(p.model) ?? HAIKU_MODEL;
       const runSummary = createEmptyExtractionRunSummary();
       const minConfidence = clampConfidenceThreshold(asOptionalNumber(p.min_confidence));
       let extracted: StructuredCommitment[] = providedCommitments;

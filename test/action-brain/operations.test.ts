@@ -435,4 +435,33 @@ describe('Action Brain operation integration', () => {
       expect(excerpt.length).toBeLessThanOrEqual(500);
     });
   });
+
+  test('low-confidence drops do not use model-generated text when source message is unresolved', async () => {
+    await withActionContext(async (ctx, engine) => {
+      const actionIngest = getActionOperation('action_ingest');
+      const messages = [
+        { ChatName: 'Ops A', SenderName: 'Joe', Timestamp: '2026-04-16T08:00:00.000Z', Text: 'First msg', MsgID: 'm1' },
+        { ChatName: 'Ops B', SenderName: 'Mukesh', Timestamp: '2026-04-16T08:05:00.000Z', Text: 'Second msg', MsgID: 'm2' },
+      ];
+      const commitments = [
+        {
+          who: 'Joe',
+          owes_what: 'Model generated fallback text should not be persisted',
+          to_whom: 'Abhi',
+          by_when: null,
+          confidence: 0.4,
+          type: 'commitment',
+          source_message_id: 'hallucinated-id',
+        },
+      ];
+
+      await actionIngest.handler(ctx, { messages, commitments });
+
+      const db = (engine as unknown as EngineWithDb).db;
+      const rows = await db.query(`SELECT source_id, source_excerpt FROM action_drops`);
+      expect(rows.rows.length).toBe(1);
+      expect(rows.rows[0].source_id).toMatch(/^batch:ab:/);
+      expect(rows.rows[0].source_excerpt).toBe('');
+    });
+  });
 });
