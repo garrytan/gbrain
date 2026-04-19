@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS pages (
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings

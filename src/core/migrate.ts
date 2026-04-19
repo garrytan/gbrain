@@ -284,6 +284,16 @@ export const MIGRATIONS: Migration[] = [
       DROP FUNCTION IF EXISTS update_page_search_vector_from_timeline();
     `,
   },
+  {
+    version: 11,
+    name: 'add_pages_updated_at_desc_index',
+    // Fixes slow "list pages newest-first" queries on large brains (#170).
+    // Without this index, `SELECT * FROM pages ORDER BY updated_at DESC` does a seqscan
+    // + external sort (~14s on 31k rows). With the index it's an Index Scan (~11ms).
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
