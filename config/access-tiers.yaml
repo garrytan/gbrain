@@ -1,0 +1,51 @@
+# Access-tier rules for gbrain.
+# Read by src/core/access-config.ts on startup.
+# Each tier defines allow_tags (whitelist) + block_tags (blacklist).
+# Visibility logic:
+#   - A tier with empty allow_tags = default-allow (sees everything not blocked).
+#   - A tier with populated allow_tags = only sees pages with at least one allow tag.
+#   - Any matching block tag = page is hidden (blocks win over allows).
+#   - `sensitivity:public` overrides normal rules (all tiers see it).
+#   - `sensitivity:owner-only` visible only to `full`.
+#   - Untagged pages visible only to `full` (default-deny to motivate migration).
+
+version: 1
+
+tiers:
+  full:
+    description: "clevin + Stacia. Sees everything except sensitivity:owner-only."
+    allow_tags: []
+    block_tags:
+      - "sensitivity:owner-only"
+
+  family:
+    description: "dad (Gavin), mom, Priscila at Family tier."
+    allow_tags:
+      - "domain:family"
+      - "domain:personal"
+      - "scope:dads-house-sale"
+      - "sensitivity:public"
+    block_tags:
+      - "domain:finance"
+      - "domain:health"
+      - "domain:identity"
+      - "domain:work"
+      - "scope:x-energy"
+      - "scope:jaci-bela"
+      - "scope:landscaping-saas"
+      - "scope:idearanker"
+      - "sensitivity:owner-only"
+
+  work_jaci_bela:
+    description: "Priscila's scoped-to-jaci-bela overlay. Combines with her family tier additively at the token-grant layer."
+    allow_tags:
+      - "scope:jaci-bela"
+      - "sensitivity:public"
+    block_tags:
+      - "sensitivity:owner-only"
+
+  none:
+    description: "Default-deny for unlisted identities."
+    allow_tags: []
+    block_tags:
+      - "*"
