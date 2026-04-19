@@ -1,5 +1,16 @@
 # TODOS
 
+## P0 — Flaky Tests
+
+### action-brain/operations.test.ts — 4 tests timeout under full parallel suite load
+**What:** 4 tests in `test/action-brain/operations.test.ts` (action_ingest integration paths added by GIT-173) timeout at 5000ms when run as part of the full 88-file suite but pass in isolation. Root cause is resource contention from concurrent Bun test workers starving the LLM mock timeout paths.
+
+**Why not blocking GIT-46:** Tests are not in GIT-46 diff. Pre-existing since GIT-173 merged into this branch. Tests pass in isolation: `bun test test/action-brain/operations.test.ts`.
+
+**Fix:** Either serialize the operations.test.ts suite (`--timeout` increase or `{timeout: 15000}` on the affected `beforeEach`), or run it in a dedicated test:e2e-style lane that doesn't share the worker pool.
+
+**Noticed on:** branch `impl/git-46-qa-fix`, GIT-46 ship run 2026-04-20
+
 ## P1 (BrainBench v1.1 — categories deferred from PR #188)
 
 ### BrainBench Cat 5: Source Attribution / Provenance
