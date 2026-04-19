@@ -526,10 +526,49 @@ JSON
         limit: 50,
         lockAcquireTimeoutMs: 1_000,
         lockStaleAfterMs: 100,
+        staleAfterHours: 24,
       });
 
       expect(result.degraded).toBe(false);
       expect(result.messages.map((message) => message.MsgID)).toEqual(['fresh-msg']);
+      expect(existsSync(lockPath)).toBe(false);
+    } finally {
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+    }
+  });
+
+  test('lock is released even when wacli fails after stale lock reclaim', async () => {
+    const root = createTempDir();
+    const checkpointPath = join(root, 'wacli-checkpoint.json');
+    const lockPath = `${checkpointPath}.lock`;
+    const binDir = join(root, 'bin-fail');
+    const wacliPath = join(binDir, 'wacli');
+    const previousPath = process.env.PATH;
+
+    mkdirSync(lockPath, { recursive: true });
+    utimesSync(lockPath, new Date('2020-01-01T00:00:00.000Z'), new Date('2020-01-01T00:00:00.000Z'));
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(wacliPath, `#!/usr/bin/env bash\nexit 1\n`, 'utf-8');
+    chmodSync(wacliPath, 0o755);
+
+    try {
+      process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+
+      const result = await collectWacliMessages({
+        checkpointPath,
+        stores: [{ key: 'personal', storePath: '/stores/personal' }],
+        now: new Date('2026-04-16T00:30:00.000Z'),
+        limit: 50,
+        lockAcquireTimeoutMs: 1_000,
+        lockStaleAfterMs: 100,
+        staleAfterHours: 24,
+      });
+
+      expect(result.degraded).toBe(true);
       expect(existsSync(lockPath)).toBe(false);
     } finally {
       if (previousPath === undefined) {

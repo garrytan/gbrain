@@ -10,7 +10,7 @@ All notable changes to GBrain will be documented in this file.
 
 ### Itemized changes
 
-- `src/action-brain/collector.ts` — import `stat` from `fs/promises` to enable stale lock age check without owner metadata
+- `src/action-brain/collector.ts` — added `stat` to the existing named import list from `fs/promises` to enable stale lock age check without owner metadata
 - `test/action-brain/collector.test.ts` — two regression tests: stale orphan lock reclaim in wacli command mode, stale lock reclaim without owner metadata
 
 ## [0.13.4] - 2026-04-20
