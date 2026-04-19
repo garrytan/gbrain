@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.13.5] - 2026-04-20
+
+### Added
+
+- **Gold-set recall CI gate now ships as a deterministic extractor-path test.** Added the checked-in 13-message fixture at `test/action-brain/fixtures/gold-set.jsonl` and a `>= 0.90` recall gate in `test/action-brain/gold-set.test.ts` that runs in the standard `bun test` lane. The test uses `DeterministicGoldSetClient` to keep runs deterministic and zero-network while still routing predictions through the real `extractCommitments` path so parser/normalization/trust-boundary logic is exercised. Added a drop-one regression guard proving the gate fails when an expected commitment is removed. The larger private validation corpus remains out of repo and is wired via `ACTION_BRAIN_PRIVATE_GOLD_SET_PATH` (same JSONL schema, minimum 50 rows). (GIT-175)
+
 ## [0.13.4] - 2026-04-20
 
 ### Added
