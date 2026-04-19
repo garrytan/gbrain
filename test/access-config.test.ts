@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("access-config", () => {
-  test("parses valid YAML with 4 tiers", () => {
+  test("parses valid YAML", () => {
     clearAccessConfigCache();
     const dir = mkdtempSync(join(tmpdir(), "gbrain-test-"));
     const path = join(dir, "access-tiers.yaml");
@@ -52,16 +52,20 @@ tiers:
     expect(v.tiers.full.block_tags).toEqual([]);
   });
 
-  test("loads the real repo config at config/access-tiers.yaml", () => {
+  test("loads the shipped example config at config/access-tiers.example.yaml", () => {
     clearAccessConfigCache();
     // Resolve relative to cwd (gbrain root) — should always work when bun test runs from repo root.
-    const cfg = loadAccessConfig("config/access-tiers.yaml");
+    const cfg = loadAccessConfig("config/access-tiers.example.yaml");
     expect(cfg.version).toBe(1);
-    expect(Object.keys(cfg.tiers).sort()).toEqual(["family", "full", "none", "work_scoped"]);
+    // Example ships with three generic tiers: full (default-allow), scoped
+    // (explicit-public only), none (default-deny). Downstream users copy and
+    // override this file; asserting on the generic tier names keeps the
+    // upstream example shape stable.
+    expect(Object.keys(cfg.tiers).sort()).toEqual(["full", "none", "scoped"]);
+    expect(cfg.tiers.full.allow_tags).toEqual([]);
     expect(cfg.tiers.full.block_tags).toContain("sensitivity:owner-only");
-    expect(cfg.tiers.family.allow_tags).toContain("domain:family");
-    // Public base must NOT leak product-specific scope names.
-    expect(cfg.tiers.work_scoped.allow_tags).not.toContain("scope:jaci-bela");
+    expect(cfg.tiers.scoped.allow_tags).toContain("sensitivity:public");
+    expect(cfg.tiers.none.block_tags).toContain("*");
   });
 });
 
@@ -79,8 +83,8 @@ tiers:
     description: "owner"
     allow_tags: []
     block_tags: ["sensitivity:owner-only"]
-  work_scoped:
-    description: "scoped work"
+  scoped:
+    description: "scoped partner"
     allow_tags: ["sensitivity:public"]
     block_tags: ["sensitivity:owner-only"]
 `,
@@ -88,23 +92,23 @@ tiers:
     writeFileSync(
       overlayPath,
       `tiers:
-  work_scoped:
+  scoped:
     allow_tags:
-      - "scope:jaci-bela"
+      - "scope:partner-a"
       - "sensitivity:public"  # duplicate — should be deduped
     block_tags:
       - "domain:finance"
 `,
     );
     const cfg = loadAccessConfig(basePath, overlayPath);
-    expect(cfg.tiers.work_scoped.allow_tags).toContain("scope:jaci-bela");
-    expect(cfg.tiers.work_scoped.allow_tags).toContain("sensitivity:public");
+    expect(cfg.tiers.scoped.allow_tags).toContain("scope:partner-a");
+    expect(cfg.tiers.scoped.allow_tags).toContain("sensitivity:public");
     // Dedup check: sensitivity:public should appear only once.
     expect(
-      cfg.tiers.work_scoped.allow_tags.filter((t) => t === "sensitivity:public").length,
+      cfg.tiers.scoped.allow_tags.filter((t) => t === "sensitivity:public").length,
     ).toBe(1);
-    expect(cfg.tiers.work_scoped.block_tags).toContain("domain:finance");
-    expect(cfg.tiers.work_scoped.block_tags).toContain("sensitivity:owner-only");
+    expect(cfg.tiers.scoped.block_tags).toContain("domain:finance");
+    expect(cfg.tiers.scoped.block_tags).toContain("sensitivity:owner-only");
     // Other tiers untouched.
     expect(cfg.tiers.full.allow_tags).toEqual([]);
     rmSync(dir, { recursive: true });
@@ -149,14 +153,14 @@ tiers:
     description: "owner"
     allow_tags: []
     block_tags: ["sensitivity:owner-only"]
-  work_scoped:
+  scoped:
     description: "scoped"
     allow_tags: ["sensitivity:public"]
     block_tags: ["sensitivity:owner-only"]
 `,
     );
     const cfg = loadAccessConfig(basePath, overlayPath);
-    expect(cfg.tiers.work_scoped.allow_tags).toEqual(["sensitivity:public"]);
+    expect(cfg.tiers.scoped.allow_tags).toEqual(["sensitivity:public"]);
     rmSync(dir, { recursive: true });
   });
 
@@ -168,15 +172,15 @@ tiers:
       basePath,
       `version: 1
 tiers:
-  work_scoped:
+  scoped:
     description: "scoped"
     allow_tags: ["sensitivity:public"]
     block_tags: ["sensitivity:owner-only"]
 `,
     );
     const cfg = loadAccessConfig(basePath);
-    expect(cfg.tiers.work_scoped.allow_tags).toEqual(["sensitivity:public"]);
-    expect(cfg.tiers.work_scoped.block_tags).toEqual(["sensitivity:owner-only"]);
+    expect(cfg.tiers.scoped.allow_tags).toEqual(["sensitivity:public"]);
+    expect(cfg.tiers.scoped.block_tags).toEqual(["sensitivity:owner-only"]);
     rmSync(dir, { recursive: true });
   });
 });

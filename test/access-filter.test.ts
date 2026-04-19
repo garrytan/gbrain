@@ -2,30 +2,37 @@ import { expect, test, describe } from "bun:test";
 import { filterByTier, isVisibleToTier, PageForFilter } from "../src/core/access-filter";
 import { AccessConfig } from "../src/core/access-config";
 
+// Fixture config exercises all four semantic branches:
+//   - default-allow tier (empty allow_tags) with a single block
+//   - explicit-allow tier with both allows and blocks
+//   - scoped tier that only sees one specific scope
+//   - deny-all tier using the "*" wildcard block
+// Tag names are intentionally generic so the suite travels with the primitive.
 const cfg: AccessConfig = {
   version: 1,
   tiers: {
     full: {
-      description: "owner",
+      description: "default-allow, trusted",
       allow_tags: [],
       block_tags: ["sensitivity:owner-only"],
     },
-    family: {
-      description: "family",
-      allow_tags: ["domain:family", "domain:personal", "scope:dads-house-sale", "sensitivity:public"],
+    team: {
+      description: "explicit-allow with blocks",
+      allow_tags: ["domain:team", "domain:public", "sensitivity:public"],
       block_tags: [
-        "domain:finance", "domain:health", "domain:identity", "domain:work",
-        "scope:x-energy", "scope:jaci-bela", "scope:landscaping-saas", "scope:idearanker",
+        "domain:finance",
+        "domain:health",
+        "scope:secret-project",
         "sensitivity:owner-only",
       ],
     },
-    work_scoped: {
-      description: "jaci-scoped",
-      allow_tags: ["scope:jaci-bela", "sensitivity:public"],
+    scoped: {
+      description: "only sees one explicit scope",
+      allow_tags: ["scope:partner-a", "sensitivity:public"],
       block_tags: ["sensitivity:owner-only"],
     },
     none: {
-      description: "deny",
+      description: "deny all",
       allow_tags: [],
       block_tags: ["*"],
     },
@@ -34,92 +41,94 @@ const cfg: AccessConfig = {
 
 const p = (slug: string, tags: string[]): PageForFilter => ({ slug, tags });
 
-describe("isVisibleToTier — full tier", () => {
-  test("full sees untagged pages (default allow when allow_tags empty)", () => {
+describe("isVisibleToTier — default-allow tier (full)", () => {
+  test("sees untagged pages (empty allow_tags = default allow)", () => {
     expect(isVisibleToTier(p("a", []), "full", cfg)).toBe(true);
   });
-  test("full sees domain:finance", () => {
+  test("sees pages with arbitrary tags", () => {
     expect(isVisibleToTier(p("a", ["domain:finance"]), "full", cfg)).toBe(true);
   });
-  test("full blocked from sensitivity:owner-only", () => {
-    expect(isVisibleToTier(p("a", ["domain:personal", "sensitivity:owner-only"]), "full", cfg)).toBe(false);
+  test("blocked from a page carrying the tier's block tag", () => {
+    expect(
+      isVisibleToTier(p("a", ["domain:team", "sensitivity:owner-only"]), "full", cfg),
+    ).toBe(false);
   });
 });
 
-describe("isVisibleToTier — family tier", () => {
-  test("family sees domain:family pages", () => {
-    expect(isVisibleToTier(p("a", ["domain:family"]), "family", cfg)).toBe(true);
+describe("isVisibleToTier — explicit-allow tier (team)", () => {
+  test("sees pages with an allowed tag", () => {
+    expect(isVisibleToTier(p("a", ["domain:team"]), "team", cfg)).toBe(true);
   });
-  test("family sees domain:personal pages", () => {
-    expect(isVisibleToTier(p("a", ["domain:personal"]), "family", cfg)).toBe(true);
+  test("sees sensitivity:public alone", () => {
+    expect(isVisibleToTier(p("a", ["sensitivity:public"]), "team", cfg)).toBe(true);
   });
-  test("family sees scope:dads-house-sale", () => {
-    expect(isVisibleToTier(p("a", ["scope:dads-house-sale"]), "family", cfg)).toBe(true);
+  test("blocked when a block tag is present even with an allow tag (blocks win)", () => {
+    expect(
+      isVisibleToTier(p("a", ["domain:team", "domain:finance"]), "team", cfg),
+    ).toBe(false);
   });
-  test("family blocked from domain:finance even if also family", () => {
-    expect(isVisibleToTier(p("a", ["domain:family", "domain:finance"]), "family", cfg)).toBe(false);
+  test("blocked from a scope in block_tags", () => {
+    expect(isVisibleToTier(p("a", ["scope:secret-project"]), "team", cfg)).toBe(false);
   });
-  test("family blocked from scope:jaci-bela", () => {
-    expect(isVisibleToTier(p("a", ["scope:jaci-bela"]), "family", cfg)).toBe(false);
+  test("blocked from untagged pages (no allow tag match = default deny)", () => {
+    expect(isVisibleToTier(p("a", []), "team", cfg)).toBe(false);
   });
-  test("family blocked from untagged pages (no allow tag match)", () => {
-    expect(isVisibleToTier(p("a", []), "family", cfg)).toBe(false);
-  });
-  test("sensitivity:public does NOT override explicit blocks (blocks win)", () => {
-    expect(isVisibleToTier(p("a", ["domain:finance", "sensitivity:public"]), "family", cfg)).toBe(false);
-  });
-  test("sensitivity:public alone (no blocks) is visible to family", () => {
-    expect(isVisibleToTier(p("a", ["sensitivity:public"]), "family", cfg)).toBe(true);
+  test("sensitivity:public does NOT override explicit blocks (blocks still win)", () => {
+    expect(
+      isVisibleToTier(p("a", ["domain:finance", "sensitivity:public"]), "team", cfg),
+    ).toBe(false);
   });
 });
 
-describe("isVisibleToTier — work_scoped tier", () => {
-  test("sees scope:jaci-bela pages", () => {
-    expect(isVisibleToTier(p("a", ["scope:jaci-bela"]), "work_scoped", cfg)).toBe(true);
+describe("isVisibleToTier — narrowly-scoped tier (scoped)", () => {
+  test("sees pages with the scope tag", () => {
+    expect(isVisibleToTier(p("a", ["scope:partner-a"]), "scoped", cfg)).toBe(true);
   });
-  test("blocked from non-jaci content", () => {
-    expect(isVisibleToTier(p("a", ["domain:finance"]), "work_scoped", cfg)).toBe(false);
+  test("blocked from content outside the scope", () => {
+    expect(isVisibleToTier(p("a", ["domain:finance"]), "scoped", cfg)).toBe(false);
   });
   test("blocked from untagged", () => {
-    expect(isVisibleToTier(p("a", []), "work_scoped", cfg)).toBe(false);
+    expect(isVisibleToTier(p("a", []), "scoped", cfg)).toBe(false);
   });
 });
 
-describe("isVisibleToTier — none tier", () => {
-  test("none sees nothing (wildcard block)", () => {
-    expect(isVisibleToTier(p("a", ["domain:family"]), "none", cfg)).toBe(false);
+describe("isVisibleToTier — deny-all tier (none)", () => {
+  test("wildcard block_tags hides everything", () => {
+    expect(isVisibleToTier(p("a", ["domain:team"]), "none", cfg)).toBe(false);
     expect(isVisibleToTier(p("a", ["sensitivity:public"]), "none", cfg)).toBe(false);
     expect(isVisibleToTier(p("a", []), "none", cfg)).toBe(false);
   });
 });
 
 describe("isVisibleToTier — unknown tier", () => {
-  test("unknown tier defaults to deny-all", () => {
-    expect(isVisibleToTier(p("a", ["domain:personal"]), "nonexistent-tier", cfg)).toBe(false);
+  test("unknown tier defaults to deny-all (safety default)", () => {
+    expect(
+      isVisibleToTier(p("a", ["domain:team"]), "nonexistent-tier", cfg),
+    ).toBe(false);
   });
 });
 
 describe("filterByTier", () => {
   test("filters a list of pages", () => {
     const pages = [
-      p("family-event", ["domain:family"]),
-      p("portfolio", ["domain:finance"]),
-      p("personal-log", ["domain:personal"]),
-      p("jaci-deck", ["scope:jaci-bela"]),
+      p("team-doc", ["domain:team"]),
+      p("ledger", ["domain:finance"]),
+      p("public-post", ["sensitivity:public"]),
+      p("partner-deck", ["scope:partner-a"]),
     ];
-    const visible = filterByTier(pages, "family", cfg);
-    expect(visible.map((x) => x.slug)).toEqual(["family-event", "personal-log"]);
+    const visible = filterByTier(pages, "team", cfg);
+    expect(visible.map((x) => x.slug)).toEqual(["team-doc", "public-post"]);
   });
-  test("preserves type T on generics", () => {
+  test("preserves generic type T", () => {
     const pages: Array<PageForFilter & { extra: string }> = [
-      { slug: "a", tags: ["domain:personal"], extra: "meta" },
+      { slug: "a", tags: ["domain:team"], extra: "meta" },
       { slug: "b", tags: ["domain:finance"], extra: "data" },
     ];
-    const visible = filterByTier(pages, "family", cfg);
+    const visible = filterByTier(pages, "team", cfg);
     expect(visible).toHaveLength(1);
     expect(visible[0].extra).toBe("meta");
   });
   test("empty input returns empty", () => {
-    expect(filterByTier([], "family", cfg)).toEqual([]);
+    expect(filterByTier([], "team", cfg)).toEqual([]);
   });
 });

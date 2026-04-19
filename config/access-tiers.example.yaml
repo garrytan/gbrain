@@ -1,0 +1,54 @@
+# Example access-tier rules for gbrain.
+#
+# Copy this file to `access-tiers.yaml` (or any path your app chooses) and edit
+# the tiers to match your deployment. This file ships as an example so upstream
+# users are not locked into one opinionated tier taxonomy; bring your own.
+#
+# Read by src/core/access-config.ts via loadAccessConfig(path, overlayPath?).
+# Each tier defines allow_tags (whitelist) + block_tags (blacklist).
+#
+# Visibility logic (block-wins semantics):
+#   - A tier with empty allow_tags = default-allow (sees everything not blocked).
+#   - A tier with populated allow_tags = only sees pages with at least one allow
+#     tag.
+#   - Any matching block tag = page is hidden. Blocks WIN over allows
+#     unconditionally (including over any "public"-style allow tag — a page
+#     marked public can still be blocked by any tier's block_tags).
+#   - Untagged pages are visible only to tiers with empty allow_tags
+#     (default-deny motivates migration toward explicit tagging).
+#
+# Overlay support:
+#   Some tiers may intentionally ship with empty allow_tags here. Concrete
+#   product-to-scope bindings (e.g. partner scopes, private project names) can
+#   live in a private overlay YAML passed as a second arg to loadAccessConfig.
+#   The overlay can only *extend* allow_tags/block_tags of existing tiers — it
+#   cannot define new tiers. This keeps product-specific names out of your
+#   public config.
+
+version: 1
+
+tiers:
+  # Default-allow tier for trusted readers (e.g. the brain owner, admin tools).
+  # Empty allow_tags means "see everything not explicitly blocked."
+  full:
+    description: "Trusted reader. Sees everything except explicitly owner-only content."
+    allow_tags: []
+    block_tags:
+      - "sensitivity:owner-only"
+
+  # Scoped partner tier. Sees only content explicitly tagged public, minus any
+  # blocks. Extend allow_tags via a private overlay to bind specific scopes.
+  scoped:
+    description: "Scoped partner. Only sees explicitly-public content unless overlay adds scope bindings."
+    allow_tags:
+      - "sensitivity:public"
+    block_tags:
+      - "sensitivity:owner-only"
+
+  # Default-deny for unlisted identities. The wildcard "*" in block_tags blocks
+  # everything regardless of other rules.
+  none:
+    description: "Default-deny for unlisted identities."
+    allow_tags: []
+    block_tags:
+      - "*"
