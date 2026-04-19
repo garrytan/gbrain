@@ -2,6 +2,17 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.13.5] - 2026-04-20
+
+### Fixed
+
+- **Stale lock reclaim without owner metadata in wacli command mode.** The collector now handles the edge case where a stale lock directory exists but contains no `owner.json` — previously this path could leave the lock in place or throw unexpectedly. The fix reclaims the lock by stat-checking age and deleting safely. Regression tests cover both the no-metadata wacli path and the orphan lock reclaim path in concurrent execution. (GIT-46)
+
+### Itemized changes
+
+- `src/action-brain/collector.ts` — import `stat` from `fs/promises` to enable stale lock age check without owner metadata
+- `test/action-brain/collector.test.ts` — two regression tests: stale orphan lock reclaim in wacli command mode, stale lock reclaim without owner metadata
+
 ## [0.13.4] - 2026-04-20
 
 ### Added
