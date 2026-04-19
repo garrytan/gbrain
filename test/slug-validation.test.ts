@@ -51,6 +51,14 @@ describe('slugifySegment', () => {
   test('handles curly quotes and ellipsis', () => {
     expect(slugifySegment('she\u2026said \u201chello\u201d')).toBe('shesaid-hello');
   });
+
+  test('preserves CJK characters instead of collapsing to empty', () => {
+    expect(slugifySegment('草莓-温室设计技术规范-云合')).toBe('草莓-温室设计技术规范-云合');
+  });
+
+  test('preserves mixed CJK and ASCII segments', () => {
+    expect(slugifySegment('草莓-H型高架基质栽培技术规程')).toBe('草莓-h型高架基质栽培技术规程');
+  });
 });
 
 describe('slugifyPath', () => {
@@ -109,6 +117,16 @@ describe('slugifyPath', () => {
   test('meetings transcript example', () => {
     expect(slugifyPath('meetings/transcripts/2026-01-21 maria - california c4 collaboration discussion.md'))
       .toBe('meetings/transcripts/2026-01-21-maria-california-c4-collaboration-discussion');
+  });
+
+  test('preserves CJK filenames under source directories', () => {
+    expect(slugifyPath('sources/草莓-温室设计技术规范-云合.md'))
+      .toBe('sources/草莓-温室设计技术规范-云合');
+  });
+
+  test('preserves mixed CJK and ASCII filenames under source directories', () => {
+    expect(slugifyPath('sources/草莓-H型高架基质栽培技术规程.md'))
+      .toBe('sources/草莓-h型高架基质栽培技术规程');
   });
 });
 
