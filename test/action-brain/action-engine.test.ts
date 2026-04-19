@@ -236,4 +236,114 @@ describe('ActionEngine', () => {
     const nonStaleIds = new Set(nonStale.map((item) => item.id));
     expect(nonStaleIds.has(staleByStatus.id)).toBe(false);
   });
+
+  test('postgres-style pooled adapter uses transaction callback to serialize terminal transitions', async () => {
+    class MockPooledDb {
+      private readonly item = {
+        id: 1,
+        title: 'Concurrent terminal transition guard',
+        type: 'commitment',
+        status: 'open',
+        owner: 'ops',
+        waiting_on: null,
+        due_at: null,
+        stale_after_hours: 48,
+        priority_score: 0,
+        confidence: 0.5,
+        source_message_id: 'msg-concurrency-001',
+        source_thread: 'Ops',
+        source_contact: 'Joe',
+        linked_entity_slugs: [] as string[],
+        created_at: new Date('2026-04-19T00:00:00.000Z'),
+        updated_at: new Date('2026-04-19T00:00:00.000Z'),
+        resolved_at: null as Date | null,
+      };
+      private queue: Promise<void> = Promise.resolve();
+      transactionCalls = 0;
+
+      async query<T = Record<string, unknown>>(sql: string): Promise<{ rows: T[] }> {
+        const normalized = normalizeSql(sql);
+        if (normalized === 'begin' || normalized === 'commit' || normalized === 'rollback') {
+          throw new Error('BEGIN/COMMIT/ROLLBACK should not be used when transaction() is available');
+        }
+        throw new Error(`Unexpected pooled query call: ${normalized}`);
+      }
+
+      async transaction<T>(fn: (txDb: { query: MockPooledDb['query'] }) => Promise<T>): Promise<T> {
+        this.transactionCalls += 1;
+
+        let release: (() => void) | null = null;
+        const previous = this.queue;
+        this.queue = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+
+        await previous;
+        try {
+          return await fn({ query: this.queryTx.bind(this) });
+        } finally {
+          if (release) release();
+        }
+      }
+
+      private async queryTx<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> {
+        const normalized = normalizeSql(sql);
+
+        if (normalized.includes('select * from action_items') && normalized.includes('for update')) {
+          const id = Number(params[0]);
+          if (id !== this.item.id) return { rows: [] };
+          return { rows: [this.cloneItem() as T] };
+        }
+
+        if (normalized.startsWith('update action_items')) {
+          const id = Number(params[0]);
+          const nextStatus = String(params[1]);
+          if (id !== this.item.id) return { rows: [] };
+
+          this.item.status = nextStatus;
+          this.item.updated_at = new Date();
+          this.item.resolved_at = nextStatus === 'resolved' ? new Date() : null;
+          return { rows: [this.cloneItem() as T] };
+        }
+
+        if (normalized.startsWith('insert into action_history')) {
+          return { rows: [] };
+        }
+
+        throw new Error(`Unhandled transactional SQL in mock: ${normalized}`);
+      }
+
+      getStatus(): string {
+        return this.item.status;
+      }
+
+      private cloneItem() {
+        return {
+          ...this.item,
+          linked_entity_slugs: [...this.item.linked_entity_slugs],
+        };
+      }
+    }
+
+    const db = new MockPooledDb();
+    const engine = new ActionEngine(db as any);
+
+    const [resolveResult, dropResult] = await Promise.allSettled([
+      engine.resolveItem(1, { actor: 'resolver-a' }),
+      engine.updateItemStatus(1, 'dropped', { actor: 'resolver-b' }),
+    ]);
+
+    const fulfilled = [resolveResult, dropResult].filter((result) => result.status === 'fulfilled');
+    const rejected = [resolveResult, dropResult].filter((result) => result.status === 'rejected');
+
+    expect(db.transactionCalls).toBe(2);
+    expect(fulfilled.length).toBe(1);
+    expect(rejected.length).toBe(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(ActionTransitionError);
+    expect(['resolved', 'dropped']).toContain(db.getStatus());
+  });
 });
+
+function normalizeSql(sql: string): string {
+  return sql.replace(/\s+/g, ' ').trim().toLowerCase();
+}

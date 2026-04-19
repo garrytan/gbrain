@@ -6,6 +6,7 @@ interface QueryResult<T> {
 
 interface ActionDb {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<QueryResult<T>>;
+  transaction?<T>(fn: (txDb: ActionDb) => Promise<T>): Promise<T>;
 }
 
 interface ActionItemRow {
@@ -80,8 +81,8 @@ export class ActionEngine {
   constructor(private readonly db: ActionDb) {}
 
   async createItem(input: CreateActionItemInput, options: ActionMutationOptions = {}): Promise<ActionItem> {
-    return this.withTransaction(async () => {
-      const result = await this.db.query<ActionInsertRow>(
+    return this.withTransaction(async (db) => {
+      const result = await db.query<ActionInsertRow>(
         `WITH inserted AS (
            INSERT INTO action_items (
              title,
@@ -132,6 +133,7 @@ export class ActionEngine {
 
       if (toBoolean(row.was_inserted)) {
         await this.insertHistory(
+          db,
           row.id,
           'created',
           options.actor ?? 'system',
@@ -212,11 +214,11 @@ export class ActionEngine {
     nextStatus: ActionStatus,
     options: ActionMutationOptions = {}
   ): Promise<ActionItem> {
-    return this.withTransaction(async () => {
-      const currentRow = await this.lockItemById(id);
+    return this.withTransaction(async (db) => {
+      const currentRow = await this.lockItemById(db, id);
       validateTransition(id, currentRow.status, nextStatus);
 
-      const updateResult = await this.db.query<ActionItemRow>(
+      const updateResult = await db.query<ActionItemRow>(
         `UPDATE action_items
          SET status = $2,
              resolved_at = CASE WHEN $2 = 'resolved' THEN now() ELSE NULL END,
@@ -235,6 +237,7 @@ export class ActionEngine {
         nextStatus === 'resolved' ? 'resolved' : nextStatus === 'dropped' ? 'dropped' : 'status_change';
 
       await this.insertHistory(
+        db,
         id,
         eventType,
         options.actor ?? 'system',
@@ -253,8 +256,8 @@ export class ActionEngine {
     return this.updateItemStatus(id, 'resolved', options);
   }
 
-  private async lockItemById(id: number): Promise<ActionItemRow> {
-    const rowResult = await this.db.query<ActionItemRow>(
+  private async lockItemById(db: ActionDb, id: number): Promise<ActionItemRow> {
+    const rowResult = await db.query<ActionItemRow>(
       `SELECT *
        FROM action_items
        WHERE id = $1
@@ -271,22 +274,27 @@ export class ActionEngine {
   }
 
   private async insertHistory(
+    db: ActionDb,
     itemId: number,
     eventType: ActionHistoryEventType,
     actor: string,
     metadata: Record<string, unknown>
   ): Promise<void> {
-    await this.db.query(
+    await db.query(
       `INSERT INTO action_history (item_id, event_type, actor, metadata)
        VALUES ($1, $2, $3, $4::jsonb)`,
       [itemId, eventType, actor, JSON.stringify(metadata)]
     );
   }
 
-  private async withTransaction<T>(fn: () => Promise<T>): Promise<T> {
+  private async withTransaction<T>(fn: (db: ActionDb) => Promise<T>): Promise<T> {
+    if (typeof this.db.transaction === 'function') {
+      return this.db.transaction((txDb) => fn(txDb));
+    }
+
     await this.db.query('BEGIN');
     try {
-      const result = await fn();
+      const result = await fn(this.db);
       await this.db.query('COMMIT');
       return result;
     } catch (error) {

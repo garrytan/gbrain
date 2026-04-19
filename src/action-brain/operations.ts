@@ -13,12 +13,12 @@ interface QueryResult<T> {
 interface QueryableDb {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<QueryResult<T>>;
   exec?: (sql: string) => Promise<unknown>;
+  transaction?: <T>(fn: (txDb: QueryableDb) => Promise<T>) => Promise<T>;
 }
 
 interface PostgresUnsafeConnection {
   unsafe: (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]>;
-  reserve?: () => Promise<PostgresUnsafeConnection>;
-  release?: () => Promise<void>;
+  begin?: <T>(fn: (tx: PostgresUnsafeConnection) => Promise<T>) => Promise<T>;
 }
 
 const STATUS_VALUES = ['open', 'waiting_on', 'in_progress', 'stale', 'resolved', 'dropped'] as const;
@@ -256,17 +256,23 @@ async function resolveActionDb(engine: BrainEngine): Promise<QueryableDb> {
 
   const sql = candidate.sql as PostgresUnsafeConnection | undefined;
   if (sql && typeof sql.unsafe === 'function') {
-    // Use the pool directly (not sql.reserve) to avoid holding a dedicated connection indefinitely.
-    // Each query checks out a connection from the pool and returns it when done.
-    const wrapped: QueryableDb = {
+    const wrap = (conn: PostgresUnsafeConnection): QueryableDb => ({
       query: async <T = Record<string, unknown>>(statement: string, params: unknown[] = []) => {
-        const rows = params.length === 0 ? await sql.unsafe(statement) : await sql.unsafe(statement, params);
+        const rows = params.length === 0 ? await conn.unsafe(statement) : await conn.unsafe(statement, params);
         return { rows: rows as T[] };
       },
       exec: async (statement: string) => {
-        await sql.unsafe(statement);
+        await conn.unsafe(statement);
       },
-    };
+      transaction:
+        typeof conn.begin === 'function'
+          ? async <T>(fn: (txDb: QueryableDb) => Promise<T>) => {
+              return conn.begin(async (tx) => fn(wrap(tx)));
+            }
+          : undefined,
+    });
+
+    const wrapped = wrap(sql);
     postgresDbCache.set(cacheKey, wrapped);
     return wrapped;
   }
