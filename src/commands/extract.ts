@@ -59,12 +59,20 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
   const files: { path: string; relPath: string }[] = [];
   function walk(d: string) {
     for (const entry of readdirSync(d)) {
+      // Skip `.`-prefixed entries (hidden / dotfiles) and `_`-prefixed entries
+      // (user-quarantine convention — e.g. `_pending/` ambient captures) at
+      // BOTH file and directory level. Previously the file-level check
+      // skipped `_foo.md` but the directory recursion still walked into
+      // `_pending/originals/foo.md`, so extract counted quarantined content
+      // that `sync` correctly excluded — "N pages walked" ballooned from 61
+      // to 154 on brains with large `_pending/` trees (issue #202).
       if (entry.startsWith('.')) continue;
+      if (entry.startsWith('_')) continue;
       const full = join(d, entry);
       try {
         if (lstatSync(full).isDirectory()) {
           walk(full);
-        } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
+        } else if (entry.endsWith('.md')) {
           files.push({ path: full, relPath: relative(dir, full) });
         }
       } catch { /* skip unreadable */ }
