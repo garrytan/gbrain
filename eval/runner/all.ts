@@ -24,8 +24,15 @@ interface CategoryRun {
 // One row per benchmark. Headline (Cat 1+2 combined) is the consolidated
 // before/after run on the full 240-page rich-prose corpus. Procedural
 // categories (3, 4, 7, 10, 12) test orthogonal capabilities.
+//
+// v0.10.5 additions:
+//   - Cat 2 Type Accuracy (rich prose): per-link-type accuracy measured
+//     directly on the 240-page corpus. The rich-prose bar for inferLinkType,
+//     distinct from Cat 1's retrieval metrics. Validates extraction regex
+//     work (works_at, advises) and exposes per-type confusion.
 const CATEGORIES = [
   { num: 1, name: 'Before/After PR #188 (240-page rich corpus, relational queries)', script: 'eval/runner/before-after.ts' },
+  { num: 2, name: 'Type Accuracy (per-link-type on rich prose)', script: 'eval/runner/type-accuracy.ts' },
   { num: 3, name: 'Identity Resolution', script: 'eval/runner/identity.ts' },
   { num: 4, name: 'Temporal Queries', script: 'eval/runner/temporal.ts' },
   { num: 7, name: 'Performance / Latency', script: 'eval/runner/perf.ts' },

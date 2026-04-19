@@ -1,0 +1,40 @@
+name: Eval tests
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'eval/**'
+      - 'src/core/link-extraction.ts'
+      - 'src/core/search/**'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'eval/**'
+      - 'src/core/link-extraction.ts'
+      - 'src/core/search/**'
+
+permissions:
+  contents: read
+
+jobs:
+  eval-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: latest
+      - run: bun install
+
+      # Validate the built-in Tier 5 + 5.5 query set.
+      - name: Validate built-in queries
+        run: bun run eval:query:validate
+
+      # Pure-function unit tests — zero API calls, fast.
+      - name: Run eval unit tests
+        run: bun run test:eval
+
+      # Smoke-test the world.html renderer against the committed corpus.
+      - name: Render world.html
+        run: bun run eval:world:render

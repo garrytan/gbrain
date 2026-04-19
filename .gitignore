@@ -12,3 +12,4 @@ supabase/.temp/
 .claude/skills/
 .idea
 eval/reports/
+eval/data/world-v1/world.html
