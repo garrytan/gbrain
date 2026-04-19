@@ -2,15 +2,41 @@
  * Embedding Service
  * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * Default: OpenAI text-embedding-3-large at 1536 dimensions.
+ *
+ * Overrides via environment:
+ *   EMBEDDING_BASE_URL    — custom OpenAI-compatible embeddings endpoint
+ *                           (e.g. http://localhost:1234/v1 for LM Studio,
+ *                            http://localhost:11434/v1 for Ollama)
+ *   EMBEDDING_API_KEY     — API key (defaults to OPENAI_API_KEY or 'local')
+ *   EMBEDDING_MODEL       — model name (default: text-embedding-3-large)
+ *   EMBEDDING_DIMENSIONS  — embedding vector dimension (default: 1536)
+ *   EMBEDDING_SEND_DIMENSIONS — set to '1' only if provider accepts the
+ *                                OpenAI-style `dimensions` request parameter
+ *                                (text-embedding-3-*). Local providers
+ *                                typically reject it. Default: auto — send
+ *                                dimensions only when MODEL starts with
+ *                                "text-embedding-3".
+ *
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-large';
+const DIMENSIONS = Number.parseInt(
+  process.env.EMBEDDING_DIMENSIONS || '1536',
+  10,
+);
+const SEND_DIMENSIONS = (() => {
+  const override = process.env.EMBEDDING_SEND_DIMENSIONS;
+  if (override === '1' || override === 'true') return true;
+  if (override === '0' || override === 'false') return false;
+  // Auto: only OpenAI text-embedding-3-* models support the dimensions param
+  return MODEL.startsWith('text-embedding-3');
+})();
+
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
@@ -21,7 +47,15 @@ let client: OpenAI | null = null;
 
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI();
+    const baseURL = process.env.EMBEDDING_BASE_URL;
+    const apiKey =
+      process.env.EMBEDDING_API_KEY ||
+      process.env.OPENAI_API_KEY ||
+      (baseURL ? 'local' : undefined);
+    client = new OpenAI({
+      ...(baseURL ? { baseURL } : {}),
+      ...(apiKey ? { apiKey } : {}),
+    });
   }
   return client;
 }
@@ -49,11 +83,18 @@ export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
 async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await getClient().embeddings.create({
+      const request: Parameters<
+        ReturnType<typeof getClient>['embeddings']['create']
+      >[0] = {
         model: MODEL,
         input: texts,
-        dimensions: DIMENSIONS,
-      });
+        // Force float encoding. The SDK defaults to base64 which LM Studio
+        // decodes incorrectly (returns 192 floats for a 768-dim vector).
+        // 'float' is the spec-compliant format all providers must accept.
+        encoding_format: 'float',
+        ...(SEND_DIMENSIONS ? { dimensions: DIMENSIONS } : {}),
+      };
+      const response = await getClient().embeddings.create(request);
 
       // Sort by index to maintain order
       const sorted = response.data.sort((a, b) => a.index - b.index);
