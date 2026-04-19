@@ -105,6 +105,52 @@ describe('runEmbed --all (parallel)', () => {
     expect(maxConcurrentEmbedCalls).toBe(1);
   });
 
+  test('creates chunks lazily for pages that have none, then embeds them (--stale)', async () => {
+    // Regression: prior to the ensureChunks refactor, embedAll skipped any
+    // page whose getChunks returned []. Sync/extract never create chunks,
+    // so any page that had never been individually embedded would be stuck
+    // at 0 chunks forever and autopilot would report "0 chunks embedded"
+    // on every cycle. This test catches that regression.
+    const pages = [{
+      slug: 'never-chunked',
+      compiled_truth: 'Hello world. This is the compiled truth.',
+      timeline: '',
+    }];
+    // Stateful mock: upsertChunks actually persists, getChunks reflects it.
+    const store = new Map<string, any[]>();
+    let upsertCalls = 0;
+
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => store.get(slug) ?? [],
+      upsertChunks: async (slug: string, inputs: any[]) => {
+        upsertCalls++;
+        const existing = store.get(slug) ?? [];
+        const byIndex = new Map<number, any>(existing.map(c => [c.chunk_index, c]));
+        for (const inp of inputs) {
+          const prev = byIndex.get(inp.chunk_index);
+          byIndex.set(inp.chunk_index, {
+            ...(prev ?? {}),
+            ...inp,
+            embedded_at: inp.embedding ? '2026-04-19' : (prev?.embedded_at ?? null),
+          });
+        }
+        store.set(slug, Array.from(byIndex.values()).sort((a, b) => a.chunk_index - b.chunk_index));
+      },
+    });
+
+    process.env.GBRAIN_EMBED_CONCURRENCY = '1';
+
+    await runEmbed(engine, ['--stale']);
+
+    // Chunks were created (1st upsert) and then embedded (2nd upsert).
+    expect(upsertCalls).toBe(2);
+    expect(totalEmbedCalls).toBe(1);
+    const finalChunks = store.get('never-chunked') ?? [];
+    expect(finalChunks.length).toBeGreaterThan(0);
+    expect(finalChunks.every((c: any) => c.embedded_at !== null)).toBe(true);
+  });
+
   test('skips pages whose chunks are all already embedded when --stale', async () => {
     const pages = [{ slug: 'fresh' }, { slug: 'stale' }];
     const chunksBySlug = new Map<string, any[]>([

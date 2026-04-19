@@ -1,7 +1,38 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch } from '../core/embedding.ts';
-import type { ChunkInput } from '../core/types.ts';
+import type { Chunk, ChunkInput, Page } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
+
+/**
+ * Return the chunks for a page, creating them on first call.
+ *
+ * Chunks are the unit of embedding. Sync and extract never create them —
+ * chunking happens lazily the first time we try to embed a page.
+ * Without this helper, the `--stale`/`--all` paths would silently skip any
+ * page that had never been individually embedded (getChunks returns [],
+ * filter returns [], page is "skipped, nothing to do"). Autopilot would
+ * then report `0 chunks embedded` forever even with unembedded content.
+ */
+async function ensureChunks(engine: BrainEngine, page: Page): Promise<Chunk[]> {
+  const existing = await engine.getChunks(page.slug);
+  if (existing.length > 0) return existing;
+
+  const inputs: ChunkInput[] = [];
+  if (page.compiled_truth.trim()) {
+    for (const c of chunkText(page.compiled_truth)) {
+      inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
+    }
+  }
+  if (page.timeline.trim()) {
+    for (const c of chunkText(page.timeline)) {
+      inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
+    }
+  }
+  if (inputs.length === 0) return existing; // page has no content to chunk
+
+  await engine.upsertChunks(page.slug, inputs);
+  return engine.getChunks(page.slug);
+}
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -72,26 +103,7 @@ async function embedPage(engine: BrainEngine, slug: string) {
     throw new Error(`Page not found: ${slug}`);
   }
 
-  // Get existing chunks or create new ones
-  let chunks = await engine.getChunks(slug);
-  if (chunks.length === 0) {
-    // Create chunks first
-    const inputs: ChunkInput[] = [];
-    if (page.compiled_truth.trim()) {
-      for (const c of chunkText(page.compiled_truth)) {
-        inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
-      }
-    }
-    if (page.timeline.trim()) {
-      for (const c of chunkText(page.timeline)) {
-        inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
-      }
-    }
-    if (inputs.length > 0) {
-      await engine.upsertChunks(slug, inputs);
-      chunks = await engine.getChunks(slug);
-    }
-  }
+  const chunks = await ensureChunks(engine, page);
 
   // Embed chunks without embeddings
   const toEmbed = chunks.filter(c => !c.embedded_at);
@@ -134,7 +146,7 @@ async function embedAll(engine: BrainEngine, staleOnly: boolean) {
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
 
   async function embedOnePage(page: typeof pages[number]) {
-    const chunks = await engine.getChunks(page.slug);
+    const chunks = await ensureChunks(engine, page);
     const toEmbed = staleOnly
       ? chunks.filter(c => !c.embedded_at)
       : chunks;
