@@ -23,10 +23,30 @@ export interface ExtractCommitmentsOptions {
   client?: AnthropicLike;
   model?: string;
   timeoutMs?: number;
+  retryPolicy?: Partial<ExtractionRetryPolicy>;
+  /**
+   * Optional mutable counter sink used by action_ingest run summaries.
+   * When provided, counters are reset and populated for this extraction run.
+   */
+  runSummary?: ExtractionRunSummary;
   /** The name of the person whose obligations we are tracking (e.g. "Abhinav Bansal"). */
   ownerName?: string;
   /** Known aliases for the owner (e.g. ["Abbhinaav", "Abhi"]). */
   ownerAliases?: string[];
+}
+
+export interface ExtractionRetryPolicy {
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  jitterRatio: number;
+}
+
+export interface ExtractionRunSummary {
+  extraction_attempts: number;
+  extraction_retries: number;
+  extraction_timeout_retries: number;
+  extraction_terminal_failures: number;
 }
 
 export interface QualityGateCase {
@@ -71,6 +91,13 @@ export const SONNET_MODEL = 'claude-sonnet-4-5-20250929';
 const EXTRACTION_TOOL_NAME = 'extract_commitments';
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_THRESHOLD = 0.9;
+const DEFAULT_RETRY_POLICY: Readonly<ExtractionRetryPolicy> = Object.freeze({
+  maxRetries: 3,
+  baseDelayMs: 1_000,
+  maxDelayMs: 30_000,
+  jitterRatio: 0.2,
+});
+const RETRYABLE_ERROR_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN', 'ECONNABORTED', 'ENETUNREACH']);
 
 interface AnthropicLike {
   messages: {
@@ -122,29 +149,68 @@ export async function extractCommitments(
   messages: WhatsAppMessage[],
   options: ExtractCommitmentsOptions = {}
 ): Promise<StructuredCommitment[]> {
+  const { commitments } = await extractCommitmentsWithSummary(messages, options);
+  return commitments;
+}
+
+export async function extractCommitmentsWithSummary(
+  messages: WhatsAppMessage[],
+  options: ExtractCommitmentsOptions = {}
+): Promise<{ commitments: StructuredCommitment[]; runSummary: ExtractionRunSummary }> {
+  const runSummary = options.runSummary ?? createEmptyExtractionRunSummary();
+  resetRunSummary(runSummary);
+
   if (messages.length === 0) {
-    return [];
+    return { commitments: [], runSummary };
   }
 
   const client = options.client ?? getClient();
   const model = options.model ?? HAIKU_MODEL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-
+  const retryPolicy = resolveRetryPolicy(options.retryPolicy);
+  const maxAttempts = retryPolicy.maxRetries + 1;
   const ownerName = options.ownerName ?? null;
   const ownerAliases = options.ownerAliases ?? [];
 
-  try {
-    const response = await withTimeoutSignal(timeoutMs, (signal) =>
-      client.messages.create(buildExtractionRequest(model, messages, ownerName, ownerAliases), { signal })
-    );
-    const rawCommitments = parseCommitmentsFromResponse(response);
-    return normalizeCommitments(rawCommitments);
-  } catch (err) {
-    // Queueing/retry behavior lives in pipeline orchestration; extractor never throws on model failures.
-    // Log so operators can distinguish "no commitments found" from "extraction failed".
-    console.error('[action-brain] Extraction failed:', err instanceof Error ? err.message : String(err));
-    return [];
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    runSummary.extraction_attempts += 1;
+
+    try {
+      const response = await withTimeoutSignal(timeoutMs, (signal) =>
+        client.messages.create(buildExtractionRequest(model, messages, ownerName, ownerAliases), { signal })
+      );
+      const rawCommitments = parseCommitmentsFromResponse(response);
+      return { commitments: normalizeCommitments(rawCommitments), runSummary };
+    } catch (err) {
+      const retryable = isRetryableError(err);
+      const canRetry = retryable && attempt < maxAttempts;
+
+      if (canRetry) {
+        runSummary.extraction_retries += 1;
+        if (isTimeoutLikeError(err)) {
+          runSummary.extraction_timeout_retries += 1;
+        }
+
+        const delayMs = computeRetryDelayMs(attempt, retryPolicy);
+        console.warn(
+          `[action-brain] Extraction transient failure (attempt ${attempt}/${maxAttempts}); retrying in ${delayMs}ms: ${formatError(err)}`
+        );
+        await sleep(delayMs);
+        continue;
+      }
+
+      runSummary.extraction_terminal_failures += 1;
+      // Queueing/retry behavior lives in pipeline orchestration; extractor never throws on model failures.
+      // Log so operators can distinguish "no commitments found" from "extraction failed".
+      console.error(
+        `[action-brain] Extraction failed after ${attempt} attempt(s): ${formatError(err)}`
+      );
+      return { commitments: [], runSummary };
+    }
   }
+
+  runSummary.extraction_terminal_failures += 1;
+  return { commitments: [], runSummary };
 }
 
 export async function runCommitmentQualityGate(
@@ -496,6 +562,167 @@ function normalizeForKey(value: string | null): string {
 
 function isIsoTimestamp(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}T/.test(value);
+}
+
+export function createEmptyExtractionRunSummary(): ExtractionRunSummary {
+  return {
+    extraction_attempts: 0,
+    extraction_retries: 0,
+    extraction_timeout_retries: 0,
+    extraction_terminal_failures: 0,
+  };
+}
+
+function resetRunSummary(summary: ExtractionRunSummary): void {
+  summary.extraction_attempts = 0;
+  summary.extraction_retries = 0;
+  summary.extraction_timeout_retries = 0;
+  summary.extraction_terminal_failures = 0;
+}
+
+function resolveRetryPolicy(override: Partial<ExtractionRetryPolicy> | undefined): ExtractionRetryPolicy {
+  const maxRetries = normalizeNonNegativeInteger(override?.maxRetries, DEFAULT_RETRY_POLICY.maxRetries);
+  const baseDelayMs = normalizePositiveInteger(override?.baseDelayMs, DEFAULT_RETRY_POLICY.baseDelayMs);
+  const maxDelayMs = Math.max(baseDelayMs, normalizePositiveInteger(override?.maxDelayMs, DEFAULT_RETRY_POLICY.maxDelayMs));
+  const jitterRatio = clamp(normalizeFiniteNumber(override?.jitterRatio, DEFAULT_RETRY_POLICY.jitterRatio), 0, 1);
+
+  return { maxRetries, baseDelayMs, maxDelayMs, jitterRatio };
+}
+
+function computeRetryDelayMs(attempt: number, policy: ExtractionRetryPolicy): number {
+  const exponential = policy.baseDelayMs * Math.pow(2, Math.max(attempt - 1, 0));
+  const capped = Math.min(exponential, policy.maxDelayMs);
+
+  if (policy.jitterRatio === 0) {
+    return Math.round(capped);
+  }
+
+  const jitterDelta = capped * policy.jitterRatio;
+  const jittered = capped + (Math.random() * 2 - 1) * jitterDelta;
+  return Math.max(0, Math.min(policy.maxDelayMs, Math.round(jittered)));
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (isTimeoutLikeError(error)) {
+    return true;
+  }
+
+  const status = readErrorStatus(error);
+  if (status !== null) {
+    if (status === 408 || status === 429 || status >= 500) {
+      return true;
+    }
+    if (status >= 400) {
+      return false;
+    }
+  }
+
+  const code = readErrorCode(error);
+  if (code && RETRYABLE_ERROR_CODES.has(code)) {
+    return true;
+  }
+
+  const message = formatError(error).toLowerCase();
+  return (
+    message.includes('rate limit') ||
+    message.includes('temporarily unavailable') ||
+    message.includes('service unavailable') ||
+    message.includes('connection reset') ||
+    message.includes('network error')
+  );
+}
+
+function isTimeoutLikeError(error: unknown): boolean {
+  const name = readErrorName(error).toLowerCase();
+  if (name.includes('abort') || name.includes('timeout')) {
+    return true;
+  }
+
+  const code = readErrorCode(error);
+  if (code === 'ETIMEDOUT') {
+    return true;
+  }
+
+  const message = formatError(error).toLowerCase();
+  return (
+    message.includes('timeout') ||
+    message.includes('timed out') ||
+    message.includes('request aborted') ||
+    message.includes('deadline exceeded')
+  );
+}
+
+function readErrorName(error: unknown): string {
+  if (error instanceof Error) {
+    return error.name;
+  }
+  if (isRecord(error) && typeof error.name === 'string') {
+    return error.name;
+  }
+  return '';
+}
+
+function readErrorCode(error: unknown): string | null {
+  if (!isRecord(error)) {
+    return null;
+  }
+  const code = error.code;
+  return typeof code === 'string' && code.length > 0 ? code : null;
+}
+
+function readErrorStatus(error: unknown): number | null {
+  if (!isRecord(error)) {
+    return null;
+  }
+
+  const direct = normalizeFiniteNumber(error.status, Number.NaN);
+  if (Number.isFinite(direct)) {
+    return Math.trunc(direct);
+  }
+
+  const statusCode = normalizeFiniteNumber(error.statusCode, Number.NaN);
+  if (Number.isFinite(statusCode)) {
+    return Math.trunc(statusCode);
+  }
+
+  const response = error.response;
+  if (isRecord(response)) {
+    const nestedStatus = normalizeFiniteNumber(response.status, Number.NaN);
+    if (Number.isFinite(nestedStatus)) {
+      return Math.trunc(nestedStatus);
+    }
+  }
+
+  return null;
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function normalizeFiniteNumber(value: unknown, fallback: number): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+  const parsed = Math.round(normalizeFiniteNumber(value, fallback));
+  return parsed > 0 ? parsed : fallback;
+}
+
+function normalizeNonNegativeInteger(value: unknown, fallback: number): number {
+  const parsed = Math.round(normalizeFiniteNumber(value, fallback));
+  return parsed >= 0 ? parsed : fallback;
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function withTimeoutSignal<T>(

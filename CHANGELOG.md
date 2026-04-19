@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.13.3] - 2026-04-20
+
+### Added
+
+- **Commitment extraction now retries transient LLM failures instead of dropping the batch.** The action-ingest pipeline previously treated any Anthropic error as fatal: one timeout or 503 meant the message batch was lost and the agent never saw those commitments. Extraction now runs up to 4 attempts with exponential backoff (1s → 2s → 4s, capped at 30s, ±20% jitter), retries only timeout and transient/network-like errors, and short-circuits permanent 4xx responses so broken prompts fail fast. Per-attempt warnings and a terminal error log land in the console, and `action_ingest.run_summary` surfaces retry counters so operators can see when the ceiling is hitting. The deterministic-commitment ingest path emits a zeroed `run_summary` to keep the response shape stable. New tests cover retry success, non-retryable 4xx short-circuit, exhaustion after max retries, and surfaced counters. (GIT-172)
+
 ## [0.13.2] - 2026-04-20
 
 ### Fixed

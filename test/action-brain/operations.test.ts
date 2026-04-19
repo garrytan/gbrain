@@ -118,8 +118,21 @@ describe('Action Brain operation integration', () => {
         source_message_id: 'm2',
       };
 
-      await actionIngest.handler(ctx, { messages, commitments: [commitmentA, commitmentB] });
-      await actionIngest.handler(ctx, { messages, commitments: [commitmentB, commitmentA] });
+      const firstRun = await actionIngest.handler(ctx, { messages, commitments: [commitmentA, commitmentB] });
+      const secondRun = await actionIngest.handler(ctx, { messages, commitments: [commitmentB, commitmentA] });
+
+      expect(firstRun.run_summary).toEqual({
+        extraction_attempts: 0,
+        extraction_retries: 0,
+        extraction_timeout_retries: 0,
+        extraction_terminal_failures: 0,
+      });
+      expect(secondRun.run_summary).toEqual({
+        extraction_attempts: 0,
+        extraction_retries: 0,
+        extraction_timeout_retries: 0,
+        extraction_terminal_failures: 0,
+      });
 
       const rows = await db.query(
         `SELECT source_message_id, title

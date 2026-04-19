@@ -3,7 +3,12 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { Operation } from '../core/operations.ts';
 import { ActionEngine, ActionItemNotFoundError, ActionTransitionError } from './action-engine.ts';
 import { MorningBriefGenerator } from './brief.ts';
-import { extractCommitments, type StructuredCommitment, type WhatsAppMessage } from './extractor.ts';
+import {
+  createEmptyExtractionRunSummary,
+  extractCommitmentsWithSummary,
+  type StructuredCommitment,
+  type WhatsAppMessage,
+} from './extractor.ts';
 import { initActionSchema } from './action-schema.ts';
 
 interface QueryResult<T> {
@@ -165,19 +170,23 @@ export const actionBrainOperations: Operation[] = [
         throw new Error('action_ingest requires messages (or commitments for deterministic ingest).');
       }
 
-      const extracted =
-        providedCommitments.length > 0
-          ? providedCommitments
-          : await extractCommitments(messages, {
-              model: asOptionalNonEmptyString(p.model) ?? undefined,
-              timeoutMs: asOptionalNumber(p.timeout_ms) ?? undefined,
-            });
+      const runSummary = createEmptyExtractionRunSummary();
+      let extracted: StructuredCommitment[] = providedCommitments;
+      if (providedCommitments.length === 0) {
+        const extraction = await extractCommitmentsWithSummary(messages, {
+          model: asOptionalNonEmptyString(p.model) ?? undefined,
+          timeoutMs: asOptionalNumber(p.timeout_ms) ?? undefined,
+          runSummary,
+        });
+        extracted = extraction.commitments;
+      }
 
       if (ctx.dryRun) {
         return {
           dry_run: true,
           extracted_count: extracted.length,
           extracted,
+          run_summary: runSummary,
         };
       }
 
@@ -218,6 +227,7 @@ export const actionBrainOperations: Operation[] = [
       return {
         extracted_count: extracted.length,
         created_count: items.length,
+        run_summary: runSummary,
         items,
       };
     },

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   extractCommitments,
+  extractCommitmentsWithSummary,
   runCommitmentQualityGate,
   HAIKU_MODEL,
   SONNET_MODEL,
@@ -189,9 +190,96 @@ describe('extractCommitments', () => {
     const output = await extractCommitments([message('msg-004', 'please send docs')], {
       client: fakeClient,
       timeoutMs: 10,
+      retryPolicy: { maxRetries: 0 },
     });
 
     expect(output).toEqual([]);
+  });
+
+  test('#26 retries transient timeout failures 3 times with backoff then succeeds', async () => {
+    let attempt = 0;
+    const fakeClient = new FakeAnthropicClient(() => {
+      attempt += 1;
+
+      if (attempt <= 3) {
+        const error = new Error('request timed out');
+        error.name = 'AbortError';
+        throw error;
+      }
+
+      return toolResponse([
+        {
+          who: 'Joe',
+          owes_what: 'Send docs',
+          to_whom: 'Abhi',
+          by_when: null,
+          confidence: 0.9,
+          type: 'commitment',
+        },
+      ]);
+    });
+
+    const { commitments, runSummary } = await extractCommitmentsWithSummary(
+      [message('msg-026', 'Joe will send docs today.')],
+      {
+        client: fakeClient,
+        retryPolicy: {
+          maxRetries: 3,
+          baseDelayMs: 1,
+          maxDelayMs: 10,
+          jitterRatio: 0,
+        },
+      }
+    );
+
+    expect(commitments).toEqual([
+      {
+        who: 'Joe',
+        owes_what: 'Send docs',
+        to_whom: 'Abhi',
+        by_when: null,
+        confidence: 0.9,
+        type: 'commitment',
+        source_message_id: null,
+      },
+    ]);
+    expect(fakeClient.calls.length).toBe(4);
+    expect(runSummary).toEqual({
+      extraction_attempts: 4,
+      extraction_retries: 3,
+      extraction_timeout_retries: 3,
+      extraction_terminal_failures: 0,
+    });
+  });
+
+  test('#27 exposes fail-after-exhaustion summary when all retries timeout', async () => {
+    const fakeClient = new FakeAnthropicClient(() => {
+      const error = new Error('request timed out');
+      error.name = 'AbortError';
+      throw error;
+    });
+
+    const { commitments, runSummary } = await extractCommitmentsWithSummary(
+      [message('msg-027', 'Please send docs.')],
+      {
+        client: fakeClient,
+        retryPolicy: {
+          maxRetries: 3,
+          baseDelayMs: 1,
+          maxDelayMs: 10,
+          jitterRatio: 0,
+        },
+      }
+    );
+
+    expect(commitments).toEqual([]);
+    expect(fakeClient.calls.length).toBe(4);
+    expect(runSummary).toEqual({
+      extraction_attempts: 4,
+      extraction_retries: 3,
+      extraction_timeout_retries: 3,
+      extraction_terminal_failures: 1,
+    });
   });
 
   test('#5 recovers from text JSON output when tool_use block is absent', async () => {
