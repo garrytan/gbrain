@@ -351,6 +351,118 @@ describe('PGLiteEngine: Timeline', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// Batch methods (addLinksBatch / addTimelineEntriesBatch)
+// ─────────────────────────────────────────────────────────────────
+describe('PGLiteEngine: addLinksBatch', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('a', { type: 'concept', title: 'A', compiled_truth: '', timeline: '' });
+    await engine.putPage('b', { type: 'concept', title: 'B', compiled_truth: '', timeline: '' });
+    await engine.putPage('c', { type: 'concept', title: 'C', compiled_truth: '', timeline: '' });
+  });
+
+  test('empty batch returns 0 with no DB call', async () => {
+    expect(await engine.addLinksBatch([])).toBe(0);
+  });
+
+  test('batch of 1 with missing optional fields inserts row with empty defaults', async () => {
+    const inserted = await engine.addLinksBatch([{ from_slug: 'a', to_slug: 'b' }]);
+    expect(inserted).toBe(1);
+    const links = await engine.getLinks('a');
+    expect(links.length).toBe(1);
+    expect(links[0].context).toBe('');
+    expect(links[0].link_type).toBe('');
+  });
+
+  test('within-batch duplicates are deduped via ON CONFLICT (no 21000 error)', async () => {
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'a', to_slug: 'b', link_type: 'mention' },
+      { from_slug: 'a', to_slug: 'b', link_type: 'mention' },
+      { from_slug: 'a', to_slug: 'c', link_type: 'mention' },
+    ]);
+    expect(inserted).toBe(2);
+  });
+
+  test('rows with missing slug are silently dropped by JOIN', async () => {
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'doesnt-exist', to_slug: 'b' },
+      { from_slug: 'a', to_slug: 'b' },
+    ]);
+    expect(inserted).toBe(1);
+  });
+
+  test('half-existing batch returns count of new only', async () => {
+    await engine.addLink('a', 'b', '', 'mention');
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'a', to_slug: 'b', link_type: 'mention' },
+      { from_slug: 'a', to_slug: 'c', link_type: 'mention' },
+    ]);
+    expect(inserted).toBe(1);
+  });
+
+  test('batch of 100 fresh rows returns 100', async () => {
+    // Create 100 target pages
+    for (let i = 0; i < 100; i++) {
+      await engine.putPage(`target/${i}`, { type: 'concept', title: `T${i}`, compiled_truth: '', timeline: '' });
+    }
+    const batch = Array.from({ length: 100 }, (_, i) => ({
+      from_slug: 'a', to_slug: `target/${i}`, link_type: 'mention',
+    }));
+    expect(await engine.addLinksBatch(batch)).toBe(100);
+  });
+});
+
+describe('PGLiteEngine: addTimelineEntriesBatch', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('p1', { type: 'concept', title: 'P1', compiled_truth: '', timeline: '' });
+    await engine.putPage('p2', { type: 'concept', title: 'P2', compiled_truth: '', timeline: '' });
+  });
+
+  test('empty batch returns 0', async () => {
+    expect(await engine.addTimelineEntriesBatch([])).toBe(0);
+  });
+
+  test('batch of 1 with missing optionals inserts with empty defaults', async () => {
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'p1', date: '2024-01-15', summary: 'Founded' },
+    ]);
+    expect(inserted).toBe(1);
+    const entries = await engine.getTimeline('p1');
+    expect(entries.length).toBe(1);
+    expect(entries[0].source).toBe('');
+    expect(entries[0].detail).toBe('');
+  });
+
+  test('within-batch duplicates are deduped via ON CONFLICT', async () => {
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'p1', date: '2024-01-15', summary: 'Founded' },
+      { slug: 'p1', date: '2024-01-15', summary: 'Founded' },
+      { slug: 'p1', date: '2024-02-01', summary: 'Launched' },
+    ]);
+    expect(inserted).toBe(2);
+  });
+
+  test('rows with missing slug are silently dropped by JOIN', async () => {
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'no-such-page', date: '2024-01-15', summary: 'Phantom' },
+      { slug: 'p1', date: '2024-01-15', summary: 'Real' },
+    ]);
+    expect(inserted).toBe(1);
+  });
+
+  test('mix of new + existing returns count of new only', async () => {
+    await engine.addTimelineEntry('p1', { date: '2024-01-15', summary: 'Founded' });
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'p1', date: '2024-01-15', summary: 'Founded' },
+      { slug: 'p1', date: '2024-02-01', summary: 'Launched' },
+      { slug: 'p2', date: '2024-03-01', summary: 'Spun off' },
+    ]);
+    expect(inserted).toBe(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
 // Raw Data, Versions, Config, IngestLog
 // ─────────────────────────────────────────────────────────────────
 describe('PGLiteEngine: RawData', () => {

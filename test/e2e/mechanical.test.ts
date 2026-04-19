@@ -347,6 +347,136 @@ describeE2E('E2E: Timeline', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// Batch methods (addLinksBatch / addTimelineEntriesBatch)
+// ─────────────────────────────────────────────────────────────────
+//
+// Postgres-engine batch methods use postgres-js's sql(rows, 'col1', ...) helper,
+// which is structurally different from PGLite's manual $N placeholder construction
+// (covered in test/pglite-engine.test.ts). These tests verify the postgres-js code
+// path against a real Postgres against the same invariants.
+
+describeE2E('E2E: addLinksBatch (postgres-engine)', () => {
+  beforeAll(async () => {
+    await setupDB();
+    await importFixtures();
+  });
+  afterAll(teardownDB);
+
+  test('empty batch returns 0 with no DB call', async () => {
+    const engine = getEngine();
+    expect(await engine.addLinksBatch([])).toBe(0);
+  });
+
+  test('within-batch duplicates dedup via ON CONFLICT (no 21000 cardinality error)', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    // Deterministic cleanup so re-runs aren't perturbed by prior fixture state.
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-dup'`;
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind', link_type: 'e2e-batch-dup' },
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind', link_type: 'e2e-batch-dup' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-dup'`;
+  });
+
+  test('rows with missing slug silently dropped by JOIN', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-missing'`;
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'people/does-not-exist', to_slug: 'companies/novamind', link_type: 'e2e-batch-missing' },
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind', link_type: 'e2e-batch-missing' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-missing'`;
+  });
+
+  test('half-existing batch returns count of new only', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-half'`;
+    await engine.addLink('people/sarah-chen', 'companies/novamind', 'pre-existing', 'e2e-batch-half');
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind', link_type: 'e2e-batch-half' },
+      { from_slug: 'people/sarah-chen', to_slug: 'people/marcus-reid', link_type: 'e2e-batch-half' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-half'`;
+  });
+
+  test('missing optional fields normalize to empty strings (NOT NULL safety)', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM links WHERE link_type = ''`;
+    // No link_type, no context — must default to '' to satisfy NOT NULL.
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind' },
+    ]);
+    expect(inserted).toBe(1);
+    const rows = await conn`
+      SELECT link_type, context FROM links
+      WHERE from_page_id = (SELECT id FROM pages WHERE slug = 'people/sarah-chen')
+        AND to_page_id = (SELECT id FROM pages WHERE slug = 'companies/novamind')
+        AND link_type = ''
+    `;
+    expect(rows.length).toBe(1);
+    expect(rows[0].context).toBe('');
+    await conn`DELETE FROM links WHERE link_type = ''`;
+  });
+});
+
+describeE2E('E2E: addTimelineEntriesBatch (postgres-engine)', () => {
+  beforeAll(async () => {
+    await setupDB();
+    await importFixtures();
+  });
+  afterAll(teardownDB);
+
+  test('empty batch returns 0', async () => {
+    const engine = getEngine();
+    expect(await engine.addTimelineEntriesBatch([])).toBe(0);
+  });
+
+  test('within-batch duplicates dedup via ON CONFLICT', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM timeline_entries WHERE summary = 'e2e-batch-tl-dup'`;
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'people/sarah-chen', date: '2025-05-01', summary: 'e2e-batch-tl-dup' },
+      { slug: 'people/sarah-chen', date: '2025-05-01', summary: 'e2e-batch-tl-dup' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM timeline_entries WHERE summary = 'e2e-batch-tl-dup'`;
+  });
+
+  test('rows with missing slug silently dropped by JOIN', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM timeline_entries WHERE summary = 'e2e-batch-tl-missing'`;
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'people/no-such-page', date: '2025-05-02', summary: 'e2e-batch-tl-missing' },
+      { slug: 'people/sarah-chen', date: '2025-05-02', summary: 'e2e-batch-tl-missing' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM timeline_entries WHERE summary = 'e2e-batch-tl-missing'`;
+  });
+
+  test('mix of new + existing returns count of new only', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM timeline_entries WHERE summary IN ('e2e-batch-tl-half-1', 'e2e-batch-tl-half-2')`;
+    await engine.addTimelineEntry('people/sarah-chen', { date: '2025-05-03', summary: 'e2e-batch-tl-half-1' });
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'people/sarah-chen', date: '2025-05-03', summary: 'e2e-batch-tl-half-1' },
+      { slug: 'people/sarah-chen', date: '2025-05-04', summary: 'e2e-batch-tl-half-2' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM timeline_entries WHERE summary IN ('e2e-batch-tl-half-1', 'e2e-batch-tl-half-2')`;
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
 // Versions
 // ─────────────────────────────────────────────────────────────────
 

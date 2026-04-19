@@ -536,6 +536,8 @@ ADMIN
   gbrain integrations                   Integration recipe dashboard
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
+  gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)
+  gbrain orphans [--json] [--count]     Find pages with zero inbound wikilinks
   gbrain transcribe <audio>             Transcribe audio (Groq Whisper)
   gbrain research init <name>           Scaffold a data-research recipe
   gbrain research list                  Show available recipes

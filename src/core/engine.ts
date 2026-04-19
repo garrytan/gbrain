@@ -11,6 +11,23 @@ import type {
   EngineConfig,
 } from './types.ts';
 
+/** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
+export interface LinkBatchInput {
+  from_slug: string;
+  to_slug: string;
+  link_type?: string;
+  context?: string;
+}
+
+/** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
+export interface TimelineBatchInput {
+  slug: string;
+  date: string;
+  source?: string;
+  summary: string;
+  detail?: string;
+}
+
 /** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */
 export const MAX_SEARCH_LIMIT = 100;
 
@@ -53,6 +70,13 @@ export interface BrainEngine {
 
   // Links
   addLink(from: string, to: string, context?: string, linkType?: string): Promise<void>;
+  /**
+   * Bulk insert links via a single multi-row INSERT...SELECT FROM (VALUES) JOIN pages
+   * statement with ON CONFLICT DO NOTHING. Returns the count of rows actually inserted
+   * (RETURNING clause excludes conflicts and JOIN-dropped rows whose slugs don't exist).
+   * Used by extract.ts to avoid 47K sequential round-trips on large brains.
+   */
+  addLinksBatch(links: LinkBatchInput[]): Promise<number>;
   /**
    * Remove links from `from` to `to`. If linkType is provided, only that specific
    * (from, to, type) row is removed. If omitted, ALL link types between the pair
@@ -98,6 +122,13 @@ export interface BrainEngine {
     entry: TimelineInput,
     opts?: { skipExistenceCheck?: boolean },
   ): Promise<void>;
+  /**
+   * Bulk insert timeline entries via a single multi-row INSERT...SELECT FROM (VALUES)
+   * JOIN pages statement with ON CONFLICT DO NOTHING. Returns the count of rows
+   * actually inserted (RETURNING excludes conflicts and JOIN-dropped rows whose
+   * slugs don't exist). Used by extract.ts to avoid sequential round-trips.
+   */
+  addTimelineEntriesBatch(entries: TimelineBatchInput[]): Promise<number>;
   getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]>;
 
   // Raw data

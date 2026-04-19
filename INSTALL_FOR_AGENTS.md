@@ -127,7 +127,7 @@ Verify: `gbrain integrations doctor` (after at least one is configured)
 
 ## Step 9: Verify
 
-Read `docs/GBRAIN_VERIFY.md` and run all 6 verification checks. Check #4 (live sync
+Read `docs/GBRAIN_VERIFY.md` and run all 7 verification checks. Check #4 (live sync
 actually works) is the most important.
 
 ## Upgrade
@@ -145,3 +145,10 @@ this is how features ship in the binary but stay dormant in the user's brain.
 For v0.12.0+ specifically: if your brain was created before v0.12.0, run
 `gbrain extract links --source db && gbrain extract timeline --source db` to
 backfill the new graph layer (see Step 4.5 above).
+
+For v0.12.2+ specifically: if your brain is Postgres- or Supabase-backed and
+predates v0.12.2, the `v0_12_2` migration runs `gbrain repair-jsonb`
+automatically during `gbrain post-upgrade` to fix the double-encoded JSONB
+columns. PGLite brains no-op. If wiki-style imports were truncated by the old
+`splitBody` bug, run `gbrain sync --full` after upgrading to rebuild
+`compiled_truth` from source markdown.

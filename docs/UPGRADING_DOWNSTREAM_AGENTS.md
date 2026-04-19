@@ -177,6 +177,74 @@ Timeline entries still need explicit `gbrain timeline-add` calls.
    ```
    Should return an indented tree of typed edges.
 
+---
+
+## v0.12.2 hotfix (data-correctness, no skill edits)
+
+v0.12.2 is a Postgres data-correctness hotfix. No forked skill files need to
+change — the skill contracts are unchanged. But you DO need to run the migration,
+and you should know about one behavior change in markdown parsing.
+
+### 1. Run the migration (Postgres-backed brains)
+
+```bash
+gbrain upgrade
+```
+
+The `v0_12_2` orchestrator runs `gbrain repair-jsonb` automatically. It rewrites
+rows where `jsonb_typeof = 'string'` across `pages.frontmatter`, `raw_data.data`,
+`ingest_log.pages_updated`, `files.metadata`, and `page_versions.frontmatter`.
+Idempotent, safe to re-run. PGLite brains no-op cleanly.
+
+Verify after upgrade:
+
+```bash
+gbrain repair-jsonb --dry-run --json    # expect totalRepaired: 0
+```
+
+### 2. Recover any truncated wiki articles
+
+If your brain imported wiki-style markdown before v0.12.2, some pages were
+silently truncated (any standalone `---` in body content was treated as a
+timeline separator). Re-import from source:
+
+```bash
+gbrain sync --full
+```
+
+The new `splitBody` rebuilds `compiled_truth` correctly.
+
+### 3. Know the splitBody contract going forward
+
+`splitBody` now requires an explicit timeline sentinel. Recognized markers
+(priority order):
+
+1. `<!-- timeline -->` (preferred — what `serializeMarkdown` emits)
+2. `--- timeline ---` (decorated separator)
+3. `---` directly before `## Timeline` or `## History` heading (backward-compat)
+
+A bare `---` in body text is now a markdown horizontal rule, not a timeline
+separator. If your agent writes pages with a bare `---` delimiter, migrate to
+`<!-- timeline -->` — the `serializeMarkdown` helper already does this.
+
+### 4. Wiki subtypes now auto-typed
+
+`inferType` now auto-detects five additional directory patterns as their own
+page types (previously they all defaulted to `concept`):
+
+| Path pattern           | New type       |
+|------------------------|----------------|
+| `/wiki/analysis/`      | `analysis`     |
+| `/wiki/guides/`        | `guide`        |
+| `/wiki/hardware/`      | `hardware`     |
+| `/wiki/architecture/`  | `architecture` |
+| `/writing/`            | `writing`      |
+
+If your skills or queries filter by `type=concept` and expect wiki content in
+that bucket, update them to include the new types.
+
+---
+
 ## Future versions
 
 When gbrain ships a new version, this doc will be updated with the diffs for that

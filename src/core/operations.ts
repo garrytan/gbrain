@@ -1094,6 +1094,24 @@ const send_job_message: Operation = {
   },
 };
 
+// --- Orphans ---
+
+const find_orphans: Operation = {
+  name: 'find_orphans',
+  description: 'Find pages with no inbound wikilinks. Essential for content enrichment cycles.',
+  params: {
+    include_pseudo: {
+      type: 'boolean',
+      description: 'Include auto-generated and pseudo pages (default: false)',
+    },
+  },
+  handler: async (_ctx, p) => {
+    const { findOrphans } = await import('../commands/orphans.ts');
+    return findOrphans((p.include_pseudo as boolean) || false);
+  },
+  cliHints: { name: 'orphans', hidden: true },
+};
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -1122,6 +1140,8 @@ export const operations: Operation[] = [
   // Jobs (Minions)
   submit_job, get_job, list_jobs, cancel_job, retry_job, get_job_progress,
   pause_job, resume_job, replay_job, send_job_message,
+  // Orphans
+  find_orphans,
 ];
 
 export const operationsByName = Object.fromEntries(

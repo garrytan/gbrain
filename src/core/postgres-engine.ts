@@ -1,5 +1,5 @@
 import postgres from 'postgres';
-import type { BrainEngine } from './engine.ts';
+import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
@@ -17,7 +17,7 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
 
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
@@ -104,7 +104,7 @@ export class PostgresEngine implements BrainEngine {
 
     const rows = await sql`
       INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${JSON.stringify(frontmatter)}::jsonb, ${hash}, now())
+      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter)}, ${hash}, now())
       ON CONFLICT (slug) DO UPDATE SET
         type = EXCLUDED.type,
         title = EXCLUDED.title,
@@ -229,11 +229,17 @@ export class PostgresEngine implements BrainEngine {
     const detailLow = opts?.detail === 'low';
 
     // Search-only timeout: prevents DoS via expensive queries without
-    // affecting long-running operations like embed --all or bulk import
-    await sql`SET statement_timeout = '8s'`;
-    try {
+    // affecting long-running operations like embed --all or bulk import.
+    // SET LOCAL inside sql.begin() scopes the GUC to the transaction so
+    // it can never leak onto a pooled connection returned to other
+    // callers. A bare `SET statement_timeout` goes to an arbitrary
+    // connection from the pool, lives past this method, and either
+    // clips an unrelated caller's long-running query (DoS) or — via
+    // `SET statement_timeout = 0` — disables the guard for them.
+    const rows = await sql.begin(async sql => {
+      await sql`SET LOCAL statement_timeout = '8s'`;
       // CTE: rank pages by FTS score, then pick the best chunk per page in SQL
-      const rows = await sql`
+      return await sql`
         WITH ranked_pages AS (
           SELECT p.id, p.slug, p.title, p.type,
             ts_rank(p.search_vector, websearch_to_tsquery('english', ${query})) AS score
@@ -259,10 +265,8 @@ export class PostgresEngine implements BrainEngine {
         FROM best_chunks
         ORDER BY score DESC
       `;
-      return rows.map(rowToSearchResult);
-    } finally {
-      await sql`SET statement_timeout = '0'`;
-    }
+    });
+    return rows.map(rowToSearchResult);
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
@@ -279,10 +283,12 @@ export class PostgresEngine implements BrainEngine {
 
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
 
-    // Search-only timeout (see searchKeyword for rationale)
-    await sql`SET statement_timeout = '8s'`;
-    try {
-      const rows = await sql`
+    // Search-only timeout (see searchKeyword for rationale). SET LOCAL +
+    // sql.begin ensures the GUC stays transaction-scoped on the pooled
+    // connection.
+    const rows = await sql.begin(async sql => {
+      await sql`SET LOCAL statement_timeout = '8s'`;
+      return await sql`
         SELECT
           p.slug, p.id as page_id, p.title, p.type,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
@@ -298,10 +304,8 @@ export class PostgresEngine implements BrainEngine {
         LIMIT ${limit}
         OFFSET ${offset}
       `;
-      return rows.map(rowToSearchResult);
-    } finally {
-      await sql`SET statement_timeout = '0'`;
-    }
+    });
+    return rows.map(rowToSearchResult);
   }
 
   async getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>> {
@@ -313,7 +317,8 @@ export class PostgresEngine implements BrainEngine {
     `;
     const result = new Map<number, Float32Array>();
     for (const row of rows) {
-      if (row.embedding) result.set(row.id as number, row.embedding as Float32Array);
+      const embedding = tryParseEmbedding(row.embedding);
+      if (embedding) result.set(row.id as number, embedding);
     }
     return result;
   }
@@ -411,6 +416,30 @@ export class PostgresEngine implements BrainEngine {
       ON CONFLICT (from_page_id, to_page_id, link_type) DO UPDATE SET
         context = EXCLUDED.context
     `;
+  }
+
+  async addLinksBatch(links: LinkBatchInput[]): Promise<number> {
+    if (links.length === 0) return 0;
+    const sql = this.sql;
+    // unnest() pattern: 4 array-typed bound parameters regardless of batch size.
+    // Avoids the 65535-parameter cap and the postgres-js sql(rows, ...) helper's
+    // identifier-escape gotcha when used inside a (VALUES) subquery.
+    const fromSlugs = links.map(l => l.from_slug);
+    const toSlugs = links.map(l => l.to_slug);
+    // Normalize optional fields to '' to match per-row addLink + NOT NULL DDL.
+    const linkTypes = links.map(l => l.link_type || '');
+    const contexts = links.map(l => l.context || '');
+    const result = await sql`
+      INSERT INTO links (from_page_id, to_page_id, link_type, context)
+      SELECT f.id, t.id, v.link_type, v.context
+      FROM unnest(${fromSlugs}::text[], ${toSlugs}::text[], ${linkTypes}::text[], ${contexts}::text[])
+        AS v(from_slug, to_slug, link_type, context)
+      JOIN pages f ON f.slug = v.from_slug
+      JOIN pages t ON t.slug = v.to_slug
+      ON CONFLICT (from_page_id, to_page_id, link_type) DO NOTHING
+      RETURNING 1
+    `;
+    return result.length;
   }
 
   async removeLink(from: string, to: string, linkType?: string): Promise<void> {
@@ -670,6 +699,28 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
+  async addTimelineEntriesBatch(entries: TimelineBatchInput[]): Promise<number> {
+    if (entries.length === 0) return 0;
+    const sql = this.sql;
+    // unnest() pattern: 5 array-typed bound parameters regardless of batch size.
+    const slugs = entries.map(e => e.slug);
+    const dates = entries.map(e => e.date);
+    // Normalize optional fields to '' to match per-row addTimelineEntry + NOT NULL DDL.
+    const sources = entries.map(e => e.source || '');
+    const summaries = entries.map(e => e.summary);
+    const details = entries.map(e => e.detail || '');
+    const result = await sql`
+      INSERT INTO timeline_entries (page_id, date, source, summary, detail)
+      SELECT p.id, v.date::date, v.source, v.summary, v.detail
+      FROM unnest(${slugs}::text[], ${dates}::text[], ${sources}::text[], ${summaries}::text[], ${details}::text[])
+        AS v(slug, date, source, summary, detail)
+      JOIN pages p ON p.slug = v.slug
+      ON CONFLICT (page_id, date, summary) DO NOTHING
+      RETURNING 1
+    `;
+    return result.length;
+  }
+
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
     const sql = this.sql;
     const limit = opts?.limit || 100;
@@ -706,7 +757,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const result = await sql`
       INSERT INTO raw_data (page_id, source, data)
-      SELECT id, ${source}, ${JSON.stringify(data)}::jsonb
+      SELECT id, ${source}, ${sql.json(data as Record<string, unknown>)}
       FROM pages WHERE slug = ${slug}
       ON CONFLICT (page_id, source) DO UPDATE SET
         data = EXCLUDED.data,
@@ -884,7 +935,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     await sql`
       INSERT INTO ingest_log (source_type, source_ref, pages_updated, summary)
-      VALUES (${entry.source_type}, ${entry.source_ref}, ${JSON.stringify(entry.pages_updated)}::jsonb, ${entry.summary})
+      VALUES (${entry.source_type}, ${entry.source_ref}, ${sql.json(entry.pages_updated)}, ${entry.summary})
     `;
   }
 

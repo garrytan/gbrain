@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
-import type { BrainEngine } from './engine.ts';
+import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
@@ -385,6 +385,29 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
+  async addLinksBatch(links: LinkBatchInput[]): Promise<number> {
+    if (links.length === 0) return 0;
+    // unnest() pattern: 4 array-typed bound parameters regardless of batch size.
+    // Same shape as PostgresEngine. Avoids the 65535-parameter cap entirely.
+    const fromSlugs = links.map(l => l.from_slug);
+    const toSlugs = links.map(l => l.to_slug);
+    // Normalize optional fields to '' to match per-row addLink + NOT NULL DDL.
+    const linkTypes = links.map(l => l.link_type || '');
+    const contexts = links.map(l => l.context || '');
+    const result = await this.db.query(
+      `INSERT INTO links (from_page_id, to_page_id, link_type, context)
+       SELECT f.id, t.id, v.link_type, v.context
+       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[])
+         AS v(from_slug, to_slug, link_type, context)
+       JOIN pages f ON f.slug = v.from_slug
+       JOIN pages t ON t.slug = v.to_slug
+       ON CONFLICT (from_page_id, to_page_id, link_type) DO NOTHING
+       RETURNING 1`,
+      [fromSlugs, toSlugs, linkTypes, contexts]
+    );
+    return result.rows.length;
+  }
+
   async removeLink(from: string, to: string, linkType?: string): Promise<void> {
     if (linkType !== undefined) {
       await this.db.query(
@@ -643,6 +666,28 @@ export class PGLiteEngine implements BrainEngine {
        ON CONFLICT (page_id, date, summary) DO NOTHING`,
       [slug, entry.date, entry.source || '', entry.summary, entry.detail || '']
     );
+  }
+
+  async addTimelineEntriesBatch(entries: TimelineBatchInput[]): Promise<number> {
+    if (entries.length === 0) return 0;
+    // unnest() pattern: 5 array-typed bound parameters regardless of batch size.
+    const slugs = entries.map(e => e.slug);
+    const dates = entries.map(e => e.date);
+    // Normalize optional fields to '' to match per-row addTimelineEntry + NOT NULL DDL.
+    const sources = entries.map(e => e.source || '');
+    const summaries = entries.map(e => e.summary);
+    const details = entries.map(e => e.detail || '');
+    const result = await this.db.query(
+      `INSERT INTO timeline_entries (page_id, date, source, summary, detail)
+       SELECT p.id, v.date::date, v.source, v.summary, v.detail
+       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
+         AS v(slug, date, source, summary, detail)
+       JOIN pages p ON p.slug = v.slug
+       ON CONFLICT (page_id, date, summary) DO NOTHING
+       RETURNING 1`,
+      [slugs, dates, sources, summaries, details]
+    );
+    return result.rows.length;
   }
 
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {

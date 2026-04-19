@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { parseMarkdown, serializeMarkdown, splitBody } from '../src/core/markdown.ts';
 
 describe('Markdown Parser', () => {
-  test('parses frontmatter + compiled_truth + timeline', () => {
+  test('parses frontmatter + compiled_truth + timeline (explicit sentinel)', () => {
     const md = `---
 type: concept
 title: Do Things That Don't Scale
@@ -11,7 +11,7 @@ tags: [startups, growth]
 
 Paul Graham argues that startups should do unscalable things early on.
 
----
+<!-- timeline -->
 
 - 2013-07-01: Published on paulgraham.com
 - 2024-11-15: Referenced in batch kickoff talk
@@ -90,30 +90,75 @@ Content
 });
 
 describe('splitBody', () => {
-  test('splits at first standalone ---', () => {
-    const body = 'Above the line\n\n---\n\nBelow the line';
+  test('splits at <!-- timeline --> sentinel', () => {
+    const body = 'Above the line\n\n<!-- timeline -->\n\nBelow the line';
     const { compiled_truth, timeline } = splitBody(body);
     expect(compiled_truth).toContain('Above the line');
     expect(timeline).toContain('Below the line');
   });
 
-  test('returns all as compiled_truth if no separator', () => {
+  test('splits at --- timeline --- sentinel', () => {
+    const body = 'Above the line\n\n--- timeline ---\n\nBelow the line';
+    const { compiled_truth, timeline } = splitBody(body);
+    expect(compiled_truth).toContain('Above the line');
+    expect(timeline).toContain('Below the line');
+  });
+
+  test('splits at --- when followed by ## Timeline heading', () => {
+    const body = 'Article content\n\n---\n\n## Timeline\n\n- 2024: Event happened';
+    const { compiled_truth, timeline } = splitBody(body);
+    expect(compiled_truth).toContain('Article content');
+    expect(timeline).toContain('## Timeline');
+    expect(timeline).toContain('Event happened');
+  });
+
+  test('splits at --- when followed by ## History heading', () => {
+    const body = 'Article content\n\n---\n\n## History\n\n- 2020: Founded';
+    const { compiled_truth, timeline } = splitBody(body);
+    expect(compiled_truth).toContain('Article content');
+    expect(timeline).toContain('## History');
+  });
+
+  test('does NOT split at plain --- (horizontal rule in article body)', () => {
+    const body = 'Above the line\n\n---\n\nBelow the line';
+    const { compiled_truth, timeline } = splitBody(body);
+    expect(compiled_truth).toBe(body);
+    expect(timeline).toBe('');
+  });
+
+  test('does NOT split on multiple plain --- horizontal rules', () => {
+    const body = 'Section 1\n\n---\n\nSection 2\n\n---\n\nSection 3';
+    const { compiled_truth, timeline } = splitBody(body);
+    expect(compiled_truth).toBe(body);
+    expect(timeline).toBe('');
+  });
+
+  test('returns all as compiled_truth if no sentinel', () => {
     const body = 'Just some content\nWith multiple lines';
     const { compiled_truth, timeline } = splitBody(body);
     expect(compiled_truth).toBe(body);
     expect(timeline).toBe('');
   });
 
-  test('handles --- at end of content', () => {
+  test('plain --- at end of content stays in compiled_truth', () => {
     const body = 'Content here\n\n---\n';
     const { compiled_truth, timeline } = splitBody(body);
-    expect(compiled_truth).toContain('Content here');
-    expect(timeline.trim()).toBe('');
+    expect(compiled_truth).toBe(body);
+    expect(timeline).toBe('');
+  });
+
+  test('<!-- timeline --> with content before and after', () => {
+    const body = '## Summary\n\nArticle summary here.\n\n---\n\nMore body content.\n\n<!-- timeline -->\n\n- 2024: Timeline entry';
+    const { compiled_truth, timeline } = splitBody(body);
+    expect(compiled_truth).toContain('## Summary');
+    expect(compiled_truth).toContain('More body content.');
+    expect(compiled_truth).not.toContain('Timeline entry');
+    expect(timeline).toContain('Timeline entry');
   });
 });
 
 describe('serializeMarkdown', () => {
-  test('round-trips through parse and serialize', () => {
+  test('round-trips through parse and serialize (explicit sentinel)', () => {
     const original = `---
 type: concept
 title: Do Things That Don't Scale
@@ -125,7 +170,7 @@ custom: value
 
 Paul Graham argues that startups should do unscalable things early on.
 
----
+<!-- timeline -->
 
 - 2013-07-01: Published on paulgraham.com
 `;
@@ -148,7 +193,7 @@ Paul Graham argues that startups should do unscalable things early on.
 });
 
 describe('parseMarkdown edge cases', () => {
-  test('handles content with multiple --- separators', () => {
+  test('does NOT split on plain --- separators (horizontal rules stay in compiled_truth)', () => {
     const md = `---
 type: concept
 title: Test
@@ -158,16 +203,38 @@ First section.
 
 ---
 
-Timeline part 1.
+Second section.
 
 ---
 
-More timeline.`;
+Third section.`;
     const parsed = parseMarkdown(md);
-    // Only splits at the FIRST standalone ---
-    expect(parsed.compiled_truth.trim()).toBe('First section.');
-    expect(parsed.timeline).toContain('Timeline part 1.');
-    expect(parsed.timeline).toContain('More timeline.');
+    expect(parsed.compiled_truth).toContain('First section.');
+    expect(parsed.compiled_truth).toContain('Second section.');
+    expect(parsed.compiled_truth).toContain('Third section.');
+    expect(parsed.timeline).toBe('');
+  });
+
+  test('splits on <!-- timeline --> sentinel with horizontal rules in body', () => {
+    const md = `---
+type: concept
+title: Test
+---
+
+First section.
+
+---
+
+Second section.
+
+<!-- timeline -->
+
+- 2024: Timeline entry`;
+    const parsed = parseMarkdown(md);
+    expect(parsed.compiled_truth).toContain('First section.');
+    expect(parsed.compiled_truth).toContain('Second section.');
+    expect(parsed.compiled_truth).not.toContain('Timeline entry');
+    expect(parsed.timeline).toContain('Timeline entry');
   });
 
   test('handles frontmatter without type or title', () => {
@@ -177,7 +244,7 @@ custom_field: hello
 
 Some content.`;
     const parsed = parseMarkdown(md);
-    expect(parsed.type).toBeTruthy(); // should have a default
+    expect(parsed.type).toBeTruthy();
     expect(parsed.compiled_truth.trim()).toBe('Some content.');
     expect(parsed.frontmatter.custom_field).toBe('hello');
   });
@@ -198,5 +265,20 @@ Some content.`;
     expect(parseMarkdown('', 'people/someone.md').type).toBe('person');
     expect(parseMarkdown('', 'concepts/thing.md').type).toBe('concept');
     expect(parseMarkdown('', 'companies/acme.md').type).toBe('company');
+  });
+
+  test('infers type from wiki subdirectory paths', () => {
+    expect(parseMarkdown('', 'tech/wiki/concepts/longevity-science.md').type).toBe('concept');
+    expect(parseMarkdown('', 'tech/wiki/guides/team-os-claude-code.md').type).toBe('guide');
+    expect(parseMarkdown('', 'tech/wiki/analysis/agi-timeline-debate.md').type).toBe('analysis');
+    expect(parseMarkdown('', 'tech/wiki/hardware/h100-vs-gb200-training-benchmarks.md').type).toBe('hardware');
+    expect(parseMarkdown('', 'tech/wiki/architecture/kb-infrastructure.md').type).toBe('architecture');
+    expect(parseMarkdown('', 'finance/wiki/analysis/polymarket-bot-automation-thesis.md').type).toBe('analysis');
+    expect(parseMarkdown('', 'personal/wiki/concepts/career-regrets-2026-framework.md').type).toBe('concept');
+  });
+
+  test('infers writing type from /writing/ paths', () => {
+    expect(parseMarkdown('', 'writing/post.md').type).toBe('writing');
+    expect(parseMarkdown('', 'projects/blog/writing/essay.md').type).toBe('writing');
   });
 });
