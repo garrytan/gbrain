@@ -1,0 +1,32 @@
+# pareen-brain — gbrain remote MCP on fly.io
+# Region: lhr (London). Adjust if you redeploy elsewhere.
+app = "pareen-brain"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  NOTES_DIR = "/notes"
+  SYNC_INTERVAL = "300"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Always-on so the autopilot sync loop keeps running. Auto-stop would pause
+  # ingestion when no MCP requests come in.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
