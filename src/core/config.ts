@@ -13,6 +13,8 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  embedding_provider?: 'openai' | 'gemini';
+  embedding_dimensions?: number;
 }
 
 /**
@@ -41,8 +43,16 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
-  };
-  return merged as GBrainConfig;
+  } as GBrainConfig;
+
+  if (merged.embedding_provider && !process.env.GBRAIN_EMBEDDING_PROVIDER) {
+    process.env.GBRAIN_EMBEDDING_PROVIDER = merged.embedding_provider;
+  }
+  if (merged.embedding_dimensions && !process.env.GBRAIN_EMBEDDING_DIMENSIONS) {
+    process.env.GBRAIN_EMBEDDING_DIMENSIONS = String(merged.embedding_dimensions);
+  }
+
+  return merged;
 }
 
 export function saveConfig(config: GBrainConfig): void {

@@ -5,7 +5,8 @@ import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { getPGLiteSchema } from './pglite-schema.ts';
+import { getActiveProvider } from './embedding-provider.ts'; // FORK
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -61,7 +62,8 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+    const p = getActiveProvider();
+    await this.db.exec(getPGLiteSchema(p.dimensions, p.model));
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {
