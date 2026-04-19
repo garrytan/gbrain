@@ -24,9 +24,12 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   const workerCount = workersArg ? parseInt(workersArg, 10) : 1;
-  // Find dir: first non-flag arg that isn't a value for --workers
+  const maxSizeIdx = args.indexOf('--max-size');
+  const maxSizeArg = maxSizeIdx !== -1 ? parseInt(args[maxSizeIdx + 1], 10) : undefined;
+  // Find dir: first non-flag arg that isn't a value for --workers or --max-size
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
+  if (maxSizeIdx !== -1) flagValues.add(maxSizeIdx + 1);
   const dir = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dir) {
@@ -94,7 +97,7 @@ export async function runImport(engine: BrainEngine, args: string[]) {
     let retries = 2;
     while (retries >= 0) {
       try {
-        const result = await importFile(eng, filePath, relativePath, { noEmbed, hashCache });
+        const result = await importFile(eng, filePath, relativePath, { noEmbed, hashCache, maxSize: maxSizeArg });
         if (result.status === 'imported') {
           imported++;
           chunksCreated += result.chunks;

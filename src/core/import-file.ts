@@ -145,7 +145,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean; hashCache?: Map<string, string> } = {},
+  opts: { noEmbed?: boolean; hashCache?: Map<string, string>; maxSize?: number } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -154,8 +154,9 @@ export async function importFromFile(
   }
 
   const stat = statSync(filePath);
-  if (stat.size > MAX_FILE_SIZE) {
-    return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes)` };
+  const sizeLimit = opts.maxSize || MAX_FILE_SIZE;
+  if (stat.size > sizeLimit) {
+    return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes, limit ${sizeLimit})` };
   }
 
   const content = readFileSync(filePath, 'utf-8');

@@ -1,5 +1,18 @@
 #!/usr/bin/env bun
 
+// Catch postgres.js socket crashes that bypass normal error handling.
+// Supabase's connection pooler (Supavisor) can kill connections mid-write,
+// causing a TypeError in postgres.js internals that crashes the process.
+process.on('uncaughtException', (err) => {
+  const msg = err?.message || '';
+  if (msg.includes('socket.write') || msg.includes('CONNECTION_CLOSED') || msg.includes('ECONNRESET')) {
+    console.error('[gbrain] Connection lost (recovered). Continuing...');
+    return; // swallow — postgres.js will reconnect on next query
+  }
+  console.error('[gbrain] Fatal error:', err);
+  process.exit(1);
+});
+
 import { readFileSync } from 'fs';
 import { loadConfig, toEngineConfig } from './core/config.ts';
 import type { BrainEngine } from './core/engine.ts';
