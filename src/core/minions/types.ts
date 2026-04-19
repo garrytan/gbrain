@@ -142,8 +142,13 @@ export interface MinionJobContext {
   name: string;
   data: Record<string, unknown>;
   attempts_made: number;
-  /** AbortSignal for cooperative cancellation (fires on pause or lock loss). */
+  /** AbortSignal for cooperative cancellation (fires on timeout, cancel, pause, or lock loss). */
   signal: AbortSignal;
+  /** AbortSignal that fires only on worker process SIGTERM/SIGINT. Handlers sensitive
+   *  to deploy restarts (e.g. the shell handler, which must run a SIGTERM → 5s → SIGKILL
+   *  sequence on its child) listen to this in addition to `signal`. Most handlers can
+   *  ignore it — workers give them the full 30s cleanup race to finish naturally. */
+  shutdownSignal: AbortSignal;
   /** Update structured progress (not just 0-100). */
   updateProgress(progress: unknown): Promise<void>;
   /** Accumulate token usage for this job. */

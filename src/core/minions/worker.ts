@@ -37,6 +37,13 @@ export class MinionWorker {
   private inFlight = new Map<number, InFlightJob>();
   private workerId = randomUUID();
 
+  /** Fires only on worker process SIGTERM/SIGINT. Handlers that need to run
+   *  shutdown-specific cleanup (e.g. shell handler's SIGTERM→SIGKILL sequence on
+   *  its child) subscribe via `ctx.shutdownSignal`. Separated from the per-job
+   *  abort controller so non-shell handlers don't get cancelled mid-flight on
+   *  deploy restart — they still get the full 30s cleanup race instead. */
+  private shutdownAbort = new AbortController();
+
   private opts: Required<MinionWorkerOpts>;
 
   constructor(
@@ -76,10 +83,16 @@ export class MinionWorker {
     await this.queue.ensureSchema();
     this.running = true;
 
-    // Graceful shutdown
+    // Graceful shutdown. Fires shutdownAbort so handlers subscribed to
+    // `ctx.shutdownSignal` (currently: shell handler) can run their own cleanup
+    // BEFORE the 30s cleanup race expires. Non-shell handlers ignore shutdown
+    // and keep running — they get the full 30s window.
     const shutdown = () => {
       console.log('Minion worker shutting down...');
       this.running = false;
+      if (!this.shutdownAbort.signal.aborted) {
+        this.shutdownAbort.abort(new Error('shutdown'));
+      }
     };
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
@@ -170,7 +183,7 @@ export class MinionWorker {
       if (!renewed) {
         console.warn(`Lock lost for job ${job.id}, aborting execution`);
         clearInterval(lockTimer);
-        abort.abort();
+        abort.abort(new Error('lock-lost'));
       }
     }, this.opts.lockDuration / 2);
 
@@ -184,7 +197,7 @@ export class MinionWorker {
       timeoutTimer = setTimeout(() => {
         if (!abort.signal.aborted) {
           console.warn(`Job ${job.id} (${job.name}) hit per-job timeout (${job.timeout_ms}ms), aborting`);
-          abort.abort();
+          abort.abort(new Error('timeout'));
         }
       }, job.timeout_ms);
     }
@@ -211,13 +224,18 @@ export class MinionWorker {
       return;
     }
 
-    // Build job context with per-job AbortSignal
+    // Build job context with per-job AbortSignal + shared shutdown signal.
+    // Most handlers only care about `signal` (timeout / cancel / lock-loss).
+    // `shutdownSignal` is separate: fires only on worker process SIGTERM/SIGINT.
+    // Handlers that need to run cleanup before worker exit (shell handler's
+    // SIGTERM→5s→SIGKILL on its child) subscribe to shutdownSignal too.
     const context: MinionJobContext = {
       id: job.id,
       name: job.name,
       data: job.data,
       attempts_made: job.attempts_made,
       signal: abort.signal,
+      shutdownSignal: this.shutdownAbort.signal,
       updateProgress: async (progress: unknown) => {
         await this.queue.updateProgress(job.id, lockToken, progress);
       },
@@ -267,13 +285,23 @@ export class MinionWorker {
     } catch (err) {
       clearInterval(lockTimer);
 
-      // If aborted (paused or lock lost), don't try to fail the job
+      // If the per-job abort fired, derive the reason from signal.reason (set
+      // by whichever site aborted: 'timeout' / 'cancel' / 'lock-lost'). We call
+      // failJob unconditionally — the DB match on status='active' + lock_token
+      // makes it idempotent: if another path (handleTimeouts, cancelJob, stall)
+      // already flipped status, our call no-ops cleanly. The prior silent-return
+      // left jobs stranded in 'active' until a secondary sweep, breaking
+      // timeout/cancel contracts downstream callers rely on.
+      let errorText: string;
       if (abort.signal.aborted) {
-        console.log(`Job ${job.id} (${job.name}) aborted (paused or lock lost)`);
-        return;
+        const reason = abort.signal.reason instanceof Error
+          ? abort.signal.reason.message
+          : String(abort.signal.reason || 'aborted');
+        errorText = `aborted: ${reason}`;
+      } else {
+        errorText = err instanceof Error ? err.message : String(err);
       }
 
-      const errorText = err instanceof Error ? err.message : String(err);
       const isUnrecoverable = err instanceof UnrecoverableError;
       const attemptsExhausted = job.attempts_made + 1 >= job.max_attempts;
 

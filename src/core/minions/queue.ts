@@ -15,6 +15,16 @@ import type {
 } from './types.ts';
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
+import { isProtectedJobName } from './protected-names.ts';
+
+/** Options for opting into protected-job-name submission. Passed as a separate
+ *  4th arg to `MinionQueue.add()` (NOT folded into `opts`) so user-spread
+ *  `{...userOpts}` payloads can't accidentally carry the trust flag. */
+export interface TrustedSubmitOpts {
+  /** When true, allow submission of names in PROTECTED_JOB_NAMES (currently 'shell').
+   *  Set only by the CLI path and by `submit_job` when `ctx.remote === false`. */
+  allowProtectedSubmit?: boolean;
+}
 
 const MIGRATION_VERSION = 7;
 
@@ -55,9 +65,24 @@ export class MinionQueue {
    * to 'waiting-children' atomically. Idempotency_key dedups via PG unique
    * partial index; same key returns the existing row (no second insert).
    */
-  async add(name: string, data?: Record<string, unknown>, opts?: Partial<MinionJobInput>): Promise<MinionJob> {
-    if (!name || name.trim().length === 0) {
+  async add(
+    name: string,
+    data?: Record<string, unknown>,
+    opts?: Partial<MinionJobInput>,
+    trusted?: TrustedSubmitOpts,
+  ): Promise<MinionJob> {
+    // Normalize first so the protected-name check and the insert use the same
+    // canonical form. Without the trim-before-check, `queue.add(' shell ', ...)`
+    // would evade the guard and insert a job literally named 'shell'.
+    const jobName = (name || '').trim();
+    if (jobName.length === 0) {
       throw new Error('Job name cannot be empty');
+    }
+    if (isProtectedJobName(jobName) && !trusted?.allowProtectedSubmit) {
+      throw new Error(
+        `protected job name '${jobName}' requires CLI or operation-local submitter ` +
+        `(pass {allowProtectedSubmit: true} as the 4th arg to MinionQueue.add)`,
+      );
     }
     await this.ensureSchema();
 
@@ -123,7 +148,7 @@ export class MinionQueue {
            RETURNING *`;
 
       const params = [
-        name.trim(),
+        jobName,
         opts?.queue ?? 'default',
         childStatus,
         opts?.priority ?? 0,

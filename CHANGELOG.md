@@ -2,6 +2,73 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.13.0] - 2026-04-19
+
+## **Move gateway crons to Minions. Zero LLM tokens per cron fire.**
+## **Worker abort path finally marks aborted jobs dead.**
+
+Your OpenClaw gateway pins at 100% CPU when your 32 cron jobs each boot a full Opus session per fire, and ~14 of them are pure API-fetch-and-write scripts that don't need reasoning at all. This release adds a `shell` job type to Minions so those deterministic crons move off the gateway to the Minions worker. ~60% gateway load reduction at OpenClaw scale. Retry, backoff, DLQ, unified `gbrain jobs list` visibility, all free. The LLM-reasoning crons stay on the gateway where they belong.
+
+Getting there meant fixing the Minions worker abort path, which was quietly wrong since v0.11: aborted jobs (timeout, cancel, lock loss) returned silently without calling `failJob`, so status stayed `active` until a stall sweep found them ~30s later. This release makes abort-reason the `error_text` of an immediate `failJob` call. Handlers get cleaner signals, operators see accurate status, `--follow` stops hanging past timeouts.
+
+### The numbers that matter
+
+Measured on the new `test/minions-shell.test.ts` (40 unit cases) and `test/e2e/minions-shell.test.ts` (4 E2E cases) plus 5 rounds of pre-landing review (spec adversarial x2, CEO scope, DX, eng, Codex outside voice).
+
+| Metric                                            | BEFORE v0.13.0          | AFTER v0.13.0                     | Δ                    |
+|---------------------------------------------------|-------------------------|-----------------------------------|----------------------|
+| LLM tokens per cron fire                          | ~full Opus context boot | 0 (deterministic crons)           | **100% reduction**   |
+| Gateway CPU headroom with ~14 crons moved         | 0%                      | ~60% free                         | cron load off gateway|
+| Aborted job status lag (timeout/cancel/lock-loss) | up to 30s               | immediate `failJob` call          | **deterministic**    |
+| Shell submission surfaces                         | none                    | CLI + trusted `submit_job`        | 2 paths, both gated  |
+| Submission audit trail                            | none                    | JSONL at `~/.gbrain/audit/`       | operational trace    |
+| Unit tests                                        | 1318 pass               | **1358 pass (+40 shell cases)**   | +40                  |
+| E2E tests                                         | 124                     | **128 (+4 shell lifecycle)**      | +4                   |
+| Pre-landing review rounds                         | 1 (eng)                 | **5 (spec×2 / CEO / DX / eng / codex)** | 29 issues surfaced, 26 resolved |
+
+The abort-path fix is the quietly-important one. Handlers that use `ctx.signal` for cooperative cancel (sync, embed) now have deterministic status flips instead of waiting for the stall sweep. Shell jobs get reliable timeout semantics for the first time: `cmd: 'sleep 30', timeout_ms: 2000` hits `dead` at ~2100ms instead of ~32000ms.
+
+### What this means for OpenClaw operators
+
+`gbrain upgrade` reads `skills/migrations/v0.13.0.md` and walks your host agent through the adoption: enable the worker with `GBRAIN_ALLOW_SHELL_JOBS=1`, audit every cron entry (LLM-requiring stays, deterministic moves), propose a rewrite per cron with a diff, verify one fire end-to-end before approving the next batch. Never auto-rewrites your crontab — every change is a human approval per-cron. On Postgres, one persistent worker daemon claims each job. On PGLite, every crontab invocation adds `--follow` for inline execution because PGLite doesn't support the worker daemon. Either way, your gateway CPU stops pinning at 100% and your live messages stop getting blocked by batch processing. See `docs/guides/minions-shell-jobs.md` for usage recipes and `skills/migrations/v0.13.0.md` for the adoption playbook.
+
+### Itemized changes
+
+#### New `shell` job type
+
+- **Spawn arbitrary commands as Minions jobs.** Pass `{cmd: "string"}` (shell-interpolated via `/bin/sh -c`) or `{argv: ["bin","arg"]}` (no shell, safe for programmatic callers). Both forms require an absolute `cwd`. Env vars are scoped to a minimal allowlist (`PATH, HOME, USER, LANG, TZ, NODE_ENV`) to prevent accidental `$OPENAI_API_KEY` interpolation; callers opt-in to additional keys per job.
+- **Two-layer security: MCP boundary + env flag.** `submit_job` rejects `name: 'shell'` when `ctx.remote === true`. Independent of the env flag. `MinionQueue.add('shell', ...)` also rejects unless the caller explicitly opts in via `{allowProtectedSubmit: true}` as the 4th arg, so an in-process handler can't programmatically submit a shell child by accident. Worker only registers the handler when `GBRAIN_ALLOW_SHELL_JOBS=1` is set on the worker process. Default: off. Opt in per-host.
+- **Graceful child shutdown.** Abort fires SIGTERM, 5-second grace, then SIGKILL. Listens to both `ctx.signal` (timeout/cancel/lock-loss) and a new `ctx.shutdownSignal` (worker process SIGTERM/SIGINT), so deploy restarts don't orphan shell children. Non-shell handlers ignore `shutdownSignal` and keep running through the worker's 30s cleanup race.
+- **UTF-8-safe output truncation.** stdout is retained as the last 64KB, stderr as the last 16KB, with a `[truncated N bytes]` marker prepended when exceeded. Uses `string_decoder.StringDecoder` so multibyte characters don't split across the truncation boundary.
+- **Operational audit trail at `~/.gbrain/audit/shell-jobs-YYYY-Www.jsonl`** (ISO-week rotation, override via `GBRAIN_AUDIT_DIR`). Records caller, remote flag, job_id, cwd, and cmd/argv display. Never logs env values. Best-effort writes: failures log to stderr but don't block submission. Operational trace for "what did this cron submit last Tuesday," not forensic insurance.
+- **Starvation warning on first-time submission.** If you `gbrain jobs submit shell ...` without `--follow` and no worker with the env flag is running, stderr prints a warning block pointing at both `--follow` and `gbrain jobs work` remediation. Turns a silent "job sits in waiting forever" failure mode into a directed next-step.
+
+#### Worker abort path overhaul
+
+- **Aborted jobs now call `failJob` with the abort reason.** Pre-v0.13.0 worker returned silently when `ctx.signal.aborted` fired, leaving jobs in `active` until stall sweep. Fixed: catch-block now derives reason from `abort.signal.reason` (`timeout`, `cancel`, `lock-lost`, `shutdown`) and calls `failJob(id, token, "aborted: <reason>")`. Token-match makes the call idempotent: if another path already flipped status, it no-ops cleanly. Downstream `--follow` loops and status assertions now reflect reality.
+- **`ctx.shutdownSignal` separated from `ctx.signal`.** Only fires on worker process SIGTERM/SIGINT. Handlers that need shutdown-specific cleanup (currently: shell handler's SIGTERM→SIGKILL on its child) subscribe to both signals. Non-shell handlers subscribe only to `ctx.signal` and don't get cancelled mid-flight on deploy restart.
+
+#### CLI + operation surface additions
+
+- **`gbrain jobs submit --timeout-ms N`.** Per-job wall-clock timeout in ms. Surfaced from the existing `timeout_ms` schema field, which had no CLI flag before.
+- **`submit_job` operation gains `timeout_ms` param.** Same field exposed through MCP (for non-protected names).
+- **`gbrain jobs submit --help` lists handler types.** `shell` is explicitly called out as CLI-only with a pointer to the guide. Closes the "what handlers are even available" discovery gap.
+
+#### Tests
+
+- **40 new unit cases in `test/minions-shell.test.ts`** covering validation (cmd/argv/cwd/env), spawn happy + error paths, UTF-8 safe truncation, SIGTERM abort via both signals, env allowlist (OPENAI_API_KEY blocked, PATH inherited, caller override), ISO-week filename at year boundary (2027-01-01 → W53 2026), audit write happy + EACCES failure paths, whitespace-bypass defense on `MinionQueue.add(' shell ', ...)`, and auto-added regression tests per the iron rule (non-protected names unaffected).
+- **4 E2E tests in `test/e2e/minions-shell.test.ts`** covering full lifecycle (submit → worker claim → spawn → complete with captured stdout), `MinionQueue.add` defense-in-depth, `submit_job` MCP-guard rejection, `submit_job` CLI-path acceptance.
+
+#### Docs
+
+- **New `docs/guides/minions-shell-jobs.md`** opens with a 30-second copy-paste hello-world, then covers the two-layer security model with honest callouts about what env allowlist does and does not do, Postgres vs PGLite crontab recipes side-by-side, debug playbook (`gbrain jobs list`, `gbrain jobs get`, audit log tail, PGLite `--follow` note), known limitations, and an `#errors` table linked from every `UnrecoverableError` the handler throws.
+- **New `skills/migrations/v0.13.0.md`** is the adoption playbook your host agent reads on `gbrain upgrade`. Walks through enabling the worker, auditing cron entries (LLM-requiring vs deterministic), proposing per-cron rewrites with diffs, and verifying end-to-end before batch approval. Iron rule: never auto-rewrites the operator's crontab — every change is human-approved per-cron.
+- **README.md** links the guide from the Commands section.
+
+#### Pre-ship review
+
+Five independent rounds surfaced 29 issues across the plan. 26 resolved before a single line of code was written: spec-review adversarial subagent (x2 iterations) caught implementer-ergonomic gaps (caller derivation, mkdirSync, ISO-week formatter). CEO review + SELECTIVE EXPANSION cherry-picked argv form, audit log, SIGTERM grace, env allowlist, MCP-guard defense-in-depth, honest FS-read trust model, orphan-child `setTimeout.unref()` fix. DX review added the starvation warning block. Eng review added `ctx.shutdownSignal` separation, revised trusted-arg from opts-fold to separate 4th arg (stops accidental pass-through via `{...userOpts}` spreads), 18 additional test cases, 4 iron-rule regression tests. Codex outside voice caught 4 architectural dealbreakers: the worker abort silent-return bug (the "contract is a lie" finding), `--timeout-ms` CLI flag and `submit_job` param both missing, `PROTECTED_JOB_NAMES.has(name)` whitespace bypass before normalization. Effort estimate revised 8-10h → 16-20h once the full review was done.
+
 ## [0.12.3] - 2026-04-19
 
 ## **Reliability wave: the pieces v0.12.2 didn't cover.**

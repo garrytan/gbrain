@@ -909,26 +909,44 @@ const file_url: Operation = {
 
 const submit_job: Operation = {
   name: 'submit_job',
-  description: 'Submit a background job to the Minions queue',
+  description: 'Submit a background job to the Minions queue. Built-in types: sync, embed, lint, import, extract, backlinks, autopilot-cycle. The `shell` type is CLI-only and rejected over MCP.',
   params: {
-    name: { type: 'string', required: true, description: 'Job type (sync, embed, lint, import)' },
+    name: { type: 'string', required: true, description: 'Job type (sync, embed, lint, import, extract, backlinks, autopilot-cycle; shell is CLI-only)' },
     data: { type: 'object', description: 'Job payload (JSON)' },
     queue: { type: 'string', description: 'Queue name (default: "default")' },
     priority: { type: 'number', description: 'Priority (0 = highest, default: 0)' },
     max_attempts: { type: 'number', description: 'Max retry attempts (default: 3)' },
     delay: { type: 'number', description: 'Delay in ms before eligible' },
+    timeout_ms: { type: 'number', description: 'Per-job wall-clock timeout in ms; aborted job goes to dead' },
   },
   mutating: true,
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'submit_job', name: p.name };
+    const name = typeof p.name === 'string' ? p.name.trim() : '';
+    if (ctx.dryRun) return { dry_run: true, action: 'submit_job', name };
+
+    // Submit-side MCP guard: reject protected job names from untrusted callers
+    // BEFORE we touch the DB. This is the first of the two security layers
+    // (the second is MinionQueue.add's check). Independent of the worker-side
+    // GBRAIN_ALLOW_SHELL_JOBS env flag — even if that flag is on, MCP callers
+    // cannot submit protected-type jobs.
+    const { isProtectedJobName } = await import('./minions/protected-names.ts');
+    if (ctx.remote && isProtectedJobName(name)) {
+      throw new OperationError('permission_denied', `'${name}' jobs cannot be submitted over MCP (CLI-only for security)`);
+    }
+
     const { MinionQueue } = await import('./minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    return queue.add(p.name as string, (p.data as Record<string, unknown>) || {}, {
+    // Trusted flag set only when this is a local (non-remote) submission. When
+    // remote=true, the guard above has already thrown for protected names, so
+    // passing undefined here is safe for any non-protected name that slips by.
+    const trusted = !ctx.remote && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
+    return queue.add(name, (p.data as Record<string, unknown>) || {}, {
       queue: (p.queue as string) || 'default',
       priority: (p.priority as number) || 0,
       max_attempts: (p.max_attempts as number) || 3,
       delay: (p.delay as number) || undefined,
-    });
+      timeout_ms: (p.timeout_ms as number) || undefined,
+    }, trusted);
   },
 };
 

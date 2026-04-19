@@ -245,6 +245,45 @@ that bucket, update them to include the new types.
 
 ---
 
+## v0.13.0 shell jobs (optional adoption, no skill edits)
+
+Adds a `shell` job type to Minions so deterministic cron scripts (API fetch, token
+refresh, scrape + write) move off the LLM gateway. Zero tokens per fire. ~60%
+gateway CPU headroom at typical scale. Feature is **off by default**, existing
+installs keep running exactly as they did before. Nothing breaks.
+
+To adopt, follow `skills/migrations/v0.13.0.md`. The short version:
+
+1. Set `GBRAIN_ALLOW_SHELL_JOBS=1` on the worker process, then `gbrain jobs work`
+   (Postgres). On PGLite, every crontab invocation uses `--follow` for inline
+   execution; no persistent worker.
+2. Classify each of your host's cron entries: LLM-requiring (keep on gateway) vs
+   deterministic (candidate for shell). Typical splits:
+   - **Deterministic → shell:** `ycli-token-refresh`, `x-oauth2-refresh`,
+     `x-garrytan-unified`, `calendar-sync-to-brain`, `github-pulse`,
+     `frameio-scan`, `flight-tracker`, `x-raw-json-backfill`.
+   - **LLM-requiring → stay:** `social-radar`, `content-ideas`, `adversary-vacuum`,
+     `ea-inbox-sweep`, `morning-briefing`, `brain-maintenance`.
+3. For each deterministic cron, rewrite as:
+   ```cron
+   3 13,16,19,22,1,4,7,10 * * * \
+     gbrain jobs submit shell \
+       --params '{"cmd":"node scripts/your-script.mjs","cwd":"/data/.openclaw/workspace"}' \
+       --max-attempts 3 --timeout-ms 300000
+   ```
+4. Watch `gbrain jobs get <id>` for exit_code / stdout_tail / stderr_tail on each
+   fire. Compare against pre-migration behavior before approving the next batch.
+
+**No skill edits required.** The handler runs worker-side; skill files don't
+change. If your host exposed custom handlers via the plugin contract (v0.11.0),
+they still work the same way.
+
+Iron rule: **never auto-rewrite the operator's crontab.** Every rewrite is
+per-cron, human-approved, with a diff. If you want automation later, the
+upcoming `gbrain crontab-to-minions <file>` helper is P1 in TODOS.
+
+---
+
 ## Future versions
 
 When gbrain ships a new version, this doc will be updated with the diffs for that
