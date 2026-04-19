@@ -1,0 +1,131 @@
+[
+  {
+    "id": "agent-workflow-natural-language",
+    "scope": ["regression"],
+    "priority": "critical",
+    "query": "plans reviews agent workflow",
+    "expect_any": [
+      "knowledge/patterns/workflow-orchestration",
+      "knowledge/patterns/agent-delegation-pattern",
+      "knowledge/decisions/2026-02-14-compound-engineering",
+      "plans/2026-02-14-agent-hackathon-monitor",
+      "plans/2026-02-14-hackathon-analyzer"
+    ]
+  },
+  {
+    "id": "reviews-role-division-quality",
+    "scope": ["regression"],
+    "priority": "high",
+    "query": "What did reviews conclude about role division or execution quality?",
+    "expect_any": [
+      "reviews/2026-02-15-feature-cloudflare-cdn",
+      "reviews/2026-02-15-feature-bun-1-2-v3",
+      "reviews/2026-02-14-atlas-v2-enhancement",
+      "knowledge/checklists/quality",
+      "plans/2026-02-14-system-re-evaluation-deep"
+    ]
+  },
+  {
+    "id": "cross-source-lessons",
+    "scope": ["regression"],
+    "priority": "medium",
+    "query": "lessons learned",
+    "expect_any": [
+      "knowledge/lessons-learned/index",
+      "knowledge/lessons-learned/2026-03-06-lessons",
+      "knowledge/lessons-learned/2026-03-05-lessons",
+      "knowledge/lessons-learned/2026-03-14-lessons"
+    ]
+  },
+  {
+    "id": "bun-review-cluster",
+    "scope": ["regression", "smoke"],
+    "priority": "high",
+    "query": "feature review bun",
+    "expect_any": [
+      "reviews/2026-02-15-feature-bun-1-2-final",
+      "reviews/2026-02-15-feature-bun-1-2-v3",
+      "reviews/2026-02-15-feature-bun-1-2-duplicate",
+      "plans/2026-02-15-bun-1-2"
+    ]
+  },
+  {
+    "id": "demo-video-0g-plan",
+    "scope": ["regression"],
+    "priority": "high",
+    "query": "demo video 0g plan",
+    "expect_any": [
+      "plans/2026-02-14-demo-video-0g",
+      "plans/2026-02-15-demo-video-generator-0g-storage",
+      "reviews/2026-02-15-feature-demo-video-generator-0g-storage"
+    ]
+  },
+  {
+    "id": "agent-delegation-pattern",
+    "scope": ["regression", "smoke"],
+    "priority": "critical",
+    "query": "agent delegation pattern",
+    "expect_any": [
+      "knowledge/patterns/agent-delegation-pattern",
+      "knowledge/patterns/workflow-orchestration",
+      "knowledge/patterns/defensive-subprocess"
+    ]
+  },
+  {
+    "id": "duplicate-review-detection",
+    "scope": ["regression"],
+    "priority": "high",
+    "query": "duplicate review request branch diff same as previous",
+    "expect_any": [
+      "reviews/2026-02-15-feature-bun-1-2-duplicate",
+      "reviews/2026-02-15-feature-0g-agent-skills",
+      "reviews/2026-02-15-feature-skill-descriptions-standardize-all-skill-md-descriptions-template-when-to-use-inputs-outputs-examples-update-22-skills-improve-agent-routing-accuracy-by-20"
+    ]
+  },
+  {
+    "id": "hackathon-winning-conditions",
+    "scope": ["regression", "smoke"],
+    "priority": "medium",
+    "query": "hackathon winning conditions postmortem",
+    "expect_any": [
+      "hackathons/playbook/win-conditions",
+      "hackathons/postmortems/novaguardian-colosseum",
+      "hackathons/playbook/security-audit-template"
+    ]
+  },
+  {
+    "id": "task-allocation-role-division",
+    "scope": ["regression", "smoke"],
+    "priority": "medium",
+    "query": "task allocation role division",
+    "expect_any": [
+      "docs/role_division_clawdia_sophie",
+      "docs/task_allocation_qwen_optimized",
+      "docs/dual_gpu_strategy",
+      "agents/agents"
+    ]
+  },
+  {
+    "id": "security-audit-patterns",
+    "scope": ["regression"],
+    "priority": "high",
+    "query": "security audit checklist smart contract pattern",
+    "expect_any": [
+      "knowledge/patterns/smart-contract-security",
+      "knowledge/checklists/security",
+      "hackathons/playbook/security-audit-template"
+    ]
+  },
+  {
+    "id": "0g-agent-skills-cluster",
+    "scope": ["regression"],
+    "priority": "high",
+    "query": "0g agent skills integration plan review",
+    "expect_any": [
+      "plans/2026-02-15-0g-agent-skills",
+      "reviews/2026-02-15-feature-0g-agent-skills",
+      "plans/2026-02-14-gopher-0g-integration",
+      "plans/2026-02-14-gopher-0g-trading-agent"
+    ]
+  }
+]

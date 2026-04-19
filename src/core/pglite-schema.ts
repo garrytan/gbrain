@@ -13,6 +13,9 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
+const EMBEDDING_MODEL = process.env.GBRAIN_EMBED_MODEL || process.env.OPENAI_EMBED_MODEL || 'text-embedding-3-large';
+const EMBEDDING_DIMENSIONS = parseInt(process.env.GBRAIN_EMBED_DIMENSIONS || process.env.OPENAI_EMBED_DIMENSIONS || '1536', 10);
+
 export const PGLITE_SCHEMA_SQL = `
 -- GBrain PGLite schema (local embedded Postgres)
 
@@ -48,8 +51,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  embedding     vector(${EMBEDDING_DIMENSIONS}),
+  model         TEXT    NOT NULL DEFAULT '${EMBEDDING_MODEL}',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -156,8 +159,8 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
   ('engine', 'pglite'),
-  ('embedding_model', 'text-embedding-3-large'),
-  ('embedding_dimensions', '1536'),
+  ('embedding_model', '${EMBEDDING_MODEL}'),
+  ('embedding_dimensions', '${EMBEDDING_DIMENSIONS}'),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
 
