@@ -3,7 +3,12 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { Operation } from '../core/operations.ts';
 import { ActionEngine, ActionItemNotFoundError, ActionTransitionError } from './action-engine.ts';
 import { MorningBriefGenerator } from './brief.ts';
-import { extractCommitments, type StructuredCommitment, type WhatsAppMessage } from './extractor.ts';
+import {
+  createEmptyExtractionRunSummary,
+  extractCommitmentsWithSummary,
+  type StructuredCommitment,
+  type WhatsAppMessage,
+} from './extractor.ts';
 import { initActionSchema } from './action-schema.ts';
 
 interface QueryResult<T> {
@@ -150,6 +155,10 @@ export const actionBrainOperations: Operation[] = [
       commitments: { type: 'array', description: 'Optional pre-extracted commitments (bypass LLM)', items: { type: 'object' } },
       model: { type: 'string', description: 'Anthropic model override' },
       timeout_ms: { type: 'number', description: 'Extractor timeout in milliseconds' },
+      min_confidence: {
+        type: 'number',
+        description: 'Drop extracted commitments below this confidence threshold (0-1, default: 0)',
+      },
       actor: { type: 'string', description: 'Actor writing created events' },
     },
     mutating: true,
@@ -165,19 +174,25 @@ export const actionBrainOperations: Operation[] = [
         throw new Error('action_ingest requires messages (or commitments for deterministic ingest).');
       }
 
-      const extracted =
-        providedCommitments.length > 0
-          ? providedCommitments
-          : await extractCommitments(messages, {
-              model: asOptionalNonEmptyString(p.model) ?? undefined,
-              timeoutMs: asOptionalNumber(p.timeout_ms) ?? undefined,
-            });
+      const runSummary = createEmptyExtractionRunSummary();
+      const minConfidence = clampConfidenceThreshold(asOptionalNumber(p.min_confidence));
+      let extracted: StructuredCommitment[] = providedCommitments;
+      if (providedCommitments.length === 0) {
+        const extraction = await extractCommitmentsWithSummary(messages, {
+          model: asOptionalNonEmptyString(p.model) ?? undefined,
+          timeoutMs: asOptionalNumber(p.timeout_ms) ?? undefined,
+          runSummary,
+        });
+        extracted = extraction.commitments;
+      }
+      extracted = filterLowConfidenceCommitments(extracted, minConfidence, runSummary);
 
       if (ctx.dryRun) {
         return {
           dry_run: true,
           extracted_count: extracted.length,
           extracted,
+          run_summary: runSummary,
         };
       }
 
@@ -218,6 +233,7 @@ export const actionBrainOperations: Operation[] = [
       return {
         extracted_count: extracted.length,
         created_count: items.length,
+        run_summary: runSummary,
         items,
       };
     },
@@ -478,6 +494,33 @@ function clampConfidence(value: unknown): number {
     return 0.5;
   }
   return Math.min(1, Math.max(0, parsed));
+}
+
+function clampConfidenceThreshold(value: number | undefined): number {
+  if (value === undefined) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, value));
+}
+
+function filterLowConfidenceCommitments(
+  commitments: StructuredCommitment[],
+  minConfidence: number,
+  runSummary: { extraction_low_confidence_drops: number }
+): StructuredCommitment[] {
+  if (minConfidence <= 0) {
+    return commitments;
+  }
+
+  const filtered: StructuredCommitment[] = [];
+  for (const commitment of commitments) {
+    if (commitment.confidence < minConfidence) {
+      runSummary.extraction_low_confidence_drops += 1;
+      continue;
+    }
+    filtered.push(commitment);
+  }
+  return filtered;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

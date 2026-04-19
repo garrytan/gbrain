@@ -1,10 +1,8 @@
-import { describe, expect, setDefaultTimeout, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mergeOperationSets, operations } from '../../src/core/operations.ts';
 import type { Operation, OperationContext } from '../../src/core/operations.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { actionBrainOperations } from '../../src/action-brain/operations.ts';
-
-setDefaultTimeout(15_000);
 
 function makeOperation(name: string, cliName?: string): Operation {
   return {
@@ -28,24 +26,6 @@ function getActionOperation(name: string): Operation {
     throw new Error(`Missing action operation: ${name}`);
   }
   return operation;
-}
-
-async function withActionContext<T>(fn: (ctx: OperationContext, engine: PGLiteEngine) => Promise<T>): Promise<T> {
-  const engine = new PGLiteEngine();
-  await engine.connect({ engine: 'pglite' } as any);
-
-  const ctx: OperationContext = {
-    engine,
-    config: { engine: 'pglite' } as any,
-    logger: { info: () => {}, warn: () => {}, error: () => {} },
-    dryRun: false,
-  };
-
-  try {
-    return await fn(ctx, engine);
-  } finally {
-    await engine.disconnect();
-  }
 }
 
 describe('Action Brain operation integration', () => {
@@ -82,9 +62,39 @@ describe('Action Brain operation integration', () => {
     expect(stdout).toContain('Usage: gbrain action list');
   });
 
-  test('action_ingest stays idempotent when commitments arrive in different output order', async () => {
-    await withActionContext(async (ctx, engine) => {
-      const actionIngest = getActionOperation('action_ingest');
+  describe('action_ingest integration', () => {
+    let engine: PGLiteEngine;
+    let ctx: OperationContext;
+    let actionIngest: Operation;
+    let db: EngineWithDb['db'];
+
+    beforeAll(async () => {
+      engine = new PGLiteEngine();
+      await engine.connect({ engine: 'pglite' } as any);
+
+      ctx = {
+        engine,
+        config: { engine: 'pglite' } as any,
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+        dryRun: false,
+      };
+
+      actionIngest = getActionOperation('action_ingest');
+
+      // Ensure schema exists once, then reuse engine across tests.
+      await getActionOperation('action_list').handler(ctx, {});
+      db = (engine as unknown as EngineWithDb).db;
+    });
+
+    beforeEach(async () => {
+      await db.query('TRUNCATE action_history, action_items RESTART IDENTITY');
+    });
+
+    afterAll(async () => {
+      await engine.disconnect();
+    });
+
+    test('action_ingest stays idempotent when commitments arrive in different output order', async () => {
       const messages = [
         { ChatName: 'Thread A', SenderName: 'Joe', Timestamp: '2026-04-16T08:00:00.000Z', Text: 'Send docs', MsgID: 'm1' },
         { ChatName: 'Thread B', SenderName: 'Mukesh', Timestamp: '2026-04-16T08:05:00.000Z', Text: 'Approve payout', MsgID: 'm2' },
@@ -108,10 +118,24 @@ describe('Action Brain operation integration', () => {
         source_message_id: 'm2',
       };
 
-      await actionIngest.handler(ctx, { messages, commitments: [commitmentA, commitmentB] });
-      await actionIngest.handler(ctx, { messages, commitments: [commitmentB, commitmentA] });
+      const firstRun = await actionIngest.handler(ctx, { messages, commitments: [commitmentA, commitmentB] });
+      const secondRun = await actionIngest.handler(ctx, { messages, commitments: [commitmentB, commitmentA] });
 
-      const db = (engine as unknown as EngineWithDb).db;
+      expect(firstRun.run_summary).toEqual({
+        extraction_attempts: 0,
+        extraction_retries: 0,
+        extraction_low_confidence_drops: 0,
+        extraction_timeout_failures: 0,
+        extraction_terminal_failures: 0,
+      });
+      expect(secondRun.run_summary).toEqual({
+        extraction_attempts: 0,
+        extraction_retries: 0,
+        extraction_low_confidence_drops: 0,
+        extraction_timeout_failures: 0,
+        extraction_terminal_failures: 0,
+      });
+
       const rows = await db.query(
         `SELECT source_message_id, title
          FROM action_items
@@ -121,11 +145,8 @@ describe('Action Brain operation integration', () => {
       expect(rows.rows.length).toBe(2);
       expect(rows.rows.map((row) => row.title)).toEqual(['Send docs', 'Approve payout']);
     });
-  });
 
-  test('action_ingest uses source_message_id for source thread/contact traceability', async () => {
-    await withActionContext(async (ctx, engine) => {
-      const actionIngest = getActionOperation('action_ingest');
+    test('action_ingest uses source_message_id for source thread/contact traceability', async () => {
       const messages = [
         { ChatName: 'Operations', SenderName: 'Joe', Timestamp: '2026-04-16T08:00:00.000Z', Text: 'Two asks', MsgID: 'm1' },
         { ChatName: 'Other Thread', SenderName: 'Mukesh', Timestamp: '2026-04-16T08:05:00.000Z', Text: 'FYI', MsgID: 'm2' },
@@ -153,7 +174,6 @@ describe('Action Brain operation integration', () => {
 
       await actionIngest.handler(ctx, { messages, commitments });
 
-      const db = (engine as unknown as EngineWithDb).db;
       const rows = await db.query(
         `SELECT title, source_thread, source_contact
          FROM action_items
@@ -164,11 +184,8 @@ describe('Action Brain operation integration', () => {
       expect(rows.rows.map((row) => row.source_thread)).toEqual(['Operations', 'Operations']);
       expect(rows.rows.map((row) => row.source_contact)).toEqual(['Joe', 'Joe']);
     });
-  });
 
-  test('action_ingest does not trust unknown source_message_id when multiple messages are present', async () => {
-    await withActionContext(async (ctx, engine) => {
-      const actionIngest = getActionOperation('action_ingest');
+    test('action_ingest does not trust unknown source_message_id when multiple messages are present', async () => {
       const messages = [
         { ChatName: 'Ops A', SenderName: 'Joe', Timestamp: '2026-04-16T08:00:00.000Z', Text: 'Send docs', MsgID: 'm1' },
         {
@@ -193,7 +210,6 @@ describe('Action Brain operation integration', () => {
 
       await actionIngest.handler(ctx, { messages, commitments });
 
-      const db = (engine as unknown as EngineWithDb).db;
       const rows = await db.query(
         `SELECT source_message_id, source_thread, source_contact
          FROM action_items`
@@ -204,11 +220,8 @@ describe('Action Brain operation integration', () => {
       expect(rows.rows[0].source_thread).toBe('');
       expect(rows.rows[0].source_contact).toBe('');
     });
-  });
 
-  test('action_ingest falls back to the only message when source_message_id is invalid', async () => {
-    await withActionContext(async (ctx, engine) => {
-      const actionIngest = getActionOperation('action_ingest');
+    test('action_ingest falls back to the only message when source_message_id is invalid', async () => {
       const messages = [
         { ChatName: 'Operations', SenderName: 'Joe', Timestamp: '2026-04-16T08:00:00.000Z', Text: 'Send docs', MsgID: 'm1' },
       ];
@@ -226,7 +239,6 @@ describe('Action Brain operation integration', () => {
 
       await actionIngest.handler(ctx, { messages, commitments });
 
-      const db = (engine as unknown as EngineWithDb).db;
       const rows = await db.query(
         `SELECT source_message_id, source_thread, source_contact
          FROM action_items`
@@ -236,6 +248,64 @@ describe('Action Brain operation integration', () => {
       expect(rows.rows[0].source_message_id).toMatch(/^m1:ab:/);
       expect(rows.rows[0].source_thread).toBe('Operations');
       expect(rows.rows[0].source_contact).toBe('Joe');
+    });
+
+    test('action_ingest reports low-confidence drops in run summary with stable keys', async () => {
+      const messages = [
+        { ChatName: 'Operations', SenderName: 'Joe', Timestamp: '2026-04-16T08:00:00.000Z', Text: 'Send docs', MsgID: 'm1' },
+      ];
+      const commitments = [
+        {
+          who: 'Joe',
+          owes_what: 'Low confidence task',
+          to_whom: 'Abhi',
+          by_when: null,
+          confidence: 0.49,
+          type: 'commitment',
+          source_message_id: 'm1',
+        },
+        {
+          who: 'Joe',
+          owes_what: 'High confidence task',
+          to_whom: 'Abhi',
+          by_when: null,
+          confidence: 0.95,
+          type: 'commitment',
+          source_message_id: 'm1',
+        },
+      ];
+
+      const result = await actionIngest.handler(ctx, {
+        messages,
+        commitments,
+        min_confidence: 0.8,
+      });
+
+      expect(Object.keys(result.run_summary)).toEqual([
+        'extraction_attempts',
+        'extraction_retries',
+        'extraction_low_confidence_drops',
+        'extraction_timeout_failures',
+        'extraction_terminal_failures',
+      ]);
+      expect(result.run_summary).toEqual({
+        extraction_attempts: 0,
+        extraction_retries: 0,
+        extraction_low_confidence_drops: 1,
+        extraction_timeout_failures: 0,
+        extraction_terminal_failures: 0,
+      });
+      expect(result.extracted_count).toBe(1);
+      expect(result.created_count).toBe(1);
+
+      const rows = await db.query(
+        `SELECT title, confidence
+         FROM action_items`
+      );
+
+      expect(rows.rows.length).toBe(1);
+      expect(rows.rows[0].title).toBe('High confidence task');
+      expect(rows.rows[0].confidence).toBe(0.95);
     });
   });
 });
