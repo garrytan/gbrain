@@ -166,12 +166,25 @@ export class BudgetLedger {
   /**
    * Commit an actual spend. actualUsd may differ from the reservation's
    * estimate — the ledger adjusts reserved_usd down by the estimate and
-   * committed_usd up by the actual. Negative actuals (rare; refunds) are
-   * allowed.
+   * committed_usd up by the actual.
+   *
+   * Re-checks the cap against the post-commit total: reserving $0.01 then
+   * committing $100 against a $1 cap must not silently blow through. When
+   * actualUsd would exceed the effective cap, the commit clamps to (cap -
+   * other_committed - other_reserved) and throws. The reservation is still
+   * marked committed (the API call already happened and we don't want
+   * retry loops), but the excess is attributed as a cap-exhaustion error
+   * the caller can log.
+   *
+   * Negative actuals are rejected — refunds should be a separate operation,
+   * not a side-channel on commit().
    */
   async commit(reservationId: string, actualUsd: number): Promise<void> {
     if (!Number.isFinite(actualUsd)) {
       throw new BudgetError('invalid_input', `commit: actualUsd must be finite, got ${actualUsd}`);
+    }
+    if (actualUsd < 0) {
+      throw new BudgetError('invalid_input', `commit: actualUsd must be non-negative (got ${actualUsd}). Use a dedicated refund API instead.`);
     }
 
     return await this.engine.transaction(async (tx) => {
@@ -188,6 +201,33 @@ export class BudgetLedger {
 
       const estimate = toNum(r.estimate_usd);
 
+      // Re-check the cap against what the post-commit total would be.
+      // Lock the ledger row so a concurrent reserve cannot race us into overspend.
+      const ledgerRows = await tx.executeRaw<{ reserved_usd: string | number; committed_usd: string | number; cap_usd: string | number | null }>(
+        `SELECT reserved_usd, committed_usd, cap_usd
+         FROM budget_ledger
+         WHERE scope = $1 AND resolver_id = $2 AND local_date = $3
+         FOR UPDATE`,
+        [r.scope, r.resolver_id, r.local_date],
+      );
+      const ledger = ledgerRows[0];
+      const cap = ledger?.cap_usd != null ? toNum(ledger.cap_usd) : null;
+      const committedSoFar = ledger ? toNum(ledger.committed_usd) : 0;
+      const reservedSoFar = ledger ? toNum(ledger.reserved_usd) : 0;
+
+      let chargedAmount = actualUsd;
+      let overage: number | null = null;
+      if (cap != null) {
+        // Available headroom = cap - already-committed (exclude this reservation
+        // from reserved pool since we're about to finalize it).
+        const otherReserved = Math.max(0, reservedSoFar - estimate);
+        const available = Math.max(0, cap - committedSoFar - otherReserved);
+        if (actualUsd > available + 1e-9) {
+          chargedAmount = Math.max(0, available);
+          overage = actualUsd - chargedAmount;
+        }
+      }
+
       await tx.executeRaw(
         `UPDATE budget_reservations SET status = 'committed' WHERE reservation_id = $1`,
         [reservationId],
@@ -199,8 +239,16 @@ export class BudgetLedger {
              committed_usd = committed_usd + $2,
              updated_at    = now()
          WHERE scope = $3 AND resolver_id = $4 AND local_date = $5`,
-        [estimate, actualUsd, r.scope, r.resolver_id, r.local_date],
+        [estimate, chargedAmount, r.scope, r.resolver_id, r.local_date],
       );
+
+      if (overage !== null && overage > 0) {
+        throw new BudgetError(
+          'invalid_input',
+          `commit: actualUsd ${actualUsd.toFixed(4)} exceeds cap. Charged ${chargedAmount.toFixed(4)}, overage ${overage.toFixed(4)} was NOT recorded. Cap enforcement prevented double-charge but the API call already happened.`,
+          reservationId,
+        );
+      }
     });
   }
 
