@@ -32,7 +32,7 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: { noEmbed?: boolean; hashCache?: Map<string, string> } = {},
 ): Promise<ImportResult> {
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
@@ -60,6 +60,11 @@ export async function importFromContent(
       tags: parsed.tags.sort(),
     }))
     .digest('hex');
+
+  // Fast path: check local hash cache before hitting DB
+  if (opts.hashCache?.get(slug) === hash) {
+    return { slug, status: 'skipped', chunks: 0 };
+  }
 
   const existing = await engine.getPage(slug);
   if (existing?.content_hash === hash) {
@@ -140,7 +145,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: { noEmbed?: boolean; hashCache?: Map<string, string> } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);

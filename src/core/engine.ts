@@ -28,6 +28,9 @@ export interface BrainEngine {
   initSchema(): Promise<void>;
   transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
 
+  // Bulk helpers
+  getAllHashes(): Promise<Map<string, string>>;
+
   // Pages CRUD
   getPage(slug: string): Promise<Page | null>;
   putPage(slug: string, page: PageInput): Promise<Page>;

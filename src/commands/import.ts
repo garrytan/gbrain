@@ -56,6 +56,16 @@ export async function runImport(engine: BrainEngine, args: string[]) {
     }
   }
 
+  // Preload all page hashes in one query for fast skip detection
+  let hashCache: Map<string, string> | undefined;
+  try {
+    const allHashes = await engine.getAllHashes();
+    hashCache = allHashes;
+    console.log(`Preloaded ${hashCache.size} page hashes for fast skip`);
+  } catch {
+    console.warn('Could not preload hashes, falling back to per-file DB checks');
+  }
+
   // Determine actual worker count
   const actualWorkers = workerCount > 1 ? workerCount : 1;
   if (actualWorkers > 1) {
@@ -81,29 +91,44 @@ export async function runImport(engine: BrainEngine, args: string[]) {
 
   async function processFile(eng: BrainEngine, filePath: string) {
     const relativePath = relative(dir, filePath);
-    try {
-      const result = await importFile(eng, filePath, relativePath, { noEmbed });
-      if (result.status === 'imported') {
-        imported++;
-        chunksCreated += result.chunks;
-        importedSlugs.push(result.slug);
-      } else {
-        skipped++;
-        if (result.error && result.error !== 'unchanged') {
-          console.error(`  Skipped ${relativePath}: ${result.error}`);
+    let retries = 2;
+    while (retries >= 0) {
+      try {
+        const result = await importFile(eng, filePath, relativePath, { noEmbed, hashCache });
+        if (result.status === 'imported') {
+          imported++;
+          chunksCreated += result.chunks;
+          importedSlugs.push(result.slug);
+        } else {
+          skipped++;
+          if (result.error && result.error !== 'unchanged') {
+            console.error(`  Skipped ${relativePath}: ${result.error}`);
+          }
         }
+        break;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const isConnectionError = msg.includes('CONNECTION_CLOSED') ||
+          msg.includes('socket.write') ||
+          msg.includes('ECONNRESET') ||
+          msg.includes('connection terminated');
+        if (isConnectionError && retries > 0) {
+          retries--;
+          console.warn(`  Connection lost on ${relativePath}, retrying (${retries + 1} left)...`);
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        const errorKey = msg.replace(/"[^"]*"/g, '""');
+        errorCounts[errorKey] = (errorCounts[errorKey] || 0) + 1;
+        if (errorCounts[errorKey] <= 5) {
+          console.error(`  Warning: skipped ${relativePath}: ${msg}`);
+        } else if (errorCounts[errorKey] === 6) {
+          console.error(`  (suppressing further "${errorKey.slice(0, 60)}..." errors)`);
+        }
+        errors++;
+        skipped++;
+        break;
       }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const errorKey = msg.replace(/"[^"]*"/g, '""');
-      errorCounts[errorKey] = (errorCounts[errorKey] || 0) + 1;
-      if (errorCounts[errorKey] <= 5) {
-        console.error(`  Warning: skipped ${relativePath}: ${msg}`);
-      } else if (errorCounts[errorKey] === 6) {
-        console.error(`  (suppressing further "${errorKey.slice(0, 60)}..." errors)`);
-      }
-      errors++;
-      skipped++;
     }
     processed++;
     if (processed % 100 === 0 || processed === files.length) {

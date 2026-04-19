@@ -36,8 +36,10 @@ export class PostgresEngine implements BrainEngine {
       if (!url) throw new GBrainError('No database URL', 'database_url is missing', 'Provide --url');
       this._sql = postgres(url, {
         max: config.poolSize,
-        idle_timeout: 20,
+        idle_timeout: 0,
         connect_timeout: 10,
+        keep_alive: 5,
+        max_lifetime: 60 * 30,
         types: { bigint: postgres.BigInt },
       });
       await this._sql`SELECT 1`;
@@ -86,6 +88,14 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Pages CRUD
+  async getAllHashes(): Promise<Map<string, string>> {
+    const sql = this.sql;
+    const rows = await sql`SELECT slug, content_hash FROM pages WHERE content_hash IS NOT NULL`;
+    const map = new Map<string, string>();
+    for (const r of rows) map.set(r.slug, r.content_hash);
+    return map;
+  }
+
   async getPage(slug: string): Promise<Page | null> {
     const sql = this.sql;
     const rows = await sql`

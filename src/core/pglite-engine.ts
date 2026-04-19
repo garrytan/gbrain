@@ -77,6 +77,13 @@ export class PGLiteEngine implements BrainEngine {
     });
   }
 
+  async getAllHashes(): Promise<Map<string, string>> {
+    const { rows } = await this.db.query(`SELECT slug, content_hash FROM pages WHERE content_hash IS NOT NULL`);
+    const map = new Map<string, string>();
+    for (const r of rows as Array<{ slug: string; content_hash: string }>) map.set(r.slug, r.content_hash);
+    return map;
+  }
+
   // Pages CRUD
   async getPage(slug: string): Promise<Page | null> {
     const { rows } = await this.db.query(
