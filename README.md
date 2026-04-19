@@ -75,6 +75,21 @@ claude mcp add gbrain -t http https://your-brain.ngrok.app/mcp -H "Authorization
 
 Per-client guides: [`docs/mcp/`](docs/mcp/DEPLOY.md). ChatGPT requires OAuth 2.1 (not yet implemented).
 
+### Self-host your brain 24/7 (Fly.io)
+
+Your laptop can be off. One Fly machine runs the HTTP MCP server and the autopilot sync loop; Supabase holds the brain. `git push` to your notes repo is the only step to keep the brain fresh.
+
+```bash
+cd deploy/
+fly apps create your-brain
+fly secrets set --app your-brain DATABASE_URL=... OPENAI_API_KEY=... \
+  ANTHROPIC_API_KEY=... NOTES_REPO=git@github.com:OWNER/notes.git \
+  SSH_DEPLOY_KEY_B64=...
+fly deploy
+```
+
+Full runbook (Supabase setup, deploy key, bearer tokens, troubleshooting, ~$28/mo cost breakdown): [`deploy/README.md`](deploy/README.md).
+
 ## The 26 Skills
 
 GBrain ships 26 skills organized by `skills/RESOLVER.md`. The resolver tells your agent which skill to read for any task.

@@ -42,8 +42,11 @@ tailscale funnel 8787
 
 For production deployments that need to run 24/7 without your machine:
 
-- **Fly.io:** $5-10/mo, global edge, `fly deploy`
-- **Railway:** $5/mo, git push deploy
+- **Fly.io:** $5-10/mo, global edge, `fly deploy`. Use the
+  [`deploy/` recipe](../../deploy/README.md) — a self-contained Dockerfile +
+  HTTP wrapper + autopilot sync loop with a full runbook (Supabase setup, deploy key,
+  bearer tokens, troubleshooting, ~$28/mo total).
+- **Railway:** $5/mo, git push deploy.
 
 Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
 
@@ -60,5 +63,5 @@ Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
 | Setup time | 5 min | 10 min | 15 min |
 
 **Note:** `gbrain serve --http` (built-in HTTP transport) is planned but not yet
-implemented. Currently, remote MCP requires a custom HTTP wrapper around `gbrain serve`.
-See [DEPLOY.md](DEPLOY.md) for details.
+implemented. For a drop-in HTTP wrapper today, use the
+[`deploy/` recipe](../../deploy/README.md) or see [DEPLOY.md](DEPLOY.md) for details.

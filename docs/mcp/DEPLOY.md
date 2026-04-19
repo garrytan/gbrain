@@ -117,6 +117,9 @@ Remote servers must be added via Settings > Integrations, NOT
 | get_stats | < 100ms | Aggregate query |
 
 **Note:** `gbrain serve --http` (built-in HTTP transport) is planned but not yet
-implemented. Currently, remote MCP requires a custom HTTP wrapper. See the
-production deployment pattern in the [voice recipe](../../recipes/twilio-voice-brain.md)
-for a reference implementation.
+implemented. For a drop-in HTTP wrapper today, use the Fly.io recipe in
+[`deploy/`](../../deploy/README.md). It ships an always-on container that runs the
+HTTP MCP server and the autopilot sync loop side by side, and includes a full runbook
+(Supabase setup, deploy key, bearer tokens, troubleshooting, cost breakdown). A
+voice-oriented reference implementation also lives in the
+[voice recipe](../../recipes/twilio-voice-brain.md).

@@ -73,6 +73,7 @@ strict behavior when unset.
 - `src/commands/integrations.ts` — Standalone integration recipe management (no DB needed). Exports `getRecipeDirs()` (trust-tagged recipe sources), SSRF helpers (`isInternalUrl`, `parseOctet`, `hostnameToOctets`, `isPrivateIpv4`). Only package-bundled recipes are `embedded=true`; `$GBRAIN_RECIPES_DIR` and cwd `./recipes/` are untrusted and cannot run `command`/`http`/string health checks.
 - `src/core/search/expansion.ts` — Multi-query expansion via Haiku. Exports `sanitizeQueryForPrompt` + `sanitizeExpansionOutput` (prompt-injection defense-in-depth). Sanitized query is only used for the LLM channel; original query still drives search.
 - `recipes/` — Integration recipe files (YAML frontmatter + markdown setup instructions)
+- `deploy/` — Self-contained Fly.io recipe for hosting gbrain as a 24/7 remote MCP server. `http-wrapper.ts` (Streamable HTTP MCP with bearer auth, all 30 operation handlers), `start.sh` (decode deploy key, clone notes, run wrapper + autopilot in parallel), `Dockerfile` (Bun + git + ssh), `fly.toml` (lhr, shared-cpu-1x, always-on, `/healthz`), `README.md` (end-to-end runbook from Supabase setup through Claude Desktop connection, ~$28/mo baseline). Zero `src/` changes — consumes the same operations contract the CLI and `gbrain serve` expose.
 - `docs/guides/` — Individual SKILLPACK guides (broken out from monolith)
 - `docs/integrations/` — "Getting Data In" guides and integration docs
 - `docs/architecture/infra-layer.md` — Shared infrastructure documentation
