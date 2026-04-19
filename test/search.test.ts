@@ -239,3 +239,20 @@ describe('applyBacklinkBoost (v0.10.1)', () => {
     expect(results[2].score).toBeGreaterThan(results[1].score);
   });
 });
+
+describe('pgvector string embedding parsing', () => {
+  test('cosineSimilarity works with Float32Array parsed from pgvector string', () => {
+    const vecStr = '[-0.01,0.02,0.03,0.04,0.05]';
+    const parsed = new Float32Array(JSON.parse(vecStr));
+    const reference = new Float32Array([-0.01, 0.02, 0.03, 0.04, 0.05]);
+    expect(cosineSimilarity(parsed, reference)).toBeCloseTo(1.0, 5);
+  });
+
+  test('string cast as Float32Array produces NaN (the bug)', () => {
+    const vecStr = '[-0.01,0.02,0.03]';
+    const badCast = vecStr as unknown as Float32Array;
+    const ref = new Float32Array([1, 2, 3]);
+    const result = cosineSimilarity(badCast, ref);
+    expect(Number.isNaN(result)).toBe(true);
+  });
+});

@@ -272,7 +272,11 @@ export class PostgresEngine implements BrainEngine {
     `;
     const result = new Map<number, Float32Array>();
     for (const row of rows) {
-      if (row.embedding) result.set(row.id as number, row.embedding as Float32Array);
+      if (!row.embedding) continue;
+      const emb = typeof row.embedding === 'string'
+        ? new Float32Array(JSON.parse(row.embedding))
+        : row.embedding as Float32Array;
+      result.set(row.id as number, emb);
     }
     return result;
   }
