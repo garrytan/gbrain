@@ -1,6 +1,6 @@
 import { execFile } from 'child_process';
 import { randomUUID } from 'crypto';
-import { mkdir, readFile, rename, rm, unlink, writeFile } from 'fs/promises';
+import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'fs/promises';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { promisify } from 'util';

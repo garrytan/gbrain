@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.13.2] - 2026-04-20
+
+### Fixed
+
+- **Stale wacli checkpoint locks without owner metadata are now reclaimed safely.** When the collector found an old `.lock` directory whose internal `owner.json` had been deleted or never written (crash mid-acquire, manual cleanup, partial write), it previously failed closed and left messages uncollected until someone removed the lock by hand. It now detects the missing metadata, checks the lock's mtime against the stale threshold, reclaims the directory atomically, and continues collecting without operator intervention. Adds a regression test that seeds a metadata-less lock with an ancient mtime and asserts collection proceeds in one attempt.
+
 ## [0.13.1] - 2026-04-20
 
 ### Fixed

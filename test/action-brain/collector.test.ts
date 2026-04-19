@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawn } from 'child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import {
@@ -410,6 +410,51 @@ describe('collectWacliMessages', () => {
       }),
       'utf-8'
     );
+
+    let calls = 0;
+    const runner: WacliListMessagesRunner = async () => {
+      calls += 1;
+      return {
+        success: true,
+        data: {
+          messages: [
+            {
+              MsgID: 'fresh-msg',
+              ChatName: 'Ops',
+              SenderJID: 'sender@jid',
+              Timestamp: '2026-04-16T00:29:00.000Z',
+              FromMe: false,
+              Text: 'fresh',
+            },
+          ],
+        },
+        error: null,
+      };
+    };
+
+    const result = await collectWacliMessages({
+      checkpointPath,
+      stores: [{ key: 'personal', storePath: '/stores/personal' }],
+      now: new Date('2026-04-16T00:30:00.000Z'),
+      limit: 50,
+      lockAcquireTimeoutMs: 1_000,
+      lockStaleAfterMs: 100,
+      runner,
+    });
+
+    expect(calls).toBe(1);
+    expect(result.degraded).toBe(false);
+    expect(result.messages.map((message) => message.MsgID)).toEqual(['fresh-msg']);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  test('reclaims stale lock directory without owner metadata and continues collection', async () => {
+    const root = createTempDir();
+    const checkpointPath = join(root, 'wacli-checkpoint.json');
+    const lockPath = `${checkpointPath}.lock`;
+
+    mkdirSync(lockPath, { recursive: true });
+    utimesSync(lockPath, new Date('2020-01-01T00:00:00.000Z'), new Date('2020-01-01T00:00:00.000Z'));
 
     let calls = 0;
     const runner: WacliListMessagesRunner = async () => {
