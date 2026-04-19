@@ -9,8 +9,15 @@
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+// [brain-private patch] Make model and dimensions configurable via env vars.
+// Defaults preserved for upstream compatibility.
+const MODEL = process.env.GBRAIN_EMBED_MODEL || 'text-embedding-3-large';
+const DIMENSIONS = process.env.GBRAIN_EMBED_DIMENSIONS
+  ? parseInt(process.env.GBRAIN_EMBED_DIMENSIONS, 10)
+  : 1536;
+// When using Ollama or another provider that doesn't support the `dimensions`
+// API parameter, set GBRAIN_EMBED_SKIP_DIMENSIONS_PARAM=1 to omit it from requests.
+const SKIP_DIMENSIONS_PARAM = process.env.GBRAIN_EMBED_SKIP_DIMENSIONS_PARAM === '1';
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
@@ -49,11 +56,17 @@ export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
 async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await getClient().embeddings.create({
+      const createParams: any = {
         model: MODEL,
         input: texts,
-        dimensions: DIMENSIONS,
-      });
+        // Force 'float' so the SDK skips its base64-decode path — LiteLLM/Ollama
+        // return plain arrays even when base64 is requested, which corrupts results.
+        encoding_format: 'float',
+      };
+      if (!SKIP_DIMENSIONS_PARAM) {
+        createParams.dimensions = DIMENSIONS;
+      }
+      const response = await getClient().embeddings.create(createParams);
 
       // Sort by index to maintain order
       const sorted = response.data.sort((a, b) => a.index - b.index);
