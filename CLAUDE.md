@@ -179,7 +179,8 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/action-brain/action-engine.test.ts` (CRUD, scoring, PGLite lifecycle),
 `test/action-brain/extractor.test.ts` (extraction, source ID stability, injection defense, timestamp bounds),
 `test/action-brain/brief.test.ts` (brief generation, scoring, dedup, overdue detection),
-`test/action-brain/operations.test.ts` (all 5 ops, ingest trust boundary, batch fallbacks).
+`test/action-brain/operations.test.ts` (all 5 ops, ingest trust boundary, batch fallbacks, low-confidence drop audit trail).
+`test/action-brain/collector.test.ts` (wacli collector: checkpoint store, stale lock reclaim, cross-process lock, overlap regression, stale orphan lock without owner metadata).
 `test/check-resolvable.test.ts` (resolver reachability, MECE overlap, gap detection, DRY checks),
 `test/backoff.test.ts` (load-aware throttling, concurrency limits, active hours),
 `test/fail-improve.test.ts` (deterministic/LLM cascade, JSONL logging, test generation, rotation),
