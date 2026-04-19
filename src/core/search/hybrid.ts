@@ -13,7 +13,7 @@ import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
 import { embed } from '../embedding.ts';
-import { isEmbeddingAvailable } from '../embedding-provider.ts'; // FORK: provider-agnostic key check
+import { isEmbeddingAvailable } from '../embedding-provider.ts';
 import { dedupResults } from './dedup.ts';
 import { autoDetectDetail } from './intent.ts';
 
@@ -78,7 +78,7 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
-  // FORK: Skip vector search if no embedding provider key is configured (any provider).
+  // Skip vector search if no embedding provider key is configured (any provider).
   if (!isEmbeddingAvailable()) {
     // Apply backlink boost in keyword-only path too. One getBacklinkCounts query
     // per search request; not N+1.
