@@ -234,7 +234,38 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
     checks.push({ name: 'graph_coverage', status: 'warn', message: 'Could not check graph coverage' });
   }
 
-  // 9. JSONB integrity (v0.12.1 reliability wave).
+  // 9. Integrity sample scan (v0.13 knowledge runtime).
+  // Read-only — no network, no writes, no resolver calls. Samples the first
+  // 500 pages by slug order and surfaces bare-tweet + dead-link counts as a
+  // warning. Full-brain scan: `gbrain integrity check`.
+  try {
+    const { scanIntegrity } = await import('./integrity.ts');
+    const res = await scanIntegrity(engine, { limit: 500 });
+    const total = res.bareHits.length + res.externalHits.length;
+    if (total === 0) {
+      checks.push({
+        name: 'integrity',
+        status: 'ok',
+        message: `Sampled ${res.pagesScanned} pages; no bare-tweet phrases or external links.`,
+      });
+    } else if (res.bareHits.length > 0) {
+      checks.push({
+        name: 'integrity',
+        status: 'warn',
+        message: `Sampled ${res.pagesScanned} pages; ${res.bareHits.length} bare-tweet phrase(s), ${res.externalHits.length} external link(s). Run: gbrain integrity check (or integrity auto to repair).`,
+      });
+    } else {
+      checks.push({
+        name: 'integrity',
+        status: 'ok',
+        message: `Sampled ${res.pagesScanned} pages; ${res.externalHits.length} external link(s) (no bare tweets).`,
+      });
+    }
+  } catch (e) {
+    checks.push({ name: 'integrity', status: 'warn', message: `integrity scan skipped: ${e instanceof Error ? e.message : String(e)}` });
+  }
+
+  // 10. JSONB integrity (v0.12.3 reliability wave).
   // v0.12.0's JSON.stringify()::jsonb pattern stored JSONB string literals
   // instead of objects on real Postgres. PGLite masked this; Supabase did not.
   // Scan the 4 known sites (pages.frontmatter, raw_data.data, ingest_log.pages_updated,
@@ -269,7 +300,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
     checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
   }
 
-  // 10. Markdown body completeness (v0.12.1 reliability wave).
+  // 11. Markdown body completeness (v0.12.3 reliability wave).
   // v0.12.0's splitBody ate everything after the first `---` horizontal rule,
   // truncating wiki-style pages. Heuristic: pages whose body is <30% of the
   // raw source content length when raw has multiple H2/H3 boundaries.

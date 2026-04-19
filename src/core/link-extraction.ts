@@ -714,3 +714,16 @@ export async function isAutoLinkEnabled(engine: BrainEngine): Promise<boolean> {
   const normalized = val.trim().toLowerCase();
   return !['false', '0', 'no', 'off'].includes(normalized);
 }
+
+/**
+ * Read the auto_timeline config flag. Defaults to TRUE (on by default).
+ * Same truthiness rules as isAutoLinkEnabled. Controls whether put_page
+ * parses timeline entries from freshly-written content and inserts them
+ * via addTimelineEntriesBatch.
+ */
+export async function isAutoTimelineEnabled(engine: BrainEngine): Promise<boolean> {
+  const val = await engine.getConfig('auto_timeline');
+  if (val == null) return true;
+  const normalized = val.trim().toLowerCase();
+  return !['false', '0', 'no', 'off'].includes(normalized);
+}
