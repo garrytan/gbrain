@@ -20,11 +20,16 @@ restart the shell or add the PATH export to the shell profile.
 Ask the user for these:
 
 ```bash
-export OPENAI_API_KEY=sk-...          # required for vector search
+export OPENAI_API_KEY=sk-...          # default embedding provider (OpenAI)
 export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
+# Optional embedding overrides:
+export EMBEDDING_PROVIDER=openai      # or voyage
+export EMBEDDING_MODEL=text-embedding-3-large
+export EMBEDDING_DIMENSIONS=1536
+export VOYAGE_API_KEY=pa-...          # required only when EMBEDDING_PROVIDER=voyage
 ```
 
-Save to shell profile or `.env`. Without OpenAI, keyword search still works.
+Save to shell profile or `.env`. Without an embedding API key, keyword search still works.
 Without Anthropic, search works but skips query expansion.
 
 ## Step 3: Create the Brain
