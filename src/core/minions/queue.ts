@@ -109,17 +109,20 @@ export class MinionQueue {
 
       // 3. Insert child. Use ON CONFLICT for idempotency; if a concurrent submit
       //    raced past the fast-path SELECT, the unique index catches it here.
+      //    v12 adds quiet_hours + stagger_key passed through from opts.
       const insertSql = opts?.idempotency_key
         ? `INSERT INTO minion_jobs (name, queue, status, priority, data, max_attempts, backoff_type,
             backoff_delay, backoff_jitter, delay_until, parent_job_id, on_child_fail,
-            depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key,
+            quiet_hours, stagger_key)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20)
            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
            RETURNING *`
         : `INSERT INTO minion_jobs (name, queue, status, priority, data, max_attempts, backoff_type,
             backoff_delay, backoff_jitter, delay_until, parent_job_id, on_child_fail,
-            depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key,
+            quiet_hours, stagger_key)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20)
            RETURNING *`;
 
       const params = [
@@ -141,6 +144,8 @@ export class MinionQueue {
         opts?.remove_on_complete ?? false,
         opts?.remove_on_fail ?? false,
         opts?.idempotency_key ?? null,
+        opts?.quiet_hours ?? null,
+        opts?.stagger_key ?? null,
       ];
 
       const inserted = await tx.executeRaw<Record<string, unknown>>(insertSql, params);

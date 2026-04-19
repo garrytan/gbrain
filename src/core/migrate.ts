@@ -284,6 +284,63 @@ export const MIGRATIONS: Migration[] = [
       DROP FUNCTION IF EXISTS update_page_search_vector_from_timeline();
     `,
   },
+  {
+    version: 11,
+    name: 'budget_ledger',
+    // Resolver spend tracker. Primary key {scope, resolver_id, local_date} so
+    // midnight rollover in the user's TZ naturally creates a new row instead of
+    // mutating yesterday's. reserved_usd and committed_usd track reservations
+    // vs actuals so process death between reserve() and commit()/rollback()
+    // can be cleaned up by TTL scan. status and reserved_at exist for that
+    // reclaim path. Rollback: DROP TABLE (budget is regenerable from resolver
+    // call logs; no durable product data lives here).
+    sql: `
+      CREATE TABLE IF NOT EXISTS budget_ledger (
+        scope          TEXT        NOT NULL,
+        resolver_id    TEXT        NOT NULL,
+        local_date     DATE        NOT NULL,
+        reserved_usd   NUMERIC(12,4) NOT NULL DEFAULT 0,
+        committed_usd  NUMERIC(12,4) NOT NULL DEFAULT 0,
+        cap_usd        NUMERIC(12,4),
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (scope, resolver_id, local_date)
+      );
+      CREATE TABLE IF NOT EXISTS budget_reservations (
+        reservation_id TEXT        PRIMARY KEY,
+        scope          TEXT        NOT NULL,
+        resolver_id    TEXT        NOT NULL,
+        local_date     DATE        NOT NULL,
+        estimate_usd   NUMERIC(12,4) NOT NULL,
+        reserved_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        expires_at     TIMESTAMPTZ NOT NULL,
+        status         TEXT        NOT NULL DEFAULT 'held'
+      );
+      CREATE INDEX IF NOT EXISTS idx_budget_reservations_expires
+        ON budget_reservations(expires_at) WHERE status = 'held';
+    `,
+  },
+  {
+    version: 12,
+    name: 'minion_quiet_hours_stagger',
+    // Adds quiet-hours gating + deterministic stagger to Minions.
+    //
+    // quiet_hours (JSONB): {start, end, tz, policy} — checked at claim
+    //   time by the worker, not at dispatch. A queued job inside its quiet
+    //   window is released back to 'waiting' and claimed again outside the
+    //   window. 'skip' policy drops the event, 'defer' re-queues.
+    // stagger_key (TEXT): hashed to a minute-slot offset so jobs with the
+    //   same key don't collide when a cron boundary fires. Optional; NULL
+    //   = no stagger. The hash lives in application code (deterministic,
+    //   ensures same key always lands on same slot) so the column is
+    //   just the key.
+    sql: `
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS quiet_hours JSONB;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS stagger_key TEXT;
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_stagger_key
+        ON minion_jobs(stagger_key) WHERE stagger_key IS NOT NULL;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

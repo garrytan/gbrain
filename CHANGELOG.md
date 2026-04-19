@@ -2,6 +2,74 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.13.0.0] - 2026-04-19
+
+## **The brain stops being a write-once graph and starts being a runtime.**
+## **Five new modules land on top of v0.12's knowledge graph layer.**
+
+GBrain v0.13.0 ships the Knowledge Runtime delta: typed abstractions that turn a knowledge base into a runtime other agents can adopt. Five focused modules build on the v0.12.0 graph layer and v0.11.x Minions orchestration. A Resolver SDK unifies external lookups. A BrainWriter enforces integrity pre-commit. `gbrain integrity` repairs bare-tweet citations at scale. A BudgetLedger caps runaway resolver spend. Minions gains TZ-aware quiet-hours at claim time.
+
+### What you can do now that you couldn't before
+
+- **`gbrain integrity --auto --confidence 0.8`** repairs the 1,424 bare-tweet citations in your brain without human review. Three-bucket confidence: auto-repair ≥0.8, review queue 0.5–0.8, skip <0.5. Resumable via `~/.gbrain/integrity-progress.jsonl`.
+- **`gbrain resolvers list`** introspects the typed plugin registry. Two builtins ship: `url_reachable` (HEAD check + SSRF guard) and `x_handle_to_tweet` (X API v2 with confidence scoring). Every result carries `{value, confidence, source, fetchedAt, costEstimate, raw}`.
+- **`gbrain config set budget.daily_cap_usd 10`** puts a hard wall on resolver spend. Concurrent reserves serialize via `SELECT FOR UPDATE`. TTL auto-reclaim handles process death between reserve and commit.
+- **BrainWriter + pre-commit validators** make the Philip-Leung hallucination class structurally impossible. `Scaffolder` builds every tweet URL from API output, never LLM text. `SlugRegistry` detects name collisions at create time. Four validators (citation, link, back-link, triple-HR) run on write. `writer.lint_on_put_page=true` enables observability before the strict-mode flip.
+- **Quiet-hours on Minion jobs** stop the 3am DM. Set `quiet_hours: {start:22, end:7, tz:"America/Los_Angeles", policy:"defer"}` on a job. Worker checks at claim time (not dispatch). Wrap-around windows supported.
+
+### Schema migrations
+
+Three new migrations, all idempotent, apply automatically on `gbrain init` / upgrade.
+
+- **v11 — budget_ledger + budget_reservations.** Per-(scope, resolver, local_date) rollup with held-reservation TTL. Rollback: DROP TABLE (budget is regenerable from resolver call logs).
+- **v12 — minion_jobs.quiet_hours + stagger_key.** Additive nullable columns; existing rows keep working unchanged.
+- **TS v0.13.0 — grandfather `validate: false`.** Walks every page, adds the opt-out frontmatter so legacy content skips the new validators. `gbrain integrity --auto` clears the flag per-page as citations are repaired. Rollback log at `~/.gbrain/migrations/v0_13_0-rollback.jsonl`.
+
+### Out of scope (intentional, per CEO plan)
+
+- **Strict-mode default flip.** BrainWriter ships with `strict_mode=lint`. The flip to strict requires a 7-day soak + BrainBench regression ≤1pt + zero false-positive count.
+- **Sandboxed user plugins.** v0.13 ships builtins only. User-provided TS modules deferred pending a real isolation story (worker_threads or vm2) in a follow-on release.
+- **`openai_embedding` refactor.** Deferred to PR 1.5 post-flip; embedding is a hot path.
+- **Wintermute `claw-bridge`.** Adoption path is documentation-only this release.
+
+### Tests
+
+- **89 new unit tests** across `test/resolvers.test.ts` (43), `test/writer.test.ts` (57), `test/integrity.test.ts` (21), `test/enrichment.test.ts` (23), `test/minions-quiet-hours.test.ts` (25), `test/post-write-lint.test.ts` (11), `test/migrations-v0_13_0.test.ts` (5).
+- **E2E passes on Postgres:** 115 pass / 0 fail across mechanical, sync, upgrade, minions concurrency + resilience, graph-quality, MCP, migration-flow, search-quality, skills (Tier 2 Opus/Sonnet).
+- **1574 total tests pass** with an active test Postgres container. 1522 pass in unit-only mode (E2E auto-skip without DATABASE_URL).
+
+### Itemized changes
+
+#### Resolver SDK (`src/core/resolvers/`)
+`Resolver<I, O>` interface with `{id, cost, backend, available(), resolve()}`. In-memory `ResolverRegistry`. `ResolverContext` carries `{engine, storage, config, logger, requestId, remote, deadline?, signal?}` — the `remote` flag mirrors `OperationContext.remote` for uniform trust boundaries. `FailImproveLoop.execute` gained optional `opts.signal`; backwards compatible. Two reference builtins: `url_reachable` (SSRF guard reuses wave-3 `isInternalUrl`, max-5 redirects with per-hop re-validation, AbortSignal composition) and `x_handle_to_tweet` (X API v2 recent search, strict handle regex, confidence-scored matches, 2x 429 retry honoring Retry-After, 401/403 → `ResolverError(auth)`). `gbrain resolvers list|describe` for introspection.
+
+#### BrainWriter + validators (`src/core/output/`)
+`BrainWriter.transaction(fn, ctx)` over `engine.transaction` with pre-commit validators via `WriteTx` API. Scaffolder builds typed citations (`tweetCitation`, `emailCitation`, `sourceCitation`) + `entityLink` + `timelineLine` — URLs from structured IDs, never LLM text. `SlugRegistry` detects collisions at create time. Four validators (`citation`, `link`, `back-link`, `triple-hr`) skip fenced code / inline code / HTML comments correctly. Config flag `writer.strict_mode` (default `lint`).
+
+#### gbrain integrity (`src/commands/integrity.ts`)
+Four subcommands: `check` (read-only report with `--json`, `--type`, `--limit`), `auto` (three-bucket repair with `--confidence`, `--review-lower`, `--dry-run`, `--fresh`, `--limit`), `review` (prints queue path + count), `reset-progress`. Nine bare-tweet phrase regexes. External-link extraction for optional dead-link probing. Repairs route through `BrainWriter.transaction`.
+
+#### BudgetLedger + CompletenessScorer (`src/core/enrichment/`)
+`BudgetLedger.reserve` returns `{kind:'held'}` or `{kind:'exhausted'}`. FOR UPDATE serializes concurrent reserves. `commit`, `rollback`, `cleanupExpired`. Midnight rollover via `Intl.DateTimeFormat` en-CA in configured IANA tz. Seven per-type rubrics + default (weights sum to 1.0). Person rubric's `non_redundancy` and `recency_score` kill Wintermute's length-only heuristic + 30-day-re-enrich-forever pathologies.
+
+#### Minions scheduler polish (`src/core/minions/`)
+`quiet-hours.ts` — pure `evaluateQuietHours(cfg, now?)`. Wrap-around windows. Unknown tz fails open. `stagger.ts` — FNV-1a → 0–59 deterministic across runtimes. `worker.ts` integrated: post-claim evaluation, defer → `delayed/+15m`, skip → `cancelled`.
+
+#### Post-write lint hook (`src/core/output/post-write.ts`)
+`runPostWriteLint` invokes the four validators against freshly-written pages. Gated on `writer.lint_on_put_page` (default false). Wired into `put_page` operation handler as non-blocking. Findings go to `~/.gbrain/validator-lint.jsonl` + `engine.logIngest`.
+
+#### Design doc
+`docs/designs/KNOWLEDGE_RUNTIME.md` — 717 lines covering the 4-layer architecture, integration seams, 7-phase migration path, 10 open questions. Promoted to repo so future contributors can trace decisions.
+
+#### Prior learnings applied
+- Snapshot slugs upfront (`engine.getAllSlugs()`) in grandfather migration — avoids pagination-mutation instability.
+- TS-registry migrations only (post-v0.11.1 migration-discovery change).
+- Migration never calls `saveConfig` — avoids Postgres→PGLite flip.
+- Quiet-hours at claim/promote, not dispatch — queued job becomes claimable after window opens.
+- Core fn pattern for any handler wrapping a CLI command.
+- Schema v11 not v8 (graph layer took v8-v10).
+- `gray-matter` + line tokenizer for citation parsing, not `marked.lexer`.
+
 ## [0.12.3] - 2026-04-19
 
 ## **Reliability wave: the pieces v0.12.2 didn't cover.**

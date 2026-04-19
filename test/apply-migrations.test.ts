@@ -102,10 +102,12 @@ describe('buildPlan — diff against completed + installed VERSION', () => {
     expect(plan.applied).toEqual([]);
     expect(plan.partial).toEqual([]);
     expect(plan.pending.map(m => m.version)).toContain('0.11.0');
-    // v0.12.0 (Knowledge Graph) and v0.12.2 (JSONB repair) are registered but
-    // installed VERSION is 0.11.1, so they land in skippedFuture until the
-    // binary catches up.
-    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.0', '0.12.2']);
+    // v0.12.0 (Knowledge Graph), v0.12.2 (JSONB repair), and v0.13.0
+    // (Knowledge Runtime grandfather) are registered but installed VERSION
+    // is 0.11.1, so all three land in skippedFuture until the binary catches up.
+    expect(plan.skippedFuture.map(m => m.version)).toContain('0.12.0');
+    expect(plan.skippedFuture.map(m => m.version)).toContain('0.12.2');
+    expect(plan.skippedFuture.map(m => m.version)).toContain('0.13.0');
   });
 
   test('already applied → v0.11.0 lands in `applied` bucket, not pending', () => {
@@ -141,10 +143,11 @@ describe('buildPlan — diff against completed + installed VERSION', () => {
     const idx = indexCompleted([]);
     const plan = buildPlan(idx, '0.12.0');
     expect(plan.pending.map(m => m.version)).toContain('0.11.0');
-    // v0.12.2 was added later (JSONB repair); installed=0.12.0 means it
-    // belongs in skippedFuture, not pending. v0.11.0 and v0.12.0 stay
-    // pending despite being ≤ installed — that is the H9 invariant.
-    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.2']);
+    // v0.12.2 (JSONB repair) and v0.13.0 (Knowledge Runtime grandfather) were
+    // both added after 0.12.0; installed=0.12.0 means they belong in
+    // skippedFuture, not pending. v0.11.0 and v0.12.0 stay pending despite
+    // being ≤ installed — that is the H9 invariant.
+    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.2', '0.13.0']);
   });
 
   test('--migration filter narrows to one version', () => {

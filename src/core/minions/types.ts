@@ -75,6 +75,10 @@ export interface MinionJob {
   remove_on_fail: boolean;
   idempotency_key: string | null;
 
+  // v12: scheduler polish — quiet-hours gate + deterministic stagger
+  quiet_hours: Record<string, unknown> | null;
+  stagger_key: string | null;
+
   // Results
   result: Record<string, unknown> | null;
   progress: unknown | null;
@@ -116,6 +120,19 @@ export interface MinionJobInput {
   max_spawn_depth?: number;
   /** Global dedup key. Same key returns the existing job, no second row created. */
   idempotency_key?: string;
+
+  // v12: scheduler polish
+  /**
+   * Quiet-hours window evaluated at claim time. Jobs whose current wall-clock
+   * falls inside the window are deferred (delay +15m) or skipped per policy.
+   * Example: `{start:22,end:7,tz:"America/Los_Angeles",policy:"defer"}`.
+   */
+  quiet_hours?: { start: number; end: number; tz: string; policy?: 'skip' | 'defer' };
+  /**
+   * Deterministic stagger key. When multiple jobs share a key (same cron fire),
+   * their claim order is decorrelated by hash-based minute-offset. Optional.
+   */
+  stagger_key?: string;
 }
 
 /** Constructor options for MinionQueue (v7). */
@@ -296,6 +313,8 @@ export function rowToMinionJob(row: Record<string, unknown>): MinionJob {
     remove_on_complete: row.remove_on_complete === true,
     remove_on_fail: row.remove_on_fail === true,
     idempotency_key: (row.idempotency_key as string) || null,
+    quiet_hours: row.quiet_hours ? (typeof row.quiet_hours === 'string' ? JSON.parse(row.quiet_hours) : row.quiet_hours) as Record<string, unknown> : null,
+    stagger_key: (row.stagger_key as string) || null,
     result: row.result ? (typeof row.result === 'string' ? JSON.parse(row.result) : row.result) as Record<string, unknown> : null,
     progress: row.progress ? (typeof row.progress === 'string' ? JSON.parse(row.progress) : row.progress) : null,
     error_text: (row.error_text as string) || null,
