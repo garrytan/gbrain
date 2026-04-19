@@ -97,6 +97,32 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
     // handles the "schema v7+ but no prefs" case.
   }
 
+  // 3b. Upgrade-error trail (v0.13+). `gbrain upgrade` silently swallows
+  // best-effort failures in `gbrain post-upgrade`; the failure record is
+  // appended to ~/.gbrain/upgrade-errors.jsonl so we can surface it here
+  // with a paste-ready recovery hint. Without this, users end up with
+  // half-upgraded brains and no signal.
+  try {
+    const home = process.env.HOME || '';
+    const errPath = join(home, '.gbrain', 'upgrade-errors.jsonl');
+    if (existsSync(errPath)) {
+      const lines = readFileSync(errPath, 'utf-8').split('\n').filter(l => l.trim());
+      if (lines.length > 0) {
+        const latest = JSON.parse(lines[lines.length - 1]) as {
+          ts: string; phase: string; from_version: string; to_version: string; hint: string;
+        };
+        const date = latest.ts.slice(0, 10);
+        checks.push({
+          name: 'upgrade_errors',
+          status: 'warn',
+          message: `Post-upgrade failure on ${date} (${latest.from_version} → ${latest.to_version}, phase: ${latest.phase}). Recovery: ${latest.hint}`,
+        });
+      }
+    }
+  } catch {
+    // Read/parse failure is itself best-effort; skip silently.
+  }
+
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {

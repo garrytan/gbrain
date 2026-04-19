@@ -13,7 +13,7 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
-import { extractPageLinks, isAutoLinkEnabled } from './link-extraction.ts';
+import { extractPageLinks, isAutoLinkEnabled, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
 import { actionBrainOperations } from '../action-brain/operations.ts';
 
@@ -249,7 +249,11 @@ const put_page: Operation = {
     // Combined with the backlink boost in hybridSearch, attacker-placed targets
     // would surface higher in search. Local CLI users (ctx.remote=false) opt
     // into this behavior; MCP/remote writes do not.
-    let autoLinks: { created: number; removed: number; errors: number } | { error: string } | { skipped: 'remote' } | undefined;
+    let autoLinks:
+      | { created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }
+      | { error: string }
+      | { skipped: 'remote' }
+      | undefined;
     if (ctx.remote === true) {
       autoLinks = { skipped: 'remote' };
     } else if (result.parsedPage) {
@@ -287,43 +291,114 @@ async function runAutoLink(
   engine: BrainEngine,
   slug: string,
   parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },
-): Promise<{ created: number; removed: number; errors: number }> {
+): Promise<{ created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
-  const candidates = extractPageLinks(fullContent, parsed.frontmatter, parsed.type);
+  // Live-mode resolver: per-put throwaway cache, pg_trgm + optional search.
+  const resolver = makeResolver(engine, { mode: 'live' });
+  const { candidates, unresolved } = await extractPageLinks(
+    slug, fullContent, parsed.frontmatter, parsed.type, resolver,
+  );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
   // violation churn in addLink). One getAllSlugs call upfront, O(1) lookup.
   const allSlugs = await engine.getAllSlugs();
-  const valid = candidates.filter(c => allSlugs.has(c.targetSlug));
+  const valid = candidates.filter(c =>
+    allSlugs.has(c.targetSlug) && (!c.fromSlug || allSlugs.has(c.fromSlug))
+  );
+
+  // Split candidates by direction. Outgoing (fromSlug === slug or unset) are
+  // this page's own edges, reconciled against getLinks(slug). Incoming
+  // (fromSlug !== slug — frontmatter with `direction: incoming`) are edges
+  // where this page is the TO side; reconciled against getBacklinks(slug)
+  // but SCOPED to the frontmatter edges this page authored via
+  // (link_source='frontmatter' AND origin_slug = slug). We never touch
+  // frontmatter edges authored by OTHER pages.
+  const out = valid.filter(c => !c.fromSlug || c.fromSlug === slug);
+  const inc = valid.filter(c => c.fromSlug && c.fromSlug !== slug);
 
   // Run getLinks + addLink/removeLink loops inside a single transaction so that
   // concurrent put_page calls on the same slug can't race the reconciliation:
   // without this, two simultaneous writes both read stale `existingKeys` and
   // re-create links the other side just removed (lost-update). The transaction
   // serializes via row-level locks on `links` rows touched by addLink/removeLink.
-  return await engine.transaction(async (tx) => {
-    const existing = await tx.getLinks(slug);
-    const desiredKeys = new Set(valid.map(c => `${c.targetSlug}\u0000${c.linkType}`));
-    const existingKeys = new Set(existing.map(l => `${l.to_slug}\u0000${l.link_type}`));
+  const result = await engine.transaction(async (tx) => {
+    const existingOut = await tx.getLinks(slug);
+    // Incoming: we only look at frontmatter edges WE authored (origin_slug=slug).
+    // Non-frontmatter and other-page frontmatter edges survive untouched.
+    const existingInRaw = await tx.getBacklinks(slug);
+    const existingIn = existingInRaw.filter(
+      l => l.link_source === 'frontmatter' && l.origin_slug === slug,
+    );
+
+    // Reconcilable outgoing edges: markdown + our own frontmatter edges.
+    // Manual edges (link_source='manual') are NEVER touched by reconciliation.
+    const reconcilableOut = existingOut.filter(
+      l => l.link_source === 'markdown' || l.link_source == null ||
+           (l.link_source === 'frontmatter' && l.origin_slug === slug),
+    );
+
+    const outKeys = new Set(out.map(c =>
+      `${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`
+    ));
+    const incKeys = new Set(inc.map(c =>
+      `${c.fromSlug}\u0000${c.linkType}`
+    ));
 
     let created = 0, removed = 0, errors = 0;
 
-    // Add new + update existing.
-    for (const c of valid) {
+    // Add outgoing edges.
+    for (const c of out) {
       try {
-        await tx.addLink(slug, c.targetSlug, c.context, c.linkType);
-        if (!existingKeys.has(`${c.targetSlug}\u0000${c.linkType}`)) created++;
+        await tx.addLink(
+          slug, c.targetSlug, c.context, c.linkType,
+          c.linkSource, c.originSlug, c.originField,
+        );
+        const existKey = `${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`;
+        const exists = reconcilableOut.some(l =>
+          `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}` === existKey
+        );
+        if (!exists) created++;
       } catch {
         errors++;
       }
     }
 
-    // Remove stale (in DB but not in desired set).
-    for (const l of existing) {
-      const key = `${l.to_slug}\u0000${l.link_type}`;
-      if (!desiredKeys.has(key)) {
+    // Add incoming edges (other page → slug).
+    for (const c of inc) {
+      try {
+        await tx.addLink(
+          c.fromSlug!, c.targetSlug, c.context, c.linkType,
+          'frontmatter', c.originSlug, c.originField,
+        );
+        const existKey = `${c.fromSlug}\u0000${c.linkType}`;
+        const exists = existingIn.some(l =>
+          `${l.from_slug}\u0000${l.link_type}` === existKey
+        );
+        if (!exists) created++;
+      } catch {
+        errors++;
+      }
+    }
+
+    // Remove stale outgoing (markdown or our-frontmatter, not in desired set).
+    for (const l of reconcilableOut) {
+      const key = `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}`;
+      if (!outKeys.has(key)) {
         try {
-          await tx.removeLink(slug, l.to_slug, l.link_type);
+          await tx.removeLink(slug, l.to_slug, l.link_type, l.link_source ?? undefined);
+          removed++;
+        } catch {
+          errors++;
+        }
+      }
+    }
+
+    // Remove stale incoming (our frontmatter → slug, not in desired set).
+    for (const l of existingIn) {
+      const key = `${l.from_slug}\u0000${l.link_type}`;
+      if (!incKeys.has(key)) {
+        try {
+          await tx.removeLink(l.from_slug, slug, l.link_type, 'frontmatter');
           removed++;
         } catch {
           errors++;
@@ -333,6 +408,8 @@ async function runAutoLink(
 
     return { created, removed, errors };
   });
+
+  return { ...result, unresolved };
 }
 
 const delete_page: Operation = {

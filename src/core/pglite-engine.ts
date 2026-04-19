@@ -321,49 +321,81 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Links
-  async addLink(from: string, to: string, context?: string, linkType?: string): Promise<void> {
+  async addLink(
+    from: string,
+    to: string,
+    context?: string,
+    linkType?: string,
+    linkSource?: string,
+    originSlug?: string,
+    originField?: string,
+  ): Promise<void> {
+    const src = linkSource ?? 'markdown';
     await this.db.query(
-      `INSERT INTO links (from_page_id, to_page_id, link_type, context)
-       SELECT f.id, t.id, $3, $4
+      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
+       SELECT f.id, t.id, $3, $4, $5,
+              (SELECT id FROM pages WHERE slug = $6),
+              $7
        FROM pages f, pages t
        WHERE f.slug = $1 AND t.slug = $2
-       ON CONFLICT (from_page_id, to_page_id, link_type) DO UPDATE SET
-         context = EXCLUDED.context`,
-      [from, to, linkType || '', context || '']
+       ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO UPDATE SET
+         context = EXCLUDED.context,
+         origin_field = EXCLUDED.origin_field`,
+      [from, to, linkType || '', context || '', src, originSlug ?? null, originField ?? null]
     );
   }
 
   async addLinksBatch(links: LinkBatchInput[]): Promise<number> {
     if (links.length === 0) return 0;
-    // unnest() pattern: 4 array-typed bound parameters regardless of batch size.
-    // Same shape as PostgresEngine. Avoids the 65535-parameter cap entirely.
+    // unnest() pattern: 7 array-typed bound parameters regardless of batch size.
+    // Same shape as PostgresEngine (v0.13). Avoids the 65535-parameter cap.
     const fromSlugs = links.map(l => l.from_slug);
     const toSlugs = links.map(l => l.to_slug);
-    // Normalize optional fields to '' to match per-row addLink + NOT NULL DDL.
     const linkTypes = links.map(l => l.link_type || '');
     const contexts = links.map(l => l.context || '');
+    const linkSources = links.map(l => l.link_source || 'markdown');
+    const originSlugs = links.map(l => l.origin_slug || null);
+    const originFields = links.map(l => l.origin_field || null);
     const result = await this.db.query(
-      `INSERT INTO links (from_page_id, to_page_id, link_type, context)
-       SELECT f.id, t.id, v.link_type, v.context
-       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[])
-         AS v(from_slug, to_slug, link_type, context)
+      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
+       SELECT f.id, t.id, v.link_type, v.context, v.link_source, o.id, v.origin_field
+       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
+         AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field)
        JOIN pages f ON f.slug = v.from_slug
        JOIN pages t ON t.slug = v.to_slug
-       ON CONFLICT (from_page_id, to_page_id, link_type) DO NOTHING
+       LEFT JOIN pages o ON o.slug = v.origin_slug
+       ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
        RETURNING 1`,
-      [fromSlugs, toSlugs, linkTypes, contexts]
+      [fromSlugs, toSlugs, linkTypes, contexts, linkSources, originSlugs, originFields]
     );
     return result.rows.length;
   }
 
-  async removeLink(from: string, to: string, linkType?: string): Promise<void> {
-    if (linkType !== undefined) {
+  async removeLink(from: string, to: string, linkType?: string, linkSource?: string): Promise<void> {
+    if (linkType !== undefined && linkSource !== undefined) {
+      await this.db.query(
+        `DELETE FROM links
+         WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1)
+           AND to_page_id = (SELECT id FROM pages WHERE slug = $2)
+           AND link_type = $3
+           AND link_source IS NOT DISTINCT FROM $4`,
+        [from, to, linkType, linkSource]
+      );
+    } else if (linkType !== undefined) {
       await this.db.query(
         `DELETE FROM links
          WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1)
            AND to_page_id = (SELECT id FROM pages WHERE slug = $2)
            AND link_type = $3`,
         [from, to, linkType]
+      );
+    } else if (linkSource !== undefined) {
+      await this.db.query(
+        `DELETE FROM links
+         WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1)
+           AND to_page_id = (SELECT id FROM pages WHERE slug = $2)
+           AND link_source IS NOT DISTINCT FROM $3`,
+        [from, to, linkSource]
       );
     } else {
       await this.db.query(
@@ -377,10 +409,13 @@ export class PGLiteEngine implements BrainEngine {
 
   async getLinks(slug: string): Promise<Link[]> {
     const { rows } = await this.db.query(
-      `SELECT f.slug as from_slug, t.slug as to_slug, l.link_type, l.context
+      `SELECT f.slug as from_slug, t.slug as to_slug,
+              l.link_type, l.context, l.link_source,
+              o.slug as origin_slug, l.origin_field
        FROM links l
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
+       LEFT JOIN pages o ON o.id = l.origin_page_id
        WHERE f.slug = $1`,
       [slug]
     );
@@ -389,14 +424,42 @@ export class PGLiteEngine implements BrainEngine {
 
   async getBacklinks(slug: string): Promise<Link[]> {
     const { rows } = await this.db.query(
-      `SELECT f.slug as from_slug, t.slug as to_slug, l.link_type, l.context
+      `SELECT f.slug as from_slug, t.slug as to_slug,
+              l.link_type, l.context, l.link_source,
+              o.slug as origin_slug, l.origin_field
        FROM links l
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
+       LEFT JOIN pages o ON o.id = l.origin_page_id
        WHERE t.slug = $1`,
       [slug]
     );
     return rows as unknown as Link[];
+  }
+
+  async findByTitleFuzzy(
+    name: string,
+    dirPrefix?: string,
+    minSimilarity: number = 0.55,
+  ): Promise<{ slug: string; similarity: number } | null> {
+    // Inline threshold comparison instead of `SET LOCAL pg_trgm.similarity_threshold`.
+    // The GUC only scopes to the current transaction and pglite auto-commits each
+    // .query() call, so the SET LOCAL would be a no-op. Using similarity() >= $N
+    // directly gives predictable behavior. Tie-breaker: sort by slug so re-runs
+    // pick the same winner.
+    const prefixPattern = dirPrefix ? `${dirPrefix}/%` : '%';
+    const { rows } = await this.db.query(
+      `SELECT slug, similarity(title, $1) AS sim
+       FROM pages
+       WHERE similarity(title, $1) >= $3
+         AND slug LIKE $2
+       ORDER BY sim DESC, slug ASC
+       LIMIT 1`,
+      [name, prefixPattern, minSimilarity]
+    );
+    if (rows.length === 0) return null;
+    const row = rows[0] as { slug: string; sim: number };
+    return { slug: row.slug, similarity: row.sim };
   }
 
   async traverseGraph(slug: string, depth: number = 5): Promise<GraphNode[]> {

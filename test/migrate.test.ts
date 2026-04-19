@@ -93,11 +93,12 @@ describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate 
   });
 
   test('1000 duplicate links dedup completes in <5s and leaves table deduped', async () => {
-    // Set up: drop the unique constraint so duplicates can be inserted, then reset
-    // version so v8 re-runs. Schema-embedded.ts already has the constraint, so
-    // initSchema() above set it up; explicit DROP makes the test premise valid.
+    // Set up: drop BOTH the old (v8) and new (v11) unique constraints so
+    // duplicates can be inserted, then reset version so v8 + v11 re-run.
+    // v11 replaces the v8 constraint name; we drop whichever is present.
     const db = (engine as any).db;
     await db.exec(`ALTER TABLE links DROP CONSTRAINT IF EXISTS links_from_to_type_unique`);
+    await db.exec(`ALTER TABLE links DROP CONSTRAINT IF EXISTS links_from_to_type_source_origin_unique`);
 
     // Two pages so the FK is satisfied
     await engine.putPage('p/from', { type: 'concept', title: 'F', compiled_truth: '', timeline: '' });
@@ -115,7 +116,7 @@ describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate 
     const beforeCount = (await db.query(`SELECT COUNT(*)::int AS c FROM links`)).rows[0].c;
     expect(beforeCount).toBe(1000);
 
-    // Reset version to 7 so v8 + v9 + v10 re-run
+    // Reset version to 7 so v8 + v9 + v10 + v11 re-run
     await engine.setConfig('version', '7');
 
     // Run migrations and assert wall-clock + correctness
@@ -128,12 +129,14 @@ describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate 
     const afterCount = (await db.query(`SELECT COUNT(*)::int AS c FROM links`)).rows[0].c;
     expect(afterCount).toBe(1); // deduped to one row
 
-    // Unique constraint reinstated
+    // v11 replaces v8's constraint name. Assert the current (v11) constraint
+    // exists and the legacy v8 name is gone.
     const constraints = (await db.query(`
       SELECT conname FROM pg_constraint
       WHERE conrelid = 'links'::regclass AND contype = 'u'
     `)).rows;
-    expect(constraints.some((c: { conname: string }) => c.conname === 'links_from_to_type_unique')).toBe(true);
+    expect(constraints.some((c: { conname: string }) => c.conname === 'links_from_to_type_source_origin_unique')).toBe(true);
+    expect(constraints.some((c: { conname: string }) => c.conname === 'links_from_to_type_unique')).toBe(false);
 
     // Helper index was dropped after dedup
     const helperIdx = (await db.query(`

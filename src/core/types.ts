@@ -82,6 +82,26 @@ export interface Link {
   to_slug: string;
   link_type: string;
   context: string;
+  /**
+   * Provenance (v0.13+). NULL = legacy row (pre-v0.13, unknown source).
+   * 'markdown' = extracted from `[Name](path)` refs. 'frontmatter' = extracted
+   * from YAML frontmatter fields (company, investors, attendees, etc.).
+   * 'manual' = user-created via addLink with explicit source.
+   * Reconciliation in runAutoLink filters on link_source to avoid touching
+   * markdown / manual edges when rewriting a page's frontmatter.
+   */
+  link_source?: string | null;
+  /**
+   * For link_source='frontmatter': the slug of the page whose frontmatter
+   * created this edge. Lets reconciliation scope "my edges" precisely when
+   * multiple pages reference the same (from, to, type) tuple.
+   */
+  origin_slug?: string | null;
+  /**
+   * The frontmatter field name that created this edge (e.g. 'key_people',
+   * 'investors'). Used for debug output and the `unresolved` response list.
+   */
+  origin_field?: string | null;
 }
 
 export interface GraphNode {
