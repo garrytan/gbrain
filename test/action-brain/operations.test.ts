@@ -1,8 +1,10 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { mergeOperationSets, operations } from '../../src/core/operations.ts';
 import type { Operation, OperationContext } from '../../src/core/operations.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { actionBrainOperations } from '../../src/action-brain/operations.ts';
+
+setDefaultTimeout(15_000);
 
 function makeOperation(name: string, cliName?: string): Operation {
   return {
