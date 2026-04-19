@@ -38,11 +38,16 @@ export type BriefContextEnricher = (
   items: ActionItem[]
 ) => Promise<Map<number, string> | Record<number, string>> | Map<number, string> | Record<number, string>;
 
+export type BriefSourceContactEnricher = (
+  items: ActionItem[]
+) => Promise<Map<number, string> | Record<number, string>> | Map<number, string> | Record<number, string>;
+
 export interface GenerateMorningBriefOptions {
   now?: Date;
   lastSyncAt?: Date | null;
   timezoneOffsetMinutes?: number;
   contextEnricher?: BriefContextEnricher;
+  sourceContactEnricher?: BriefSourceContactEnricher;
 }
 
 export class MorningBriefGenerator {
@@ -53,7 +58,9 @@ export class MorningBriefGenerator {
     const timezoneOffsetMinutes = resolveTimezoneOffsetMinutes(options.timezoneOffsetMinutes, now);
     const items = await this.listActiveItems();
     const lastSyncAt = await this.resolveLastSyncAt(options.lastSyncAt);
-    const contextByItemId = await resolveContextByItemId(items, options.contextEnricher);
+    const contextByItemId = await resolveTextByItemId(items, options.contextEnricher);
+    const includeSourceContact = typeof options.sourceContactEnricher === 'function';
+    const sourceContactByItemId = await resolveTextByItemId(items, options.sourceContactEnricher);
 
     const lines: string[] = [];
     lines.push('Action Brain Morning Brief');
@@ -71,15 +78,49 @@ export class MorningBriefGenerator {
     }
 
     lines.push('');
-    lines.push(...renderSection('Overdue items', selectOverdue(items, now), sortByDueThenPriority, contextByItemId));
-    lines.push('');
     lines.push(
-      ...renderSection('Due today', selectDueToday(items, now, timezoneOffsetMinutes), sortByDueThenPriority, contextByItemId)
+      ...renderSection(
+        'Overdue items',
+        selectOverdue(items, now),
+        sortByDueThenPriority,
+        contextByItemId,
+        sourceContactByItemId,
+        includeSourceContact
+      )
     );
     lines.push('');
-    lines.push(...renderSection('Newly created (last 24h)', selectNewlyCreated(items, now), sortByNewestCreated, contextByItemId));
+    lines.push(
+      ...renderSection(
+        'Due today',
+        selectDueToday(items, now, timezoneOffsetMinutes),
+        sortByDueThenPriority,
+        contextByItemId,
+        sourceContactByItemId,
+        includeSourceContact
+      )
+    );
     lines.push('');
-    lines.push(...renderSection('Gone stale', selectGoneStale(items, now), sortByOldestActivity, contextByItemId));
+    lines.push(
+      ...renderSection(
+        'Newly created (last 24h)',
+        selectNewlyCreated(items, now),
+        sortByNewestCreated,
+        contextByItemId,
+        sourceContactByItemId,
+        includeSourceContact
+      )
+    );
+    lines.push('');
+    lines.push(
+      ...renderSection(
+        'Gone stale',
+        selectGoneStale(items, now),
+        sortByOldestActivity,
+        contextByItemId,
+        sourceContactByItemId,
+        includeSourceContact
+      )
+    );
 
     return lines.join('\n');
   }
@@ -114,7 +155,9 @@ function renderSection(
   title: string,
   sectionItems: ActionItem[],
   sorter: (a: ActionItem, b: ActionItem) => number,
-  contextByItemId: Map<number, string>
+  contextByItemId: Map<number, string>,
+  sourceContactByItemId: Map<number, string>,
+  includeSourceContact: boolean
 ): string[] {
   const sorted = [...sectionItems].sort(sorter);
   const lines = [`## ${title} (${sorted.length})`];
@@ -125,13 +168,18 @@ function renderSection(
   }
 
   for (const item of sorted) {
-    lines.push(formatItemLine(item, contextByItemId.get(item.id)));
+    lines.push(formatItemLine(item, contextByItemId.get(item.id), sourceContactByItemId.get(item.id), includeSourceContact));
   }
 
   return lines;
 }
 
-function formatItemLine(item: ActionItem, context: string | undefined): string {
+function formatItemLine(
+  item: ActionItem,
+  context: string | undefined,
+  sourceContactOverride: string | undefined,
+  includeSourceContact: boolean
+): string {
   const parts = [`- [#${item.id}] ${item.title}`];
 
   if (item.owner) {
@@ -146,6 +194,13 @@ function formatItemLine(item: ActionItem, context: string | undefined): string {
     parts.push(`due=${item.due_at.toISOString()}`);
   }
 
+  if (includeSourceContact) {
+    const sourceContact = sourceContactOverride ?? item.source_contact;
+    if (sourceContact) {
+      parts.push(`source_contact=${sourceContact}`);
+    }
+  }
+
   parts.push(`status=${item.status}`);
   parts.push(`priority=${item.priority_score.toFixed(2)}`);
 
@@ -156,16 +211,16 @@ function formatItemLine(item: ActionItem, context: string | undefined): string {
   return parts.join(' | ');
 }
 
-async function resolveContextByItemId(
+async function resolveTextByItemId(
   items: ActionItem[],
-  contextEnricher: BriefContextEnricher | undefined
+  enricher: BriefContextEnricher | BriefSourceContactEnricher | undefined
 ): Promise<Map<number, string>> {
-  if (!contextEnricher || items.length === 0) {
+  if (!enricher || items.length === 0) {
     return new Map();
   }
 
   try {
-    const enriched = await contextEnricher(items);
+    const enriched = await enricher(items);
 
     if (enriched instanceof Map) {
       return enriched;

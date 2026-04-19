@@ -2,6 +2,18 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.13.6] - 2026-04-20
+
+### Added
+
+- **Morning brief now shows GBrain-backed entity links for source contacts.** When `action_brief` runs, each action item's `source_contact` field is resolved against your GBrain knowledge base — first via pre-linked entity slugs, then via `resolveSlugs` + `searchKeyword`. Contacts with exactly one candidate match get an enriched display (e.g. `Joe MacPherson [people/joe-macpherson]`). Ambiguous matches (0 or 2+ candidates) degrade cleanly to the raw contact string with no hallucinated links. The resolver is bounded: 24 contacts max per brief, 4 concurrent lookups, so a large inbox can't cause unbounded GBrain fan-out. (GIT-177)
+
+### Itemized changes
+
+- `src/action-brain/brief.ts` — added `BriefSourceContactEnricher` type, `sourceContactEnricher` option to `GenerateMorningBriefOptions`, and renamed `resolveContextByItemId` → `resolveTextByItemId` to serve both the context enricher and the new source-contact enricher
+- `src/action-brain/operations.ts` — added `buildSourceContactLinks`, `resolveEntitySlugForSourceContact`, `pickLinkedEntitySlug`, `formatSourceContactLink`, `toEntitySlugBase`, `mapWithConcurrency`, `asOptionalNonEmptyString` helpers; wired `sourceContactEnricher` into `action_brief` handler; exported `ACTION_BRIEF_SOURCE_CONTACT_LOOKUP_CONCURRENCY` and `ACTION_BRIEF_SOURCE_CONTACT_LOOKUP_CAP` constants
+- `test/action-brain/action-brief-linking.test.ts` — new test file: 274 lines covering pre-linked slug path, keyword-only resolution, ambiguous degradation, per-brief lookup cap enforcement, and enricher-absent fallback
+
 ## [0.13.5] - 2026-04-20
 
 ### Added

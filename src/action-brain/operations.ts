@@ -10,6 +10,7 @@ import {
   type StructuredCommitment,
   type WhatsAppMessage,
 } from './extractor.ts';
+import type { ActionItem } from './types.ts';
 import { initActionSchema } from './action-schema.ts';
 
 interface QueryResult<T> {
@@ -32,6 +33,9 @@ const ACTION_LIST_FILTER_VALUES = ['low_confidence_dropped'] as const;
 const LOW_CONFIDENCE_THRESHOLD = 0.9;
 const SOURCE_EXCERPT_MAX_CHARS = 500;
 const ACTION_EXTRACTOR_VERSION = 'extractor.ts@v1';
+const ENTITY_LINK_SEARCH_LIMIT = 20;
+export const ACTION_BRIEF_SOURCE_CONTACT_LOOKUP_CONCURRENCY = 4;
+export const ACTION_BRIEF_SOURCE_CONTACT_LOOKUP_CAP = 24;
 const initializedEngines = new WeakSet<object>();
 const postgresDbCache = new WeakMap<object, QueryableDb>();
 type ActionListFilter = typeof ACTION_LIST_FILTER_VALUES[number];
@@ -129,6 +133,7 @@ export const actionBrainOperations: Operation[] = [
         now: parseOptionalDate(p.now, 'now') ?? undefined,
         lastSyncAt: parseOptionalDate(p.last_sync_at, 'last_sync_at'),
         timezoneOffsetMinutes: asOptionalNumber(p.timezone_offset_minutes),
+        sourceContactEnricher: async (items) => buildSourceContactLinks(ctx.engine, items),
       });
 
       return { brief };
@@ -745,4 +750,150 @@ function mapActionDrop(row: ActionDropRow): ActionDrop {
 
 function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
+}
+
+async function buildSourceContactLinks(engine: BrainEngine, items: ActionItem[]): Promise<Map<number, string>> {
+  const linksByItemId = new Map<number, string>();
+  const contactsNeedingLookup: string[] = [];
+  const seenContacts = new Set<string>();
+
+  for (const item of items) {
+    const sourceContact = asOptionalNonEmptyString(item.source_contact);
+    if (!sourceContact) continue;
+
+    const linkedSlug = pickLinkedEntitySlug(item.linked_entity_slugs);
+    if (linkedSlug) {
+      linksByItemId.set(item.id, formatSourceContactLink(sourceContact, linkedSlug));
+      continue;
+    }
+
+    if (!seenContacts.has(sourceContact)) {
+      seenContacts.add(sourceContact);
+      contactsNeedingLookup.push(sourceContact);
+    }
+  }
+
+  const resolvedLookupPairs = await mapWithConcurrency(
+    contactsNeedingLookup.slice(0, ACTION_BRIEF_SOURCE_CONTACT_LOOKUP_CAP),
+    ACTION_BRIEF_SOURCE_CONTACT_LOOKUP_CONCURRENCY,
+    async (sourceContact) => [sourceContact, await resolveEntitySlugForSourceContact(engine, sourceContact)] as const
+  );
+  const slugBySourceContact = new Map<string, string | null>(resolvedLookupPairs);
+
+  for (const item of items) {
+    if (linksByItemId.has(item.id)) {
+      continue;
+    }
+
+    const sourceContact = asOptionalNonEmptyString(item.source_contact);
+    if (!sourceContact) continue;
+
+    const resolvedSlug = slugBySourceContact.get(sourceContact) ?? null;
+    if (!resolvedSlug) continue;
+    linksByItemId.set(item.id, formatSourceContactLink(sourceContact, resolvedSlug));
+  }
+
+  return linksByItemId;
+}
+
+async function resolveEntitySlugForSourceContact(engine: BrainEngine, sourceContact: string): Promise<string | null> {
+  const slugBase = toEntitySlugBase(sourceContact);
+  if (!slugBase) {
+    return null;
+  }
+
+  const candidateSlugs = [`people/${slugBase}`, `companies/${slugBase}`];
+  const resolverMatches = new Set<string>();
+
+  for (const candidateSlug of candidateSlugs) {
+    try {
+      const resolved = await engine.resolveSlugs(candidateSlug);
+      if (resolved.includes(candidateSlug)) {
+        resolverMatches.add(candidateSlug);
+      }
+    } catch {
+      // Best-effort resolution; unresolved contacts should never fail brief generation.
+    }
+  }
+
+  if (resolverMatches.size === 0) {
+    return null;
+  }
+
+  try {
+    const keywordHits = await engine.searchKeyword(sourceContact, {
+      limit: ENTITY_LINK_SEARCH_LIMIT,
+      detail: 'low',
+    });
+    const hitSlugs = new Set(keywordHits.map((hit) => hit.slug).filter((slug) => isEntitySlug(slug)));
+    const matchedCandidates = candidateSlugs.filter(
+      (candidateSlug) => resolverMatches.has(candidateSlug) && hitSlugs.has(candidateSlug)
+    );
+    if (matchedCandidates.length === 1) {
+      return matchedCandidates[0];
+    }
+  } catch {
+    // Best-effort lookup; unresolved contacts should never fail brief generation.
+  }
+
+  return null;
+}
+
+function pickLinkedEntitySlug(slugs: string[]): string | null {
+  const uniqueEntitySlugs = new Set<string>();
+  for (const slug of slugs) {
+    if (isEntitySlug(slug)) {
+      uniqueEntitySlugs.add(slug);
+    }
+  }
+  return uniqueEntitySlugs.size === 1 ? [...uniqueEntitySlugs][0] : null;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const effectiveConcurrency = Math.max(1, Math.min(concurrency, items.length));
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const workers = Array.from({ length: effectiveConcurrency }, async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) {
+        return;
+      }
+
+      results[currentIndex] = await mapper(items[currentIndex]);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
+function isEntitySlug(slug: string): boolean {
+  return slug.startsWith('people/') || slug.startsWith('companies/');
+}
+
+function toEntitySlugBase(sourceContact: string): string {
+  return sourceContact
+    .toLowerCase()
+    .replace(/['']/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function formatSourceContactLink(sourceContact: string, slug: string): string {
+  return `[${escapeMarkdownLinkText(sourceContact)}](${slug})`;
+}
+
+function escapeMarkdownLinkText(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
 }
