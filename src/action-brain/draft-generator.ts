@@ -138,6 +138,21 @@ export async function generateActionDraft(
       );
       const rawDraftText = parseDraftTextFromResponse(response);
       const sanitizedDraft = stripControlCharacters(rawDraftText).trim().slice(0, DRAFT_OUTPUT_MAX_CHARS);
+
+      if (sanitizedDraft.length === 0) {
+        runSummary.draft_generation_terminal_failures += 1;
+        console.error(
+          `[action-brain] Draft generation rejected empty output after sanitization (attempt ${attempt}/${maxAttempts}).`
+        );
+        return {
+          ok: false,
+          model,
+          draftText: null,
+          injectionSuspected: false,
+          runSummary,
+        };
+      }
+
       const injectionSuspected = hasPromptInjectionEcho(sanitizedDraft);
 
       if (injectionSuspected) {

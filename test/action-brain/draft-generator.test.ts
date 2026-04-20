@@ -144,6 +144,27 @@ describe('generateActionDraft', () => {
     expect(result.draftText).toBe('Hi\tthere\nnow');
   });
 
+  test('treats control-char-only model output as terminal generation failure', async () => {
+    const fakeClient = new FakeAnthropicClient(() => textResponse('\u0000\u0001'));
+    const runSummary = createEmptyDraftGenerationRunSummary();
+
+    const result = await generateActionDraft(baseItem(), baseContext(), {
+      client: fakeClient,
+      runSummary,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.draftText).toBeNull();
+    expect(fakeClient.calls.length).toBe(1);
+    expect(runSummary).toEqual({
+      draft_generation_attempts: 1,
+      draft_generation_retries: 0,
+      draft_generation_timeout_failures: 0,
+      draft_generation_terminal_failures: 1,
+      draft_injection_suspected: 0,
+    });
+  });
+
   test('escapes XML-sensitive source content before embedding in prompt', async () => {
     const fakeClient = new FakeAnthropicClient(() => textResponse('Ack.'));
     const context = baseContext();
