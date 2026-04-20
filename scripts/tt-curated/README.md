@@ -17,6 +17,8 @@ cp config.example.yaml config.yaml
 # then edit config.yaml for your local paths / chat target
 ```
 
+If `config.yaml` is missing or malformed, the loader now fails with a direct bootstrap hint that tells you to rebuild from `config.example.yaml`.
+
 ## Main commands
 ```bash
 ./gbrain-curated status

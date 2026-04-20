@@ -11,10 +11,33 @@ import yaml
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = SCRIPT_DIR / 'config.yaml'
+EXAMPLE_CONFIG_PATH = SCRIPT_DIR / 'config.example.yaml'
+
+
+def _bootstrap_hint() -> str:
+    return f"cp {EXAMPLE_CONFIG_PATH.name} {CONFIG_PATH.name}"
 
 
 def load_config() -> dict:
-    return yaml.safe_load(CONFIG_PATH.read_text())
+    try:
+        text = CONFIG_PATH.read_text()
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"Missing {CONFIG_PATH.name}. Bootstrap with `{_bootstrap_hint()}` and edit local paths/chat target."
+        ) from exc
+
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise RuntimeError(
+            f"Invalid YAML in {CONFIG_PATH.name}: {exc}. Fix the file or rebuild from `{_bootstrap_hint()}`."
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"Invalid {CONFIG_PATH.name}: expected a YAML mapping at top level. Rebuild from `{_bootstrap_hint()}` if needed."
+        )
+    return data
 
 
 def _get(cfg: dict, *keys: str):
