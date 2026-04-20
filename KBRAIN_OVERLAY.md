@@ -78,6 +78,6 @@ conflict-free.
 
 | Date       | Action                  | Upstream SHA | Fork SHA | Notes                                          |
 | ---------- | ----------------------- | ------------ | -------- | ---------------------------------------------- |
-| 2026-04-20        | Initial fork            | b5fa3d044ae25d08f23068c1e2a00ec77405ccce          | TBD      | Populate on first sync; owner/repo TBD.        |
+| 2026-04-20        | Initial fork            | b5fa3d044ae25d08f23068c1e2a00ec77405ccce          | 0cbe71c23946f1b069edd71de4503b166f0fbece      | Populate on first sync; owner/repo TBD.        |
 
 Keep this table append-only. One row per sync.
