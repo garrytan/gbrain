@@ -62,13 +62,17 @@ export class PostgresEngine implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
-
-      // Run any pending migrations automatically
+      // Run any pending migrations first so that new columns/indexes exist
+      // before SCHEMA_SQL's CREATE INDEX statements reference them.
+      // For fresh installs: migrations are no-ops (all tables are created by
+      // SCHEMA_SQL below); for upgrades: migrations add new columns first,
+      // then SCHEMA_SQL's CREATE INDEX IF NOT EXISTS succeeds.
       const { applied } = await runMigrations(this);
       if (applied > 0) {
         console.log(`  ${applied} migration(s) applied`);
       }
+
+      await conn.unsafe(SCHEMA_SQL);
     } finally {
       await conn`SELECT pg_advisory_unlock(42)`;
     }
