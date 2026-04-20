@@ -167,6 +167,208 @@ Now I'm meeting with [Bob](people/bob).
     expect(links[0].to_slug).toBe('people/bob');
   });
 
+  test('auto-link reconciliation preserves frontmatter edges from other origins', async () => {
+    await engine.putPage('people/pedro', { type: 'person', title: 'Pedro', compiled_truth: '', timeline: '' });
+    await engine.putPage('companies/stripe', { type: 'company', title: 'Stripe', compiled_truth: '', timeline: '' });
+    const putOp = operationsByName['put_page'];
+
+    // Person frontmatter emits: people/pedro -> companies/stripe (origin=people/pedro).
+    await putOp.handler(makeContext(), {
+      slug: 'people/pedro',
+      content: `---
+type: person
+title: Pedro
+company: Stripe
+---
+
+Profile.
+`,
+    });
+
+    // Company frontmatter emits the same tuple with a different origin.
+    await putOp.handler(makeContext(), {
+      slug: 'companies/stripe',
+      content: `---
+type: company
+title: Stripe
+key_people:
+  - Pedro
+---
+
+Company profile.
+`,
+    });
+
+    let worksAtEdges = (await engine.getLinks('people/pedro'))
+      .filter(l =>
+        l.to_slug === 'companies/stripe' &&
+        l.link_type === 'works_at' &&
+        l.link_source === 'frontmatter',
+      );
+    expect(worksAtEdges.length).toBe(2);
+    expect(new Set(worksAtEdges.map(l => l.origin_slug))).toEqual(
+      new Set(['people/pedro', 'companies/stripe']),
+    );
+
+    // Reconcile company page without key_people; only company-authored edge should be removed.
+    const result = await putOp.handler(makeContext(), {
+      slug: 'companies/stripe',
+      content: `---
+type: company
+title: Stripe
+---
+
+Company profile.
+`,
+    });
+    expect((result as any).auto_links.removed).toBe(1);
+
+    worksAtEdges = (await engine.getLinks('people/pedro'))
+      .filter(l =>
+        l.to_slug === 'companies/stripe' &&
+        l.link_type === 'works_at' &&
+        l.link_source === 'frontmatter',
+      );
+    expect(worksAtEdges.length).toBe(1);
+    expect(worksAtEdges[0].origin_slug).toBe('people/pedro');
+  });
+
+  test('auto-link reconciliation on one origin preserves duplicate tuple from the other origin', async () => {
+    await engine.putPage('people/pedro', { type: 'person', title: 'Pedro', compiled_truth: '', timeline: '' });
+    await engine.putPage('companies/stripe', { type: 'company', title: 'Stripe', compiled_truth: '', timeline: '' });
+    const putOp = operationsByName['put_page'];
+
+    // Create duplicate typed tuple from two origins.
+    await putOp.handler(makeContext(), {
+      slug: 'people/pedro',
+      content: `---
+type: person
+title: Pedro
+company: Stripe
+---
+
+Profile.
+`,
+    });
+    await putOp.handler(makeContext(), {
+      slug: 'companies/stripe',
+      content: `---
+type: company
+title: Stripe
+key_people:
+  - Pedro
+---
+
+Company profile.
+`,
+    });
+
+    let worksAtEdges = (await engine.getLinks('people/pedro'))
+      .filter(l =>
+        l.to_slug === 'companies/stripe' &&
+        l.link_type === 'works_at' &&
+        l.link_source === 'frontmatter',
+      );
+    expect(worksAtEdges.length).toBe(2);
+    expect(new Set(worksAtEdges.map(l => l.origin_slug))).toEqual(
+      new Set(['people/pedro', 'companies/stripe']),
+    );
+
+    // Reconcile person page without company; only person-authored edge should be removed.
+    const result = await putOp.handler(makeContext(), {
+      slug: 'people/pedro',
+      content: `---
+type: person
+title: Pedro
+---
+
+Profile.
+`,
+    });
+    expect((result as any).auto_links.removed).toBe(1);
+
+    worksAtEdges = (await engine.getLinks('people/pedro'))
+      .filter(l =>
+        l.to_slug === 'companies/stripe' &&
+        l.link_type === 'works_at' &&
+        l.link_source === 'frontmatter',
+      );
+    expect(worksAtEdges.length).toBe(1);
+    expect(worksAtEdges[0].origin_slug).toBe('companies/stripe');
+  });
+
+  test('auto-timeline: put_page extracts + inserts timeline entries', async () => {
+    const putOp = operationsByName['put_page'];
+    const result = await putOp.handler(makeContext(), {
+      slug: 'people/dana',
+      content: `---
+type: person
+title: Dana
+---
+
+Dana is a founder.
+
+## Timeline
+
+- **2026-03-15** | Shipped v1.0
+- **2026-04-02** | Closed seed round
+`,
+    });
+
+    expect((result as any).auto_timeline).toBeDefined();
+    expect((result as any).auto_timeline.created).toBe(2);
+
+    const entries = await engine.getTimeline('people/dana');
+    expect(entries.length).toBe(2);
+    const dates = entries.map((e: any) => {
+      const d = e.date instanceof Date ? e.date.toISOString().slice(0, 10) : String(e.date).slice(0, 10);
+      return d;
+    }).sort();
+    expect(dates).toEqual(['2026-03-15', '2026-04-02']);
+  });
+
+  test('auto-timeline is idempotent: re-write does not duplicate entries', async () => {
+    const putOp = operationsByName['put_page'];
+    const content = `---
+type: person
+title: Eve
+---
+
+## Timeline
+
+- **2026-03-15** | Shipped
+`;
+    await putOp.handler(makeContext(), { slug: 'people/eve', content });
+    await putOp.handler(makeContext(), { slug: 'people/eve', content });
+
+    const entries = await engine.getTimeline('people/eve');
+    expect(entries.length).toBe(1);
+  });
+
+  test('auto-timeline respects auto_timeline=false config', async () => {
+    await engine.setConfig('auto_timeline', 'false');
+    try {
+      const putOp = operationsByName['put_page'];
+      const result = await putOp.handler(makeContext(), {
+        slug: 'people/frank',
+        content: `---
+type: person
+title: Frank
+---
+
+## Timeline
+
+- **2026-03-15** | Something happened
+`,
+      });
+      expect((result as any).auto_timeline).toBeUndefined();
+      const entries = await engine.getTimeline('people/frank');
+      expect(entries.length).toBe(0);
+    } finally {
+      await engine.setConfig('auto_timeline', 'true');
+    }
+  });
+
   test('auto-link respects auto_link=false config', async () => {
     await engine.setConfig('auto_link', 'false');
     try {

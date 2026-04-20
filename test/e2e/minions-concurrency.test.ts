@@ -29,8 +29,8 @@ if (skip) {
 describeE2E('E2E: Minions concurrent claim (FOR UPDATE SKIP LOCKED)', () => {
   beforeAll(async () => {
     await setupDB();
-    // setupDB() runs SCHEMA_SQL but not migrations; bump config.version
-    // so MinionQueue.ensureSchema() passes (needs version >= 7).
+    // setupDB() runs SCHEMA_SQL but not migrations; run migrations so
+    // MinionQueue.ensureSchema() passes (needs version >= 13).
     await runMigrations(getEngine());
   });
 

@@ -15,11 +15,14 @@ import type {
 } from './types.ts';
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
+import { staggerSecondOffset } from './stagger.ts';
 
-const MIGRATION_VERSION = 7;
+const MIGRATION_VERSION = 13;
 
 const DEFAULT_MAX_SPAWN_DEPTH = 5;
 const DEFAULT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MiB
+const STAGGER_HERD_SPREAD_MS = 1000;
+const STAGGER_HERD_MAX_STEPS = 59;
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'dead', 'cancelled'] as const;
 
@@ -32,13 +35,13 @@ export class MinionQueue {
     this.maxAttachmentBytes = opts.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
   }
 
-  /** Verify minion_jobs table exists (migration v5+). Call before first operation. */
+  /** Verify queue schema supports quiet-hours/stagger fields (migration v13+). */
   async ensureSchema(): Promise<void> {
     const ver = await this.engine.getConfig('version');
     const current = parseInt(ver || '1', 10);
     if (current < MIGRATION_VERSION) {
       throw new Error(
-        `minion_jobs table not found (schema version ${current}, need ${MIGRATION_VERSION}). Run 'gbrain init' to apply migrations.`
+        `minion queue schema too old (schema version ${current}, need ${MIGRATION_VERSION}). Run 'gbrain init' to apply migrations.`
       );
     }
   }
@@ -61,8 +64,6 @@ export class MinionQueue {
     }
     await this.ensureSchema();
 
-    const childStatus: MinionJobStatus = opts?.delay ? 'delayed' : 'waiting';
-    const delayUntil = opts?.delay ? new Date(Date.now() + opts.delay) : null;
     const maxSpawnDepth = opts?.max_spawn_depth ?? this.maxSpawnDepth;
 
     return this.engine.transaction(async (tx) => {
@@ -107,19 +108,33 @@ export class MinionQueue {
         }
       }
 
+      // 2.5 Deterministic stagger: runtime release timing actually honors
+      // stagger_key. We apply:
+      // - base offset from key hash when caller did not provide an explicit delay
+      // - per-minute sequence spread (1s steps) for same-key batches to avoid
+      //   herd release at the exact same instant.
+      const explicitDelayMs = Math.max(0, opts?.delay ?? 0);
+      const staggerDelayMs = await this.computeStaggerDelayMs(tx, opts?.stagger_key, explicitDelayMs === 0);
+      const totalDelayMs = explicitDelayMs + staggerDelayMs;
+      const childStatus: MinionJobStatus = totalDelayMs > 0 ? 'delayed' : 'waiting';
+      const delayUntil = totalDelayMs > 0 ? new Date(Date.now() + totalDelayMs) : null;
+
       // 3. Insert child. Use ON CONFLICT for idempotency; if a concurrent submit
       //    raced past the fast-path SELECT, the unique index catches it here.
+      //    v13 adds quiet_hours + stagger_key passed through from opts.
       const insertSql = opts?.idempotency_key
         ? `INSERT INTO minion_jobs (name, queue, status, priority, data, max_attempts, backoff_type,
             backoff_delay, backoff_jitter, delay_until, parent_job_id, on_child_fail,
-            depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key,
+            quiet_hours, stagger_key)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20)
            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
            RETURNING *`
         : `INSERT INTO minion_jobs (name, queue, status, priority, data, max_attempts, backoff_type,
             backoff_delay, backoff_jitter, delay_until, parent_job_id, on_child_fail,
-            depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key,
+            quiet_hours, stagger_key)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20)
            RETURNING *`;
 
       const params = [
@@ -141,6 +156,8 @@ export class MinionQueue {
         opts?.remove_on_complete ?? false,
         opts?.remove_on_fail ?? false,
         opts?.idempotency_key ?? null,
+        opts?.quiet_hours ?? null,
+        opts?.stagger_key ?? null,
       ];
 
       const inserted = await tx.executeRaw<Record<string, unknown>>(insertSql, params);
@@ -172,6 +189,47 @@ export class MinionQueue {
 
       return child;
     });
+  }
+
+  private async computeStaggerDelayMs(
+    tx: BrainEngine,
+    staggerKey: string | null | undefined,
+    includeBaseOffset: boolean,
+  ): Promise<number> {
+    const key = typeof staggerKey === 'string' ? staggerKey.trim() : '';
+    if (!key) return 0;
+
+    // Serialize same-key insertions so sequence spacing is stable under
+    // concurrent add() calls across workers/processes.
+    try {
+      await tx.executeRaw(
+        `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+        [`minion_stagger:${key}`],
+      );
+    } catch {
+      // Embedded/test engines may not support advisory locks.
+    }
+
+    const baseMs = includeBaseOffset ? staggerSecondOffset(key) * 1000 : 0;
+    let spreadMs = 0;
+    try {
+      const rows = await tx.executeRaw<{ count: string }>(
+        `SELECT count(*)::text AS count
+         FROM minion_jobs
+         WHERE stagger_key = $1
+           AND created_at >= date_trunc('minute', now())
+           AND status IN ('waiting', 'delayed', 'active', 'waiting-children', 'paused')`,
+        [key],
+      );
+      const existing = parseInt(rows[0]?.count ?? '0', 10);
+      const spreadStep = Math.max(0, Math.min(existing, STAGGER_HERD_MAX_STEPS));
+      spreadMs = spreadStep * STAGGER_HERD_SPREAD_MS;
+    } catch {
+      // If counting fails, keep deterministic base offset and proceed.
+      spreadMs = 0;
+    }
+
+    return baseMs + spreadMs;
   }
 
   /** Get a job by ID. Returns null if not found. */

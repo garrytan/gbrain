@@ -79,6 +79,18 @@ describe('postgres-engine / search path timeout isolation', () => {
   });
 });
 
+describe('postgres-engine / removeLink origin scoping', () => {
+  test('removeLink matches explicit origins with null-safe equality', () => {
+    const fn = extractMethod(SRC, 'removeLink');
+    expect(fn).toMatch(/origin_page_id IS NOT DISTINCT FROM/);
+  });
+
+  test('removeLink defaults to origin_page_id IS NULL when origin is omitted', () => {
+    const fn = extractMethod(SRC, 'removeLink');
+    expect(fn).toMatch(/AND origin_page_id IS NULL/);
+  });
+});
+
 function stripComments(s: string): string {
   return s
     .replace(/\/\*[\s\S]*?\*\//g, '')

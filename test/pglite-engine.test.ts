@@ -700,6 +700,46 @@ describe('PGLiteEngine: Multi-type links (v5 migration)', () => {
     expect(links.length).toBe(1);
     expect(links[0].link_type).toBe('advises');
   });
+
+  test('removeLink can scope frontmatter deletes by origin page', async () => {
+    await engine.addLink(
+      'people/alice', 'companies/acme', 'from person frontmatter',
+      'works_at', 'frontmatter', 'people/alice', 'company',
+    );
+    await engine.addLink(
+      'people/alice', 'companies/acme', 'from company frontmatter',
+      'works_at', 'frontmatter', 'companies/acme', 'key_people',
+    );
+    let links = (await engine.getLinks('people/alice'))
+      .filter(l => l.to_slug === 'companies/acme' && l.link_type === 'works_at' && l.link_source === 'frontmatter');
+    expect(links.length).toBe(2);
+    expect(new Set(links.map(l => l.origin_slug))).toEqual(new Set(['people/alice', 'companies/acme']));
+
+    await engine.removeLink('people/alice', 'companies/acme', 'works_at', 'frontmatter', 'people/alice');
+
+    links = (await engine.getLinks('people/alice'))
+      .filter(l => l.to_slug === 'companies/acme' && l.link_type === 'works_at' && l.link_source === 'frontmatter');
+    expect(links.length).toBe(1);
+    expect(links[0].origin_slug).toBe('companies/acme');
+  });
+
+  test('removeLink without origin does not delete frontmatter edges across origins', async () => {
+    await engine.addLink(
+      'people/alice', 'companies/acme', 'from person frontmatter',
+      'works_at', 'frontmatter', 'people/alice', 'company',
+    );
+    await engine.addLink(
+      'people/alice', 'companies/acme', 'from company frontmatter',
+      'works_at', 'frontmatter', 'companies/acme', 'key_people',
+    );
+
+    await engine.removeLink('people/alice', 'companies/acme', 'works_at', 'frontmatter');
+
+    const links = (await engine.getLinks('people/alice'))
+      .filter(l => l.to_slug === 'companies/acme' && l.link_type === 'works_at' && l.link_source === 'frontmatter');
+    expect(links.length).toBe(2);
+    expect(new Set(links.map(l => l.origin_slug))).toEqual(new Set(['people/alice', 'companies/acme']));
+  });
 });
 
 describe('PGLiteEngine: Timeline dedup constraint (v6 migration)', () => {

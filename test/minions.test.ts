@@ -6,6 +6,8 @@ import { MinionWorker } from '../src/core/minions/worker.ts';
 import { calculateBackoff } from '../src/core/minions/backoff.ts';
 import { UnrecoverableError } from '../src/core/minions/types.ts';
 import type { MinionJob } from '../src/core/minions/types.ts';
+import { staggerSecondOffset } from '../src/core/minions/stagger.ts';
+import { LATEST_VERSION } from '../src/core/migrate.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -464,6 +466,34 @@ describe('MinionQueue: Claim Mechanics', () => {
 
     const third = await queue.claim('tok3', 30000, 'default', ['low', 'high', 'mid']);
     expect(third!.name).toBe('low'); // priority 10
+  });
+
+  test('stagger_key spreads same-minute same-key jobs to avoid herd release', async () => {
+    const key = 'social-radar';
+    expect(staggerSecondOffset(key)).toBeGreaterThan(0);
+
+    const j1 = await queue.add('sync', {}, { stagger_key: key });
+    const j2 = await queue.add('sync', {}, { stagger_key: key });
+    const j3 = await queue.add('sync', {}, { stagger_key: key });
+
+    const r1 = await queue.getJob(j1.id);
+    const r2 = await queue.getJob(j2.id);
+    const r3 = await queue.getJob(j3.id);
+
+    expect(r1).not.toBeNull();
+    expect(r2).not.toBeNull();
+    expect(r3).not.toBeNull();
+    expect(r1!.status).toBe('delayed');
+    expect(r2!.status).toBe('delayed');
+    expect(r3!.status).toBe('delayed');
+
+    const t1 = r1!.delay_until!.getTime();
+    const t2 = r2!.delay_until!.getTime();
+    const t3 = r3!.delay_until!.getTime();
+    expect(t2).toBeGreaterThan(t1);
+    expect(t3).toBeGreaterThan(t2);
+    expect(t2 - t1).toBeGreaterThanOrEqual(900);
+    expect(t3 - t2).toBeGreaterThanOrEqual(900);
   });
 
   test('claim only claims registered names', async () => {
@@ -1547,5 +1577,27 @@ describe('MinionQueue: Attachments', () => {
     const list = await queue.listAttachments(job.id);
     expect(list.length).toBe(1);
     expect(list[0].filename).toBe('b.txt');
+  });
+});
+
+describe('MinionQueue: schema compatibility', () => {
+  test('rejects pre-v13 schema before insert and recovers after migration version is restored', async () => {
+    const previousVersion = await engine.getConfig('version') ?? String(LATEST_VERSION);
+
+    try {
+      await engine.setConfig('version', '12');
+      await expect(queue.add('sync', {}))
+        .rejects.toThrow('minion queue schema too old (schema version 12, need 13). Run \'gbrain init\' to apply migrations.');
+
+      const rows = await engine.executeRaw<{ count: string }>(
+        'SELECT count(*)::text as count FROM minion_jobs',
+      );
+      expect(parseInt(rows[0].count, 10)).toBe(0);
+    } finally {
+      await engine.setConfig('version', previousVersion);
+    }
+
+    const restored = await queue.add('sync', {});
+    expect(restored.status).toBe('waiting');
   });
 });
