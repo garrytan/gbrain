@@ -68,7 +68,11 @@ export async function hybridSearch(
 
   // Auto-detect detail level from query intent when caller doesn't specify
   const detail = opts?.detail ?? autoDetectDetail(query);
-  const searchOpts: SearchOpts = { limit: innerLimit, detail };
+  // Propagate filter options (type, exclude_slugs, etc.) from caller opts to inner
+  // searchKeyword/searchVector calls. Without the spread, filters were silently
+  // dropped. `limit` is overridden to innerLimit (RRF needs more candidates) and
+  // `offset` is forced to 0 (outer result is sliced at the end of this function).
+  const searchOpts: SearchOpts = { ...opts, limit: innerLimit, offset: 0, detail };
 
   if (DEBUG && detail) {
     console.error(`[search-debug] auto-detail=${detail} for query="${query}"`);
