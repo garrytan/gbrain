@@ -509,15 +509,13 @@ export function makeResolver(
       if (opts.mode === 'live') {
         try {
           const results = await engine.searchKeyword(trimmed, { limit: 3 });
-          if (results.length > 0 && results[0].score >= 0.8) {
-            // Filter by dir hint if provided.
-            const top = hints.length > 0
-              ? results.find(r => hints.some(h => r.slug.startsWith(`${h}/`)))
-              : results[0];
-            if (top) {
-              cache.set(cacheKey, top.slug);
-              return top.slug;
-            }
+          const hinted = hints.length > 0
+            ? results.filter(r => hints.some(h => r.slug.startsWith(`${h}/`)))
+            : results;
+          const top = hinted[0];
+          if (top && top.score >= 0.8) {
+            cache.set(cacheKey, top.slug);
+            return top.slug;
           }
         } catch { /* search errors are non-fatal; fall through to null */ }
       }
