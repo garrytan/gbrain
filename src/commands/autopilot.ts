@@ -22,7 +22,7 @@ import { join } from 'path';
 import { execSync, spawn, type ChildProcess } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
-import { loadConfig } from '../core/config.ts';
+import { loadConfig, toEngineConfig } from '../core/config.ts';
 
 function parseArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -122,6 +122,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   // lock blocks a separate worker process).
   const mode = loadPreferences().minion_mode ?? 'pain_triggered';
   const cfg = loadConfig();
+  const engineCfg = cfg ? toEngineConfig(cfg) : null;
   const engineType = cfg?.engine ?? 'pglite';
   const useMinionsDispatch = mode !== 'off' && engineType === 'postgres' && !forceInline;
 
@@ -175,6 +176,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         try { workerProc.kill('SIGKILL'); } catch { /* already dead */ }
       }
     }
+    // Close the engine so PGLite can flush WAL and release postmaster.pid.
+    // Without this, the next autopilot start sees a dirty data dir and
+    // PGLite's WASM recovery aborts with `Aborted()` (assertions stripped
+    // from the PGLite dist), leaving launchd in a respawn crash loop.
+    try { await engine.disconnect(); } catch { /* already disconnected */ }
     try { unlinkSync(lockPath); } catch { /* already gone */ }
     process.exit(0);
   };
@@ -197,7 +203,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     } catch {
       try {
         await engine.disconnect();
-        await (engine as any).connect?.();
+        if (!engineCfg) throw new Error('cannot reconnect: engine config unavailable (loadConfig returned null)');
+        await engine.connect(engineCfg);
       } catch (e) { logError('reconnect', e); }
     }
 
