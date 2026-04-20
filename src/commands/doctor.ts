@@ -4,6 +4,7 @@ import { LATEST_VERSION } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
+import { loadConfig } from '../core/config.ts';
 import { join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 
@@ -160,36 +161,46 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
   }
 
   // 4. pgvector extension
-  try {
-    const sql = db.getConnection();
-    const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
-    if (ext.length > 0) {
-      checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
-    } else {
-      checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+  const cfg = loadConfig();
+  const isPglite = (cfg?.engine ?? 'postgres') === 'pglite';
+  if (isPglite) {
+    checks.push({ name: 'pgvector', status: 'ok', message: 'N/A (PGLite — vector built-in)' });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
+      if (ext.length > 0) {
+        checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
+      } else {
+        checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+      }
+    } catch {
+      checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
     }
-  } catch {
-    checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
   }
 
   // 5. RLS
-  try {
-    const sql = db.getConnection();
-    const tables = await sql`
-      SELECT tablename, rowsecurity FROM pg_tables
-      WHERE schemaname = 'public'
-        AND tablename IN ('pages','content_chunks','links','tags','raw_data',
-                           'page_versions','timeline_entries','ingest_log','config','files')
-    `;
-    const noRls = tables.filter((t: any) => !t.rowsecurity);
-    if (noRls.length === 0) {
-      checks.push({ name: 'rls', status: 'ok', message: 'RLS enabled on all tables' });
-    } else {
-      const names = noRls.map((t: any) => t.tablename).join(', ');
-      checks.push({ name: 'rls', status: 'warn', message: `RLS not enabled on: ${names}` });
+  if (isPglite) {
+    checks.push({ name: 'rls', status: 'ok', message: 'N/A (PGLite — single-user local DB)' });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const tables = await sql`
+        SELECT tablename, rowsecurity FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename IN ('pages','content_chunks','links','tags','raw_data',
+                             'page_versions','timeline_entries','ingest_log','config','files')
+      `;
+      const noRls = tables.filter((t: any) => !t.rowsecurity);
+      if (noRls.length === 0) {
+        checks.push({ name: 'rls', status: 'ok', message: 'RLS enabled on all tables' });
+      } else {
+        const names = noRls.map((t: any) => t.tablename).join(', ');
+        checks.push({ name: 'rls', status: 'warn', message: `RLS not enabled on: ${names}` });
+      }
+    } catch {
+      checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS status' });
     }
-  } catch {
-    checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS status' });
   }
 
   // 6. Schema version
@@ -283,34 +294,38 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
   // instead of objects on real Postgres. PGLite masked this; Supabase did not.
   // Scan the 4 known sites (pages.frontmatter, raw_data.data, ingest_log.pages_updated,
   // files.metadata) for rows whose top-level jsonb_typeof is 'string'.
-  try {
-    const sql = db.getConnection();
-    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
-      { table: 'pages',      col: 'frontmatter',    expected: 'object' },
-      { table: 'raw_data',   col: 'data',           expected: 'object' },
-      { table: 'ingest_log', col: 'pages_updated',  expected: 'array'  },
-      { table: 'files',      col: 'metadata',       expected: 'object' },
-    ];
-    let totalBad = 0;
-    const breakdown: string[] = [];
-    for (const { table, col } of targets) {
-      const rows = await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
-      );
-      const n = Number((rows as any)[0]?.n ?? 0);
-      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+  if (isPglite) {
+    checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'N/A (PGLite — bug never affected this path)' });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
+        { table: 'pages',      col: 'frontmatter',    expected: 'object' },
+        { table: 'raw_data',   col: 'data',           expected: 'object' },
+        { table: 'ingest_log', col: 'pages_updated',  expected: 'array'  },
+        { table: 'files',      col: 'metadata',       expected: 'object' },
+      ];
+      let totalBad = 0;
+      const breakdown: string[] = [];
+      for (const { table, col } of targets) {
+        const rows = await sql.unsafe(
+          `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
+        );
+        const n = Number((rows as any)[0]?.n ?? 0);
+        if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+      }
+      if (totalBad === 0) {
+        checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
+      } else {
+        checks.push({
+          name: 'jsonb_integrity',
+          status: 'warn',
+          message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
+        });
+      }
+    } catch {
+      checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
     }
-    if (totalBad === 0) {
-      checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
-    } else {
-      checks.push({
-        name: 'jsonb_integrity',
-        status: 'warn',
-        message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
-      });
-    }
-  } catch {
-    checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
   }
 
   // 11. Markdown body completeness (v0.12.3 reliability wave).
