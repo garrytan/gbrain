@@ -385,7 +385,11 @@ export class PGLiteEngine implements BrainEngine {
     }
     if (originSlug !== undefined) {
       params.push(originSlug);
-      where += ` AND origin_page_id = (SELECT id FROM pages WHERE slug = $${params.length})`;
+      where += ` AND origin_page_id IS NOT DISTINCT FROM (SELECT id FROM pages WHERE slug = $${params.length})`;
+    } else {
+      // v0.13 safety: when origin is omitted, only non-frontmatter rows are
+      // eligible. This prevents broad deletes across frontmatter origins.
+      where += ` AND origin_page_id IS NULL`;
     }
     await this.db.query(
       `DELETE FROM links

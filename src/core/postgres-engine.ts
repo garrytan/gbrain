@@ -430,9 +430,11 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const linkTypeClause = linkType !== undefined ? sql`AND link_type = ${linkType}` : sql``;
     const linkSourceClause = linkSource !== undefined ? sql`AND link_source IS NOT DISTINCT FROM ${linkSource}` : sql``;
+    // v0.13 safety: deletes are origin-aware. Without an explicit origin, only
+    // non-frontmatter rows (origin_page_id IS NULL) are eligible.
     const originClause = originSlug !== undefined
-      ? sql`AND origin_page_id = (SELECT id FROM pages WHERE slug = ${originSlug})`
-      : sql``;
+      ? sql`AND origin_page_id IS NOT DISTINCT FROM (SELECT id FROM pages WHERE slug = ${originSlug})`
+      : sql`AND origin_page_id IS NULL`;
     await sql`
       DELETE FROM links
       WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})

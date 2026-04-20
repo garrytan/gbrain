@@ -337,11 +337,13 @@ async function runAutoLink(
            (l.link_source === 'frontmatter' && l.origin_slug === slug),
     );
 
+    const makeOriginKey = (linkSource: string | undefined, origin: string | null | undefined): string =>
+      (linkSource ?? 'markdown') === 'frontmatter' ? (origin ?? '') : '';
     const outKeys = new Set(out.map(c =>
-      `${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`
+      `${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}\u0000${makeOriginKey(c.linkSource, c.originSlug ?? slug)}`
     ));
     const incKeys = new Set(inc.map(c =>
-      `${c.fromSlug}\u0000${c.linkType}`
+      `${c.fromSlug}\u0000${c.linkType}\u0000${makeOriginKey('frontmatter', c.originSlug ?? slug)}`
     ));
 
     let created = 0, removed = 0, errors = 0;
@@ -353,9 +355,9 @@ async function runAutoLink(
           slug, c.targetSlug, c.context, c.linkType,
           c.linkSource, c.originSlug, c.originField,
         );
-        const existKey = `${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`;
+        const existKey = `${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}\u0000${makeOriginKey(c.linkSource, c.originSlug ?? slug)}`;
         const exists = reconcilableOut.some(l =>
-          `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}` === existKey
+          `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}\u0000${makeOriginKey(l.link_source, l.origin_slug)}` === existKey
         );
         if (!exists) created++;
       } catch {
@@ -370,9 +372,9 @@ async function runAutoLink(
           c.fromSlug!, c.targetSlug, c.context, c.linkType,
           'frontmatter', c.originSlug, c.originField,
         );
-        const existKey = `${c.fromSlug}\u0000${c.linkType}`;
+        const existKey = `${c.fromSlug}\u0000${c.linkType}\u0000${makeOriginKey('frontmatter', c.originSlug ?? slug)}`;
         const exists = existingIn.some(l =>
-          `${l.from_slug}\u0000${l.link_type}` === existKey
+          `${l.from_slug}\u0000${l.link_type}\u0000${makeOriginKey('frontmatter', l.origin_slug)}` === existKey
         );
         if (!exists) created++;
       } catch {
@@ -382,7 +384,7 @@ async function runAutoLink(
 
     // Remove stale outgoing (markdown or our-frontmatter, not in desired set).
     for (const l of reconcilableOut) {
-      const key = `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}`;
+      const key = `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}\u0000${makeOriginKey(l.link_source, l.origin_slug)}`;
       if (!outKeys.has(key)) {
         try {
           const originSlug = l.link_source === 'frontmatter' ? (l.origin_slug ?? slug) : undefined;
@@ -396,7 +398,7 @@ async function runAutoLink(
 
     // Remove stale incoming (our frontmatter → slug, not in desired set).
     for (const l of existingIn) {
-      const key = `${l.from_slug}\u0000${l.link_type}`;
+      const key = `${l.from_slug}\u0000${l.link_type}\u0000${makeOriginKey('frontmatter', l.origin_slug)}`;
       if (!incKeys.has(key)) {
         try {
           await tx.removeLink(l.from_slug, slug, l.link_type, 'frontmatter', slug);

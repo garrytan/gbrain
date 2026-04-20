@@ -233,6 +233,70 @@ Company profile.
     expect(worksAtEdges[0].origin_slug).toBe('people/pedro');
   });
 
+  test('auto-link reconciliation on one origin preserves duplicate tuple from the other origin', async () => {
+    await engine.putPage('people/pedro', { type: 'person', title: 'Pedro', compiled_truth: '', timeline: '' });
+    await engine.putPage('companies/stripe', { type: 'company', title: 'Stripe', compiled_truth: '', timeline: '' });
+    const putOp = operationsByName['put_page'];
+
+    // Create duplicate typed tuple from two origins.
+    await putOp.handler(makeContext(), {
+      slug: 'people/pedro',
+      content: `---
+type: person
+title: Pedro
+company: Stripe
+---
+
+Profile.
+`,
+    });
+    await putOp.handler(makeContext(), {
+      slug: 'companies/stripe',
+      content: `---
+type: company
+title: Stripe
+key_people:
+  - Pedro
+---
+
+Company profile.
+`,
+    });
+
+    let worksAtEdges = (await engine.getLinks('people/pedro'))
+      .filter(l =>
+        l.to_slug === 'companies/stripe' &&
+        l.link_type === 'works_at' &&
+        l.link_source === 'frontmatter',
+      );
+    expect(worksAtEdges.length).toBe(2);
+    expect(new Set(worksAtEdges.map(l => l.origin_slug))).toEqual(
+      new Set(['people/pedro', 'companies/stripe']),
+    );
+
+    // Reconcile person page without company; only person-authored edge should be removed.
+    const result = await putOp.handler(makeContext(), {
+      slug: 'people/pedro',
+      content: `---
+type: person
+title: Pedro
+---
+
+Profile.
+`,
+    });
+    expect((result as any).auto_links.removed).toBe(1);
+
+    worksAtEdges = (await engine.getLinks('people/pedro'))
+      .filter(l =>
+        l.to_slug === 'companies/stripe' &&
+        l.link_type === 'works_at' &&
+        l.link_source === 'frontmatter',
+      );
+    expect(worksAtEdges.length).toBe(1);
+    expect(worksAtEdges[0].origin_slug).toBe('companies/stripe');
+  });
+
   test('auto-link respects auto_link=false config', async () => {
     await engine.setConfig('auto_link', 'false');
     try {

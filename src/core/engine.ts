@@ -109,6 +109,9 @@ export interface BrainEngine {
    * 'manual') — used by runAutoLink reconciliation to avoid deleting edges from
    * other provenances when pruning frontmatter-derived edges. originSlug (when
    * provided) constrains the delete to edges authored by that frontmatter page.
+   * When originSlug is omitted, engines scope deletes to origin_page_id IS NULL
+   * (non-frontmatter rows) as a safety guard against cross-origin frontmatter
+   * tuple deletion.
    */
   removeLink(from: string, to: string, linkType?: string, linkSource?: string, originSlug?: string): Promise<void>;
   getLinks(slug: string): Promise<Link[]>;
