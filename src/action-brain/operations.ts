@@ -355,10 +355,16 @@ export const actionBrainOperations: Operation[] = [
         }
 
         if (current.status === 'approved' && current.sent_at === null && retry) {
+          const hasDeliveryConfirmation = await hasDraftDeliveryConfirmation(
+            txDb,
+            current.action_item_id,
+            current.id
+          );
           return {
             claimed: true as const,
             resumedFromStatus: 'approved' as const,
             draft: current,
+            reconcileWithoutResend: hasDeliveryConfirmation,
           };
         }
 
@@ -370,6 +376,7 @@ export const actionBrainOperations: Operation[] = [
               claimed: false as const,
               resumedFromStatus: null,
               draft: latest ?? current,
+              reconcileWithoutResend: false as const,
             };
           }
 
@@ -377,6 +384,7 @@ export const actionBrainOperations: Operation[] = [
             claimed: true as const,
             resumedFromStatus: 'send_failed' as const,
             draft: retried,
+            reconcileWithoutResend: false as const,
           };
         }
 
@@ -385,6 +393,7 @@ export const actionBrainOperations: Operation[] = [
             claimed: false as const,
             resumedFromStatus: null,
             draft: current,
+            reconcileWithoutResend: false as const,
           };
         }
 
@@ -395,6 +404,7 @@ export const actionBrainOperations: Operation[] = [
             claimed: false as const,
             resumedFromStatus: null,
             draft: latest ?? current,
+            reconcileWithoutResend: false as const,
           };
         }
 
@@ -408,6 +418,7 @@ export const actionBrainOperations: Operation[] = [
           claimed: true as const,
           resumedFromStatus: null,
           draft: approved,
+          reconcileWithoutResend: false as const,
         };
       });
 
@@ -426,6 +437,17 @@ export const actionBrainOperations: Operation[] = [
 
       const approvedDraft = claimed.draft;
       const resumedFromStatus = claimed.resumedFromStatus;
+
+      if (claimed.reconcileWithoutResend) {
+        const reconciledDraft = await persistDraftSentState(db, id);
+        return {
+          status: 'sent',
+          draft: mapActionDraftRecord(reconciledDraft),
+          resumed_from_status: resumedFromStatus,
+          reconciled_without_resend: true,
+        };
+      }
+
       try {
         await sendDraftViaWacli(approvedDraft.recipient, approvedDraft.draft_text, timeoutMs);
       } catch (error) {
@@ -450,19 +472,8 @@ export const actionBrainOperations: Operation[] = [
         };
       }
 
-      const sentDraft = await withDbTransaction(db, async (txDb) => {
-        const updated = await markDraftSent(txDb, id);
-        if (!updated) {
-          throw new Error(`Action draft not found: ${id}`);
-        }
-
-        await transitionParentActionItemAfterSend(txDb, updated.action_item_id);
-        await insertActionHistory(txDb, updated.action_item_id, 'draft_sent', actor, {
-          draft_id: updated.id,
-          resumed_from_status: resumedFromStatus,
-        });
-        return updated;
-      });
+      await recordDraftDeliveryConfirmation(db, approvedDraft.action_item_id, approvedDraft.id, actor, resumedFromStatus);
+      const sentDraft = await persistDraftSentState(db, id);
 
       return {
         status: 'sent',
@@ -1439,6 +1450,47 @@ async function markDraftSent(db: QueryableDb, draftId: number): Promise<ActionDr
     [draftId]
   );
   return result.rows[0] ?? null;
+}
+
+async function hasDraftDeliveryConfirmation(db: QueryableDb, itemId: number, draftId: number): Promise<boolean> {
+  const result = await db.query(
+    `SELECT 1
+     FROM action_history
+     WHERE item_id = $1
+       AND event_type = 'draft_sent'
+       AND metadata @> jsonb_build_object('draft_id', $2::int, 'delivery_confirmed', true)
+     LIMIT 1`,
+    [itemId, draftId]
+  );
+  return result.rows.length > 0;
+}
+
+async function recordDraftDeliveryConfirmation(
+  db: QueryableDb,
+  itemId: number,
+  draftId: number,
+  actor: string,
+  resumedFromStatus: 'approved' | 'send_failed' | null
+): Promise<void> {
+  await withDbTransaction(db, async (txDb) => {
+    await insertActionHistory(txDb, itemId, 'draft_sent', actor, {
+      draft_id: draftId,
+      resumed_from_status: resumedFromStatus,
+      delivery_confirmed: true,
+    });
+  });
+}
+
+async function persistDraftSentState(db: QueryableDb, draftId: number): Promise<ActionDraftRow> {
+  return withDbTransaction(db, async (txDb) => {
+    const updated = await markDraftSent(txDb, draftId);
+    if (!updated) {
+      throw new Error(`Action draft not found: ${draftId}`);
+    }
+
+    await transitionParentActionItemAfterSend(txDb, updated.action_item_id);
+    return updated;
+  });
 }
 
 async function updateDraftSendFailed(db: QueryableDb, draftId: number, sendError: string): Promise<ActionDraftRow | null> {

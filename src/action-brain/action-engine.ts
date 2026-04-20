@@ -59,6 +59,7 @@ interface ActionDraftRow {
 }
 
 const TERMINAL_STATUSES = new Set<ActionStatus>(['resolved', 'dropped']);
+const AUTO_DRAFT_VERSION_MAX_RETRIES = 5;
 
 export interface CreateActionItemInput {
   title: string;
@@ -284,48 +285,69 @@ export class ActionEngine {
   }
 
   async createDraft(input: CreateActionDraftInput): Promise<ActionDraft> {
-    return this.withTransaction(async (db) => {
-      const version = input.version ?? (await this.nextDraftVersion(db, input.action_item_id));
-      const result = await db.query<ActionDraftRow>(
-        `INSERT INTO action_drafts (
-           action_item_id,
-           version,
-           status,
-           channel,
-           recipient,
-           draft_text,
-           model,
-           context_hash,
-           context_snapshot,
-           approved_at,
-           sent_at,
-           send_error
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
-         RETURNING *`,
-        [
-          input.action_item_id,
-          version,
-          input.status ?? 'pending',
-          input.channel ?? 'whatsapp',
-          input.recipient,
-          input.draft_text,
-          input.model,
-          input.context_hash,
-          JSON.stringify(input.context_snapshot),
-          input.approved_at ?? null,
-          input.sent_at ?? null,
-          input.send_error ?? null,
-        ]
-      );
+    const maxAttempts = input.version === undefined ? AUTO_DRAFT_VERSION_MAX_RETRIES : 1;
 
-      const row = result.rows[0];
-      if (!row) {
-        throw new Error(`Failed to create action draft for action item: ${input.action_item_id}`);
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await this.withTransaction(async (db) => {
+          let version = input.version;
+          if (version === undefined) {
+            // Serialize auto-version allocation per action item.
+            await this.lockItemById(db, input.action_item_id);
+            version = await this.nextDraftVersion(db, input.action_item_id);
+          }
+
+          const result = await db.query<ActionDraftRow>(
+            `INSERT INTO action_drafts (
+               action_item_id,
+               version,
+               status,
+               channel,
+               recipient,
+               draft_text,
+               model,
+               context_hash,
+               context_snapshot,
+               approved_at,
+               sent_at,
+               send_error
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+             RETURNING *`,
+            [
+              input.action_item_id,
+              version,
+              input.status ?? 'pending',
+              input.channel ?? 'whatsapp',
+              input.recipient,
+              input.draft_text,
+              input.model,
+              input.context_hash,
+              JSON.stringify(input.context_snapshot),
+              input.approved_at ?? null,
+              input.sent_at ?? null,
+              input.send_error ?? null,
+            ]
+          );
+
+          const row = result.rows[0];
+          if (!row) {
+            throw new Error(`Failed to create action draft for action item: ${input.action_item_id}`);
+          }
+
+          return mapActionDraft(row);
+        });
+      } catch (error) {
+        if (input.version !== undefined) {
+          throw error;
+        }
+        if (!isDraftVersionUniqueViolation(error) || attempt >= maxAttempts) {
+          throw error;
+        }
       }
+    }
 
-      return mapActionDraft(row);
-    });
+    throw new Error(`Failed to create action draft for action item: ${input.action_item_id}`);
   }
 
   async insertDraft(input: CreateActionDraftInput): Promise<ActionDraft> {
@@ -699,6 +721,21 @@ function ensureDate(value: Date | string, field: string): Date {
     throw new Error(`Invalid ${field} value: ${String(value)}`);
   }
   return parsed;
+}
+
+function isDraftVersionUniqueViolation(error: unknown): boolean {
+  if (!isRecord(error)) {
+    return false;
+  }
+
+  return (
+    error.code === '23505' &&
+    error.constraint === 'action_drafts_action_item_id_version_key'
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function toBoolean(value: boolean | string): boolean {
