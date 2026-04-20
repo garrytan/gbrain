@@ -559,6 +559,26 @@ describe('makeResolver — fallback chain', () => {
     expect(counts.searchCalls).toBe(0);
   });
 
+  test('live mode search fallback applies threshold after dir-hint filtering', async () => {
+    const engine = {
+      async getPage() {
+        return null;
+      },
+      async findByTitleFuzzy() {
+        return null;
+      },
+      async searchKeyword() {
+        return [
+          { slug: 'companies/acme', score: 0.95 },
+          { slug: 'people/alice-low-match', score: 0.05 },
+        ];
+      },
+    } as unknown as BrainEngine;
+
+    const r = makeResolver(engine, { mode: 'live' });
+    expect(await r.resolve('alice', ['people'])).toBeNull();
+  });
+
   test('cache: same name → single getPage call', async () => {
     const engine = makeFakeEngine(['people/pedro']);
     const r = makeResolver(engine);

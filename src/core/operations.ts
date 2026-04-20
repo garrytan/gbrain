@@ -13,7 +13,7 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
-import { extractPageLinks, isAutoLinkEnabled, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
 import { actionBrainOperations } from '../action-brain/operations.ts';
 
@@ -222,7 +222,7 @@ const get_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link is enabled) extracts + reconciles graph links.',
+  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
@@ -254,8 +254,10 @@ const put_page: Operation = {
       | { error: string }
       | { skipped: 'remote' }
       | undefined;
+    let autoTimeline: { created: number } | { error: string } | { skipped: 'remote' } | undefined;
     if (ctx.remote === true) {
       autoLinks = { skipped: 'remote' };
+      autoTimeline = { skipped: 'remote' };
     } else if (result.parsedPage) {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
@@ -265,6 +267,52 @@ const put_page: Operation = {
       } catch (e) {
         autoLinks = { error: e instanceof Error ? e.message : String(e) };
       }
+      // Timeline extraction mirrors auto-link: runs post-write, best-effort,
+      // never blocks the write. ON CONFLICT DO NOTHING in
+      // addTimelineEntriesBatch keeps it idempotent across re-writes, so a
+      // page that's edited and re-written won't duplicate its own timeline.
+      try {
+        const enabled = await isAutoTimelineEnabled(ctx.engine);
+        if (enabled) {
+          const fullContent = result.parsedPage.compiled_truth + '\n' + result.parsedPage.timeline;
+          const entries = parseTimelineEntries(fullContent);
+          if (entries.length > 0) {
+            const batch = entries.map(e => ({
+              slug,
+              date: e.date,
+              summary: e.summary,
+              detail: e.detail || '',
+            }));
+            const created = await ctx.engine.addTimelineEntriesBatch(batch);
+            autoTimeline = { created };
+          } else {
+            autoTimeline = { created: 0 };
+          }
+        }
+      } catch (e) {
+        autoTimeline = { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+
+    // Post-write validator lint (PR 2.5): feature-flag-gated, non-blocking.
+    // When `writer.lint_on_put_page` is enabled, runs the BrainWriter's
+    // validators on the freshly-written page and logs findings to
+    // ingest_log + ~/.gbrain/validator-lint.jsonl. Does NOT reject the
+    // write — that's the deferred strict-mode flip after the 7-day soak.
+    let writerLint: { error_count: number; warning_count: number } | { skipped: string } | undefined;
+    try {
+      const { runPostWriteLint } = await import('./output/post-write.ts');
+      const lint = await runPostWriteLint(ctx.engine, result.slug);
+      if (lint.ran) {
+        writerLint = {
+          error_count: lint.findings.filter(f => f.severity === 'error').length,
+          warning_count: lint.findings.filter(f => f.severity === 'warning').length,
+        };
+      } else if (lint.skippedReason) {
+        writerLint = { skipped: lint.skippedReason };
+      }
+    } catch {
+      // Non-fatal; never blocks put_page.
     }
 
     return {
@@ -272,6 +320,8 @@ const put_page: Operation = {
       status: result.status === 'imported' ? 'created_or_updated' : result.status,
       chunks: result.chunks,
       ...(autoLinks ? { auto_links: autoLinks } : {}),
+      ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
+      ...(writerLint ? { writer_lint: writerLint } : {}),
     };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
@@ -319,9 +369,20 @@ async function runAutoLink(
   // Run getLinks + addLink/removeLink loops inside a single transaction so that
   // concurrent put_page calls on the same slug can't race the reconciliation:
   // without this, two simultaneous writes both read stale `existingKeys` and
-  // re-create links the other side just removed (lost-update). The transaction
-  // serializes via row-level locks on `links` rows touched by addLink/removeLink.
+  // re-create links the other side just removed (lost-update).
+  //
+  // Row-level locks alone aren't enough: both writers can read the same
+  // `existingKeys` set BEFORE either mutates a row, so the union-of-writes
+  // race survives. A transaction-scoped advisory lock keyed on the slug
+  // hash serializes the entire reconciliation across processes. Falls
+  // through on engines that don't support pg_advisory_xact_lock (PGLite is
+  // single-process so there's no cross-process concern there anyway).
   const result = await engine.transaction(async (tx) => {
+    try {
+      await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [`auto_link:${slug}`]);
+    } catch {
+      // engine doesn't support advisory locks — fall through
+    }
     const existingOut = await tx.getLinks(slug);
     // Incoming: we only look at frontmatter edges WE authored (origin_slug=slug).
     // Non-frontmatter and other-page frontmatter edges survive untouched.

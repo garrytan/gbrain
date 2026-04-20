@@ -509,15 +509,13 @@ export function makeResolver(
       if (opts.mode === 'live') {
         try {
           const results = await engine.searchKeyword(trimmed, { limit: 3 });
-          if (results.length > 0 && results[0].score >= 0.8) {
-            // Filter by dir hint if provided.
-            const top = hints.length > 0
-              ? results.find(r => hints.some(h => r.slug.startsWith(`${h}/`)))
-              : results[0];
-            if (top) {
-              cache.set(cacheKey, top.slug);
-              return top.slug;
-            }
+          const hinted = hints.length > 0
+            ? results.filter(r => hints.some(h => r.slug.startsWith(`${h}/`)))
+            : results;
+          const top = hinted[0];
+          if (top && top.score >= 0.8) {
+            cache.set(cacheKey, top.slug);
+            return top.slug;
           }
         } catch { /* search errors are non-fatal; fall through to null */ }
       }
@@ -710,6 +708,19 @@ function isValidDate(s: string): boolean {
  */
 export async function isAutoLinkEnabled(engine: BrainEngine): Promise<boolean> {
   const val = await engine.getConfig('auto_link');
+  if (val == null) return true;
+  const normalized = val.trim().toLowerCase();
+  return !['false', '0', 'no', 'off'].includes(normalized);
+}
+
+/**
+ * Read the auto_timeline config flag. Defaults to TRUE (on by default).
+ * Same truthiness rules as isAutoLinkEnabled. Controls whether put_page
+ * parses timeline entries from freshly-written content and inserts them
+ * via addTimelineEntriesBatch.
+ */
+export async function isAutoTimelineEnabled(engine: BrainEngine): Promise<boolean> {
+  const val = await engine.getConfig('auto_timeline');
   if (val == null) return true;
   const normalized = val.trim().toLowerCase();
   return !['false', '0', 'no', 'off'].includes(normalized);

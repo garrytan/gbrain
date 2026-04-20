@@ -20,6 +20,18 @@ import { UnrecoverableError } from './types.ts';
 import { MinionQueue } from './queue.ts';
 import { calculateBackoff } from './backoff.ts';
 import { randomUUID } from 'crypto';
+import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
+
+/**
+ * Read the quiet_hours JSONB column off a MinionJob, if present. The
+ * column was added in schema migration v12; older rows + versions of
+ * MinionJob that don't include the field return null.
+ */
+function readQuietHoursConfig(job: MinionJob): QuietHoursConfig | null {
+  const cfg = (job as MinionJob & { quiet_hours?: unknown }).quiet_hours;
+  if (!cfg || typeof cfg !== 'object') return null;
+  return cfg as QuietHoursConfig;
+}
 
 /** Per-job in-flight state (isolated per job, not shared on the worker). */
 interface InFlightJob {
@@ -123,7 +135,17 @@ export class MinionWorker {
           );
 
           if (job) {
-            this.launchJob(job, lockToken);
+            // Quiet-hours gate: evaluated at claim time, not dispatch.
+            // Config lives on the job record (jsonb column added in
+            // schema migration v12). Worker releases the job back to the
+            // queue on 'defer' or marks it cancelled on 'skip'.
+            const quietCfg = readQuietHoursConfig(job);
+            const verdict = evaluateQuietHours(quietCfg);
+            if (verdict !== 'allow') {
+              await this.handleQuietHoursDefer(job, lockToken, verdict);
+            } else {
+              this.launchJob(job, lockToken);
+            }
           } else if (this.inFlight.size === 0) {
             // No jobs and nothing in flight, poll
             await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
@@ -152,6 +174,60 @@ export class MinionWorker {
       }
 
       console.log('Minion worker stopped.');
+    }
+  }
+
+  /**
+   * Called when a claimed job falls inside its quiet-hours window. The
+   * claim already set status='active' and held the lock; we reverse the
+   * state transition (defer) or cancel outright (skip).
+   *
+   * 'defer' → status='waiting', lock cleared, delay_until bumped ahead by
+   *   15 minutes so the same job doesn't immediately re-claim. Jobs will
+   *   naturally pick up again once `now` exits the quiet window.
+   * 'skip' → status='cancelled', final_status='skipped_quiet_hours'. The
+   *   event is dropped.
+   */
+  private async handleQuietHoursDefer(job: MinionJob, lockToken: string, verdict: 'skip' | 'defer'): Promise<void> {
+    try {
+      if (verdict === 'skip') {
+        // Route through MinionQueue.cancelJob so parent jobs in waiting-children
+        // see the cancellation and roll up correctly. A direct status='cancelled'
+        // UPDATE strands parents forever (no inbox, no dependency resolution).
+        // Release our lock first so cancelJob's descendant walk sees a clean state.
+        await this.engine.executeRaw(
+          `UPDATE minion_jobs SET lock_token = NULL, lock_until = NULL, updated_at = now()
+           WHERE id = $1 AND lock_token = $2`,
+          [job.id, lockToken],
+        );
+        try {
+          await this.queue.cancelJob(job.id);
+        } catch {
+          // cancelJob best-effort — if the parent rollup path errors, we still
+          // want the job out of 'active' rather than re-claimed on next tick.
+          await this.engine.executeRaw(
+            `UPDATE minion_jobs
+             SET status = 'cancelled', error_text = 'skipped_quiet_hours', updated_at = now()
+             WHERE id = $1 AND status NOT IN ('completed','failed','dead')`,
+            [job.id],
+          );
+        }
+        console.log(`Quiet-hours skip: ${job.name} (id=${job.id})`);
+      } else {
+        // Defer: release back to delayed, push delay ~15 minutes to avoid
+        // immediate re-claim loops when the claim query re-runs.
+        await this.engine.executeRaw(
+          `UPDATE minion_jobs
+           SET status = 'delayed', lock_token = NULL, lock_until = NULL,
+               delay_until = now() + interval '15 minutes',
+               updated_at = now()
+           WHERE id = $1 AND lock_token = $2`,
+          [job.id, lockToken],
+        );
+        console.log(`Quiet-hours defer: ${job.name} (id=${job.id}) → retry after 15m`);
+      }
+    } catch (e) {
+      console.error(`handleQuietHoursDefer error for job ${job.id}:`, e instanceof Error ? e.message : String(e));
     }
   }
 

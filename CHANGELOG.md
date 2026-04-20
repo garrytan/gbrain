@@ -2,6 +2,87 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.15.0] - 2026-04-21
+
+**Knowledge Runtime lands: Resolver SDK, BrainWriter, integrity repair, Budget ledger.**
+**Time-to-queryable goes from 0% to 100%. Doctor now surfaces real brain damage.**
+
+This release absorbs upstream PR #210 into the fork and applies four post-integration fixes. The headline is Knowledge Runtime v0.13.0: a pluggable Resolver SDK, a transaction-safe BrainWriter with post-write validators, a three-bucket integrity repair pipeline, and a Budget ledger for enrichment cost tracking. On top of that, `put_page` now auto-extracts timeline entries — every page you write is immediately queryable, no second step required.
+
+Five post-integration fixes address stagger timing restoration, minion queue gating on schema v13, integrity auto-resume checkpoint durability, hinted-candidate score threshold enforcement, and a TOCTOU race in `integrity --auto` repair.
+
+### The numbers that matter
+
+Source: `bun run test/benchmark-put-page-latency.ts --json` and `bun run test/benchmark-knowledge-runtime.ts --json` against PGLite in-process. No network, no API keys.
+
+| Benchmark | Before (master) | After (v0.15.0) | Delta |
+|---|---|---|---|
+| put_page mean latency | 2.00 ms | 2.58 ms | +0.58 ms (+29%) |
+| Timeline entries on 200 writes | 0 | 300 | +300 (free) |
+| Time-to-queryable timeline | 0% | 100% | +100 pp |
+| Integrity repair rate (auto-fix) | n/a | 70% | new feature |
+| Integrity review queue | n/a | 20% | new feature |
+| Doctor completeness on real issues | 0% | 100% | new feature |
+| Graph quality (link recall) | 0.889 | 0.889 | 0 |
+| Search quality (MRR) | 0.974 | 0.974 | 0 |
+
+The +0.58 ms mean cost buys you 300 timeline entries per 200 writes at essentially zero marginal effort. Before this release, `gbrain doctor` caught zero of the integrity issues the test seeds — now it catches 5/5 surfaceable issues and correctly respects the `validate: false` grandfather flag.
+
+What this means for agents and daily use: timeline queries work the moment you write a page. The brain no longer requires `gbrain extract timeline` as a separate step. For brains with bare-tweet patterns or dead external links, `gbrain integrity auto` now routes each issue to auto-fix, review queue, or skip based on resolver confidence — deterministically. Run `gbrain apply-migrations --yes` after upgrading to pick up the budget_ledger schema and minion stagger columns.
+
+## To take advantage of v0.15.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Your agent reads `skills/migrations/v0.15.0.md` the next time you interact with it.**
+   The v0_13_1 migration handles schema: budget_ledger table and minion stagger columns.
+3. **Verify the outcome:**
+   ```bash
+   gbrain integrity scan --dry-run
+   gbrain stats
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+### Itemized changes
+
+#### Knowledge Runtime (upstream PR #210)
+- **Resolver SDK** (`src/core/resolvers/`) — pluggable resolver interface with registry, `url_reachable` and `x_handle_to_tweet` builtins, and confidence-scored `ResolverResult` type. Agents can register custom resolvers via `registry.register()`.
+- **BrainWriter** (`src/core/output/writer.ts`) — transaction-safe page-write API. Runs post-write validators (back-link, citation, link, triple-hr) after every write and surfaces lint findings without blocking the write. Advisory locking prevents concurrent writes to the same slug.
+- **Post-write validators** (`src/core/output/validators/`) — four validators: back-link enforcement (Iron Law), citation format, link reachability hint, triple-hr pattern. Validators are composable and independently tested.
+- **Integrity command** (`src/commands/integrity.ts`) — `gbrain integrity auto/scan/review` pipeline. Three-bucket confidence routing: auto-fix (>=0.8), review queue (0.5–0.8), skip (<0.5). Auto-resume checkpoints are durable across restarts.
+- **Budget ledger** (`src/core/enrichment/budget.ts`) — enrichment cost tracking per session and provider. `FOR UPDATE` locking prevents double-spend races. `estimateUsd` and `actualUsd` validated with `Number.isFinite()`.
+- **Completeness scoring** (`src/core/enrichment/completeness.ts`) — page-level completeness signals for enrichment prioritization.
+- **Scaffold output** (`src/core/output/scaffold.ts`) — structured output scaffolding for BrainWriter.
+- **Slug registry** (`src/core/output/slug-registry.ts`) — in-memory slug deduplication during batch writes.
+- **Auto-timeline on put_page** — `put_page` operation now extracts timeline entries inline. Time-to-queryable: 0% → 100%.
+- **v0_13_1 migration** (`src/commands/migrations/v0_13_1.ts`) — adds budget_ledger table and minion stagger columns. Idempotent, resumable.
+- **Doctor integration** — `gbrain doctor` gains integrity scan in non-fast mode. Surfaces bare-tweet phrases, dead external links, and respects `validate: false` grandfather flag.
+
+#### Post-integration fixes
+- `fix(linking)` — enforce hinted-candidate score threshold: candidates below the threshold are no longer promoted regardless of hint weight.
+- `fix(integrity,minions)` — restore auto-validation and apply stagger timing after absorb merge.
+- `fix(minions)` — gate minion queue on schema v13: prevents jobs from being claimed before the stagger columns exist.
+- `fix(integrity)` — make auto-resume checkpoints durable: progress survives process restart mid-scan.
+- `fix(integrity)` — eliminate TOCTOU in `repairBareTweet`: compiled_truth is now read inside the writer transaction via `WriteTx.getCompiledTruth()` so concurrent repair processes cannot silently overwrite each other's repairs.
+
+#### Tests
+- `test/resolvers.test.ts` — 622 lines, full Resolver SDK coverage (registry, builtins, confidence scoring, error paths)
+- `test/writer.test.ts` — 714 lines, BrainWriter coverage (transaction safety, validator integration, advisory locking, error paths)
+- `test/post-write-lint.test.ts` — 130 lines, post-write validator coverage
+- `test/integrity.test.ts`, `test/integrity-auto-resume.test.ts` — integrity pipeline and checkpoint durability
+- `test/minions-quiet-hours.test.ts`, `test/minions.test.ts` (additions) — quiet-hours and stagger coverage
+- `test/apply-migrations.test.ts`, `test/migrations-v0_13_1.test.ts` — migration orchestrator coverage
+- `test/enrichment.test.ts` — budget and completeness coverage
+- Unit suite: 1748 pass, 0 fail across 103 files
+
 ## [0.14.1] - 2026-04-20
 
 **Action Brain 0.3 plan locked. Seven children, one direction, no ambiguity.**
