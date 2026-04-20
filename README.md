@@ -10,6 +10,8 @@ GBrain is those patterns, generalized. 26 skills. Install in 30 minutes. Your ag
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
+> **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
+
 ## Install
 
 ### On an agent platform (recommended)
@@ -27,6 +29,11 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 ```
 
 That's it. The agent clones the repo, installs GBrain, sets up the brain, loads 26 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
+
+If your agent doesn't auto-read `AGENTS.md`, point it at that file first:
+`https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` is the non-Claude
+agent operating protocol (install, read order, trust boundary, common tasks). For
+the full doc map, use `llms.txt` at the same URL root.
 
 ### Standalone CLI (no agent)
 

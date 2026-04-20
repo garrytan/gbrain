@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.14.2",
+  "version": "0.15.0",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -20,6 +20,7 @@
     "build": "bun build --compile --outfile bin/gbrain src/cli.ts",
     "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts",
     "build:schema": "bash scripts/build-schema.sh",
+    "build:llms": "bun run scripts/build-llms.ts",
     "test": "scripts/check-jsonb-pattern.sh && bun test",
     "test:e2e": "bun test test/e2e/",
     "check:jsonb": "scripts/check-jsonb-pattern.sh",

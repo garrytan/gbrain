@@ -2,6 +2,76 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.15.0] - 2026-04-21
+
+## **GBrain now talks to LLMs the way modern docs sites do.**
+## **One URL, full context. Three files, zero drift.**
+
+Three new artifacts ship at the repo root: `llms.txt` (llmstxt.org-spec index), `llms-full.txt` (same map with core docs inlined, ~225KB, fits well under a 150k-token context window), and `AGENTS.md` (the non-Claude-agent operating protocol). All three are generator-driven. `scripts/build-llms.ts` reads a curated `scripts/llms-config.ts` and emits `llms.txt` + `llms-full.txt` deterministically; `AGENTS.md` is hand-written and uses relative links so it survives forks and rename. Every agent that clones GBrain now has a one-screen answer to "I just got here, what do I do?"
+
+README and `INSTALL_FOR_AGENTS.md` now point agents at `AGENTS.md` first. The old install prompt still works, but the leverage point, Codex's read of the plan, was that these files are invisible unless the install path references them. Fixed.
+
+### The numbers that matter
+
+Measured on this release:
+
+| Metric                                          | BEFORE                          | AFTER                            | Δ                          |
+|-------------------------------------------------|----------------------------------|-----------------------------------|----------------------------|
+| Agent entry points with clear install protocol  | 1 (CLAUDE.md, Claude Code only) | 3 (CLAUDE.md + AGENTS.md + llms.txt) | +non-Claude coverage       |
+| Docs referenced at a single canonical URL       | 0                               | 20 (across 5 H2 sections)        | index exists               |
+| Full-context fetch round-trips                  | ~20 (one per doc)               | 1 (`llms-full.txt`, 224 KB)      | ~20x fewer fetches         |
+| Tests guarding the doc index                    | 0                               | 7 (paths resolve, idempotent, spec shape, regen-drift, content contract, AGENTS mirror, size budget) | +7                         |
+| Pre-existing repo bugs found and fixed          | —                               | 1 (`git pull origin main` → `master`) | drive-by                   |
+
+The 7 tests enforce content contract: removing `skills/RESOLVER.md` or the Debugging H2 from the config fails `bun test`. Forgetting to rerun `bun run build:llms` after adding a new doc fails `bun test`. The size budget (600KB) fails `bun test` if `llms-full.txt` balloons.
+
+### What this means for you
+
+If you're running GBrain: nothing to do. Your agent already has CLAUDE.md. But next time you install GBrain on Codex, Cursor, or OpenClaw, the agent lands on `AGENTS.md` and walks the install without hunting. If you run a fork, regenerate with `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms` to rewrite URLs. If you publish GBrain docs alongside your own, `llms.txt` is the index; `llms-full.txt` is the drop-into-a-context-window bundle.
+
+Credit to Codex for catching that the original plan's AGENTS.md was underpowered, that the eng review missed a content-contract test, and that the install prompt was the real leverage point. Seven of the fifteen Codex findings landed directly in the plan; three went to user decision; five stayed as intentional NOT-in-scope.
+
+## To take advantage of this release
+
+`gbrain upgrade` does not need to do anything. These are new public files; existing installs pick them up on their next pull.
+
+1. **If you wrote a downstream fork:** regenerate with your URL base.
+   ```bash
+   LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms
+   git add llms.txt llms-full.txt && git commit
+   ```
+2. **If you add a new doc under `docs/`:** add it to `scripts/llms-config.ts`, then
+   ```bash
+   bun run build:llms
+   bun test test/build-llms.test.ts
+   ```
+   CI blocks ship if these drift.
+3. **Verify it actually works:** ask a fresh LLM
+   ```
+   Fetch https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt and tell me
+   how I'd debug a broken live sync.
+   ```
+   Answer should cite `docs/GBRAIN_VERIFY.md`, `docs/guides/live-sync.md`, and `gbrain doctor`.
+
+### Itemized changes
+
+#### Added
+- `AGENTS.md` at repo root — ~45-line non-Claude-agent operating protocol. Install, read order, trust boundary, config/debug/migration pointers, fork instructions. Uses relative links so it survives renames.
+- `llms.txt` at repo root — llmstxt.org-spec index. H1 + blockquote + 5 required H2 sections (Core entry points, Configuration, Debugging, Migrations) plus an Operational tips block with `gbrain doctor`, `gbrain orphans`, `gbrain repair-jsonb`. ~4KB.
+- `llms-full.txt` at repo root — same index with core docs inlined under `## {path}` headings for single-fetch ingestion. ~225KB, under the 600KB `FULL_SIZE_BUDGET`.
+- `scripts/llms-config.ts` — curated TS config. `LLMS_REPO_BASE` env var lets forks regenerate with their own URL base. `includeInFull: false` flags entries that should appear in `llms.txt` but not be inlined in `llms-full.txt` (Philosophy, Optional, CHANGELOG).
+- `scripts/build-llms.ts` — the generator. Deterministic, no timestamps, sorted by config order. Warns (does not fail) if `llms-full.txt` exceeds `FULL_SIZE_BUDGET` with the biggest entries listed.
+- `test/build-llms.test.ts` — 7 cases: paths resolve on disk, generator idempotent, llms.txt spec shape, checked-in files match generator output (drift guard), content contract (RESOLVER / AGENTS / INSTALL_FOR_AGENTS referenced), AGENTS mirrors README+INSTALL install path, size budget enforcement.
+- `bun run build:llms` script in `package.json`.
+
+#### Changed
+- `README.md` — adds a one-line LLMs/Agents pointer above the install CTA and a follow-up paragraph under the agent paste block naming `AGENTS.md` + `llms.txt` as fallback entry points for non-Claude agents.
+- `INSTALL_FOR_AGENTS.md` — new "Step 0: If you are not Claude Code" prelude points agents at `AGENTS.md` first.
+- `CLAUDE.md` — adds `scripts/llms-config.ts`, `scripts/build-llms.ts`, and `AGENTS.md` to Key files. Explicitly notes that committed generator output is NOT analogous to `schema-embedded.ts` (no runtime consumer; committed for GitHub browsing + fork safety).
+
+#### Fixed
+- `INSTALL_FOR_AGENTS.md:136` — `git pull origin main` → `git pull origin master`. Pre-existing drift: README and CI use `master`, `origin/HEAD -> master`, but the upgrade instructions told users to pull from a branch that doesn't exist. Folded into this release as a drive-by fix.
+
 ## [0.14.2] - 2026-04-20
 
 ## **Eight deferred bugs, root-cause fixes, one clean wave.**

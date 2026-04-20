@@ -3,6 +3,17 @@
 Read this entire file, then follow the steps. Ask the user for API keys when needed.
 Target: ~30 minutes to a fully working brain.
 
+## Step 0: If you are not Claude Code
+
+Read `AGENTS.md` at the repo root first. It's the non-Claude-agent operating
+protocol (install, read order, trust boundary, common tasks). Claude Code reads
+`CLAUDE.md` automatically and can skip ahead.
+
+If you fetched this file by URL without cloning yet, the companion files live at:
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — full doc map
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — same map, inlined
+
 ## Step 1: Install GBrain
 
 ```bash
@@ -133,7 +144,7 @@ actually works) is the most important.
 ## Upgrade
 
 ```bash
-cd ~/gbrain && git pull origin main && bun install
+cd ~/gbrain && git pull origin master && bun install
 gbrain init                           # apply schema migrations (idempotent)
 gbrain post-upgrade                   # show migration notes for the version range
 ```
