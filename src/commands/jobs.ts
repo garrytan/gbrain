@@ -57,8 +57,8 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
 
 USAGE
   gbrain jobs submit <name> [--params JSON] [--follow] [--priority N]
-                            [--delay Nms] [--max-attempts N] [--queue Q]
-                            [--dry-run]
+                            [--delay Nms] [--timeout-ms Nms] [--max-attempts N]
+                            [--queue Q] [--dry-run]
   gbrain jobs list [--status S] [--queue Q] [--limit N]
   gbrain jobs get <id>
   gbrain jobs cancel <id>
@@ -68,6 +68,18 @@ USAGE
   gbrain jobs stats
   gbrain jobs smoke
   gbrain jobs work [--queue Q] [--concurrency N]
+
+HANDLER TYPES (built in)
+  sync              Pull and embed new pages from the repo
+  embed             (Re-)embed pages; --params '{"slug":...}' or '{"all":true}'
+  lint              Run page linter; --params '{"dir":"...","fix":true}'
+  import            Bulk import markdown; --params '{"dir":"..."}'
+  extract           Extract links + timeline entries; '{"mode":"all"}'
+  backlinks         Check or fix back-links; '{"action":"fix"}'
+  autopilot-cycle   One autopilot pass (sync+extract+embed+backlinks)
+  shell             Run a command or argv. Requires GBRAIN_ALLOW_SHELL_JOBS=1
+                    on the worker. Params: {cmd?, argv?, cwd, env?}.
+                    See: docs/guides/minions-shell-jobs.md
 `);
     return;
   }
@@ -93,6 +105,12 @@ USAGE
       const delay = parseInt(parseFlag(args, '--delay') ?? '0', 10);
       const maxAttempts = parseInt(parseFlag(args, '--max-attempts') ?? '3', 10);
       const queueName = parseFlag(args, '--queue') ?? 'default';
+      const timeoutMsRaw = parseFlag(args, '--timeout-ms');
+      const timeoutMs = timeoutMsRaw !== undefined ? parseInt(timeoutMsRaw, 10) : undefined;
+      if (timeoutMsRaw !== undefined && (isNaN(timeoutMs!) || timeoutMs! <= 0)) {
+        console.error('Error: --timeout-ms must be a positive integer (milliseconds)');
+        process.exit(1);
+      }
       const dryRun = hasFlag(args, '--dry-run');
       const follow = hasFlag(args, '--follow');
 
@@ -103,6 +121,7 @@ USAGE
         console.log(`  Priority: ${priority}`);
         console.log(`  Max attempts: ${maxAttempts}`);
         if (delay > 0) console.log(`  Delay: ${delay}ms`);
+        if (timeoutMs) console.log(`  Timeout: ${timeoutMs}ms`);
         console.log(`  Data: ${JSON.stringify(data)}`);
         return;
       }
@@ -114,12 +133,51 @@ USAGE
         process.exit(1);
       }
 
+      // The CLI path is a trusted submitter. Pass {allowProtectedSubmit: true}
+      // ONLY for protected names, not blanket-set for every submission, so any
+      // future protected name forces explicit opt-in at the call site.
+      const { isProtectedJobName } = await import('../core/minions/protected-names.ts');
+      const trusted = isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
       const job = await queue.add(name, data, {
         priority,
         delay: delay > 0 ? delay : undefined,
         max_attempts: maxAttempts,
         queue: queueName,
-      });
+        timeout_ms: timeoutMs,
+      }, trusted);
+
+      // Submission audit log (operational trace, not forensic insurance).
+      try {
+        const { logShellSubmission } = await import('../core/minions/handlers/shell-audit.ts');
+        if (name.trim() === 'shell') {
+          logShellSubmission({
+            caller: 'cli',
+            remote: false,
+            job_id: job.id,
+            cwd: typeof data.cwd === 'string' ? data.cwd : '',
+            cmd_display: typeof data.cmd === 'string' ? data.cmd.slice(0, 80) : undefined,
+            argv_display: Array.isArray(data.argv)
+              ? (data.argv as unknown[]).filter((a): a is string => typeof a === 'string').map((a) => a.slice(0, 80))
+              : undefined,
+          });
+        }
+      } catch { /* audit failures never block submission */ }
+
+      // Starvation warning (DX polish). Fire for every non-`--follow` shell submit
+      // regardless of the submitter's own `GBRAIN_ALLOW_SHELL_JOBS` — the submitter
+      // env is a weak proxy for the worker env (they may run on different machines),
+      // so the warning remains useful any time the job might sit in 'waiting'.
+      if (!follow && name.trim() === 'shell') {
+        process.stderr.write(
+          `\n⚠  Shell jobs require GBRAIN_ALLOW_SHELL_JOBS=1 on the worker process.\n` +
+          `   Your job was queued (id=${job.id}) but will sit in 'waiting' until a\n` +
+          `   worker with the env flag starts. To run now:\n\n` +
+          `     GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \\\n` +
+          `       --params '...' --follow\n\n` +
+          `   Or start a persistent worker (Postgres only — PGLite uses --follow):\n\n` +
+          `     GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work\n\n`,
+        );
+      }
 
       if (follow) {
         console.log(`Job #${job.id} submitted (${name}). Executing inline...`);
@@ -470,4 +528,16 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     }
     return { partial: false, steps };
   });
+
+  // Shell handler: registered ONLY when GBRAIN_ALLOW_SHELL_JOBS=1 is set on the
+  // worker process. Default-closed; opt-in per-host. Without the flag, shell
+  // jobs submitted via CLI insert rows but no worker claims them (they sit in
+  // 'waiting' — the CLI prints a starvation warning for that case).
+  if (process.env.GBRAIN_ALLOW_SHELL_JOBS === '1') {
+    const { shellHandler } = await import('../core/minions/handlers/shell.ts');
+    worker.register('shell', shellHandler);
+    process.stderr.write('[minion worker] shell handler enabled (GBRAIN_ALLOW_SHELL_JOBS=1)\n');
+  } else {
+    process.stderr.write('[minion worker] shell handler disabled (set GBRAIN_ALLOW_SHELL_JOBS=1 to enable)\n');
+  }
 }
