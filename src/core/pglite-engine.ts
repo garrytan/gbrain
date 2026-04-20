@@ -61,12 +61,16 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
-
+    // Run migrations first so that new columns/indexes exist before
+    // PGLITE_SCHEMA_SQL's CREATE INDEX statements reference them.
+    // For fresh installs: migrations are no-ops (tables created below);
+    // for upgrades: migrations add new columns first, then the indexes succeed.
     const { applied } = await runMigrations(this);
     if (applied > 0) {
       console.log(`  ${applied} migration(s) applied`);
     }
+
+    await this.db.exec(PGLITE_SCHEMA_SQL);
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
