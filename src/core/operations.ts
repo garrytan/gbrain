@@ -230,6 +230,11 @@ const put_page: Operation = {
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
     const slug = p.slug as string;
+    // Reject uppercase slugs early with a clear message rather than letting
+    // them fail later with a misleading "Page not found" error.
+    if (/[A-Z]/.test(slug)) {
+      throw new OperationError('invalid_params', `Slug must be lowercase letters, digits, hyphens, and forward slugs only. Got: "${slug}"`);
+    }
     // Skip embedding when no OpenAI key is configured. importFromContent's existing
     // try/catch around embed only catches; without a key the OpenAI client would
     // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
