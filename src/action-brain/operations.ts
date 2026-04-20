@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import type { BrainEngine } from '../core/engine.ts';
 import type { Operation } from '../core/operations.ts';
 import { ActionEngine, ActionItemNotFoundError, ActionTransitionError } from './action-engine.ts';
@@ -10,7 +12,7 @@ import {
   type StructuredCommitment,
   type WhatsAppMessage,
 } from './extractor.ts';
-import type { ActionItem } from './types.ts';
+import type { ActionDraft, ActionDraftStatus, ActionItem } from './types.ts';
 import { initActionSchema } from './action-schema.ts';
 
 interface QueryResult<T> {
@@ -29,16 +31,24 @@ interface PostgresUnsafeConnection {
 }
 
 const STATUS_VALUES = ['open', 'waiting_on', 'in_progress', 'stale', 'resolved', 'dropped'] as const;
+const ACTION_DRAFT_STATUS_VALUES = ['pending', 'approved', 'sending', 'rejected', 'sent', 'send_failed', 'superseded'] as const;
 const ACTION_LIST_FILTER_VALUES = ['low_confidence_dropped'] as const;
 const LOW_CONFIDENCE_THRESHOLD = 0.9;
 const SOURCE_EXCERPT_MAX_CHARS = 500;
 const ACTION_EXTRACTOR_VERSION = 'extractor.ts@v1';
+const ACTION_DRAFT_DEFAULT_SEND_TIMEOUT_MS = 30_000;
+const ACTION_DRAFT_SENDING_RECOVERY_MIN_GRACE_MS = 60_000;
+const ACTION_DRAFT_SENDING_RECOVERY_ERROR =
+  'delivery confirmation missing after sending timeout window; marked send_failed for manual recovery';
+const ACTION_DRAFT_DEFAULT_MODEL = 'manual';
 const ENTITY_LINK_SEARCH_LIMIT = 20;
 export const ACTION_BRIEF_SOURCE_CONTACT_LOOKUP_CONCURRENCY = 4;
 export const ACTION_BRIEF_SOURCE_CONTACT_LOOKUP_CAP = 24;
+const execFileAsync = promisify(execFile);
 const initializedEngines = new WeakSet<object>();
 const postgresDbCache = new WeakMap<object, QueryableDb>();
 type ActionListFilter = typeof ACTION_LIST_FILTER_VALUES[number];
+type ActionDraftStatusValue = typeof ACTION_DRAFT_STATUS_VALUES[number];
 type ActionDropReason = 'low_confidence' | 'schema_reject' | 'duplicate' | 'other';
 
 interface ActionDropRow {
@@ -69,6 +79,77 @@ interface ListActionDropFilters {
   dropReason?: ActionDropReason;
   limit?: number;
   offset?: number;
+}
+
+interface ActionDraftListRow {
+  id: number;
+  action_item_id: number;
+  version: number;
+  status: ActionDraftStatus;
+  channel: string;
+  recipient: string;
+  draft_text: string;
+  model: string;
+  context_hash: string;
+  context_snapshot: Record<string, unknown> | string;
+  generated_at: Date | string;
+  approved_at: Date | string | null;
+  sent_at: Date | string | null;
+  send_error: string | null;
+  action_priority_score: number;
+  action_status: string;
+  action_title: string;
+}
+
+interface ActionDraftStateRow {
+  id: number;
+  action_item_id: number;
+  status: ActionDraftStatus;
+  channel: string;
+  recipient: string;
+  draft_text: string;
+  approved_at: Date | string | null;
+  sent_at: Date | string | null;
+}
+
+interface ActionDraftRow {
+  id: number;
+  action_item_id: number;
+  version: number;
+  status: ActionDraftStatus;
+  channel: string;
+  recipient: string;
+  draft_text: string;
+  model: string;
+  context_hash: string;
+  context_snapshot: Record<string, unknown> | string;
+  generated_at: Date | string;
+  approved_at: Date | string | null;
+  sent_at: Date | string | null;
+  send_error: string | null;
+}
+
+interface ActionItemDraftSeedRow {
+  id: number;
+  title: string;
+  source_contact: string;
+}
+
+interface SendCommandResult {
+  stdout: string;
+  stderr: string;
+}
+
+type SendTextExecutor = (
+  command: string,
+  args: string[],
+  options: { timeoutMs: number }
+) => Promise<SendCommandResult>;
+
+let sendTextExecutor: SendTextExecutor = defaultSendTextExecutor;
+
+export function setActionDraftSendExecutorForTests(executor: SendTextExecutor | null): void {
+  sendTextExecutor = executor ?? defaultSendTextExecutor;
 }
 
 export const actionBrainOperations: Operation[] = [
@@ -198,6 +279,444 @@ export const actionBrainOperations: Operation[] = [
         }
         throw error;
       }
+    },
+  },
+  {
+    name: 'action_draft_list',
+    description: 'List Action Brain drafts',
+    params: {
+      status: { type: 'string', enum: [...ACTION_DRAFT_STATUS_VALUES], description: 'Filter by draft status' },
+      action_item_id: { type: 'number', description: 'Filter by parent action item id' },
+      limit: { type: 'number', description: 'Max results (default: 100)' },
+      offset: { type: 'number', description: 'Pagination offset (default: 0)' },
+    },
+    cliHints: { name: 'action-draft-list' },
+    handler: async (ctx, p) => {
+      const db = await ensureActionBrainSchema(ctx.engine);
+      const status = parseActionDraftStatus(p.status) ?? 'pending';
+      const actionItemId = asOptionalInteger(p.action_item_id, 'action_item_id');
+      const limit = asOptionalNumber(p.limit);
+      const offset = asOptionalNumber(p.offset);
+      return listActionDrafts(db, {
+        status,
+        actionItemId,
+        limit,
+        offset,
+      });
+    },
+  },
+  {
+    name: 'action_draft_show',
+    description: 'Show one Action Brain draft',
+    params: {
+      id: { type: 'number', required: true, description: 'Draft id' },
+    },
+    cliHints: { name: 'action-draft-show', positional: ['id'] },
+    handler: async (ctx, p) => {
+      const db = await ensureActionBrainSchema(ctx.engine);
+      const engine = new ActionEngine(db);
+      const id = asRequiredInteger(p.id, 'id');
+      const draft = await engine.getDraft(id);
+      if (!draft) {
+        throw new Error(`Action draft not found: ${id}`);
+      }
+      return draft;
+    },
+  },
+  {
+    name: 'action_draft_approve',
+    description: 'Approve and send one Action Brain draft',
+    params: {
+      id: { type: 'number', required: true, description: 'Draft id' },
+      actor: { type: 'string', description: 'Actor writing lifecycle events' },
+      timeout_ms: { type: 'number', description: 'wacli send timeout in milliseconds (default: 30000)' },
+      retry: {
+        type: 'boolean',
+        description: 'When true, resume interrupted approved drafts and retry send_failed drafts',
+      },
+    },
+    mutating: true,
+    cliHints: { name: 'action-draft-approve', positional: ['id'] },
+    handler: async (ctx, p) => {
+      const db = await ensureActionBrainSchema(ctx.engine);
+      const id = asRequiredInteger(p.id, 'id');
+      const actor = asOptionalNonEmptyString(p.actor) ?? 'human_feedback';
+      const timeoutMs = asOptionalInteger(p.timeout_ms, 'timeout_ms') ?? ACTION_DRAFT_DEFAULT_SEND_TIMEOUT_MS;
+      const retry = parseOptionalBoolean(p.retry) ?? false;
+      if (timeoutMs <= 0) {
+        throw new Error('Invalid timeout_ms: expected integer > 0');
+      }
+
+      if (ctx.dryRun) {
+        return { dry_run: true, action: 'action_draft_approve', id, timeout_ms: timeoutMs, retry };
+      }
+
+      const claimed = await withDbTransaction(db, async (txDb) => {
+        const current = await getActionDraftStateForUpdate(txDb, id);
+        if (!current) {
+          throw new Error(`Action draft not found: ${id}`);
+        }
+
+        if (current.status === 'approved' && current.sent_at === null && retry) {
+          const hasDeliveryConfirmation = await hasDraftDeliveryConfirmation(
+            txDb,
+            current.action_item_id,
+            current.id
+          );
+          if (hasDeliveryConfirmation) {
+            return {
+              claimed: true as const,
+              resumedFromStatus: 'approved' as const,
+              draft: current,
+              reconcileWithoutResend: true as const,
+            };
+          }
+          const sending = await claimApprovedDraftForSend(txDb, id);
+          if (!sending) {
+            const latest = await getActionDraftStateForUpdate(txDb, id);
+            return {
+              claimed: false as const,
+              resumedFromStatus: null,
+              draft: latest ?? current,
+              reconcileWithoutResend: false as const,
+            };
+          }
+          return {
+            claimed: true as const,
+            resumedFromStatus: 'approved' as const,
+            draft: sending,
+            reconcileWithoutResend: false as const,
+          };
+        }
+
+        if (current.status === 'send_failed' && retry) {
+          const sending = await claimFailedDraftForRetry(txDb, id);
+          if (!sending) {
+            const latest = await getActionDraftStateForUpdate(txDb, id);
+            return {
+              claimed: false as const,
+              resumedFromStatus: null,
+              draft: latest ?? current,
+              reconcileWithoutResend: false as const,
+            };
+          }
+
+          return {
+            claimed: true as const,
+            resumedFromStatus: 'send_failed' as const,
+            draft: sending,
+            reconcileWithoutResend: false as const,
+          };
+        }
+
+        if (current.status === 'sending' && retry) {
+          const hasDeliveryConfirmation = await hasDraftDeliveryConfirmation(
+            txDb,
+            current.action_item_id,
+            current.id
+          );
+          if (hasDeliveryConfirmation) {
+            return {
+              claimed: true as const,
+              resumedFromStatus: 'sending' as const,
+              draft: current,
+              reconcileWithoutResend: true as const,
+            };
+          }
+        }
+
+        if (current.status !== 'pending') {
+          return {
+            claimed: false as const,
+            resumedFromStatus: null,
+            draft: current,
+            reconcileWithoutResend: false as const,
+          };
+        }
+
+        const approved = await markDraftApproved(txDb, id);
+        if (!approved) {
+          const latest = await getActionDraftStateForUpdate(txDb, id);
+          return {
+            claimed: false as const,
+            resumedFromStatus: null,
+            draft: latest ?? current,
+            reconcileWithoutResend: false as const,
+          };
+        }
+
+        await insertActionHistory(txDb, approved.action_item_id, 'draft_approved', actor, {
+          draft_id: approved.id,
+          channel: approved.channel,
+          recipient: approved.recipient,
+        });
+
+        const sending = await claimApprovedDraftForSend(txDb, id);
+        if (!sending) {
+          const latest = await getActionDraftStateForUpdate(txDb, id);
+          return {
+            claimed: false as const,
+            resumedFromStatus: null,
+            draft: latest ?? approved,
+            reconcileWithoutResend: false as const,
+          };
+        }
+
+        return {
+          claimed: true as const,
+          resumedFromStatus: null,
+          draft: sending,
+          reconcileWithoutResend: false as const,
+        };
+      });
+
+      if (!claimed.claimed) {
+        if (retry && claimed.draft.status === 'sending') {
+          const sendingRecovered = await recoverStuckSendingDraftWithoutConfirmation(
+            db,
+            id,
+            actor,
+            timeoutMs
+          );
+          if (sendingRecovered) {
+            return {
+              status: 'send_failed',
+              draft: mapActionDraftRecord(sendingRecovered),
+              resumed_from_status: 'sending',
+              recovered_without_resend: true,
+            };
+          }
+        }
+
+        const retryRequired =
+          claimed.draft.status === 'approved' || claimed.draft.status === 'send_failed' || claimed.draft.status === 'sending';
+        return {
+          status: 'already_processed',
+          draft_id: claimed.draft.id,
+          draft_status: claimed.draft.status,
+          approved_at: toOptionalDate(claimed.draft.approved_at),
+          sent_at: toOptionalDate(claimed.draft.sent_at),
+          retry_required: retryRequired,
+          retry_hint: retryRequired ? 'rerun with retry=true to resume delivery' : undefined,
+        };
+      }
+
+      const approvedDraft = claimed.draft;
+      const resumedFromStatus = claimed.resumedFromStatus;
+
+      if (claimed.reconcileWithoutResend) {
+        const reconciledDraft = await persistDraftSentState(db, id);
+        return {
+          status: 'sent',
+          draft: mapActionDraftRecord(reconciledDraft),
+          resumed_from_status: resumedFromStatus,
+          reconciled_without_resend: true,
+        };
+      }
+
+      try {
+        await sendDraftViaWacli(approvedDraft.recipient, approvedDraft.draft_text, timeoutMs);
+      } catch (error) {
+        const sendError = formatError(error);
+        const failedDraft = await withDbTransaction(db, async (txDb) => {
+          const updated = await updateDraftSendFailed(txDb, id, sendError);
+          if (!updated) {
+            throw new Error(`Action draft not found: ${id}`);
+          }
+          await insertActionHistory(txDb, updated.action_item_id, 'draft_send_failed', actor, {
+            draft_id: updated.id,
+            error: sendError,
+            resumed_from_status: resumedFromStatus,
+          });
+          return updated;
+        });
+
+        return {
+          status: 'send_failed',
+          draft: mapActionDraftRecord(failedDraft),
+          resumed_from_status: resumedFromStatus,
+        };
+      }
+
+      await recordDraftDeliveryConfirmation(db, approvedDraft.action_item_id, approvedDraft.id, actor, resumedFromStatus);
+      const sentDraft = await persistDraftSentState(db, id);
+
+      return {
+        status: 'sent',
+        draft: mapActionDraftRecord(sentDraft),
+        resumed_from_status: resumedFromStatus,
+      };
+    },
+  },
+  {
+    name: 'action_draft_reject',
+    description: 'Reject one Action Brain draft',
+    params: {
+      id: { type: 'number', required: true, description: 'Draft id' },
+      reason: { type: 'string', description: 'Optional rejection reason' },
+      actor: { type: 'string', description: 'Actor writing lifecycle events' },
+    },
+    mutating: true,
+    cliHints: { name: 'action-draft-reject', positional: ['id'] },
+    handler: async (ctx, p) => {
+      const db = await ensureActionBrainSchema(ctx.engine);
+      const id = asRequiredInteger(p.id, 'id');
+      const reason = asOptionalNonEmptyString(p.reason);
+      const actor = asOptionalNonEmptyString(p.actor) ?? 'human_feedback';
+
+      if (ctx.dryRun) {
+        return { dry_run: true, action: 'action_draft_reject', id, reason };
+      }
+
+      const result = await withDbTransaction(db, async (txDb) => {
+        const current = await getActionDraftStateForUpdate(txDb, id);
+        if (!current) {
+          throw new Error(`Action draft not found: ${id}`);
+        }
+
+        if (current.status !== 'pending') {
+          return {
+            status: 'already_processed',
+            draft: mapActionDraftState(current),
+          };
+        }
+
+        const rejected = await updateDraftRejected(txDb, id);
+        if (!rejected) {
+          throw new Error(`Action draft not found: ${id}`);
+        }
+
+        await insertActionHistory(txDb, rejected.action_item_id, 'draft_rejected', actor, {
+          draft_id: rejected.id,
+          reason,
+        });
+
+        return {
+          status: 'rejected',
+          draft: mapActionDraftRecord(rejected),
+        };
+      });
+
+      return result;
+    },
+  },
+  {
+    name: 'action_draft_edit',
+    description: 'Edit draft text for one Action Brain draft',
+    params: {
+      id: { type: 'number', required: true, description: 'Draft id' },
+      text: { type: 'string', required: true, description: 'Replacement draft text' },
+      actor: { type: 'string', description: 'Actor writing lifecycle events' },
+    },
+    mutating: true,
+    cliHints: { name: 'action-draft-edit', positional: ['id'] },
+    handler: async (ctx, p) => {
+      const db = await ensureActionBrainSchema(ctx.engine);
+      const id = asRequiredInteger(p.id, 'id');
+      const actor = asOptionalNonEmptyString(p.actor) ?? 'human_feedback';
+      const nextText = asOptionalNonEmptyString(p.text);
+      if (!nextText) {
+        throw new Error('Missing --text (non-empty draft text required).');
+      }
+
+      if (ctx.dryRun) {
+        return { dry_run: true, action: 'action_draft_edit', id, text_length: nextText.length };
+      }
+
+      const result = await withDbTransaction(db, async (txDb) => {
+        const current = await getActionDraftStateForUpdate(txDb, id);
+        if (!current) {
+          throw new Error(`Action draft not found: ${id}`);
+        }
+        if (current.status !== 'pending') {
+          throw new Error(`Cannot edit draft ${id}: status is ${current.status}. Only pending drafts are editable.`);
+        }
+
+        const edited = await updateDraftText(txDb, id, nextText);
+        if (!edited) {
+          throw new Error(`Action draft not found: ${id}`);
+        }
+
+        await insertActionHistory(txDb, edited.action_item_id, 'draft_edited', actor, {
+          draft_id: edited.id,
+          previous_length: current.draft_text.length,
+          new_length: nextText.length,
+          diff_length: nextText.length - current.draft_text.length,
+        });
+
+        return edited;
+      });
+
+      return {
+        status: 'edited',
+        draft: mapActionDraftRecord(result),
+      };
+    },
+  },
+  {
+    name: 'action_draft_regenerate',
+    description: 'Regenerate a draft for one Action Brain item',
+    params: {
+      item_id: { type: 'number', required: true, description: 'Action item id' },
+      hint: { type: 'string', description: 'Optional regeneration hint' },
+      actor: { type: 'string', description: 'Actor writing lifecycle events' },
+    },
+    mutating: true,
+    cliHints: { name: 'action-draft-regenerate', positional: ['item_id'] },
+    handler: async (ctx, p) => {
+      const db = await ensureActionBrainSchema(ctx.engine);
+      const itemId = asRequiredInteger(p.item_id, 'item_id');
+      const hint = asOptionalNonEmptyString(p.hint);
+      const actor = asOptionalNonEmptyString(p.actor) ?? 'human_feedback';
+
+      if (ctx.dryRun) {
+        return { dry_run: true, action: 'action_draft_regenerate', item_id: itemId, hint };
+      }
+
+      const result = await withDbTransaction(db, async (txDb) => {
+        const item = await lockActionItemForDraft(txDb, itemId);
+        if (!item) {
+          throw new Error(`Action item not found: ${itemId}`);
+        }
+
+        const supersededIds = await supersedePendingDrafts(txDb, itemId);
+        const latestDraft = await getLatestDraftForItem(txDb, itemId);
+        const recipient = latestDraft?.recipient ?? resolveRecipientForRegeneratedDraft(item);
+        if (!recipient) {
+          throw new Error(`Cannot regenerate draft for action item ${itemId}: recipient is unavailable.`);
+        }
+
+        const draftText = buildRegeneratedDraftText(item, latestDraft, hint);
+        const contextSnapshot = buildRegeneratedContextSnapshot(item, latestDraft, hint);
+        const contextHash = hashContextSnapshot(contextSnapshot);
+        const inserted = await insertRegeneratedDraft(txDb, {
+          actionItemId: item.id,
+          recipient,
+          draftText,
+          model: latestDraft?.model ?? ACTION_DRAFT_DEFAULT_MODEL,
+          contextHash,
+          contextSnapshot,
+        });
+
+        await insertActionHistory(txDb, item.id, 'draft_created', actor, {
+          draft_id: inserted.id,
+          version: inserted.version,
+          regenerated: true,
+          hint,
+          superseded_draft_ids: supersededIds,
+        });
+
+        return {
+          draft: inserted,
+          superseded_count: supersededIds.length,
+        };
+      });
+
+      return {
+        status: 'regenerated',
+        draft: mapActionDraftRecord(result.draft),
+        superseded_count: result.superseded_count,
+      };
     },
   },
   {
@@ -732,6 +1251,589 @@ async function listActionDrops(db: QueryableDb, filters: ListActionDropFilters =
   );
 
   return result.rows.map(mapActionDrop);
+}
+
+async function listActionDrafts(
+  db: QueryableDb,
+  filters: {
+    status?: ActionDraftStatus;
+    actionItemId?: number;
+    limit?: number;
+    offset?: number;
+  }
+): Promise<Array<ActionDraft & { action: { id: number; title: string; status: string; priority_score: number } }>> {
+  const where: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters.status) {
+    params.push(filters.status);
+    where.push(`d.status = $${params.length}`);
+  }
+  if (typeof filters.actionItemId === 'number') {
+    params.push(filters.actionItemId);
+    where.push(`d.action_item_id = $${params.length}`);
+  }
+
+  const limit = filters.limit ?? 100;
+  const offset = filters.offset ?? 0;
+  params.push(limit);
+  const limitParam = `$${params.length}`;
+  params.push(offset);
+  const offsetParam = `$${params.length}`;
+
+  const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  const result = await db.query<ActionDraftListRow>(
+    `SELECT
+       d.*,
+       ai.priority_score AS action_priority_score,
+       ai.status AS action_status,
+       ai.title AS action_title
+     FROM action_drafts d
+     JOIN action_items ai ON ai.id = d.action_item_id
+     ${whereClause}
+     ORDER BY ai.priority_score DESC, d.generated_at DESC, d.id DESC
+     LIMIT ${limitParam}
+     OFFSET ${offsetParam}`,
+    params
+  );
+
+  return result.rows.map((row) => ({
+    ...mapActionDraftRecord(row),
+    action: {
+      id: Number(row.action_item_id),
+      title: row.action_title,
+      status: row.action_status,
+      priority_score: Number(row.action_priority_score),
+    },
+  }));
+}
+
+async function getActionDraftStateForUpdate(db: QueryableDb, draftId: number): Promise<ActionDraftStateRow | null> {
+  const result = await db.query<ActionDraftStateRow>(
+    `SELECT
+       d.id,
+       d.action_item_id,
+       d.status,
+       d.channel,
+       d.recipient,
+       d.draft_text,
+       d.approved_at,
+       d.sent_at
+     FROM action_drafts d
+     WHERE d.id = $1
+     FOR UPDATE`,
+    [draftId]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function markDraftApproved(db: QueryableDb, draftId: number): Promise<ActionDraftStateRow | null> {
+  const result = await db.query<ActionDraftStateRow>(
+    `UPDATE action_drafts
+     SET status = 'approved',
+         approved_at = now(),
+         send_error = NULL
+     WHERE id = $1
+       AND status = 'pending'
+     RETURNING id, action_item_id, status, channel, recipient, draft_text, approved_at, sent_at`,
+    [draftId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function claimApprovedDraftForSend(db: QueryableDb, draftId: number): Promise<ActionDraftStateRow | null> {
+  const result = await db.query<ActionDraftStateRow>(
+    `UPDATE action_drafts
+     SET status = 'sending',
+         send_error = NULL
+     WHERE id = $1
+       AND status = 'approved'
+       AND sent_at IS NULL
+     RETURNING id, action_item_id, status, channel, recipient, draft_text, approved_at, sent_at`,
+    [draftId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function claimFailedDraftForRetry(db: QueryableDb, draftId: number): Promise<ActionDraftStateRow | null> {
+  const result = await db.query<ActionDraftStateRow>(
+    `UPDATE action_drafts
+     SET status = 'sending',
+         send_error = NULL,
+         approved_at = now()
+     WHERE id = $1
+       AND status = 'send_failed'
+     RETURNING id, action_item_id, status, channel, recipient, draft_text, approved_at, sent_at`,
+    [draftId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function updateDraftRejected(db: QueryableDb, draftId: number): Promise<ActionDraftRow | null> {
+  const result = await db.query<ActionDraftRow>(
+    `UPDATE action_drafts
+     SET status = 'rejected'
+     WHERE id = $1
+       AND status = 'pending'
+     RETURNING *`,
+    [draftId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function updateDraftText(db: QueryableDb, draftId: number, text: string): Promise<ActionDraftRow | null> {
+  const result = await db.query<ActionDraftRow>(
+    `UPDATE action_drafts
+     SET draft_text = $2,
+         status = 'pending',
+         send_error = NULL
+     WHERE id = $1
+       AND status = 'pending'
+     RETURNING *`,
+    [draftId, text]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function lockActionItemForDraft(db: QueryableDb, itemId: number): Promise<ActionItemDraftSeedRow | null> {
+  const result = await db.query<ActionItemDraftSeedRow>(
+    `SELECT id, title, source_contact
+     FROM action_items
+     WHERE id = $1
+     FOR UPDATE`,
+    [itemId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function supersedePendingDrafts(db: QueryableDb, itemId: number): Promise<number[]> {
+  const result = await db.query<{ id: number | string }>(
+    `UPDATE action_drafts
+     SET status = 'superseded'
+     WHERE action_item_id = $1
+       AND status = 'pending'
+     RETURNING id`,
+    [itemId]
+  );
+  return result.rows.map((row) => Number(row.id));
+}
+
+async function getLatestDraftForItem(db: QueryableDb, itemId: number): Promise<ActionDraftRow | null> {
+  const result = await db.query<ActionDraftRow>(
+    `SELECT *
+     FROM action_drafts
+     WHERE action_item_id = $1
+     ORDER BY version DESC, id DESC
+     LIMIT 1`,
+    [itemId]
+  );
+  return result.rows[0] ?? null;
+}
+
+function resolveRecipientForRegeneratedDraft(item: ActionItemDraftSeedRow): string | null {
+  return asOptionalNonEmptyString(item.source_contact);
+}
+
+function buildRegeneratedDraftText(item: ActionItemDraftSeedRow, latestDraft: ActionDraftRow | null, hint: string | null): string {
+  if (latestDraft && asOptionalNonEmptyString(latestDraft.draft_text)) {
+    return latestDraft.draft_text;
+  }
+  const hintSuffix = hint ? ` (${hint})` : '';
+  return `Hi - following up on: ${item.title}${hintSuffix}`;
+}
+
+function buildRegeneratedContextSnapshot(
+  item: ActionItemDraftSeedRow,
+  latestDraft: ActionDraftRow | null,
+  hint: string | null
+): Record<string, unknown> {
+  const latestSnapshot = latestDraft ? parseJsonObject(latestDraft.context_snapshot, 'context_snapshot') : {};
+  return {
+    ...latestSnapshot,
+    item_id: item.id,
+    item_title: item.title,
+    source_contact: item.source_contact,
+    regeneration_hint: hint ?? null,
+  };
+}
+
+function hashContextSnapshot(snapshot: Record<string, unknown>): string {
+  return createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+}
+
+async function insertRegeneratedDraft(
+  db: QueryableDb,
+  input: {
+    actionItemId: number;
+    recipient: string;
+    draftText: string;
+    model: string;
+    contextHash: string;
+    contextSnapshot: Record<string, unknown>;
+  }
+): Promise<ActionDraftRow> {
+  const result = await db.query<ActionDraftRow>(
+    `WITH next_version AS (
+       SELECT COALESCE(MAX(version), 0) + 1 AS version
+       FROM action_drafts
+       WHERE action_item_id = $1
+     )
+     INSERT INTO action_drafts (
+       action_item_id,
+       version,
+       status,
+       channel,
+       recipient,
+       draft_text,
+       model,
+       context_hash,
+       context_snapshot
+     )
+     SELECT
+       $1,
+       next_version.version,
+       'pending',
+       'whatsapp',
+       $2,
+       $3,
+       $4,
+       $5,
+       $6::jsonb
+     FROM next_version
+     RETURNING *`,
+    [
+      input.actionItemId,
+      input.recipient,
+      input.draftText,
+      input.model,
+      input.contextHash,
+      JSON.stringify(input.contextSnapshot),
+    ]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Failed to regenerate draft for action item ${input.actionItemId}`);
+  }
+  return row;
+}
+
+async function markDraftSent(db: QueryableDb, draftId: number): Promise<ActionDraftRow | null> {
+  const result = await db.query<ActionDraftRow>(
+    `UPDATE action_drafts
+     SET status = 'sent',
+         sent_at = now(),
+         send_error = NULL
+     WHERE id = $1
+       AND status IN ('approved', 'sending')
+     RETURNING *`,
+    [draftId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function hasDraftDeliveryConfirmation(db: QueryableDb, itemId: number, draftId: number): Promise<boolean> {
+  const result = await db.query(
+    `SELECT 1
+     FROM action_history
+     WHERE item_id = $1
+       AND event_type = 'draft_sent'
+       AND metadata @> jsonb_build_object('draft_id', $2::int, 'delivery_confirmed', true)
+     LIMIT 1`,
+    [itemId, draftId]
+  );
+  return result.rows.length > 0;
+}
+
+async function recordDraftDeliveryConfirmation(
+  db: QueryableDb,
+  itemId: number,
+  draftId: number,
+  actor: string,
+  resumedFromStatus: 'approved' | 'sending' | 'send_failed' | null
+): Promise<void> {
+  await withDbTransaction(db, async (txDb) => {
+    await insertDraftSentHistoryIfMissing(txDb, itemId, draftId, actor, {
+      draft_id: draftId,
+      resumed_from_status: resumedFromStatus,
+      delivery_confirmed: true,
+    });
+  });
+}
+
+async function insertDraftSentHistoryIfMissing(
+  db: QueryableDb,
+  itemId: number,
+  draftId: number,
+  actor: string,
+  metadata: Record<string, unknown>
+): Promise<void> {
+  await db.query(
+    `SELECT id
+     FROM action_drafts
+     WHERE id = $1
+     FOR UPDATE`,
+    [draftId]
+  );
+
+  await db.query(
+    `INSERT INTO action_history (item_id, event_type, actor, metadata)
+     SELECT $1, 'draft_sent', $3, $4::jsonb
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM action_history
+       WHERE item_id = $1
+         AND event_type = 'draft_sent'
+         AND metadata @> jsonb_build_object('draft_id', $2::int)
+     )`,
+    [itemId, draftId, actor, JSON.stringify(metadata)]
+  );
+}
+
+async function persistDraftSentState(db: QueryableDb, draftId: number): Promise<ActionDraftRow> {
+  return withDbTransaction(db, async (txDb) => {
+    const updated = await markDraftSent(txDb, draftId);
+    if (!updated) {
+      throw new Error(`Action draft not found: ${draftId}`);
+    }
+
+    await transitionParentActionItemAfterSend(txDb, updated.action_item_id);
+    return updated;
+  });
+}
+
+async function updateDraftSendFailed(db: QueryableDb, draftId: number, sendError: string): Promise<ActionDraftRow | null> {
+  const result = await db.query<ActionDraftRow>(
+    `UPDATE action_drafts
+     SET status = 'send_failed',
+         send_error = $2
+     WHERE id = $1
+       AND status = 'sending'
+     RETURNING *`,
+    [draftId, sendError]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function recoverStuckSendingDraftWithoutConfirmation(
+  db: QueryableDb,
+  draftId: number,
+  actor: string,
+  timeoutMs: number
+): Promise<ActionDraftRow | null> {
+  return withDbTransaction(db, async (txDb) => {
+    const current = await getActionDraftStateForUpdate(txDb, draftId);
+    if (!current || current.status !== 'sending' || current.sent_at !== null) {
+      return null;
+    }
+    if (!isSendingRecoveryEligible(current.approved_at, timeoutMs)) {
+      return null;
+    }
+
+    const hasDeliveryConfirmation = await hasDraftDeliveryConfirmation(txDb, current.action_item_id, current.id);
+    if (hasDeliveryConfirmation) {
+      return null;
+    }
+
+    const recovered = await updateSendingDraftToSendFailed(txDb, draftId, ACTION_DRAFT_SENDING_RECOVERY_ERROR);
+    if (!recovered) {
+      return null;
+    }
+
+    await insertActionHistory(txDb, recovered.action_item_id, 'draft_send_failed', actor, {
+      draft_id: recovered.id,
+      error: ACTION_DRAFT_SENDING_RECOVERY_ERROR,
+      resumed_from_status: 'sending',
+      recovery_mode: 'missing_delivery_confirmation',
+    });
+
+    return recovered;
+  });
+}
+
+function isSendingRecoveryEligible(approvedAt: Date | string | null, timeoutMs: number): boolean {
+  if (!approvedAt) {
+    return false;
+  }
+
+  const approvedAtMs = toDate(approvedAt).getTime();
+  if (!Number.isFinite(approvedAtMs)) {
+    return false;
+  }
+
+  const graceMs = Math.max(timeoutMs * 2, ACTION_DRAFT_SENDING_RECOVERY_MIN_GRACE_MS);
+  return Date.now() - approvedAtMs >= graceMs;
+}
+
+async function updateSendingDraftToSendFailed(
+  db: QueryableDb,
+  draftId: number,
+  sendError: string
+): Promise<ActionDraftRow | null> {
+  const result = await db.query<ActionDraftRow>(
+    `UPDATE action_drafts
+     SET status = 'send_failed',
+         send_error = $2
+     WHERE id = $1
+       AND status = 'sending'
+       AND sent_at IS NULL
+     RETURNING *`,
+    [draftId, sendError]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function transitionParentActionItemAfterSend(db: QueryableDb, itemId: number): Promise<void> {
+  await db.query(
+    `UPDATE action_items
+     SET status = 'in_progress',
+         updated_at = now()
+     WHERE id = $1
+       AND status = 'waiting_on'`,
+    [itemId]
+  );
+}
+
+async function insertActionHistory(
+  db: QueryableDb,
+  itemId: number,
+  eventType:
+    | 'draft_created'
+    | 'draft_approved'
+    | 'draft_edited'
+    | 'draft_rejected'
+    | 'draft_sent'
+    | 'draft_send_failed',
+  actor: string,
+  metadata: Record<string, unknown>
+): Promise<void> {
+  await db.query(
+    `INSERT INTO action_history (item_id, event_type, actor, metadata)
+     VALUES ($1, $2, $3, $4::jsonb)`,
+    [itemId, eventType, actor, JSON.stringify(metadata)]
+  );
+}
+
+function mapActionDraftState(row: ActionDraftStateRow): Record<string, unknown> {
+  return {
+    id: Number(row.id),
+    action_item_id: Number(row.action_item_id),
+    status: row.status,
+    channel: row.channel,
+    recipient: row.recipient,
+    draft_text: row.draft_text,
+    approved_at: toOptionalDate(row.approved_at),
+    sent_at: toOptionalDate(row.sent_at),
+  };
+}
+
+function mapActionDraftRecord(row: ActionDraftRow): ActionDraft {
+  return {
+    id: Number(row.id),
+    action_item_id: Number(row.action_item_id),
+    version: Number(row.version),
+    status: row.status,
+    channel: row.channel as ActionDraft['channel'],
+    recipient: row.recipient,
+    draft_text: row.draft_text,
+    model: row.model,
+    context_hash: row.context_hash,
+    context_snapshot: parseJsonObject(row.context_snapshot, 'context_snapshot'),
+    generated_at: toDate(row.generated_at),
+    approved_at: toOptionalDate(row.approved_at),
+    sent_at: toOptionalDate(row.sent_at),
+    send_error: row.send_error,
+  };
+}
+
+async function sendDraftViaWacli(recipient: string, text: string, timeoutMs: number): Promise<void> {
+  const to = asOptionalNonEmptyString(recipient);
+  if (!to) {
+    throw new Error('Draft recipient is empty.');
+  }
+
+  await sendTextExecutor('wacli', ['send', 'text', '--to', to, '--message', text], { timeoutMs });
+}
+
+async function defaultSendTextExecutor(
+  command: string,
+  args: string[],
+  options: { timeoutMs: number }
+): Promise<SendCommandResult> {
+  const result = await execFileAsync(command, args, {
+    timeout: options.timeoutMs,
+    maxBuffer: 1024 * 1024,
+  });
+  return {
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+  };
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function parseActionDraftStatus(value: unknown): ActionDraftStatusValue | undefined {
+  const parsed = asOptionalNonEmptyString(value);
+  if (!parsed) {
+    return undefined;
+  }
+  if ((ACTION_DRAFT_STATUS_VALUES as readonly string[]).includes(parsed)) {
+    return parsed as ActionDraftStatusValue;
+  }
+  throw new Error(`Invalid status: ${parsed}`);
+}
+
+function asOptionalInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const parsed = asOptionalNumber(value);
+  if (parsed === undefined || !Number.isInteger(parsed)) {
+    throw new Error(`Invalid ${field}: expected integer`);
+  }
+  return parsed;
+}
+
+function parseJsonObject(value: Record<string, unknown> | string, field: string): Record<string, unknown> {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`Invalid ${field} value`);
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new Error(`Invalid ${field} value`);
+  }
+}
+
+function toOptionalDate(value: Date | string | null): Date | null {
+  if (value === null) return null;
+  return toDate(value);
+}
+
+async function withDbTransaction<T>(db: QueryableDb, fn: (txDb: QueryableDb) => Promise<T>): Promise<T> {
+  if (typeof db.transaction === 'function') {
+    return db.transaction(fn);
+  }
+
+  await db.query('BEGIN');
+  try {
+    const result = await fn(db);
+    await db.query('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      await db.query('ROLLBACK');
+    } catch {
+      // Best-effort rollback; preserve original error.
+    }
+    throw error;
+  }
 }
 
 function mapActionDrop(row: ActionDropRow): ActionDrop {

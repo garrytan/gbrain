@@ -117,7 +117,7 @@ strict behavior when unset.
 - `src/commands/report.ts` — Structured report saver (audit trail for maintenance/enrichment)
 - `openclaw.plugin.json` — ClawHub bundle plugin manifest
 - `src/action-brain/types.ts` — Action Brain shared types (ActionItem, CommitmentBatch, ExtractionResult)
-- `src/action-brain/action-schema.ts` — PGLite DDL + idempotent schema init for action_items / action_history / action_drops tables
+- `src/action-brain/action-schema.ts` — PGLite DDL + idempotent schema init for action_items / action_history / action_drafts tables
 - `src/action-brain/action-engine.ts` — Storage layer: CRUD, priority scoring (urgency × confidence × recency), PGLite lifecycle
 - `src/action-brain/extractor.ts` — LLM commitment extraction (two-tier Haiku→Sonnet), XML delimiter defense, stable source IDs
 - `src/action-brain/brief.ts` — Morning priority brief generator: ranked action items, overdue detection, deduplication
@@ -147,7 +147,7 @@ Key commands added in v0.12.3:
 - `gbrain orphans [--json] [--count] [--include-pseudo]` — surface pages with zero inbound wikilinks, grouped by domain. Auto-generated/raw/pseudo pages filtered by default. Also exposed as `find_orphans` MCP operation. The natural consumer of the v0.12.0 knowledge graph layer: once edges are captured, find the gaps.
 - `gbrain doctor` gains two new reliability detection checks: `jsonb_integrity` (v0.12.0 Postgres double-encode damage) and `markdown_body_completeness` (pages truncated by the old splitBody bug). Detection only; fix hints point at `gbrain repair-jsonb` and `gbrain sync --force`.
 
-Planned commands for Action Brain 0.2 draft approvals (not shipped on `master` until GIT-1062/GIT-1063 land):
+Key commands added for Action Brain 0.2 draft approvals:
 - `gbrain action draft list` — list pending/sent/failed drafts by priority.
 - `gbrain action draft show <draft_id>` — display full draft text plus context snapshot.
 - `gbrain action draft approve <draft_id>` — atomic approve + WhatsApp send path.
@@ -522,15 +522,33 @@ Key decisions:
 - Stack: PGLite, Bun, TypeScript (same as GBrain core).
 - MVP 0.1: extraction + storage + morning brief. Prove accuracy before building infrastructure.
 
-Action Brain 0.2 (draft approvals) status:
-- Locked plan doc: `docs/designs/action-brain/0.2.md`.
-- Planned, not currently shipped on `master`. Treat as forward-looking until GIT-1061/GIT-1062/GIT-1063/GIT-1064 are all landed.
-- Auto-send remains forbidden by design.
+Action Brain 0.2 (draft approvals) specifics:
+- Drafts are persisted in `action_drafts` (versioned, one-to-many per action item).
+- Approval and send are a single explicit CLI flow (`gbrain action draft approve <id>`).
+- Auto-send is forbidden.
 
-Planned 0.2 specifics (future state):
-- Drafts persist in `action_drafts` (versioned, one-to-many per action item).
-- Approval and send use one explicit CLI flow (`gbrain action draft approve <id>`).
-- The planned `action_drafts` schema lives in `docs/designs/action-brain/0.2.md` until code is merged.
+`action_drafts` schema (source of truth: `src/action-brain/action-schema.ts`):
+
+```sql
+CREATE TABLE IF NOT EXISTS action_drafts (
+  id               SERIAL PRIMARY KEY,
+  action_item_id   INTEGER NOT NULL REFERENCES action_items(id) ON DELETE CASCADE,
+  version          INTEGER NOT NULL DEFAULT 1,
+  status           TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected', 'sent', 'send_failed', 'superseded')),
+  channel          TEXT NOT NULL DEFAULT 'whatsapp' CHECK (channel IN ('whatsapp', 'telegram')),
+  recipient        TEXT NOT NULL,
+  draft_text       TEXT NOT NULL,
+  model            TEXT NOT NULL,
+  context_hash     TEXT NOT NULL,
+  context_snapshot JSONB NOT NULL,
+  generated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  approved_at      TIMESTAMPTZ,
+  sent_at          TIMESTAMPTZ,
+  send_error       TEXT,
+  UNIQUE (action_item_id, version)
+);
+```
 
 ## Skill routing
 

@@ -781,6 +781,19 @@ JOBS (Minions)
   gbrain jobs smoke                                     One-command health check
   gbrain jobs work [--queue Q] [--concurrency N]        Start worker daemon
 
+ACTION BRAIN
+  gbrain action list [--status S]                    List action items with filters
+  gbrain action brief                                Morning priority brief with inline drafts
+  gbrain action resolve <id>                         Mark action item resolved
+  gbrain action mark-fp <id>                         Mark as false positive
+  gbrain action ingest                               Ingest messages into action items
+  gbrain action draft list                           List pending/sent/failed drafts by priority
+  gbrain action draft show <draft_id>                Display full draft text + context snapshot
+  gbrain action draft approve <draft_id>             Approve draft and send via wacli
+  gbrain action draft reject <draft_id> [--reason]  Mark draft rejected with audit reason
+  gbrain action draft edit <draft_id> --text "..."  Update pending draft text before approval
+  gbrain action draft regenerate <item_id>           Create next-version draft for an action item
+
 ADMIN
   gbrain doctor [--json] [--fast]       Health checks (resolver, skills, DB, embeddings)
   gbrain doctor --fix                   Auto-fix resolver issues

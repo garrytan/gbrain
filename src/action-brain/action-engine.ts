@@ -1,4 +1,12 @@
-import type { ActionHistoryEventType, ActionItem, ActionStatus, ActionType } from './types.ts';
+import type {
+  ActionDraft,
+  ActionDraftChannel,
+  ActionDraftStatus,
+  ActionHistoryEventType,
+  ActionItem,
+  ActionStatus,
+  ActionType,
+} from './types.ts';
 
 interface QueryResult<T> {
   rows: T[];
@@ -33,7 +41,25 @@ interface ActionInsertRow extends ActionItemRow {
   was_inserted: boolean;
 }
 
+interface ActionDraftRow {
+  id: number;
+  action_item_id: number;
+  version: number;
+  status: ActionDraftStatus;
+  channel: ActionDraftChannel;
+  recipient: string;
+  draft_text: string;
+  model: string;
+  context_hash: string;
+  context_snapshot: Record<string, unknown> | string;
+  generated_at: Date | string;
+  approved_at: Date | string | null;
+  sent_at: Date | string | null;
+  send_error: string | null;
+}
+
 const TERMINAL_STATUSES = new Set<ActionStatus>(['resolved', 'dropped']);
+const AUTO_DRAFT_VERSION_MAX_RETRIES = 5;
 
 export interface CreateActionItemInput {
   title: string;
@@ -63,6 +89,48 @@ export interface ListActionItemsFilters {
   offset?: number;
 }
 
+export interface CreateActionDraftInput {
+  action_item_id: number;
+  version?: number;
+  status?: ActionDraftStatus;
+  channel?: ActionDraftChannel;
+  recipient: string;
+  draft_text: string;
+  model: string;
+  context_hash: string;
+  context_snapshot: Record<string, unknown>;
+  approved_at?: Date | null;
+  sent_at?: Date | null;
+  send_error?: string | null;
+}
+
+export interface ListActionDraftFilters {
+  action_item_id?: number;
+  status?: ActionDraftStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface UpdateActionDraftInput {
+  status?: ActionDraftStatus;
+  channel?: ActionDraftChannel;
+  recipient?: string;
+  draft_text?: string;
+  model?: string;
+  context_hash?: string;
+  context_snapshot?: Record<string, unknown>;
+  approved_at?: Date | null;
+  sent_at?: Date | null;
+  send_error?: string | null;
+}
+
+export interface UpdateActionDraftStatusAtomicInput {
+  status: ActionDraftStatus;
+  approved_at?: Date | null;
+  sent_at?: Date | null;
+  send_error?: string | null;
+}
+
 export class ActionItemNotFoundError extends Error {
   constructor(id: number) {
     super(`Action item not found: ${id}`);
@@ -74,6 +142,13 @@ export class ActionTransitionError extends Error {
   constructor(itemId: number, fromStatus: ActionStatus, toStatus: ActionStatus) {
     super(`Invalid status transition for action item ${itemId}: ${fromStatus} -> ${toStatus}`);
     this.name = 'ActionTransitionError';
+  }
+}
+
+export class ActionDraftNotFoundError extends Error {
+  constructor(id: number) {
+    super(`Action draft not found: ${id}`);
+    this.name = 'ActionDraftNotFoundError';
   }
 }
 
@@ -209,6 +284,264 @@ export class ActionEngine {
     return result.rows.map(mapActionItem);
   }
 
+  async createDraft(input: CreateActionDraftInput): Promise<ActionDraft> {
+    const maxAttempts = input.version === undefined ? AUTO_DRAFT_VERSION_MAX_RETRIES : 1;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await this.withTransaction(async (db) => {
+          let version = input.version;
+          if (version === undefined) {
+            // Serialize auto-version allocation per action item.
+            await this.lockItemById(db, input.action_item_id);
+            version = await this.nextDraftVersion(db, input.action_item_id);
+          }
+
+          const result = await db.query<ActionDraftRow>(
+            `INSERT INTO action_drafts (
+               action_item_id,
+               version,
+               status,
+               channel,
+               recipient,
+               draft_text,
+               model,
+               context_hash,
+               context_snapshot,
+               approved_at,
+               sent_at,
+               send_error
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+             RETURNING *`,
+            [
+              input.action_item_id,
+              version,
+              input.status ?? 'pending',
+              input.channel ?? 'whatsapp',
+              input.recipient,
+              input.draft_text,
+              input.model,
+              input.context_hash,
+              JSON.stringify(input.context_snapshot),
+              input.approved_at ?? null,
+              input.sent_at ?? null,
+              input.send_error ?? null,
+            ]
+          );
+
+          const row = result.rows[0];
+          if (!row) {
+            throw new Error(`Failed to create action draft for action item: ${input.action_item_id}`);
+          }
+
+          return mapActionDraft(row);
+        });
+      } catch (error) {
+        if (input.version !== undefined) {
+          throw error;
+        }
+        if (!isDraftVersionUniqueViolation(error) || attempt >= maxAttempts) {
+          throw error;
+        }
+      }
+    }
+
+    throw new Error(`Failed to create action draft for action item: ${input.action_item_id}`);
+  }
+
+  async insertDraft(input: CreateActionDraftInput): Promise<ActionDraft> {
+    return this.createDraft(input);
+  }
+
+  async getDraft(id: number): Promise<ActionDraft | null> {
+    const result = await this.db.query<ActionDraftRow>(
+      `SELECT *
+       FROM action_drafts
+       WHERE id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return mapActionDraft(result.rows[0]);
+  }
+
+  async getDraftById(id: number): Promise<ActionDraft | null> {
+    return this.getDraft(id);
+  }
+
+  async listDrafts(filters: ListActionDraftFilters = {}): Promise<ActionDraft[]> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    if (typeof filters.action_item_id === 'number') {
+      params.push(filters.action_item_id);
+      where.push(`action_item_id = $${params.length}`);
+    }
+
+    if (filters.status) {
+      params.push(filters.status);
+      where.push(`status = $${params.length}`);
+    }
+
+    const limit = filters.limit ?? 100;
+    const offset = filters.offset ?? 0;
+    params.push(limit);
+    const limitParam = `$${params.length}`;
+    params.push(offset);
+    const offsetParam = `$${params.length}`;
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const result = await this.db.query<ActionDraftRow>(
+      `SELECT *
+       FROM action_drafts
+       ${whereClause}
+       ORDER BY action_item_id DESC, version DESC, id DESC
+       LIMIT ${limitParam}
+       OFFSET ${offsetParam}`,
+      params
+    );
+
+    return result.rows.map(mapActionDraft);
+  }
+
+  async listPendingByItem(actionItemId: number, limit = 100, offset = 0): Promise<ActionDraft[]> {
+    return this.listDrafts({
+      action_item_id: actionItemId,
+      status: 'pending',
+      limit,
+      offset,
+    });
+  }
+
+  async listByStatus(status: ActionDraftStatus, limit = 100, offset = 0): Promise<ActionDraft[]> {
+    return this.listDrafts({ status, limit, offset });
+  }
+
+  async updateDraft(id: number, patch: UpdateActionDraftInput): Promise<ActionDraft> {
+    const assignments: string[] = [];
+    const params: unknown[] = [id];
+
+    if (patch.status !== undefined) {
+      params.push(patch.status);
+      assignments.push(`status = $${params.length}`);
+    }
+
+    if (patch.channel !== undefined) {
+      params.push(patch.channel);
+      assignments.push(`channel = $${params.length}`);
+    }
+
+    if (patch.recipient !== undefined) {
+      params.push(patch.recipient);
+      assignments.push(`recipient = $${params.length}`);
+    }
+
+    if (patch.draft_text !== undefined) {
+      params.push(patch.draft_text);
+      assignments.push(`draft_text = $${params.length}`);
+    }
+
+    if (patch.model !== undefined) {
+      params.push(patch.model);
+      assignments.push(`model = $${params.length}`);
+    }
+
+    if (patch.context_hash !== undefined) {
+      params.push(patch.context_hash);
+      assignments.push(`context_hash = $${params.length}`);
+    }
+
+    if (patch.context_snapshot !== undefined) {
+      params.push(JSON.stringify(patch.context_snapshot));
+      assignments.push(`context_snapshot = $${params.length}::jsonb`);
+    }
+
+    if (patch.approved_at !== undefined) {
+      params.push(patch.approved_at);
+      assignments.push(`approved_at = $${params.length}`);
+    }
+
+    if (patch.sent_at !== undefined) {
+      params.push(patch.sent_at);
+      assignments.push(`sent_at = $${params.length}`);
+    }
+
+    if (patch.send_error !== undefined) {
+      params.push(patch.send_error);
+      assignments.push(`send_error = $${params.length}`);
+    }
+
+    if (assignments.length === 0) {
+      throw new Error('updateDraft requires at least one field to update.');
+    }
+
+    const result = await this.db.query<ActionDraftRow>(
+      `UPDATE action_drafts
+       SET ${assignments.join(', ')}
+       WHERE id = $1
+       RETURNING *`,
+      params
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      throw new ActionDraftNotFoundError(id);
+    }
+
+    return mapActionDraft(row);
+  }
+
+  async updateStatusAtomic(id: number, update: UpdateActionDraftStatusAtomicInput): Promise<ActionDraft | null> {
+    const params: unknown[] = [id, update.status];
+    const assignments = ['status = $2'];
+
+    if (update.approved_at !== undefined) {
+      params.push(update.approved_at);
+      assignments.push(`approved_at = $${params.length}`);
+    }
+
+    if (update.sent_at !== undefined) {
+      params.push(update.sent_at);
+      assignments.push(`sent_at = $${params.length}`);
+    }
+
+    if (update.send_error !== undefined) {
+      params.push(update.send_error);
+      assignments.push(`send_error = $${params.length}`);
+    }
+
+    const result = await this.db.query<ActionDraftRow>(
+      `UPDATE action_drafts
+       SET ${assignments.join(', ')}
+       WHERE id = $1
+         AND status = 'pending'
+       RETURNING *`,
+      params
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    return mapActionDraft(row);
+  }
+
+  async deleteDraft(id: number): Promise<boolean> {
+    const result = await this.db.query<{ id: number }>(
+      `DELETE FROM action_drafts
+       WHERE id = $1
+       RETURNING id`,
+      [id]
+    );
+
+    return result.rows.length > 0;
+  }
+
   async updateItemStatus(
     id: number,
     nextStatus: ActionStatus,
@@ -254,6 +587,20 @@ export class ActionEngine {
 
   async resolveItem(id: number, options: ActionMutationOptions = {}): Promise<ActionItem> {
     return this.updateItemStatus(id, 'resolved', options);
+  }
+
+  private async nextDraftVersion(db: ActionDb, actionItemId: number): Promise<number> {
+    const result = await db.query<{ next_version: number | string }>(
+      `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+       FROM action_drafts
+       WHERE action_item_id = $1`,
+      [actionItemId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return 1;
+    }
+    return Number(row.next_version);
   }
 
   private async lockItemById(db: ActionDb, id: number): Promise<ActionItemRow> {
@@ -336,6 +683,33 @@ function mapActionItem(row: ActionItemRow): ActionItem {
   };
 }
 
+function mapActionDraft(row: ActionDraftRow): ActionDraft {
+  return {
+    id: Number(row.id),
+    action_item_id: Number(row.action_item_id),
+    version: Number(row.version),
+    status: row.status,
+    channel: row.channel,
+    recipient: row.recipient,
+    draft_text: row.draft_text,
+    model: row.model,
+    context_hash: row.context_hash,
+    context_snapshot: parseJsonObject(row.context_snapshot, 'context_snapshot'),
+    generated_at: ensureDate(row.generated_at, 'generated_at'),
+    approved_at: toDate(row.approved_at),
+    sent_at: toDate(row.sent_at),
+    send_error: row.send_error,
+  };
+}
+
+function parseJsonObject(value: Record<string, unknown> | string, field: string): Record<string, unknown> {
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Invalid ${field} value: expected object`);
+  }
+  return parsed;
+}
+
 function toDate(value: Date | string | null): Date | null {
   if (value === null) return null;
   return ensureDate(value, 'timestamp');
@@ -347,6 +721,21 @@ function ensureDate(value: Date | string, field: string): Date {
     throw new Error(`Invalid ${field} value: ${String(value)}`);
   }
   return parsed;
+}
+
+function isDraftVersionUniqueViolation(error: unknown): boolean {
+  if (!isRecord(error)) {
+    return false;
+  }
+
+  return (
+    error.code === '23505' &&
+    error.constraint === 'action_drafts_action_item_id_version_key'
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function toBoolean(value: boolean | string): boolean {

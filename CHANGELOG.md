@@ -2,6 +2,90 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.14.0] - 2026-04-20
+
+## **Action Brain 0.2 is live: draft approvals, wacli send, and concurrent retry correctness.**
+## **The brief shows pending drafts inline. Send failures surface at-a-glance. No duplicate sends.**
+
+Action Brain 0.2 ships the full draft approval pipeline. You generate a draft, review it with
+`gbrain action draft list`, approve it with `gbrain action draft approve <id>`, and the message
+goes out over wacli. The morning brief now renders pending drafts and send failures inline so
+you never lose track of what's waiting on you. The `action_drafts` table tracks every version,
+status, and context snapshot. Full audit trail.
+
+The hardest part was the concurrent retry path. Drafts in `sending` status required careful
+state anchoring so a retry doesn't resend a draft that already went out. Five commits address
+this: serialized retry claims, version-checked status transitions, stale draft recovery, and
+`send_failed` anchored to the current attempt rather than any prior one. The brief integration
+works off the same deduplication so you see at most one pending entry per action item.
+
+The draft generator is a separate trust-boundary module. It validates context hashes, rejects
+empty post-sanitization drafts, and runs through the gold-set recall gate (>= 90% recall on
+the 13-row fixture) before anything can merge.
+
+### The numbers that matter
+
+Source: diff against `origin/master`, branch `impl/git-1061-concurrent-retry-fix`.
+Gold-set gate: `test/action-brain/draft-gold-set.test.ts` + `test/action-brain/gold-set.test.ts`.
+
+| Metric | Before | After | Delta |
+|---|---|---|---|
+| Draft approval CLI commands | 0 | 6 (list/show/approve/reject/edit/regenerate) | +6 |
+| Draft status transitions with atomic helpers | 0 | 7 (pending→approved→sending→sent/send_failed, rejected, superseded) | +7 |
+| Concurrent send races addressed | 0 | 5 (serialize claim, version check, stale recovery, dedup, anchor) | +5 |
+| Brief inline draft/failure rendering | 0 | Yes | shipped |
+| Gold-set recall gate (unit) | no gate | ≥ 90% CI gate | enforced |
+| New test files | — | 7 | +7 |
+| Unit tests | 1412 | 1504 | +92 |
+
+A draft that would have silently double-sent on a network retry now hits the version
+check on the `sending` claim and skips. The `sent_without_approval` QA query now does
+`(item_id, draft_id)` linkage with a 30s proximity guard. The only way it passes
+is if the specific draft was actually approved.
+
+What this means: you can approve and send drafts with confidence. The audit trail in
+`action_history` tells you exactly what approved what and when. The QA runbook in
+`docs/action-brain/0.2-qa-runbook.md` gives you the 48h SQL queries to verify that
+nothing sent without an explicit approval. Run `gbrain action draft list` now.
+
+### Itemized changes
+
+#### Action Brain 0.2 — draft approval pipeline
+- `action_drafts` table: versioned drafts, one-to-many per action item, full status lifecycle (`pending` → `approved` → `sending` → `sent` / `send_failed`, plus `rejected` / `superseded`)
+- `draft-generator.ts`: trust-boundary module — context hash validation, empty post-sanitization rejection, two-tier Haiku→Sonnet generation, bounded context sourcing
+- `context-source.ts`: bounded draft context sourcing — caps message count, scopes to relevant entity history
+- `sanitize.ts`: input sanitization before LLM prompts — strips control chars, XML-significant chars, enforces length caps
+- `gbrain action draft` CLI: `list`, `show`, `approve`, `reject`, `edit`, `regenerate` subcommands wired to wacli send flow
+- `action-engine.ts`: CRUD for drafts, atomic status helpers, version-checked transitions, stale `sending` draft recovery
+- `brief.ts`: inline draft/failure rendering in morning brief — shows pending drafts and `send_failed` items per action item
+
+#### Concurrent retry correctness (GIT-1061)
+- Serialized retry send claims: only one in-flight `sending` draft per action item at a time
+- Version-checked status transitions: approve + send path checks version before claiming `sending`
+- Stale `sending` draft recovery: drafts stuck in `sending` without a `sent` event are recovered and retried
+- `send_failed` anchored to current attempt: retry doesn't misread a prior failure as a current one
+- Dedup `draft_sent` events: reconciliation skips if event already recorded for this draft version
+
+#### Schema
+- `action_drafts` table with `UNIQUE (action_item_id, version)` and full status CHECK constraint
+- `action_history` event constraint migration: adds `draft_approved`, `draft_rejected`, `draft_sent`, `draft_send_failed`, `draft_superseded` to the allowed event type list
+
+#### Tests
+- `test/action-brain/draft-generator.test.ts` — trust-boundary validation, context hash, empty draft rejection
+- `test/action-brain/draft-gold-set.test.ts` — gold-set recall CI gate (≥ 90% recall, 13-row fixture)
+- `test/action-brain/context-source.test.ts` — bounded context sourcing caps and scoping
+- `test/action-brain/action-brief-linking.test.ts` — inline draft/failure rendering in brief
+- `test/action-brain/reconciliation-e2e.test.ts` — concurrent retry reconciliation end-to-end
+- Updated `operations.test.ts`, `action-engine.test.ts`, `brief.test.ts`, `extractor.test.ts`, `gold-set.test.ts`, `collector.test.ts` for 0.2 API surface
+- `test/action-brain/fixtures/draft-gold-set.jsonl` — 15-row draft quality fixture (checked in, no PII)
+
+#### Docs
+- `docs/designs/action-brain/0.2.md` — locked plan doc: schema, trust boundaries, CLI contracts, send flow
+- `docs/designs/action-brain/0.1c.md` — 0.1c retrospective: what shipped, what changed
+- `docs/action-brain/0.2-qa-runbook.md` — 48h QA runbook with `(item_id, draft_id)` causality queries and 30s proximity guard
+- `.env.testing.example` — environment variable reference for test setup
+- `CONTRIBUTING.md` — initial contributor guide
+
 ## [0.13.7] - 2026-04-20
 
 ## **Action Brain 0.2 docs now match what is actually shippable today.**

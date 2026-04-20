@@ -1,6 +1,9 @@
 import type { ActionItem, ActionStatus } from './types.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_BRIEF_LINE_LENGTH = 280;
+const INLINE_DRAFT_PREVIEW_MAX_CHARS = 120;
+const SEND_FAILURE_ERROR_PREVIEW_MAX_CHARS = 120;
 
 interface QueryResult<T> {
   rows: T[];
@@ -34,6 +37,43 @@ interface LastSyncRow {
   last_sync_at: Date | string | null;
 }
 
+interface PendingDraftRow {
+  id: number;
+  action_item_id: number;
+  version: number;
+  recipient: string;
+  draft_text: string;
+}
+
+interface SendFailedDraftRow {
+  id: number;
+  action_item_id: number;
+  version: number;
+  recipient: string;
+  draft_text: string;
+  send_error: string | null;
+  generated_at: Date | string;
+  item_title: string;
+}
+
+interface PendingDraftSummary {
+  id: number;
+  action_item_id: number;
+  version: number;
+  recipient: string;
+  draft_text: string;
+}
+
+interface SendFailedDraftSummary {
+  id: number;
+  action_item_id: number;
+  version: number;
+  recipient: string;
+  send_error: string | null;
+  generated_at: Date;
+  item_title: string;
+}
+
 export type BriefContextEnricher = (
   items: ActionItem[]
 ) => Promise<Map<number, string> | Record<number, string>> | Map<number, string> | Record<number, string>;
@@ -57,6 +97,9 @@ export class MorningBriefGenerator {
     const now = options.now ? ensureDate(options.now, 'now') : new Date();
     const timezoneOffsetMinutes = resolveTimezoneOffsetMinutes(options.timezoneOffsetMinutes, now);
     const items = await this.listActiveItems();
+    const itemIds = items.map((item) => item.id);
+    const pendingDraftsByItemId = await this.listLatestPendingDraftsByItem(itemIds);
+    const sendFailedDrafts = await this.listSendFailedDrafts(itemIds);
     const lastSyncAt = await this.resolveLastSyncAt(options.lastSyncAt);
     const contextByItemId = await resolveTextByItemId(items, options.contextEnricher);
     const includeSourceContact = typeof options.sourceContactEnricher === 'function';
@@ -85,7 +128,8 @@ export class MorningBriefGenerator {
         sortByDueThenPriority,
         contextByItemId,
         sourceContactByItemId,
-        includeSourceContact
+        includeSourceContact,
+        pendingDraftsByItemId
       )
     );
     lines.push('');
@@ -96,7 +140,8 @@ export class MorningBriefGenerator {
         sortByDueThenPriority,
         contextByItemId,
         sourceContactByItemId,
-        includeSourceContact
+        includeSourceContact,
+        pendingDraftsByItemId
       )
     );
     lines.push('');
@@ -107,7 +152,8 @@ export class MorningBriefGenerator {
         sortByNewestCreated,
         contextByItemId,
         sourceContactByItemId,
-        includeSourceContact
+        includeSourceContact,
+        pendingDraftsByItemId
       )
     );
     lines.push('');
@@ -118,9 +164,15 @@ export class MorningBriefGenerator {
         sortByOldestActivity,
         contextByItemId,
         sourceContactByItemId,
-        includeSourceContact
+        includeSourceContact,
+        pendingDraftsByItemId
       )
     );
+
+    if (sendFailedDrafts.length > 0) {
+      lines.push('');
+      lines.push(...renderSendFailuresSection(sendFailedDrafts));
+    }
 
     return lines.join('\n');
   }
@@ -149,6 +201,72 @@ export class MorningBriefGenerator {
     const raw = result.rows[0]?.last_sync_at ?? null;
     return raw ? ensureDate(raw, 'last_sync_at') : null;
   }
+
+  private async listLatestPendingDraftsByItem(itemIds: number[]): Promise<Map<number, PendingDraftSummary>> {
+    if (itemIds.length === 0) {
+      return new Map();
+    }
+
+    const result = await this.db.query<PendingDraftRow>(
+      `SELECT DISTINCT ON (action_item_id)
+         id,
+         action_item_id,
+         version,
+         recipient,
+         draft_text
+       FROM action_drafts
+       WHERE status = 'pending'
+         AND action_item_id = ANY($1::int[])
+       ORDER BY action_item_id, version DESC, id DESC`,
+      [itemIds]
+    );
+
+    const byItemId = new Map<number, PendingDraftSummary>();
+    for (const row of result.rows) {
+      byItemId.set(Number(row.action_item_id), {
+        id: Number(row.id),
+        action_item_id: Number(row.action_item_id),
+        version: Number(row.version),
+        recipient: row.recipient,
+        draft_text: row.draft_text,
+      });
+    }
+    return byItemId;
+  }
+
+  private async listSendFailedDrafts(itemIds: number[]): Promise<SendFailedDraftSummary[]> {
+    if (itemIds.length === 0) {
+      return [];
+    }
+
+    const result = await this.db.query<SendFailedDraftRow>(
+      `SELECT
+         d.id,
+         d.action_item_id,
+         d.version,
+         d.recipient,
+         d.draft_text,
+         d.send_error,
+         d.generated_at,
+         ai.title AS item_title
+       FROM action_drafts d
+       INNER JOIN action_items ai ON ai.id = d.action_item_id
+       WHERE d.status = 'send_failed'
+         AND d.action_item_id = ANY($1::int[])
+       ORDER BY d.generated_at DESC, d.id DESC`,
+      [itemIds]
+    );
+
+    return result.rows.map((row) => ({
+      id: Number(row.id),
+      action_item_id: Number(row.action_item_id),
+      version: Number(row.version),
+      recipient: row.recipient,
+      send_error: row.send_error,
+      generated_at: ensureDate(row.generated_at, 'generated_at'),
+      item_title: row.item_title,
+    }));
+  }
 }
 
 function renderSection(
@@ -157,7 +275,8 @@ function renderSection(
   sorter: (a: ActionItem, b: ActionItem) => number,
   contextByItemId: Map<number, string>,
   sourceContactByItemId: Map<number, string>,
-  includeSourceContact: boolean
+  includeSourceContact: boolean,
+  pendingDraftByItemId: Map<number, PendingDraftSummary>
 ): string[] {
   const sorted = [...sectionItems].sort(sorter);
   const lines = [`## ${title} (${sorted.length})`];
@@ -169,6 +288,10 @@ function renderSection(
 
   for (const item of sorted) {
     lines.push(formatItemLine(item, contextByItemId.get(item.id), sourceContactByItemId.get(item.id), includeSourceContact));
+    const pendingDraft = pendingDraftByItemId.get(item.id);
+    if (pendingDraft) {
+      lines.push(formatPendingDraftLine(pendingDraft));
+    }
   }
 
   return lines;
@@ -208,7 +331,45 @@ function formatItemLine(
     parts.push(`context=${context}`);
   }
 
-  return parts.join(' | ');
+  return clampBriefLineLength(parts.join(' | '));
+}
+
+function formatPendingDraftLine(draft: PendingDraftSummary): string {
+  const approveCommand = `gbrain action draft approve ${draft.id}`;
+  const preview = summarizeInlineText(draft.draft_text, INLINE_DRAFT_PREVIEW_MAX_CHARS);
+  return clampBriefLineLength(
+    `  draft[#${draft.id} v${draft.version}] pending | recipient=${draft.recipient} | approve=${approveCommand} | text=${preview}`
+  );
+}
+
+function renderSendFailuresSection(sendFailedDrafts: SendFailedDraftSummary[]): string[] {
+  const lines = [`## Send failures (${sendFailedDrafts.length})`];
+
+  for (const draft of sendFailedDrafts) {
+    const errorPreview = summarizeInlineText(draft.send_error ?? 'unknown send error', SEND_FAILURE_ERROR_PREVIEW_MAX_CHARS);
+    lines.push(
+      clampBriefLineLength(
+        `- [#${draft.action_item_id}] ${draft.item_title} | draft_id=${draft.id} | version=${draft.version} | recipient=${draft.recipient} | send_error=${errorPreview}`
+      )
+    );
+  }
+
+  return lines;
+}
+
+function summarizeInlineText(text: string, maxChars: number): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 3))}...`;
+}
+
+function clampBriefLineLength(line: string): string {
+  if (line.length <= MAX_BRIEF_LINE_LENGTH) {
+    return line;
+  }
+  return `${line.slice(0, MAX_BRIEF_LINE_LENGTH - 3)}...`;
 }
 
 async function resolveTextByItemId(

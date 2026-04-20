@@ -76,6 +76,44 @@ async function insertItem(localDb: PGlite, input: InsertItemInput): Promise<numb
   return Number((result.rows[0] as { id: number | string }).id);
 }
 
+interface InsertDraftInput {
+  action_item_id: number;
+  status?: 'pending' | 'approved' | 'rejected' | 'sent' | 'send_failed' | 'superseded';
+  version?: number;
+  recipient?: string;
+  draft_text?: string;
+  send_error?: string | null;
+}
+
+async function insertDraft(localDb: PGlite, input: InsertDraftInput): Promise<number> {
+  const result = await localDb.query(
+    `INSERT INTO action_drafts (
+       action_item_id,
+       version,
+       status,
+       channel,
+       recipient,
+       draft_text,
+       model,
+       context_hash,
+       context_snapshot,
+       send_error
+     )
+     VALUES ($1, $2, $3, 'whatsapp', $4, $5, 'gpt-5.2', 'hash', '{}'::jsonb, $6)
+     RETURNING id`,
+    [
+      input.action_item_id,
+      input.version ?? 1,
+      input.status ?? 'pending',
+      input.recipient ?? 'whatsapp:+15551234567',
+      input.draft_text ?? 'Ping for status update.',
+      input.send_error ?? null,
+    ]
+  );
+
+  return Number((result.rows[0] as { id: number | string }).id);
+}
+
 function sectionItemLines(brief: string, sectionTitle: string): string[] {
   const lines = brief.split('\n');
   const sectionIndex = lines.findIndex((line) => line.startsWith(`## ${sectionTitle} (`));
@@ -265,6 +303,138 @@ describe('MorningBriefGenerator', () => {
     expect(brief).toContain('## Due today (0)');
     expect(sectionItemLines(brief, 'Due today').length).toBe(0);
     expect(brief).toContain(`- [#${boundaryItemId}] Timezone boundary item`);
+  });
+
+  test('renders inline pending drafts only for items that appear in brief sections', async () => {
+    const { db: localDb, generator } = await createGenerator();
+    const now = new Date('2026-04-16T12:00:00.000Z');
+
+    const eligibleItemId = await insertItem(localDb, {
+      title: 'Eligible due-today item',
+      source_message_id: 'brief-1061-eligible',
+      due_at: '2026-04-16T18:00:00.000Z',
+      created_at: '2026-04-14T10:00:00.000Z',
+      updated_at: '2026-04-16T10:00:00.000Z',
+    });
+    const ineligibleItemId = await insertItem(localDb, {
+      title: 'Ineligible non-section item',
+      source_message_id: 'brief-1061-ineligible',
+      due_at: null,
+      created_at: '2026-04-10T10:00:00.000Z',
+      updated_at: '2026-04-16T11:59:00.000Z',
+      stale_after_hours: 48,
+    });
+
+    const eligibleDraftId = await insertDraft(localDb, {
+      action_item_id: eligibleItemId,
+      status: 'pending',
+      draft_text: 'Following up quickly on this.',
+    });
+    const ineligibleDraftId = await insertDraft(localDb, {
+      action_item_id: ineligibleItemId,
+      status: 'pending',
+      draft_text: 'This should not render inline because the item is not in any section.',
+    });
+
+    const brief = await generator.generateMorningBrief({
+      now,
+      lastSyncAt: new Date('2026-04-16T11:50:00.000Z'),
+    });
+
+    expect(brief).toContain(`draft[#${eligibleDraftId} v1] pending`);
+    expect(brief).toContain(`approve=gbrain action draft approve ${eligibleDraftId}`);
+    expect(brief).not.toContain(`draft[#${ineligibleDraftId} v1] pending`);
+  });
+
+  test('shows send failures section only when send_failed drafts exist', async () => {
+    const { db: localDb, generator } = await createGenerator();
+    const now = new Date('2026-04-16T12:00:00.000Z');
+
+    const itemId = await insertItem(localDb, {
+      title: 'Waiting on reply from broker',
+      source_message_id: 'brief-1061-send-failed',
+      due_at: '2026-04-16T17:00:00.000Z',
+      created_at: '2026-04-15T10:00:00.000Z',
+      updated_at: '2026-04-16T10:00:00.000Z',
+    });
+
+    const before = await generator.generateMorningBrief({
+      now,
+      lastSyncAt: new Date('2026-04-16T11:30:00.000Z'),
+    });
+    expect(before).not.toContain('## Send failures (');
+
+    const sendFailedId = await insertDraft(localDb, {
+      action_item_id: itemId,
+      status: 'send_failed',
+      draft_text: 'Reminder that payment is pending.',
+      send_error: 'wacli send timeout after 30s',
+    });
+
+    const after = await generator.generateMorningBrief({
+      now,
+      lastSyncAt: new Date('2026-04-16T11:30:00.000Z'),
+    });
+
+    expect(after).toContain('## Send failures (1)');
+    expect(after).toContain(`draft_id=${sendFailedId}`);
+    expect(after).toContain('send_error=wacli send timeout after 30s');
+  });
+
+  test('caps rendered brief line lengths for long context and draft payloads', async () => {
+    const { db: localDb, generator } = await createGenerator();
+
+    const itemId = await insertItem(localDb, {
+      title: 'Long line stress test item',
+      source_message_id: 'brief-1061-linecap',
+      due_at: '2026-04-17T12:00:00.000Z',
+      created_at: '2026-04-16T10:00:00.000Z',
+      updated_at: '2026-04-16T10:00:00.000Z',
+    });
+    await insertDraft(localDb, {
+      action_item_id: itemId,
+      status: 'pending',
+      version: 1,
+      draft_text: `draft ${'x'.repeat(500)}`,
+    });
+    await insertDraft(localDb, {
+      action_item_id: itemId,
+      status: 'send_failed',
+      version: 2,
+      draft_text: 'retry failed',
+      send_error: `err ${'y'.repeat(500)}`,
+    });
+
+    const brief = await generator.generateMorningBrief({
+      now: new Date('2026-04-16T12:00:00.000Z'),
+      lastSyncAt: new Date('2026-04-16T11:50:00.000Z'),
+      contextEnricher: () => ({ [itemId]: `ctx ${'z'.repeat(800)}` }),
+    });
+
+    for (const line of brief.split('\n')) {
+      if (line.length === 0) continue;
+      expect(line.length).toBeLessThanOrEqual(280);
+    }
+  });
+
+  test('does not render inline draft blocks when no pending drafts exist', async () => {
+    const { db: localDb, generator } = await createGenerator();
+
+    await insertItem(localDb, {
+      title: 'Item without drafts',
+      source_message_id: 'brief-1061-no-drafts',
+      due_at: '2026-04-16T18:00:00.000Z',
+      created_at: '2026-04-15T10:00:00.000Z',
+      updated_at: '2026-04-16T10:00:00.000Z',
+    });
+
+    const brief = await generator.generateMorningBrief({
+      now: new Date('2026-04-16T12:00:00.000Z'),
+      lastSyncAt: new Date('2026-04-16T11:30:00.000Z'),
+    });
+
+    expect(brief).not.toContain('draft[#');
+    expect(brief).not.toContain('## Send failures (');
   });
 
   test('#19 emits no active commitments when there are no non-terminal items', async () => {

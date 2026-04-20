@@ -56,6 +56,14 @@ const ACTION_SUBCOMMANDS = new Map<string, string>([
   ['mark-fp', 'action-mark-fp'],
   ['ingest', 'action-ingest'],
 ]);
+const ACTION_DRAFT_SUBCOMMANDS = new Map<string, string>([
+  ['list', 'action-draft-list'],
+  ['show', 'action-draft-show'],
+  ['approve', 'action-draft-approve'],
+  ['reject', 'action-draft-reject'],
+  ['edit', 'action-draft-edit'],
+  ['regenerate', 'action-draft-regenerate'],
+]);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -84,15 +92,32 @@ async function main() {
       return;
     }
 
-    const mapped = ACTION_SUBCOMMANDS.get(subArgs[0]);
-    if (!mapped) {
-      console.error(`Unknown action command: ${subArgs[0]}`);
-      console.error('Run gbrain action --help for available subcommands.');
-      process.exit(1);
-    }
+    if (subArgs[0] === 'draft') {
+      if (subArgs.length === 1 || subArgs[1] === '--help' || subArgs[1] === '-h') {
+        printActionDraftHelp();
+        return;
+      }
 
-    command = mapped;
-    subArgs = subArgs.slice(1);
+      const draftMapped = ACTION_DRAFT_SUBCOMMANDS.get(subArgs[1]);
+      if (!draftMapped) {
+        console.error(`Unknown action draft command: ${subArgs[1]}`);
+        console.error('Run gbrain action draft --help for available subcommands.');
+        process.exit(1);
+      }
+
+      command = draftMapped;
+      subArgs = subArgs.slice(2);
+    } else {
+      const mapped = ACTION_SUBCOMMANDS.get(subArgs[0]);
+      if (!mapped) {
+        console.error(`Unknown action command: ${subArgs[0]}`);
+        console.error('Run gbrain action --help for available subcommands.');
+        process.exit(1);
+      }
+
+      command = mapped;
+      subArgs = subArgs.slice(1);
+    }
   }
 
   // DX alias: `ask` is a natural-language alias for `query`
@@ -593,6 +618,12 @@ ACTION
   action resolve <id>                  Mark an action item resolved
   action mark-fp <id>                  Mark extraction as false positive
   action ingest [--messages-json J]    Extract and ingest commitments from a message batch
+  action draft list [--status S]       List drafts (pending by default)
+  action draft show <id>               Show one draft
+  action draft approve <id>            Approve + send one draft via wacli
+  action draft reject <id> [--reason]  Reject one draft
+  action draft edit <id> --text "..."  Edit pending draft text
+  action draft regenerate <item-id>    Generate version N+1 for an action item
 
 TOOLS
   extract <links|timeline|all>       Extract links/timeline (idempotent)
@@ -642,10 +673,27 @@ Subcommands:
   resolve <id>
   mark-fp <id>
   ingest [--messages-json <json>] [--model <model>] [--timeout-ms <ms>]
+  draft <subcommand>                  Manage reply drafts (list/show/approve/reject/edit/regenerate)
+`);
+}
+
+function printActionDraftHelp() {
+  console.log(`Usage: gbrain action draft <subcommand> [options]
+
+Subcommands:
+  list [--status <pending|approved|rejected|sent|send_failed|superseded>] [--action-item-id <id>]
+  show <draft-id>
+  approve <draft-id> [--timeout-ms <ms>]
+  reject <draft-id> [--reason "..."]
+  edit <draft-id> --text "..."
+  regenerate <item-id> [--hint "..."]
 `);
 }
 
 function displayCliCommandName(name: string): string {
+  if (name.startsWith('action-draft-')) {
+    return `action draft ${name.slice('action-draft-'.length)}`;
+  }
   if (name.startsWith('action-')) {
     return `action ${name.slice('action-'.length)}`;
   }

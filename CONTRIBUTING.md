@@ -38,12 +38,16 @@ src/
   mcp/
     server.ts             MCP stdio server (generated from operations)
   action-brain/           Action Brain extension (commitment/obligation tracking)
-    types.ts              Shared types (ActionItem, CommitmentBatch, ExtractionResult)
-    action-schema.ts      PGLite DDL + schema init for action_items/action_history tables
-    action-engine.ts      Storage layer: CRUD, priority scoring, PGLite lifecycle
+    types.ts              Shared types (ActionItem, CommitmentBatch, ExtractionResult, ActionDraft)
+    action-schema.ts      PGLite DDL + schema init for action_items/action_history/action_drafts tables
+    action-engine.ts      Storage layer: CRUD, priority scoring, draft CRUD, atomic status helpers
     extractor.ts          LLM commitment extraction with prompt injection defense
-    brief.ts              Morning priority brief generator (ranked + deduped)
-    operations.ts         5 registered ops: action_list/brief/resolve/mark-fp/ingest
+    brief.ts              Morning priority brief with inline draft/failure rendering
+    draft-generator.ts    Draft generation: context hash validation, trust-boundary, two-tier LLM
+    context-source.ts     Bounded draft context sourcing (caps message count, scopes entity history)
+    context.ts            Shared context snapshot types
+    sanitize.ts           Input sanitization for LLM prompts (strips control/XML chars, length caps)
+    operations.ts         Action Brain CLI + MCP ops: list/brief/resolve/mark-fp/ingest + draft subcommands
   schema.sql              Postgres DDL
 skills/                   Fat markdown skills for AI agents
 test/                     Unit tests (bun test, no DB required)
@@ -61,7 +65,8 @@ docs/                     Architecture docs
 ```bash
 bun test                          # all tests (unit + E2E skipped without DB)
 bun test test/markdown.test.ts    # specific unit test
-bun test test/action-brain/gold-set.test.ts  # Action Brain recall gate (GIT-175)
+bun test test/action-brain/gold-set.test.ts       # Action Brain recall gate (GIT-175)
+bun test test/action-brain/draft-gold-set.test.ts # Draft quality gold-set gate (GIT-1064)
 
 # E2E tests (requires Postgres with pgvector)
 docker compose -f docker-compose.test.yml up -d
