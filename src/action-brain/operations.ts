@@ -31,7 +31,7 @@ interface PostgresUnsafeConnection {
 }
 
 const STATUS_VALUES = ['open', 'waiting_on', 'in_progress', 'stale', 'resolved', 'dropped'] as const;
-const ACTION_DRAFT_STATUS_VALUES = ['pending', 'approved', 'rejected', 'sent', 'send_failed', 'superseded'] as const;
+const ACTION_DRAFT_STATUS_VALUES = ['pending', 'approved', 'sending', 'rejected', 'sent', 'send_failed', 'superseded'] as const;
 const ACTION_LIST_FILTER_VALUES = ['low_confidence_dropped'] as const;
 const LOW_CONFIDENCE_THRESHOLD = 0.9;
 const SOURCE_EXCERPT_MAX_CHARS = 500;
@@ -360,17 +360,35 @@ export const actionBrainOperations: Operation[] = [
             current.action_item_id,
             current.id
           );
+          if (hasDeliveryConfirmation) {
+            return {
+              claimed: true as const,
+              resumedFromStatus: 'approved' as const,
+              draft: current,
+              reconcileWithoutResend: true as const,
+            };
+          }
+          const sending = await claimApprovedDraftForSend(txDb, id);
+          if (!sending) {
+            const latest = await getActionDraftStateForUpdate(txDb, id);
+            return {
+              claimed: false as const,
+              resumedFromStatus: null,
+              draft: latest ?? current,
+              reconcileWithoutResend: false as const,
+            };
+          }
           return {
             claimed: true as const,
             resumedFromStatus: 'approved' as const,
-            draft: current,
-            reconcileWithoutResend: hasDeliveryConfirmation,
+            draft: sending,
+            reconcileWithoutResend: false as const,
           };
         }
 
         if (current.status === 'send_failed' && retry) {
-          const retried = await reopenFailedDraftForRetry(txDb, id);
-          if (!retried) {
+          const sending = await claimFailedDraftForRetry(txDb, id);
+          if (!sending) {
             const latest = await getActionDraftStateForUpdate(txDb, id);
             return {
               claimed: false as const,
@@ -383,7 +401,7 @@ export const actionBrainOperations: Operation[] = [
           return {
             claimed: true as const,
             resumedFromStatus: 'send_failed' as const,
-            draft: retried,
+            draft: sending,
             reconcileWithoutResend: false as const,
           };
         }
@@ -414,10 +432,21 @@ export const actionBrainOperations: Operation[] = [
           recipient: approved.recipient,
         });
 
+        const sending = await claimApprovedDraftForSend(txDb, id);
+        if (!sending) {
+          const latest = await getActionDraftStateForUpdate(txDb, id);
+          return {
+            claimed: false as const,
+            resumedFromStatus: null,
+            draft: latest ?? approved,
+            reconcileWithoutResend: false as const,
+          };
+        }
+
         return {
           claimed: true as const,
           resumedFromStatus: null,
-          draft: approved,
+          draft: sending,
           reconcileWithoutResend: false as const,
         };
       });
@@ -1276,10 +1305,24 @@ async function markDraftApproved(db: QueryableDb, draftId: number): Promise<Acti
   return result.rows[0] ?? null;
 }
 
-async function reopenFailedDraftForRetry(db: QueryableDb, draftId: number): Promise<ActionDraftStateRow | null> {
+async function claimApprovedDraftForSend(db: QueryableDb, draftId: number): Promise<ActionDraftStateRow | null> {
   const result = await db.query<ActionDraftStateRow>(
     `UPDATE action_drafts
-     SET status = 'approved',
+     SET status = 'sending',
+         send_error = NULL
+     WHERE id = $1
+       AND status = 'approved'
+       AND sent_at IS NULL
+     RETURNING id, action_item_id, status, channel, recipient, draft_text, approved_at, sent_at`,
+    [draftId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function claimFailedDraftForRetry(db: QueryableDb, draftId: number): Promise<ActionDraftStateRow | null> {
+  const result = await db.query<ActionDraftStateRow>(
+    `UPDATE action_drafts
+     SET status = 'sending',
          send_error = NULL,
          approved_at = COALESCE(approved_at, now())
      WHERE id = $1
@@ -1445,7 +1488,7 @@ async function markDraftSent(db: QueryableDb, draftId: number): Promise<ActionDr
          sent_at = now(),
          send_error = NULL
      WHERE id = $1
-       AND status = 'approved'
+       AND status IN ('approved', 'sending')
      RETURNING *`,
     [draftId]
   );
@@ -1473,12 +1516,41 @@ async function recordDraftDeliveryConfirmation(
   resumedFromStatus: 'approved' | 'send_failed' | null
 ): Promise<void> {
   await withDbTransaction(db, async (txDb) => {
-    await insertActionHistory(txDb, itemId, 'draft_sent', actor, {
+    await insertDraftSentHistoryIfMissing(txDb, itemId, draftId, actor, {
       draft_id: draftId,
       resumed_from_status: resumedFromStatus,
       delivery_confirmed: true,
     });
   });
+}
+
+async function insertDraftSentHistoryIfMissing(
+  db: QueryableDb,
+  itemId: number,
+  draftId: number,
+  actor: string,
+  metadata: Record<string, unknown>
+): Promise<void> {
+  await db.query(
+    `SELECT id
+     FROM action_drafts
+     WHERE id = $1
+     FOR UPDATE`,
+    [draftId]
+  );
+
+  await db.query(
+    `INSERT INTO action_history (item_id, event_type, actor, metadata)
+     SELECT $1, 'draft_sent', $3, $4::jsonb
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM action_history
+       WHERE item_id = $1
+         AND event_type = 'draft_sent'
+         AND metadata @> jsonb_build_object('draft_id', $2::int)
+     )`,
+    [itemId, draftId, actor, JSON.stringify(metadata)]
+  );
 }
 
 async function persistDraftSentState(db: QueryableDb, draftId: number): Promise<ActionDraftRow> {
@@ -1499,7 +1571,7 @@ async function updateDraftSendFailed(db: QueryableDb, draftId: number, sendError
      SET status = 'send_failed',
          send_error = $2
      WHERE id = $1
-       AND status = 'approved'
+       AND status = 'sending'
      RETURNING *`,
     [draftId, sendError]
   );

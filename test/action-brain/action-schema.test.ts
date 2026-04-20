@@ -222,4 +222,48 @@ describe('Action Brain schema', () => {
     const eventTypes = (historyRows.rows as { event_type: string }[]).map((row) => row.event_type);
     expect(eventTypes).toEqual(['draft_generation_failed']);
   });
+
+  test('upgrades legacy action_drafts status constraint to include sending', async () => {
+    const localDb = await createDb();
+
+    await initActionSchema(localDb);
+
+    await localDb.query(
+      `ALTER TABLE action_drafts
+       DROP CONSTRAINT IF EXISTS action_drafts_status_check`
+    );
+    await localDb.query(
+      `ALTER TABLE action_drafts
+       ADD CONSTRAINT action_drafts_status_check
+       CHECK (status IN ('pending', 'approved', 'rejected', 'sent', 'send_failed', 'superseded'))`
+    );
+
+    const inserted = await localDb.query(
+      `INSERT INTO action_items (title, type, source_message_id, source_contact)
+       VALUES ('Legacy draft status path', 'follow_up', 'msg-legacy-draft-status-001', 'joe@c.us')
+       RETURNING id`
+    );
+    const itemId = Number((inserted.rows[0] as { id: number | string }).id);
+
+    const draftInserted = await localDb.query(
+      `INSERT INTO action_drafts (
+         action_item_id, version, status, channel, recipient, draft_text, model, context_hash, context_snapshot
+       )
+       VALUES ($1, 1, 'approved', 'whatsapp', 'joe@c.us', 'hello', 'test', 'ctx', '{}'::jsonb)
+       RETURNING id`,
+      [itemId]
+    );
+    const draftId = Number((draftInserted.rows[0] as { id: number | string }).id);
+
+    await expect(
+      localDb.query(`UPDATE action_drafts SET status = 'sending' WHERE id = $1`, [draftId])
+    ).rejects.toThrow();
+
+    await initActionSchema(localDb);
+
+    await localDb.query(`UPDATE action_drafts SET status = 'sending' WHERE id = $1`, [draftId]);
+
+    const draftRow = await localDb.query(`SELECT status FROM action_drafts WHERE id = $1`, [draftId]);
+    expect((draftRow.rows[0] as { status: string }).status).toBe('sending');
+  });
 });

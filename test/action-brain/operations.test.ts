@@ -392,6 +392,72 @@ describe('Action Brain operation integration', () => {
     });
   });
 
+  test('action_draft_approve allows only one concurrent retry=true sender and records one draft_sent event', async () => {
+    await withActionContext(async (ctx, engine) => {
+      const { draftId, itemId } = await seedActionItemAndDraft(engine);
+      const db = (engine as unknown as EngineWithDb).db;
+      const actionDraftApprove = getActionOperation('action_draft_approve');
+
+      await db.query(
+        `UPDATE action_drafts
+         SET status = 'approved',
+             approved_at = now()
+         WHERE id = $1`,
+        [draftId]
+      );
+      await db.query(
+        `INSERT INTO action_history (item_id, event_type, actor, metadata)
+         VALUES ($1, 'draft_approved', 'human_feedback', $2::jsonb)`,
+        [itemId, JSON.stringify({ draft_id: draftId, simulated_interruption: true })]
+      );
+
+      const calls: Array<{ command: string; args: string[] }> = [];
+      let releaseSend: (() => void) | null = null;
+      let resolveSendStarted: (() => void) | null = null;
+      const sendStarted = new Promise<void>((resolve) => {
+        resolveSendStarted = resolve;
+      });
+      const sendGate = new Promise<void>((resolve) => {
+        releaseSend = resolve;
+      });
+
+      setActionDraftSendExecutorForTests(async (command, args) => {
+        calls.push({ command, args: [...args] });
+        resolveSendStarted?.();
+        await sendGate;
+        return { stdout: 'ok', stderr: '' };
+      });
+
+      try {
+        const firstAttempt = actionDraftApprove.handler(ctx, { id: draftId, retry: true });
+        await sendStarted;
+
+        const concurrentAttempt = await actionDraftApprove.handler(ctx, { id: draftId, retry: true });
+        expect(concurrentAttempt.status).toBe('already_processed');
+        expect(concurrentAttempt.draft_status).toBe('sending');
+
+        releaseSend?.();
+        const firstResult = await firstAttempt;
+        expect(firstResult.status).toBe('sent');
+
+        expect(calls).toHaveLength(1);
+
+        const sentHistory = await db.query(
+          `SELECT count(*)::int AS n
+           FROM action_history
+           WHERE item_id = $1
+             AND event_type = 'draft_sent'
+             AND metadata @> jsonb_build_object('draft_id', $2::int)`,
+          [itemId, draftId]
+        );
+        expect(Number((sentHistory.rows[0] as { n: number | string }).n)).toBe(1);
+      } finally {
+        releaseSend?.();
+        setActionDraftSendExecutorForTests(null);
+      }
+    });
+  });
+
   test('action_draft_approve reconciles post-send persistence failures without re-sending', async () => {
     await withActionContext(async (ctx, engine) => {
       const { draftId, itemId } = await seedActionItemAndDraft(engine);

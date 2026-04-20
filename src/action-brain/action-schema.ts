@@ -19,6 +19,8 @@ const ACTION_HISTORY_EVENT_TYPES = [
 ] as const;
 
 const ACTION_HISTORY_EVENT_TYPES_SQL = ACTION_HISTORY_EVENT_TYPES.map((eventType) => `'${eventType}'`).join(',\n      ');
+const ACTION_DRAFT_STATUS_VALUES = ['pending', 'approved', 'sending', 'rejected', 'sent', 'send_failed', 'superseded'] as const;
+const ACTION_DRAFT_STATUS_VALUES_SQL = ACTION_DRAFT_STATUS_VALUES.map((status) => `'${status}'`).join(', ');
 
 const ACTION_HISTORY_EVENT_TYPE_MIGRATION_SQL = `
 ALTER TABLE IF EXISTS action_history
@@ -31,6 +33,15 @@ CHECK (
       ${ACTION_HISTORY_EVENT_TYPES_SQL}
   )
 );
+`;
+
+const ACTION_DRAFT_STATUS_MIGRATION_SQL = `
+ALTER TABLE IF EXISTS action_drafts
+DROP CONSTRAINT IF EXISTS action_drafts_status_check;
+
+ALTER TABLE IF EXISTS action_drafts
+ADD CONSTRAINT action_drafts_status_check
+CHECK (status IN (${ACTION_DRAFT_STATUS_VALUES_SQL}));
 `;
 
 export const ACTION_SCHEMA_SQL = `
@@ -80,7 +91,7 @@ CREATE TABLE IF NOT EXISTS action_drafts (
   action_item_id   INTEGER NOT NULL REFERENCES action_items(id) ON DELETE CASCADE,
   version          INTEGER NOT NULL DEFAULT 1,
   status           TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'approved', 'rejected', 'sent', 'send_failed', 'superseded')),
+    CHECK (status IN (${ACTION_DRAFT_STATUS_VALUES_SQL})),
   channel          TEXT NOT NULL DEFAULT 'whatsapp' CHECK (channel IN ('whatsapp', 'telegram')),
   recipient        TEXT NOT NULL,
   draft_text       TEXT NOT NULL,
@@ -116,4 +127,5 @@ CREATE INDEX IF NOT EXISTS idx_action_drops_source_id ON action_drops(source_id)
 export async function initActionSchema(db: { exec: (sql: string) => Promise<unknown> }): Promise<void> {
   await db.exec(ACTION_SCHEMA_SQL);
   await db.exec(ACTION_HISTORY_EVENT_TYPE_MIGRATION_SQL);
+  await db.exec(ACTION_DRAFT_STATUS_MIGRATION_SQL);
 }

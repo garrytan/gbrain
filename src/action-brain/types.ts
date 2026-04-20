@@ -2,7 +2,7 @@ export type ActionType = 'commitment' | 'follow_up' | 'decision' | 'question' | 
 
 export type ActionStatus = 'open' | 'waiting_on' | 'in_progress' | 'stale' | 'resolved' | 'dropped';
 
-export type ActionDraftStatus = 'pending' | 'approved' | 'rejected' | 'sent' | 'send_failed' | 'superseded';
+export type ActionDraftStatus = 'pending' | 'approved' | 'sending' | 'rejected' | 'sent' | 'send_failed' | 'superseded';
 
 export type ActionDraftChannel = 'whatsapp' | 'telegram';
 
