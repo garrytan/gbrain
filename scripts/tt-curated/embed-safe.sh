@@ -9,8 +9,8 @@ if [[ ! -e "$CURATED_DB_PATH" ]]; then
   exit 1
 fi
 
-ATTEMPTS="${ATTEMPTS:-3}"
-SLEEP_SECONDS="${SLEEP_SECONDS:-90}"
+ATTEMPTS="${ATTEMPTS:-${EMBED_SAFE_ATTEMPTS:-3}}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-${EMBED_SAFE_SLEEP_SECONDS:-90}}"
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
   ts=$(date '+%Y-%m-%d %H:%M:%S')

@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 import json
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-LOG_DIR = Path('/home/tt/workspace/tools/gbrain-curated-logs')
-REG_LAST = LOG_DIR / 'query-regression-last.json'
-REG_BASE = LOG_DIR / 'query-regression-baseline.json'
-SMOKE_LAST = LOG_DIR / 'refresh-smoke-last.json'
-OUT = LOG_DIR / 'weekly-baseline-review.json'
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from config_loader import load_config, paths
+
+CONFIG = load_config()
+PATHS = paths(CONFIG)
+LOG_DIR = Path(PATHS['CURATED_LOG_DIR'])
+REG_LAST = Path(PATHS['REGRESSION_LAST_JSON'])
+REG_BASE = Path(PATHS['REGRESSION_BASELINE_JSON'])
+SMOKE_LAST = Path(PATHS['SMOKE_LAST_JSON'])
+OUT = Path(PATHS['WEEKLY_REVIEW_JSON'])
 
 
 def load(path):

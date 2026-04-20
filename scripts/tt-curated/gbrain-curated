@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="/home/tt/workspace/tools/gbrain/scripts/tt-curated"
-LOG_DIR="/home/tt/workspace/tools/gbrain-curated-logs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eval "$(/usr/bin/python3 "$SCRIPT_DIR/config_loader.py" shell)"
+LOG_DIR="$CURATED_LOG_DIR"
 
 usage() {
   cat <<'EOF'

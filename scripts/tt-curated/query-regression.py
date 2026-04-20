@@ -7,11 +7,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path('/home/tt/workspace/tools/gbrain')
-CASES_PATH = Path('/home/tt/workspace/tools/gbrain/scripts/tt-curated/query-cases.json')
-COMMON_PATH = Path('/home/tt/workspace/tools/gbrain/scripts/tt-curated/common.sh')
-OUTPUT_PATH = Path('/home/tt/workspace/tools/gbrain-curated-logs/query-regression-last.json')
-BASELINE_PATH = Path('/home/tt/workspace/tools/gbrain-curated-logs/query-regression-baseline.json')
+import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from config_loader import load_config, paths
+
+CONFIG = load_config()
+PATHS = paths(CONFIG)
+ROOT = Path(PATHS['GBRAIN_ROOT'])
+CASES_PATH = Path(PATHS['QUERY_CASES_PATH'])
+COMMON_PATH = Path(PATHS['COMMON_PATH'])
+OUTPUT_PATH = Path(PATHS['REGRESSION_LAST_JSON'])
+BASELINE_PATH = Path(PATHS['REGRESSION_BASELINE_JSON'])
 DEFAULT_DRIFT_RANK_TOLERANCE = 3
 DEFAULT_DRIFT_SCORE_DROP_TOLERANCE = 0.12
 PRIORITY_DRIFT_RULES = {
@@ -110,7 +117,7 @@ def main():
     write_baseline = '--write-baseline' in sys.argv
     env = load_env_from_common()
     cases = [
-        case for case in json.loads(CASES_PATH.read_text())
+        case for case in (yaml.safe_load(CASES_PATH.read_text()) or [])
         if 'regression' in case.get('scope', ['regression'])
     ]
     baseline = load_baseline()

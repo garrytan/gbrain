@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="/home/tt/workspace/tools/gbrain/scripts/tt-curated"
-LOG_DIR="/home/tt/workspace/tools/gbrain-curated-logs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eval "$(/usr/bin/python3 "$SCRIPT_DIR/config_loader.py" shell)"
+LOG_DIR="$CURATED_LOG_DIR"
 STAMP="$(date '+%Y%m%d-%H%M%S')"
 LOG_FILE="$LOG_DIR/cron-embed-health-regression-$STAMP.log"
-JSON_FILE="$LOG_DIR/query-regression-last.json"
-OPENCLAW_CONFIG="/home/tt/.openclaw/openclaw.json"
-CHAT_ID="477144117"
+JSON_FILE="$REGRESSION_LAST_JSON"
+CHAT_ID="$TELEGRAM_CHAT_ID"
 
 mkdir -p "$LOG_DIR"
+TAIL_LINES="${CRON_NIGHTLY_LOG_TAIL_LINES:-40}"
+FAILED_CASE_LIMIT="${CRON_NIGHTLY_FAILED_CASE_LIMIT:-10}"
+SEVERE_DRIFT_CASE_LIMIT="${CRON_NIGHTLY_SEVERE_DRIFT_CASE_LIMIT:-5}"
+ALERT_PREFIX="${CRON_NIGHTLY_ALERT_PREFIX:-gbrain nightly FAIL}"
+REGRESSION_ALERT_PREFIX="${CRON_NIGHTLY_REGRESSION_ALERT_PREFIX:-gbrain regression FAIL}"
 
 send_failure_alert() {
   local body="$1"
@@ -33,8 +38,8 @@ PY
   "$SCRIPT_DIR/run-embed-health.sh"
   echo "[$(date '+%F %T')] done"
 } >"$LOG_FILE" 2>&1 || {
-  tail_text="$(tail -n 40 "$LOG_FILE")"
-  message="gbrain nightly FAIL\nlog: $LOG_FILE\n\n$tail_text"
+  tail_text="$(tail -n "$TAIL_LINES" "$LOG_FILE")"
+  message="$ALERT_PREFIX\nlog: $LOG_FILE\n\n$tail_text"
   send_failure_alert "$message" || true
   echo "FAILED: $LOG_FILE"
   exit 1
@@ -48,18 +53,20 @@ print('ok' if obj.get('ok') else 'fail')
 PY
 )"
   if [[ "$status" != "ok" ]]; then
-    summary="$(/usr/bin/python3 - <<'PY' "$JSON_FILE"
+    summary="$(/usr/bin/python3 - <<'PY' "$JSON_FILE" "$FAILED_CASE_LIMIT"
 import json, sys
 obj = json.load(open(sys.argv[1]))
+limit = int(sys.argv[2])
 failed = [r['id'] for r in obj.get('results', []) if not r.get('ok')]
-print(', '.join(failed[:10]))
+print(', '.join(failed[:limit]))
 PY
 )"
-    drift="$(/usr/bin/python3 - <<'PY' "$JSON_FILE"
+    drift="$(/usr/bin/python3 - <<'PY' "$JSON_FILE" "$SEVERE_DRIFT_CASE_LIMIT"
 import json, sys
 obj = json.load(open(sys.argv[1]))
+limit = int(sys.argv[2])
 parts = []
-for item in obj.get('severe_drift_cases', [])[:5]:
+for item in obj.get('severe_drift_cases', [])[:limit]:
     priority = item.get('priority', 'high')
     seg = f"{item['id']}[{priority}]"
     if item.get('rank_shift') is not None:
@@ -70,7 +77,7 @@ for item in obj.get('severe_drift_cases', [])[:5]:
 print('; '.join(parts))
 PY
 )"
-    message="gbrain regression FAIL\nlog: $LOG_FILE"
+    message="$REGRESSION_ALERT_PREFIX\nlog: $LOG_FILE"
     if [[ -n "$summary" ]]; then
       message+="\nfailed: $summary"
     fi

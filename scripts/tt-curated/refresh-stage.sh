@@ -2,7 +2,6 @@
 set -euo pipefail
 source /home/tt/workspace/tools/gbrain/scripts/tt-curated/common.sh
 
-VAULT_ROOT="/home/tt/obsidian-vault"
 TMP_STAGE="$CURATED_STAGE.tmp"
 
 rm -rf "$TMP_STAGE"
@@ -17,15 +16,27 @@ copy_if_exists() {
   fi
 }
 
-copy_if_exists "$VAULT_ROOT/knowledge" "$TMP_STAGE"
-copy_if_exists "$VAULT_ROOT/docs" "$TMP_STAGE"
-copy_if_exists "$VAULT_ROOT/agents" "$TMP_STAGE"
-copy_if_exists "$VAULT_ROOT/hackathons" "$TMP_STAGE"
-copy_if_exists "$VAULT_ROOT/plans" "$TMP_STAGE"
-copy_if_exists "$VAULT_ROOT/reviews" "$TMP_STAGE"
-copy_if_exists "$VAULT_ROOT/README.md" "$TMP_STAGE"
-copy_if_exists "$VAULT_ROOT/TAG_STRATEGY.md" "$TMP_STAGE"
-copy_if_exists "$VAULT_ROOT/ZETTELKASTEN_GUIDE.md" "$TMP_STAGE"
+mapfile -t INCLUDE_PATHS < <(/usr/bin/python3 - <<'PY' "$CURATED_INCLUDE_PATHS_JSON"
+import json, sys
+for item in json.loads(sys.argv[1]):
+    print(item)
+PY
+)
+
+mapfile -t INCLUDE_FILES < <(/usr/bin/python3 - <<'PY' "$CURATED_INCLUDE_FILES_JSON"
+import json, sys
+for item in json.loads(sys.argv[1]):
+    print(item)
+PY
+)
+
+for rel in "${INCLUDE_PATHS[@]}"; do
+  copy_if_exists "$VAULT_ROOT/$rel" "$TMP_STAGE"
+done
+
+for rel in "${INCLUDE_FILES[@]}"; do
+  copy_if_exists "$VAULT_ROOT/$rel" "$TMP_STAGE"
+done
 
 rm -rf "$CURATED_STAGE"
 mv "$TMP_STAGE" "$CURATED_STAGE"

@@ -1,0 +1,48 @@
+paths:
+  script_dir: /home/tt/workspace/tools/gbrain/scripts/tt-curated
+  sandbox_home: /home/tt/workspace/tools/gbrain-sandbox-home
+  bun_bin_dir: /home/tt/workspace/tools/gbrain-local-bun/bin
+  gbrain_root: /home/tt/workspace/tools/gbrain
+  vault_root: /home/tt/obsidian-vault
+  curated_stage: /home/tt/workspace/tools/gbrain-curated-stage
+  curated_db_dir: /home/tt/workspace/tools/gbrain-curated-db-768
+  curated_log_dir: /home/tt/workspace/tools/gbrain-curated-logs
+  openclaw_config: /home/tt/.openclaw/openclaw.json
+telegram:
+  chat_id: "477144117"
+env:
+  gbrain_embed_dimensions: 768
+pipeline:
+  embed_safe:
+    attempts: 3
+    sleep_seconds: 90
+  stage:
+    include_paths:
+      - knowledge
+      - docs
+      - agents
+      - hackathons
+      - plans
+      - reviews
+    include_files:
+      - README.md
+      - TAG_STRATEGY.md
+      - ZETTELKASTEN_GUIDE.md
+  cron:
+    refresh:
+      log_tail_lines: 40
+      failed_case_limit: 10
+      alert_prefix: gbrain refresh FAIL
+    nightly:
+      log_tail_lines: 40
+      failed_case_limit: 10
+      severe_drift_case_limit: 5
+      alert_prefix: gbrain nightly FAIL
+      regression_alert_prefix: gbrain regression FAIL
+artifacts:
+  smoke_last_json: refresh-smoke-last.json
+  regression_last_json: query-regression-last.json
+  regression_baseline_json: query-regression-baseline.json
+  weekly_review_json: weekly-baseline-review.json
+query_cases:
+  path: /home/tt/workspace/tools/gbrain/scripts/tt-curated/query-cases.yaml

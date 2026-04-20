@@ -1,16 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export HOME=/home/tt/workspace/tools/gbrain-sandbox-home
-export PATH=/home/tt/workspace/tools/gbrain-local-bun/bin:$PATH
-export GBRAIN_EMBED_DIMENSIONS="768"
-
-GBRAIN_ROOT="/home/tt/workspace/tools/gbrain"
-GBRAIN_CLI="/home/tt/workspace/tools/gbrain-local-bun/bin/bun run src/cli.ts"
-CURATED_STAGE="/home/tt/workspace/tools/gbrain-curated-stage"
-CURATED_DB_DIR="/home/tt/workspace/tools/gbrain-curated-db-768"
-CURATED_DB_PATH="$CURATED_DB_DIR/brain.pglite"
-CURATED_LOG_DIR="/home/tt/workspace/tools/gbrain-curated-logs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eval "$(/usr/bin/python3 "$SCRIPT_DIR/config_loader.py" shell)"
 
 mkdir -p "$CURATED_LOG_DIR"
 
