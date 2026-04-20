@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+node_modules/
+bun.lockb
+backups/
+artifacts/
+logs/
+*.log
+.DS_Store

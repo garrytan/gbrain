@@ -1,0 +1,25 @@
+[Unit]
+Description=HQ Minions OpenClaw Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+EnvironmentFile=/etc/hq-minions-openclaw/env
+Environment=GBRAIN_ALLOW_SHELL_JOBS=0
+ExecStartPre=/usr/bin/env bash -lc 'command -v bun >/dev/null 2>&1 || { echo "bun not found on PATH; install Bun before starting hq-minions-openclaw-worker.service" >&2; exit 1; }'
+ExecStart=/usr/bin/env bun run worker
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=35
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=__DIR__
+
+[Install]
+WantedBy=multi-user.target
