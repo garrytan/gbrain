@@ -2,6 +2,49 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.13.7] - 2026-04-20
+
+## **Action Brain 0.2 docs now match what is actually shippable today.**
+## **48h QA checks are draft-scoped, causal, and tied to real send timing.**
+
+This release closes documentation drift around Action Brain 0.2. The runbook now
+checks approval to send causality using `(item_id, draft_id)` linkage, not just
+item-level correlation that could false-pass multi-draft threads. It also uses a
+30-second approval-to-send window aligned with the locked 0.2 design's send timeout
+path, instead of a hard 1-second cutoff that could reject legitimate sends.
+
+The docs now call out feature gating clearly. `CLAUDE.md` keeps the 0.2 command and
+schema guidance, but marks it as planned until the dependent implementation children
+land. `docs/designs/action-brain/DESIGN.md` now links directly to the locked 0.2 plan
+so readers can move from high-level architecture to execution contract in one hop.
+
+### The numbers that matter
+
+Source: diff review for `GIT-1065` (`git diff origin/master...impl/git-1065-docs-48h-qa-runbook`)
+plus runbook query semantics in `docs/action-brain/0.2-qa-runbook.md`.
+
+| Metric | Before | After | Delta |
+|---|---:|---:|---:|
+| Runbook draft correlation key width | 1 key (`item_id`) | 2 keys (`item_id`, `draft_id`) | +1 key |
+| Approval-to-send proximity bound | 1 second | 30 seconds | +29s |
+| Missing locked-plan doc deliverables (DESIGN link + CHANGELOG entry) | 2 | 0 | -2 |
+| CLAUDE 0.2 status labeling | implicit shipped | explicit planned/not-shipped | clarified |
+
+The key shift is reliability in QA verdicts. A send now only counts as approved when
+the same draft was approved in causal order, within the real send timeout envelope.
+
+What this means for operators: the 48h gate now reflects actual runtime behavior and
+reduces both false positives and false confidence. When this wave ships, QA can trust
+the PASS/FAIL call without hand-auditing every thread. Use this as the canonical doc
+set for GIT-1057 Child 8 handoff.
+
+### Itemized changes
+
+- `docs/action-brain/0.2-qa-runbook.md` — tightened Query #3/#4 to draft-level correlation and causal timing semantics with a 30s bound.
+- `CLAUDE.md` — corrected Action Brain 0.2 sections to explicit planned/not-shipped status; removed schema source-of-truth claim against current `master`.
+- `docs/designs/action-brain/DESIGN.md` — added direct cross-reference to locked plan doc `docs/designs/action-brain/0.2.md`.
+- `scripts/check-action-brain-no-autosend.sh` + `test/check-action-brain-no-autosend.test.ts` — added CI guard for forbidden `auto.?send|autosend` wording under `src/action-brain`, with fixture coverage for pass/fail behavior, and wired it into `bun test`.
+
 ## [0.13.6] - 2026-04-20
 
 ### Added

@@ -217,6 +217,7 @@ Ship: Suggested responses
 - Draft replies for high-priority items
 - Context-aware (knows the person, history, stakes from GBrain)
 - Confirm-before-send (Abhi approves, system sends)
+- Locked implementation plan: `docs/designs/action-brain/0.2.md`
 
 ## Failure Modes & Recovery
 
