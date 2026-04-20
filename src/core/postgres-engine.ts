@@ -37,10 +37,14 @@ export class PostgresEngine implements BrainEngine {
       const url = config.database_url;
       if (!url) throw new GBrainError('No database URL', 'database_url is missing', 'Provide --url');
       const size = Math.min(config.poolSize, db.resolvePoolSize(config.poolSize));
+      // See db.ts connect() for rationale: pgbouncer transaction mode
+      // invalidates prepared statements between connection releases.
+      const isPooler = /pooler\.supabase\.com|:6543/i.test(url);
       this._sql = postgres(url, {
         max: size,
         idle_timeout: 20,
         connect_timeout: 10,
+        prepare: !isPooler,
         types: { bigint: postgres.BigInt },
       });
       await this._sql`SELECT 1`;
