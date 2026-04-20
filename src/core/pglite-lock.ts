@@ -75,20 +75,23 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
 
         // Is the locking process still alive?
         if (!isProcessAlive(lockPid)) {
-          // Stale lock — clean it up
+          // Stale lock — clean it up and retry immediately
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition, try again */ }
+          continue;
         } else if (Date.now() - lockTime > STALE_THRESHOLD_MS) {
           // Lock held for too long — assume stale (e.g., process hung)
-          // Still alive but probably stuck — force remove
+          // Still alive but probably stuck — force remove and retry
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+          continue;
         } else {
           // Lock is held by a live process — wait and retry
           await new Promise(r => setTimeout(r, 1000));
           continue;
         }
       } catch {
-        // Corrupt lock file — remove it
-        try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+        // Corrupt lock file — remove it and retry immediately
+        try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition, try again */ }
+        continue;
       }
     }
 
