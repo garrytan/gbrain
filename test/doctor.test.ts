@@ -36,9 +36,41 @@ describe('doctor command', () => {
 
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
-    // runDoctor should accept null engine — it runs filesystem checks only
-    // We can't call it directly (it calls process.exit), but we verify the signature
-    expect(runDoctor.length).toBe(2); // engine, args
+    // runDoctor should accept null engine — it runs filesystem checks only.
+    // Signature is (engine, args, dbSource?) — third param is optional and
+    // used by --fast to distinguish "no config" from "user skipped DB check".
+    // Function.length counts required params only (JS ignores ?-marked).
+    expect(runDoctor.length).toBeGreaterThanOrEqual(2);
+    expect(runDoctor.length).toBeLessThanOrEqual(3);
+  });
+
+  // Bug 7 — --fast should differentiate "no config anywhere" from "user
+  // chose --fast with GBRAIN_DATABASE_URL / config-file URL present".
+  test('getDbUrlSource reflects GBRAIN_DATABASE_URL env var', async () => {
+    const { getDbUrlSource } = await import('../src/core/config.ts');
+    const orig = process.env.GBRAIN_DATABASE_URL;
+    const origAlt = process.env.DATABASE_URL;
+    try {
+      process.env.GBRAIN_DATABASE_URL = 'postgresql://test@localhost/x';
+      expect(getDbUrlSource()).toBe('env:GBRAIN_DATABASE_URL');
+      delete process.env.GBRAIN_DATABASE_URL;
+      process.env.DATABASE_URL = 'postgresql://test@localhost/x';
+      expect(getDbUrlSource()).toBe('env:DATABASE_URL');
+    } finally {
+      if (orig === undefined) delete process.env.GBRAIN_DATABASE_URL;
+      else process.env.GBRAIN_DATABASE_URL = orig;
+      if (origAlt === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = origAlt;
+    }
+  });
+
+  test('doctor --fast emits source-specific message when URL present', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The source-aware message must reference the variable name so users
+    // know where their URL is coming from.
+    expect(source).toContain('Skipping DB checks (--fast mode, URL present from');
+    // The null-source fallback must still mention both config + env paths.
+    expect(source).toContain('GBRAIN_DATABASE_URL');
   });
 
   // v0.12.2 reliability wave — doctor detects JSONB double-encode + truncated

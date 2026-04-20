@@ -4,6 +4,7 @@ import { LATEST_VERSION } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
+import type { DbUrlSource } from '../core/config.ts';
 import { join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 
@@ -18,8 +19,13 @@ export interface Check {
  * Run doctor with filesystem-first, DB-second architecture.
  * Filesystem checks (resolver, conformance) run without engine.
  * DB checks run only if engine is provided.
+ *
+ * `dbSource` is passed only from the `--fast` and DB-unavailable paths in
+ * cli.ts so we can emit a precise "why no DB check" message. When null, the
+ * user has no DB configured anywhere; otherwise the caller chose --fast or
+ * we failed to connect despite a configured URL.
  */
-export async function runDoctor(engine: BrainEngine | null, args: string[]) {
+export async function runDoctor(engine: BrainEngine | null, args: string[], dbSource?: DbUrlSource) {
   const jsonOutput = args.includes('--json');
   const fastMode = args.includes('--fast');
   const doFix = args.includes('--fix');
@@ -136,11 +142,54 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
     // Read/parse failure is itself best-effort; skip silently.
   }
 
+  // 3c. Sync failure trail (Bug 9). sync.ts gates the `sync.last_commit`
+  // bookmark when per-file parse errors happen, and appends each failure
+  // to ~/.gbrain/sync-failures.jsonl with the commit hash + exact error.
+  // Without this doctor check, users see "sync blocked" and have no
+  // surface showing which files to fix.
+  try {
+    const { unacknowledgedSyncFailures, loadSyncFailures } = await import('../core/sync.ts');
+    const unacked = unacknowledgedSyncFailures();
+    const all = loadSyncFailures();
+    if (unacked.length > 0) {
+      const preview = unacked.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
+      checks.push({
+        name: 'sync_failures',
+        status: 'warn',
+        message:
+          `${unacked.length} unacknowledged sync failure(s). ${preview}` +
+          `${unacked.length > 3 ? `, and ${unacked.length - 3} more` : ''}. ` +
+          `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge.`,
+      });
+    } else if (all.length > 0) {
+      // Acknowledged-only: informational, not a warning.
+      checks.push({
+        name: 'sync_failures',
+        status: 'ok',
+        message: `${all.length} historical sync failure(s), all acknowledged.`,
+      });
+    }
+  } catch {
+    // Best-effort. A broken JSONL should not stop doctor.
+  }
+
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {
     if (!engine) {
-      checks.push({ name: 'connection', status: 'warn', message: 'No database configured (filesystem checks only)' });
+      // Pick the precise message. When dbSource is provided, we know
+      // whether a URL exists (env or config-file) — the caller simply
+      // skipped the connection. When null, there really is no config
+      // anywhere.
+      let msg: string;
+      if (fastMode && dbSource) {
+        msg = `Skipping DB checks (--fast mode, URL present from ${dbSource})`;
+      } else if (!fastMode && dbSource) {
+        msg = `Could not connect to configured DB (URL from ${dbSource}); filesystem checks only`;
+      } else {
+        msg = 'No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.';
+      }
+      checks.push({ name: 'connection', status: 'warn', message: msg });
     }
     const earlyFail1 = outputResults(checks, jsonOutput);
     process.exit(earlyFail1 ? 1 : 0);
@@ -229,7 +278,6 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
   }
 
   // 8. Graph health (link + timeline coverage on entity pages).
-  // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
   try {
     const health = await engine.getHealth();
     const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
@@ -242,6 +290,27 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
         status: 'warn',
         message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain link-extract && gbrain timeline-extract`,
       });
+    }
+
+    // Bug 11 — brain_score breakdown. When the total is < 100, show which
+    // components contributed the deficit so users know what to fix.
+    // Uses distinct *_score field names (not overloading link_coverage /
+    // timeline_coverage, which are entity-scoped).
+    if (health.brain_score < 100) {
+      const parts = [
+        `embed ${health.embed_coverage_score}/35`,
+        `links ${health.link_density_score}/25`,
+        `timeline ${health.timeline_coverage_score}/15`,
+        `orphans ${health.no_orphans_score}/15`,
+        `dead-links ${health.no_dead_links_score}/10`,
+      ];
+      checks.push({
+        name: 'brain_score',
+        status: health.brain_score >= 70 ? 'ok' : 'warn',
+        message: `Brain score ${health.brain_score}/100 (${parts.join(', ')})`,
+      });
+    } else {
+      checks.push({ name: 'brain_score', status: 'ok', message: `Brain score 100/100` });
     }
   } catch {
     checks.push({ name: 'graph_coverage', status: 'warn', message: 'Could not check graph coverage' });

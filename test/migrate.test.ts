@@ -201,3 +201,49 @@ describe('migrate: v9 (timeline_dedup_index) regression — must be fast on 1K d
     expect(helperIdx.length).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// resolvePoolSize — GBRAIN_POOL_SIZE env override
+// ─────────────────────────────────────────────────────────────────
+//
+// Guards the Bug 2 fix: users on constrained poolers (Supabase port 6543)
+// must be able to cap the pool size via GBRAIN_POOL_SIZE. The default
+// (10) is unchanged when the env var is unset.
+
+describe('resolvePoolSize — env var + explicit override', () => {
+  const { resolvePoolSize } = require('../src/core/db.ts');
+  const original = process.env.GBRAIN_POOL_SIZE;
+
+  afterAll(() => {
+    if (original === undefined) delete process.env.GBRAIN_POOL_SIZE;
+    else process.env.GBRAIN_POOL_SIZE = original;
+  });
+
+  test('returns 10 default when unset and no explicit override', () => {
+    delete process.env.GBRAIN_POOL_SIZE;
+    expect(resolvePoolSize()).toBe(10);
+  });
+
+  test('reads GBRAIN_POOL_SIZE as an integer', () => {
+    process.env.GBRAIN_POOL_SIZE = '2';
+    expect(resolvePoolSize()).toBe(2);
+    process.env.GBRAIN_POOL_SIZE = '5';
+    expect(resolvePoolSize()).toBe(5);
+  });
+
+  test('ignores invalid GBRAIN_POOL_SIZE values', () => {
+    process.env.GBRAIN_POOL_SIZE = 'not-a-number';
+    expect(resolvePoolSize()).toBe(10);
+    process.env.GBRAIN_POOL_SIZE = '0';
+    expect(resolvePoolSize()).toBe(10);
+    process.env.GBRAIN_POOL_SIZE = '-1';
+    expect(resolvePoolSize()).toBe(10);
+  });
+
+  test('explicit argument wins over env + default', () => {
+    delete process.env.GBRAIN_POOL_SIZE;
+    expect(resolvePoolSize(3)).toBe(3);
+    process.env.GBRAIN_POOL_SIZE = '7';
+    expect(resolvePoolSize(3)).toBe(3);
+  });
+});

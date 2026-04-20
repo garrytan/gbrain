@@ -511,14 +511,30 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     const steps: Record<string, unknown> = {};
     const failed: string[] = [];
 
+    // Bug 8 — Between phases, yield to the event loop. The worker's lock
+    // renewal runs on a timer (src/core/minions/worker.ts); without a
+    // periodic yield, long CPU-bound phases starve the renewal callback
+    // and the job gets killed by the stalled-sweeper. A single
+    // `await new Promise(r => setImmediate(r))` gives the timer a chance
+    // to fire. The per-phase body is async+await already, so each phase
+    // internally yields on its own I/O boundaries — this is a belt for
+    // the gap between phases.
+    //
+    // Follow-up (deferred to v0.15): thread ctx.signal / ctx.shutdownSignal
+    // through each core fn so mid-phase cancellation works on huge brains.
+    const yieldToLoop = () => new Promise<void>(r => setImmediate(r));
+
     try { steps.sync = await performSync(engine, { repoPath, noEmbed: true }); }
     catch (e) { steps.sync = { error: e instanceof Error ? e.message : String(e) }; failed.push('sync'); }
+    await yieldToLoop();
 
     try { steps.extract = await runExtractCore(engine, { mode: 'all', dir: repoPath }); }
     catch (e) { steps.extract = { error: e instanceof Error ? e.message : String(e) }; failed.push('extract'); }
+    await yieldToLoop();
 
     try { await runEmbedCore(engine, { stale: true }); steps.embed = { embedded: true }; }
     catch (e) { steps.embed = { error: e instanceof Error ? e.message : String(e) }; failed.push('embed'); }
+    await yieldToLoop();
 
     try { steps.backlinks = await runBacklinksCore({ action: 'fix', dir: repoPath }); }
     catch (e) { steps.backlinks = { error: e instanceof Error ? e.message : String(e) }; failed.push('backlinks'); }

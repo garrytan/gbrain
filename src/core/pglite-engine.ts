@@ -481,7 +481,12 @@ export class PGLiteEngine implements BrainEngine {
       )
       SELECT DISTINCT g.slug, g.title, g.type, g.depth,
         coalesce(
-          (SELECT jsonb_agg(jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
+          -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type)
+          -- edges that originate from different provenance (markdown body
+          -- vs frontmatter vs auto-extracted). Presentation-only dedup;
+          -- the links table still preserves every provenance row. See
+          -- plan Bug 6/10.
+          (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
            WHERE l2.from_page_id = g.id),
@@ -850,6 +855,8 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM pages p
          WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
+        -- Bug 11 — orphan = islanded (no inbound AND no outbound).
+        -- See BrainHealth.orphan_pages docstring; docs updated to match this.
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
@@ -890,10 +897,14 @@ export class PGLiteEngine implements BrainEngine {
     const timelineCoverageDensity = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
     const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
-    const brainScore = pageCount === 0 ? 0 : Math.round(
-      (embedCoverage * 0.35 + linkDensity * 0.25 + timelineCoverageDensity * 0.15 +
-       noOrphans * 0.15 + noDeadLinks * 0.10) * 100
-    );
+    // Bug 11 — per-component points. Sum equals brainScore by construction
+    // so `doctor` can render a breakdown that adds up to the total.
+    const embedCoverageScore = pageCount === 0 ? 0 : Math.round(embedCoverage * 35);
+    const linkDensityScore = pageCount === 0 ? 0 : Math.round(linkDensity * 25);
+    const timelineCoverageScore = pageCount === 0 ? 0 : Math.round(timelineCoverageDensity * 15);
+    const noOrphansScore = pageCount === 0 ? 0 : Math.round(noOrphans * 15);
+    const noDeadLinksScore = pageCount === 0 ? 0 : Math.round(noDeadLinks * 10);
+    const brainScore = embedCoverageScore + linkDensityScore + timelineCoverageScore + noOrphansScore + noDeadLinksScore;
 
     return {
       page_count: pageCount,
@@ -902,12 +913,18 @@ export class PGLiteEngine implements BrainEngine {
       orphan_pages: orphanPages,
       missing_embeddings: Number(r.missing_embeddings),
       brain_score: brainScore,
+      dead_links: deadLinks,
       link_coverage: Number(r.link_coverage),
       timeline_coverage: Number(r.timeline_coverage),
       most_connected: (connected as { slug: string; link_count: number }[]).map(c => ({
         slug: c.slug,
         link_count: Number(c.link_count),
       })),
+      embed_coverage_score: embedCoverageScore,
+      link_density_score: linkDensityScore,
+      timeline_coverage_score: timelineCoverageScore,
+      no_orphans_score: noOrphansScore,
+      no_dead_links_score: noDeadLinksScore,
     };
   }
 

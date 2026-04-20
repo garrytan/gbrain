@@ -42,7 +42,7 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import type { BrainEngine } from '../../core/engine.ts';
-import { appendCompletedMigration } from '../../core/preferences.ts';
+// Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 const ROLLBACK_DIR = join(homedir(), '.gbrain', 'migrations');
 const ROLLBACK_FILE = join(ROLLBACK_DIR, 'v0_13_1-rollback.jsonl');
@@ -233,24 +233,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
     const anyFailed = phases.some(p => p.status === 'failed');
     const status: OrchestratorResult['status'] = anyFailed ? 'partial' : 'complete';
 
-    if (!opts.dryRun && status === 'complete') {
-      try {
-        appendCompletedMigration({
-          version: '0.13.1',
-          completed_at: new Date().toISOString(),
-          status: 'complete',
-          phases: phases.map(p => ({ name: p.name, status: p.status })),
-          files_rewritten: filesRewritten,
-        });
-      } catch (e) {
-        // Recording failure is non-fatal; migration still ran.
-        phases.push({
-          name: 'record',
-          status: 'failed',
-          detail: e instanceof Error ? e.message : String(e),
-        });
-      }
-    }
+    // Bug 3 — ledger write lives in the runner now.
 
     return {
       version: '0.13.1',

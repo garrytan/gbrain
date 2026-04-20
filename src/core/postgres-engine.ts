@@ -31,11 +31,14 @@ export class PostgresEngine implements BrainEngine {
   // Lifecycle
   async connect(config: EngineConfig & { poolSize?: number }): Promise<void> {
     if (config.poolSize) {
-      // Instance-level connection for worker isolation
+      // Instance-level connection for worker isolation. resolvePoolSize lets
+      // GBRAIN_POOL_SIZE cap below the caller's requested size when set — the
+      // env var is a user escape hatch, so it wins.
       const url = config.database_url;
       if (!url) throw new GBrainError('No database URL', 'database_url is missing', 'Provide --url');
+      const size = Math.min(config.poolSize, db.resolvePoolSize(config.poolSize));
       this._sql = postgres(url, {
-        max: config.poolSize,
+        max: size,
         idle_timeout: 20,
         connect_timeout: 10,
         types: { bigint: postgres.BigInt },
@@ -540,7 +543,14 @@ export class PostgresEngine implements BrainEngine {
       )
       SELECT DISTINCT g.slug, g.title, g.type, g.depth,
         coalesce(
-          (SELECT jsonb_agg(jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
+          -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type)
+          -- edges that originate from different provenance (markdown body
+          -- vs frontmatter vs auto-extracted). The underlying links table
+          -- preserves every row with its origin_page_id / link_source —
+          -- the dedup is presentation-only for the legacy traverseGraph
+          -- aggregation. traversePaths has its own in-memory dedup at a
+          -- different layer. See plan Bug 6/10.
+          (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
            WHERE l2.from_page_id = g.id),
@@ -893,9 +903,12 @@ export class PostgresEngine implements BrainEngine {
 
   async getHealth(): Promise<BrainHealth> {
     const sql = this.sql;
-    // dead_links omitted (always 0 under ON DELETE CASCADE on link FKs).
-    // orphan_pages now matches PGLite definition: no inbound links (regardless of outbound).
-    // stale_pages aligned to PGLite definition (page updated_at < latest timeline entry).
+    // Bug 11 doc-drift fix — orphan_pages means "islanded" (no inbound AND
+    // no outbound links), aligning both engines with the user-facing
+    // definition. The type comment previously said "no inbound" but the
+    // SQL required both — docs now match code so users can trust the
+    // number. A hub page that links out to many but has no back-references
+    // is working as intended, not an orphan.
     const [h] = await sql`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
@@ -943,13 +956,16 @@ export class PostgresEngine implements BrainEngine {
 
     // brain_score: 0-100 weighted average
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverage = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
+    const timelineCoverageWhole = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
     const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
-    const brainScore = pageCount === 0 ? 0 : Math.round(
-      (embedCoverage * 0.35 + linkDensity * 0.25 + timelineCoverage * 0.15 +
-       noOrphans * 0.15 + noDeadLinks * 0.10) * 100
-    );
+    // Per-component points. Sum equals brainScore by construction.
+    const embedCoverageScore = pageCount === 0 ? 0 : Math.round(embedCoverage * 35);
+    const linkDensityScore = pageCount === 0 ? 0 : Math.round(linkDensity * 25);
+    const timelineCoverageScore = pageCount === 0 ? 0 : Math.round(timelineCoverageWhole * 15);
+    const noOrphansScore = pageCount === 0 ? 0 : Math.round(noOrphans * 15);
+    const noDeadLinksScore = pageCount === 0 ? 0 : Math.round(noDeadLinks * 10);
+    const brainScore = embedCoverageScore + linkDensityScore + timelineCoverageScore + noOrphansScore + noDeadLinksScore;
 
     return {
       page_count: pageCount,
@@ -958,12 +974,18 @@ export class PostgresEngine implements BrainEngine {
       orphan_pages: orphanPages,
       missing_embeddings: Number(h.missing_embeddings),
       brain_score: brainScore,
+      dead_links: deadLinks,
       link_coverage: Number(h.link_coverage),
       timeline_coverage: Number(h.timeline_coverage),
       most_connected: (connected as { slug: string; link_count: number }[]).map(c => ({
         slug: c.slug,
         link_count: Number(c.link_count),
       })),
+      embed_coverage_score: embedCoverageScore,
+      link_density_score: linkDensityScore,
+      timeline_coverage_score: timelineCoverageScore,
+      no_orphans_score: noOrphansScore,
+      no_dead_links_score: noDeadLinksScore,
     };
   }
 

@@ -332,8 +332,11 @@ async function handleCliOnly(command: string, args: string[]) {
     // Doctor runs filesystem checks first (no DB needed), then DB checks.
     // --fast skips DB checks entirely.
     const { runDoctor } = await import('./commands/doctor.ts');
+    const { getDbUrlSource } = await import('./core/config.ts');
     if (args.includes('--fast')) {
-      await runDoctor(null, args);
+      // Pass the DB URL source so doctor can tell "no config at all" from
+      // "user chose --fast while config is present".
+      await runDoctor(null, args, getDbUrlSource());
     } else {
       try {
         const eng = await connectEngine();
@@ -341,7 +344,7 @@ async function handleCliOnly(command: string, args: string[]) {
         await eng.disconnect();
       } catch {
         // DB unavailable — still run filesystem checks
-        await runDoctor(null, args);
+        await runDoctor(null, args, getDbUrlSource());
       }
     }
     return;

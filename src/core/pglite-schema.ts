@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   backoff_delay    INTEGER     NOT NULL DEFAULT 1000,
   backoff_jitter   REAL        NOT NULL DEFAULT 0.2,
   stalled_counter  INTEGER     NOT NULL DEFAULT 0,
-  max_stalled      INTEGER     NOT NULL DEFAULT 1,
+  max_stalled      INTEGER     NOT NULL DEFAULT 3,
   lock_token       TEXT,
   lock_until       TIMESTAMPTZ,
   delay_until      TIMESTAMPTZ,
