@@ -275,7 +275,8 @@ export class PostgresEngine implements BrainEngine {
     `;
     const result = new Map<number, Float32Array>();
     for (const row of rows) {
-      if (row.embedding) result.set(row.id as number, row.embedding as Float32Array);
+      const parsed = parseEmbedding(row.embedding);
+      if (parsed) result.set(row.id as number, parsed);
     }
     return result;
   }
@@ -710,4 +711,26 @@ export class PostgresEngine implements BrainEngine {
     `;
     return rows.map((r: Record<string, unknown>) => rowToChunk(r, true));
   }
+}
+
+/**
+ * Parse an embedding value from any runtime shape into a Float32Array.
+ * postgres (Porsager) returns pgvector columns as strings ("[0.1,0.2,...]")
+ * by default — no custom type parser is registered. The previous code cast
+ * directly as Float32Array, which is a compile-time no-op and caused NaN
+ * scores downstream in cosine similarity.
+ */
+function parseEmbedding(raw: unknown): Float32Array | null {
+  if (!raw) return null;
+  if (raw instanceof Float32Array) return raw;
+  if (Array.isArray(raw)) return new Float32Array(raw);
+  if (typeof raw === 'string') {
+    const clean = raw.trim().replace(/^\[|\]$/g, '');
+    if (!clean) return null;
+    const parts = clean.split(',');
+    const arr = new Float32Array(parts.length);
+    for (let i = 0; i < parts.length; i++) arr[i] = parseFloat(parts[i]);
+    return arr;
+  }
+  return null;
 }

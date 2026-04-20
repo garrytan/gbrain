@@ -204,11 +204,14 @@ async function cosineReScore(
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   let dot = 0, magA = 0, magB = 0;
-  for (let i = 0; i < a.length; i++) {
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
     dot += a[i] * b[i];
     magA += a[i] * a[i];
     magB += b[i] * b[i];
   }
   const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
+  if (!Number.isFinite(denom) || denom === 0) return 0;
+  const result = dot / denom;
+  return Number.isFinite(result) ? result : 0;
 }
