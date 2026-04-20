@@ -11,6 +11,9 @@ describe('parseGlobalFlags', () => {
   });
 
   test('strips --quiet from argv and sets quiet=true', () => {
+    // Per-command handlers that historically parsed their own --quiet
+    // (skillpack-check) now read the resolved CliOptions singleton via
+    // getCliOptions() — see src/core/cli-options.ts.
     const r = parseGlobalFlags(['--quiet', 'doctor', '--fast']);
     expect(r.cliOpts.quiet).toBe(true);
     expect(r.cliOpts.progressJson).toBe(false);

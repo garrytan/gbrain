@@ -18,6 +18,7 @@
 
 import { execFileSync } from 'child_process';
 import { VERSION } from '../version.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 
 /**
  * Resolve the gbrain binary + args for spawning subcommands from
@@ -207,7 +208,9 @@ Exit codes:
     return;
   }
 
-  const quiet = args.includes('--quiet');
+  // --quiet is parsed as a global flag in src/cli.ts (and stripped from argv
+  // before reaching here); honor it via the CliOptions singleton.
+  const quiet = getCliOptions().quiet;
   const report = buildReport();
 
   if (!quiet) {

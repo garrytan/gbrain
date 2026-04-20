@@ -2,6 +2,8 @@ import { writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
+import { createProgress } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 export async function runExport(engine: BrainEngine, args: string[]) {
   const dirIdx = args.indexOf('--dir');
@@ -9,6 +11,10 @@ export async function runExport(engine: BrainEngine, args: string[]) {
 
   const pages = await engine.listPages({ limit: 100000 });
   console.log(`Exporting ${pages.length} pages to ${outDir}/`);
+
+  // Progress on stderr so stdout stays clean for scripts parsing counts.
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('export.pages', pages.length);
 
   let exported = 0;
 
@@ -41,10 +47,10 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     }
 
     exported++;
-    if (exported % 100 === 0) {
-      process.stdout.write(`\r  ${exported}/${pages.length} exported`);
-    }
+    progress.tick();
   }
 
-  console.log(`\nExported ${exported} pages to ${outDir}/`);
+  progress.finish();
+  // Stdout summary preserved so scripts that grep for "Exported N pages" keep working.
+  console.log(`Exported ${exported} pages to ${outDir}/`);
 }
