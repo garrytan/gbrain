@@ -123,6 +123,13 @@ export interface UpdateActionDraftInput {
   send_error?: string | null;
 }
 
+export interface UpdateActionDraftStatusAtomicInput {
+  status: ActionDraftStatus;
+  approved_at?: Date | null;
+  sent_at?: Date | null;
+  send_error?: string | null;
+}
+
 export class ActionItemNotFoundError extends Error {
   constructor(id: number) {
     super(`Action item not found: ${id}`);
@@ -321,6 +328,10 @@ export class ActionEngine {
     });
   }
 
+  async insertDraft(input: CreateActionDraftInput): Promise<ActionDraft> {
+    return this.createDraft(input);
+  }
+
   async getDraft(id: number): Promise<ActionDraft | null> {
     const result = await this.db.query<ActionDraftRow>(
       `SELECT *
@@ -334,6 +345,10 @@ export class ActionEngine {
     }
 
     return mapActionDraft(result.rows[0]);
+  }
+
+  async getDraftById(id: number): Promise<ActionDraft | null> {
+    return this.getDraft(id);
   }
 
   async listDrafts(filters: ListActionDraftFilters = {}): Promise<ActionDraft[]> {
@@ -369,6 +384,19 @@ export class ActionEngine {
     );
 
     return result.rows.map(mapActionDraft);
+  }
+
+  async listPendingByItem(actionItemId: number, limit = 100, offset = 0): Promise<ActionDraft[]> {
+    return this.listDrafts({
+      action_item_id: actionItemId,
+      status: 'pending',
+      limit,
+      offset,
+    });
+  }
+
+  async listByStatus(status: ActionDraftStatus, limit = 100, offset = 0): Promise<ActionDraft[]> {
+    return this.listDrafts({ status, limit, offset });
   }
 
   async updateDraft(id: number, patch: UpdateActionDraftInput): Promise<ActionDraft> {
@@ -440,6 +468,42 @@ export class ActionEngine {
     const row = result.rows[0];
     if (!row) {
       throw new ActionDraftNotFoundError(id);
+    }
+
+    return mapActionDraft(row);
+  }
+
+  async updateStatusAtomic(id: number, update: UpdateActionDraftStatusAtomicInput): Promise<ActionDraft | null> {
+    const params: unknown[] = [id, update.status];
+    const assignments = ['status = $2'];
+
+    if (update.approved_at !== undefined) {
+      params.push(update.approved_at);
+      assignments.push(`approved_at = $${params.length}`);
+    }
+
+    if (update.sent_at !== undefined) {
+      params.push(update.sent_at);
+      assignments.push(`sent_at = $${params.length}`);
+    }
+
+    if (update.send_error !== undefined) {
+      params.push(update.send_error);
+      assignments.push(`send_error = $${params.length}`);
+    }
+
+    const result = await this.db.query<ActionDraftRow>(
+      `UPDATE action_drafts
+       SET ${assignments.join(', ')}
+       WHERE id = $1
+         AND status = 'pending'
+       RETURNING *`,
+      params
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      return null;
     }
 
     return mapActionDraft(row);

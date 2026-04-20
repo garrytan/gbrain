@@ -18,7 +18,12 @@ export type ActionHistoryEventType =
   | 'draft_edited'
   | 'draft_rejected'
   | 'draft_sent'
-  | 'draft_send_failed';
+  | 'draft_send_failed'
+  | 'draft_regenerate'
+  | 'draft_skipped'
+  | 'draft_superseded'
+  | 'draft_generation_failed'
+  | 'draft_injection_suspected';
 
 export interface ActionItem {
   id: number;

@@ -117,12 +117,18 @@ describe('Action Brain schema', () => {
     const inserted = await localDb.query(
       `INSERT INTO action_items (title, type, source_message_id)
        VALUES ('Follow up on shipment ETA', 'follow_up', 'msg-001')
-       RETURNING status, stale_after_hours`
+       RETURNING id, status, stale_after_hours`
     );
 
-    const row = inserted.rows[0] as { status: string; stale_after_hours: number };
+    const row = inserted.rows[0] as { id: number; status: string; stale_after_hours: number };
     expect(row.status).toBe('open');
     expect(row.stale_after_hours).toBe(48);
+
+    await localDb.query(
+      `INSERT INTO action_history (item_id, event_type, actor, metadata)
+       VALUES ($1, 'draft_generation_failed', 'system', '{}'::jsonb)`,
+      [row.id]
+    );
   });
 
   test('is idempotent when initActionSchema is run twice', async () => {

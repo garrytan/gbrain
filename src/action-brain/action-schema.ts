@@ -41,7 +41,12 @@ CREATE TABLE IF NOT EXISTS action_history (
       'draft_edited',
       'draft_rejected',
       'draft_sent',
-      'draft_send_failed'
+      'draft_send_failed',
+      'draft_regenerate',
+      'draft_skipped',
+      'draft_superseded',
+      'draft_generation_failed',
+      'draft_injection_suspected'
     )
   ),
   timestamp   TIMESTAMPTZ NOT NULL DEFAULT now(),

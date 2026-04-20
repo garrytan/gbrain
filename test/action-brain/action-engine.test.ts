@@ -338,6 +338,71 @@ describe('ActionEngine', () => {
     expect(await engine.getDraft(created.id)).toBeNull();
   });
 
+  test('draft query helpers expose pending-by-item and status filters', async () => {
+    const { engine } = await createEngine();
+    const item = await engine.createItem({
+      title: 'Draft helper methods',
+      type: 'follow_up',
+      source_message_id: 'msg-draft-helpers-001',
+    });
+
+    const pending = await engine.insertDraft({
+      action_item_id: item.id,
+      recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+      draft_text: 'Pending draft',
+      model: 'claude-3-5-haiku',
+      context_hash: 'hash-helper-1',
+      context_snapshot: {},
+    });
+
+    await engine.insertDraft({
+      action_item_id: item.id,
+      recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+      draft_text: 'Already sent',
+      model: 'claude-3-5-haiku',
+      context_hash: 'hash-helper-2',
+      context_snapshot: {},
+      status: 'sent',
+    });
+
+    const fetched = await engine.getDraftById(pending.id);
+    expect(fetched?.id).toBe(pending.id);
+
+    const pendingByItem = await engine.listPendingByItem(item.id);
+    expect(pendingByItem.length).toBe(1);
+    expect(pendingByItem[0]?.id).toBe(pending.id);
+
+    const sentDrafts = await engine.listByStatus('sent');
+    expect(sentDrafts.some((draft) => draft.action_item_id === item.id)).toBe(true);
+  });
+
+  test('updateStatusAtomic only updates pending drafts once', async () => {
+    const { engine } = await createEngine();
+    const item = await engine.createItem({
+      title: 'Atomic status update guard',
+      type: 'follow_up',
+      source_message_id: 'msg-draft-atomic-001',
+    });
+
+    const draft = await engine.createDraft({
+      action_item_id: item.id,
+      recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+      draft_text: 'Need approval',
+      model: 'claude-3-5-haiku',
+      context_hash: 'hash-atomic',
+      context_snapshot: {},
+    });
+
+    const first = await engine.updateStatusAtomic(draft.id, {
+      status: 'approved',
+      approved_at: new Date('2026-04-20T00:00:00.000Z'),
+    });
+    expect(first?.status).toBe('approved');
+
+    const second = await engine.updateStatusAtomic(draft.id, { status: 'sent' });
+    expect(second).toBeNull();
+  });
+
   test('drafts enforce unique(action_item_id, version)', async () => {
     const { engine } = await createEngine();
     const item = await engine.createItem({
