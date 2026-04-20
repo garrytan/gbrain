@@ -21,12 +21,12 @@ cd "$ROOT"
 # Using grep -P for Perl-compatible regex (lookahead-free pattern is enough here).
 PATTERN='\$\{JSON\.stringify\([^)]*\)\}::jsonb'
 
-if grep -rEn "$PATTERN" src/ 2>/dev/null; then
+if grep -rEn "$PATTERN" src/ scripts/ 2>/dev/null; then
   echo
-  echo "ERROR: Found JSON.stringify(...)::jsonb pattern in src/."
+  echo "ERROR: Found JSON.stringify(...)::jsonb pattern in src/ or scripts/."
   echo "       postgres.js v3 stringifies again, producing JSONB string literals."
   echo "       Use sql.json(x) instead. See feedback_postgres_jsonb_double_encode.md."
   exit 1
 fi
 
-echo "OK: no JSON.stringify(x)::jsonb interpolation pattern in src/"
+echo "OK: no JSON.stringify(x)::jsonb interpolation pattern in src/ or scripts/"

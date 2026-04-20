@@ -209,7 +209,7 @@ try {
       });
       await tx`
         UPDATE pages
-        SET frontmatter = ${JSON.stringify(mergedFm)}::jsonb,
+        SET frontmatter = ${sql.json(mergedFm)},
             content_hash = ${newHash},
             updated_at = now()
         WHERE id = ${canonical.id}

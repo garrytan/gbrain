@@ -56,9 +56,55 @@ What shipped:
 Current corpus state: **15,507 pages** (was 15,526 at start of continuation),
 **3,496 `works_at` edges intact** (edges were migrated, none dropped).
 
+### Late afternoon addendum: Tier B hub re-verification
+
+After codex pushed back on "add relationship edges" as low-ROI pre-spend, the
+next tractable paid option got unblocked: verify the Tier B non-noise hubs.
+
+- **Target**: Tier B (`enrichment_source='no_search'`) companies with inbound
+  edges >= 3. That's 35 hubs — Gary's actual network density leaders that the
+  Phase 2 hybrid didn't reach.
+- **Run**: Haiku 4.5 + web search, concurrency 5, budget cap $5, wall-clock cap
+  5 min. Completed 35/35 in **31.2s** at **$0.9973** (well under both caps).
+  Script at `scripts/cleanup-tier-b-hub-reverify.ts`. Rollback at
+  `~/.gbrain/migrations/tier-b-hub-reverify-rollback-2026-04-20T15-59-44-142Z.jsonl`.
+- Every row written with `enrichment_source='haiku_search'`,
+  `enrichment_verified=true`, industry_canonical bucket re-applied, industry_original
+  updated to the fresh Haiku value.
+
+### Late afternoon addendum: JSONB double-encode bug caught and fixed
+
+While verifying the hub re-verification counts, the final haiku_search total
+came out wrong (71 when 113+ was expected). Investigation uncovered a **silent
+data corruption** bug in my own merge + re-verify scripts.
+
+- **Cause**: `${JSON.stringify(x)}::jsonb` in a postgres.js template literal
+  binds the value as jsonb and applies one extra layer of jsonb-string
+  wrapping, storing an opaque JSON string instead of the intended object.
+  All `->>` accessors and `?` key checks on the corrupted rows silently
+  return null.
+- **Scope**: 54 company rows affected — all 35 newly-reverified hubs plus 19
+  canonical rows from the Tier 1/2/Erste merges earlier in the session. None
+  of the pre-session data was affected (Phase 1 + Phase 2 scripts used the
+  UNNEST pattern which forces correct text-then-jsonb cast).
+- **Fix**: `scripts/cleanup-fix-jsonb-string-corruption.ts` unwraps via
+  `(frontmatter #>> '{}')::jsonb` and recomputes content_hash. All 54 rows
+  recovered cleanly with full rollback JSONL. Post-fix enrichment distribution:
+  no_search=1,772, openai_search=621, haiku_search=**112** (matches expected
+  58 baseline + 20 Tier A backfill + some restored canonicals + 35 new hubs,
+  accounting for the 19 merged pages).
+- **Why I missed it**: gbrain ships a `gbrain repair-jsonb` command plus a CI
+  grep guard (`scripts/check-jsonb-pattern.sh`) for this exact bug class, but
+  the guard only scanned `src/`, not `scripts/`. Extended the guard to cover
+  both. My scripts are now all on `sql.json(x)` (the canonical fix).
+- **Memory saved**: `~/.claude/projects/-Users-gergoorendi/memory/feedback_postgres_jsonb_double_encode.md`
+  so this doesn't repeat.
+
 What remains open from the original doc:
 1. **4.1 step 2 trust-boundary gate** - still blocked on the CRM surface existing.
-2. **4.2 paid top-N re-verification** - still requires explicit capped budget.
+2. **4.2 paid top-N re-verification** - **PARTIALLY CLOSED**: 35 highest-signal
+   hubs (edges >= 3) are now verified. 1,100+ non-hub single-edge Tier B rows
+   remain at `verified:false`; the doc's "do nothing" default still applies.
 
 Nothing else from the original section 4 list is actionable.
 
