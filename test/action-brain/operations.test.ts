@@ -700,6 +700,48 @@ describe('Action Brain operation integration', () => {
     });
   });
 
+  test('action_draft_approve stale sending retries converge deterministically across repeated retry=true attempts', async () => {
+    await withActionContext(async (ctx, engine) => {
+      const { draftId } = await seedActionItemAndDraft(engine);
+      const db = (engine as unknown as EngineWithDb).db;
+      const actionDraftApprove = getActionOperation('action_draft_approve');
+
+      await db.query(
+        `UPDATE action_drafts
+         SET status = 'sending',
+             approved_at = now() - interval '5 minutes',
+             sent_at = NULL
+         WHERE id = $1`,
+        [draftId]
+      );
+
+      const calls: Array<{ command: string; args: string[] }> = [];
+      setActionDraftSendExecutorForTests(async (command, args) => {
+        calls.push({ command, args: [...args] });
+        return { stdout: 'ok', stderr: '' };
+      });
+
+      try {
+        const firstRetry = await actionDraftApprove.handler(ctx, { id: draftId, retry: true });
+        expect(firstRetry.status).toBe('send_failed');
+        expect(firstRetry.resumed_from_status).toBe('sending');
+        expect(firstRetry.recovered_without_resend).toBe(true);
+
+        const secondRetry = await actionDraftApprove.handler(ctx, { id: draftId, retry: true });
+        expect(secondRetry.status).toBe('sent');
+        expect(secondRetry.resumed_from_status).toBe('send_failed');
+        expect(calls).toHaveLength(1);
+
+        const thirdRetry = await actionDraftApprove.handler(ctx, { id: draftId, retry: true });
+        expect(thirdRetry.status).toBe('already_processed');
+        expect(thirdRetry.draft_status).toBe('sent');
+        expect(thirdRetry.retry_required).toBe(false);
+      } finally {
+        setActionDraftSendExecutorForTests(null);
+      }
+    });
+  });
+
   test('action_draft_reject, action_draft_edit, and action_draft_regenerate emit expected history events', async () => {
     await withActionContext(async (ctx, engine) => {
       const db = (engine as unknown as EngineWithDb).db;
