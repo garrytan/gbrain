@@ -434,6 +434,52 @@ describe('ActionEngine', () => {
     ).rejects.toThrow();
   });
 
+  test('createDraft retries auto-version allocation after unique version conflicts', async () => {
+    const { db: localDb, engine } = await createEngine();
+    const item = await engine.createItem({
+      title: 'Retry version allocation',
+      type: 'follow_up',
+      source_message_id: 'msg-draft-version-retry-001',
+    });
+
+    await engine.createDraft({
+      action_item_id: item.id,
+      recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+      draft_text: 'existing v1',
+      model: 'claude-3-5-haiku',
+      context_hash: 'hash-existing-v1',
+      context_snapshot: {},
+    });
+
+    let injectedStaleVersionRead = false;
+    const conflictSimulatingEngine = new ActionEngine({
+      query: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> => {
+        if (
+          !injectedStaleVersionRead &&
+          sql.includes('COALESCE(MAX(version), 0) + 1 AS next_version') &&
+          Number(params[0]) === item.id
+        ) {
+          injectedStaleVersionRead = true;
+          return { rows: [{ next_version: 1 } as T] };
+        }
+        const result = params.length === 0 ? await localDb.query(sql) : await localDb.query(sql, params);
+        return { rows: result.rows as T[] };
+      },
+    } as any);
+
+    const created = await conflictSimulatingEngine.createDraft({
+      action_item_id: item.id,
+      recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+      draft_text: 'new draft after race',
+      model: 'claude-3-5-haiku',
+      context_hash: 'hash-after-race',
+      context_snapshot: {},
+    });
+
+    expect(injectedStaleVersionRead).toBe(true);
+    expect(created.version).toBe(2);
+  });
+
   test('deleting action_items cascades to action_drafts', async () => {
     const { db: localDb, engine } = await createEngine();
     const item = await engine.createItem({

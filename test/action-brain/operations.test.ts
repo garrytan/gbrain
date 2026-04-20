@@ -392,6 +392,57 @@ describe('Action Brain operation integration', () => {
     });
   });
 
+  test('action_draft_approve reconciles post-send persistence failures without re-sending', async () => {
+    await withActionContext(async (ctx, engine) => {
+      const { draftId, itemId } = await seedActionItemAndDraft(engine);
+      const db = (engine as unknown as EngineWithDb).db;
+      const actionDraftApprove = getActionOperation('action_draft_approve');
+
+      await db.query(
+        `UPDATE action_drafts
+         SET status = 'approved',
+             approved_at = now()
+         WHERE id = $1`,
+        [draftId]
+      );
+      await db.query(
+        `INSERT INTO action_history (item_id, event_type, actor, metadata)
+         VALUES ($1, 'draft_sent', 'human_feedback', $2::jsonb)`,
+        [itemId, JSON.stringify({ draft_id: draftId, delivery_confirmed: true, simulated_interruption: true })]
+      );
+
+      const calls: Array<{ command: string; args: string[] }> = [];
+      setActionDraftSendExecutorForTests(async (command, args) => {
+        calls.push({ command, args: [...args] });
+        return { stdout: 'ok', stderr: '' };
+      });
+
+      try {
+        const noRetry = await actionDraftApprove.handler(ctx, { id: draftId });
+        expect(noRetry.status).toBe('already_processed');
+        expect(noRetry.draft_status).toBe('approved');
+        expect(noRetry.retry_required).toBe(true);
+
+        const repaired = await actionDraftApprove.handler(ctx, { id: draftId, retry: true });
+        expect(repaired.status).toBe('sent');
+        expect(repaired.resumed_from_status).toBe('approved');
+        expect(repaired.reconciled_without_resend).toBe(true);
+        expect(calls.length).toBe(0);
+
+        const finalDraft = await db.query(
+          `SELECT status, sent_at
+           FROM action_drafts
+           WHERE id = $1`,
+          [draftId]
+        );
+        expect(finalDraft.rows[0]?.status).toBe('sent');
+        expect(finalDraft.rows[0]?.sent_at).not.toBeNull();
+      } finally {
+        setActionDraftSendExecutorForTests(null);
+      }
+    });
+  });
+
   test('action_draft_reject, action_draft_edit, and action_draft_regenerate emit expected history events', async () => {
     await withActionContext(async (ctx, engine) => {
       const db = (engine as unknown as EngineWithDb).db;
