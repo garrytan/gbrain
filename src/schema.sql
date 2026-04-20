@@ -78,6 +78,26 @@ CREATE TABLE IF NOT EXISTS links (
 
 CREATE INDEX IF NOT EXISTS idx_links_from ON links(from_page_id);
 CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_page_id);
+
+-- Defensive ALTERs for upgrades from pre-v0.11 databases where `links`
+-- existed without link_source / origin_page_id / origin_field. The
+-- CREATE TABLE IF NOT EXISTS above is skipped on a pre-existing table,
+-- so those columns must be added here to keep the CREATE INDEX statements
+-- below safe on old brains. Idempotent via ADD COLUMN IF NOT EXISTS.
+-- migrate.ts v11 also runs these, but it fires *after* schema.sql, so
+-- without this block the index creates fail on any brain created before
+-- v0.11 — observed as `column "link_source" does not exist` during the
+-- Phase A (`gbrain init --migrate-only`) step of the v0.11.0 migration.
+ALTER TABLE links ADD COLUMN IF NOT EXISTS link_source TEXT;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'links_link_source_check') THEN
+    ALTER TABLE links ADD CONSTRAINT links_link_source_check
+      CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual'));
+  END IF;
+END $$;
+ALTER TABLE links ADD COLUMN IF NOT EXISTS origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL;
+ALTER TABLE links ADD COLUMN IF NOT EXISTS origin_field TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_links_source ON links(link_source);
 CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
 
