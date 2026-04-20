@@ -15,11 +15,14 @@ import type {
 } from './types.ts';
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
+import { staggerSecondOffset } from './stagger.ts';
 
 const MIGRATION_VERSION = 13;
 
 const DEFAULT_MAX_SPAWN_DEPTH = 5;
 const DEFAULT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MiB
+const STAGGER_HERD_SPREAD_MS = 1000;
+const STAGGER_HERD_MAX_STEPS = 59;
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'dead', 'cancelled'] as const;
 
@@ -61,8 +64,6 @@ export class MinionQueue {
     }
     await this.ensureSchema();
 
-    const childStatus: MinionJobStatus = opts?.delay ? 'delayed' : 'waiting';
-    const delayUntil = opts?.delay ? new Date(Date.now() + opts.delay) : null;
     const maxSpawnDepth = opts?.max_spawn_depth ?? this.maxSpawnDepth;
 
     return this.engine.transaction(async (tx) => {
@@ -106,6 +107,17 @@ export class MinionQueue {
           }
         }
       }
+
+      // 2.5 Deterministic stagger: runtime release timing actually honors
+      // stagger_key. We apply:
+      // - base offset from key hash when caller did not provide an explicit delay
+      // - per-minute sequence spread (1s steps) for same-key batches to avoid
+      //   herd release at the exact same instant.
+      const explicitDelayMs = Math.max(0, opts?.delay ?? 0);
+      const staggerDelayMs = await this.computeStaggerDelayMs(tx, opts?.stagger_key, explicitDelayMs === 0);
+      const totalDelayMs = explicitDelayMs + staggerDelayMs;
+      const childStatus: MinionJobStatus = totalDelayMs > 0 ? 'delayed' : 'waiting';
+      const delayUntil = totalDelayMs > 0 ? new Date(Date.now() + totalDelayMs) : null;
 
       // 3. Insert child. Use ON CONFLICT for idempotency; if a concurrent submit
       //    raced past the fast-path SELECT, the unique index catches it here.
@@ -177,6 +189,47 @@ export class MinionQueue {
 
       return child;
     });
+  }
+
+  private async computeStaggerDelayMs(
+    tx: BrainEngine,
+    staggerKey: string | null | undefined,
+    includeBaseOffset: boolean,
+  ): Promise<number> {
+    const key = typeof staggerKey === 'string' ? staggerKey.trim() : '';
+    if (!key) return 0;
+
+    // Serialize same-key insertions so sequence spacing is stable under
+    // concurrent add() calls across workers/processes.
+    try {
+      await tx.executeRaw(
+        `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+        [`minion_stagger:${key}`],
+      );
+    } catch {
+      // Embedded/test engines may not support advisory locks.
+    }
+
+    const baseMs = includeBaseOffset ? staggerSecondOffset(key) * 1000 : 0;
+    let spreadMs = 0;
+    try {
+      const rows = await tx.executeRaw<{ count: string }>(
+        `SELECT count(*)::text AS count
+         FROM minion_jobs
+         WHERE stagger_key = $1
+           AND created_at >= date_trunc('minute', now())
+           AND status IN ('waiting', 'delayed', 'active', 'waiting-children', 'paused')`,
+        [key],
+      );
+      const existing = parseInt(rows[0]?.count ?? '0', 10);
+      const spreadStep = Math.max(0, Math.min(existing, STAGGER_HERD_MAX_STEPS));
+      spreadMs = spreadStep * STAGGER_HERD_SPREAD_MS;
+    } catch {
+      // If counting fails, keep deterministic base offset and proceed.
+      spreadMs = 0;
+    }
+
+    return baseMs + spreadMs;
   }
 
   /** Get a job by ID. Returns null if not found. */

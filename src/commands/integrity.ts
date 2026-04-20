@@ -444,7 +444,7 @@ async function cmdAuto(args: string[]): Promise<void> {
               );
               if (result.confidence >= confidenceThreshold && result.value.url && result.value.tweet_id && result.value.created_at) {
                 await repairBareTweet({
-                  writer, slug, hit, result, handle, dryRun,
+                  writer, engine, slug, hit, result, handle, dryRun,
                 });
                 bucketAuto++;
                 slugHasRepair = true;
@@ -595,6 +595,7 @@ function cmdReview(): void {
 
 interface RepairArgs {
   writer: BrainWriter;
+  engine: BrainEngine;
   slug: string;
   hit: BareTweetHit;
   result: ResolverResult<{ url?: string; tweet_id?: string; created_at?: string }>;
@@ -603,7 +604,7 @@ interface RepairArgs {
 }
 
 async function repairBareTweet(args: RepairArgs): Promise<void> {
-  const { writer, slug, hit, result, handle, dryRun } = args;
+  const { writer, engine, slug, hit, result, handle, dryRun } = args;
   const tweetId = result.value.tweet_id!;
   const createdAt = result.value.created_at!;
   const dateISO = createdAt.slice(0, 10);
@@ -612,30 +613,23 @@ async function repairBareTweet(args: RepairArgs): Promise<void> {
   const cite = tweetCitation({ handle, tweetId, dateISO });
 
   if (dryRun) {
-    console.log(`[dry-run] ${slug}:${hit.line} would append ${cite}`);
+    console.log(`[dry-run] ${slug}:${hit.line} would write citation + enable validators: ${cite}`);
     return;
   }
 
-  // Read current, append citation to the flagged line, write back through
-  // BrainWriter so the transaction is atomic and the writer's grandfather
-  // opt-out can be cleared if validators pass post-repair.
-  const current = await (args.writer as unknown as { engine: BrainEngine })['engine']?.getPage?.(slug);
-  // fall back: use a direct engine handle via writer's internal ref is ugly;
-  // instead, use writer.transaction and read/write inside
+  const current = await engine.getPage(slug);
+  if (!current) {
+    throw new Error(`repairBareTweet: page not found: ${slug}`);
+  }
+  const nextCompiledTruth = addCitationToLine(current.compiled_truth, hit.line, cite);
+
+  // Keep the repair atomic: mutate compiled_truth + clear grandfather mode in
+  // the same transaction so repaired pages re-enter validator coverage.
   await writer.transaction(async (tx) => {
-    // We can't read inside a transaction without engine access; set-wise,
-    // we fetch via the outer engine reference captured on the writer.
-    // Simpler: perform a read outside via setCompiledTruth which already
-    // handles "page not found" + merges with existing content server-side.
-    // However BrainWriter.setCompiledTruth requires the new body — we need
-    // to read first. Do the read here via the engine on the tx's context
-    // (the tx uses the same engine instance).
-    //
-    // Workaround: use setFrontmatterField + appendTimeline pattern. We
-    // leave the bare phrase alone and append a timeline entry with the
-    // citation. That's honest — we're adding evidence, not rewriting
-    // prose. Pages with `validate: false` in frontmatter stay flagged
-    // until a more thorough repair pass removes the bare phrase.
+    if (nextCompiledTruth !== current.compiled_truth) {
+      await tx.setCompiledTruth(slug, nextCompiledTruth);
+    }
+    await tx.setFrontmatterField(slug, 'validate', true);
     await tx.appendTimeline(slug, {
       date: dateISO,
       source: 'gbrain integrity --auto',
@@ -648,8 +642,6 @@ async function repairBareTweet(args: RepairArgs): Promise<void> {
   });
 
   console.log(`repaired ${slug}:${hit.line} → ${cite}`);
-  // Silence unused var from earlier refactor
-  void current;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,6 +743,19 @@ function extractFloatFlag(args: string[], flag: string): number | undefined {
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 3) + '...';
+}
+
+function addCitationToLine(compiledTruth: string, lineNumber: number, citation: string): string {
+  const lines = compiledTruth.split('\n');
+  const idx = lineNumber - 1;
+  if (idx < 0 || idx >= lines.length) return compiledTruth;
+  const line = lines[idx] ?? '';
+  if (URL_NEARBY_RE.test(line) || line.includes(citation)) return compiledTruth;
+  const trailing = line.match(/\s*$/)?.[0] ?? '';
+  const base = line.slice(0, line.length - trailing.length);
+  const sep = base.length > 0 && !base.endsWith(' ') ? ' ' : '';
+  lines[idx] = `${base}${sep}${citation}${trailing}`;
+  return lines.join('\n');
 }
 
 function printHelp(): void {

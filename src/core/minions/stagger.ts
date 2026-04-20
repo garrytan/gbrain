@@ -6,10 +6,9 @@
  * same slot, always. Different keys → different slots (collision rate
  * proportional to 1/60).
  *
- * Used by Minions' delayed-promotion path: a cron that fires at minute 0
- * can set `delay_until = now() + stagger_offset_seconds` so 10 jobs
- * scheduled for the same minute don't actually hit the queue at the same
- * moment.
+ * Used by MinionQueue.add(): jobs with a stagger_key get a deterministic
+ * release offset before they become claimable. Queue runtime may layer an
+ * additional small per-minute spread on top to avoid same-key herd release.
  *
  * Not a general-purpose hash. FNV-1a is tiny, deterministic across
  * runtimes, and enough distinguishing entropy for 60 buckets.

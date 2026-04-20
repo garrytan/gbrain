@@ -129,8 +129,9 @@ export interface MinionJobInput {
    */
   quiet_hours?: { start: number; end: number; tz: string; policy?: 'skip' | 'defer' };
   /**
-   * Deterministic stagger key. When multiple jobs share a key (same cron fire),
-   * their claim order is decorrelated by hash-based minute-offset. Optional.
+   * Deterministic stagger key. Queue runtime uses this to apply a hash-based
+   * base offset (minute slot) plus per-minute sequence spread, so same-key
+   * bursts do not release in a single herd moment. Optional.
    */
   stagger_key?: string;
 }

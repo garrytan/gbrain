@@ -28,6 +28,26 @@ const fakeEngine: any = {
   disconnect: async () => {},
   getAllSlugs: async () => [...pages.keys()],
   getPage: async (slug: string) => pages.get(slug) ?? null,
+  putPage: async (slug: string, input: any) => {
+    const existing = pages.get(slug);
+    if (!existing) return;
+    pages.set(slug, {
+      type: input.type,
+      title: input.title,
+      compiled_truth: input.compiled_truth,
+      timeline: input.timeline,
+      frontmatter: input.frontmatter ?? existing.frontmatter,
+    });
+  },
+  addTimelineEntry: async (slug: string, entry: any) => {
+    const existing = pages.get(slug);
+    if (!existing) return;
+    const line = `- **${entry.date}** | ${entry.summary}${entry.detail ? ` ${entry.detail}` : ''}`;
+    pages.set(slug, {
+      ...existing,
+      timeline: existing.timeline ? `${existing.timeline}\n${line}` : line,
+    });
+  },
   transaction: async (fn: (txEngine: unknown) => Promise<unknown>) => fn(fakeEngine),
 };
 
@@ -172,5 +192,38 @@ describe('integrity auto durable resume', () => {
     const progressEntries = readJsonLines(PROGRESS_FILE);
     expect(progressEntries.some(e => e.kind === 'dead_link_scan')).toBe(true);
     expect(progressEntries.some(e => e.kind === 'complete')).toBe(true);
+  });
+
+  test('auto-repair writes citation into compiled truth and re-enables validators', async () => {
+    pages.set('people/alice', {
+      type: 'person',
+      title: 'Alice',
+      compiled_truth: 'Alice tweeted about launch plans.',
+      timeline: '',
+      frontmatter: { x_handle: 'alice', validate: false },
+    });
+
+    resolverImpl = async (name: string) => {
+      if (name === 'x_handle_to_tweet') {
+        return {
+          confidence: 0.95,
+          value: {
+            url: 'https://x.com/alice/status/123',
+            tweet_id: '123',
+            created_at: '2026-01-02T00:00:00Z',
+            candidates: [],
+          },
+        };
+      }
+      return { confidence: 1, value: { reachable: true } };
+    };
+
+    await runIntegrity(['auto']);
+
+    const updated = pages.get('people/alice');
+    expect(updated).toBeDefined();
+    expect(updated!.compiled_truth).toContain('https://x.com/alice/status/123');
+    expect(updated!.compiled_truth).toContain('[Source: [X/alice, 2026-01-02]');
+    expect(updated!.frontmatter.validate).toBe(true);
   });
 });
