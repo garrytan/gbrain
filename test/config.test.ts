@@ -55,12 +55,14 @@ describe('loadConfig', () => {
     const originalAnthropic = process.env.ANTHROPIC_API_KEY;
     const originalMiniMax = process.env.MINIMAX_API_KEY;
     const originalMiniMaxBase = process.env.MINIMAX_BASE_URL;
+    const originalMiniMaxGroupId = process.env.MINIMAX_GROUP_ID;
 
     const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-config-'));
     process.env.HOME = tempHome;
     delete process.env.OPENAI_API_KEY;
     process.env.ANTHROPIC_API_KEY = 'ant-test';
     process.env.MINIMAX_API_KEY = 'mini-test';
+    process.env.MINIMAX_GROUP_ID = 'group-test';
     process.env.MINIMAX_BASE_URL = 'https://example.minimax/v1';
 
     try {
@@ -76,6 +78,7 @@ describe('loadConfig', () => {
       expect(config?.embedding_model).toBe('embo-01');
       expect(config?.anthropic_api_key).toBe('ant-test');
       expect(config?.minimax_api_key).toBe('mini-test');
+      expect(config?.minimax_group_id).toBe('group-test');
       expect(config?.minimax_base_url).toBe('https://example.minimax/v1');
     } finally {
       if (originalHome === undefined) delete process.env.HOME;
@@ -88,6 +91,31 @@ describe('loadConfig', () => {
       else process.env.MINIMAX_API_KEY = originalMiniMax;
       if (originalMiniMaxBase === undefined) delete process.env.MINIMAX_BASE_URL;
       else process.env.MINIMAX_BASE_URL = originalMiniMaxBase;
+      if (originalMiniMaxGroupId === undefined) delete process.env.MINIMAX_GROUP_ID;
+      else process.env.MINIMAX_GROUP_ID = originalMiniMaxGroupId;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('hasEmbeddingProviderCredentials requires MiniMax group id', async () => {
+    const originalHome = process.env.HOME;
+    const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-minimax-creds-'));
+    process.env.HOME = tempHome;
+
+    try {
+      saveConfig({
+        engine: 'pglite',
+        database_path: '/tmp/brain.pglite',
+        embedding_provider: 'minimax',
+        embedding_model: 'embo-01',
+        minimax_api_key: 'mini-test',
+      });
+
+      const { hasEmbeddingProviderCredentials } = await import('../src/core/embedding.ts');
+      expect(hasEmbeddingProviderCredentials()).toBe(false);
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
       rmSync(tempHome, { recursive: true, force: true });
     }
   });
@@ -122,6 +150,7 @@ describe('loadConfig', () => {
         embedding_provider: 'minimax',
         embedding_model: 'embo-01',
         minimax_api_key: 'mini-test',
+        minimax_group_id: 'group-test',
       });
 
       const { embedBatch, getEmbeddingModel, getEmbeddingProvider, hasEmbeddingProviderCredentials } = await import('../src/core/embedding.ts');
@@ -134,7 +163,7 @@ describe('loadConfig', () => {
       expect(vectors[0]).toBeInstanceOf(Float32Array);
       expect(vectors[0].length).toBe(1536);
       expect(calls).toHaveLength(1);
-      expect(calls[0].url).toBe('https://api.minimax.io/v1/embeddings');
+      expect(calls[0].url).toBe('https://api.minimax.chat/v1/embeddings?GroupId=group-test');
       expect(calls[0].init?.headers).toEqual({
         Authorization: 'Bearer mini-test',
         'Content-Type': 'application/json',

@@ -239,12 +239,13 @@ You take a meeting with someone. The agent writes a brain page for them, links i
 Set the API keys as environment variables:
 
 ```bash
-export OPENAI_API_KEY=sk-...      # or use MiniMax instead
-export MINIMAX_API_KEY=...        # optional alternative embeddings provider
+export OPENAI_API_KEY=sk-...         # or use MiniMax instead
+export MINIMAX_API_KEY=...           # MiniMax embeddings auth
+export MINIMAX_GROUP_ID=...          # required for MiniMax embeddings
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-The Supabase connection URL is configured during `gbrain init --supabase`. OpenAI and Anthropic use their standard SDK environment variables. MiniMax embeddings use `MINIMAX_API_KEY`. You can choose the embeddings provider during init with `--embedding-provider openai|minimax`.
+The Supabase connection URL is configured during `gbrain init --supabase`. OpenAI and Anthropic use their standard SDK environment variables. MiniMax embeddings require both `MINIMAX_API_KEY` and `MINIMAX_GROUP_ID`. You can choose the embeddings provider during init with `--embedding-provider openai|minimax`.
 
 Without an embeddings key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
 

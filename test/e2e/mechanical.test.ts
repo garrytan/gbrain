@@ -579,6 +579,7 @@ describeE2E('E2E: Setup Journey', () => {
       ...cliEnv(),
       HOME: homeDir,
       MINIMAX_API_KEY: 'mini-test-key',
+      MINIMAX_GROUP_ID: 'group-test-id',
     };
 
     try {
@@ -588,6 +589,7 @@ describeE2E('E2E: Setup Journey', () => {
           '--url', process.env.DATABASE_URL!,
           '--embedding-provider', 'minimax',
           '--minimax-key', 'mini-test-key',
+          '--minimax-group-id', 'group-test-id',
         ],
         cwd: cliCwd,
         env,
@@ -602,6 +604,7 @@ describeE2E('E2E: Setup Journey', () => {
       expect(saved.embedding_provider).toBe('minimax');
       expect(saved.embedding_model).toBe('embo-01');
       expect(saved.minimax_api_key).toBe('mini-test-key');
+      expect(saved.minimax_group_id).toBe('group-test-id');
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }

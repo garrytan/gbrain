@@ -16,6 +16,7 @@ export interface GBrainConfig {
   openai_api_key?: string;
   anthropic_api_key?: string;
   minimax_api_key?: string;
+  minimax_group_id?: string;
   minimax_base_url?: string;
   embedding_provider?: EmbeddingProvider;
   embedding_model?: string;
@@ -49,6 +50,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.MINIMAX_API_KEY ? { minimax_api_key: process.env.MINIMAX_API_KEY } : {}),
+    ...(process.env.MINIMAX_GROUP_ID ? { minimax_group_id: process.env.MINIMAX_GROUP_ID } : {}),
     ...(process.env.MINIMAX_BASE_URL ? { minimax_base_url: process.env.MINIMAX_BASE_URL } : {}),
   };
   return merged as GBrainConfig;

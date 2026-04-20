@@ -18,7 +18,7 @@ const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
-const MINIMAX_BASE_URL = 'https://api.minimax.io/v1';
+const MINIMAX_BASE_URL = 'https://api.minimax.chat/v1';
 
 let openaiClient: OpenAI | null = null;
 let openaiClientApiKey: string | undefined;
@@ -28,6 +28,7 @@ interface EmbeddingConfig {
   model: string;
   dimensions: number;
   apiKey?: string;
+  groupId?: string;
   baseUrl?: string;
 }
 
@@ -50,6 +51,7 @@ function getEmbeddingConfig(): EmbeddingConfig {
       model: config?.embedding_model || MINIMAX_MODEL,
       dimensions: EMBEDDING_DIMENSIONS,
       apiKey: config?.minimax_api_key,
+      groupId: config?.minimax_group_id,
       baseUrl: config?.minimax_base_url || MINIMAX_BASE_URL,
     };
   }
@@ -84,6 +86,9 @@ export function getEmbeddingDimensions(): number {
 
 export function hasEmbeddingProviderCredentials(): boolean {
   const config = getEmbeddingConfig();
+  if (config.provider === 'minimax') {
+    return Boolean(config.apiKey && config.groupId);
+  }
   return Boolean(config.apiKey);
 }
 
@@ -153,7 +158,14 @@ async function createOpenAIEmbeddings(texts: string[], config: EmbeddingConfig):
 }
 
 async function createMiniMaxEmbeddings(texts: string[], config: EmbeddingConfig): Promise<Float32Array[]> {
-  const response = await fetch(`${config.baseUrl}/embeddings`, {
+  if (!config.groupId) {
+    throw new Error('MiniMax embeddings require MINIMAX_GROUP_ID to be set');
+  }
+
+  const url = new URL(`${config.baseUrl}/embeddings`);
+  url.searchParams.set('GroupId', config.groupId);
+
+  const response = await fetch(url.toString(), {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${config.apiKey}`,

@@ -20,6 +20,8 @@ export async function runInit(args: string[]) {
   const openaiKey = openaiKeyIndex !== -1 ? args[openaiKeyIndex + 1] : null;
   const minimaxKeyIndex = args.indexOf('--minimax-key');
   const minimaxKey = minimaxKeyIndex !== -1 ? args[minimaxKeyIndex + 1] : null;
+  const minimaxGroupIdIndex = args.indexOf('--minimax-group-id');
+  const minimaxGroupId = minimaxGroupIdIndex !== -1 ? args[minimaxGroupIdIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
 
@@ -34,6 +36,7 @@ export async function runInit(args: string[]) {
     legacyApiKey: apiKey,
     openaiKey,
     minimaxKey,
+    minimaxGroupId,
   });
 
   // Explicit PGLite mode
@@ -80,6 +83,7 @@ async function initPGLite(opts: {
   embeddingProvider: EmbeddingProvider;
   openaiApiKey: string | null;
   minimaxApiKey: string | null;
+  minimaxGroupId: string | null;
 }) {
   const dbPath = opts.customPath || join(homedir(), '.gbrain', 'brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
@@ -97,6 +101,7 @@ async function initPGLite(opts: {
       : {}),
     ...(opts.openaiApiKey ? { openai_api_key: opts.openaiApiKey } : {}),
     ...(opts.minimaxApiKey ? { minimax_api_key: opts.minimaxApiKey } : {}),
+    ...(opts.minimaxGroupId ? { minimax_group_id: opts.minimaxGroupId } : {}),
   };
   saveConfig(config);
 
@@ -120,6 +125,7 @@ async function initPostgres(opts: {
   embeddingProvider: EmbeddingProvider;
   openaiApiKey: string | null;
   minimaxApiKey: string | null;
+  minimaxGroupId: string | null;
 }) {
   const { databaseUrl } = opts;
 
@@ -179,6 +185,7 @@ async function initPostgres(opts: {
       : {}),
     ...(opts.openaiApiKey ? { openai_api_key: opts.openaiApiKey } : {}),
     ...(opts.minimaxApiKey ? { minimax_api_key: opts.minimaxApiKey } : {}),
+    ...(opts.minimaxGroupId ? { minimax_group_id: opts.minimaxGroupId } : {}),
   };
   saveConfig(config);
   console.log('Config saved to ~/.gbrain/config.json');
@@ -199,10 +206,12 @@ function buildEmbeddingConfig(opts: {
   legacyApiKey: string | null;
   openaiKey: string | null;
   minimaxKey: string | null;
+  minimaxGroupId: string | null;
 }): {
   embeddingProvider: EmbeddingProvider;
   openaiApiKey: string | null;
   minimaxApiKey: string | null;
+  minimaxGroupId: string | null;
 } {
   const openaiApiKey = opts.openaiKey || (opts.embeddingProvider === 'openai' ? opts.legacyApiKey : null);
   const minimaxApiKey = opts.minimaxKey || (opts.embeddingProvider === 'minimax' ? opts.legacyApiKey : null);
@@ -211,6 +220,7 @@ function buildEmbeddingConfig(opts: {
     embeddingProvider: opts.embeddingProvider,
     openaiApiKey,
     minimaxApiKey,
+    minimaxGroupId: opts.embeddingProvider === 'minimax' ? opts.minimaxGroupId : null,
   };
 }
 

@@ -66,6 +66,7 @@ describe('runEmbed metadata', () => {
       embedding_provider: 'minimax',
       embedding_model: 'embo-01',
       minimax_api_key: 'mini-test',
+      minimax_group_id: 'group-test',
     }, null, 2));
 
     const chunks = [{
