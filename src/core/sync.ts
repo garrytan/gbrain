@@ -82,6 +82,14 @@ export function isSyncable(path: string): boolean {
   // Skip hidden directories
   if (path.split('/').some(p => p.startsWith('.'))) return false;
 
+  // Skip dependency/build/vendor directories at any depth
+  const EXCLUDED_DIRS = new Set([
+    'node_modules', 'vendor', 'dist', 'build', 'out',
+    'target', '.next', '.nuxt', '.svelte-kit', '.turbo',
+    '.cache', 'coverage', '__pycache__', '.venv', 'venv',
+  ]);
+  if (path.split('/').some(p => EXCLUDED_DIRS.has(p))) return false;
+
   // Skip .raw/ sidecar directories
   if (path.includes('.raw/')) return false;
 
