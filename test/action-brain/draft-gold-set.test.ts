@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  buildActionDraftContext,
-  type ActionDraftContext,
-  type ActionDraftThreadMessage,
+  buildActionDraftContextSource,
+  type ActionDraftContextSourceResult,
+  type ActionDraftContextThreadMessage,
 } from '../../src/action-brain/context.ts';
 import {
   generateActionDraft,
@@ -173,22 +173,20 @@ function includesCaseInsensitive(haystack: string, needle: string): boolean {
 }
 
 function hasPromptTagEcho(text: string): boolean {
-  return /<\/?(system|gbrain_context|action_item|thread|task)\b/i.test(text);
+  return /<\/?(system|gbrain_context|action_item|item|thread|task)\b/i.test(text);
 }
 
-function toContextThreadMessages(caseId: string, thread: ThreadMessage[]): ActionDraftThreadMessage[] {
-  return thread.map((message, index) => ({
-    id: `${caseId}-msg-${index + 1}`,
+function toContextThreadMessages(thread: ThreadMessage[]): ActionDraftContextThreadMessage[] {
+  return thread.map((message) => ({
     sender: message.sender,
     ts: message.ts,
     text: message.text,
   }));
 }
 
-function mutateThread(caseId: string, thread: ThreadMessage[]): ActionDraftThreadMessage[] {
+function mutateThread(thread: ThreadMessage[]): ActionDraftContextThreadMessage[] {
   if (thread.length === 0) {
     return [{
-      id: `${caseId}-mutation`,
       sender: 'system',
       ts: '2026-04-20T00:00:00Z',
       text: 'mutation marker',
@@ -196,7 +194,6 @@ function mutateThread(caseId: string, thread: ThreadMessage[]): ActionDraftThrea
   }
 
   return thread.map((message, index) => ({
-    id: `${caseId}-msg-${index + 1}`,
     sender: message.sender,
     ts: message.ts,
     text: index === thread.length - 1
@@ -222,9 +219,9 @@ function createContextEngine(row: DraftGoldSetRow): BrainEngine {
 
 async function buildContextForRow(
   row: DraftGoldSetRow,
-  threadMessages: ActionDraftThreadMessage[]
-): Promise<ActionDraftContext> {
-  return buildActionDraftContext(
+  threadMessages: ActionDraftContextThreadMessage[]
+): Promise<ActionDraftContextSourceResult> {
+  return buildActionDraftContextSource(
     createContextEngine(row),
     {
       source_contact: row.action_item.source_contact,
@@ -234,11 +231,11 @@ async function buildContextForRow(
   );
 }
 
-function toDraftGenerationContext(context: ActionDraftContext): DraftGenerationContext {
+function toDraftGenerationContext(context: ActionDraftContextSourceResult): DraftGenerationContext {
   return {
-    gbrainPages: context.pages.map((page) => ({
-      slug: page.slug,
-      compiled_truth: page.excerpt,
+    gbrainPages: context.excerpts.map((excerpt) => ({
+      slug: excerpt.slug,
+      compiled_truth: excerpt.text,
     })),
     threadMessages: context.thread.map((message) => ({
       sender: message.sender,
@@ -296,9 +293,9 @@ async function computeStructuralMetrics(
   let passedCases = 0;
 
   for (const row of rows) {
-    const firstContext = await buildContextForRow(row, toContextThreadMessages(row.id, row.thread));
-    const secondContext = await buildContextForRow(row, toContextThreadMessages(row.id, row.thread));
-    const mutatedContext = await buildContextForRow(row, mutateThread(row.id, row.thread));
+    const firstContext = await buildContextForRow(row, toContextThreadMessages(row.thread));
+    const secondContext = await buildContextForRow(row, toContextThreadMessages(row.thread));
+    const mutatedContext = await buildContextForRow(row, mutateThread(row.thread));
 
     const firstResult = await generateActionDraft(
       {
