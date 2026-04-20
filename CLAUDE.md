@@ -61,7 +61,7 @@ strict behavior when unset.
 - `src/mcp/server.ts` — MCP stdio server (generated from operations)
 - `src/commands/auth.ts` — Standalone token management (create/list/revoke/test)
 - `src/commands/upgrade.ts` — Self-update CLI. `runPostUpgrade()` enumerates migrations from the TS registry (src/commands/migrations/index.ts) and tail-calls `runApplyMigrations(['--yes', '--non-interactive'])` so the mechanical side of every outstanding migration runs unconditionally.
-- `src/commands/migrations/` — TS migration registry (compiled into the binary; no filesystem walk of `skills/migrations/*.md` needed at runtime). `index.ts` lists migrations in semver order. `v0_11_0.ts` = Minions adoption orchestrator (8 phases). `v0_12_0.ts` = Knowledge Graph auto-wire orchestrator (5 phases: schema → config check → backfill links → backfill timeline → verify). `phaseASchema` has a 600s timeout (bumped from 60s in v0.12.1 for duplicate-heavy brains). `v0_12_2.ts` = JSONB double-encode repair orchestrator (4 phases: schema → repair-jsonb → verify → record). All orchestrators are idempotent and resumable from `partial` status.
+- `src/commands/migrations/` — TS migration registry (compiled into the binary; no filesystem walk of `skills/migrations/*.md` needed at runtime). `index.ts` lists migrations in semver order. `v0_11_0.ts` = Minions adoption orchestrator (8 phases). `v0_12_0.ts` = Knowledge Graph auto-wire orchestrator (5 phases: schema → config check → backfill links → backfill timeline → verify). `phaseASchema` has a 600s timeout (bumped from 60s in v0.12.1 for duplicate-heavy brains). `v0_12_2.ts` = JSONB double-encode repair orchestrator (4 phases: schema → repair-jsonb → verify → record). `v0_13_1.ts` = budget_ledger table + minion stagger columns migration. All orchestrators are idempotent and resumable from `partial` status.
 - `src/commands/repair-jsonb.ts` — `gbrain repair-jsonb [--dry-run] [--json]`: rewrites `jsonb_typeof='string'` rows in place across 5 affected columns (pages.frontmatter, raw_data.data, ingest_log.pages_updated, files.metadata, page_versions.frontmatter). Fixes v0.12.0 double-encode bug on Postgres; PGLite no-ops. Idempotent.
 - `src/commands/orphans.ts` — `gbrain orphans [--json] [--count] [--include-pseudo]`: surfaces pages with zero inbound wikilinks, grouped by domain. Auto-generated/raw/pseudo pages filtered by default. Also exposed as `find_orphans` MCP operation. Shipped in v0.12.3 (contributed by @knee5).
 - `src/commands/doctor.ts` — `gbrain doctor [--json] [--fast] [--fix]`: health checks. v0.12.3 adds two reliability detection checks: `jsonb_integrity` (scans pages.frontmatter, raw_data.data, ingest_log.pages_updated, files.metadata for `jsonb_typeof='string'` rows left over from v0.12.0) and `markdown_body_completeness` (flags pages whose compiled_truth is <30% of raw source when raw has multiple H2/H3 boundaries). Fix hints point at `gbrain repair-jsonb` and `gbrain sync --force`.
@@ -122,6 +122,18 @@ strict behavior when unset.
 - `src/action-brain/extractor.ts` — LLM commitment extraction (two-tier Haiku→Sonnet), XML delimiter defense, stable source IDs
 - `src/action-brain/brief.ts` — Morning priority brief generator: ranked action items, overdue detection, deduplication
 - `src/action-brain/operations.ts` — 5 Action Brain operations (action_list, action_brief, action_resolve, action_mark_fp, action_ingest)
+- `src/core/resolvers/index.ts` — Resolver SDK public surface; re-exports interface, registry, and builtin resolvers
+- `src/core/resolvers/interface.ts` — Typed Resolver interface: structured input → backend lookup → typed output
+- `src/core/resolvers/registry.ts` — ResolverRegistry: in-memory id→Resolver map, register/resolve helpers
+- `src/core/resolvers/builtin/` — Built-in resolvers (url-reachable, x-api)
+- `src/core/output/writer.ts` — BrainWriter: transaction-scoped page writer with pre-commit validators (anti-hallucination contract)
+- `src/core/output/post-write.ts` — Post-write validator hook: runs lint-mode checks after put_page/importFromContent, logs findings without rejecting writes
+- `src/core/output/validators/` — Per-concern post-write validators (back-link, citation, link, triple-hr)
+- `src/core/output/scaffold.ts` — Page scaffold helpers for BrainWriter
+- `src/core/output/slug-registry.ts` — Slug registry used by BrainWriter to detect duplicates
+- `src/commands/integrity.ts` — `gbrain integrity auto|scan|review`: brain-integrity scan and repair using Resolver SDK + BrainWriter
+- `src/core/enrichment/budget.ts` — BudgetLedger: daily spend cap for resolver calls, scope + resolver granular, reserve/commit/rollback
+- `src/core/enrichment/completeness.ts` — CompletenessScorer: per-entity-type rubrics (0.0-1.0), replaces length-based heuristic
 
 ## Commands
 
@@ -146,6 +158,11 @@ Key commands added in v0.12.2:
 Key commands added in v0.12.3:
 - `gbrain orphans [--json] [--count] [--include-pseudo]` — surface pages with zero inbound wikilinks, grouped by domain. Auto-generated/raw/pseudo pages filtered by default. Also exposed as `find_orphans` MCP operation. The natural consumer of the v0.12.0 knowledge graph layer: once edges are captured, find the gaps.
 - `gbrain doctor` gains two new reliability detection checks: `jsonb_integrity` (v0.12.0 Postgres double-encode damage) and `markdown_body_completeness` (pages truncated by the old splitBody bug). Detection only; fix hints point at `gbrain repair-jsonb` and `gbrain sync --force`.
+
+Key commands added in v0.15.0:
+- `gbrain integrity auto` — automated scan + repair using Resolver SDK and BrainWriter; runs in doctor's non-fast mode
+- `gbrain integrity scan` — scan only, reports issues without writing
+- `gbrain integrity review` — interactive review of flagged pages
 
 Key commands added for Action Brain 0.2 draft approvals:
 - `gbrain action draft list` — list pending/sent/failed drafts by priority.
@@ -215,7 +232,12 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/postgres-engine.test.ts` (v0.12.3 statement_timeout scoping: `sql.begin` + `SET LOCAL` shape, source-level grep guardrail against reintroduced bare `SET statement_timeout`),
 `test/sync.test.ts` (sync logic + v0.12.3 regression guard asserting top-level `engine.transaction` is not called),
 `test/doctor.test.ts` (doctor command + v0.12.3 assertions that `jsonb_integrity` scans the four v0.12.0 write sites and `markdown_body_completeness` is present),
-`test/utils.test.ts` (shared SQL utilities + `tryParseEmbedding` null-return and single-warn semantics).
+`test/utils.test.ts` (shared SQL utilities + `tryParseEmbedding` null-return and single-warn semantics),
+`test/resolvers.test.ts` (Resolver SDK: interface contract, registry register/resolve, builtin url-reachable),
+`test/writer.test.ts` (BrainWriter: pre-commit validators, transaction rollback on failure, slug-registry dedup),
+`test/post-write-lint.test.ts` (post-write validators: back-link, citation, link, triple-hr lint-mode findings),
+`test/integrity.test.ts` (integrity command: scan detection, repair idempotency, doctor integration),
+`test/integrity-auto-resume.test.ts` (integrity auto mode: resume from partial state, phase ordering).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys). Includes 9 dedicated cases for the postgres-engine `addLinksBatch` / `addTimelineEntriesBatch` bind path — postgres-js's `unnest()` binding is structurally different from PGLite's and gets its own coverage.

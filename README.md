@@ -249,6 +249,18 @@ gbrain check-resolvable
 
 **Skillify is not a nice-to-have. It's the piece that makes the skills tree survive six months of compounding work.** Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist and the anti-patterns it catches.
 
+## Integrity: the brain catches its own drift
+
+`gbrain integrity` is the v0.15.0 addition that closes the loop on page quality. It uses the Resolver SDK (pluggable typed lookups: URL reachability, X API, local brain) and BrainWriter (transaction-scoped writes with pre-commit validators) to scan, flag, and repair issues the brain accumulates over time.
+
+```bash
+gbrain integrity scan      # report issues without touching anything
+gbrain integrity auto      # scan + repair (runs automatically in gbrain doctor non-fast mode)
+gbrain integrity review    # interactive: step through flagged pages one by one
+```
+
+The Budget Ledger (`src/core/enrichment/budget.ts`) caps daily spend on paid resolver calls per scope. The Completeness Scorer (`src/core/enrichment/completeness.ts`) replaces the old length-based heuristic with per-entity-type rubrics (0.0-1.0) that actually reflect whether a page is useful. Auto-timeline on `put_page` means every write is immediately queryable: time-to-queryable goes from 0% to 100%.
+
 ## Getting Data In
 
 GBrain ships integration recipes that your agent sets up for you. Each recipe tells the agent what credentials to ask for, how to validate, and what cron to register.
@@ -804,6 +816,9 @@ ADMIN
   gbrain lint [--fix]                   LLM artifact detection
   gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)
   gbrain orphans [--json] [--count]     Find pages with zero inbound wikilinks
+  gbrain integrity auto                 Scan + repair brain integrity (Resolver SDK + BrainWriter)
+  gbrain integrity scan                 Scan only, report issues without writing
+  gbrain integrity review               Interactive review of flagged pages
   gbrain transcribe <audio>             Transcribe audio (Groq Whisper)
   gbrain research init <name>           Scaffold a data-research recipe
   gbrain research list                  Show available recipes
