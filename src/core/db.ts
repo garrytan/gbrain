@@ -52,11 +52,21 @@ export async function connect(config: EngineConfig): Promise<void> {
     );
   }
 
+  // Transaction-mode poolers (Supabase pgbouncer on :6543, or
+  // pooler.supabase.com) invalidate server-side prepared statements between
+  // connection releases. postgres.js caches prepared statements by default,
+  // so a later query on a different underlying connection that reuses the
+  // same prepared-statement name trips `prepared statement "xyz" does not
+  // exist`. Detect pooler URLs and disable prepared statements; direct
+  // connections (port 5432, non-pooler hosts) keep prepare=true for perf.
+  const isPooler = /pooler\.supabase\.com|:6543/i.test(url);
+
   try {
     sql = postgres(url, {
       max: resolvePoolSize(),
       idle_timeout: 20,
       connect_timeout: 10,
+      prepare: !isPooler,
       types: {
         // Register pgvector type
         bigint: postgres.BigInt,
