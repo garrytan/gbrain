@@ -84,6 +84,30 @@ board" — likely an advisor-role page prior plus verb-pattern combinations.
 
 ## P1
 
+### Minions shell jobs — Phase 2 scheduling (deferred from v0.13.0)
+
+**What:** `minion_schedules` table + autopilot-cycle scanner that submits due shell jobs.
+
+**Why:** v0.13.0 moves shell scripts to Minions but still leaves scheduling in the host crontab. Your OpenClaw's `scripts/service-manager.sh` + crontab is the only piece left on the host side. A DB-driven scheduler would mean a single `gbrain autopilot --install` replaces the host crontab entirely, scheduling is visible via `gbrain jobs list --scheduled`, and downtime-on-one-machine tolerance improves (schedule is shared DB state, not per-host crontab).
+
+**Pros:** Canonical host-agnostic deployment. No more host-specific crontab.
+
+**Cons:** Cross-engine migration complexity (new table on both PGLite + Postgres). Autopilot-cycle scanner needs to handle missed-schedule semantics (fire-once-on-startup or skip-if-past-now), and this is where every other cron-like system has historically accrued bugs.
+
+**Depends on:** v0.13.0 shell jobs shipped. ✅
+
+### `gbrain crontab-to-minions <file>` migration helper (deferred from v0.13.0)
+
+**What:** Parse an existing crontab file, emit a proposed rewrite using `gbrain jobs submit shell ...` for each deterministic entry, keep LLM-requiring entries as-is.
+
+**Why:** Hand-rewriting ~14 OpenClaw cron entries is error-prone and one-shot. A helper would make the migration reversible and auditable (diff the before/after crontab, dry-run the first N, commit).
+
+**Pros:** Removes the "rewrite 14 lines by hand" tax every agent operator pays on adoption.
+
+**Cons:** Crontab parsing is historically fiddly (5-field vs 6-field, `@hourly` aliases, Vixie extensions, env vars in crontab). Could misrewrite entries with shell substitution.
+
+**Depends on:** v0.13.0 shell jobs shipped. ✅
+
 ### Batch the DB-source extract read path (deferred from v0.12.1)
 **What:** `extractLinksFromDB` and `extractTimelineFromDB` at `src/commands/extract.ts:447, 504` issue one `engine.getPage(slug)` per slug after `engine.getAllSlugs()`. On a 47K-page brain that's still 47K serial reads over the Supabase pooler.
 
@@ -203,6 +227,50 @@ board" — likely an advisor-role page prior plus verb-pattern combinations.
 **Depends on:** `child_done` inbox primitive (shipped in v0.11.0).
 
 ## P2
+
+### Minions: `gbrain jobs stats --orphaned` (deferred from v0.13.0)
+
+**What:** New CLI flag / output column surfacing jobs that are waiting with no registered handler on any live worker.
+
+**Why:** v0.13.0 adds shell jobs that require `GBRAIN_ALLOW_SHELL_JOBS=1` on the worker. If an operator submits a shell job but no worker with the flag is running, the row sits in `waiting` silently. The CLI's starvation warning + docs help at submit time; this TODO surfaces the problem at operational-check time.
+
+**Pros:** Closes the "did my cron actually run" ambiguity for multi-machine deployments.
+
+**Cons:** Knowing "no worker has this handler registered" requires worker heartbeat tracking, which Minions doesn't have yet (it's stateless at DB level beyond `lock_token`). Could be approximated by "no jobs of this name have completed in last N minutes AND count of waiting is > 0."
+
+**Depends on:** v0.13.0 shell jobs shipped. ✅
+
+### Minions: AbortReason plumbing on MinionJobContext (deferred from v0.13.0)
+
+**What:** Handlers today can't distinguish whether `ctx.signal.aborted` fired due to timeout, cancel, or lock-loss. v0.13.0 derives this at worker-catch-time from `abort.signal.reason`, but the handler can't see it directly. Expose `ctx.abortReason?: 'timeout' | 'cancel' | 'lock-lost' | 'shutdown'` on the context.
+
+**Why:** Shell handler's kill-sequence today can't decide "retry this" (lock-lost) vs "don't retry, user cancelled" (cancel) — they look the same. A typed AbortReason lets handlers make that decision for themselves.
+
+**Pros:** Handlers get richer signals.
+
+**Cons:** Small surface-area addition to the handler API. Not strictly required since the worker already makes the retry/dead decision for them.
+
+**Depends on:** v0.13.0 shell jobs shipped. ✅
+
+### Minions: blocking-mode audit log for true forensic integrity (deferred from v0.13.0)
+
+**What:** Opt-in mode for `shell-audit` where `appendFileSync` failures DO block submission instead of logging-and-continuing.
+
+**Why:** v0.13.0 ships the audit log in best-effort mode, which means a disk-full attacker can silently disable the forensic trail. Acceptable for v0.13.0 because the primary use is operational ("what did this cron do last Tuesday"), not security forensics. Operators who want fail-closed semantics should have a flag.
+
+**Pros:** Enables true forensic integrity for deployments that need it.
+
+**Cons:** Fail-closed means a transient disk issue blocks shell submissions, which can be worse than a missing log line for most operators. Opt-in is the right shape but adds surface area.
+
+**Depends on:** v0.13.0 shell jobs shipped. ✅
+
+### Minions: configurable per-job output buffer sizes (deferred from v0.13.0)
+
+**What:** Add `max_stdout_bytes` / `max_stderr_bytes` to ShellJobParams; override the 64KB/16KB defaults.
+
+**Why:** 64KB/16KB covers typical OpenClaw scripts today but a verbose benchmark or a debug-dump script could need more.
+
+**Depends on:** First shell-job author who actually needs it. Don't pre-build the flag.
 
 ### Security hardening follow-ups (deferred from security-wave-3)
 **What:** Close remaining security gaps identified during the v0.9.4 Codex outside-voice review that didn't make the wave's in-scope cut.

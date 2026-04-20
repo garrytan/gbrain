@@ -52,8 +52,11 @@ strict behavior when unset.
 - `src/commands/graph-query.ts` — `gbrain graph-query <slug> [--type T] [--depth N] [--direction in|out|both]`: typed-edge relationship traversal (renders indented tree)
 - `src/core/link-extraction.ts` — shared library for the v0.12.0 graph layer. extractEntityRefs (canonical, replaces backlinks.ts duplicate) matches both `[Name](people/slug)` markdown links and Obsidian `[[people/slug|Name]]` wikilinks as of v0.12.3. extractPageLinks, inferLinkType heuristics (attended/works_at/invested_in/founded/advises/source/mentions), parseTimelineEntries, isAutoLinkEnabled config helper. `DIR_PATTERN` covers `people`, `companies`, `deals`, `topics`, `concepts`, `projects`, `entities`, `tech`, `finance`, `personal`, `openclaw`. Used by extract.ts, operations.ts auto-link post-hook, and backlinks.ts.
 - `src/core/minions/` — Minions job queue: BullMQ-inspired, Postgres-native (queue, worker, backoff, types)
-- `src/core/minions/queue.ts` — MinionQueue class (submit, claim, complete, fail, stall detection, parent-child, depth/child-cap, per-job timeouts, cascade-kill, attachments, idempotency keys, child_done inbox, removeOnComplete/Fail)
-- `src/core/minions/worker.ts` — MinionWorker class (handler registry, lock renewal, graceful shutdown, timeout safety net)
+- `src/core/minions/queue.ts` — MinionQueue class (submit, claim, complete, fail, stall detection, parent-child, depth/child-cap, per-job timeouts, cascade-kill, attachments, idempotency keys, child_done inbox, removeOnComplete/Fail). `add()` takes a 4th `trusted` arg (separate from `opts` to prevent spread leakage); protected names in `PROTECTED_JOB_NAMES` require `{allowProtectedSubmit: true}` and the check runs trim-normalized (whitespace-bypass safe).
+- `src/core/minions/worker.ts` — MinionWorker class (handler registry, lock renewal, graceful shutdown, timeout safety net). v0.14.0 abort-path fix: aborted jobs now call `failJob` with reason (`timeout`/`cancel`/`lock-lost`/`shutdown`) instead of returning silently. `shutdownAbort` (instance field) fires on process SIGTERM/SIGINT and propagates to `ctx.shutdownSignal` — shell handler listens to it; non-shell handlers don't.
+- `src/core/minions/protected-names.ts` — side-effect-free constant module exporting `PROTECTED_JOB_NAMES` + `isProtectedJobName()`. Kept pure so queue core can import without loading handler modules.
+- `src/core/minions/handlers/shell.ts` — `shell` job handler. Spawns `/bin/sh -c cmd` (absolute path, PATH-override-safe) or `argv[0] argv[1..]` (no shell). Env allowlist: `PATH, HOME, USER, LANG, TZ, NODE_ENV` + caller `env:` overrides. UTF-8-safe stdout/stderr tail via `string_decoder.StringDecoder`. Abort (either `ctx.signal` or `ctx.shutdownSignal`) fires SIGTERM → 5s grace → SIGKILL on child. Requires `GBRAIN_ALLOW_SHELL_JOBS=1` on worker (gated by `registerBuiltinHandlers`).
+- `src/core/minions/handlers/shell-audit.ts` — per-submission JSONL audit trail at `~/.gbrain/audit/shell-jobs-YYYY-Www.jsonl` (ISO-week rotation; override via `GBRAIN_AUDIT_DIR`). Best-effort: `mkdirSync(recursive)` + `appendFileSync`; failures logged to stderr, submission not blocked. Logs cmd (first 80 chars) or argv (JSON array). Never logs env values.
 - `src/core/minions/attachments.ts` — Attachment validation (path traversal, null byte, oversize, base64, duplicate detection)
 - `src/commands/jobs.ts` — `gbrain jobs` CLI subcommands + `gbrain jobs work` daemon
 - `src/commands/features.ts` — `gbrain features --json --auto-fix`: usage scan + feature adoption salesman
@@ -67,7 +70,7 @@ strict behavior when unset.
 - `src/commands/doctor.ts` — `gbrain doctor [--json] [--fast] [--fix]`: health checks. v0.12.3 adds two reliability detection checks: `jsonb_integrity` (scans pages.frontmatter, raw_data.data, ingest_log.pages_updated, files.metadata for `jsonb_typeof='string'` rows left over from v0.12.0) and `markdown_body_completeness` (flags pages whose compiled_truth is <30% of raw source when raw has multiple H2/H3 boundaries). Fix hints point at `gbrain repair-jsonb` and `gbrain sync --force`.
 - `src/core/markdown.ts` — Frontmatter parsing + body splitter. `splitBody` requires an explicit timeline sentinel (`<!-- timeline -->`, `--- timeline ---`, or `---` immediately before `## Timeline`/`## History`). Plain `---` in body text is a markdown horizontal rule, not a separator. `inferType` auto-types `/wiki/analysis/` → analysis, `/wiki/guides/` → guide, `/wiki/hardware/` → hardware, `/wiki/architecture/` → architecture, `/writing/` → writing (plus the existing people/companies/deals/etc heuristics).
 - `scripts/check-jsonb-pattern.sh` — CI grep guard. Fails the build if anyone reintroduces the `${JSON.stringify(x)}::jsonb` interpolation pattern (which postgres.js v3 double-encodes). Wired into `bun test`.
-- `docs/UPGRADING_DOWNSTREAM_AGENTS.md` — Patches for downstream agent skill forks (Wintermute etc.) to apply when upgrading. Each release appends a new section. v0.10.3 includes diffs for brain-ops, meeting-ingestion, signal-detector, enrich.
+- `docs/UPGRADING_DOWNSTREAM_AGENTS.md` — Patches for downstream agent skill forks to apply when upgrading. Each release appends a new section. v0.10.3 includes diffs for brain-ops, meeting-ingestion, signal-detector, enrich.
 - `src/core/schema-embedded.ts` — AUTO-GENERATED from schema.sql (run `bun run build:schema`)
 - `src/schema.sql` — Full Postgres + pgvector DDL (source of truth, generates schema-embedded.ts)
 - `src/commands/integrations.ts` — Standalone integration recipe management (no DB needed). Exports `getRecipeDirs()` (trust-tagged recipe sources), SSRF helpers (`isInternalUrl`, `parseOctet`, `hostnameToOctets`, `isPrivateIpv4`). Only package-bundled recipes are `embedded=true`; `$GBRAIN_RECIPES_DIR` and cwd `./recipes/` are untrusted and cannot run `command`/`http`/string health checks.
@@ -88,7 +91,7 @@ strict behavior when unset.
 - `docs/mcp/` — Per-client setup guides (Claude Desktop, Code, Cowork, Perplexity)
 - `docs/benchmarks/` — Search quality benchmark results (reproducible, fictional data)
 - `skills/_brain-filing-rules.md` — Cross-cutting brain filing rules (referenced by all brain-writing skills)
-- `skills/RESOLVER.md` — Skill routing table (modeled on Wintermute's AGENTS.md)
+- `skills/RESOLVER.md` — Skill routing table (based on the agent-fork AGENTS.md pattern)
 - `skills/conventions/` — Cross-cutting rules (quality, brain-first, model-routing, test-before-bulk, cross-modal)
 - `skills/_output-rules.md` — Output quality standards (deterministic links, no slop, exact phrasing)
 - `skills/signal-detector/SKILL.md` — Always-on idea+entity capture on every message
@@ -258,7 +261,7 @@ organized by `skills/RESOLVER.md`:
 **Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
 briefing, migrate, setup, publish.
 
-**Brain skills (from Wintermute):** signal-detector, brain-ops, idea-ingest, media-ingest,
+**Brain skills (ported from an upstream agent fork):** signal-detector, brain-ops, idea-ingest, media-ingest,
 meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
 
 **Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
@@ -347,6 +350,54 @@ Source material to pull from:
 
 Target length: ~250-350 words for the summary. Should render as one viewport.
 
+### "To take advantage of v[version]" block (required, v0.13+)
+
+After the release-summary and BEFORE `### Itemized changes`, every `## [X.Y.Z]`
+entry MUST include a human-readable self-repair block under the heading
+`## To take advantage of v[version]`.
+
+Why: `gbrain upgrade` runs `gbrain post-upgrade` which runs `gbrain apply-migrations`.
+This chain has a known weak link — `upgrade.ts` catches post-upgrade failures as
+best-effort (so the binary still works). When that chain silently fails, users end
+up with half-upgraded brains. The self-repair block gives them a paste-ready
+recovery path; the v0.13+ `~/.gbrain/upgrade-errors.jsonl` trail + `gbrain doctor`
+integration close the loop.
+
+Template (adapt the verify commands per release):
+
+```markdown
+## To take advantage of v[version]
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
+warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Your agent reads `skills/migrations/v[version].md` the next time you interact with it.**
+   [One sentence on whether headless agents need manual action, or whether the
+   orchestrator already handled the mechanical side.]
+3. **Verify the outcome:**
+   ```bash
+   [release-specific verify commands, e.g. `gbrain graph ... --depth 2`]
+   gbrain stats
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+```
+
+**Skip this block** for patches that are pure bug fixes with zero user-facing action
+(rare). If the release has a schema migration, data backfill, or new feature the
+user needs to verify, the block is required.
+
+The v0.13.0 entry in CHANGELOG.md is the canonical example.
+
 ### Itemized changes (the existing rules)
 
 Below the release summary, write `### Itemized changes` and continue with the
@@ -417,13 +468,45 @@ your AGENTS.md, add…" or "in your cron/jobs.json, rewrite…", the migration
 orchestrator should be doing that edit, not the user.
 
 **The exception is host-specific code.** For custom Minion handlers
-(`ea-inbox-sweep`, `frameio-scan`, etc. on Wintermute), shipping them as a
+(host-specific integrations like inbox sweeps or third-party API scanners), shipping them as a
 data file the worker would exec is an RCE surface. Those get registered in
 the host's own repo via the plugin contract (`docs/guides/plugin-handlers.md`);
 the migration orchestrator emits a structured TODO to
 `~/.gbrain/migrations/pending-host-work.jsonl` + the host agent walks the
 TODOs using `skills/migrations/v0.11.0.md` — stays host-agnostic, still
 canonical.
+
+## Privacy rule: scrub real names from public docs
+
+**Never reference real people, companies, funds, or private agent names in any
+public-facing artifact.** Public artifacts include: `CHANGELOG.md`, `README.md`,
+`docs/`, `skills/`, PR titles + bodies, commit messages, and comments in checked-in
+code. Query examples, benchmark stories, and migration guides MUST use generic
+placeholders.
+
+Why: gbrain runs a personal knowledge brain containing notes on real people and
+real companies (YC founders, portfolio companies, funds, investors, meeting
+attendees). When a doc copies a query like `gbrain graph diana-hu --depth 2` or
+names a specific agent fork like `Wintermute`, that real name gets indexed by
+search engines, surfaced in cross-references, and distributed with every release.
+
+**Name mapping** to use in examples:
+- Agent forks → `your agent fork`, `a downstream agent`, or `agent-fork`
+- Example person → `alice-example`, `charlie-example`, or `a-founder`
+- Example company → `acme-example`, `widget-co`, or `a-company`
+- Example fund → `fund-a`, `fund-b`, `fund-c`
+- Example deal → `acme-seed`, `widget-series-a`
+- Example meeting → `meetings/2026-04-03` (generic date is fine)
+- Example user → `you` or `the user`, never a proper name
+
+**When in doubt, ask yourself:** "Would this query reveal private information
+about the user's contacts, investments, or portfolio if it were read by a
+stranger?" If yes, replace with generic placeholders.
+
+**Illustrative API examples with household-brand companies** (Stripe, Brex, OpenAI,
+GitHub, etc.) are fine — they're public entities, not contacts in anyone's brain.
+Do not confuse illustrative API examples with queries that reveal real
+relationships.
 
 ## Schema state tracking
 

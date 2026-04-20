@@ -1,7 +1,7 @@
 # Upgrading Downstream Agents
 
-GBrain ships skills in `skills/`. Downstream agents (Wintermute, OpenClaw deployments,
-custom agent forks) often **copy** these skill files into their own workspace and
+GBrain ships skills in `skills/`. Downstream agents (custom OpenClaw deployments,
+agent forks of any kind) often **copy** these skill files into their own workspace and
 diverge over time — adding agent-specific phases, removing irrelevant ones, tightening
 language. Once that happens, gbrain can't push updates to those forks. The agent has
 to apply the diffs by hand.
@@ -13,7 +13,7 @@ Cross-reference against your fork's local skill files.
 
 `gbrain upgrade` ships the new binary. `gbrain post-upgrade [--execute --yes]` runs
 the schema migrations and backfills the data. But the **skill files themselves**
-that tell the agent how to behave — those are user-owned. If your `~/git/wintermute/workspace/skills/brain-ops/SKILL.md`
+that tell the agent how to behave — those are user-owned. If your `~/git/<your-agent>/workspace/skills/brain-ops/SKILL.md`
 says `# Based on gbrain v0.10.0` at the top, it doesn't know about v0.12.0 features.
 
 The agent will keep manually calling `gbrain link` after every `put_page` (now redundant —
@@ -22,7 +22,7 @@ not know to backfill the structured timeline.
 
 ## How to apply
 
-1. Identify your forked skill files. For Wintermute: `~/git/wintermute/workspace/skills/`.
+1. Identify your forked skill files. Typically at `~/git/<your-agent>/workspace/skills/` or wherever your agent's skill directory lives.
 2. For each skill listed below, find the matching phase/section in your fork.
 3. Apply the diff (paste the new block in the indicated location).
 4. Update the version banner at the top of your fork (`# Based on gbrain v0.12.0`).
@@ -155,7 +155,7 @@ Timeline entries still need explicit `gbrain timeline-add` calls.
 
 1. **Bump the version banner** at the top of each forked file:
    ```
-   # Based on gbrain v0.12.0 skills/<skill-name>, extended with Wintermute-specific config
+   # Based on gbrain v0.12.0 skills/<skill-name>, extended with <your-agent>-specific config
    ```
 
 2. **Run the v0.12.0 backfill** (this populates the graph for your existing brain):
@@ -242,6 +242,119 @@ page types (previously they all defaulted to `concept`):
 
 If your skills or queries filter by `type=concept` and expect wiki content in
 that bucket, update them to include the new types.
+
+---
+
+## v0.13.0 — Frontmatter Relationship Indexing
+
+**Verdict: no action required for most skills.** v0.13 projects YAML frontmatter fields into the graph as typed edges. The ingestion API is unchanged — keep calling `put_page` with frontmatter the way you do today; the graph auto-populates behind the scenes.
+
+Three skills get an optional new phase if you want to consume the new `auto_links.unresolved` response field. Without this, unresolvable frontmatter names silently skip (same as v0.12 behavior).
+
+### 1. meeting-ingestion/SKILL.md (optional)
+
+**Where:** Add a new section after "Phase 3: Write Meeting Page".
+
+```markdown
+### Phase 3.5: Check for unresolved attendees (v0.13+)
+
+After `put_page`, inspect `response.auto_links.unresolved` — an array of frontmatter
+references that did not resolve to existing pages. For meetings, this usually means
+attendees you haven't created a person page for yet.
+
+If `unresolved.length > 0`:
+- Option 1 (create pages now): trigger an enrichment pass to build the missing people pages.
+- Option 2 (defer): log the unresolved names to the enrichment queue for later.
+- Option 3 (accept the gap): the attendee edge will not be created until a page exists.
+  Re-running `gbrain extract links --source db --include-frontmatter` after creating
+  the page fills in the missing edges.
+```
+
+### 2. enrich/SKILL.md (optional)
+
+**Where:** Add to the enrichment trigger list.
+
+```markdown
+### Drain unresolved frontmatter names (v0.13+)
+
+If any `put_page` response includes `auto_links.unresolved` entries, the enrichment
+tier should pick up those (field, name) pairs and try to create the missing entity
+pages. Example flow:
+
+1. signal-detector captures a meeting with `attendees: [Alice Known, Unknown Person]`
+2. put_page returns `auto_links.unresolved = [{field: 'attendees', name: 'Unknown Person'}]`
+3. enrichment tier consumes `Unknown Person` → web search → creates `people/unknown-person.md`
+4. The next put_page (or a backfill run) wires up the `attended` edge automatically
+```
+
+### 3. idea-ingest/SKILL.md (optional)
+
+**Where:** Same pattern as meeting-ingestion — check `auto_links.unresolved` after `put_page`, route names to enrichment.
+
+### Unchanged skills (no diffs needed)
+
+- **brain-ops/SKILL.md** — auto-link mechanics are internal; the write path stays the same.
+- **signal-detector/SKILL.md** — signal capture path unchanged.
+- **query/SKILL.md** — `traverse_graph` now returns richer results automatically.
+- **daily-task-manager/SKILL.md**, **briefing/SKILL.md**, **citation-fixer/SKILL.md**, **media-ingest/SKILL.md** — unchanged.
+
+### New edge types you can filter in graph queries
+
+v0.13 edges carry new `link_type` values. If your fork has graph-query skills that filter by type, these are now available:
+
+- `works_at` (person → company) — from `company:`, `companies:`, or `key_people:`
+- `founded` (person → company) — from `founded:`
+- `invested_in` (investor → deal/company) — from `investors:` or `lead:`
+- `led_round` (lead → deal) — from `lead:`
+- `yc_partner` (partner → company) — from `partner:`
+- `attended` (person → meeting) — from `attendees:`
+- `discussed_in` (source → page) — from `sources:`
+- `source` (page → source) — from `source:`
+- `related_to` (page → target) — from `related:` or `see_also:`
+
+### Migration timing
+
+`gbrain upgrade` takes 2-5 min on a 46K-page brain (one-time). Runs out-of-process via `gbrain post-upgrade`. If your agent holds a DB connection during the upgrade, reconnect after; otherwise keep serving.
+
+### Type normalization NOT in v0.13
+
+Legacy rows with `link_type='attendee'` or `link_type='mention'` coexist with new `'attended'` / `'mentions'` rows. Your queries filtering on old type names keep working. A separate opt-in `gbrain normalize-types` command in v0.14 handles the rename.
+## v0.14.0 shell jobs (optional adoption, no skill edits)
+
+Adds a `shell` job type to Minions so deterministic cron scripts (API fetch, token
+refresh, scrape + write) move off the LLM gateway. Zero tokens per fire. ~60%
+gateway CPU headroom at typical scale. Feature is **off by default**, existing
+installs keep running exactly as they did before. Nothing breaks.
+
+To adopt, follow `skills/migrations/v0.14.0.md`. The short version:
+
+1. Set `GBRAIN_ALLOW_SHELL_JOBS=1` on the worker process, then `gbrain jobs work`
+   (Postgres). On PGLite, every crontab invocation uses `--follow` for inline
+   execution; no persistent worker.
+2. Classify each of your host's cron entries: LLM-requiring (keep on gateway) vs
+   deterministic (candidate for shell). Typical splits:
+   - **Deterministic → shell:** `ycli-token-refresh`, `x-oauth2-refresh`,
+     `x-garrytan-unified`, `calendar-sync-to-brain`, `github-pulse`,
+     `frameio-scan`, `flight-tracker`, `x-raw-json-backfill`.
+   - **LLM-requiring → stay:** `social-radar`, `content-ideas`, `adversary-vacuum`,
+     `ea-inbox-sweep`, `morning-briefing`, `brain-maintenance`.
+3. For each deterministic cron, rewrite as:
+   ```cron
+   3 13,16,19,22,1,4,7,10 * * * \
+     gbrain jobs submit shell \
+       --params '{"cmd":"node scripts/your-script.mjs","cwd":"/data/.openclaw/workspace"}' \
+       --max-attempts 3 --timeout-ms 300000
+   ```
+4. Watch `gbrain jobs get <id>` for exit_code / stdout_tail / stderr_tail on each
+   fire. Compare against pre-migration behavior before approving the next batch.
+
+**No skill edits required.** The handler runs worker-side; skill files don't
+change. If your host exposed custom handlers via the plugin contract (v0.11.0),
+they still work the same way.
+
+Iron rule: **never auto-rewrite the operator's crontab.** Every rewrite is
+per-cron, human-approved, with a diff. If you want automation later, the
+upcoming `gbrain crontab-to-minions <file>` helper is P1 in TODOS.
 
 ---
 

@@ -20,6 +20,18 @@ import { UnrecoverableError } from './types.ts';
 import { MinionQueue } from './queue.ts';
 import { calculateBackoff } from './backoff.ts';
 import { randomUUID } from 'crypto';
+import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
+
+/**
+ * Read the quiet_hours JSONB column off a MinionJob, if present. The
+ * column was added in schema migration v12; older rows + versions of
+ * MinionJob that don't include the field return null.
+ */
+function readQuietHoursConfig(job: MinionJob): QuietHoursConfig | null {
+  const cfg = (job as MinionJob & { quiet_hours?: unknown }).quiet_hours;
+  if (!cfg || typeof cfg !== 'object') return null;
+  return cfg as QuietHoursConfig;
+}
 
 /** Per-job in-flight state (isolated per job, not shared on the worker). */
 interface InFlightJob {
@@ -36,6 +48,13 @@ export class MinionWorker {
   private running = false;
   private inFlight = new Map<number, InFlightJob>();
   private workerId = randomUUID();
+
+  /** Fires only on worker process SIGTERM/SIGINT. Handlers that need to run
+   *  shutdown-specific cleanup (e.g. shell handler's SIGTERM→SIGKILL sequence on
+   *  its child) subscribe via `ctx.shutdownSignal`. Separated from the per-job
+   *  abort controller so non-shell handlers don't get cancelled mid-flight on
+   *  deploy restart — they still get the full 30s cleanup race instead. */
+  private shutdownAbort = new AbortController();
 
   private opts: Required<MinionWorkerOpts>;
 
@@ -76,10 +95,16 @@ export class MinionWorker {
     await this.queue.ensureSchema();
     this.running = true;
 
-    // Graceful shutdown
+    // Graceful shutdown. Fires shutdownAbort so handlers subscribed to
+    // `ctx.shutdownSignal` (currently: shell handler) can run their own cleanup
+    // BEFORE the 30s cleanup race expires. Non-shell handlers ignore shutdown
+    // and keep running — they get the full 30s window.
     const shutdown = () => {
       console.log('Minion worker shutting down...');
       this.running = false;
+      if (!this.shutdownAbort.signal.aborted) {
+        this.shutdownAbort.abort(new Error('shutdown'));
+      }
     };
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
@@ -123,7 +148,17 @@ export class MinionWorker {
           );
 
           if (job) {
-            this.launchJob(job, lockToken);
+            // Quiet-hours gate: evaluated at claim time, not dispatch.
+            // Config lives on the job record (jsonb column added in
+            // schema migration v12). Worker releases the job back to the
+            // queue on 'defer' or marks it cancelled on 'skip'.
+            const quietCfg = readQuietHoursConfig(job);
+            const verdict = evaluateQuietHours(quietCfg);
+            if (verdict !== 'allow') {
+              await this.handleQuietHoursDefer(job, lockToken, verdict);
+            } else {
+              this.launchJob(job, lockToken);
+            }
           } else if (this.inFlight.size === 0) {
             // No jobs and nothing in flight, poll
             await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
@@ -155,6 +190,60 @@ export class MinionWorker {
     }
   }
 
+  /**
+   * Called when a claimed job falls inside its quiet-hours window. The
+   * claim already set status='active' and held the lock; we reverse the
+   * state transition (defer) or cancel outright (skip).
+   *
+   * 'defer' → status='waiting', lock cleared, delay_until bumped ahead by
+   *   15 minutes so the same job doesn't immediately re-claim. Jobs will
+   *   naturally pick up again once `now` exits the quiet window.
+   * 'skip' → status='cancelled', final_status='skipped_quiet_hours'. The
+   *   event is dropped.
+   */
+  private async handleQuietHoursDefer(job: MinionJob, lockToken: string, verdict: 'skip' | 'defer'): Promise<void> {
+    try {
+      if (verdict === 'skip') {
+        // Route through MinionQueue.cancelJob so parent jobs in waiting-children
+        // see the cancellation and roll up correctly. A direct status='cancelled'
+        // UPDATE strands parents forever (no inbox, no dependency resolution).
+        // Release our lock first so cancelJob's descendant walk sees a clean state.
+        await this.engine.executeRaw(
+          `UPDATE minion_jobs SET lock_token = NULL, lock_until = NULL, updated_at = now()
+           WHERE id = $1 AND lock_token = $2`,
+          [job.id, lockToken],
+        );
+        try {
+          await this.queue.cancelJob(job.id);
+        } catch {
+          // cancelJob best-effort — if the parent rollup path errors, we still
+          // want the job out of 'active' rather than re-claimed on next tick.
+          await this.engine.executeRaw(
+            `UPDATE minion_jobs
+             SET status = 'cancelled', error_text = 'skipped_quiet_hours', updated_at = now()
+             WHERE id = $1 AND status NOT IN ('completed','failed','dead')`,
+            [job.id],
+          );
+        }
+        console.log(`Quiet-hours skip: ${job.name} (id=${job.id})`);
+      } else {
+        // Defer: release back to delayed, push delay ~15 minutes to avoid
+        // immediate re-claim loops when the claim query re-runs.
+        await this.engine.executeRaw(
+          `UPDATE minion_jobs
+           SET status = 'delayed', lock_token = NULL, lock_until = NULL,
+               delay_until = now() + interval '15 minutes',
+               updated_at = now()
+           WHERE id = $1 AND lock_token = $2`,
+          [job.id, lockToken],
+        );
+        console.log(`Quiet-hours defer: ${job.name} (id=${job.id}) → retry after 15m`);
+      }
+    } catch (e) {
+      console.error(`handleQuietHoursDefer error for job ${job.id}:`, e instanceof Error ? e.message : String(e));
+    }
+  }
+
   /** Stop the worker gracefully. */
   stop(): void {
     this.running = false;
@@ -170,7 +259,7 @@ export class MinionWorker {
       if (!renewed) {
         console.warn(`Lock lost for job ${job.id}, aborting execution`);
         clearInterval(lockTimer);
-        abort.abort();
+        abort.abort(new Error('lock-lost'));
       }
     }, this.opts.lockDuration / 2);
 
@@ -184,7 +273,7 @@ export class MinionWorker {
       timeoutTimer = setTimeout(() => {
         if (!abort.signal.aborted) {
           console.warn(`Job ${job.id} (${job.name}) hit per-job timeout (${job.timeout_ms}ms), aborting`);
-          abort.abort();
+          abort.abort(new Error('timeout'));
         }
       }, job.timeout_ms);
     }
@@ -211,13 +300,18 @@ export class MinionWorker {
       return;
     }
 
-    // Build job context with per-job AbortSignal
+    // Build job context with per-job AbortSignal + shared shutdown signal.
+    // Most handlers only care about `signal` (timeout / cancel / lock-loss).
+    // `shutdownSignal` is separate: fires only on worker process SIGTERM/SIGINT.
+    // Handlers that need to run cleanup before worker exit (shell handler's
+    // SIGTERM→5s→SIGKILL on its child) subscribe to shutdownSignal too.
     const context: MinionJobContext = {
       id: job.id,
       name: job.name,
       data: job.data,
       attempts_made: job.attempts_made,
       signal: abort.signal,
+      shutdownSignal: this.shutdownAbort.signal,
       updateProgress: async (progress: unknown) => {
         await this.queue.updateProgress(job.id, lockToken, progress);
       },
@@ -267,13 +361,23 @@ export class MinionWorker {
     } catch (err) {
       clearInterval(lockTimer);
 
-      // If aborted (paused or lock lost), don't try to fail the job
+      // If the per-job abort fired, derive the reason from signal.reason (set
+      // by whichever site aborted: 'timeout' / 'cancel' / 'lock-lost'). We call
+      // failJob unconditionally — the DB match on status='active' + lock_token
+      // makes it idempotent: if another path (handleTimeouts, cancelJob, stall)
+      // already flipped status, our call no-ops cleanly. The prior silent-return
+      // left jobs stranded in 'active' until a secondary sweep, breaking
+      // timeout/cancel contracts downstream callers rely on.
+      let errorText: string;
       if (abort.signal.aborted) {
-        console.log(`Job ${job.id} (${job.name}) aborted (paused or lock lost)`);
-        return;
+        const reason = abort.signal.reason instanceof Error
+          ? abort.signal.reason.message
+          : String(abort.signal.reason || 'aborted');
+        errorText = `aborted: ${reason}`;
+      } else {
+        errorText = err instanceof Error ? err.message : String(err);
       }
 
-      const errorText = err instanceof Error ? err.message : String(err);
       const isUnrecoverable = err instanceof UnrecoverableError;
       const attemptsExhausted = job.attempts_made + 1 >= job.max_attempts;
 

@@ -52,18 +52,38 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (em
 -- ============================================================
 -- links: cross-references between pages
 -- ============================================================
+-- Provenance model (v0.13):
+--   link_source       — 'markdown' | 'frontmatter' | 'manual' | NULL
+--                       (NULL = legacy row written before v0.13; unknown source)
+--   origin_page_id    — for link_source='frontmatter', the page whose YAML
+--                       frontmatter created this edge; scopes reconciliation
+--   origin_field      — the frontmatter field name (e.g. 'key_people')
+--
+-- The unique constraint includes link_source + origin_page_id so a manual edge
+-- and a frontmatter-derived edge with the same (from, to, type) tuple coexist.
+-- Reconciliation on put_page filters by (link_source='frontmatter' AND
+-- origin_page_id = written_page) — never touches other pages' edges.
 CREATE TABLE IF NOT EXISTS links (
-  id           SERIAL PRIMARY KEY,
-  from_page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  to_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  link_type    TEXT    NOT NULL DEFAULT '',
-  context      TEXT    NOT NULL DEFAULT '',
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT links_from_to_type_unique UNIQUE(from_page_id, to_page_id, link_type)
+  id             SERIAL PRIMARY KEY,
+  from_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  link_type      TEXT    NOT NULL DEFAULT '',
+  context        TEXT    NOT NULL DEFAULT '',
+  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual')),
+  origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+  origin_field   TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- NULLS NOT DISTINCT (PG15+) so two rows with link_source IS NULL or
+  -- origin_page_id IS NULL collide as expected. Without this, every row with
+  -- NULL origin_page_id (markdown/manual edges) would be treated as unique.
+  CONSTRAINT links_from_to_type_source_origin_unique
+    UNIQUE NULLS NOT DISTINCT (from_page_id, to_page_id, link_type, link_source, origin_page_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_links_from ON links(from_page_id);
 CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_page_id);
+CREATE INDEX IF NOT EXISTS idx_links_source ON links(link_source);
+CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
 
 -- ============================================================
 -- tags

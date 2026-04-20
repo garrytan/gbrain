@@ -2,9 +2,13 @@ import { describe, test, expect } from 'bun:test';
 import {
   extractEntityRefs,
   extractPageLinks,
+  extractFrontmatterLinks,
   inferLinkType,
+  makeResolver,
   parseTimelineEntries,
   isAutoLinkEnabled,
+  FRONTMATTER_LINK_MAP,
+  type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -71,12 +75,28 @@ describe('extractEntityRefs', () => {
 
 // ─── extractPageLinks ──────────────────────────────────────────
 
+// Resolver that always returns whatever the caller asks for (pretend every
+// page exists). Used by tests that only want to exercise the non-resolver
+// paths (markdown + bare-slug + frontmatter.source).
+const allowAllResolver = {
+  resolve: async (name: string) => {
+    if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(name)) return name;
+    return null;
+  },
+};
+
+// Resolver that never resolves. Used to test that the non-frontmatter
+// paths still produce candidates even when no fuzzy matching is possible.
+const nullResolver = { resolve: async () => null };
+
 describe('extractPageLinks', () => {
-  test('returns LinkCandidate[] with inferred types', () => {
-    const candidates = extractPageLinks(
+  test('returns LinkCandidate[] with inferred types', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x',
       '[Alice](people/alice) is the CEO of Acme.',
       {},
       'concept',
+      allowAllResolver,
     );
     expect(candidates.length).toBeGreaterThan(0);
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
@@ -84,32 +104,42 @@ describe('extractPageLinks', () => {
     expect(aliceLink!.linkType).toBe('works_at');
   });
 
-  test('dedups multiple mentions of same entity (within-page dedup)', () => {
+  test('dedups multiple mentions of same entity (within-page dedup)', async () => {
     const content = '[Alice](people/alice) said this. Later, [Alice](people/alice) said that.';
-    const candidates = extractPageLinks(content, {}, 'concept');
+    const { candidates } = await extractPageLinks('docs/x', content, {}, 'concept', allowAllResolver);
     const aliceLinks = candidates.filter(c => c.targetSlug === 'people/alice');
     expect(aliceLinks.length).toBe(1);
   });
 
-  test('extracts frontmatter source as source-type link', () => {
-    const candidates = extractPageLinks('Some content.', { source: 'meetings/2026-01-15' }, 'person');
+  test('extracts frontmatter source as source-type link', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'Some content.', { source: 'meetings/2026-01-15' }, 'person', allowAllResolver,
+    );
     const sourceLink = candidates.find(c => c.linkType === 'source');
     expect(sourceLink).toBeDefined();
     expect(sourceLink!.targetSlug).toBe('meetings/2026-01-15');
   });
 
-  test('extracts bare slug references in text', () => {
-    const candidates = extractPageLinks('See companies/acme for details.', {}, 'concept');
+  test('extracts bare slug references in text', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'See companies/acme for details.', {}, 'concept', nullResolver,
+    );
     const acme = candidates.find(c => c.targetSlug === 'companies/acme');
     expect(acme).toBeDefined();
   });
 
-  test('returns empty when no refs found', () => {
-    expect(extractPageLinks('Plain text with no links.', {}, 'concept')).toEqual([]);
+  test('returns empty when no refs found', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'Plain text with no links.', {}, 'concept', nullResolver,
+    );
+    expect(candidates).toEqual([]);
   });
 
-  test('meeting page references default to attended type', () => {
-    const candidates = extractPageLinks('Attendees: [Alice](people/alice), [Bob](people/bob).', {}, 'meeting');
+  test('meeting page references default to attended type', async () => {
+    const { candidates } = await extractPageLinks(
+      'meetings/x', 'Attendees: [Alice](people/alice), [Bob](people/bob).',
+      {}, 'meeting' as never, nullResolver,
+    );
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
     expect(aliceLink!.linkType).toBe('attended');
   });
@@ -301,5 +331,281 @@ describe('isAutoLinkEnabled', () => {
   test('garbage value -> true (fail-safe to default)', async () => {
     const engine = makeFakeEngine(new Map([['auto_link', 'garbage']]));
     expect(await isAutoLinkEnabled(engine)).toBe(true);
+  });
+});
+
+// ─── Frontmatter link extraction (v0.13) ────────────────────────
+
+/**
+ * In-memory resolver for frontmatter tests. Maps names to slugs via an
+ * explicit fixture map; returns null for anything missing. Mirrors what
+ * the real resolver does on a production brain but with deterministic
+ * inputs (no pg_trgm, no searchPages).
+ */
+function makeFixtureResolver(pages: Record<string, string>): SlugResolver {
+  return {
+    async resolve(name: string, dirHint?: string | string[]) {
+      const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
+      // Already a slug — check if present.
+      if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(name)) {
+        return pages[name] ?? null;
+      }
+      const slugified = name.toLowerCase().replace(/\s+/g, '-');
+      for (const hint of hints) {
+        if (!hint) continue;
+        const candidate = `${hint}/${slugified}`;
+        if (pages[candidate]) return candidate;
+      }
+      return null;
+    },
+  };
+}
+
+describe('extractFrontmatterLinks — field-map coverage', () => {
+  const pages = {
+    'people/pedro': 'people/pedro',
+    'people/garry': 'people/garry',
+    'people/diana-hu': 'people/diana-hu',
+    'companies/stripe': 'companies/stripe',
+    'companies/brex': 'companies/brex',
+    'companies/sequoia': 'companies/sequoia',
+    'companies/benchmark': 'companies/benchmark',
+    'meetings/2026-04-03': 'meetings/2026-04-03',
+    'deal/riveter-seed': 'deal/riveter-seed',
+  };
+  const resolver = makeFixtureResolver(pages);
+
+  test('person.company → outgoing works_at', async () => {
+    const { candidates } = await extractFrontmatterLinks(
+      'people/pedro', 'person' as never, { company: 'Stripe' }, resolver,
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      fromSlug: 'people/pedro',
+      targetSlug: 'companies/stripe',
+      linkType: 'works_at',
+      linkSource: 'frontmatter',
+      originSlug: 'people/pedro',
+      originField: 'company',
+    });
+  });
+
+  test('person.companies (array alias) → multiple works_at edges', async () => {
+    const { candidates } = await extractFrontmatterLinks(
+      'people/pedro', 'person' as never, { companies: ['Stripe', 'Brex'] }, resolver,
+    );
+    expect(candidates).toHaveLength(2);
+    for (const c of candidates) {
+      expect(c.fromSlug).toBe('people/pedro');
+      expect(c.linkType).toBe('works_at');
+      expect(c.targetSlug).toMatch(/^companies\/(stripe|brex)$/);
+    }
+  });
+
+  test('company.key_people → INCOMING works_at (person → company)', async () => {
+    const { candidates } = await extractFrontmatterLinks(
+      'companies/stripe', 'company' as never, { key_people: ['Pedro', 'Garry'] }, resolver,
+    );
+    expect(candidates).toHaveLength(2);
+    for (const c of candidates) {
+      // Incoming: from = resolved person, to = the page being written.
+      expect(c.targetSlug).toBe('companies/stripe');
+      expect(c.fromSlug).toMatch(/^people\/(pedro|garry)$/);
+      expect(c.linkType).toBe('works_at');
+      expect(c.originSlug).toBe('companies/stripe');
+      expect(c.originField).toBe('key_people');
+    }
+  });
+
+  test('meeting.attendees → INCOMING attended (person → meeting)', async () => {
+    const { candidates } = await extractFrontmatterLinks(
+      'meetings/2026-04-03', 'meeting' as never, { attendees: ['Pedro', 'Garry'] }, resolver,
+    );
+    expect(candidates).toHaveLength(2);
+    for (const c of candidates) {
+      expect(c.targetSlug).toBe('meetings/2026-04-03');
+      expect(c.linkType).toBe('attended');
+      expect(c.fromSlug).toMatch(/^people\/(pedro|garry)$/);
+    }
+  });
+
+  test('deal.investors (multi-dir hint) → INCOMING invested_in', async () => {
+    const { candidates } = await extractFrontmatterLinks(
+      'deal/riveter-seed', 'deal' as never,
+      { investors: ['Sequoia', 'Benchmark'] }, resolver,
+    );
+    expect(candidates).toHaveLength(2);
+    for (const c of candidates) {
+      expect(c.targetSlug).toBe('deal/riveter-seed');
+      expect(c.linkType).toBe('invested_in');
+      expect(c.fromSlug).toMatch(/^companies\/(sequoia|benchmark)$/);
+    }
+  });
+
+  test('source field → outgoing source edge', async () => {
+    const { candidates } = await extractFrontmatterLinks(
+      'people/pedro', 'person' as never, { source: 'meetings/2026-04-03' }, resolver,
+    );
+    const src = candidates.find(c => c.linkType === 'source');
+    expect(src).toBeDefined();
+    expect(src!.fromSlug).toBe('people/pedro');
+    expect(src!.targetSlug).toBe('meetings/2026-04-03');
+  });
+
+  test('unresolvable name goes to unresolved list, not candidates', async () => {
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'meetings/x', 'meeting' as never,
+      { attendees: ['Pedro', 'Unknown Person'] }, resolver,
+    );
+    expect(candidates).toHaveLength(1);
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]).toEqual({ field: 'attendees', name: 'Unknown Person' });
+  });
+
+  test('bad types (number, null, empty) skipped silently', async () => {
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'meetings/x', 'meeting' as never,
+      { attendees: [42, null, '', 'Pedro', { nothing: true }] }, resolver,
+    );
+    // Only 'Pedro' produces a candidate. 42/null/'' silently skipped.
+    // Object without name/slug/title is skipped. No unresolved entry for skipped.
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].fromSlug).toBe('people/pedro');
+    expect(unresolved).toHaveLength(0);
+  });
+
+  test('array of objects: uses .name, carries role into context', async () => {
+    const { candidates } = await extractFrontmatterLinks(
+      'deal/riveter-seed', 'deal' as never,
+      { investors: [{ name: 'Sequoia', role: 'lead' }] }, resolver,
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].context).toContain('Sequoia');
+    expect(candidates[0].context).toContain('lead');
+  });
+
+  test('context enrichment — not bare field name', async () => {
+    const { candidates } = await extractFrontmatterLinks(
+      'companies/stripe', 'company' as never, { key_people: ['Pedro'] }, resolver,
+    );
+    // Per plan Finding 7: context must include field + value, not bare 'frontmatter.key_people'.
+    expect(candidates[0].context).toBe('frontmatter.key_people: Pedro');
+  });
+
+  test('pageType filter — field ignored on non-matching page', async () => {
+    // `company` field only fires on person pages. On a concept page it's ignored.
+    const { candidates } = await extractFrontmatterLinks(
+      'concepts/x', 'concept' as never, { company: 'Stripe' }, resolver,
+    );
+    expect(candidates).toHaveLength(0);
+  });
+});
+
+describe('makeResolver — fallback chain', () => {
+  // Minimal engine fake with controlled pages + findByTitleFuzzy.
+  function makeFakeEngine(
+    slugs: string[],
+    fuzzyMap: Map<string, { slug: string; similarity: number }> = new Map(),
+  ): BrainEngine {
+    const lookup = new Set(slugs);
+    let getPageCalls = 0;
+    let fuzzyCalls = 0;
+    let searchCalls = 0;
+    const engine = {
+      async getPage(slug: string) {
+        getPageCalls++;
+        return lookup.has(slug) ? { slug } as any : null;
+      },
+      async findByTitleFuzzy(name: string) {
+        fuzzyCalls++;
+        return fuzzyMap.get(name) ?? null;
+      },
+      async searchKeyword() {
+        searchCalls++;
+        return [];
+      },
+    } as unknown as BrainEngine;
+    (engine as any)._counts = () => ({ getPageCalls, fuzzyCalls, searchCalls });
+    return engine;
+  }
+
+  test('step 1: slug passthrough', async () => {
+    const engine = makeFakeEngine(['people/pedro']);
+    const r = makeResolver(engine);
+    expect(await r.resolve('people/pedro')).toBe('people/pedro');
+  });
+
+  test('step 2: dir-hint construction', async () => {
+    const engine = makeFakeEngine(['companies/stripe']);
+    const r = makeResolver(engine);
+    expect(await r.resolve('Stripe', 'companies')).toBe('companies/stripe');
+  });
+
+  test('step 3: pg_trgm fuzzy hit', async () => {
+    const engine = makeFakeEngine(
+      ['companies/brex'],
+      new Map([['Brex Inc', { slug: 'companies/brex', similarity: 0.8 }]]),
+    );
+    const r = makeResolver(engine);
+    expect(await r.resolve('Brex Inc', 'companies')).toBe('companies/brex');
+  });
+
+  test('batch mode NEVER calls searchKeyword (deterministic migration)', async () => {
+    const engine = makeFakeEngine([]);
+    const r = makeResolver(engine, { mode: 'batch' });
+    const result = await r.resolve('Unknown Name', 'companies');
+    expect(result).toBeNull();
+    const counts = (engine as any)._counts();
+    expect(counts.searchCalls).toBe(0);
+  });
+
+  test('cache: same name → single getPage call', async () => {
+    const engine = makeFakeEngine(['people/pedro']);
+    const r = makeResolver(engine);
+    await r.resolve('people/pedro');
+    await r.resolve('people/pedro');
+    await r.resolve('people/pedro');
+    const counts = (engine as any)._counts();
+    expect(counts.getPageCalls).toBe(1);
+  });
+
+  test('unresolvable → null (no dead link written)', async () => {
+    const engine = makeFakeEngine([]);
+    const r = makeResolver(engine, { mode: 'batch' });
+    expect(await r.resolve('Nonexistent Person', 'people')).toBeNull();
+  });
+});
+
+describe('FRONTMATTER_LINK_MAP integrity', () => {
+  test('every mapping has fields + type + direction + dirHint', () => {
+    for (const m of FRONTMATTER_LINK_MAP) {
+      expect(m.fields.length).toBeGreaterThan(0);
+      expect(m.type).toBeTruthy();
+      expect(['outgoing', 'incoming']).toContain(m.direction);
+      expect(m.dirHint !== undefined).toBe(true);
+    }
+  });
+
+  test('key_people maps to INCOMING works_at on company page', () => {
+    const m = FRONTMATTER_LINK_MAP.find(m => m.fields.includes('key_people'));
+    expect(m).toBeDefined();
+    expect(m!.direction).toBe('incoming');
+    expect(m!.pageType).toBe('company');
+    expect(m!.type).toBe('works_at');
+  });
+
+  test('attendees maps to INCOMING attended on meeting page', () => {
+    const m = FRONTMATTER_LINK_MAP.find(m => m.fields.includes('attendees'));
+    expect(m!.direction).toBe('incoming');
+    expect(m!.pageType).toBe('meeting');
+    expect(m!.type).toBe('attended');
+  });
+
+  test('investors uses multi-dir hint (companies/funds/people)', () => {
+    const m = FRONTMATTER_LINK_MAP.find(m => m.fields.includes('investors'));
+    expect(Array.isArray(m!.dirHint)).toBe(true);
+    expect(m!.dirHint).toContain('companies');
+    expect(m!.dirHint).toContain('funds');
+    expect(m!.dirHint).toContain('people');
   });
 });

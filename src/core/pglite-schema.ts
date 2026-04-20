@@ -62,18 +62,25 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (em
 -- ============================================================
 -- links: cross-references between pages
 -- ============================================================
+-- See src/schema.sql for full design notes on link_source + origin_page_id.
 CREATE TABLE IF NOT EXISTS links (
-  id           SERIAL PRIMARY KEY,
-  from_page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  to_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  link_type    TEXT    NOT NULL DEFAULT '',
-  context      TEXT    NOT NULL DEFAULT '',
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT links_from_to_type_unique UNIQUE(from_page_id, to_page_id, link_type)
+  id             SERIAL PRIMARY KEY,
+  from_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  link_type      TEXT    NOT NULL DEFAULT '',
+  context        TEXT    NOT NULL DEFAULT '',
+  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual')),
+  origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+  origin_field   TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT links_from_to_type_source_origin_unique
+    UNIQUE NULLS NOT DISTINCT (from_page_id, to_page_id, link_type, link_source, origin_page_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_links_from ON links(from_page_id);
 CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_page_id);
+CREATE INDEX IF NOT EXISTS idx_links_source ON links(link_source);
+CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
 
 -- ============================================================
 -- tags

@@ -13,7 +13,7 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
-import { extractPageLinks, isAutoLinkEnabled } from './link-extraction.ts';
+import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -221,7 +221,7 @@ const get_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link is enabled) extracts + reconciles graph links.',
+  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
@@ -248,9 +248,15 @@ const put_page: Operation = {
     // Combined with the backlink boost in hybridSearch, attacker-placed targets
     // would surface higher in search. Local CLI users (ctx.remote=false) opt
     // into this behavior; MCP/remote writes do not.
-    let autoLinks: { created: number; removed: number; errors: number } | { error: string } | { skipped: 'remote' } | undefined;
+    let autoLinks:
+      | { created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }
+      | { error: string }
+      | { skipped: 'remote' }
+      | undefined;
+    let autoTimeline: { created: number } | { error: string } | { skipped: 'remote' } | undefined;
     if (ctx.remote === true) {
       autoLinks = { skipped: 'remote' };
+      autoTimeline = { skipped: 'remote' };
     } else if (result.parsedPage) {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
@@ -260,6 +266,52 @@ const put_page: Operation = {
       } catch (e) {
         autoLinks = { error: e instanceof Error ? e.message : String(e) };
       }
+      // Timeline extraction mirrors auto-link: runs post-write, best-effort,
+      // never blocks the write. ON CONFLICT DO NOTHING in
+      // addTimelineEntriesBatch keeps it idempotent across re-writes, so a
+      // page that's edited and re-written won't duplicate its own timeline.
+      try {
+        const enabled = await isAutoTimelineEnabled(ctx.engine);
+        if (enabled) {
+          const fullContent = result.parsedPage.compiled_truth + '\n' + result.parsedPage.timeline;
+          const entries = parseTimelineEntries(fullContent);
+          if (entries.length > 0) {
+            const batch = entries.map(e => ({
+              slug,
+              date: e.date,
+              summary: e.summary,
+              detail: e.detail || '',
+            }));
+            const created = await ctx.engine.addTimelineEntriesBatch(batch);
+            autoTimeline = { created };
+          } else {
+            autoTimeline = { created: 0 };
+          }
+        }
+      } catch (e) {
+        autoTimeline = { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+
+    // Post-write validator lint (PR 2.5): feature-flag-gated, non-blocking.
+    // When `writer.lint_on_put_page` is enabled, runs the BrainWriter's
+    // validators on the freshly-written page and logs findings to
+    // ingest_log + ~/.gbrain/validator-lint.jsonl. Does NOT reject the
+    // write — that's the deferred strict-mode flip after the 7-day soak.
+    let writerLint: { error_count: number; warning_count: number } | { skipped: string } | undefined;
+    try {
+      const { runPostWriteLint } = await import('./output/post-write.ts');
+      const lint = await runPostWriteLint(ctx.engine, result.slug);
+      if (lint.ran) {
+        writerLint = {
+          error_count: lint.findings.filter(f => f.severity === 'error').length,
+          warning_count: lint.findings.filter(f => f.severity === 'warning').length,
+        };
+      } else if (lint.skippedReason) {
+        writerLint = { skipped: lint.skippedReason };
+      }
+    } catch {
+      // Non-fatal; never blocks put_page.
     }
 
     return {
@@ -267,6 +319,8 @@ const put_page: Operation = {
       status: result.status === 'imported' ? 'created_or_updated' : result.status,
       chunks: result.chunks,
       ...(autoLinks ? { auto_links: autoLinks } : {}),
+      ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
+      ...(writerLint ? { writer_lint: writerLint } : {}),
     };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
@@ -286,43 +340,125 @@ async function runAutoLink(
   engine: BrainEngine,
   slug: string,
   parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },
-): Promise<{ created: number; removed: number; errors: number }> {
+): Promise<{ created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
-  const candidates = extractPageLinks(fullContent, parsed.frontmatter, parsed.type);
+  // Live-mode resolver: per-put throwaway cache, pg_trgm + optional search.
+  const resolver = makeResolver(engine, { mode: 'live' });
+  const { candidates, unresolved } = await extractPageLinks(
+    slug, fullContent, parsed.frontmatter, parsed.type, resolver,
+  );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
   // violation churn in addLink). One getAllSlugs call upfront, O(1) lookup.
   const allSlugs = await engine.getAllSlugs();
-  const valid = candidates.filter(c => allSlugs.has(c.targetSlug));
+  const valid = candidates.filter(c =>
+    allSlugs.has(c.targetSlug) && (!c.fromSlug || allSlugs.has(c.fromSlug))
+  );
+
+  // Split candidates by direction. Outgoing (fromSlug === slug or unset) are
+  // this page's own edges, reconciled against getLinks(slug). Incoming
+  // (fromSlug !== slug — frontmatter with `direction: incoming`) are edges
+  // where this page is the TO side; reconciled against getBacklinks(slug)
+  // but SCOPED to the frontmatter edges this page authored via
+  // (link_source='frontmatter' AND origin_slug = slug). We never touch
+  // frontmatter edges authored by OTHER pages.
+  const out = valid.filter(c => !c.fromSlug || c.fromSlug === slug);
+  const inc = valid.filter(c => c.fromSlug && c.fromSlug !== slug);
 
   // Run getLinks + addLink/removeLink loops inside a single transaction so that
   // concurrent put_page calls on the same slug can't race the reconciliation:
   // without this, two simultaneous writes both read stale `existingKeys` and
-  // re-create links the other side just removed (lost-update). The transaction
-  // serializes via row-level locks on `links` rows touched by addLink/removeLink.
-  return await engine.transaction(async (tx) => {
-    const existing = await tx.getLinks(slug);
-    const desiredKeys = new Set(valid.map(c => `${c.targetSlug}\u0000${c.linkType}`));
-    const existingKeys = new Set(existing.map(l => `${l.to_slug}\u0000${l.link_type}`));
+  // re-create links the other side just removed (lost-update).
+  //
+  // Row-level locks alone aren't enough: both writers can read the same
+  // `existingKeys` set BEFORE either mutates a row, so the union-of-writes
+  // race survives. A transaction-scoped advisory lock keyed on the slug
+  // hash serializes the entire reconciliation across processes. Falls
+  // through on engines that don't support pg_advisory_xact_lock (PGLite is
+  // single-process so there's no cross-process concern there anyway).
+  const result = await engine.transaction(async (tx) => {
+    try {
+      await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [`auto_link:${slug}`]);
+    } catch {
+      // engine doesn't support advisory locks — fall through
+    }
+    const existingOut = await tx.getLinks(slug);
+    // Incoming: we only look at frontmatter edges WE authored (origin_slug=slug).
+    // Non-frontmatter and other-page frontmatter edges survive untouched.
+    const existingInRaw = await tx.getBacklinks(slug);
+    const existingIn = existingInRaw.filter(
+      l => l.link_source === 'frontmatter' && l.origin_slug === slug,
+    );
+
+    // Reconcilable outgoing edges: markdown + our own frontmatter edges.
+    // Manual edges (link_source='manual') are NEVER touched by reconciliation.
+    const reconcilableOut = existingOut.filter(
+      l => l.link_source === 'markdown' || l.link_source == null ||
+           (l.link_source === 'frontmatter' && l.origin_slug === slug),
+    );
+
+    const outKeys = new Set(out.map(c =>
+      `${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`
+    ));
+    const incKeys = new Set(inc.map(c =>
+      `${c.fromSlug}\u0000${c.linkType}`
+    ));
 
     let created = 0, removed = 0, errors = 0;
 
-    // Add new + update existing.
-    for (const c of valid) {
+    // Add outgoing edges.
+    for (const c of out) {
       try {
-        await tx.addLink(slug, c.targetSlug, c.context, c.linkType);
-        if (!existingKeys.has(`${c.targetSlug}\u0000${c.linkType}`)) created++;
+        await tx.addLink(
+          slug, c.targetSlug, c.context, c.linkType,
+          c.linkSource, c.originSlug, c.originField,
+        );
+        const existKey = `${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`;
+        const exists = reconcilableOut.some(l =>
+          `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}` === existKey
+        );
+        if (!exists) created++;
       } catch {
         errors++;
       }
     }
 
-    // Remove stale (in DB but not in desired set).
-    for (const l of existing) {
-      const key = `${l.to_slug}\u0000${l.link_type}`;
-      if (!desiredKeys.has(key)) {
+    // Add incoming edges (other page → slug).
+    for (const c of inc) {
+      try {
+        await tx.addLink(
+          c.fromSlug!, c.targetSlug, c.context, c.linkType,
+          'frontmatter', c.originSlug, c.originField,
+        );
+        const existKey = `${c.fromSlug}\u0000${c.linkType}`;
+        const exists = existingIn.some(l =>
+          `${l.from_slug}\u0000${l.link_type}` === existKey
+        );
+        if (!exists) created++;
+      } catch {
+        errors++;
+      }
+    }
+
+    // Remove stale outgoing (markdown or our-frontmatter, not in desired set).
+    for (const l of reconcilableOut) {
+      const key = `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}`;
+      if (!outKeys.has(key)) {
         try {
-          await tx.removeLink(slug, l.to_slug, l.link_type);
+          await tx.removeLink(slug, l.to_slug, l.link_type, l.link_source ?? undefined);
+          removed++;
+        } catch {
+          errors++;
+        }
+      }
+    }
+
+    // Remove stale incoming (our frontmatter → slug, not in desired set).
+    for (const l of existingIn) {
+      const key = `${l.from_slug}\u0000${l.link_type}`;
+      if (!incKeys.has(key)) {
+        try {
+          await tx.removeLink(l.from_slug, slug, l.link_type, 'frontmatter');
           removed++;
         } catch {
           errors++;
@@ -332,6 +468,8 @@ async function runAutoLink(
 
     return { created, removed, errors };
   });
+
+  return { ...result, unresolved };
 }
 
 const delete_page: Operation = {
@@ -921,26 +1059,44 @@ const file_url: Operation = {
 
 const submit_job: Operation = {
   name: 'submit_job',
-  description: 'Submit a background job to the Minions queue',
+  description: 'Submit a background job to the Minions queue. Built-in types: sync, embed, lint, import, extract, backlinks, autopilot-cycle. The `shell` type is CLI-only and rejected over MCP.',
   params: {
-    name: { type: 'string', required: true, description: 'Job type (sync, embed, lint, import)' },
+    name: { type: 'string', required: true, description: 'Job type (sync, embed, lint, import, extract, backlinks, autopilot-cycle; shell is CLI-only)' },
     data: { type: 'object', description: 'Job payload (JSON)' },
     queue: { type: 'string', description: 'Queue name (default: "default")' },
     priority: { type: 'number', description: 'Priority (0 = highest, default: 0)' },
     max_attempts: { type: 'number', description: 'Max retry attempts (default: 3)' },
     delay: { type: 'number', description: 'Delay in ms before eligible' },
+    timeout_ms: { type: 'number', description: 'Per-job wall-clock timeout in ms; aborted job goes to dead' },
   },
   mutating: true,
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'submit_job', name: p.name };
+    const name = typeof p.name === 'string' ? p.name.trim() : '';
+    if (ctx.dryRun) return { dry_run: true, action: 'submit_job', name };
+
+    // Submit-side MCP guard: reject protected job names from untrusted callers
+    // BEFORE we touch the DB. This is the first of the two security layers
+    // (the second is MinionQueue.add's check). Independent of the worker-side
+    // GBRAIN_ALLOW_SHELL_JOBS env flag — even if that flag is on, MCP callers
+    // cannot submit protected-type jobs.
+    const { isProtectedJobName } = await import('./minions/protected-names.ts');
+    if (ctx.remote && isProtectedJobName(name)) {
+      throw new OperationError('permission_denied', `'${name}' jobs cannot be submitted over MCP (CLI-only for security)`);
+    }
+
     const { MinionQueue } = await import('./minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    return queue.add(p.name as string, (p.data as Record<string, unknown>) || {}, {
+    // Trusted flag set only when this is a local (non-remote) submission. When
+    // remote=true, the guard above has already thrown for protected names, so
+    // passing undefined here is safe for any non-protected name that slips by.
+    const trusted = !ctx.remote && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
+    return queue.add(name, (p.data as Record<string, unknown>) || {}, {
       queue: (p.queue as string) || 'default',
       priority: (p.priority as number) || 0,
       max_attempts: (p.max_attempts as number) || 3,
       delay: (p.delay as number) || undefined,
-    });
+      timeout_ms: (p.timeout_ms as number) || undefined,
+    }, trusted);
   },
 };
 

@@ -165,6 +165,78 @@ Now I'm meeting with [Bob](people/bob).
     expect(links[0].to_slug).toBe('people/bob');
   });
 
+  test('auto-timeline: put_page extracts + inserts timeline entries', async () => {
+    const putOp = operationsByName['put_page'];
+    const result = await putOp.handler(makeContext(), {
+      slug: 'people/dana',
+      content: `---
+type: person
+title: Dana
+---
+
+Dana is a founder.
+
+## Timeline
+
+- **2026-03-15** | Shipped v1.0
+- **2026-04-02** | Closed seed round
+`,
+    });
+
+    expect((result as any).auto_timeline).toBeDefined();
+    expect((result as any).auto_timeline.created).toBe(2);
+
+    const entries = await engine.getTimeline('people/dana');
+    expect(entries.length).toBe(2);
+    const dates = entries.map((e: any) => {
+      const d = e.date instanceof Date ? e.date.toISOString().slice(0, 10) : String(e.date).slice(0, 10);
+      return d;
+    }).sort();
+    expect(dates).toEqual(['2026-03-15', '2026-04-02']);
+  });
+
+  test('auto-timeline is idempotent: re-write does not duplicate entries', async () => {
+    const putOp = operationsByName['put_page'];
+    const content = `---
+type: person
+title: Eve
+---
+
+## Timeline
+
+- **2026-03-15** | Shipped
+`;
+    await putOp.handler(makeContext(), { slug: 'people/eve', content });
+    await putOp.handler(makeContext(), { slug: 'people/eve', content });
+
+    const entries = await engine.getTimeline('people/eve');
+    expect(entries.length).toBe(1);
+  });
+
+  test('auto-timeline respects auto_timeline=false config', async () => {
+    await engine.setConfig('auto_timeline', 'false');
+    try {
+      const putOp = operationsByName['put_page'];
+      const result = await putOp.handler(makeContext(), {
+        slug: 'people/frank',
+        content: `---
+type: person
+title: Frank
+---
+
+## Timeline
+
+- **2026-03-15** | Something happened
+`,
+      });
+      expect((result as any).auto_timeline).toBeUndefined();
+      const entries = await engine.getTimeline('people/frank');
+      expect(entries.length).toBe(0);
+    } finally {
+      await engine.setConfig('auto_timeline', 'true');
+    }
+  });
+
   test('auto-link respects auto_link=false config', async () => {
     await engine.setConfig('auto_link', 'false');
     try {

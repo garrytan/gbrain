@@ -17,6 +17,17 @@ export interface LinkBatchInput {
   to_slug: string;
   link_type?: string;
   context?: string;
+  /**
+   * Provenance (v0.13+). Pass 'frontmatter' for edges derived from YAML
+   * frontmatter, 'markdown' for [Name](path) refs, 'manual' for user-created.
+   * NULL means "legacy / unknown" and is only used by pre-v0.13 rows; new
+   * writes should always set this. Missing on input defaults to 'markdown'.
+   */
+  link_source?: string;
+  /** For link_source='frontmatter': slug of the page whose frontmatter created this edge. */
+  origin_slug?: string;
+  /** Frontmatter field name (e.g. 'key_people', 'investors'). */
+  origin_field?: string;
 }
 
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -69,7 +80,20 @@ export interface BrainEngine {
   deleteChunks(slug: string): Promise<void>;
 
   // Links
-  addLink(from: string, to: string, context?: string, linkType?: string): Promise<void>;
+  /**
+   * Single-row link insert. linkSource defaults to 'markdown' for back-compat
+   * with pre-v0.13 callers. Pass 'frontmatter' + originSlug + originField for
+   * frontmatter-derived edges; 'manual' for user-initiated edges.
+   */
+  addLink(
+    from: string,
+    to: string,
+    context?: string,
+    linkType?: string,
+    linkSource?: string,
+    originSlug?: string,
+    originField?: string,
+  ): Promise<void>;
   /**
    * Bulk insert links via a single multi-row INSERT...SELECT FROM (VALUES) JOIN pages
    * statement with ON CONFLICT DO NOTHING. Returns the count of rows actually inserted
@@ -80,11 +104,32 @@ export interface BrainEngine {
   /**
    * Remove links from `from` to `to`. If linkType is provided, only that specific
    * (from, to, type) row is removed. If omitted, ALL link types between the pair
-   * are removed (matches pre-multi-type-link behavior).
+   * are removed (matches pre-multi-type-link behavior). linkSource additionally
+   * constrains the delete to a specific provenance ('frontmatter', 'markdown',
+   * 'manual') — used by runAutoLink reconciliation to avoid deleting edges from
+   * other provenances when pruning frontmatter-derived edges.
    */
-  removeLink(from: string, to: string, linkType?: string): Promise<void>;
+  removeLink(from: string, to: string, linkType?: string, linkSource?: string): Promise<void>;
   getLinks(slug: string): Promise<Link[]>;
   getBacklinks(slug: string): Promise<Link[]>;
+  /**
+   * Fuzzy-match a display name to a page slug using pg_trgm similarity.
+   * Zero embedding cost, zero LLM cost — designed for the v0.13 resolver used
+   * during migration/batch backfill where 5K+ lookups must stay sub-second.
+   *
+   * Returns the best match whose title similarity is at or above `minSimilarity`
+   * (default 0.55). If `dirPrefix` is given (e.g. 'people' or 'companies'),
+   * only slugs starting with that prefix are considered. Returns null when no
+   * page meets the threshold.
+   *
+   * Uses the `%` trigram operator (GIN-indexed) + the standard `similarity()`
+   * function. Both engines support pg_trgm (PGLite 0.3+, Postgres always).
+   */
+  findByTitleFuzzy(
+    name: string,
+    dirPrefix?: string,
+    minSimilarity?: number,
+  ): Promise<{ slug: string; similarity: number } | null>;
   traverseGraph(slug: string, depth?: number): Promise<GraphNode[]>;
   /**
    * Edge-based graph traversal with optional type and direction filters.

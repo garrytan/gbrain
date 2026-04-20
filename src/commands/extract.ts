@@ -21,7 +21,11 @@ import { join, relative, dirname } from 'path';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from '../core/engine.ts';
 import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
-import { extractPageLinks, parseTimelineEntries, inferLinkType } from '../core/link-extraction.ts';
+import {
+  extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
+  extractFrontmatterLinks,
+  type UnresolvedFrontmatterRef,
+} from '../core/link-extraction.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -142,8 +146,19 @@ export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<st
   return null;
 }
 
-/** Infer link type from directory structure */
-function inferLinkType(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
+/**
+ * Directory-based link-type inference for the fs-source path.
+ *
+ * FS-source operates without a BrainEngine. We have paths, not pages. This
+ * helper looks at source + target directories and returns a type aligned
+ * with the canonical `inferLinkType` in link-extraction.ts (calibrated
+ * verb-based inference for db-source).
+ *
+ * v0.13: aligned type names with link-extraction.ts (was: 'mention' →
+ * 'mentions', 'attendee' → 'attended'). Diverged historically; the v0_13_0
+ * migration normalizes any legacy rows on existing brains.
+ */
+function inferTypeByDir(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
   const from = fromDir.split('/')[0];
   const to = toDir.split('/')[0];
   if (from === 'people' && to === 'companies') {
@@ -152,31 +167,8 @@ function inferLinkType(fromDir: string, toDir: string, frontmatter?: Record<stri
   }
   if (from === 'people' && to === 'deals') return 'involved_in';
   if (from === 'deals' && to === 'companies') return 'deal_for';
-  if (from === 'meetings' && to === 'people') return 'attendee';
-  return 'mention';
-}
-
-/** Extract links from frontmatter fields */
-function extractFrontmatterLinks(slug: string, fm: Record<string, unknown>): ExtractedLink[] {
-  const links: ExtractedLink[] = [];
-  const fieldMap: Record<string, { dir: string; type: string }> = {
-    company: { dir: 'companies', type: 'works_at' },
-    companies: { dir: 'companies', type: 'works_at' },
-    investors: { dir: 'companies', type: 'invested_in' },
-    attendees: { dir: 'people', type: 'attendee' },
-    founded: { dir: 'companies', type: 'founded' },
-  };
-  for (const [field, config] of Object.entries(fieldMap)) {
-    const value = fm[field];
-    if (!value) continue;
-    const slugs = Array.isArray(value) ? value : [value];
-    for (const s of slugs) {
-      if (typeof s !== 'string') continue;
-      const toSlug = `${config.dir}/${s.toLowerCase().replace(/\s+/g, '-')}`;
-      links.push({ from_slug: slug, to_slug: toSlug, link_type: config.type, context: `frontmatter.${field}` });
-    }
-  }
-  return links;
+  if (from === 'meetings' && to === 'people') return 'attended';
+  return 'mentions';
 }
 
 /** Parse frontmatter using the project's gray-matter-based parser */
@@ -189,10 +181,19 @@ function parseFrontmatterFromContent(content: string, relPath: string): Record<s
   }
 }
 
-/** Full link extraction from a single markdown file */
-export function extractLinksFromFile(
+/**
+ * Full link extraction from a single markdown file (FS-source path).
+ *
+ * Async (v0.13): uses the canonical `extractFrontmatterLinks` via a
+ * synthetic resolver backed by the pre-loaded `allSlugs` Set. No DB,
+ * no fuzzy match — FS-source resolves only when the dir-hint + slugify
+ * of the frontmatter value hits an actual file path. That mirrors the
+ * fs path's existing "exact match against disk" behavior.
+ */
+export async function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
-): ExtractedLink[] {
+  opts?: { includeFrontmatter?: boolean },
+): Promise<ExtractedLink[]> {
   const links: ExtractedLink[] = [];
   const slug = relPath.replace('.md', '');
   const fileDir = dirname(relPath);
@@ -203,13 +204,51 @@ export function extractLinksFromFile(
     if (resolved !== null) {
       links.push({
         from_slug: slug, to_slug: resolved,
-        link_type: inferLinkType(fileDir, dirname(resolved), fm),
+        link_type: inferTypeByDir(fileDir, dirname(resolved), fm),
         context: `markdown link: [${name}]`,
       });
     }
   }
 
-  links.push(...extractFrontmatterLinks(slug, fm));
+  if (opts?.includeFrontmatter) {
+    // Synthetic sync-ish resolver: only does step 1 (already a slug) and
+    // step 2 (dir-hint + slugify), backed by the Set of all known slugs.
+    const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+    const fsResolver = {
+      async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
+        if (!name) return null;
+        const trimmed = name.trim();
+        if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(trimmed) && allSlugs.has(trimmed)) {
+          return trimmed;
+        }
+        const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
+        for (const hint of hints) {
+          if (!hint) continue;
+          const candidate = `${hint}/${slugify(trimmed)}`;
+          if (allSlugs.has(candidate)) return candidate;
+        }
+        return null;
+      },
+    };
+    // Guess the page type from its directory for field-map filtering.
+    const topDir = slug.split('/')[0];
+    const pageType = topDir === 'people' ? 'person'
+      : topDir === 'companies' ? 'company'
+      : topDir === 'deals' || topDir === 'deal' ? 'deal'
+      : topDir === 'meetings' ? 'meeting'
+      : 'concept';
+    const fm = parseFrontmatterFromContent(content, relPath);
+    const fmLinks = await extractFrontmatterLinks(slug, pageType as never, fm, fsResolver);
+    for (const c of fmLinks.candidates) {
+      links.push({
+        from_slug: c.fromSlug ?? slug,
+        to_slug: c.targetSlug,
+        link_type: c.linkType,
+        context: c.context,
+      });
+    }
+  }
+
   return links;
 }
 
@@ -300,6 +339,10 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
   const since = (sinceIdx >= 0 && sinceIdx + 1 < args.length) ? args[sinceIdx + 1] : undefined;
   const dryRun = args.includes('--dry-run');
   const jsonMode = args.includes('--json');
+  // --include-frontmatter: v0.13 flag. Default OFF for back-compat. The
+  // v0_13_0 migration orchestrator runs this once under the hood; users
+  // opt in for subsequent runs.
+  const includeFrontmatter = args.includes('--include-frontmatter');
 
   // Validate --since upfront. Without this, an invalid date like
   // `--since yesterday` produces NaN which silently passes the filter check
@@ -337,7 +380,7 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
       // can opt in via mode + source.
       result = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
       if (subcommand === 'links' || subcommand === 'all') {
-        const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since);
+        const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since, { includeFrontmatter });
         result.links_created = r.created;
         result.pages_processed = r.pages;
       }
@@ -397,7 +440,7 @@ async function extractLinksFromDir(
   for (let i = 0; i < files.length; i++) {
     try {
       const content = readFileSync(files[i].path, 'utf-8');
-      const links = extractLinksFromFile(content, files[i].relPath, allSlugs);
+      const links = await extractLinksFromFile(content, files[i].relPath, allSlugs);
       for (const link of links) {
         if (dryRunSeen) {
           const key = `${link.from_slug}::${link.to_slug}::${link.link_type}`;
@@ -491,7 +534,7 @@ export async function extractLinksForSlugs(engine: BrainEngine, repoPath: string
     if (!existsSync(filePath)) continue;
     try {
       const content = readFileSync(filePath, 'utf-8');
-      for (const link of extractLinksFromFile(content, slug + '.md', allSlugs)) {
+      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs)) {
         try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type); created++; } catch { /* skip */ }
       }
     } catch { /* skip */ }
@@ -527,7 +570,18 @@ async function extractLinksFromDB(
   jsonMode: boolean,
   typeFilter: PageType | undefined,
   since: string | undefined,
-): Promise<{ created: number; pages: number }> {
+  opts?: { includeFrontmatter?: boolean },
+): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[] }> {
+  const includeFrontmatter = opts?.includeFrontmatter ?? false;
+  // Batch resolver: pg_trgm + exact only, NO search fallback. Dodges the
+  // N-thousand API call trap on 46K-page brains. Resolver has a per-run
+  // cache so duplicate names (same person appearing on many pages) resolve
+  // once, not once per mention.
+  const resolver = makeResolver(engine, { mode: 'batch' });
+  const unresolved: UnresolvedFrontmatterRef[] = [];
+  const nullResolver = {
+    resolve: async () => null as string | null,
+  };
   const allSlugs = await engine.getAllSlugs();
   const slugList = Array.from(allSlugs);
   let processed = 0, created = 0;
@@ -564,25 +618,45 @@ async function extractLinksFromDB(
     }
 
     const fullContent = page.compiled_truth + '\n' + page.timeline;
-    const candidates = extractPageLinks(fullContent, page.frontmatter, page.type);
+    // --include-frontmatter default OFF in v0.13 (codex tension 5, back-compat).
+    // Migration orchestrator explicitly enables it for the one-time backfill;
+    // user-invoked `gbrain extract links` stays outgoing-only.
+    const activeResolver = includeFrontmatter ? resolver : nullResolver;
+    const extracted = await extractPageLinks(
+      slug, fullContent, page.frontmatter, page.type, activeResolver,
+    );
+    unresolved.push(...extracted.unresolved);
 
-    for (const c of candidates) {
+    for (const c of extracted.candidates) {
+      // Validate BOTH endpoints exist. Incoming frontmatter edges have
+      // fromSlug !== the page being processed; we need that page to exist
+      // too or the JOIN drops the row anyway.
+      const fromSlug = c.fromSlug ?? slug;
       if (!allSlugs.has(c.targetSlug)) continue;
+      if (!allSlugs.has(fromSlug)) continue;
       if (dryRunSeen) {
-        const key = `${slug}::${c.targetSlug}::${c.linkType}`;
+        const key = `${fromSlug}::${c.targetSlug}::${c.linkType}::${c.linkSource ?? 'markdown'}`;
         if (dryRunSeen.has(key)) continue;
         dryRunSeen.add(key);
         if (jsonMode) {
           process.stdout.write(JSON.stringify({
-            action: 'add_link', from: slug, to: c.targetSlug,
-            type: c.linkType, context: c.context,
+            action: 'add_link', from: fromSlug, to: c.targetSlug,
+            type: c.linkType, context: c.context, link_source: c.linkSource,
           }) + '\n');
         } else {
-          console.log(`  ${slug} → ${c.targetSlug} (${c.linkType})`);
+          console.log(`  ${fromSlug} → ${c.targetSlug} (${c.linkType})${c.linkSource === 'frontmatter' ? ' [fm]' : ''}`);
         }
         created++;
       } else {
-        batch.push({ from_slug: slug, to_slug: c.targetSlug, link_type: c.linkType, context: c.context });
+        batch.push({
+          from_slug: fromSlug,
+          to_slug: c.targetSlug,
+          link_type: c.linkType,
+          context: c.context,
+          link_source: c.linkSource,
+          origin_slug: c.originSlug,
+          origin_field: c.originField,
+        });
         if (batch.length >= BATCH_SIZE) await flush();
       }
     }
@@ -596,8 +670,22 @@ async function extractLinksFromDB(
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
+    if (includeFrontmatter && unresolved.length > 0) {
+      // Top-20 preview of unresolvable frontmatter names so the user can
+      // see where the graph has holes (codex tension 6.4).
+      console.log(`Unresolved frontmatter refs: ${unresolved.length} total`);
+      const bucket = new Map<string, number>();
+      for (const u of unresolved) {
+        const key = `${u.field}:${u.name}`;
+        bucket.set(key, (bucket.get(key) || 0) + 1);
+      }
+      const top = Array.from(bucket.entries()).sort((a, b) => b[1] - a[1]).slice(0, 20);
+      for (const [key, count] of top) {
+        console.log(`  ${count}× ${key}`);
+      }
+    }
   }
-  return { created, pages: processed };
+  return { created, pages: processed, unresolved };
 }
 
 async function extractTimelineFromDB(
