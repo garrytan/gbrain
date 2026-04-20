@@ -1,8 +1,10 @@
+import path from 'node:path';
+import os from 'node:os';
 import postgres from 'postgres';
 import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 
-let sql: ReturnType<typeof postgres> | null = null;
+let sql: any = null;
 let connectedUrl: string | null = null;
 
 /**
@@ -23,7 +25,7 @@ export function resolvePoolSize(explicit?: number): number {
   return DEFAULT_POOL_SIZE_FALLBACK;
 }
 
-export function getConnection(): ReturnType<typeof postgres> {
+export function getConnection(): any {
   if (!sql) {
     throw new GBrainError(
       'No database connection',
@@ -36,36 +38,77 @@ export function getConnection(): ReturnType<typeof postgres> {
 
 export async function connect(config: EngineConfig): Promise<void> {
   if (sql) {
-    // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
       console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
     }
     return;
   }
 
-  const url = config.database_url;
+  let url = config.database_url;
+  
+  // If no URL provided, default to local PGLite in the home directory.
+  // This ensures a real OS filesystem path is used, bypassing Bun's $bunfs virtual filesystem.
   if (!url) {
-    throw new GBrainError(
-      'No database URL',
-      'database_url is missing from config',
-      'Run gbrain init --supabase or gbrain init --url <connection_string>',
-    );
+    url = `pglite://${path.join(os.homedir(), '.gbrain', 'data')}`;
   }
 
   try {
-    sql = postgres(url, {
-      max: resolvePoolSize(),
-      idle_timeout: 20,
-      connect_timeout: 10,
-      types: {
-        // Register pgvector type
-        bigint: postgres.BigInt,
-      },
-    });
+    if (url.startsWith('pglite://')) {
+      let dataDir = url.slice(9);
+      
+      // Detect if we are running in a Bun single-file executable ($bunfs://)
+      const isBunCompiled = import.meta.url.startsWith('bunfs:');
+      
+      // Resolve relative paths against the current working directory to avoid $bunfs resolution errors
+      if (dataDir !== 'memory' && dataDir !== ':memory:') {
+        if (dataDir.startsWith('.') || (isBunCompiled && !dataDir.startsWith('/'))) {
+          dataDir = path.resolve(process.cwd(), dataDir);
+        }
+      }
 
-    // Test connection
-    await sql`SELECT 1`;
-    connectedUrl = url;
+      const { PGLite } = await import('@electric-sql/pglite');
+      const pg = new PGLite(dataDir);
+
+      // Wrapper to make PGLite compatible with the postgres.js interface used elsewhere
+      const wrap = (client: any): any => {
+        const queryFn = (async (strings: TemplateStringsArray, ...values: any[]) => {
+          const query = strings.reduce((acc, str, i) => acc + str + (i < values.length ? `\$${i + 1}` : ''), '');
+          const res = await client.query(query, values);
+          return res.rows;
+        }) as any;
+
+        queryFn.unsafe = async (query: string) => {
+          const res = await client.exec(query);
+          const last = Array.isArray(res) ? res[res.length - 1] : res;
+          return last?.rows || [];
+        };
+
+        queryFn.begin = async (fn: any) => {
+          return await client.transaction(async (tx: any) => {
+            return await fn(wrap(tx));
+          });
+        };
+
+        queryFn.end = () => client.close();
+        return queryFn;
+      };
+
+      sql = wrap(pg);
+      await sql`SELECT 1`;
+      connectedUrl = url;
+    } else {
+      sql = postgres(url, {
+        max: resolvePoolSize(),
+        idle_timeout: 20,
+        connect_timeout: 10,
+        types: {
+          bigint: postgres.BigInt,
+        },
+      });
+
+      await sql`SELECT 1`;
+      connectedUrl = url;
+    }
   } catch (e: unknown) {
     sql = null;
     connectedUrl = null;
@@ -80,7 +123,7 @@ export async function connect(config: EngineConfig): Promise<void> {
 
 export async function disconnect(): Promise<void> {
   if (sql) {
-    await sql.end();
+    if (typeof sql.end === 'function') await sql.end();
     sql = null;
     connectedUrl = null;
   }
@@ -88,18 +131,20 @@ export async function disconnect(): Promise<void> {
 
 export async function initSchema(): Promise<void> {
   const conn = getConnection();
-  // Advisory lock prevents concurrent initSchema() calls from deadlocking
-  await conn`SELECT pg_advisory_lock(42)`;
+  // Advisory locks only supported on network Postgres, skip for PGLite
+  const isPGLite = connectedUrl?.startsWith('pglite://');
+  
+  if (!isPGLite) await conn`SELECT pg_advisory_lock(42)`;
   try {
     await conn.unsafe(SCHEMA_SQL);
   } finally {
-    await conn`SELECT pg_advisory_unlock(42)`;
+    if (!isPGLite) await conn`SELECT pg_advisory_unlock(42)`;
   }
 }
 
-export async function withTransaction<T>(fn: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+export async function withTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> {
   const conn = getConnection();
-  return conn.begin(async (tx) => {
-    return fn(tx as unknown as ReturnType<typeof postgres>);
+  return conn.begin(async (tx: any) => {
+    return fn(tx);
   });
 }
