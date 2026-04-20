@@ -1361,7 +1361,7 @@ async function claimFailedDraftForRetry(db: QueryableDb, draftId: number): Promi
     `UPDATE action_drafts
      SET status = 'sending',
          send_error = NULL,
-         approved_at = COALESCE(approved_at, now())
+         approved_at = now()
      WHERE id = $1
        AND status = 'send_failed'
      RETURNING id, action_item_id, status, channel, recipient, draft_text, approved_at, sent_at`,
