@@ -27,6 +27,9 @@
 
 import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
+import { loadConfig, toEngineConfig } from '../../core/config.ts';
+import { createEngine } from '../../core/engine-factory.ts';
+import { extractLinksFromDB } from '../extract.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts). The
 // orchestrator returns its result and the runner persists it.
 
@@ -56,44 +59,47 @@ function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
 
 // ── Phase B — Frontmatter edge backfill ─────────────────────
 
-function phaseBBackfill(opts: OrchestratorOpts): OrchestratorPhaseResult {
+async function phaseBBackfill(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> {
   if (opts.dryRun) return { name: 'frontmatter_backfill', status: 'skipped', detail: 'dry-run' };
+  // Call extractLinksFromDB in-process instead of spawning `${GBRAIN} extract`.
+  // Rationale: `process.execPath` is `bun` under `bun run src/cli.ts` (dev /
+  // bun-link installs). Passing that as GBRAIN produces `bun extract ...`
+  // which bun interprets as a missing package.json script and fails. Calling
+  // the function directly sidesteps all subprocess + PATH + exec-lookup hazards.
+  const config = loadConfig();
+  if (!config) {
+    return { name: 'frontmatter_backfill', status: 'failed', detail: 'No gbrain config found (run `gbrain init` first).' };
+  }
+  let engine;
   try {
-    // `--source db` iterates pages from the engine (no local checkout required).
-    // `--include-frontmatter` is the v0.13 flag that enables the canonical
-    // frontmatter link extractor. Default-OFF in the CLI for back-compat;
-    // the migration explicitly opts in because this is the canonical backfill.
-    execSync(`${GBRAIN} extract links --source db --include-frontmatter`, {
-      stdio: 'inherit',
-      timeout: 1_800_000,  // 30 min hard cap; typical 2-5 min on 46K pages
-      env: process.env,
-    });
+    engine = await createEngine(toEngineConfig(config));
+    await engine.connect(toEngineConfig(config));
+    await extractLinksFromDB(engine, false, false, undefined, undefined, { includeFrontmatter: true });
     return { name: 'frontmatter_backfill', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { name: 'frontmatter_backfill', status: 'failed', detail: msg };
+  } finally {
+    try { await engine?.disconnect(); } catch { /* best-effort */ }
   }
 }
 
 // ── Phase C — Verify ────────────────────────────────────────
 
-function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
+async function phaseCVerify(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> {
   if (opts.dryRun) return { name: 'verify', status: 'skipped', detail: 'dry-run' };
+  // Call getStats in-process for the same `process.execPath` reason as Phase B.
+  const config = loadConfig();
+  if (!config) {
+    return { name: 'verify', status: 'failed', detail: 'No gbrain config found.' };
+  }
+  let engine;
   try {
-    // Query frontmatter edge count via get_stats + a secondary --json call
-    // to `gbrain graph-query` as a smoke test: extract one random page and
-    // confirm it has at least one edge. Non-blocking.
-    //
-    // We intentionally do NOT fail on 0 frontmatter edges: fresh installs,
-    // docs-only brains, and brains with no entity pages legitimately
-    // produce 0. Phase B's own stdout shows `Links: created N` which is
-    // the authoritative signal — user sees it during upgrade.
-    const out = execSync(`${GBRAIN} call get_stats`, {
-      encoding: 'utf-8', timeout: 60_000, env: process.env,
-    });
-    const parsed = JSON.parse(out) as { link_count?: number; page_count?: number };
-    const linkCount = parsed.link_count ?? 0;
-    const pageCount = parsed.page_count ?? 0;
+    engine = await createEngine(toEngineConfig(config));
+    await engine.connect(toEngineConfig(config));
+    const stats = await engine.getStats();
+    const linkCount = stats.link_count ?? 0;
+    const pageCount = stats.page_count ?? 0;
     return {
       name: 'verify',
       status: 'complete',
@@ -102,6 +108,8 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { name: 'verify', status: 'failed', detail: msg };
+  } finally {
+    try { await engine?.disconnect(); } catch { /* best-effort */ }
   }
 }
 
@@ -119,13 +127,13 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   phases.push(a);
   if (a.status === 'failed') return finalizeResult(phases, 'failed');
 
-  const b = phaseBBackfill(opts);
+  const b = await phaseBBackfill(opts);
   phases.push(b);
   // Backfill failure → partial. Schema is already applied so re-running
   // only re-tries the backfill (idempotent via ON CONFLICT DO NOTHING).
   if (b.status === 'failed') return finalizeResult(phases, 'partial');
 
-  const c = phaseCVerify(opts);
+  const c = await phaseCVerify(opts);
   phases.push(c);
 
   const overallStatus: 'complete' | 'partial' | 'failed' =
