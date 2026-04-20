@@ -8,7 +8,7 @@ import { loadConfig } from '../core/config.ts';
 import { VERSION } from '../version.ts';
 
 /** Validate required params exist and have the expected type */
-function validateParams(op: Operation, params: Record<string, unknown>): string | null {
+export function validateParams(op: Operation, params: Record<string, unknown>): string | null {
   for (const [key, def] of Object.entries(op.params)) {
     if (def.required && (params[key] === undefined || params[key] === null)) {
       return `Missing required parameter: ${key}`;
@@ -26,13 +26,13 @@ function validateParams(op: Operation, params: Record<string, unknown>): string 
   return null;
 }
 
-export async function startMcpServer(engine: BrainEngine) {
+/** Create a configured MCP Server instance. Used by both stdio and HTTP transports. */
+export function createMcpServer(engine: BrainEngine): Server {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
     { capabilities: { tools: {} } },
   );
 
-  // Generate tool definitions from operations
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: operations.map(op => ({
       name: op.name,
@@ -54,7 +54,6 @@ export async function startMcpServer(engine: BrainEngine) {
     })),
   }));
 
-  // Dispatch tool calls to operation handlers
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
     const op = operations.find(o => o.name === name);
@@ -93,6 +92,11 @@ export async function startMcpServer(engine: BrainEngine) {
     }
   });
 
+  return server;
+}
+
+export async function startMcpServer(engine: BrainEngine) {
+  const server = createMcpServer(engine);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
