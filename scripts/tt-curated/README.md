@@ -6,9 +6,16 @@ Lightweight operator notes for TT's curated gbrain pipeline.
 This directory maintains a narrowed, high-signal slice of the Obsidian vault for nightly retrieval quality checks.
 
 ## Source of truth
-- Pipeline config: `config.yaml`
+- Runtime config: `config.yaml`
+- Bootstrap template: `config.example.yaml`
 - Query cases: `query-cases.yaml`
 - Shared shell env loader: `config_loader.py`
+
+## First-time setup
+```bash
+cp config.example.yaml config.yaml
+# then edit config.yaml for your local paths / chat target
+```
 
 ## Main commands
 ```bash

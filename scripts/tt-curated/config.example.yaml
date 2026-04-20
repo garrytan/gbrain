@@ -1,0 +1,48 @@
+paths:
+  script_dir: /path/to/gbrain/scripts/tt-curated
+  sandbox_home: /path/to/gbrain-sandbox-home
+  bun_bin_dir: /path/to/gbrain-local-bun/bin
+  gbrain_root: /path/to/gbrain
+  vault_root: /path/to/obsidian-vault
+  curated_stage: /path/to/gbrain-curated-stage
+  curated_db_dir: /path/to/gbrain-curated-db-768
+  curated_log_dir: /path/to/gbrain-curated-logs
+  openclaw_config: /path/to/.openclaw/openclaw.json
+telegram:
+  chat_id: "123456789"
+env:
+  gbrain_embed_dimensions: 768
+pipeline:
+  embed_safe:
+    attempts: 3
+    sleep_seconds: 90
+  stage:
+    include_paths:
+      - knowledge
+      - docs
+      - agents
+      - hackathons
+      - plans
+      - reviews
+    include_files:
+      - README.md
+      - TAG_STRATEGY.md
+      - ZETTELKASTEN_GUIDE.md
+  cron:
+    refresh:
+      log_tail_lines: 40
+      failed_case_limit: 10
+      alert_prefix: gbrain refresh FAIL
+    nightly:
+      log_tail_lines: 40
+      failed_case_limit: 10
+      severe_drift_case_limit: 5
+      alert_prefix: gbrain nightly FAIL
+      regression_alert_prefix: gbrain regression FAIL
+artifacts:
+  smoke_last_json: refresh-smoke-last.json
+  regression_last_json: query-regression-last.json
+  regression_baseline_json: query-regression-baseline.json
+  weekly_review_json: weekly-baseline-review.json
+query_cases:
+  path: /path/to/gbrain/scripts/tt-curated/query-cases.yaml
