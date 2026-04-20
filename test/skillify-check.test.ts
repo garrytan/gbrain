@@ -15,10 +15,11 @@ import { join } from 'path';
 
 const REPO = join(__dirname, '..');
 const SCRIPT = join(REPO, 'scripts', 'skillify-check.ts');
+const BUN_BIN = process.execPath;
 
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
   try {
-    const stdout = execFileSync('bun', ['run', SCRIPT, ...args], {
+    const stdout = execFileSync(BUN_BIN, ['run', SCRIPT, ...args], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: REPO,
