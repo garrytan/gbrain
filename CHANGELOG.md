@@ -2,6 +2,50 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.15.1] - 2026-04-21
+
+**Action Brain failure-mode hardening: stale context detection, degraded fetch protection, and concurrent retry correctness.**
+
+Two targeted fixes (GIT-1063) address the failure paths that matter most when `wacli` is unreliable or a conversation thread changes between draft generation and approval.
+
+When the thread fetch returns `success=false`, the system previously swallowed it silently and treated the empty result as fresh context. Now it throws, which propagates `context_fetch_degraded = true`. The stale context sweep correctly skips drafts instead of superseding them based on a broken diff. The `action_draft_regenerate` path skips regeneration and logs a `draft_skipped` event. Both paths preserve the existing pending draft rather than clobbering it.
+
+The legacy hash compatibility bridge (`doesContextHashMatch`) handles drafts generated before `context_fetch_degraded` was added to the hash input, so existing brains upgrade without false supersedes.
+
+### The numbers that matter
+
+Source: `bun test` on merged branch (`aa605ae` + `2367c29` atop v0.15.0).
+
+| Metric | Before | After | Δ |
+|--------|--------|-------|---|
+| Tests | 1521 | 1755 | +234 |
+| Failure-mode paths covered | partial | 12/12 | complete |
+| Pass rate | 100% | 100% | — |
+| `wacli success=false` behavior | silently empty | throws + degraded | correct |
+| Stale sweep on degraded fetch | supersedes | preserves | correct |
+
+234 new tests, all green. Zero regressions.
+
+### What this means for Action Brain users
+
+If your WhatsApp thread fetch is flaky — which it is in Tanzania — your pending drafts are now safe. A transient `wacli` failure no longer clears your context hash comparison and silently supersedes a good draft. The brief still surfaces the draft; the next sweep will retry.
+
+Run `gbrain upgrade` to get the fix.
+
+### Itemized changes
+
+#### Action Brain
+
+- `fix(action-brain)`: `wacli messages list` returning `success=false` now throws instead of returning an empty array, correctly propagating `context_fetch_degraded = true`
+- `fix(action-brain)`: Stale context sweep skips supersede when `context_fetch_degraded` — fail closed, preserves pending draft
+- `fix(action-brain)`: `action_draft_regenerate` skips with `draft_skipped` event when context fetch is degraded, no new draft inserted
+- `fix(action-brain)`: `doesContextHashMatch` checks both new hash format (includes `context_fetch_degraded`) and legacy format for migration safety
+- `fix(action-brain)`: `action_draft_regenerate` logs `draft_skipped` when recipient unavailable instead of throwing
+
+#### Tests
+
+- 12 new failure-mode test cases covering: stale context supersede, hash-unchanged preservation, legacy hash compat, transient degraded skip, `wacli success=false`, cap enforcement, starvation prevention under sustained ingest, generation_failed logging, skipped on no_recipient, skipped on degraded context
+
 ## [0.15.0] - 2026-04-21
 
 **Knowledge Runtime lands: Resolver SDK, BrainWriter, integrity repair, Budget ledger.**
