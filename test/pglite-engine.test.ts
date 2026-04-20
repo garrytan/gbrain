@@ -891,3 +891,40 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     expect(h2.orphan_pages).toBe(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// v0.13.1 — PGLite.create() error-wrap (structural guard for #223)
+// ─────────────────────────────────────────────────────────────────
+describe('PGLiteEngine: v0.13.1 error-wrap on connect() (#223)', () => {
+  test('pglite-engine.ts source contains the wrap with #223 hint and nested original error', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/pglite-engine.ts', 'utf-8');
+    // Structural: the try/catch block must wrap PGlite.create() (the actual
+    // abort site, NOT engine-factory.ts). The error message must name the
+    // issue and suggest gbrain doctor. Must NOT suggest "missing migrations"
+    // as a cause (that was conflating #218 and #223 — migrations run AFTER
+    // create()).
+    expect(src).toContain('this._db = await PGlite.create');
+    expect(src).toContain('https://github.com/garrytan/gbrain/issues/223');
+    expect(src).toContain('gbrain doctor');
+    expect(src).toContain('Original error:');
+    // Regression guard: the user-visible error MESSAGE must not re-introduce
+    // the misleading "missing migrations" hint. (A source comment explaining
+    // *why* we removed it is fine — match only inside the wrapped Error body.)
+    const wrapStart = src.indexOf('const wrapped = new Error(');
+    expect(wrapStart).toBeGreaterThan(-1);
+    const wrapEnd = src.indexOf(');', wrapStart);
+    const errBody = src.slice(wrapStart, wrapEnd);
+    expect(errBody).not.toContain('missing migrations');
+    expect(errBody).not.toContain('apply-migrations');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// v0.13.1 — Engine kind discriminator
+// ─────────────────────────────────────────────────────────────────
+describe('PGLiteEngine: v0.13.1 kind discriminator', () => {
+  test('exposes readonly kind = pglite', () => {
+    expect(engine.kind).toBe('pglite');
+  });
+});

@@ -99,6 +99,12 @@ export interface MinionJobInput {
   backoff_type?: BackoffType;
   backoff_delay?: number;
   backoff_jitter?: number;
+  /**
+   * Max number of stall windows before dead-letter. Default is the schema
+   * default (5 as of v0.13.1). Clamped to [1, 100] on insert — values
+   * outside that range are silently coerced. See migration v13.
+   */
+  max_stalled?: number;
   delay?: number; // ms delay before eligible
   parent_job_id?: number;
   on_child_fail?: ChildFailPolicy;

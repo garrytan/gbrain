@@ -15,6 +15,11 @@ bun install && bun link
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
+> **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
+> postinstall hook on global installs, so schema migrations never run and the CLI
+> aborts with `Aborted()` when it opens PGLite. Use the `git clone + bun link` path
+> above. Tracking issue: [#218](https://github.com/garrytan/gbrain/issues/218).
+
 ## Step 2: API Keys
 
 Ask the user for these:

@@ -179,15 +179,30 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
     checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS status' });
   }
 
-  // 6. Schema version
+  // 6. Schema version — also surfaces the #218 "postinstall silently failed"
+  // state: if schema_version is 0/missing but the DB connected, migrations
+  // never ran. That's the same class as a half-migrated install, just from a
+  // different root cause (Bun blocked our top-level postinstall on global
+  // install). Message is actionable either way.
   let schemaVersion = 0;
   try {
     const version = await engine.getConfig('version');
     schemaVersion = parseInt(version || '0', 10);
     if (schemaVersion >= LATEST_VERSION) {
       checks.push({ name: 'schema_version', status: 'ok', message: `Version ${schemaVersion} (latest: ${LATEST_VERSION})` });
+    } else if (schemaVersion === 0) {
+      checks.push({
+        name: 'schema_version',
+        status: 'fail',
+        message: `No schema version recorded. Migrations never ran. Fix: gbrain apply-migrations --yes. ` +
+                 `If you installed via 'bun install -g github:...', see https://github.com/garrytan/gbrain/issues/218.`,
+      });
     } else {
-      checks.push({ name: 'schema_version', status: 'warn', message: `Version ${schemaVersion}, latest is ${LATEST_VERSION}. Run gbrain init to migrate.` });
+      checks.push({
+        name: 'schema_version',
+        status: 'warn',
+        message: `Version ${schemaVersion}, latest is ${LATEST_VERSION}. Fix: gbrain apply-migrations --yes`,
+      });
     }
   } catch {
     checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
@@ -300,6 +315,51 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
   } catch {
     // pages_raw.raw_data may not exist on older schemas; best-effort.
     checks.push({ name: 'markdown_body_completeness', status: 'ok', message: 'Skipped (raw_data unavailable)' });
+  }
+
+  // 11. Index audit (opt-in via --index-audit). v0.13.1 follow-up to #170.
+  // Reports indexes with zero recorded scans on Postgres. Informational only;
+  // we DO NOT auto-drop. On #170's brain, idx_pages_frontmatter and
+  // idx_pages_trgm showed 0 scans — the suggestion there is "consider
+  // investigating on YOUR brain," not "drop these globally." Zero scans on a
+  // fresh install is also normal (nothing has queried yet); the real signal
+  // is zero scans on a long-running active brain.
+  if (args.includes('--index-audit')) {
+    if (engine.kind === 'pglite') {
+      checks.push({
+        name: 'index_audit',
+        status: 'ok',
+        message: 'Skipped (PGLite — pg_stat_user_indexes is a Postgres extension)',
+      });
+    } else {
+      try {
+        const sql = db.getConnection();
+        const rows = await sql`
+          SELECT schemaname, relname AS table, indexrelname AS index,
+                 idx_scan, pg_size_pretty(pg_relation_size(indexrelid)) AS size
+            FROM pg_stat_user_indexes
+           WHERE schemaname = 'public'
+             AND idx_scan = 0
+           ORDER BY pg_relation_size(indexrelid) DESC
+           LIMIT 20
+        `;
+        if (rows.length === 0) {
+          checks.push({ name: 'index_audit', status: 'ok', message: 'All public indexes have recorded scans' });
+        } else {
+          const list = rows.map((r: any) => `${r.index}(${r.size})`).join(', ');
+          checks.push({
+            name: 'index_audit',
+            status: 'warn',
+            message: `${rows.length} zero-scan index(es): ${list}. ` +
+                     `Consider investigating whether they're used on YOUR workload (fresh brains naturally show zero scans until queries accumulate). ` +
+                     `Do not drop without confirming.`,
+          });
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        checks.push({ name: 'index_audit', status: 'warn', message: `Index audit failed: ${msg}` });
+      }
+    }
   }
 
   const hasFail = outputResults(checks, jsonOutput);

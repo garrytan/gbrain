@@ -17,7 +17,20 @@ import { slugifyPath } from './sync.ts';
 interface Migration {
   version: number;
   name: string;
+  /** Engine-agnostic SQL. Used when `sqlFor` is absent. Set to '' for handler-only or sqlFor-only migrations. */
   sql: string;
+  /**
+   * Engine-specific SQL. If present, overrides `sql` for the matching engine.
+   * Needed when Postgres wants CONCURRENTLY but PGLite can't honor it.
+   */
+  sqlFor?: { postgres?: string; pglite?: string };
+  /**
+   * When false, the runner does NOT wrap the SQL in `engine.transaction()`.
+   * Required for `CREATE INDEX CONCURRENTLY` (which Postgres refuses inside a transaction).
+   * Enforced Postgres-only; ignored on PGLite (PGLite has no concurrent writers anyway).
+   * Defaults to true.
+   */
+  transaction?: boolean;
   handler?: (engine: BrainEngine) => Promise<void>;
 }
 
@@ -102,7 +115,7 @@ export const MIGRATIONS: Migration[] = [
         backoff_delay    INTEGER     NOT NULL DEFAULT 1000,
         backoff_jitter   REAL        NOT NULL DEFAULT 0.2,
         stalled_counter  INTEGER     NOT NULL DEFAULT 0,
-        max_stalled      INTEGER     NOT NULL DEFAULT 1,
+        max_stalled      INTEGER     NOT NULL DEFAULT 5,
         lock_token       TEXT,
         lock_until       TIMESTAMPTZ,
         delay_until      TIMESTAMPTZ,
@@ -348,6 +361,86 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
     `,
   },
+  {
+    version: 12,
+    name: 'pages_updated_at_index',
+    // v0.13.1: fixes the 14.6s "list pages newest-first" seqscan on 31k+ row brains.
+    // Original report: https://github.com/garrytan/gbrain/issues/170 (PR #215).
+    //
+    // Engine-aware (via handler, not SQL): Postgres uses CREATE INDEX
+    // CONCURRENTLY to avoid the write-blocking SHARE lock on `pages`
+    // (autopilot brains with 500k+ rows would otherwise stall for seconds).
+    // CONCURRENTLY refuses to run inside a transaction AND postgres.js's
+    // multi-statement `.unsafe()` wraps in an implicit transaction, so we
+    // run each statement as a separate call via the handler.
+    //
+    // A failed CONCURRENTLY build leaves behind an invalid index with the
+    // target name. Subsequent IF NOT EXISTS would skip it, marking the
+    // migration successful with an invalid index (query stays slow). The
+    // handler pre-drops any invalid remnant via pg_index.indisvalid check.
+    //
+    // PGLite has no concurrent writers and runs everything in a single
+    // connection; plain CREATE INDEX is safe. Handler branches on engine.kind.
+    sql: '',
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        // Postgres: two sequential, un-transacted statements.
+        // Step 1: drop any invalid remnant from a previous failed CONCURRENTLY.
+        await engine.runMigration(
+          12,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'idx_pages_updated_at_desc' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_pages_updated_at_desc';
+             END IF;
+           END $$;`
+        );
+        // Step 2: CREATE CONCURRENTLY (separate statement, no implicit transaction).
+        await engine.runMigration(
+          12,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pages_updated_at_desc
+             ON pages (updated_at DESC);`
+        );
+      } else {
+        // PGLite: plain CREATE is fine; no concurrent writers.
+        await engine.runMigration(
+          12,
+          `CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc
+             ON pages (updated_at DESC);`
+        );
+      }
+    },
+  },
+  {
+    version: 13,
+    name: 'minion_jobs_max_stalled_default_5',
+    // v0.13.1: fixes https://github.com/garrytan/gbrain/issues/219
+    //
+    // Problem: original schema shipped DEFAULT 1, meaning first stall →
+    // dead-letter. The "SIGKILL mid-flight, 10/10 rescued" claim was false
+    // out-of-the-box. New default is 5 (headroom for flaky deploys without
+    // letting a genuinely stuck worker linger forever).
+    //
+    // Two statements:
+    //   1. ALTER DEFAULT for new rows.
+    //   2. UPDATE for rows already in non-terminal statuses. Statuses come
+    //      directly from src/core/minions/types.ts MinionJobStatus. Terminal
+    //      statuses (completed/failed/dead/cancelled) are intentionally
+    //      untouched. Row locks serialize against concurrent claim() which
+    //      uses FOR UPDATE SKIP LOCKED, so this is race-safe.
+    //
+    // Idempotent: second run's UPDATE matches zero rows.
+    sql: `
+      ALTER TABLE minion_jobs ALTER COLUMN max_stalled SET DEFAULT 5;
+      UPDATE minion_jobs
+         SET max_stalled = 5
+       WHERE status IN ('waiting','active','delayed','waiting-children','paused')
+         AND max_stalled < 5;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -361,11 +454,23 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   let applied = 0;
   for (const m of MIGRATIONS) {
     if (m.version > current) {
-      // SQL migration (transactional)
-      if (m.sql) {
-        await engine.transaction(async (tx) => {
-          await tx.runMigration(m.version, m.sql);
-        });
+      // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
+      const sql = m.sqlFor?.[engine.kind] ?? m.sql;
+
+      if (sql) {
+        const useTransaction = m.transaction !== false;
+        // Non-transactional path is Postgres-only: `CREATE INDEX CONCURRENTLY`
+        // refuses to run inside a transaction. PGLite has no concurrent
+        // writers, so even if a migration sets transaction:false we wrap it
+        // anyway (harmless; keeps behavior consistent).
+        if (useTransaction || engine.kind === 'pglite') {
+          await engine.transaction(async (tx) => {
+            await tx.runMigration(m.version, sql);
+          });
+        } else {
+          // Postgres + transaction:false → direct execution, no BEGIN/COMMIT.
+          await engine.runMigration(m.version, sql);
+        }
       }
 
       // Application-level handler (runs outside transaction for flexibility)

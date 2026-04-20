@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS pages (
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
+-- v0.13.1 #170: avoids 14.6s seqscan on large brains when listing pages newest-first.
+CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -280,7 +282,7 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   backoff_delay    INTEGER     NOT NULL DEFAULT 1000,
   backoff_jitter   REAL        NOT NULL DEFAULT 0.2,
   stalled_counter  INTEGER     NOT NULL DEFAULT 0,
-  max_stalled      INTEGER     NOT NULL DEFAULT 1,
+  max_stalled      INTEGER     NOT NULL DEFAULT 5,
   lock_token       TEXT,
   lock_until       TIMESTAMPTZ,
   delay_until      TIMESTAMPTZ,

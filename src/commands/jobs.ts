@@ -57,7 +57,10 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
 
 USAGE
   gbrain jobs submit <name> [--params JSON] [--follow] [--priority N]
-                            [--delay Nms] [--max-attempts N] [--queue Q]
+                            [--delay Nms] [--max-attempts N] [--max-stalled N]
+                            [--backoff-type fixed|exponential] [--backoff-delay Nms]
+                            [--backoff-jitter 0..1] [--timeout-ms N]
+                            [--idempotency-key K] [--queue Q]
                             [--dry-run]
   gbrain jobs list [--status S] [--queue Q] [--limit N]
   gbrain jobs get <id>
@@ -92,6 +95,21 @@ USAGE
       const priority = parseInt(parseFlag(args, '--priority') ?? '0', 10);
       const delay = parseInt(parseFlag(args, '--delay') ?? '0', 10);
       const maxAttempts = parseInt(parseFlag(args, '--max-attempts') ?? '3', 10);
+      const maxStalledRaw = parseFlag(args, '--max-stalled');
+      const maxStalled = maxStalledRaw !== undefined ? parseInt(maxStalledRaw, 10) : undefined;
+      // v0.13.1 field audit: expose retry/backoff/timeout/idempotency knobs so
+      // users can tune Minions behavior without dropping into TypeScript.
+      const backoffTypeRaw = parseFlag(args, '--backoff-type');
+      const backoffType = backoffTypeRaw === 'fixed' || backoffTypeRaw === 'exponential'
+        ? backoffTypeRaw
+        : undefined;
+      const backoffDelayRaw = parseFlag(args, '--backoff-delay');
+      const backoffDelay = backoffDelayRaw !== undefined ? parseInt(backoffDelayRaw, 10) : undefined;
+      const backoffJitterRaw = parseFlag(args, '--backoff-jitter');
+      const backoffJitter = backoffJitterRaw !== undefined ? parseFloat(backoffJitterRaw) : undefined;
+      const timeoutMsRaw = parseFlag(args, '--timeout-ms');
+      const timeoutMs = timeoutMsRaw !== undefined ? parseInt(timeoutMsRaw, 10) : undefined;
+      const idempotencyKey = parseFlag(args, '--idempotency-key');
       const queueName = parseFlag(args, '--queue') ?? 'default';
       const dryRun = hasFlag(args, '--dry-run');
       const follow = hasFlag(args, '--follow');
@@ -102,6 +120,12 @@ USAGE
         console.log(`  Queue: ${queueName}`);
         console.log(`  Priority: ${priority}`);
         console.log(`  Max attempts: ${maxAttempts}`);
+        if (maxStalled !== undefined) console.log(`  Max stalled: ${maxStalled}`);
+        if (backoffType) console.log(`  Backoff type: ${backoffType}`);
+        if (backoffDelay !== undefined) console.log(`  Backoff delay: ${backoffDelay}ms`);
+        if (backoffJitter !== undefined) console.log(`  Backoff jitter: ${backoffJitter}`);
+        if (timeoutMs !== undefined) console.log(`  Timeout: ${timeoutMs}ms`);
+        if (idempotencyKey) console.log(`  Idempotency key: ${idempotencyKey}`);
         if (delay > 0) console.log(`  Delay: ${delay}ms`);
         console.log(`  Data: ${JSON.stringify(data)}`);
         return;
@@ -118,6 +142,12 @@ USAGE
         priority,
         delay: delay > 0 ? delay : undefined,
         max_attempts: maxAttempts,
+        max_stalled: maxStalled,
+        backoff_type: backoffType,
+        backoff_delay: backoffDelay,
+        backoff_jitter: backoffJitter,
+        timeout_ms: timeoutMs,
+        idempotency_key: idempotencyKey,
         queue: queueName,
       });
 
@@ -295,6 +325,8 @@ USAGE
         process.exit(1);
       }
 
+      const sigkillRescue = hasFlag(args, '--sigkill-rescue');
+
       const worker = new MinionWorker(engine, { queue: 'smoke', pollInterval: 100 });
       worker.register('noop', async () => ({ ok: true, at: new Date().toISOString() }));
 
@@ -312,22 +344,64 @@ USAGE
       await workerPromise;
 
       const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(2);
-      if (final?.status === 'completed') {
-        const cfg = (await import('../core/config.ts')).loadConfig();
-        const engineLabel = cfg?.engine ?? 'unknown';
-        console.log(`SMOKE PASS — Minions healthy in ${elapsedSec}s (engine: ${engineLabel})`);
-        if (engineLabel === 'pglite') {
-          console.log('Note: the `gbrain jobs work` daemon requires Postgres. PGLite');
-          console.log('supports inline execution only (`submit --follow`).');
-        }
-        try { await queue.removeJob(job.id); } catch { /* non-fatal cleanup */ }
-        process.exit(0);
-      } else {
+      if (final?.status !== 'completed') {
         console.error(`SMOKE FAIL — job #${job.id} status: ${final?.status ?? 'timeout'} (${elapsedSec}s elapsed)`);
         if (final?.error_text) console.error(`  Error: ${final.error_text}`);
         process.exit(1);
       }
-      break;
+
+      // --sigkill-rescue: regression case for #219. Simulates a SIGKILL
+      // mid-flight by directly manipulating lock_until via handleStalled.
+      // Verifies that with the v0.13.1 schema default (max_stalled=5), a
+      // stalled job is REQUEUED rather than dead-lettered on first stall.
+      // Full subprocess-level SIGKILL lives in test/e2e/minions.test.ts.
+      if (sigkillRescue) {
+        const rescueJob = await queue.add('noop', {}, { queue: 'smoke' });
+
+        // Transition to active with a past lock_until, mimicking a worker
+        // that claimed and then got SIGKILL'd mid-run.
+        await engine.executeRaw(
+          `UPDATE minion_jobs
+              SET status='active',
+                  lock_token='smoke-sigkill-rescue',
+                  lock_until=now() - interval '1 minute',
+                  started_at=now() - interval '2 minute',
+                  attempts_started = attempts_started + 1
+            WHERE id=$1`,
+          [rescueJob.id]
+        );
+
+        const result = await queue.handleStalled();
+        const afterStall = await queue.getJob(rescueJob.id);
+
+        if (afterStall?.status === 'dead') {
+          console.error(
+            `SMOKE FAIL (--sigkill-rescue) — job #${rescueJob.id} was dead-lettered on first stall. ` +
+            `This is the #219 regression: schema default max_stalled should rescue, not dead-letter. ` +
+            `handleStalled: ${JSON.stringify(result)}`
+          );
+          process.exit(1);
+        }
+        if (afterStall?.status !== 'waiting') {
+          console.error(
+            `SMOKE FAIL (--sigkill-rescue) — unexpected status after stall: ${afterStall?.status}. ` +
+            `Expected 'waiting' (rescued). handleStalled: ${JSON.stringify(result)}`
+          );
+          process.exit(1);
+        }
+        try { await queue.removeJob(rescueJob.id); } catch { /* non-fatal cleanup */ }
+      }
+
+      const cfg = (await import('../core/config.ts')).loadConfig();
+      const engineLabel = cfg?.engine ?? 'unknown';
+      const tag = sigkillRescue ? ' + SIGKILL rescue' : '';
+      console.log(`SMOKE PASS — Minions healthy${tag} in ${elapsedSec}s (engine: ${engineLabel})`);
+      if (engineLabel === 'pglite') {
+        console.log('Note: the `gbrain jobs work` daemon requires Postgres. PGLite');
+        console.log('supports inline execution only (`submit --follow`).');
+      }
+      try { await queue.removeJob(job.id); } catch { /* non-fatal cleanup */ }
+      process.exit(0);
     }
 
     case 'work': {

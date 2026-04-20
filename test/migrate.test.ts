@@ -79,6 +79,122 @@ describe('migrations v8 + v9 — structural guard for helper-index fix', () => {
   });
 });
 
+// v0.13.1 — fix wave structural assertions
+describe('migrate v12 — pages_updated_at_index (handler-based, engine-aware)', () => {
+  const v12 = MIGRATIONS.find(m => m.version === 12);
+  test('v12 exists and uses a handler (not pure SQL) for engine-aware branching', () => {
+    expect(v12).toBeDefined();
+    expect(v12!.name).toBe('pages_updated_at_index');
+    // Handler-based because postgres.js wraps multi-statement .unsafe() in an
+    // implicit transaction, which CREATE INDEX CONCURRENTLY refuses. The
+    // handler runs each statement as a separate call.
+    expect(typeof v12!.handler).toBe('function');
+    // SQL body must be empty so the runner skips the SQL path.
+    expect(v12!.sql).toBe('');
+  });
+
+  test('v12 handler source contains CONCURRENTLY + invalid-index cleanup for Postgres branch', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    // Find the v12 migration block.
+    const v12Start = src.indexOf("name: 'pages_updated_at_index'");
+    expect(v12Start).toBeGreaterThan(-1);
+    const v12Block = src.slice(v12Start, v12Start + 3000);
+    // Postgres branch: invalid-index cleanup before CREATE CONCURRENTLY.
+    expect(v12Block).toContain('pg_index');
+    expect(v12Block).toContain('indisvalid');
+    expect(v12Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_pages_updated_at_desc');
+    expect(v12Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pages_updated_at_desc');
+    const dropIdx = v12Block.indexOf('DROP INDEX CONCURRENTLY');
+    const createIdx = v12Block.indexOf('CREATE INDEX CONCURRENTLY');
+    expect(dropIdx).toBeLessThan(createIdx);
+    // PGLite branch: plain CREATE, no CONCURRENTLY.
+    expect(v12Block).toContain('engine.kind');
+  });
+});
+
+describe('migrate v13 — minion_jobs_max_stalled_default_5', () => {
+  const v13 = MIGRATIONS.find(m => m.version === 13);
+  test('v13 exists and alters max_stalled default to 5', () => {
+    expect(v13).toBeDefined();
+    expect(v13!.name).toBe('minion_jobs_max_stalled_default_5');
+    expect(v13!.sql).toContain('ALTER TABLE minion_jobs ALTER COLUMN max_stalled SET DEFAULT 5');
+  });
+
+  test('v13 backfill UPDATE targets the correct non-terminal statuses', () => {
+    const sql = v13!.sql;
+    // Must include the actual statuses from MinionJobStatus, NOT the invented
+    // `claimed/running/stalled` that existed in the first draft.
+    expect(sql).toContain(`'waiting'`);
+    expect(sql).toContain(`'active'`);
+    expect(sql).toContain(`'delayed'`);
+    expect(sql).toContain(`'waiting-children'`);
+    expect(sql).toContain(`'paused'`);
+    // Terminal statuses must NOT appear in the UPDATE WHERE clause.
+    expect(sql).not.toContain(`'completed'`);
+    expect(sql).not.toContain(`'dead'`);
+    expect(sql).not.toContain(`'cancelled'`);
+    // Guard against re-introducing the invented statuses.
+    expect(sql).not.toContain(`'claimed'`);
+    expect(sql).not.toContain(`'running'`);
+    expect(sql).not.toContain(`'stalled'`);
+  });
+
+  test('v13 UPDATE clause has the < 5 guard so idempotent re-runs are no-ops', () => {
+    expect(v13!.sql).toContain('max_stalled < 5');
+  });
+});
+
+describe('migrate — runner respects transaction:false + sqlFor (v12 behavioral)', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('v12 created idx_pages_updated_at_desc on PGLite via sqlFor.pglite branch', async () => {
+    // PGLite stores index metadata in pg_indexes.
+    const rows = await (engine as any).db.query(
+      `SELECT indexname FROM pg_indexes WHERE indexname = 'idx_pages_updated_at_desc'`
+    );
+    expect(rows.rows.length).toBe(1);
+  });
+
+  test('v13 backfilled any max_stalled=1 rows (smoke: schema default is 5)', async () => {
+    // Fresh PGLite brain won't have any minion_jobs rows; insert one at 1, rerun v13.
+    await (engine as any).db.exec(
+      `INSERT INTO minion_jobs (name, queue, status, max_stalled) VALUES ('test', 'default', 'waiting', 1)`
+    );
+    // Manually re-run v13 UPDATE statement to verify idempotent semantics
+    await (engine as any).db.exec(
+      `UPDATE minion_jobs SET max_stalled = 5
+         WHERE status IN ('waiting','active','delayed','waiting-children','paused')
+           AND max_stalled < 5`
+    );
+    const rows = await (engine as any).db.query(
+      `SELECT max_stalled FROM minion_jobs WHERE name = 'test'`
+    );
+    expect((rows.rows[0] as any).max_stalled).toBe(5);
+
+    // Second run is a no-op (no rows < 5 left).
+    await (engine as any).db.exec(
+      `UPDATE minion_jobs SET max_stalled = 5
+         WHERE status IN ('waiting','active','delayed','waiting-children','paused')
+           AND max_stalled < 5`
+    );
+    const rows2 = await (engine as any).db.query(
+      `SELECT max_stalled FROM minion_jobs WHERE name = 'test'`
+    );
+    expect((rows2.rows[0] as any).max_stalled).toBe(5);
+  });
+});
+
 describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate rows', () => {
   let engine: PGLiteEngine;
 

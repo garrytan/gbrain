@@ -37,6 +37,11 @@ gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
 ```
 
+**Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
+postinstall hook on global installs, so schema migrations never run and the CLI
+aborts with `Aborted()` the first time it opens PGLite. Use `git clone + bun install
+&& bun link` as shown above. See [#218](https://github.com/garrytan/gbrain/issues/218).
+
 ```
 3 results (hybrid search, 0.12s):
 
