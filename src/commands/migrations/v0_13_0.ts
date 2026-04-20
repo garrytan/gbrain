@@ -36,12 +36,21 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 // and swaps the unique constraint. Schema build time on 46K pages is
 // ~10s (ALTER + index builds). Bumped timeout accounts for slow Supabase
 // links (v0.12.1 pattern — migrations can time out on the 60s default).
-// Use the CURRENTLY-RUNNING binary path (not `gbrain` off $PATH). After
-// `gbrain upgrade` rewrites the binary, a bare `gbrain` could resolve to
-// an older installed copy via alias shadowing or stale PATH cache. The
-// active process.execPath is the one that loaded THIS migration module,
-// so recursing into it is always the right binary.
-const GBRAIN = process.execPath;
+// Resolve to the currently-running gbrain invocation. The intent is to
+// avoid bare `gbrain` off $PATH (which can resolve to a stale copy after
+// `gbrain upgrade` rewrites the binary). But `process.execPath` alone is
+// wrong in bun-TS mode: for a `bun install -g github:...` install, the
+// symlink in ~/.bun/bin/gbrain points at src/cli.ts and `bun` is the
+// process — so `process.execPath` is /path/to/bun, and invoking it as
+// `${bun} extract links ...` makes bun treat "extract" as a script name
+// and fail with `Script not found "extract"`. In compiled mode
+// (`bun build --compile`), execPath IS the gbrain binary, so it works
+// alone. Detect which mode we're in by checking whether argv[1] looks
+// like the TS entry point.
+const execPath = process.execPath;
+const scriptPath = process.argv[1] ?? '';
+const isBunRunningTS = scriptPath.endsWith('.ts');
+const GBRAIN = isBunRunningTS ? `${execPath} ${scriptPath}` : execPath;
 
 function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
