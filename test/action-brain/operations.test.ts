@@ -626,6 +626,80 @@ describe('Action Brain operation integration', () => {
     });
   });
 
+  test('action_draft_approve does not recover an in-flight send_failed retry while sender is active', async () => {
+    await withActionContext(async (ctx, engine) => {
+      const { draftId, itemId } = await seedActionItemAndDraft(engine);
+      const db = (engine as unknown as EngineWithDb).db;
+      const actionDraftApprove = getActionOperation('action_draft_approve');
+
+      await db.query(
+        `UPDATE action_drafts
+         SET status = 'send_failed',
+             approved_at = now() - interval '10 minutes',
+             sent_at = NULL,
+             send_error = 'simulated previous failure'
+         WHERE id = $1`,
+        [draftId]
+      );
+
+      const calls: Array<{ command: string; args: string[] }> = [];
+      let releaseSend: (() => void) | null = null;
+      let resolveSendStarted: (() => void) | null = null;
+      const sendStarted = new Promise<void>((resolve) => {
+        resolveSendStarted = resolve;
+      });
+      const sendGate = new Promise<void>((resolve) => {
+        releaseSend = resolve;
+      });
+
+      setActionDraftSendExecutorForTests(async (command, args) => {
+        calls.push({ command, args: [...args] });
+        resolveSendStarted?.();
+        await sendGate;
+        return { stdout: 'ok', stderr: '' };
+      });
+
+      try {
+        const firstAttempt = actionDraftApprove.handler(ctx, { id: draftId, retry: true });
+        await sendStarted;
+
+        const concurrentAttempt = await actionDraftApprove.handler(ctx, { id: draftId, retry: true });
+        expect(concurrentAttempt.status).toBe('already_processed');
+        expect(concurrentAttempt.draft_status).toBe('sending');
+        expect(concurrentAttempt.retry_required).toBe(true);
+
+        releaseSend?.();
+        const firstResult = await firstAttempt;
+        expect(firstResult.status).toBe('sent');
+        expect(firstResult.resumed_from_status).toBe('send_failed');
+
+        expect(calls).toHaveLength(1);
+
+        const finalDraft = await db.query(
+          `SELECT status, sent_at
+           FROM action_drafts
+           WHERE id = $1`,
+          [draftId]
+        );
+        expect(finalDraft.rows[0]?.status).toBe('sent');
+        expect(finalDraft.rows[0]?.sent_at).not.toBeNull();
+
+        const staleRecoveryEvents = await db.query(
+          `SELECT count(*)::int AS n
+           FROM action_history
+           WHERE item_id = $1
+             AND event_type = 'draft_send_failed'
+             AND metadata @> '{"recovery_mode":"missing_delivery_confirmation"}'::jsonb`,
+          [itemId]
+        );
+        expect(Number((staleRecoveryEvents.rows[0] as { n: number | string }).n)).toBe(0);
+      } finally {
+        releaseSend?.();
+        setActionDraftSendExecutorForTests(null);
+      }
+    });
+  });
+
   test('action_draft_reject, action_draft_edit, and action_draft_regenerate emit expected history events', async () => {
     await withActionContext(async (ctx, engine) => {
       const db = (engine as unknown as EngineWithDb).db;
