@@ -2,7 +2,23 @@ export type ActionType = 'commitment' | 'follow_up' | 'decision' | 'question' | 
 
 export type ActionStatus = 'open' | 'waiting_on' | 'in_progress' | 'stale' | 'resolved' | 'dropped';
 
-export type ActionHistoryEventType = 'created' | 'status_change' | 'reminded' | 'escalated' | 'resolved' | 'dropped';
+export type ActionDraftStatus = 'pending' | 'approved' | 'rejected' | 'sent' | 'send_failed' | 'superseded';
+
+export type ActionDraftChannel = 'whatsapp' | 'telegram';
+
+export type ActionHistoryEventType =
+  | 'created'
+  | 'status_change'
+  | 'reminded'
+  | 'escalated'
+  | 'resolved'
+  | 'dropped'
+  | 'draft_created'
+  | 'draft_approved'
+  | 'draft_edited'
+  | 'draft_rejected'
+  | 'draft_sent'
+  | 'draft_send_failed';
 
 export interface ActionItem {
   id: number;
@@ -31,4 +47,21 @@ export interface ActionHistory {
   timestamp: Date;
   actor: string;
   metadata: Record<string, unknown>;
+}
+
+export interface ActionDraft {
+  id: number;
+  action_item_id: number;
+  version: number;
+  status: ActionDraftStatus;
+  channel: ActionDraftChannel;
+  recipient: string;
+  draft_text: string;
+  model: string;
+  context_hash: string;
+  context_snapshot: Record<string, unknown>;
+  generated_at: Date;
+  approved_at: Date | null;
+  sent_at: Date | null;
+  send_error: string | null;
 }

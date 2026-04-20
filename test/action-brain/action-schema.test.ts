@@ -17,7 +17,7 @@ async function createDb(): Promise<PGlite> {
 }
 
 describe('Action Brain schema', () => {
-  test('creates action_items and action_history with required columns', async () => {
+  test('creates action_items, action_history, action_drafts, and action_drops with required columns', async () => {
     const localDb = await createDb();
 
     await initActionSchema(localDb);
@@ -38,10 +38,16 @@ describe('Action Brain schema', () => {
        FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'action_drops'`
     );
+    const actionDraftCols = await localDb.query(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'action_drafts'`
+    );
 
     const itemColumns = new Set((actionItemsCols.rows as { column_name: string }[]).map((r) => r.column_name));
     const historyColumns = new Set((actionHistoryCols.rows as { column_name: string }[]).map((r) => r.column_name));
     const dropColumns = new Set((actionDropsCols.rows as { column_name: string }[]).map((r) => r.column_name));
+    const draftColumns = new Set((actionDraftCols.rows as { column_name: string }[]).map((r) => r.column_name));
 
     const requiredItemColumns = [
       'id',
@@ -75,6 +81,22 @@ describe('Action Brain schema', () => {
       'model',
       'created_at',
     ];
+    const requiredDraftColumns = [
+      'id',
+      'action_item_id',
+      'version',
+      'status',
+      'channel',
+      'recipient',
+      'draft_text',
+      'model',
+      'context_hash',
+      'context_snapshot',
+      'generated_at',
+      'approved_at',
+      'sent_at',
+      'send_error',
+    ];
 
     for (const col of requiredItemColumns) {
       expect(itemColumns.has(col)).toBe(true);
@@ -86,6 +108,10 @@ describe('Action Brain schema', () => {
 
     for (const col of requiredDropColumns) {
       expect(dropColumns.has(col)).toBe(true);
+    }
+
+    for (const col of requiredDraftColumns) {
+      expect(draftColumns.has(col)).toBe(true);
     }
 
     const inserted = await localDb.query(
@@ -112,7 +138,7 @@ describe('Action Brain schema', () => {
       `SELECT count(*)::int AS n
        FROM pg_indexes
        WHERE schemaname = 'public'
-         AND tablename IN ('action_items', 'action_history', 'action_drops')`
+         AND tablename IN ('action_items', 'action_history', 'action_drafts', 'action_drops')`
     );
 
     await initActionSchema(localDb);
@@ -121,7 +147,7 @@ describe('Action Brain schema', () => {
       `SELECT count(*)::int AS n
        FROM pg_indexes
        WHERE schemaname = 'public'
-         AND tablename IN ('action_items', 'action_history', 'action_drops')`
+         AND tablename IN ('action_items', 'action_history', 'action_drafts', 'action_drops')`
     );
 
     const rows = await localDb.query(`SELECT count(*)::int AS n FROM action_items`);

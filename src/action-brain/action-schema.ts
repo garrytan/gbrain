@@ -28,13 +28,50 @@ CREATE INDEX IF NOT EXISTS idx_action_items_linked_entity_slugs ON action_items 
 CREATE TABLE IF NOT EXISTS action_history (
   id          SERIAL PRIMARY KEY,
   item_id     INTEGER NOT NULL REFERENCES action_items(id) ON DELETE CASCADE,
-  event_type  TEXT NOT NULL CHECK (event_type IN ('created', 'status_change', 'reminded', 'escalated', 'resolved', 'dropped')),
+  event_type  TEXT NOT NULL CHECK (
+    event_type IN (
+      'created',
+      'status_change',
+      'reminded',
+      'escalated',
+      'resolved',
+      'dropped',
+      'draft_created',
+      'draft_approved',
+      'draft_edited',
+      'draft_rejected',
+      'draft_sent',
+      'draft_send_failed'
+    )
+  ),
   timestamp   TIMESTAMPTZ NOT NULL DEFAULT now(),
   actor       TEXT NOT NULL,
   metadata    JSONB NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_action_history_item_id_timestamp ON action_history(item_id, timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS action_drafts (
+  id               SERIAL PRIMARY KEY,
+  action_item_id   INTEGER NOT NULL REFERENCES action_items(id) ON DELETE CASCADE,
+  version          INTEGER NOT NULL DEFAULT 1,
+  status           TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected', 'sent', 'send_failed', 'superseded')),
+  channel          TEXT NOT NULL DEFAULT 'whatsapp' CHECK (channel IN ('whatsapp', 'telegram')),
+  recipient        TEXT NOT NULL,
+  draft_text       TEXT NOT NULL,
+  model            TEXT NOT NULL,
+  context_hash     TEXT NOT NULL,
+  context_snapshot JSONB NOT NULL,
+  generated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  approved_at      TIMESTAMPTZ,
+  sent_at          TIMESTAMPTZ,
+  send_error       TEXT,
+  UNIQUE (action_item_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS action_drafts_item_idx ON action_drafts(action_item_id);
+CREATE INDEX IF NOT EXISTS action_drafts_status_idx ON action_drafts(status);
 
 CREATE TABLE IF NOT EXISTS action_drops (
   id                SERIAL PRIMARY KEY,

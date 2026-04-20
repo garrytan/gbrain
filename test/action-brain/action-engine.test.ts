@@ -18,6 +18,46 @@ async function createEngine(): Promise<{ db: PGlite; engine: ActionEngine }> {
   return { db, engine: new ActionEngine(db) };
 }
 
+function createPostgresStyleAdapter(localDb: PGlite): {
+  query: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }>;
+  transaction: <T>(
+    fn: (txDb: { query: <U = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<{ rows: U[] }> }) => Promise<T>
+  ) => Promise<T>;
+} {
+  const query = async <T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> => {
+    const result = params.length === 0 ? await localDb.query(sql) : await localDb.query(sql, params);
+    return { rows: result.rows as T[] };
+  };
+
+  return {
+    query,
+    transaction: async <T>(
+      fn: (txDb: { query: <U = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<{ rows: U[] }> }) => Promise<T>
+    ): Promise<T> => {
+      await query('BEGIN');
+      try {
+        const result = await fn({ query });
+        await query('COMMIT');
+        return result;
+      } catch (error) {
+        try {
+          await query('ROLLBACK');
+        } catch {
+          // Best effort rollback.
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+async function createEngineWithPostgresStyleAdapter(): Promise<{ db: PGlite; engine: ActionEngine }> {
+  db = await PGlite.create();
+  await initActionSchema(db);
+  const adapter = createPostgresStyleAdapter(db);
+  return { db, engine: new ActionEngine(adapter as any) };
+}
+
 describe('ActionEngine', () => {
   test('createItem inserts a new action and writes created history', async () => {
     const { db: localDb, engine } = await createEngine();
@@ -235,6 +275,166 @@ describe('ActionEngine', () => {
     const nonStale = await engine.listItems({ stale: false });
     const nonStaleIds = new Set(nonStale.map((item) => item.id));
     expect(nonStaleIds.has(staleByStatus.id)).toBe(false);
+  });
+
+  test('draft CRUD roundtrip supports create/read/list/update/delete', async () => {
+    const { engine } = await createEngine();
+    const item = await engine.createItem({
+      title: 'Draft reply to shipping delay update',
+      type: 'follow_up',
+      source_message_id: 'msg-draft-crud-001',
+      source_contact: 'Joe',
+    });
+
+    const created = await engine.createDraft({
+      action_item_id: item.id,
+      recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+      draft_text: 'Will confirm with the carrier and revert in 2 hours.',
+      model: 'claude-3-5-haiku',
+      context_hash: 'hash-a',
+      context_snapshot: { gbrain_page_slugs: ['people/joe'], source_thread_snapshot_ids: ['msg-1'] },
+    });
+
+    expect(created.version).toBe(1);
+    expect(created.status).toBe('pending');
+    expect(created.channel).toBe('whatsapp');
+
+    const createdSecond = await engine.createDraft({
+      action_item_id: item.id,
+      recipient: created.recipient,
+      draft_text: 'Revised draft text',
+      model: created.model,
+      context_hash: 'hash-b',
+      context_snapshot: { gbrain_page_slugs: [], source_thread_snapshot_ids: [] },
+    });
+
+    expect(createdSecond.version).toBe(2);
+
+    const fetched = await engine.getDraft(created.id);
+    expect(fetched?.id).toBe(created.id);
+    expect(fetched?.context_snapshot).toEqual({
+      gbrain_page_slugs: ['people/joe'],
+      source_thread_snapshot_ids: ['msg-1'],
+    });
+
+    const listed = await engine.listDrafts({ action_item_id: item.id });
+    expect(listed.map((draft) => draft.id)).toEqual([createdSecond.id, created.id]);
+
+    const updated = await engine.updateDraft(created.id, {
+      status: 'rejected',
+      draft_text: 'Need more context before sending.',
+      send_error: 'manual_reject',
+      context_hash: 'hash-c',
+      context_snapshot: { gbrain_page_slugs: ['people/joe'], source_thread_snapshot_ids: ['msg-2'] },
+    });
+
+    expect(updated.status).toBe('rejected');
+    expect(updated.draft_text).toBe('Need more context before sending.');
+    expect(updated.send_error).toBe('manual_reject');
+    expect(updated.context_hash).toBe('hash-c');
+
+    expect(await engine.deleteDraft(created.id)).toBe(true);
+    expect(await engine.deleteDraft(created.id)).toBe(false);
+    expect(await engine.getDraft(created.id)).toBeNull();
+  });
+
+  test('drafts enforce unique(action_item_id, version)', async () => {
+    const { engine } = await createEngine();
+    const item = await engine.createItem({
+      title: 'Unique draft version test',
+      type: 'follow_up',
+      source_message_id: 'msg-draft-unique-001',
+    });
+
+    await engine.createDraft({
+      action_item_id: item.id,
+      version: 1,
+      recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+      draft_text: 'first',
+      model: 'claude-3-5-haiku',
+      context_hash: 'hash-1',
+      context_snapshot: {},
+    });
+
+    await expect(
+      engine.createDraft({
+        action_item_id: item.id,
+        version: 1,
+        recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+        draft_text: 'duplicate',
+        model: 'claude-3-5-haiku',
+        context_hash: 'hash-2',
+        context_snapshot: {},
+      })
+    ).rejects.toThrow();
+  });
+
+  test('deleting action_items cascades to action_drafts', async () => {
+    const { db: localDb, engine } = await createEngine();
+    const item = await engine.createItem({
+      title: 'Cascade delete draft test',
+      type: 'follow_up',
+      source_message_id: 'msg-draft-cascade-001',
+    });
+
+    await engine.createDraft({
+      action_item_id: item.id,
+      recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+      draft_text: 'Please share the pending invoice by EOD.',
+      model: 'claude-3-5-haiku',
+      context_hash: 'hash-cascade',
+      context_snapshot: {},
+    });
+
+    const before = await localDb.query(
+      `SELECT count(*)::int AS n
+       FROM action_drafts
+       WHERE action_item_id = $1`,
+      [item.id]
+    );
+    expect(Number((before.rows[0] as { n: number | string }).n)).toBe(1);
+
+    await localDb.query(`DELETE FROM action_items WHERE id = $1`, [item.id]);
+
+    const after = await localDb.query(
+      `SELECT count(*)::int AS n
+       FROM action_drafts
+       WHERE action_item_id = $1`,
+      [item.id]
+    );
+    expect(Number((after.rows[0] as { n: number | string }).n)).toBe(0);
+  });
+
+  test('draft CRUD roundtrip works through postgres-style transaction adapter path', async () => {
+    const { engine } = await createEngineWithPostgresStyleAdapter();
+    const item = await engine.createItem({
+      title: 'Postgres adapter draft path test',
+      type: 'follow_up',
+      source_message_id: 'msg-draft-postgres-path-001',
+    });
+
+    const created = await engine.createDraft({
+      action_item_id: item.id,
+      recipient: 'whatsapp:+14155550199@s.whatsapp.net',
+      draft_text: 'Sharing an update shortly.',
+      model: 'claude-3-5-haiku',
+      context_hash: 'hash-pg-1',
+      context_snapshot: { source_thread_snapshot_ids: ['msg-1'] },
+    });
+
+    const updated = await engine.updateDraft(created.id, {
+      status: 'approved',
+      approved_at: new Date('2026-04-20T00:00:00.000Z'),
+    });
+
+    expect(updated.status).toBe('approved');
+    expect(updated.approved_at?.toISOString()).toBe('2026-04-20T00:00:00.000Z');
+
+    const listed = await engine.listDrafts({ action_item_id: item.id, status: 'approved' });
+    expect(listed.length).toBe(1);
+    expect(listed[0]?.id).toBe(created.id);
+
+    expect(await engine.deleteDraft(created.id)).toBe(true);
   });
 
   test('postgres-style pooled adapter uses transaction callback to serialize terminal transitions', async () => {

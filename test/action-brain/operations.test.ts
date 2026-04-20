@@ -112,7 +112,7 @@ describe('Action Brain operation integration', () => {
     });
 
     beforeEach(async () => {
-      await db.query('TRUNCATE action_history, action_items RESTART IDENTITY');
+      await db.query('TRUNCATE action_history, action_drafts, action_items RESTART IDENTITY');
     });
 
     afterAll(async () => {
