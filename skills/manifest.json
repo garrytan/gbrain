@@ -143,6 +143,11 @@
       "name": "skillpack-check",
       "path": "skillpack-check/SKILL.md",
       "description": "Agent-readable gbrain health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
+    },
+    {
+      "name": "voice-extraction",
+      "path": "voice-extraction/SKILL.md",
+      "description": "Analyze outbound emails to extract the user's writing voice into a reusable profile (patterns, recipient-type variations, drafting checklist)"
     }
   ],
   "dependencies": {
