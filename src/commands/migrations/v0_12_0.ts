@@ -32,7 +32,7 @@
 
 import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
-import { appendCompletedMigration } from '../../core/preferences.ts';
+// Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // ── Phase A — Schema ────────────────────────────────────────
 
@@ -225,13 +225,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 }
 
 function finalizeResult(phases: OrchestratorPhaseResult[], status: 'complete' | 'partial' | 'failed'): OrchestratorResult {
-  if (status !== 'failed') {
-    try {
-      appendCompletedMigration({ version: '0.12.0', status: status as 'complete' | 'partial' });
-    } catch {
-      // Recording is best-effort.
-    }
-  }
+  // Ledger write lives in the runner now (Bug 3).
   return {
     version: '0.12.0',
     status,

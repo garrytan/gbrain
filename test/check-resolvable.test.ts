@@ -1,6 +1,12 @@
 import { describe, test, expect } from "bun:test";
 import { join } from "path";
-import { checkResolvable, parseResolverEntries } from "../src/core/check-resolvable.ts";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import {
+  checkResolvable,
+  parseResolverEntries,
+  extractDelegationTargets,
+} from "../src/core/check-resolvable.ts";
 
 const SKILLS_DIR = join(import.meta.dir, "..", "skills");
 
@@ -126,3 +132,133 @@ describe("checkResolvable — real skills directory", () => {
     expect(report.summary.reachable + report.summary.unreachable).toBe(report.summary.total_skills);
   });
 });
+
+// ---------------------------------------------------------------------------
+// DRY detection — proximity-based suppression
+// ---------------------------------------------------------------------------
+
+function makeSkillsFixture(files: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), "gbrain-dry-"));
+  // Minimal RESOLVER.md and manifest.json so checkResolvable doesn't bail.
+  const skillNames = Object.keys(files);
+  const resolverRows = skillNames.map(n => `| "${n}" | \`skills/${n}/SKILL.md\` |`).join("\n");
+  writeFileSync(join(dir, "RESOLVER.md"), `## Test\n| Trigger | Skill |\n|-----|-----|\n${resolverRows}\n`);
+  writeFileSync(
+    join(dir, "manifest.json"),
+    JSON.stringify({ skills: skillNames.map(n => ({ name: n, path: `${n}/SKILL.md` })) }, null, 2)
+  );
+  for (const [name, body] of Object.entries(files)) {
+    mkdirSync(join(dir, name), { recursive: true });
+    // Skill conformance tests (elsewhere) check for frontmatter + triggers;
+    // checkResolvable itself only needs the body.
+    const frontmatter = `---\nname: ${name}\ndescription: test\ntriggers:\n  - "${name}"\n---\n`;
+    writeFileSync(join(dir, name, "SKILL.md"), frontmatter + body);
+  }
+  return dir;
+}
+
+describe("extractDelegationTargets", () => {
+  test("parses > **Convention:** callouts", () => {
+    const refs = extractDelegationTargets(
+      "> **Convention:** See `skills/conventions/quality.md` for citation rules.\n"
+    );
+    expect(refs).toEqual([{ convention: "conventions/quality.md", line: 1 }]);
+  });
+
+  test("parses > **Filing rule:** callouts", () => {
+    const refs = extractDelegationTargets(
+      "> **Filing rule:** Read `skills/_brain-filing-rules.md` before any new page.\n"
+    );
+    expect(refs).toEqual([{ convention: "_brain-filing-rules.md", line: 1 }]);
+  });
+
+  test("parses inline backtick references", () => {
+    const refs = extractDelegationTargets(
+      "some prose.\nSee `skills/conventions/quality.md` for details.\n"
+    );
+    expect(refs).toEqual([{ convention: "conventions/quality.md", line: 2 }]);
+  });
+
+  test("ignores backticks pointing outside known delegation targets", () => {
+    const refs = extractDelegationTargets(
+      "See `skills/random/README.md` for unrelated notes.\n"
+    );
+    expect(refs).toHaveLength(0);
+  });
+
+  test("handles frontmatter-only skill (no body matches)", () => {
+    const refs = extractDelegationTargets("---\nname: foo\n---\n");
+    expect(refs).toHaveLength(0);
+  });
+});
+
+describe("DRY detection — checkResolvable", () => {
+  let dir: string;
+  afterEachCleanup(() => dir && rmSync(dir, { recursive: true, force: true }));
+
+  test("flags inlined notability rule with no reference", () => {
+    dir = makeSkillsFixture({
+      bad: "# BadSkill\n\nCheck the notability gate every time.\n",
+    });
+    const report = checkResolvable(dir);
+    const dry = report.issues.filter(i => i.type === "dry_violation");
+    expect(dry).toHaveLength(1);
+    expect(dry[0].skill).toBe("bad");
+  });
+
+  test("suppresses DRY when > **Convention:** callout points at quality.md (notability)", () => {
+    dir = makeSkillsFixture({
+      good: `# GoodSkill\n\n> **Convention:** See \`skills/conventions/quality.md\` for rules.\n\nCheck the notability gate.\n`,
+    });
+    const report = checkResolvable(dir);
+    const dry = report.issues.filter(i => i.type === "dry_violation");
+    expect(dry).toHaveLength(0);
+  });
+
+  test("suppresses DRY when _brain-filing-rules.md is referenced for notability", () => {
+    dir = makeSkillsFixture({
+      good: `# GoodSkill\n\n> **Filing rule:** Read \`skills/_brain-filing-rules.md\`.\n\nCheck the notability gate.\n`,
+    });
+    const report = checkResolvable(dir);
+    const dry = report.issues.filter(i => i.type === "dry_violation");
+    expect(dry).toHaveLength(0);
+  });
+
+  test("does NOT suppress when reference is >40 lines from the match", () => {
+    const filler = Array(50).fill("padding paragraph with no match.").join("\n");
+    dir = makeSkillsFixture({
+      distant: `> **Convention:** See \`skills/conventions/quality.md\`.\n\n${filler}\n\nCheck the notability gate now.\n`,
+    });
+    const report = checkResolvable(dir);
+    const dry = report.issues.filter(i => i.type === "dry_violation");
+    expect(dry).toHaveLength(1);
+  });
+
+  test("DOES suppress when reference is ~30 lines from the match", () => {
+    const filler = Array(20).fill("padding paragraph with no match.").join("\n");
+    dir = makeSkillsFixture({
+      near: `> **Convention:** See \`skills/conventions/quality.md\`.\n\n${filler}\n\nCheck the notability gate now.\n`,
+    });
+    const report = checkResolvable(dir);
+    const dry = report.issues.filter(i => i.type === "dry_violation");
+    expect(dry).toHaveLength(0);
+  });
+
+  test("iron-law pattern does NOT accept _brain-filing-rules.md as delegation", () => {
+    // iron-law's only accepted target is conventions/quality.md
+    dir = makeSkillsFixture({
+      filing: `> **Filing rule:** Read \`skills/_brain-filing-rules.md\`.\n\n## Iron Law: Back-Linking (MANDATORY)\n`,
+    });
+    const report = checkResolvable(dir);
+    const dry = report.issues.filter(i => i.type === "dry_violation");
+    expect(dry.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// bun:test has no beforeEach/afterEach at module scope cleanly interacting
+// with closures; a small helper keeps cleanup readable and per-test.
+function afterEachCleanup(fn: () => void) {
+  const { afterEach } = require("bun:test");
+  afterEach(fn);
+}
+

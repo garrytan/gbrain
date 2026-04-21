@@ -33,12 +33,23 @@ export interface Preferences {
 export interface CompletedMigrationEntry {
   version: string;
   ts?: string;
-  status: 'complete' | 'partial';
+  /**
+   * - `complete`  — orchestrator finished cleanly. Terminal state; future
+   *   runs no-op this version unless `retry` is appended.
+   * - `partial`   — orchestrator ran but reported missed phases; re-run is
+   *   expected. Attempt cap (3 consecutive partials without a `complete`
+   *   or `retry` between them) triggers the "wedged" skip in the runner.
+   * - `retry`     — explicit reset marker written by `--force-retry`.
+   *   Clears a wedge without faking success; the next upgrade treats the
+   *   version as fresh again.
+   */
+  status: 'complete' | 'partial' | 'retry';
   mode?: MinionMode;
   files_rewritten?: number;
   autopilot_installed?: boolean;
   install_target?: string;
   apply_migrations_pending?: boolean;
+  phases?: Array<{ name: string; status: string; detail?: string }>;
   [key: string]: unknown;
 }
 
@@ -103,8 +114,20 @@ export function savePreferences(prefs: Preferences): void {
  */
 export function appendCompletedMigration(entry: CompletedMigrationEntry): void {
   if (!entry.version) throw new Error('appendCompletedMigration: version required');
-  if (entry.status !== 'complete' && entry.status !== 'partial') {
-    throw new Error(`appendCompletedMigration: status must be 'complete' or 'partial', got "${entry.status}"`);
+  if (entry.status !== 'complete' && entry.status !== 'partial' && entry.status !== 'retry') {
+    throw new Error(`appendCompletedMigration: status must be 'complete', 'partial', or 'retry', got "${entry.status}"`);
+  }
+  // Bug 3 — idempotency guard. If the most recent existing entry for this
+  // version is already 'complete' and we're about to write another
+  // 'complete', skip. This protects against accidental double-writes
+  // during the Bug 3 runner-owned-ledger transition (old orchestrator
+  // code paths and new runner path shouldn't both write).
+  if (entry.status === 'complete') {
+    const existing = loadCompletedMigrations();
+    const prior = existing.filter(e => e.version === entry.version);
+    if (prior.length > 0 && prior[prior.length - 1].status === 'complete') {
+      return; // no-op — already terminal
+    }
   }
   const full: CompletedMigrationEntry = {
     ts: new Date().toISOString(),

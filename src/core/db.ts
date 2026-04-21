@@ -5,6 +5,24 @@ import { SCHEMA_SQL } from './schema-embedded.ts';
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
 
+/**
+ * Default pool size for Postgres connections. Users on the Supabase transaction
+ * pooler (port 6543) or any multi-tenant pooler can lower this to avoid
+ * MaxClients errors when `gbrain upgrade` spawns subprocesses that each open
+ * their own pool. Set `GBRAIN_POOL_SIZE=2` (or similar) before the command.
+ */
+const DEFAULT_POOL_SIZE_FALLBACK = 10;
+
+export function resolvePoolSize(explicit?: number): number {
+  if (typeof explicit === 'number' && explicit > 0) return explicit;
+  const raw = process.env.GBRAIN_POOL_SIZE;
+  if (raw) {
+    const parsed = parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_POOL_SIZE_FALLBACK;
+}
+
 export function getConnection(): ReturnType<typeof postgres> {
   if (!sql) {
     throw new GBrainError(
@@ -36,7 +54,7 @@ export async function connect(config: EngineConfig): Promise<void> {
 
   try {
     sql = postgres(url, {
-      max: 10,
+      max: resolvePoolSize(),
       idle_timeout: 20,
       connect_timeout: 10,
       types: {

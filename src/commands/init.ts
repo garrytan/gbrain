@@ -107,36 +107,39 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   console.log(`Setting up local brain with PGLite (no server needed)...`);
 
   const engine = await createEngine({ engine: 'pglite' });
-  await engine.connect({ database_path: dbPath, engine: 'pglite' });
-  await engine.initSchema();
+  try {
+    await engine.connect({ database_path: dbPath, engine: 'pglite' });
+    await engine.initSchema();
 
-  const config: GBrainConfig = {
-    engine: 'pglite',
-    database_path: dbPath,
-    ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
-  };
-  saveConfig(config);
+    const config: GBrainConfig = {
+      engine: 'pglite',
+      database_path: dbPath,
+      ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+    };
+    saveConfig(config);
 
-  const stats = await engine.getStats();
-  await engine.disconnect();
+    const stats = await engine.getStats();
 
-  if (opts.jsonOutput) {
-    console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count }));
-  } else {
-    console.log(`\nBrain ready at ${dbPath}`);
-    console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
-    if (stats.page_count > 0) {
-      console.log('');
-      console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
-      console.log('  gbrain extract links --source db        (typed link backfill)');
-      console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
-      console.log('  gbrain stats                            (verify links > 0)');
+    if (opts.jsonOutput) {
+      console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count }));
     } else {
-      console.log('Next: gbrain import <dir>');
+      console.log(`\nBrain ready at ${dbPath}`);
+      console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
+      if (stats.page_count > 0) {
+        console.log('');
+        console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
+        console.log('  gbrain extract links --source db        (typed link backfill)');
+        console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
+        console.log('  gbrain stats                            (verify links > 0)');
+      } else {
+        console.log('Next: gbrain import <dir>');
+      }
+      console.log('');
+      console.log('When you outgrow local: gbrain migrate --to supabase');
+      reportModStatus();
     }
-    console.log('');
-    console.log('When you outgrow local: gbrain migrate --to supabase');
-    reportModStatus();
+  } finally {
+    try { await engine.disconnect(); } catch { /* best-effort */ }
   }
 }
 
@@ -157,64 +160,67 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
   console.log('Connecting to database...');
   const engine = await createEngine({ engine: 'postgres' });
   try {
-    await engine.connect({ database_url: databaseUrl });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
-      console.error('Connection failed. Supabase direct connections (db.*.supabase.co:5432) are IPv6 only.');
-      console.error('Use the Session pooler connection string instead (port 6543).');
-    }
-    throw e;
-  }
-
-  // Check and auto-create pgvector extension
-  try {
-    const conn = (engine as any).sql || (await import('../core/db.ts')).getConnection();
-    const ext = await conn`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
-    if (ext.length === 0) {
-      console.log('pgvector extension not found. Attempting to create...');
-      try {
-        await conn`CREATE EXTENSION IF NOT EXISTS vector`;
-        console.log('pgvector extension created successfully.');
-      } catch {
-        console.error('Could not auto-create pgvector extension. Run manually in SQL Editor:');
-        console.error('  CREATE EXTENSION vector;');
-        await engine.disconnect();
-        process.exit(1);
+    try {
+      await engine.connect({ database_url: databaseUrl });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
+        console.error('Connection failed. Supabase direct connections (db.*.supabase.co:5432) are IPv6 only.');
+        console.error('Use the Session pooler connection string instead (port 6543).');
       }
+      throw e;
     }
-  } catch {
-    // Non-fatal
-  }
 
-  console.log('Running schema migration...');
-  await engine.initSchema();
+    // Check and auto-create pgvector extension
+    try {
+      const conn = (engine as any).sql || (await import('../core/db.ts')).getConnection();
+      const ext = await conn`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
+      if (ext.length === 0) {
+        console.log('pgvector extension not found. Attempting to create...');
+        try {
+          await conn`CREATE EXTENSION IF NOT EXISTS vector`;
+          console.log('pgvector extension created successfully.');
+        } catch {
+          console.error('Could not auto-create pgvector extension. Run manually in SQL Editor:');
+          console.error('  CREATE EXTENSION vector;');
+          // Throw so the outer finally runs engine.disconnect() before we die.
+          throw new Error('pgvector extension missing');
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
 
-  const config: GBrainConfig = {
-    engine: 'postgres',
-    database_url: databaseUrl,
-    ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
-  };
-  saveConfig(config);
-  console.log('Config saved to ~/.gbrain/config.json');
+    console.log('Running schema migration...');
+    await engine.initSchema();
 
-  const stats = await engine.getStats();
-  await engine.disconnect();
+    const config: GBrainConfig = {
+      engine: 'postgres',
+      database_url: databaseUrl,
+      ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+    };
+    saveConfig(config);
+    console.log('Config saved to ~/.gbrain/config.json');
 
-  if (opts.jsonOutput) {
-    console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count }));
-  } else {
-    console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
-    if (stats.page_count > 0) {
-      console.log('');
-      console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
-      console.log('  gbrain extract links --source db        (typed link backfill)');
-      console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
-      console.log('  gbrain stats                            (verify links > 0)');
+    const stats = await engine.getStats();
+
+    if (opts.jsonOutput) {
+      console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count }));
     } else {
-      console.log('Next: gbrain import <dir>');
+      console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
+      if (stats.page_count > 0) {
+        console.log('');
+        console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
+        console.log('  gbrain extract links --source db        (typed link backfill)');
+        console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
+        console.log('  gbrain stats                            (verify links > 0)');
+      } else {
+        console.log('Next: gbrain import <dir>');
+      }
+      reportModStatus();
     }
-    reportModStatus();
+  } finally {
+    try { await engine.disconnect(); } catch { /* best-effort */ }
   }
 }
 

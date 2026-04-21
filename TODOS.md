@@ -364,6 +364,27 @@ board" — likely an advisor-role page prior plus verb-pattern combinations.
 **Priority:** P2
 **Depends on:** Nothing.
 
+### Doctor --fix polish from v0.14.1 adversarial review
+**What:** Six deferred findings from v0.14.1 ship-time adversarial review on `src/core/dry-fix.ts`:
+1. **TOCTOU between read and write.** `attemptFix` reads once, writes later. Concurrent editor saves silently overwritten. Fix: re-read immediately before write and compare snapshot, or `O_EXCL` tempfile + rename.
+2. **Fence detection misses 4-backtick and `~~~` fences.** `isInsideCodeFence` only catches `^```$`. CommonMark-legal alternates slip through.
+3. **`expandBullet` walk-up is dead code.** Loop breaks immediately because `baseIndent` matches the current line. Remove or make it actually walk up.
+4. **Multi-match guard too strict.** Skills with the pattern in a table-of-contents AND body get `ambiguous_multiple_matches` forever. Consider: fix first, re-scan, repeat until fixed-point.
+5. **Subprocess spam.** `getWorkingTreeStatus` spawns `git status` N×M times per `doctor --fix`. Cache per-skill per-invocation.
+6. **`doctor --fix --json` swallows the auto-fix report.** `printAutoFixReport` returns early on `jsonOutput`; agents don't see fix outcomes. Emit `auto_fix` as a top-level key.
+
+**Why:** None are ship-blockers; all surfaced during v0.14.1 Codex adversarial review. Bundle into one follow-up PR.
+
+**Pros:** Closes the adversarial findings loop. Better correctness under concurrent edits and JSON-consumer agents.
+
+**Cons:** Concurrent-edit test is finicky.
+
+**Context:** v0.14.1 shipped with the 4 critical fixes (shell-injection via execFileSync, no-git-backup detection, EOF newline preservation, proximity-window consistency). These six are the deferred remainder.
+
+**Effort estimate:** M (CC: ~45min for all six + tests).
+**Priority:** P2
+**Depends on:** Nothing.
+
 ## Completed
 
 ### Implement AWS Signature V4 for S3 storage backend

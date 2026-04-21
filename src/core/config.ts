@@ -1,7 +1,23 @@
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig } from './types.ts';
+
+/**
+ * Where is the active DB URL coming from? Pure introspection, no connection
+ * attempt. Used by `gbrain doctor --fast` so the user gets a precise message
+ * instead of the misleading "No database configured" when GBRAIN_DATABASE_URL
+ * (or DATABASE_URL) is actually set.
+ *
+ * Precedence matches loadConfig(): env vars win over config-file URL. Returns
+ * null only when NO source provides a URL at all.
+ */
+export type DbUrlSource =
+  | 'env:GBRAIN_DATABASE_URL'
+  | 'env:DATABASE_URL'
+  | 'config-file'
+  | 'config-file-path' // PGLite: config file present, no URL but database_path set
+  | null;
 
 // Lazy-evaluated to avoid calling homedir() at module scope (breaks in serverless/bundled environments)
 function getConfigDir() { return join(homedir(), '.gbrain'); }
@@ -69,4 +85,24 @@ export function configDir(): string {
 
 export function configPath(): string {
   return join(configDir(), 'config.json');
+}
+
+/**
+ * Introspect where the active DB URL would come from if we tried to connect.
+ * Never throws, never connects. Env vars take precedence (matches loadConfig).
+ */
+export function getDbUrlSource(): DbUrlSource {
+  if (process.env.GBRAIN_DATABASE_URL) return 'env:GBRAIN_DATABASE_URL';
+  if (process.env.DATABASE_URL) return 'env:DATABASE_URL';
+  if (!existsSync(configPath())) return null;
+  try {
+    const raw = readFileSync(configPath(), 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<GBrainConfig>;
+    if (parsed.database_url) return 'config-file';
+    if (parsed.database_path) return 'config-file-path';
+    return null;
+  } catch {
+    // Config file exists but is unreadable/malformed — treat as null source.
+    return null;
+  }
 }
