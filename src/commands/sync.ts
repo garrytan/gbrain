@@ -118,18 +118,11 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     renamed: manifest.renamed.filter(r => isSyncable(r.to)),
   };
 
-  // Delete pages that became un-syncable (modified but filtered out)
-  const unsyncableModified = manifest.modified.filter(p => !isSyncable(p));
-  for (const path of unsyncableModified) {
-    const slug = pathToSlug(path);
-    try {
-      const existing = await engine.getPage(slug);
-      if (existing) {
-        await engine.deletePage(slug);
-        console.log(`  Deleted un-syncable page: ${slug}`);
-      }
-    } catch { /* ignore */ }
-  }
+  // Intentionally do NOT delete modified files that are now filtered out.
+  // Files like index.md/log.md/README.md may be excluded from git sync on purpose
+  // while still being canonical pages that are managed separately via put/extract.
+  // Auto-deleting them here causes data loss and graph breakage during otherwise
+  // healthy syncs. Only explicit deletes/renames should remove pages.
 
   const totalChanges = filtered.added.length + filtered.modified.length +
     filtered.deleted.length + filtered.renamed.length;

@@ -253,6 +253,45 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     expect(ops).toBeNull();
   });
 
+  test('modified non-syncable canonical pages are preserved and not auto-deleted', async () => {
+    const { performSync } = await import('../../src/commands/sync.ts');
+    const engine = getEngine();
+
+    // Seed index as an intentionally canonical page managed outside git sync.
+    await engine.putPage('index', {
+      type: 'concept',
+      title: 'Index',
+      compiled_truth: '# Index\n\nCanonical hub page.',
+      timeline: '',
+      frontmatter: {},
+      tags: [],
+      content_hash: 'seed-index',
+    } as any);
+
+    // Modify index.md in the repo. It remains non-syncable by design.
+    writeFileSync(join(repoPath, 'index.md'), [
+      '---',
+      'title: Index',
+      '---',
+      '',
+      '# Index',
+      '',
+      'Updated canonical hub content.',
+    ].join('\n'));
+    gitCommit(repoPath, 'modify index');
+
+    const result = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+    });
+
+    expect(result.status).toBe('up_to_date');
+    const index = await engine.getPage('index');
+    expect(index).not.toBeNull();
+    expect(index!.title).toBe('Index');
+  });
+
   test('sync stores last_commit and last_run in config', async () => {
     const engine = getEngine();
 
