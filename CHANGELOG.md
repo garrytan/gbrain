@@ -2,6 +2,26 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.15.3] - 2026-04-21
+
+## **Two upgrade-night bugs that crashed v0.13 → v0.14, now fixed with regression guards.**
+## **Migrations find the right binary. Autopilot spawns its worker. `gbrain upgrade` survives.**
+
+Tonight's production upgrade surfaced eleven bugs. Two of them — Bug 1 (the migration shell-out) and Bug 4 (the autopilot resolver) — survived two eng-review passes AND nine Codex reviews with correct diagnoses and implementable fixes. The other nine had wrong root causes or unimplementable architectures (documented in `~/.claude/plans/` as deferred work with grounded starting context for future `/investigate` sessions). This release ships the two clean fixes so the next `gbrain upgrade` actually lands.
+
+### Itemized changes
+
+**Fixed**
+- **`gbrain upgrade` no longer crashes mid-migration on bun installs.** The v0.13.0 migration orchestrator used to shell out via `process.execPath`, which on bun-installed trees is the `bun` runtime itself. `${bun} extract links --source db …` got reinterpreted as `bun run extract` and crashed with "script not found." The fix drops the execPath detour and shells out to the bare `gbrain` string, letting the canonical shim on PATH (`/usr/local/bin/gbrain` by default) win. Regression test in `test/migrations-v0_13_0.test.ts` greps the source for `process.execPath` and fails the build if anyone reintroduces the pattern. Contributed by @garrytan.
+- **Autopilot spawns its Minions worker again.** `resolveGbrainCliPath` checked `argv[1]` first and happily returned `/path/to/src/cli.ts` on bun-source installs. `spawn()` then failed with `EACCES` because TypeScript source isn't executable, and autopilot silently lost its worker. The fix reorders the probe: `which gbrain` (shim on PATH) wins first, then compiled `process.execPath`, then an `argv[1]=/gbrain` fallback. The `.ts` branch is deleted entirely. A critical regression test enforces that the resolver NEVER returns a `.ts` path across any combination of `argv[1]` + `process.execPath` + shim availability.
+
+**Tests**
+- New `test/migrations-v0_13_0.test.ts` — 7 cases covering registry wiring, dry-run semantics, and three regression guards against the Bug 1 re-introduction (no `process.execPath`, no `GBRAIN` constant, no `bun` or `.ts` in `execSync` calls).
+- Rewrote `test/autopilot-resolve-cli.test.ts` — the old test enshrined the buggy `.ts` return path. New test parameterizes argv/execPath combinations and asserts the resolver never returns a `.ts` path. This is the test that would have caught Bug 4 before it shipped.
+
+**Deferred (tracked for follow-up `/investigate` sessions)**
+- Bug 2 (pooler MaxClients), Bug 3 (partial-migration retry loop), Bug 5 (v0.14.0 registry gap), Bug 6/10 (duplicate graph edges), Bug 7 (doctor --fast), Bug 8 (autopilot-cycle stalls), Bug 9 (YAML colons), Bug 11 (brain_score breakdown). Each has grounded Codex findings documenting the real root cause and where prior diagnoses went wrong. Landing target: subsequent PR waves.
+
 ## [0.14.2] - 2026-04-20
 
 ## **Eight deferred bugs, root-cause fixes, one clean wave.**
