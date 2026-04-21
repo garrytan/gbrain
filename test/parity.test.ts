@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import type { Operation } from '../src/core/operations.ts';
+import { createEngine } from '../src/core/engine-factory.ts';
 
 describe('operations contract parity', () => {
   test('every operation has a unique name', () => {
@@ -91,5 +92,10 @@ describe('operations contract parity', () => {
       expect(typeof tool.inputSchema.properties).toBe('object');
       expect(Array.isArray(tool.inputSchema.required)).toBe(true);
     }
+  });
+
+  test('engine factory parity includes sqlite backend', async () => {
+    const sqlite = await createEngine({ engine: 'sqlite' as any });
+    expect(sqlite.constructor.name).toBe('SqliteEngine');
   });
 });

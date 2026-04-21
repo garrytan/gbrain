@@ -12,6 +12,8 @@ import { createEngine } from '../core/engine-factory.ts';
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
+  const sqliteIndex = args.indexOf('--sqlite');
+  const isSqlite = sqliteIndex !== -1;
   const isNonInteractive = args.includes('--non-interactive');
   const isMigrateOnly = args.includes('--migrate-only');
   const jsonOutput = args.includes('--json');
@@ -21,6 +23,9 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  const sqlitePath = isSqlite && sqliteIndex + 1 < args.length && !args[sqliteIndex + 1].startsWith('--')
+    ? args[sqliteIndex + 1]
+    : null;
 
   // Schema-only path: apply initSchema against the already-configured engine
   // without ever calling saveConfig. Used by apply-migrations, the stopgap
@@ -29,6 +34,10 @@ export async function runInit(args: string[]) {
   // branch from a migration orchestrator.
   if (isMigrateOnly) {
     return initMigrateOnly({ jsonOutput });
+  }
+
+  if (isSqlite) {
+    return initSqlite({ jsonOutput, apiKey, customPath: sqlitePath });
   }
 
   // Explicit PGLite mode
@@ -125,6 +134,48 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
     } else {
       console.log(`\nBrain ready at ${dbPath}`);
       console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
+      if (stats.page_count > 0) {
+        console.log('');
+        console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
+        console.log('  gbrain extract links --source db        (typed link backfill)');
+        console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
+        console.log('  gbrain stats                            (verify links > 0)');
+      } else {
+        console.log('Next: gbrain import <dir>');
+      }
+      console.log('');
+      console.log('When you outgrow local: gbrain migrate --to supabase');
+      reportModStatus();
+    }
+  } finally {
+    try { await engine.disconnect(); } catch { /* best-effort */ }
+  }
+}
+
+async function initSqlite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
+  const dbPath = opts.customPath || join(homedir(), '.gbrain', 'brain.sqlite');
+  console.log('Setting up local brain with SQLite (single-file database)...');
+  mkdirSync(dirname(dbPath), { recursive: true });
+
+  const engine = await createEngine({ engine: 'sqlite' });
+  try {
+    await engine.connect({ database_path: dbPath, engine: 'sqlite' });
+    await engine.initSchema();
+
+    const config: GBrainConfig = {
+      engine: 'sqlite',
+      database_path: dbPath,
+      ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+    };
+    saveConfig(config);
+
+    const stats = await engine.getStats();
+
+    if (opts.jsonOutput) {
+      console.log(JSON.stringify({ status: 'success', engine: 'sqlite', path: dbPath, pages: stats.page_count }));
+    } else {
+      console.log(`\nBrain ready at ${dbPath}`);
+      console.log(`${stats.page_count} pages. Engine: SQLite (local file).`);
       if (stats.page_count > 0) {
         console.log('');
         console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');

@@ -457,20 +457,19 @@ CLI / MCP Server
               |
       BrainEngine interface (pluggable)
               |
-     +--------+--------+
-     |                  |
-PGLiteEngine       PostgresEngine
-  (default)          (Supabase)
-     |                  |
-~/.gbrain/           Supabase Pro ($25/mo)
-brain.pglite         Postgres + pgvector
-embedded PG 17.5
+   +------+---------+--------+
+   |                |        |
+PGLiteEngine   SqliteEngine  PostgresEngine
+ (default)      (file DB)      (Supabase)
+   |                |              |
+~/.gbrain/      ~/.gbrain/     Supabase Pro ($25/mo)
+brain.pglite    brain.sqlite   Postgres + pgvector
 
      gbrain migrate --to supabase|pglite
          (bidirectional migration)
 ```
 
-PGLite: embedded Postgres, no server, zero config. When your brain outgrows local (1000+ files, multi-device), `gbrain migrate --to supabase` moves everything.
+PGLite and SQLite are local embedded options with no server. Use SQLite for a single-file database (`--sqlite`) and PGLite for embedded Postgres parity. When your brain outgrows local (1000+ files, multi-device), `gbrain migrate --to supabase` moves everything.
 
 ## File Storage
 
@@ -489,7 +488,7 @@ Storage backends: S3-compatible (AWS, R2, MinIO), Supabase Storage, or local.
 
 ```
 SETUP
-  gbrain init [--supabase|--url]        Create brain (PGLite default)
+  gbrain init [--pglite|--sqlite|--supabase|--url]  Create brain (PGLite default)
   gbrain migrate --to supabase|pglite   Bidirectional engine migration
   gbrain upgrade                        Self-update with feature discovery
 

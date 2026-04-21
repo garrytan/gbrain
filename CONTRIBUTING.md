@@ -93,11 +93,8 @@ See `docs/ENGINES.md` for the full guide. In short:
 3. Run the test suite against your engine
 4. Document in `docs/`
 
-The SQLite engine is designed and ready for implementation. See `docs/SQLITE_ENGINE.md`.
-
 ## Welcome PRs
 
-- SQLite engine implementation
 - Docker Compose for self-hosted Postgres
 - Additional migration sources
 - New enrichment API integrations
