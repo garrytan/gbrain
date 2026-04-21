@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.17.0] - 2026-04-20
+## [0.18.0] - 2026-04-20
 
 ## **BrainBench v1 lands as a public benchmark. 4 adapters scored side-by-side, graph layer worth +31 points P@5.**
 ## **Portable JSON schemas at `eval/schemas/` make v2 (Python + Inspect AI + Docker) a driver swap, not a rewrite.**
@@ -82,7 +82,7 @@ If you're porting BrainBench to a different driver (Python + Inspect AI + Docker
 
 **Corpus generation (Day 3b — run locally by the author):** 398 Opus calls, 84K input / 38K output tokens, **\$4.12 spent** (vs \$20 cap, vs \$12 estimate). 418 items landed under `eval/data/amara-life-v1/` with 10 planted contradictions, 5 stale facts, 5 paraphrased-injection poison items, 3 implicit preferences. Corpus itself stays local until the v0.18 brainbench split (per design-doc direction: `brainbench` becomes a standalone MIT sibling repo that depends on `gbrain`, keeping this repo lean).
 
-**Deferred to v0.18 (brainbench split):** Moving `eval/`, `test/eval/`, `docs/benchmarks/*`, the corpus, and all Cat runners into `github.com/garrytan/brainbench`. gbrain stays the knowledge-brain CLI + library; brainbench consumes it via GitHub-URL dep. Matches the v2 design-doc topology.
+**Deferred to v0.19 (brainbench split):** Moving `eval/`, `test/eval/`, `docs/benchmarks/*`, the corpus, and all Cat runners into `github.com/garrytan/brainbench`. gbrain stays the knowledge-brain CLI + library; brainbench consumes it via GitHub-URL dep. Matches the v2 design-doc topology.
 
 ## [0.14.2] - 2026-04-20
 
