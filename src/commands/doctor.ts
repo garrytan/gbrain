@@ -5,8 +5,9 @@ import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import type { DbUrlSource } from '../core/config.ts';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 export interface Check {
   name: string;
@@ -524,13 +525,23 @@ function printAutoFixReport(report: AutoFixReport, dryRun: boolean, jsonOutput: 
 }
 
 /** Find the GBrain repo root by walking up from cwd looking for skills/RESOLVER.md */
-function findRepoRoot(): string | null {
+export function findRepoRoot(): string | null {
+  // Try cwd first (works when gbrain is run from within the repo)
   let dir = process.cwd();
   for (let i = 0; i < 10; i++) {
     if (existsSync(join(dir, 'skills', 'RESOLVER.md'))) return dir;
     const parent = join(dir, '..');
     if (parent === dir) break;
     dir = parent;
+  }
+  // Fallback: resolve from this file's location (works when gbrain is run from
+  // outside the repo, e.g. via a global bun link or source-linked install)
+  const selfDir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 10; i++) {
+    if (existsSync(join(selfDir, 'skills', 'RESOLVER.md'))) return selfDir;
+    const parent = join(selfDir, '..');
+    if (parent === selfDir) break;
+    selfDir = parent;
   }
   return null;
 }

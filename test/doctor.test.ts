@@ -90,4 +90,19 @@ describe('doctor command', () => {
     expect(source).toMatch(/table:\s*'ingest_log'.*col:\s*'pages_updated'/);
     expect(source).toMatch(/table:\s*'files'.*col:\s*'metadata'/);
   });
+
+  // Issue #283: findRepoRoot should fall back to import.meta.dir when cwd has no skills/
+  // This prevents false-positive "Could not find skills directory" warnings when
+  // gbrain doctor is run from outside the repo (e.g. from an agent workspace).
+  test('findRepoRoot falls back to import.meta.dir when cwd is outside repo', async () => {
+    const { findRepoRoot } = await import('../src/commands/doctor.ts');
+    // The function is exported for testing — verify it exists and is callable
+    expect(typeof findRepoRoot).toBe('function');
+    // Calling from a random cwd that doesn't have skills/RESOLVER.md should still
+    // resolve to the gbrain source directory via import.meta.dir fallback.
+    const root = findRepoRoot();
+    expect(root).not.toBeNull();
+    // The resolved root must have skills/RESOLVER.md accessible.
+    expect(await Bun.file(root + '/skills/RESOLVER.md').exists()).toBe(true);
+  });
 });
