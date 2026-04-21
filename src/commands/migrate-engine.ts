@@ -231,6 +231,13 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     ...(opts.targetEngine === 'postgres'
       ? { database_url: targetConfig.database_url }
       : { database_path: targetConfig.database_path }),
+    ...(config.openai_api_key ? { openai_api_key: config.openai_api_key } : {}),
+    ...(config.anthropic_api_key ? { anthropic_api_key: config.anthropic_api_key } : {}),
+    ...(config.minimax_api_key ? { minimax_api_key: config.minimax_api_key } : {}),
+    ...(config.minimax_group_id ? { minimax_group_id: config.minimax_group_id } : {}),
+    ...(config.minimax_base_url ? { minimax_base_url: config.minimax_base_url } : {}),
+    ...(config.embedding_provider ? { embedding_provider: config.embedding_provider } : {}),
+    ...(config.embedding_model ? { embedding_model: config.embedding_model } : {}),
   };
   saveConfig(newConfig);
 

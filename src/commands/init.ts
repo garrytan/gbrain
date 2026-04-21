@@ -3,11 +3,11 @@ import { readdirSync, lstatSync, existsSync, copyFileSync, mkdirSync, readFileSy
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
+import { saveConfig, loadConfig, toEngineConfig, type EmbeddingProvider, type GBrainConfig } from '../core/config.ts';
+import { createEngine } from '../core/engine-factory.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { saveConfig, loadConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
-import { createEngine } from '../core/engine-factory.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -19,18 +19,34 @@ export async function runInit(args: string[]) {
   const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : null;
   const keyIndex = args.indexOf('--key');
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
+  const embeddingProviderIndex = args.indexOf('--embedding-provider');
+  const embeddingProvider = embeddingProviderIndex !== -1 ? args[embeddingProviderIndex + 1] as EmbeddingProvider : null;
+  const openaiKeyIndex = args.indexOf('--openai-key');
+  const openaiKey = openaiKeyIndex !== -1 ? args[openaiKeyIndex + 1] : null;
+  const minimaxKeyIndex = args.indexOf('--minimax-key');
+  const minimaxKey = minimaxKeyIndex !== -1 ? args[minimaxKeyIndex + 1] : null;
+  const minimaxGroupIdIndex = args.indexOf('--minimax-group-id');
+  const minimaxGroupId = minimaxGroupIdIndex !== -1 ? args[minimaxGroupIdIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
 
-  // Schema-only path: apply initSchema against the already-configured engine
-  // without ever calling saveConfig. Used by apply-migrations, the stopgap
-  // script, and the postinstall hook. Bare `gbrain init` defaults to PGLite
-  // and overwrites any existing Postgres config — we must never take that
-  // branch from a migration orchestrator.
+  if (embeddingProvider && embeddingProvider !== 'openai' && embeddingProvider !== 'minimax') {
+    console.error('--embedding-provider must be one of: openai, minimax');
+    process.exit(1);
+  }
+
+  const resolvedEmbeddingProvider = embeddingProvider || (minimaxKey ? 'minimax' : 'openai');
+  const providerConfig = buildEmbeddingConfig({
+    embeddingProvider: resolvedEmbeddingProvider,
+    legacyApiKey: apiKey,
+    openaiKey,
+    minimaxKey,
+    minimaxGroupId,
+  });
+
   if (isMigrateOnly) {
     return initMigrateOnly({ jsonOutput });
   }
-
   // Explicit PGLite mode
   if (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)) {
     // Smart detection: scan for .md files unless --pglite flag forces it
@@ -47,7 +63,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath });
+    return initPGLite({ jsonOutput, customPath, ...providerConfig });
   }
 
   // Supabase/Postgres mode
@@ -66,7 +82,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey });
+  return initPostgres({ databaseUrl, jsonOutput, ...providerConfig });
 }
 
 /**
@@ -102,7 +118,14 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
   }
 }
 
-async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
+async function initPGLite(opts: {
+  jsonOutput: boolean;
+  customPath: string | null;
+  embeddingProvider: EmbeddingProvider;
+  openaiApiKey: string | null;
+  minimaxApiKey: string | null;
+  minimaxGroupId: string | null;
+}) {
   const dbPath = opts.customPath || join(homedir(), '.gbrain', 'brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
 
@@ -114,7 +137,13 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
     const config: GBrainConfig = {
       engine: 'pglite',
       database_path: dbPath,
-      ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+      embedding_provider: opts.embeddingProvider,
+      ...(opts.embeddingProvider === 'minimax'
+        ? { embedding_model: 'embo-01' }
+        : {}),
+      ...(opts.openaiApiKey ? { openai_api_key: opts.openaiApiKey } : {}),
+      ...(opts.minimaxApiKey ? { minimax_api_key: opts.minimaxApiKey } : {}),
+      ...(opts.minimaxGroupId ? { minimax_group_id: opts.minimaxGroupId } : {}),
     };
     saveConfig(config);
 
@@ -143,7 +172,14 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   }
 }
 
-async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null }) {
+async function initPostgres(opts: {
+  databaseUrl: string;
+  jsonOutput: boolean;
+  embeddingProvider: EmbeddingProvider;
+  openaiApiKey: string | null;
+  minimaxApiKey: string | null;
+  minimaxGroupId: string | null;
+}) {
   const { databaseUrl } = opts;
 
   // Detect Supabase direct connection URLs and warn about IPv6
@@ -197,7 +233,13 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
     const config: GBrainConfig = {
       engine: 'postgres',
       database_url: databaseUrl,
-      ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+      embedding_provider: opts.embeddingProvider,
+      ...(opts.embeddingProvider === 'minimax'
+        ? { embedding_model: 'embo-01' }
+        : {}),
+      ...(opts.openaiApiKey ? { openai_api_key: opts.openaiApiKey } : {}),
+      ...(opts.minimaxApiKey ? { minimax_api_key: opts.minimaxApiKey } : {}),
+      ...(opts.minimaxGroupId ? { minimax_group_id: opts.minimaxGroupId } : {}),
     };
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
@@ -222,6 +264,29 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
   }
+}
+
+function buildEmbeddingConfig(opts: {
+  embeddingProvider: EmbeddingProvider;
+  legacyApiKey: string | null;
+  openaiKey: string | null;
+  minimaxKey: string | null;
+  minimaxGroupId: string | null;
+}): {
+  embeddingProvider: EmbeddingProvider;
+  openaiApiKey: string | null;
+  minimaxApiKey: string | null;
+  minimaxGroupId: string | null;
+} {
+  const openaiApiKey = opts.openaiKey || (opts.embeddingProvider === 'openai' ? opts.legacyApiKey : null);
+  const minimaxApiKey = opts.minimaxKey || (opts.embeddingProvider === 'minimax' ? opts.legacyApiKey : null);
+
+  return {
+    embeddingProvider: opts.embeddingProvider,
+    openaiApiKey,
+    minimaxApiKey,
+    minimaxGroupId: opts.embeddingProvider === 'minimax' ? opts.minimaxGroupId : null,
+  };
 }
 
 /**

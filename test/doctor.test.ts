@@ -1,4 +1,9 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, mock } from 'bun:test';
+
+mock.module('../src/core/embedding.ts', () => ({
+  getEmbeddingProvider: () => 'minimax',
+  hasEmbeddingProviderCredentials: () => false,
+}));
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -9,6 +14,35 @@ describe('doctor command', () => {
   test('LATEST_VERSION is importable from migrate', async () => {
     const { LATEST_VERSION } = await import('../src/core/migrate.ts');
     expect(typeof LATEST_VERSION).toBe('number');
+  });
+
+  test('doctor warns when configured embedding provider has no credentials', async () => {
+    const { runDoctor } = await import('../src/commands/doctor.ts');
+
+    const lines: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+
+    console.log = (...args: any[]) => { lines.push(args.join(' ')); };
+    (process.exit as any) = ((code?: number) => { throw new Error(`EXIT:${code ?? 0}`); }) as any;
+
+    const engine = {
+      getStats: async () => ({ page_count: 1 }),
+      getConfig: async () => '1',
+      getHealth: async () => ({ embed_coverage: 0, missing_embeddings: 1 }),
+    } as any;
+
+    try {
+      await runDoctor(engine, []);
+    } catch (e: any) {
+      expect(String(e.message)).toContain('EXIT:0');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+    }
+
+    expect(lines.join('\n')).toContain('Embedding provider "minimax" is configured without credentials');
+    expect(lines.join('\n')).not.toContain('embed refresh');
   });
 
   test('CLI registers doctor command', async () => {
@@ -23,7 +57,6 @@ describe('doctor command', () => {
 
   test('Check interface supports issues array', async () => {
     const { Check } = await import('../src/commands/doctor.ts');
-    // The Check type allows an optional issues array for resolver findings
     const check: import('../src/commands/doctor.ts').Check = {
       name: 'resolver_health',
       status: 'warn',
@@ -36,16 +69,10 @@ describe('doctor command', () => {
 
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
-    // runDoctor should accept null engine — it runs filesystem checks only.
-    // Signature is (engine, args, dbSource?) — third param is optional and
-    // used by --fast to distinguish "no config" from "user skipped DB check".
-    // Function.length counts required params only (JS ignores ?-marked).
     expect(runDoctor.length).toBeGreaterThanOrEqual(2);
     expect(runDoctor.length).toBeLessThanOrEqual(3);
   });
 
-  // Bug 7 — --fast should differentiate "no config anywhere" from "user
-  // chose --fast with GBRAIN_DATABASE_URL / config-file URL present".
   test('getDbUrlSource reflects GBRAIN_DATABASE_URL env var', async () => {
     const { getDbUrlSource } = await import('../src/core/config.ts');
     const orig = process.env.GBRAIN_DATABASE_URL;
@@ -66,16 +93,10 @@ describe('doctor command', () => {
 
   test('doctor --fast emits source-specific message when URL present', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
-    // The source-aware message must reference the variable name so users
-    // know where their URL is coming from.
     expect(source).toContain('Skipping DB checks (--fast mode, URL present from');
-    // The null-source fallback must still mention both config + env paths.
     expect(source).toContain('GBRAIN_DATABASE_URL');
   });
 
-  // v0.12.2 reliability wave — doctor detects JSONB double-encode + truncated
-  // bodies and points users at the standalone `gbrain repair-jsonb` command.
-  // Detection only; repair lives in src/commands/repair-jsonb.ts.
   test('doctor source contains jsonb_integrity and markdown_body_completeness checks', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
     expect(source).toContain('jsonb_integrity');

@@ -1,3 +1,4 @@
+import { getEmbeddingProvider, hasEmbeddingProviderCredentials } from '../core/embedding.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION } from '../core/migrate.ts';
@@ -279,14 +280,23 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
 
   // 7. Embedding health
   try {
-    const health = await engine.getHealth();
-    const pct = (health.embed_coverage * 100).toFixed(0);
-    if (health.embed_coverage >= 0.9) {
-      checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing` });
-    } else if (health.embed_coverage > 0) {
-      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed --stale` });
+    const provider = getEmbeddingProvider();
+    if (!hasEmbeddingProviderCredentials()) {
+      checks.push({
+        name: 'embeddings',
+        status: 'warn',
+        message: `Embedding provider "${provider}" is configured without credentials. Set the matching API key or run without embeddings.`,
+      });
     } else {
-      checks.push({ name: 'embeddings', status: 'warn', message: 'No embeddings yet. Run: gbrain embed --stale' });
+      const health = await engine.getHealth();
+      const pct = (health.embed_coverage * 100).toFixed(0);
+      if (health.embed_coverage >= 0.9) {
+        checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing` });
+      } else if (health.embed_coverage > 0) {
+        checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed --stale` });
+      } else {
+        checks.push({ name: 'embeddings', status: 'warn', message: `No embeddings yet for provider "${provider}". Run: gbrain embed --all` });
+      }
     }
   } catch {
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });

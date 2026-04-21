@@ -1,9 +1,9 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import type { BrainEngine } from '../src/core/engine.ts';
 
-// Mock the embedding module BEFORE importing runEmbed, so runEmbed picks up
-// the mocked embedBatch. We track max concurrent invocations via a counter
-// that increments on entry and decrements when the mock resolves.
 let activeEmbedCalls = 0;
 let maxConcurrentEmbedCalls = 0;
 let totalEmbedCalls = 0;
@@ -15,17 +15,16 @@ mock.module('../src/core/embedding.ts', () => ({
     if (activeEmbedCalls > maxConcurrentEmbedCalls) {
       maxConcurrentEmbedCalls = activeEmbedCalls;
     }
-    // Simulate API latency so concurrent workers actually overlap.
     await new Promise(r => setTimeout(r, 30));
     activeEmbedCalls--;
     return texts.map(() => new Float32Array(1536));
   },
+  getEmbeddingModel: () => 'embo-01',
+  getEmbeddingProvider: () => process.env.TEST_EMBED_PROVIDER === 'minimax' ? 'minimax' : 'openai',
 }));
 
-// Import AFTER mocking.
 const { runEmbed } = await import('../src/commands/embed.ts');
 
-// Proxy-based mock engine that matches test/import-file.test.ts pattern.
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {
@@ -51,13 +50,60 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.GBRAIN_EMBED_CONCURRENCY;
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
+  delete process.env.MINIMAX_GROUP_ID;
+  delete process.env.MINIMAX_BASE_URL;
+  delete process.env.TEST_EMBED_PROVIDER;
+});
+
+describe('runEmbed metadata', () => {
+  test('writes configured embedding model when updating stale chunks', async () => {
+    const originalHome = process.env.HOME;
+    const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-embed-'));
+    process.env.HOME = tempHome;
+    mkdirSync(join(tempHome, '.gbrain'), { recursive: true });
+    writeFileSync(join(tempHome, '.gbrain', 'config.json'), JSON.stringify({
+      engine: 'pglite',
+      database_path: '/tmp/test.pglite',
+      embedding_provider: 'minimax',
+      embedding_model: 'embo-01',
+      minimax_api_key: 'mini-test',
+      minimax_group_id: 'group-test',
+    }, null, 2));
+
+    const chunks = [{
+      chunk_index: 0,
+      chunk_text: 'text for slug',
+      chunk_source: 'compiled_truth',
+      embedded_at: null,
+      token_count: 4,
+      model: 'text-embedding-3-large',
+    }];
+
+    let upserted: any[] | null = null;
+    const engine = mockEngine({
+      getPage: async () => ({ slug: 'page-1', compiled_truth: 'text', timeline: '' }),
+      getChunks: async () => chunks,
+      upsertChunks: async (_slug: string, updated: any[]) => { upserted = updated; },
+    });
+
+    try {
+      await runEmbed(engine, ['page-1']);
+      expect(upserted).toBeTruthy();
+      expect(upserted?.[0].model).toBe('embo-01');
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('runEmbed --all (parallel)', () => {
   test('runs embedBatch calls concurrently across pages', async () => {
     const NUM_PAGES = 20;
     const pages = Array.from({ length: NUM_PAGES }, (_, i) => ({ slug: `page-${i}` }));
-    // Each page has one chunk without an embedding (stale).
     const chunksBySlug = new Map(
       pages.map(p => [
         p.slug,
@@ -76,9 +122,7 @@ describe('runEmbed --all (parallel)', () => {
     await runEmbed(engine, ['--all']);
 
     expect(totalEmbedCalls).toBe(NUM_PAGES);
-    // Concurrency actually happened.
     expect(maxConcurrentEmbedCalls).toBeGreaterThan(1);
-    // And stayed within the configured limit.
     expect(maxConcurrentEmbedCalls).toBeLessThanOrEqual(10);
   });
 
@@ -105,6 +149,29 @@ describe('runEmbed --all (parallel)', () => {
     expect(maxConcurrentEmbedCalls).toBe(1);
   });
 
+  test('defaults to serial embedding for MiniMax', async () => {
+    process.env.TEST_EMBED_PROVIDER = 'minimax';
+
+    const pages = Array.from({ length: 5 }, (_, i) => ({ slug: `page-${i}` }));
+    const chunksBySlug = new Map(
+      pages.map(p => [
+        p.slug,
+        [{ chunk_index: 0, chunk_text: `text ${p.slug}`, chunk_source: 'compiled_truth', embedded_at: null, token_count: 4 }],
+      ]),
+    );
+
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      upsertChunks: async () => {},
+    });
+
+    await runEmbed(engine, ['--all']);
+
+    expect(totalEmbedCalls).toBe(5);
+    expect(maxConcurrentEmbedCalls).toBe(1);
+  });
+
   test('skips pages whose chunks are all already embedded when --stale', async () => {
     const pages = [{ slug: 'fresh' }, { slug: 'stale' }];
     const chunksBySlug = new Map<string, any[]>([
@@ -122,7 +189,6 @@ describe('runEmbed --all (parallel)', () => {
 
     await runEmbed(engine, ['--stale']);
 
-    // Only the stale page triggers an embedBatch call.
     expect(totalEmbedCalls).toBe(1);
   });
 });

@@ -730,6 +730,43 @@ describeE2E('E2E: Setup Journey', () => {
     expect(stdout).toContain('Brain ready');
   }, 30_000);
 
+  test('gbrain init --non-interactive accepts MiniMax embedding flags', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'gbrain-init-home-'));
+    const env = {
+      ...cliEnv(),
+      HOME: homeDir,
+      MINIMAX_API_KEY: 'mini-test-key',
+      MINIMAX_GROUP_ID: 'group-test-id',
+    };
+
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          'bun', 'run', 'src/cli.ts', 'init', '--non-interactive',
+          '--url', process.env.DATABASE_URL!,
+          '--embedding-provider', 'minimax',
+          '--minimax-key', 'mini-test-key',
+          '--minimax-group-id', 'group-test-id',
+        ],
+        cwd: cliCwd,
+        env,
+        timeout: 15_000,
+      });
+      const stdout = new TextDecoder().decode(result.stdout);
+      expect(result.exitCode).toBe(0);
+      expect(stdout).toContain('Brain ready');
+
+      const configRaw = readFileSync(join(homeDir, '.gbrain', 'config.json'), 'utf-8');
+      const saved = JSON.parse(configRaw);
+      expect(saved.embedding_provider).toBe('minimax');
+      expect(saved.embedding_model).toBe('embo-01');
+      expect(saved.minimax_api_key).toBe('mini-test-key');
+      expect(saved.minimax_group_id).toBe('group-test-id');
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   test('gbrain import imports fixtures via CLI', () => {
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'import', '--no-embed', FIXTURES_PATH],

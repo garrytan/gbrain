@@ -214,6 +214,27 @@ gbrain jobs work --concurrency 4         # start a worker (Postgres only)
 
 Read [`skills/minion-orchestrator/SKILL.md`](skills/minion-orchestrator/SKILL.md) for parent-child DAGs, fan-in collection, steering via inbox.
 
+### GBrain without OpenClaw
+
+| Dependency | What it's for | How to get it |
+|------------|--------------|---------------|
+| **Supabase account** | Postgres + pgvector database | [supabase.com](https://supabase.com) (Pro tier, $25/mo for 8GB) |
+| **OpenAI API key** | Embeddings via `text-embedding-3-large` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **MiniMax API key** | Embeddings via `embo-01` | MiniMax console |
+| **Anthropic API key** | Multi-query expansion + LLM chunking (Haiku) | [console.anthropic.com](https://console.anthropic.com) |
+
+```bash
+export OPENAI_API_KEY=sk-...         # or use MiniMax instead
+export MINIMAX_API_KEY=...           # MiniMax embeddings auth
+export MINIMAX_GROUP_ID=...          # required for MiniMax embeddings
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+The Supabase connection URL is configured during `gbrain init --supabase`. OpenAI and Anthropic use their standard SDK environment variables. MiniMax embeddings require both `MINIMAX_API_KEY` and `MINIMAX_GROUP_ID`. You can choose the embeddings provider during init with `--embedding-provider openai|minimax`.
+
+Without an embeddings key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
+
+
 **Minions is not incrementally better than sub-agents for background work. It's categorically different.** 753ms vs gateway timeout. $0 vs tokens. 100% vs couldn't-spawn. If your agent does deterministic work on a schedule, it runs on Minions now.
 
 ### Health check and self-heal
@@ -566,6 +587,8 @@ I was setting up my [OpenClaw](https://openclaw.ai) agent and started a markdown
 The agent runs while I sleep. The dream cycle scans every conversation, enriches missing entities, fixes broken citations, consolidates memory. I wake up and the brain is smarter than when I went to sleep.
 
 The skills in this repo are those patterns, generalized. What took 11 days to build by hand ships as a mod you install in 30 minutes.
+
+Initial embedding cost: ~$4-5 for 7,500 pages via OpenAI text-embedding-3-large. MiniMax `embo-01` is also supported as an embeddings provider.
 
 ## Docs
 

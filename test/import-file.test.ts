@@ -1,8 +1,12 @@
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, mock, beforeAll, afterAll } from 'bun:test';
 import { writeFileSync, mkdirSync, rmSync, symlinkSync } from 'fs';
 import { join } from 'path';
-import { importFile, importFromContent } from '../src/core/import-file.ts';
-import type { BrainEngine } from '../src/core/engine.ts';
+mock.module('../src/core/embedding.ts', () => ({
+  embedBatch: async (texts: string[]) => texts.map(() => new Float32Array(1536)),
+  getEmbeddingModel: () => 'embo-01',
+}));
+
+const { importFile, importFromContent } = await import('../src/core/import-file.ts');
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
 
@@ -334,6 +338,28 @@ Content to chunk but not embed.
       for (const chunk of chunkCall.args[1]) {
         expect(chunk.embedding).toBeUndefined();
       }
+    }
+  });
+
+  test('stores resolved embedding model when embeddings are generated', async () => {
+    const engine = mockEngine();
+    const content = `---
+type: concept
+title: Embedded
+---
+
+Content that should be embedded.
+`;
+
+    const result = await importFromContent(engine, 'concepts/embedded', content);
+    expect(result.status).toBe('imported');
+
+    const calls = (engine as any)._calls;
+    const chunkCall = calls.find((c: any) => c.method === 'upsertChunks');
+    expect(chunkCall).toBeTruthy();
+    for (const chunk of chunkCall.args[1]) {
+      expect(chunk.model).toBe('embo-01');
+      expect(chunk.embedding).toBeInstanceOf(Float32Array);
     }
   });
 
