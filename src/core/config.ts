@@ -42,6 +42,11 @@ export function loadConfig(): GBrainConfig | null {
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
   };
+
+  if (!process.env.OPENAI_API_KEY && merged.openai_api_key) {
+    process.env.OPENAI_API_KEY = merged.openai_api_key;
+  }
+
   return merged as GBrainConfig;
 }
 
