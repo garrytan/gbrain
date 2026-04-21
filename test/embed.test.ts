@@ -20,6 +20,7 @@ mock.module('../src/core/embedding.ts', () => ({
     return texts.map(() => new Float32Array(1536));
   },
   getEmbeddingModel: () => 'embo-01',
+  getEmbeddingProvider: () => process.env.TEST_EMBED_PROVIDER === 'minimax' ? 'minimax' : 'openai',
 }));
 
 const { runEmbed } = await import('../src/commands/embed.ts');
@@ -51,7 +52,9 @@ afterEach(() => {
   delete process.env.GBRAIN_EMBED_CONCURRENCY;
   delete process.env.OPENAI_API_KEY;
   delete process.env.MINIMAX_API_KEY;
+  delete process.env.MINIMAX_GROUP_ID;
   delete process.env.MINIMAX_BASE_URL;
+  delete process.env.TEST_EMBED_PROVIDER;
 });
 
 describe('runEmbed metadata', () => {
@@ -139,6 +142,29 @@ describe('runEmbed --all (parallel)', () => {
     });
 
     process.env.GBRAIN_EMBED_CONCURRENCY = '1';
+
+    await runEmbed(engine, ['--all']);
+
+    expect(totalEmbedCalls).toBe(5);
+    expect(maxConcurrentEmbedCalls).toBe(1);
+  });
+
+  test('defaults to serial embedding for MiniMax', async () => {
+    process.env.TEST_EMBED_PROVIDER = 'minimax';
+
+    const pages = Array.from({ length: 5 }, (_, i) => ({ slug: `page-${i}` }));
+    const chunksBySlug = new Map(
+      pages.map(p => [
+        p.slug,
+        [{ chunk_index: 0, chunk_text: `text ${p.slug}`, chunk_source: 'compiled_truth', embedded_at: null, token_count: 4 }],
+      ]),
+    );
+
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      upsertChunks: async () => {},
+    });
 
     await runEmbed(engine, ['--all']);
 

@@ -180,6 +180,112 @@ describe('loadConfig', () => {
       rmSync(tempHome, { recursive: true, force: true });
     }
   });
+
+  test('MiniMax retries on API rate-limit style responses', async () => {
+    const originalHome = process.env.HOME;
+    const originalFetch = globalThis.fetch;
+    const originalInterval = process.env.MINIMAX_MIN_REQUEST_INTERVAL_MS;
+    const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-minimax-retry-'));
+    process.env.HOME = tempHome;
+    process.env.MINIMAX_MIN_REQUEST_INTERVAL_MS = '1';
+
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      if (calls === 1) {
+        return new Response(JSON.stringify({
+          base_resp: { status_code: 1002, status_msg: 'rate limit' },
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'retry-after': '1',
+          },
+        });
+      }
+
+      return new Response(JSON.stringify({
+        vectors: [new Array(1536).fill(0.5)],
+        base_resp: { status_code: 0 },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    try {
+      saveConfig({
+        engine: 'pglite',
+        database_path: '/tmp/brain.pglite',
+        embedding_provider: 'minimax',
+        embedding_model: 'embo-01',
+        minimax_api_key: 'mini-test',
+        minimax_group_id: 'group-test',
+      });
+
+      const { embedBatch, resetEmbeddingStateForTests } = await import('../src/core/embedding.ts');
+      resetEmbeddingStateForTests();
+      const vectors = await embedBatch(['hello world']);
+
+      expect(calls).toBe(2);
+      expect(vectors).toHaveLength(1);
+      expect(vectors[0]).toBeInstanceOf(Float32Array);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalInterval === undefined) delete process.env.MINIMAX_MIN_REQUEST_INTERVAL_MS;
+      else process.env.MINIMAX_MIN_REQUEST_INTERVAL_MS = originalInterval;
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('MiniMax spaces requests by configured minimum interval', async () => {
+    const originalHome = process.env.HOME;
+    const originalFetch = globalThis.fetch;
+    const originalInterval = process.env.MINIMAX_MIN_REQUEST_INTERVAL_MS;
+    const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-minimax-spacing-'));
+    process.env.HOME = tempHome;
+    process.env.MINIMAX_MIN_REQUEST_INTERVAL_MS = '25';
+
+    const callTimes: number[] = [];
+    globalThis.fetch = (async () => {
+      callTimes.push(Date.now());
+      return new Response(JSON.stringify({
+        vectors: [new Array(1536).fill(0.25)],
+        base_resp: { status_code: 0 },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    try {
+      saveConfig({
+        engine: 'pglite',
+        database_path: '/tmp/brain.pglite',
+        embedding_provider: 'minimax',
+        embedding_model: 'embo-01',
+        minimax_api_key: 'mini-test',
+        minimax_group_id: 'group-test',
+      });
+
+      const { embedBatch, resetEmbeddingStateForTests } = await import('../src/core/embedding.ts');
+      resetEmbeddingStateForTests();
+      await embedBatch(['one']);
+      await embedBatch(['two']);
+
+      expect(callTimes).toHaveLength(2);
+      expect(callTimes[1] - callTimes[0]).toBeGreaterThanOrEqual(20);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalInterval === undefined) delete process.env.MINIMAX_MIN_REQUEST_INTERVAL_MS;
+      else process.env.MINIMAX_MIN_REQUEST_INTERVAL_MS = originalInterval;
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('config source correctness', () => {

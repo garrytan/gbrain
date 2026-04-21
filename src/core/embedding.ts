@@ -19,9 +19,11 @@ const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
 const MINIMAX_BASE_URL = 'https://api.minimax.chat/v1';
+const DEFAULT_MINIMAX_REQUEST_INTERVAL_MS = 6500;
 
 let openaiClient: OpenAI | null = null;
 let openaiClientApiKey: string | undefined;
+let minimaxNextRequestAt = 0;
 
 interface EmbeddingConfig {
   provider: EmbeddingProvider;
@@ -39,6 +41,16 @@ interface MiniMaxEmbeddingResponse {
     status_code?: number;
     status_msg?: string;
   };
+}
+
+class MiniMaxRateLimitError extends Error {
+  retryAfterMs: number;
+
+  constructor(message: string, retryAfterMs: number) {
+    super(message);
+    this.name = 'MiniMaxRateLimitError';
+    this.retryAfterMs = retryAfterMs;
+  }
 }
 
 function getEmbeddingConfig(): EmbeddingConfig {
@@ -129,6 +141,10 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
 
       let delay = exponentialDelay(attempt);
 
+      if (config.provider === 'minimax' && e instanceof MiniMaxRateLimitError) {
+        delay = Math.max(delay, e.retryAfterMs);
+      }
+
       if (config.provider === 'openai' && e instanceof OpenAI.APIError && e.status === 429) {
         const retryAfter = e.headers?.['retry-after'];
         if (retryAfter) {
@@ -162,6 +178,8 @@ async function createMiniMaxEmbeddings(texts: string[], config: EmbeddingConfig)
     throw new Error('MiniMax embeddings require MINIMAX_GROUP_ID to be set');
   }
 
+  await waitForMiniMaxRequestSlot();
+
   const url = new URL(`${config.baseUrl}/embeddings`);
   url.searchParams.set('GroupId', config.groupId);
 
@@ -178,15 +196,19 @@ async function createMiniMaxEmbeddings(texts: string[], config: EmbeddingConfig)
     }),
   });
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`MiniMax embeddings request failed (${response.status}): ${body}`);
-  }
-
   const data = await response.json() as MiniMaxEmbeddingResponse;
   const statusCode = data.base_resp?.status_code;
-  if (statusCode && statusCode !== 0) {
-    throw new Error(data.base_resp?.status_msg || `MiniMax embeddings request failed with status_code ${statusCode}`);
+  const statusMessage = data.base_resp?.status_msg;
+
+  if (!response.ok || (statusCode && statusCode !== 0)) {
+    if (statusCode === 1002 || /rate limit/i.test(statusMessage || '')) {
+      throw new MiniMaxRateLimitError(
+        statusMessage || `MiniMax embeddings request failed (${response.status})`,
+        getMiniMaxRetryAfterMs(response),
+      );
+    }
+
+    throw new Error(statusMessage || `MiniMax embeddings request failed (${response.status})`);
   }
 
   if (!Array.isArray(data.vectors) || data.vectors.length !== texts.length) {
@@ -206,8 +228,42 @@ function exponentialDelay(attempt: number): number {
   return Math.min(delay, MAX_DELAY_MS);
 }
 
+async function waitForMiniMaxRequestSlot(): Promise<void> {
+  const intervalMs = parsePositiveInt(process.env.MINIMAX_MIN_REQUEST_INTERVAL_MS)
+    || parsePositiveInt(process.env.GBRAIN_MINIMAX_MIN_REQUEST_INTERVAL_MS)
+    || DEFAULT_MINIMAX_REQUEST_INTERVAL_MS;
+  const now = Date.now();
+  const scheduledAt = Math.max(now, minimaxNextRequestAt);
+  minimaxNextRequestAt = scheduledAt + intervalMs;
+  const waitMs = scheduledAt - now;
+  if (waitMs > 0) {
+    await sleep(waitMs);
+  }
+}
+
+function getMiniMaxRetryAfterMs(response: Response): number {
+  const retryAfterHeader = response.headers.get('retry-after');
+  const parsedSeconds = retryAfterHeader ? parseInt(retryAfterHeader, 10) : NaN;
+  if (Number.isFinite(parsedSeconds) && parsedSeconds > 0) {
+    return parsedSeconds * 1000;
+  }
+  return 60000;
+}
+
+function parsePositiveInt(value?: string): number | undefined {
+  if (!value) return undefined;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export function resetEmbeddingStateForTests(): void {
+  openaiClient = null;
+  openaiClientApiKey = undefined;
+  minimaxNextRequestAt = 0;
 }
 
 export { EMBEDDING_DIMENSIONS };
