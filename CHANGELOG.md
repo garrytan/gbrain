@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.15.0] - 2026-04-20
+## [0.17.0] - 2026-04-20
 
 ## **GBrain runs on any embedding stack. OpenAI, Google Gemini, Ollama, Voyage, or anything via LiteLLM — one config line away.**
 ## **The AI layer is now Vercel AI SDK. Six providers on day one. The silent-drop bug that made non-OpenAI users invisible is fixed.**

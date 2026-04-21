@@ -10,7 +10,7 @@
  *   - getEmbeddingDimensions()  — for schema setup
  *   - getEmbeddingModel()       — for schema metadata
  *
- * v0.15 stubs: chunk, transcribe, enrich, improve (throw NotMigratedYet).
+ * Future stubs: chunk, transcribe, enrich, improve (throw NotMigratedYet until migrated).
  *
  * DESIGN RULES:
  *   - Gateway reads config from a single configureGateway() call.
@@ -324,11 +324,11 @@ export async function expand(query: string): Promise<string[]> {
   }
 }
 
-// ---- v0.15 stubs ----
+// ---- Future touchpoint stubs ----
 
 class NotMigratedYet extends AIConfigError {
   constructor(touchpoint: string) {
-    super(`${touchpoint} has not been migrated to the gateway yet (v0.15).`);
+    super(`${touchpoint} has not been migrated to the gateway yet.`);
     this.name = 'NotMigratedYet';
   }
 }
