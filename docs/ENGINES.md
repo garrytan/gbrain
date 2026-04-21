@@ -4,7 +4,7 @@
 
 Every GBrain operation goes through `BrainEngine`. The engine is the contract between "what the brain can do" and "how it's stored." Swap the engine, keep everything else.
 
-v0 shipped `PostgresEngine` backed by Supabase. v0.7 adds `PGLiteEngine` -- embedded Postgres 17.5 via WASM (@electric-sql/pglite), zero-config default. The interface is designed so a `DuckDBEngine`, `TursoEngine`, or any custom backend could slot in without touching the CLI, MCP server, skills, or any consumer code.
+v0 shipped `PostgresEngine` backed by Supabase. v0.7 adds `PGLiteEngine` -- embedded Postgres 17.5 via WASM (@electric-sql/pglite), zero-config default. v0.15 adds `SqliteEngine` -- embedded SQLite via Bun's native `bun:sqlite` driver. The interface is designed so a `DuckDBEngine`, `TursoEngine`, or any custom backend could slot in without touching the CLI, MCP server, skills, or any consumer code.
 
 ## Why this matters
 
@@ -14,7 +14,7 @@ Different users have different constraints:
 |------|-------|-------------|
 | Getting started | Zero-config, no accounts, no server | PGLiteEngine (default since v0.7) |
 | Power user (you) | World-class search, 7K+ pages, zero-ops | PostgresEngine + Supabase |
-| Open source hacker | Single file, no server, git-friendly | PGLiteEngine |
+| Open source hacker | Single file, no server, git-friendly | SqliteEngine |
 | Team/enterprise | Multi-user, RLS, audit trail | PostgresEngine + self-hosted |
 | Researcher | Analytics, bulk exports, embeddings | DuckDBEngine (someday) |
 | Edge/mobile | Offline-first, sync later | PGLiteEngine + sync (someday) |
@@ -210,18 +210,19 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 
 ## Capability matrix
 
-| Capability | PostgresEngine | PGLiteEngine | Notes |
-|-----------|---------------|-------------|-------|
-| CRUD | Full | Full | Same SQL |
-| Keyword search | tsvector + ts_rank | tsvector + ts_rank | Identical (real Postgres) |
-| Vector search | pgvector HNSW | pgvector HNSW | Identical (real Postgres) |
-| Fuzzy slug | pg_trgm | pg_trgm | Identical (real Postgres) |
-| Graph traversal | Recursive CTE | Recursive CTE | Same SQL |
-| Transactions | Full ACID | Full ACID | Both support this |
-| JSONB queries | GIN index | GIN index | Identical |
-| Concurrent access | Connection pooling | Single process | PGLite limitation |
-| Hosting | Supabase, self-hosted, Docker | Local file | |
-| Migration methods | runMigration, getChunksWithEmbeddings | Same | Added v0.7 |
+| Capability | PostgresEngine | PGLiteEngine | SqliteEngine | Notes |
+|-----------|---------------|-------------|-------------|-------|
+| CRUD | Full | Full | Full | |
+| Keyword search | tsvector + ts_rank | tsvector + ts_rank | FTS5 + bm25 | |
+| Vector search | pgvector HNSW | pgvector HNSW | Not on Bun | Bun's bundled sqlite3 does not support dynamic extension loading, so sqlite-vec cannot load at runtime. Keyword search is fully supported on SQLite; use PGLite or Postgres for semantic search. |
+| Fuzzy slug | pg_trgm | pg_trgm | LIKE/title overlap | |
+| Graph traversal | Recursive CTE | Recursive CTE | Recursive CTE | |
+| Transactions | Full ACID | Full ACID | Full ACID | |
+| Minion jobs | Full | Full | Postgres only | SQLite rejects Postgres-only raw SQL used by queue paths |
+| JSON fields | JSONB + GIN | JSONB + GIN | TEXT + JSON parse | |
+| Concurrent access | Connection pooling | Single process | Single process | |
+| Hosting | Supabase, self-hosted, Docker | Local file | Local file | |
+| Driver | `postgres` | `@electric-sql/pglite` | `bun:sqlite` | |
 
 ## Future engine ideas
 

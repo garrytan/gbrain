@@ -2,6 +2,23 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `SqliteEngine` as a third backend via Bun's native `bun:sqlite` driver.
+- `gbrain init --sqlite [path]` for single-file local brains (default `~/.gbrain/brain.sqlite`).
+- SQLite schema (`src/core/schema-sqlite.ts`) with FTS5 keyword index and JSON-as-TEXT storage.
+- SQLite migration handling for existing migration versions (`v2` through `v13`).
+
+### Changed
+- Engine factory now supports `sqlite` instead of throwing an unsupported-engine error.
+- Documentation updated to include SQLite in engine architecture and capability tables.
+
+### Notes
+- Vector search on SQLite is not available on Bun. Bun's bundled sqlite3 does not support dynamic extension loading, so `sqlite-vec` cannot load at runtime. Keyword search (FTS5) is fully supported on SQLite; use PGLite or Postgres for semantic search. Swapping to `better-sqlite3` would re-enable vector search on SQLite but adds a native-module build step.
+- Minion job queue (`gbrain jobs`) remains Postgres-only for v0.15. SQLite brains should use PGLite or Postgres for that workflow.
+- Budget ledger and reservation tables ship as part of SQLite migration v12 (ported from the Postgres migration), so enrichment's `BudgetLedger.reserve()` path works on fresh SQLite brains.
+
 ## [0.14.2] - 2026-04-20
 
 ## **Eight deferred bugs, root-cause fixes, one clean wave.**

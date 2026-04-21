@@ -17,8 +17,9 @@ describe('createEngine', () => {
     expect(engine.constructor.name).toBe('PostgresEngine');
   });
 
-  test('throws for sqlite with helpful message', async () => {
-    await expect(createEngine({ engine: 'sqlite' as any })).rejects.toThrow('pglite');
+  test('returns SqliteEngine for sqlite', async () => {
+    const engine = await createEngine({ engine: 'sqlite' as any });
+    expect(engine.constructor.name).toBe('SqliteEngine');
   });
 
   test('throws for unknown engine', async () => {

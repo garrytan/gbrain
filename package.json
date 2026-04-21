@@ -41,7 +41,8 @@
     "marked": "^18.0.0",
     "openai": "^4.0.0",
     "pgvector": "^0.2.0",
-    "postgres": "^3.4.0"
+    "postgres": "^3.4.0",
+    "sqlite-vec": "^0.1.9"
   },
   "devDependencies": {
     "@types/bun": "latest"
