@@ -41,7 +41,11 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 // an older installed copy via alias shadowing or stale PATH cache. The
 // active process.execPath is the one that loaded THIS migration module,
 // so recursing into it is always the right binary.
-const GBRAIN = process.execPath;
+// Exception: under Bun, process.execPath is bun[.exe], not gbrain — so
+// recursing would shell out to `bun extract` (command not found). Fall
+// back to the `gbrain` command name in that case.
+declare const Bun: { version: string } | undefined;
+const GBRAIN = typeof Bun !== 'undefined' ? 'gbrain' : process.execPath;
 
 function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };

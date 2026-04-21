@@ -41,7 +41,7 @@ export async function runReport(args: string[]) {
   // Read content from --content arg or stdin
   let content = contentIdx >= 0 ? args[contentIdx + 1] : null;
   if (!content && !process.stdin.isTTY) {
-    content = readFileSync('/dev/stdin', 'utf-8');
+    content = readFileSync(0, 'utf-8');
   }
 
   if (!content?.trim()) {

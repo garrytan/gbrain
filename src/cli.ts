@@ -127,7 +127,7 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
 
   // Read stdin for content params
   if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
-    const stdinContent = readFileSync('/dev/stdin', 'utf-8');
+    const stdinContent = readFileSync(0, 'utf-8');
     const MAX_STDIN = 5_000_000; // 5MB
     if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
       console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
