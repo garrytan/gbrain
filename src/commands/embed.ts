@@ -117,8 +117,46 @@ async function embedPage(engine: BrainEngine, slug: string) {
   console.log(`${slug}: embedded ${toEmbed.length} chunks`);
 }
 
+/**
+ * Fetch the set of slugs that have at least one stale chunk (embedded_at IS NULL).
+ * Used to avoid a full-brain walk in `embedAll(engine, true)` when coverage is
+ * already 100% or near-100% — see issue #161.
+ *
+ * Falls back to `null` (meaning "iterate all pages") when the engine's raw-SQL
+ * escape hatch isn't available, e.g. test mocks that don't implement
+ * executeRaw. Callers must treat null as "proceed with a full walk".
+ */
+async function listStaleSlugs(engine: BrainEngine): Promise<string[] | null> {
+  try {
+    const rows = await engine.executeRaw<{ slug: string }>(
+      `SELECT DISTINCT p.slug
+       FROM content_chunks c
+       JOIN pages p ON p.id = c.page_id
+       WHERE c.embedded_at IS NULL
+       ORDER BY p.slug`,
+    );
+    return rows.map(r => r.slug);
+  } catch {
+    return null;
+  }
+}
+
 async function embedAll(engine: BrainEngine, staleOnly: boolean) {
-  const pages = await engine.listPages({ limit: 100000 });
+  let pages: { slug: string }[];
+  if (staleOnly) {
+    const staleSlugs = await listStaleSlugs(engine);
+    if (staleSlugs !== null) {
+      if (staleSlugs.length === 0) {
+        console.log('No stale chunks to embed.');
+        return;
+      }
+      pages = staleSlugs.map(slug => ({ slug }));
+    } else {
+      pages = await engine.listPages({ limit: 100000 });
+    }
+  } else {
+    pages = await engine.listPages({ limit: 100000 });
+  }
   let total = 0;
   let embedded = 0;
   let processed = 0;
