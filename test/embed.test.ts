@@ -116,6 +116,12 @@ describe('runEmbed --all (parallel)', () => {
       listPages: async () => pages,
       getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
       upsertChunks: async () => {},
+      // With the issue #161 SQL pre-filter, executeRaw returns the pre-filtered
+      // set of stale slugs. Mock it to return only the stale one.
+      executeRaw: async (sql: string) => {
+        if (/embedded_at IS NULL/i.test(sql)) return [{ slug: 'stale' }];
+        return [];
+      },
     });
 
     process.env.GBRAIN_EMBED_CONCURRENCY = '5';
@@ -123,6 +129,60 @@ describe('runEmbed --all (parallel)', () => {
     await runEmbed(engine, ['--stale']);
 
     // Only the stale page triggers an embedBatch call.
+    expect(totalEmbedCalls).toBe(1);
+  });
+
+  test('--stale with 100% coverage does NOT walk every page (issue #161)', async () => {
+    // Regression for https://github.com/garrytan/gbrain/issues/161:
+    // when executeRaw reports zero stale chunks, embedAll must short-circuit
+    // BEFORE falling back to listPages({ limit: 100000 }) + per-page getChunks.
+    const engineCalls: string[] = [];
+    const engine = mockEngine({
+      executeRaw: async (sql: string) => {
+        engineCalls.push('executeRaw');
+        if (/embedded_at IS NULL/i.test(sql)) return [];
+        throw new Error('unexpected sql in test');
+      },
+      listPages: async () => {
+        engineCalls.push('listPages');
+        // If we got here, the bug is back: the code walked every page.
+        return Array.from({ length: 31_139 }, (_, i) => ({ slug: `page-${i}` }));
+      },
+      getChunks: async () => {
+        engineCalls.push('getChunks');
+        return [];
+      },
+    });
+
+    await runEmbed(engine, ['--stale']);
+
+    expect(engineCalls).toContain('executeRaw');
+    expect(engineCalls).not.toContain('listPages');
+    expect(engineCalls).not.toContain('getChunks');
+    expect(totalEmbedCalls).toBe(0);
+  });
+
+  test('--stale falls back to full walk when executeRaw is unsupported', async () => {
+    // Back-compat: older engine implementations (or test doubles) without
+    // executeRaw should still work via the pre-#161 path.
+    const pages = [
+      { slug: 'a' },
+      { slug: 'b' },
+    ];
+    const chunksBySlug = new Map<string, any[]>([
+      ['a', [{ chunk_index: 0, chunk_text: 'hi', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 }]],
+      ['b', [{ chunk_index: 0, chunk_text: 'hi', chunk_source: 'compiled_truth', embedded_at: '2026-01-01', token_count: 1 }]],
+    ]);
+
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      upsertChunks: async () => {},
+      executeRaw: async () => { throw new Error('not implemented'); },
+    });
+
+    await runEmbed(engine, ['--stale']);
+
     expect(totalEmbedCalls).toBe(1);
   });
 });
