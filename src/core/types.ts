@@ -1,5 +1,5 @@
 // Page types
-export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media';
+export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media' | 'writing' | 'analysis' | 'guide' | 'hardware' | 'architecture';
 
 export interface Page {
   id: number;
@@ -28,6 +28,8 @@ export interface PageFilters {
   tag?: string;
   limit?: number;
   offset?: number;
+  /** ISO date string (YYYY-MM-DD or full ISO timestamp). Filter to pages updated_at > value. */
+  updated_after?: string;
 }
 
 // Chunks
@@ -60,6 +62,8 @@ export interface SearchResult {
   type: PageType;
   chunk_text: string;
   chunk_source: 'compiled_truth' | 'timeline';
+  chunk_id: number;
+  chunk_index: number;
   score: number;
   stale: boolean;
 }
@@ -69,6 +73,7 @@ export interface SearchOpts {
   offset?: number;
   type?: PageType;
   exclude_slugs?: string[];
+  detail?: 'low' | 'medium' | 'high';
 }
 
 // Links
@@ -77,6 +82,26 @@ export interface Link {
   to_slug: string;
   link_type: string;
   context: string;
+  /**
+   * Provenance (v0.13+). NULL = legacy row (pre-v0.13, unknown source).
+   * 'markdown' = extracted from `[Name](path)` refs. 'frontmatter' = extracted
+   * from YAML frontmatter fields (company, investors, attendees, etc.).
+   * 'manual' = user-created via addLink with explicit source.
+   * Reconciliation in runAutoLink filters on link_source to avoid touching
+   * markdown / manual edges when rewriting a page's frontmatter.
+   */
+  link_source?: string | null;
+  /**
+   * For link_source='frontmatter': the slug of the page whose frontmatter
+   * created this edge. Lets reconciliation scope "my edges" precisely when
+   * multiple pages reference the same (from, to, type) tuple.
+   */
+  origin_slug?: string | null;
+  /**
+   * The frontmatter field name that created this edge (e.g. 'key_people',
+   * 'investors'). Used for debug output and the `unresolved` response list.
+   */
+  origin_field?: string | null;
 }
 
 export interface GraphNode {
@@ -85,6 +110,20 @@ export interface GraphNode {
   type: PageType;
   depth: number;
   links: { to_slug: string; link_type: string }[];
+}
+
+/**
+ * Edge in a graph traversal. Used by traversePaths() and graph-query.
+ * Unlike GraphNode (which only carries outgoing links), GraphPath represents an
+ * actual edge with direction, type, and depth from the root.
+ */
+export interface GraphPath {
+  from_slug: string;
+  to_slug: string;
+  link_type: string;
+  context: string;
+  /** Depth of `to_slug` from the root (1 for direct neighbors). */
+  depth: number;
 }
 
 // Timeline
@@ -142,9 +181,46 @@ export interface BrainHealth {
   page_count: number;
   embed_coverage: number;
   stale_pages: number;
+  /**
+   * Islanded pages — zero inbound AND zero outbound links. A hub page
+   * that has references out but no back-references is NOT an orphan under
+   * this definition (it's working as intended as an index). The metric
+   * aims at "pages I forgot to connect to anything", not the stricter
+   * graph-theory "no inbound" definition. Both engines share this
+   * semantics after Bug 11 doc-drift fix.
+   */
   orphan_pages: number;
-  dead_links: number;
   missing_embeddings: number;
+  /**
+   * Composite quality score, 0-100. Weighted sum of five components: embed
+   * coverage, link density, timeline coverage, orphan avoidance, dead-link
+   * avoidance. See the per-component *_score fields below for breakdown.
+   */
+  brain_score: number;
+  /**
+   * Number of links whose to_page_id no longer resolves to a page. Under
+   * `ON DELETE CASCADE` this is always 0, but malformed data or direct SQL
+   * DELETEs can produce dangling references.
+   */
+  dead_links: number;
+  /** Fraction of entity pages (person/company) with >= 1 inbound link. */
+  link_coverage: number;
+  /** Fraction of entity pages (person/company) with >= 1 structured timeline entry. */
+  timeline_coverage: number;
+  /** Top 5 entities by total link count (in + out). */
+  most_connected: Array<{ slug: string; link_count: number }>;
+  /**
+   * Per-component contribution to brain_score. Sum equals brain_score by
+   * construction. Displayed by `gbrain doctor` when brain_score < 100.
+   * Field names are distinct from the entity-scoped link_coverage /
+   * timeline_coverage above to avoid semantic collision (these reflect
+   * whole-brain measures used in the score formula).
+   */
+  embed_coverage_score: number;     // 0-35
+  link_density_score: number;        // 0-25
+  timeline_coverage_score: number;   // 0-15
+  no_orphans_score: number;          // 0-15
+  no_dead_links_score: number;       // 0-10
 }
 
 // Ingest log

@@ -1,3 +1,16 @@
+---
+name: publish
+description: Share brain pages as beautiful password-protected HTML with zero LLM calls
+triggers:
+  - "share this page"
+  - "publish page"
+  - "create shareable link"
+tools:
+  - get_page
+  - search
+mutating: false
+---
+
 # Publish Skill
 
 Share brain pages as beautiful, self-contained HTML documents. Optionally
@@ -7,6 +20,14 @@ This is a **code + skill pair**: the deterministic code (`gbrain publish`) does
 the stripping, encrypting, and HTML generation. This skill tells you when and
 how to use it. See [Thin Harness, Fat Skills](https://x.com/garrytan/status/2042925773300908103)
 for the architecture philosophy.
+
+## Contract
+
+- Published HTML is fully self-contained: no external dependencies, no server needed.
+- All private metadata (frontmatter, source citations, confirmation numbers, brain cross-links, timeline) is stripped before publishing.
+- Password protection uses AES-256-GCM with PBKDF2 key derivation; plaintext never appears in the encrypted HTML file.
+- Default is always encrypted unless the user explicitly requests "open", "no password", or "public".
+- External URLs (`https://...`) are preserved; only internal brain paths are stripped.
 
 ## When to Publish
 
@@ -121,6 +142,28 @@ Same file, same URL (if hosted), updated content.
 
 Delete the file. If using signed URLs, the URL expires automatically (1 hour).
 If using static hosting, remove the file from the host.
+
+## Anti-Patterns
+
+- **Publishing without encryption.** Brain content is private. Default to password-protected unless the user explicitly says "open", "no password", or "public".
+- **Sharing password and URL in the same channel.** Always share the password via a different channel than the URL for security.
+- **Assuming the user wants raw markdown.** The publish command produces beautiful HTML. Don't copy-paste markdown when `gbrain publish` exists.
+- **Including internal metadata.** Never manually share content that contains frontmatter, source citations, or timeline sections. Let the publish command strip it.
+
+## Output Format
+
+```
+PUBLISHED: [page title]
+========================
+
+File: [output path]
+Encrypted: [yes (AES-256-GCM) / no]
+Password: [auto-generated password / user-provided / none]
+Size: [file size]
+
+Share the file via: [email / Slack / Airdrop / cloud upload]
+Share the password via: [a different channel]
+```
 
 ## Tools Used
 

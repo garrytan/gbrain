@@ -181,6 +181,71 @@ function collectPages(dir: string): string[] {
   return pages.sort();
 }
 
+export interface LintOpts {
+  target: string;
+  fix?: boolean;
+  dryRun?: boolean;
+}
+
+export interface LintResult {
+  pages_scanned: number;
+  pages_with_issues: number;
+  total_issues: number;
+  total_fixed: number;
+  dryRun: boolean;
+  applied_fix: boolean;
+}
+
+/**
+ * Library-level lint. Throws on validation errors (missing target, target
+ * not found); lints otherwise. Does NOT print human-readable details (the
+ * CLI wrapper handles that) — returns counts so Minions handlers can
+ * report structured results. Safe from the worker — no process.exit.
+ */
+export async function runLintCore(opts: LintOpts): Promise<LintResult> {
+  if (!opts.target) {
+    throw new Error('lint: target (dir|file.md) required');
+  }
+  if (!existsSync(opts.target)) {
+    throw new Error(`Not found: ${opts.target}`);
+  }
+
+  const isSingleFile = statSync(opts.target).isFile();
+  const pages = isSingleFile ? [opts.target] : collectPages(opts.target);
+
+  let totalIssues = 0;
+  let totalFixed = 0;
+  let pagesWithIssues = 0;
+
+  for (const page of pages) {
+    const content = readFileSync(page, 'utf-8');
+    const issues = lintContent(content, isSingleFile ? page : relative(opts.target, page));
+    if (issues.length === 0) continue;
+    pagesWithIssues++;
+    totalIssues += issues.length;
+
+    if (opts.fix && issues.some(i => i.fixable)) {
+      const fixed = fixContent(content);
+      if (fixed !== content) {
+        const fixCount = issues.filter(i => i.fixable).length;
+        totalFixed += fixCount;
+        if (!opts.dryRun) {
+          writeFileSync(page, fixed);
+        }
+      }
+    }
+  }
+
+  return {
+    pages_scanned: pages.length,
+    pages_with_issues: pagesWithIssues,
+    total_issues: totalIssues,
+    total_fixed: totalFixed,
+    dryRun: !!opts.dryRun,
+    applied_fix: !!opts.fix,
+  };
+}
+
 export async function runLint(args: string[]) {
   const target = args.find(a => !a.startsWith('--'));
   const doFix = args.includes('--fix');
@@ -198,22 +263,16 @@ export async function runLint(args: string[]) {
     process.exit(1);
   }
 
-  // Single file or directory
+  // Single file or directory — print human detail as we go, then rely on
+  // Core for the aggregate numbers at the end.
   const isSingleFile = statSync(target).isFile();
   const pages = isSingleFile ? [target] : collectPages(target);
-
-  let totalIssues = 0;
-  let totalFixed = 0;
-  let pagesWithIssues = 0;
 
   for (const page of pages) {
     const content = readFileSync(page, 'utf-8');
     const relPath = isSingleFile ? page : relative(target, page);
     const issues = lintContent(content, relPath);
-
     if (issues.length === 0) continue;
-    pagesWithIssues++;
-    totalIssues += issues.length;
 
     console.log(`\n${relPath}:`);
     for (const issue of issues) {
@@ -221,12 +280,10 @@ export async function runLint(args: string[]) {
       console.log(`  L${issue.line} ${issue.rule}: ${issue.message}${fixLabel}`);
     }
 
-    // Auto-fix if requested
     if (doFix && issues.some(i => i.fixable)) {
       const fixed = fixContent(content);
       if (fixed !== content) {
         const fixCount = issues.filter(i => i.fixable).length;
-        totalFixed += fixCount;
         if (!dryRun) {
           writeFileSync(page, fixed);
         }
@@ -235,11 +292,13 @@ export async function runLint(args: string[]) {
     }
   }
 
-  console.log(`\n${pages.length} pages scanned. ${totalIssues} issue(s) in ${pagesWithIssues} page(s).`);
+  // Re-run core for the aggregate counts (cheap; re-parses contents but
+  // produces canonical numbers for the summary line).
+  const result = await runLintCore({ target, fix: doFix, dryRun });
+  console.log(`\n${result.pages_scanned} pages scanned. ${result.total_issues} issue(s) in ${result.pages_with_issues} page(s).`);
   if (doFix) {
-    console.log(`${dryRun ? '(dry run) ' : ''}${totalFixed} auto-fixed.`);
-  } else if (totalIssues > 0) {
-    const fixable = totalIssues; // rough estimate
+    console.log(`${dryRun ? '(dry run) ' : ''}${result.total_fixed} auto-fixed.`);
+  } else if (result.total_issues > 0) {
     console.log(`Run with --fix to auto-fix fixable issues.`);
   }
 }

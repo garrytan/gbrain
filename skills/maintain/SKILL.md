@@ -1,8 +1,42 @@
+---
+name: maintain
+version: 1.0.0
+description: |
+  Brain health checks: back-link enforcement, citation audit, filing validation,
+  stale info detection, orphan pages, and benchmarks. Use when asked to check
+  brain health, run maintenance, or audit quality.
+triggers:
+  - "brain health"
+  - "check backlinks"
+  - "citation audit"
+  - "maintenance"
+  - "orphan pages"
+  - "stale pages"
+tools:
+  - get_health
+  - get_page
+  - put_page
+  - list_pages
+  - get_backlinks
+  - add_link
+  - search
+mutating: true
+---
+
 # Maintain Skill
 
 Periodic brain health checks and cleanup.
 
-## Workflow
+## Contract
+
+This skill guarantees:
+- All health dimensions are checked (stale, orphan, dead links, cross-refs, backlinks, citations, filing, tags)
+- Each issue found has a specific fix action
+- Back-link iron law is enforced
+- Citation format is validated against the standard
+- Results are reported with counts per dimension
+
+## Phases
 
 1. **Run health check.** Check gbrain health to get the dashboard.
 2. **Check each dimension:**
@@ -24,6 +58,56 @@ Links pointing to pages that don't exist.
 ### Missing cross-references
 Pages that mention entity names but don't have formal links.
 - Read compiled_truth from gbrain, extract entity mentions, create links in gbrain
+
+### Link graph extraction
+If link_count is 0 or low relative to page_count, run batch extraction:
+```bash
+gbrain extract links --dir ~/brain
+```
+This scans all markdown files for entity references, See Also sections, and
+frontmatter fields, then creates typed links in the database.
+
+### Timeline extraction
+If timeline_entry_count is 0, extract structured timeline from markdown:
+```bash
+gbrain extract timeline --dir ~/brain
+```
+Parses `- **YYYY-MM-DD** | Source — Summary` and `### YYYY-MM-DD — Title` formats.
+Note: extracted entries improve structured queries (`gbrain timeline`), not vector search.
+
+### Autopilot check
+Verify autopilot is running:
+```bash
+gbrain autopilot --status
+```
+If not running, install it:
+```bash
+gbrain autopilot --install --repo ~/brain
+```
+Autopilot runs sync, extract, and embed in a continuous loop with adaptive scheduling.
+In v0.11.1+, autopilot dispatches each cycle as a single `autopilot-cycle`
+Minion job and supervises the worker child — one install step gives you
+sync + extract + embed + backlinks + durable job processing.
+
+### Fix a half-migrated install
+A v0.11.0 install where the migration skill never fired leaves Minions
+partially set up: schema is applied, but `~/.gbrain/preferences.json`
+doesn't exist, autopilot runs inline, host manifests still reference
+`agentTurn`. Repair:
+
+```bash
+# Check migration status
+gbrain apply-migrations --list
+
+# Apply pending migrations (idempotent; safe on healthy installs)
+gbrain apply-migrations --yes
+
+# If host-specific handlers are flagged in ~/.gbrain/migrations/pending-host-work.jsonl:
+# walk them per skills/migrations/v0.11.0.md + docs/guides/plugin-handlers.md,
+# ship handler registrations in the host repo, then re-run apply-migrations.
+```
+
+Full troubleshooting guide: `docs/guides/minions-fix.md`.
 
 ### Back-link enforcement
 Check that the back-linking iron law is being followed:
@@ -51,6 +135,34 @@ Spot-check pages for missing `[Source: ...]` citations:
 ### Tag consistency
 Inconsistent tagging (e.g., "vc" vs "venture-capital", "ai" vs "artificial-intelligence").
 - Standardize to the most common variant using gbrain tag operations
+
+### Graph population (v0.10.3+)
+
+The `links` and `timeline_entries` tables are the structured graph layer.
+Populate them periodically or after major imports:
+
+- `gbrain extract links --source db` — backfill structured links by walking pages
+  from the engine. Reads `[Name](people/slug)` / `[Name](companies/slug)` references
+  and infers relationship types (`attended`, `works_at`, `invested_in`, `founded`,
+  `advises`, `mentions`, `source`). Idempotent. Use `--source fs --dir <brain>`
+  if you have a markdown checkout to walk instead.
+- `gbrain extract timeline --source db` — backfill structured timeline entries.
+  Parses `- **YYYY-MM-DD** | summary` lines from page content. Idempotent (DB
+  UNIQUE constraint).
+- `gbrain extract all --source db` — both in one run.
+- `gbrain graph-query <slug> --depth 2` — verify connectivity (use any well-known
+  entity slug as a probe).
+- `gbrain stats` — verify `link_count > 0` and `timeline_entry_count > 0` after extraction.
+- `gbrain health` — review `link_coverage` and `timeline_coverage` percentages
+  on entity pages (person/company). Below 50% means more extraction is needed.
+
+Available link types (use with `gbrain graph-query --type`):
+`attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, `source`.
+
+Going forward, every `gbrain put` call auto-creates and reconciles links via the
+auto-link post-hook (default on; disable: `gbrain config set auto_link false`).
+So link-extract is mostly a one-time backfill. timeline-extract should be re-run
+after bulk imports or content edits that add new dated entries.
 
 ### Embedding freshness
 Chunks without embeddings, or chunks embedded with an old model.
@@ -145,6 +257,50 @@ This creates an audit trail for brain health over time.
 - Never delete pages without confirmation
 - Log all changes via timeline entries
 - Check gbrain health before and after to show improvement
+
+## Anti-Patterns
+
+- Fixing pages without reading them first -- you must understand context before editing
+- Silently skipping dimensions -- every dimension must be checked and reported, even if clean
+- Deleting orphan pages without checking if they should be linked instead
+- Running embedding refresh during peak usage hours
+- Batch-fixing back-links without verifying the relationship is real
+- Marking a dimension "clean" without actually querying it
+- Rewriting compiled truth without reading the full timeline first
+- Removing tags without checking if other pages use the same tag consistently
+
+## Output Format
+
+The maintenance report follows this structure:
+
+```
+## Brain Health Report — YYYY-MM-DD
+
+| Dimension           | Issues Found | Fixed | Remaining |
+|----------------------|-------------|-------|-----------|
+| Stale pages          | N           | N     | N         |
+| Orphan pages         | N           | N     | N         |
+| Dead links           | N           | N     | N         |
+| Missing cross-refs   | N           | N     | N         |
+| Back-link violations | N           | N     | N         |
+| Citation gaps        | N           | N     | N         |
+| Filing violations    | N           | N     | N         |
+| Tag inconsistencies  | N           | N     | N         |
+| Embedding staleness  | N           | N     | N         |
+| Security (RLS)       | N           | N     | N         |
+| Schema health        | N           | N     | N         |
+| File storage         | N           | N     | N         |
+| Open threads         | N           | N     | N         |
+
+### Details
+[Per-dimension breakdown with specific pages and actions taken]
+
+### Benchmark Results (if run)
+[Tier 1-4 query results with pass/fail]
+
+### Outstanding Issues
+[Items requiring user attention or confirmation]
+```
 
 ## Tools Used
 

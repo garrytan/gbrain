@@ -190,3 +190,18 @@ describe('buildSyncManifest edge cases', () => {
     expect(manifest.renamed).toEqual([]);
   });
 });
+
+describe('sync regression — #132 nested transaction deadlock', () => {
+  test('src/commands/sync.ts does not wrap the add/modify loop in engine.transaction()', async () => {
+    const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
+    const loopStart = source.indexOf('for (const path of [...filtered.added, ...filtered.modified]');
+    expect(loopStart).toBeGreaterThan(-1);
+    const prelude = source.slice(0, loopStart);
+    const lastTxIdx = prelude.lastIndexOf('engine.transaction');
+    if (lastTxIdx !== -1) {
+      const lineStart = prelude.lastIndexOf('\n', lastTxIdx) + 1;
+      const line = prelude.slice(lineStart, prelude.indexOf('\n', lastTxIdx));
+      expect(line.trim().startsWith('//')).toBe(true);
+    }
+  });
+});

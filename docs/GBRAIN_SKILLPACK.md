@@ -49,10 +49,24 @@ Running a production brain.
 | Guide | What It Covers |
 |-------|---------------|
 | [Reference Cron Schedule](guides/cron-schedule.md) | 20+ recurring jobs, quiet hours, dream cycle |
+| [Cron via Minions](../skills/conventions/cron-via-minions.md) | Why scheduled work runs as Minion jobs, not `agentTurn`. Auto-applied by v0.11.0 migration for built-in handlers; host-specific handlers use the plugin contract below. |
+| [Plugin Handlers](guides/plugin-handlers.md) | Registering host-specific Minion handlers via code (no data-file exec surface). |
+| [Minions fix](guides/minions-fix.md) | Repairing a half-migrated v0.11.0 install. |
+| [Shell jobs (v0.14.0+)](guides/minions-shell-jobs.md) | Move deterministic crons (API fetch, token refresh, scrape+write) off the LLM gateway. Zero tokens per fire, ~60% gateway headroom. Follow `skills/migrations/v0.14.0.md` for the adoption playbook. |
 | [Quiet Hours & Timezone](guides/quiet-hours.md) | Hold notifications during sleep, timezone-aware delivery |
 | [Executive Assistant Pattern](guides/executive-assistant.md) | Email triage, meeting prep, scheduling |
 | [Operational Disciplines](guides/operational-disciplines.md) | Signal detection, brain-first, sync-after-write, heartbeat, dream cycle |
 | [Skill Development Cycle](guides/skill-development.md) | 5-step cycle: concept, prototype, evaluate, codify, cron |
+
+**Subagent routing (v0.11.0+):** agents that dispatch background work should route through
+`skills/conventions/subagent-routing.md` — it reads `~/.gbrain/preferences.json#minion_mode`
+and branches between native subagents and Minion jobs. The v0.11.0 migration auto-injects
+a marker into AGENTS.md pointing at this convention.
+
+**Cron routing (v0.11.0+):** scheduled work goes through Minions, not OpenClaw's `agentTurn`.
+See `skills/conventions/cron-via-minions.md` for the rewrite pattern. The v0.11.0 migration
+auto-rewrites entries whose handler is a gbrain builtin; host-specific handlers (e.g.
+`ea-inbox-sweep`) need a code-level registration per `docs/guides/plugin-handlers.md`.
 
 ## Architecture
 

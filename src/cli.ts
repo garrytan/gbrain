@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'apply-migrations', 'skillpack-check', 'resolvers', 'integrity', 'repair-jsonb', 'orphans']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -145,6 +145,9 @@ function makeContext(engine: BrainEngine, params: Record<string, unknown>): Oper
     config: loadConfig() || { engine: 'postgres' },
     logger: { info: console.log, warn: console.warn, error: console.error },
     dryRun: (params.dry_run as boolean) || false,
+    // Local CLI invocation — the user owns the machine; do not apply remote-caller
+    // confinement (e.g., cwd-locked file_upload).
+    remote: false,
   };
 }
 
@@ -198,19 +201,35 @@ function formatResult(opName: string, result: unknown): string {
     }
     case 'get_health': {
       const h = result as any;
+      // Health score weights: missing_embeddings is the heaviest (2 pts), other
+      // graph quality issues are 1 pt each. link_coverage / timeline_coverage below
+      // 50% on entity pages indicates the graph needs population.
       const score = Math.max(0, 10
         - (h.missing_embeddings > 0 ? 2 : 0)
         - (h.stale_pages > 0 ? 1 : 0)
-        - (h.dead_links > 0 ? 1 : 0)
-        - (h.orphan_pages > 0 ? 1 : 0));
-      return [
+        - (h.orphan_pages > 0 ? 1 : 0)
+        - ((h.link_coverage ?? 1) < 0.5 ? 1 : 0)
+        - ((h.timeline_coverage ?? 1) < 0.5 ? 1 : 0));
+      const lines = [
         `Health score: ${score}/10`,
         `Embed coverage: ${(h.embed_coverage * 100).toFixed(1)}%`,
         `Missing embeddings: ${h.missing_embeddings}`,
         `Stale pages: ${h.stale_pages}`,
         `Orphan pages: ${h.orphan_pages}`,
-        `Dead links: ${h.dead_links}`,
-      ].join('\n') + '\n';
+      ];
+      if (h.link_coverage !== undefined) {
+        lines.push(`Link coverage (entities): ${(h.link_coverage * 100).toFixed(1)}%`);
+      }
+      if (h.timeline_coverage !== undefined) {
+        lines.push(`Timeline coverage (entities): ${(h.timeline_coverage * 100).toFixed(1)}%`);
+      }
+      if (Array.isArray(h.most_connected) && h.most_connected.length > 0) {
+        lines.push('Most connected entities:');
+        for (const e of h.most_connected) {
+          lines.push(`  ${e.slug}: ${e.link_count} links`);
+        }
+      }
+      return lines.join('\n') + '\n';
     }
     case 'get_timeline': {
       const entries = result as any[];
@@ -245,7 +264,7 @@ async function handleCliOnly(command: string, args: string[]) {
   }
   if (command === 'post-upgrade') {
     const { runPostUpgrade } = await import('./commands/upgrade.ts');
-    runPostUpgrade();
+    await runPostUpgrade(args);
     return;
   }
   if (command === 'check-update') {
@@ -256,6 +275,16 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'integrations') {
     const { runIntegrations } = await import('./commands/integrations.ts');
     await runIntegrations(args);
+    return;
+  }
+  if (command === 'resolvers') {
+    const { runResolvers } = await import('./commands/resolvers.ts');
+    await runResolvers(args);
+    return;
+  }
+  if (command === 'integrity') {
+    const { runIntegrity } = await import('./commands/integrity.ts');
+    await runIntegrity(args);
     return;
   }
   if (command === 'publish') {
@@ -276,6 +305,48 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'report') {
     const { runReport } = await import('./commands/report.ts');
     await runReport(args);
+    return;
+  }
+  if (command === 'apply-migrations') {
+    // Does not need connectEngine — each phase (schema, smoke, host-rewrite)
+    // manages its own subprocess or file-layer access directly. Avoids
+    // connecting a second time when the orchestrator shells out to
+    // `gbrain init --migrate-only` and `gbrain jobs smoke`.
+    const { runApplyMigrations } = await import('./commands/apply-migrations.ts');
+    await runApplyMigrations(args);
+    return;
+  }
+  if (command === 'repair-jsonb') {
+    const { runRepairJsonbCli } = await import('./commands/repair-jsonb.ts');
+    await runRepairJsonbCli(args);
+    return;
+  }
+  if (command === 'skillpack-check') {
+    // Agent-readable health report. Shells out to doctor + apply-migrations
+    // internally; does not need its own DB connection.
+    const { runSkillpackCheck } = await import('./commands/skillpack-check.ts');
+    await runSkillpackCheck(args);
+    return;
+  }
+  if (command === 'doctor') {
+    // Doctor runs filesystem checks first (no DB needed), then DB checks.
+    // --fast skips DB checks entirely.
+    const { runDoctor } = await import('./commands/doctor.ts');
+    const { getDbUrlSource } = await import('./core/config.ts');
+    if (args.includes('--fast')) {
+      // Pass the DB URL source so doctor can tell "no config at all" from
+      // "user chose --fast while config is present".
+      await runDoctor(null, args, getDbUrlSource());
+    } else {
+      try {
+        const eng = await connectEngine();
+        await runDoctor(eng, args);
+        await eng.disconnect();
+      } catch {
+        // DB unavailable — still run filesystem checks
+        await runDoctor(null, args, getDbUrlSource());
+      }
+    }
     return;
   }
 
@@ -318,14 +389,50 @@ async function handleCliOnly(command: string, args: string[]) {
         await runConfig(engine, args);
         break;
       }
-      case 'doctor': {
-        const { runDoctor } = await import('./commands/doctor.ts');
-        await runDoctor(engine, args);
-        break;
-      }
+      // doctor is handled before connectEngine() above
       case 'migrate': {
         const { runMigrateEngine } = await import('./commands/migrate-engine.ts');
         await runMigrateEngine(engine, args);
+        break;
+      }
+      case 'eval': {
+        const { runEvalCommand } = await import('./commands/eval.ts');
+        await runEvalCommand(engine, args);
+        break;
+      }
+      case 'jobs': {
+        const { runJobs } = await import('./commands/jobs.ts');
+        await runJobs(engine, args);
+        break;
+      }
+      case 'sync': {
+        const { runSync } = await import('./commands/sync.ts');
+        await runSync(engine, args);
+        break;
+      }
+      case 'extract': {
+        const { runExtract } = await import('./commands/extract.ts');
+        await runExtract(engine, args);
+        break;
+      }
+      case 'features': {
+        const { runFeatures } = await import('./commands/features.ts');
+        await runFeatures(engine, args);
+        break;
+      }
+      case 'autopilot': {
+        const { runAutopilot } = await import('./commands/autopilot.ts');
+        await runAutopilot(engine, args);
+        return; // autopilot doesn't disconnect (long-running)
+      }
+      case 'graph-query': {
+        const { runGraphQuery } = await import('./commands/graph-query.ts');
+        await runGraphQuery(engine, args);
+        break;
+      }
+      case 'orphans': {
+        const { runOrphans } = await import('./commands/orphans.ts');
+        await runOrphans(engine, args);
         break;
       }
     }
@@ -378,7 +485,7 @@ SETUP
   migrate --to <supabase|pglite>     Transfer brain between engines
   upgrade                            Self-update
   check-update [--json]              Check for new versions
-  doctor [--json]                    Health check (pgvector, RLS, schema, embeddings)
+  doctor [--json] [--fast]            Health check (resolver, skills, pgvector, RLS, embeddings)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
 
 PAGES
@@ -395,6 +502,8 @@ SEARCH
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
+  sync --watch [--interval N]        Continuous sync (loops until stopped)
+  sync --install-cron                Install persistent sync daemon
   export [--dir ./out/]              Export to markdown
 
 FILES
@@ -412,7 +521,9 @@ LINKS
   link <from> <to> [--type T]        Create typed link
   unlink <from> <to>                 Remove link
   backlinks <slug>                   Incoming links
-  graph <slug> [--depth N]           Traverse link graph
+  graph <slug> [--depth N]           Traverse link graph (returns nodes)
+  graph-query <slug> [--type T]      Edge-based traversal with type/direction filters
+        [--depth N] [--direction in|out|both]
 
 TAGS
   tags <slug>                        List tags
@@ -424,16 +535,34 @@ TIMELINE
   timeline-add <slug> <date> <text>  Add timeline entry
 
 TOOLS
+  extract <links|timeline|all>       Extract links/timeline (idempotent)
+        [--source fs|db]             fs (default) walks .md files; db iterates engine pages
+        [--dir <brain>]              brain dir for fs source
+        [--type T] [--since DATE]    filters (db source)
+        [--dry-run] [--json]
   publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
+  orphans [--json] [--count]         Find pages with no inbound wikilinks
   report --type <name> --content ... Save timestamped report to brain/reports/
+
+JOBS (Minions)
+  jobs submit <name> [--params JSON]  Submit background job [--follow] [--dry-run]
+  jobs list [--status S] [--limit N]  List jobs
+  jobs get <id>                       Job details + history
+  jobs cancel <id>                    Cancel job
+  jobs retry <id>                     Re-queue failed/dead job
+  jobs prune [--older-than 30d]       Clean old jobs
+  jobs stats                          Job health dashboard
+  jobs work [--queue Q]               Start worker daemon (Postgres only)
 
 ADMIN
   stats                              Brain statistics
   health                             Brain health dashboard
   history <slug>                     Page version history
   revert <slug> <version-id>         Revert to version
+  features [--json] [--auto-fix]     Scan usage + recommend unused features
+  autopilot [--repo] [--interval N]  Self-maintaining brain daemon
   config [show|get|set] <key> [val]  Brain config
   serve                              MCP server (stdio)
   call <tool> '<json>'               Raw tool invocation

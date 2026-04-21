@@ -71,6 +71,8 @@ export async function startMcpServer(engine: BrainEngine) {
         error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
       },
       dryRun: !!(params?.dry_run),
+      // MCP stdio callers are remote/untrusted; enforce strict file confinement.
+      remote: true,
     };
 
     const safeParams = params || {};
@@ -112,6 +114,8 @@ export async function handleToolCall(
     config: loadConfig() || { engine: 'postgres' },
     logger: { info: console.log, warn: console.warn, error: console.error },
     dryRun: !!(params?.dry_run),
+    // Backing path for `gbrain call` CLI command — trusted local invocation.
+    remote: false,
   };
 
   return op.handler(ctx, params);

@@ -351,6 +351,118 @@ describe('PGLiteEngine: Timeline', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// Batch methods (addLinksBatch / addTimelineEntriesBatch)
+// ─────────────────────────────────────────────────────────────────
+describe('PGLiteEngine: addLinksBatch', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('a', { type: 'concept', title: 'A', compiled_truth: '', timeline: '' });
+    await engine.putPage('b', { type: 'concept', title: 'B', compiled_truth: '', timeline: '' });
+    await engine.putPage('c', { type: 'concept', title: 'C', compiled_truth: '', timeline: '' });
+  });
+
+  test('empty batch returns 0 with no DB call', async () => {
+    expect(await engine.addLinksBatch([])).toBe(0);
+  });
+
+  test('batch of 1 with missing optional fields inserts row with empty defaults', async () => {
+    const inserted = await engine.addLinksBatch([{ from_slug: 'a', to_slug: 'b' }]);
+    expect(inserted).toBe(1);
+    const links = await engine.getLinks('a');
+    expect(links.length).toBe(1);
+    expect(links[0].context).toBe('');
+    expect(links[0].link_type).toBe('');
+  });
+
+  test('within-batch duplicates are deduped via ON CONFLICT (no 21000 error)', async () => {
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'a', to_slug: 'b', link_type: 'mention' },
+      { from_slug: 'a', to_slug: 'b', link_type: 'mention' },
+      { from_slug: 'a', to_slug: 'c', link_type: 'mention' },
+    ]);
+    expect(inserted).toBe(2);
+  });
+
+  test('rows with missing slug are silently dropped by JOIN', async () => {
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'doesnt-exist', to_slug: 'b' },
+      { from_slug: 'a', to_slug: 'b' },
+    ]);
+    expect(inserted).toBe(1);
+  });
+
+  test('half-existing batch returns count of new only', async () => {
+    await engine.addLink('a', 'b', '', 'mention');
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'a', to_slug: 'b', link_type: 'mention' },
+      { from_slug: 'a', to_slug: 'c', link_type: 'mention' },
+    ]);
+    expect(inserted).toBe(1);
+  });
+
+  test('batch of 100 fresh rows returns 100', async () => {
+    // Create 100 target pages
+    for (let i = 0; i < 100; i++) {
+      await engine.putPage(`target/${i}`, { type: 'concept', title: `T${i}`, compiled_truth: '', timeline: '' });
+    }
+    const batch = Array.from({ length: 100 }, (_, i) => ({
+      from_slug: 'a', to_slug: `target/${i}`, link_type: 'mention',
+    }));
+    expect(await engine.addLinksBatch(batch)).toBe(100);
+  });
+});
+
+describe('PGLiteEngine: addTimelineEntriesBatch', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('p1', { type: 'concept', title: 'P1', compiled_truth: '', timeline: '' });
+    await engine.putPage('p2', { type: 'concept', title: 'P2', compiled_truth: '', timeline: '' });
+  });
+
+  test('empty batch returns 0', async () => {
+    expect(await engine.addTimelineEntriesBatch([])).toBe(0);
+  });
+
+  test('batch of 1 with missing optionals inserts with empty defaults', async () => {
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'p1', date: '2024-01-15', summary: 'Founded' },
+    ]);
+    expect(inserted).toBe(1);
+    const entries = await engine.getTimeline('p1');
+    expect(entries.length).toBe(1);
+    expect(entries[0].source).toBe('');
+    expect(entries[0].detail).toBe('');
+  });
+
+  test('within-batch duplicates are deduped via ON CONFLICT', async () => {
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'p1', date: '2024-01-15', summary: 'Founded' },
+      { slug: 'p1', date: '2024-01-15', summary: 'Founded' },
+      { slug: 'p1', date: '2024-02-01', summary: 'Launched' },
+    ]);
+    expect(inserted).toBe(2);
+  });
+
+  test('rows with missing slug are silently dropped by JOIN', async () => {
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'no-such-page', date: '2024-01-15', summary: 'Phantom' },
+      { slug: 'p1', date: '2024-01-15', summary: 'Real' },
+    ]);
+    expect(inserted).toBe(1);
+  });
+
+  test('mix of new + existing returns count of new only', async () => {
+    await engine.addTimelineEntry('p1', { date: '2024-01-15', summary: 'Founded' });
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'p1', date: '2024-01-15', summary: 'Founded' },
+      { slug: 'p1', date: '2024-02-01', summary: 'Launched' },
+      { slug: 'p2', date: '2024-03-01', summary: 'Spun off' },
+    ]);
+    expect(inserted).toBe(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
 // Raw Data, Versions, Config, IngestLog
 // ─────────────────────────────────────────────────────────────────
 describe('PGLiteEngine: RawData', () => {
@@ -491,5 +603,291 @@ describe('PGLiteEngine: Cascade deletes', () => {
     expect(chunks.length).toBe(0);
     const tags = await engine.getTags('test/cascade');
     expect(tags.length).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// v0.10.1: Knowledge graph layer
+// ─────────────────────────────────────────────────────────────────
+
+describe('PGLiteEngine: getAllSlugs', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
+    await engine.putPage('people/bob', { ...testPage, type: 'person', title: 'Bob' });
+    await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' });
+  });
+
+  test('returns Set of all page slugs', async () => {
+    const slugs = await engine.getAllSlugs();
+    expect(slugs).toBeInstanceOf(Set);
+    expect(slugs.size).toBe(3);
+    expect(slugs.has('people/alice')).toBe(true);
+    expect(slugs.has('companies/acme')).toBe(true);
+  });
+
+  test('empty brain returns empty Set', async () => {
+    await truncateAll();
+    const slugs = await engine.getAllSlugs();
+    expect(slugs.size).toBe(0);
+  });
+});
+
+describe('PGLiteEngine: listPages updated_after filter', () => {
+  beforeEach(async () => {
+    await truncateAll();
+  });
+
+  test('filters pages by updated_at > given date', async () => {
+    await engine.putPage('test/old', testPage);
+    // Sleep briefly so the second page has a strictly later updated_at.
+    await new Promise(r => setTimeout(r, 10));
+    const cutoff = new Date().toISOString();
+    await new Promise(r => setTimeout(r, 10));
+    await engine.putPage('test/new', testPage);
+
+    const recent = await engine.listPages({ updated_after: cutoff, limit: 100 });
+    const recentSlugs = recent.map(p => p.slug);
+    expect(recentSlugs).toContain('test/new');
+    expect(recentSlugs).not.toContain('test/old');
+  });
+
+  test('without updated_after, returns all pages (regression)', async () => {
+    await engine.putPage('test/a', testPage);
+    await engine.putPage('test/b', testPage);
+    const all = await engine.listPages({ limit: 100 });
+    expect(all.length).toBe(2);
+  });
+});
+
+describe('PGLiteEngine: Multi-type links (v5 migration)', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
+    await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' });
+  });
+
+  test('same (from, to) with different link_types both stored', async () => {
+    await engine.addLink('people/alice', 'companies/acme', 'CEO', 'works_at');
+    await engine.addLink('people/alice', 'companies/acme', 'on the board', 'advises');
+    const links = await engine.getLinks('people/alice');
+    expect(links.length).toBe(2);
+    const types = links.map(l => l.link_type).sort();
+    expect(types).toEqual(['advises', 'works_at']);
+  });
+
+  test('upsert on same (from, to, type) updates context', async () => {
+    await engine.addLink('people/alice', 'companies/acme', 'old context', 'works_at');
+    await engine.addLink('people/alice', 'companies/acme', 'new context', 'works_at');
+    const links = await engine.getLinks('people/alice');
+    expect(links.length).toBe(1);
+    expect(links[0].context).toBe('new context');
+  });
+
+  test('removeLink without linkType removes ALL types for the pair (regression)', async () => {
+    await engine.addLink('people/alice', 'companies/acme', 'a', 'works_at');
+    await engine.addLink('people/alice', 'companies/acme', 'b', 'advises');
+    await engine.removeLink('people/alice', 'companies/acme');
+    const links = await engine.getLinks('people/alice');
+    expect(links.length).toBe(0);
+  });
+
+  test('removeLink with linkType removes only that type', async () => {
+    await engine.addLink('people/alice', 'companies/acme', 'a', 'works_at');
+    await engine.addLink('people/alice', 'companies/acme', 'b', 'advises');
+    await engine.removeLink('people/alice', 'companies/acme', 'works_at');
+    const links = await engine.getLinks('people/alice');
+    expect(links.length).toBe(1);
+    expect(links[0].link_type).toBe('advises');
+  });
+});
+
+describe('PGLiteEngine: Timeline dedup constraint (v6 migration)', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('test/timeline-dedup', testPage);
+  });
+
+  test('inserting same (date, summary) twice is silent no-op (idempotent)', async () => {
+    await engine.addTimelineEntry('test/timeline-dedup', { date: '2026-01-15', summary: 'Event A' });
+    await engine.addTimelineEntry('test/timeline-dedup', { date: '2026-01-15', summary: 'Event A' });
+    const entries = await engine.getTimeline('test/timeline-dedup');
+    expect(entries.length).toBe(1);
+  });
+
+  test('different summary on same date: both inserted', async () => {
+    await engine.addTimelineEntry('test/timeline-dedup', { date: '2026-01-15', summary: 'Morning' });
+    await engine.addTimelineEntry('test/timeline-dedup', { date: '2026-01-15', summary: 'Evening' });
+    const entries = await engine.getTimeline('test/timeline-dedup');
+    expect(entries.length).toBe(2);
+  });
+
+  test('throws on missing page (default behavior preserved)', async () => {
+    await expect(engine.addTimelineEntry('does/not-exist', { date: '2026-01-15', summary: 'X' }))
+      .rejects.toThrow();
+  });
+
+  test('skipExistenceCheck=true: silent no-op on missing page', async () => {
+    // No throw, but also nothing inserted (subquery returns no rows).
+    await engine.addTimelineEntry(
+      'does/not-exist',
+      { date: '2026-01-15', summary: 'X' },
+      { skipExistenceCheck: true },
+    );
+    // No assertion needed beyond "did not throw".
+  });
+});
+
+describe('PGLiteEngine: getBacklinkCounts', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
+    await engine.putPage('people/bob', { ...testPage, type: 'person', title: 'Bob' });
+    await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' });
+  });
+
+  test('returns Map<slug, count> for given slugs', async () => {
+    await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
+    await engine.addLink('people/bob', 'companies/acme', '', 'invested_in');
+    const counts = await engine.getBacklinkCounts(['companies/acme', 'people/alice']);
+    expect(counts.get('companies/acme')).toBe(2);
+    expect(counts.get('people/alice')).toBe(0);
+  });
+
+  test('empty input -> empty Map', async () => {
+    const counts = await engine.getBacklinkCounts([]);
+    expect(counts.size).toBe(0);
+  });
+
+  test('slugs with zero links: present in Map with 0', async () => {
+    const counts = await engine.getBacklinkCounts(['people/alice']);
+    expect(counts.get('people/alice')).toBe(0);
+  });
+});
+
+describe('PGLiteEngine: traversePaths (v0.10.1)', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
+    await engine.putPage('people/bob', { ...testPage, type: 'person', title: 'Bob' });
+    await engine.putPage('people/carol', { ...testPage, type: 'person', title: 'Carol' });
+    await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' });
+    await engine.putPage('meetings/standup', { ...testPage, type: 'meeting', title: 'Standup' });
+    // Build a small typed graph
+    await engine.addLink('meetings/standup', 'people/alice', '', 'attended');
+    await engine.addLink('meetings/standup', 'people/bob', '', 'attended');
+    await engine.addLink('meetings/standup', 'people/carol', '', 'attended');
+    await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
+    await engine.addLink('people/bob', 'companies/acme', '', 'invested_in');
+  });
+
+  test('out direction (default): follows from->to edges', async () => {
+    const paths = await engine.traversePaths('meetings/standup', { depth: 1 });
+    expect(paths.length).toBe(3);
+    expect(new Set(paths.map(p => p.to_slug))).toEqual(new Set(['people/alice', 'people/bob', 'people/carol']));
+    expect(paths.every(p => p.link_type === 'attended')).toBe(true);
+  });
+
+  test('in direction: follows to->from edges', async () => {
+    const paths = await engine.traversePaths('companies/acme', { depth: 1, direction: 'in' });
+    expect(paths.length).toBe(2);
+    expect(new Set(paths.map(p => p.from_slug))).toEqual(new Set(['people/alice', 'people/bob']));
+  });
+
+  test('linkType per-edge filter: only follows matching edges', async () => {
+    const paths = await engine.traversePaths('companies/acme', {
+      depth: 1, direction: 'in', linkType: 'works_at',
+    });
+    expect(paths.length).toBe(1);
+    expect(paths[0].from_slug).toBe('people/alice');
+  });
+
+  test('depth 2: multi-hop traversal', async () => {
+    const paths = await engine.traversePaths('meetings/standup', { depth: 2 });
+    // alice/bob/carol direct + alice->acme + bob->acme
+    expect(paths.length).toBeGreaterThanOrEqual(5);
+    const acmePaths = paths.filter(p => p.to_slug === 'companies/acme');
+    expect(acmePaths.length).toBe(2);
+    expect(acmePaths.every(p => p.depth === 2)).toBe(true);
+  });
+
+  test('non-existent slug returns empty', async () => {
+    const paths = await engine.traversePaths('does/not-exist', { depth: 5 });
+    expect(paths).toEqual([]);
+  });
+});
+
+describe('PGLiteEngine: traverseGraph cycle prevention', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('people/a', { ...testPage, type: 'person', title: 'A' });
+    await engine.putPage('people/b', { ...testPage, type: 'person', title: 'B' });
+    // Create a 2-cycle: A -> B -> A
+    await engine.addLink('people/a', 'people/b', '', 'mentions');
+    await engine.addLink('people/b', 'people/a', '', 'mentions');
+  });
+
+  test('does not amplify on cyclic graphs', async () => {
+    // Without cycle prevention, depth 5 on a 2-cycle would loop indefinitely
+    // (or at least produce many duplicate nodes). With the visited array, each
+    // node appears at most once.
+    const graph = await engine.traverseGraph('people/a', 5);
+    const slugs = graph.map(n => n.slug);
+    // Each slug should appear at most twice (once at depth 0, possibly once
+    // again at a deeper level via the cycle, but bounded by visited check).
+    const counts = new Map<string, number>();
+    for (const s of slugs) counts.set(s, (counts.get(s) ?? 0) + 1);
+    for (const [slug, count] of counts) {
+      expect(count).toBeLessThanOrEqual(2); // tolerate root + 1 traversal entry
+      void slug;
+    }
+  });
+});
+
+describe('PGLiteEngine: getHealth graph metrics', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
+    await engine.putPage('people/bob', { ...testPage, type: 'person', title: 'Bob' });
+    await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' });
+  });
+
+  test('link_coverage = 0 when no links exist', async () => {
+    const h = await engine.getHealth();
+    expect(h.link_coverage).toBe(0);
+  });
+
+  test('link_coverage = % of entity pages with >= 1 inbound link', async () => {
+    // Acme gets 1 inbound link (from Alice), Alice/Bob get 0 inbound.
+    // 1 of 3 entity pages has inbound links -> 33%.
+    await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
+    const h = await engine.getHealth();
+    expect(h.link_coverage).toBeCloseTo(1 / 3, 2);
+  });
+
+  test('timeline_coverage = % with >= 1 timeline entry', async () => {
+    await engine.addTimelineEntry('people/alice', { date: '2026-01-15', summary: 'Joined' });
+    const h = await engine.getHealth();
+    expect(h.timeline_coverage).toBeCloseTo(1 / 3, 2);
+  });
+
+  test('most_connected lists top entities by link count', async () => {
+    await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
+    await engine.addLink('people/bob', 'companies/acme', '', 'invested_in');
+    const h = await engine.getHealth();
+    expect(h.most_connected.length).toBeGreaterThan(0);
+    expect(h.most_connected[0].slug).toBe('companies/acme');
+    expect(h.most_connected[0].link_count).toBe(2);
+  });
+
+  test('orphan_pages: pages with neither inbound nor outbound links', async () => {
+    // All 3 pages start with no links. Expect 3 orphans.
+    const h = await engine.getHealth();
+    expect(h.orphan_pages).toBe(3);
+
+    // Add alice -> acme. Alice has outbound, acme has inbound, only Bob is orphan.
+    await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
+    const h2 = await engine.getHealth();
+    expect(h2.orphan_pages).toBe(1);
   });
 });

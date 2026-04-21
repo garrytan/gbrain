@@ -22,14 +22,16 @@ export interface ParsedMarkdown {
  *   tags: [startups, growth]
  *   ---
  *   Compiled truth content here...
- *   ---
+ *
+ *   <!-- timeline -->
  *   Timeline content here...
  *
  * The first --- pair is YAML frontmatter (handled by gray-matter).
- * After frontmatter, the body is split at the first standalone ---
- * (a line containing only --- with optional whitespace).
- * Everything before is compiled_truth, everything after is timeline.
- * If no body --- exists, all content is compiled_truth.
+ * After frontmatter, the body is split at the first recognized timeline
+ * sentinel: `<!-- timeline -->` (preferred), `--- timeline ---` (decorated),
+ * or a plain `---` immediately preceding a `## Timeline` / `## History`
+ * heading (backward-compat for existing files). A bare `---` in body text
+ * is treated as a markdown horizontal rule, not a timeline separator.
  */
 export function parseMarkdown(content: string, filePath?: string): ParsedMarkdown {
   const { data: frontmatter, content: body } = matter(content);
@@ -62,26 +64,21 @@ export function parseMarkdown(content: string, filePath?: string): ParsedMarkdow
 }
 
 /**
- * Split body content at first standalone --- separator.
+ * Split body content at the first recognized timeline sentinel.
  * Returns compiled_truth (before) and timeline (after).
+ *
+ * Recognized sentinels (in order of precedence):
+ *   1. `<!-- timeline -->` — preferred, unambiguous, what serializeMarkdown emits
+ *   2. `--- timeline ---` — decorated separator
+ *   3. `---` ONLY when the next non-empty line is `## Timeline` or `## History`
+ *      (backward-compat fallback for older gbrain-written files)
+ *
+ * A plain `---` line is a markdown horizontal rule, NOT a timeline separator.
+ * Treating bare `---` as a separator caused 83% content truncation on wiki corpora.
  */
 export function splitBody(body: string): { compiled_truth: string; timeline: string } {
-  // Match a line that is only --- (with optional whitespace)
-  // Must not be at the very start (that would be frontmatter)
   const lines = body.split('\n');
-  let splitIndex = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (trimmed === '---') {
-      // Skip if this is the very first non-empty line (leftover from frontmatter parsing)
-      const beforeContent = lines.slice(0, i).join('\n').trim();
-      if (beforeContent.length > 0) {
-        splitIndex = i;
-        break;
-      }
-    }
-  }
+  const splitIndex = findTimelineSplitIndex(lines);
 
   if (splitIndex === -1) {
     return { compiled_truth: body, timeline: '' };
@@ -90,6 +87,33 @@ export function splitBody(body: string): { compiled_truth: string; timeline: str
   const compiled_truth = lines.slice(0, splitIndex).join('\n');
   const timeline = lines.slice(splitIndex + 1).join('\n');
   return { compiled_truth, timeline };
+}
+
+function findTimelineSplitIndex(lines: string[]): number {
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+
+    if (trimmed === '<!-- timeline -->' || trimmed === '<!--timeline-->') {
+      return i;
+    }
+
+    if (trimmed === '--- timeline ---' || /^---\s+timeline\s+---$/i.test(trimmed)) {
+      return i;
+    }
+
+    if (trimmed === '---') {
+      const beforeContent = lines.slice(0, i).join('\n').trim();
+      if (beforeContent.length === 0) continue;
+
+      for (let j = i + 1; j < lines.length; j++) {
+        const next = lines[j].trim();
+        if (next.length === 0) continue;
+        if (/^##\s+(timeline|history)\b/i.test(next)) return i;
+        break;
+      }
+    }
+  }
+  return -1;
 }
 
 /**
@@ -116,7 +140,7 @@ export function serializeMarkdown(
 
   let body = compiled_truth;
   if (timeline) {
-    body += '\n\n---\n\n' + timeline;
+    body += '\n\n<!-- timeline -->\n\n' + timeline;
   }
 
   return yamlContent + '\n\n' + body + '\n';
@@ -125,8 +149,18 @@ export function serializeMarkdown(
 function inferType(filePath?: string): PageType {
   if (!filePath) return 'concept';
 
-  // Normalize: add leading / for consistent matching
+  // Normalize: add leading / for consistent matching.
+  // Wiki subtypes and /writing/ check FIRST — they're stronger signals than
+  // ancestor directories. e.g. `projects/blog/writing/essay.md` is a piece of
+  // writing, not a project page; `tech/wiki/analysis/foo.md` is analysis,
+  // not a hit on the broader `tech/` ancestor.
   const lower = ('/' + filePath).toLowerCase();
+  if (lower.includes('/writing/')) return 'writing';
+  if (lower.includes('/wiki/analysis/')) return 'analysis';
+  if (lower.includes('/wiki/guides/') || lower.includes('/wiki/guide/')) return 'guide';
+  if (lower.includes('/wiki/hardware/')) return 'hardware';
+  if (lower.includes('/wiki/architecture/')) return 'architecture';
+  if (lower.includes('/wiki/concepts/') || lower.includes('/wiki/concept/')) return 'concept';
   if (lower.includes('/people/') || lower.includes('/person/')) return 'person';
   if (lower.includes('/companies/') || lower.includes('/company/')) return 'company';
   if (lower.includes('/deals/') || lower.includes('/deal/')) return 'deal';
