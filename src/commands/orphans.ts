@@ -14,6 +14,8 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
+import { createProgress, startHeartbeat } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 // --- Types ---
 
@@ -121,13 +123,28 @@ export async function queryOrphanPages(): Promise<{ slug: string; title: string;
  * Returns structured OrphanResult with totals.
  */
 export async function findOrphans(includePseudo: boolean = false): Promise<OrphanResult> {
-  const allOrphans = await queryOrphanPages();
-  const totalPages = allOrphans.length; // pages with no inbound links
+  // The NOT EXISTS anti-join over pages × links can take seconds on 50K-page
+  // brains. Heartbeat every second so agents see the scan is alive. Keyset
+  // pagination was considered and rejected: without an index on
+  // links.to_page_id it does no useful work. Adding that index is a
+  // follow-up (v0.14.3 schema migration).
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('orphans.scan');
+  const stopHb = startHeartbeat(progress, 'scanning pages for missing inbound links…');
+  let allOrphans: { slug: string; title: string; domain: string | null }[];
+  let total: number;
+  try {
+    allOrphans = await queryOrphanPages();
 
-  // Count total pages in DB for the summary line
-  const sql = db.getConnection();
-  const [{ count: totalPagesCount }] = await sql`SELECT count(*)::int AS count FROM pages`;
-  const total = Number(totalPagesCount);
+    // Count total pages in DB for the summary line
+    const sql = db.getConnection();
+    const [{ count: totalPagesCount }] = await sql`SELECT count(*)::int AS count FROM pages`;
+    total = Number(totalPagesCount);
+  } finally {
+    stopHb();
+    progress.finish();
+  }
+  const _totalPages = allOrphans.length; // pages with no inbound links (preserved for ref)
 
   const filtered = includePseudo
     ? allOrphans

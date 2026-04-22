@@ -2,6 +2,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
+import { createProgress, type ProgressReporter } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -12,6 +14,13 @@ export interface EmbedOpts {
   slugs?: string[];
   /** Embed a single page. */
   slug?: string;
+  /**
+   * Optional progress callback. Called after each page. CLI wrappers
+   * supply a reporter.tick()-backed implementation; Minion handlers
+   * supply a job.updateProgress()-backed one so per-job progress lives
+   * in the DB where `gbrain jobs get` can read it.
+   */
+  onProgress?: (done: number, total: number, embedded: number) => void;
 }
 
 /**
@@ -29,7 +38,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     return;
   }
   if (opts.all || opts.stale) {
-    await embedAll(engine, !!opts.stale);
+    await embedAll(engine, !!opts.stale, opts.onProgress);
     return;
   }
   if (opts.slug) {
@@ -58,9 +67,24 @@ export async function runEmbed(engine: BrainEngine, args: string[]) {
     opts = { slug };
   }
 
+  // CLI path: wire a reporter so --progress-json / --quiet / TTY rendering
+  // all work. Minion handlers call runEmbedCore directly with their own
+  // onProgress (see jobs.ts).
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  let progressStarted = false;
+  opts.onProgress = (done, total, _embedded) => {
+    if (!progressStarted) {
+      progress.start('embed.pages', total);
+      progressStarted = true;
+    }
+    progress.tick(1);
+  };
+
   try {
     await runEmbedCore(engine, opts);
+    if (progressStarted) progress.finish();
   } catch (e) {
+    if (progressStarted) progress.finish();
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   }
@@ -117,7 +141,11 @@ async function embedPage(engine: BrainEngine, slug: string) {
   console.log(`${slug}: embedded ${toEmbed.length} chunks`);
 }
 
-async function embedAll(engine: BrainEngine, staleOnly: boolean) {
+async function embedAll(
+  engine: BrainEngine,
+  staleOnly: boolean,
+  onProgress?: (done: number, total: number, embedded: number) => void,
+) {
   const pages = await engine.listPages({ limit: 100000 });
   let total = 0;
   let embedded = 0;
@@ -141,7 +169,7 @@ async function embedAll(engine: BrainEngine, staleOnly: boolean) {
 
     if (toEmbed.length === 0) {
       processed++;
-      process.stdout.write(`\r  ${processed}/${pages.length} pages, ${embedded} chunks embedded`);
+      onProgress?.(processed, pages.length, embedded);
       return;
     }
 
@@ -168,7 +196,7 @@ async function embedAll(engine: BrainEngine, staleOnly: boolean) {
 
     total += toEmbed.length;
     processed++;
-    process.stdout.write(`\r  ${processed}/${pages.length} pages, ${embedded} chunks embedded`);
+    onProgress?.(processed, pages.length, embedded);
   }
 
   // Sliding worker pool: N workers share a queue and each pulls the
@@ -187,5 +215,6 @@ async function embedAll(engine: BrainEngine, staleOnly: boolean) {
   const numWorkers = Math.min(CONCURRENCY, pages.length);
   await Promise.all(Array.from({ length: numWorkers }, () => worker()));
 
-  console.log(`\n\nEmbedded ${embedded} chunks across ${pages.length} pages`);
+  // Stdout summary preserved for scripts/tests that grep for counts.
+  console.log(`Embedded ${embedded} chunks across ${pages.length} pages`);
 }

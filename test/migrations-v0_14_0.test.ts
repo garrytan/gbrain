@@ -88,16 +88,20 @@ describe('Bug 5 — Phase B host-work entry dedup', () => {
 });
 
 describe('Bug 8 — max_stalled default bumped in schema files', () => {
-  test('schema-embedded.ts has max_stalled DEFAULT 3', async () => {
+  // v0.14.2 bumped schema default 1 -> 3 via Bug 8. v0.14.3 (#219 fix wave) further
+  // bumps to 5 for extra flaky-deploy headroom, plus adds UPDATE backfill of
+  // non-terminal rows via migration v15. These structural assertions track the
+  // current schema source state (not historical).
+  test('schema-embedded.ts has max_stalled DEFAULT 5', async () => {
     const source = await Bun.file(new URL('../src/core/schema-embedded.ts', import.meta.url)).text();
-    expect(source).toContain('max_stalled      INTEGER     NOT NULL DEFAULT 3');
+    expect(source).toContain('max_stalled      INTEGER     NOT NULL DEFAULT 5');
   });
-  test('pglite-schema.ts has max_stalled DEFAULT 3', async () => {
+  test('pglite-schema.ts has max_stalled DEFAULT 5', async () => {
     const source = await Bun.file(new URL('../src/core/pglite-schema.ts', import.meta.url)).text();
-    expect(source).toContain('max_stalled      INTEGER     NOT NULL DEFAULT 3');
+    expect(source).toContain('max_stalled      INTEGER     NOT NULL DEFAULT 5');
   });
-  test('schema.sql has max_stalled DEFAULT 3', async () => {
+  test('schema.sql has max_stalled DEFAULT 5', async () => {
     const source = await Bun.file(new URL('../src/schema.sql', import.meta.url)).text();
-    expect(source).toContain('max_stalled      INTEGER     NOT NULL DEFAULT 3');
+    expect(source).toContain('max_stalled      INTEGER     NOT NULL DEFAULT 5');
   });
 });

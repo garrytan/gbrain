@@ -268,10 +268,17 @@ export async function runLint(args: string[]) {
   const isSingleFile = statSync(target).isFile();
   const pages = isSingleFile ? [target] : collectPages(target);
 
+  // Progress on stderr. Stdout keeps the per-issue human output it always had.
+  const { createProgress } = await import('../core/progress.ts');
+  const { getCliOptions, cliOptsToProgressOptions } = await import('../core/cli-options.ts');
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('lint.pages', pages.length);
+
   for (const page of pages) {
     const content = readFileSync(page, 'utf-8');
     const relPath = isSingleFile ? page : relative(target, page);
     const issues = lintContent(content, relPath);
+    progress.tick(1);
     if (issues.length === 0) continue;
 
     console.log(`\n${relPath}:`);
@@ -291,6 +298,8 @@ export async function runLint(args: string[]) {
       }
     }
   }
+
+  progress.finish();
 
   // Re-run core for the aggregate counts (cheap; re-parses contents but
   // produces canonical numbers for the summary line).

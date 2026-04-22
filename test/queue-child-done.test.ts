@@ -230,10 +230,19 @@ describe('v0.15 parent-resolution terminal set', () => {
   });
 });
 
-describe('v0.15 MinionJobInput.max_stalled', () => {
-  test('default max_stalled is 1 when omitted (regression)', async () => {
+describe('v0.16 MinionJobInput.max_stalled', () => {
+  test('default max_stalled picks up schema DEFAULT when omitted (regression)', async () => {
+    // v0.14.3 bumped the schema column DEFAULT from 1 → 5 (max_stalled becomes
+    // tolerant of short-lock blips for long-running LLM handlers). The v0.16
+    // queue.add conditional-insert skips the column when the caller omits it,
+    // so the schema DEFAULT is what actually stores. Pin the current default
+    // rather than hardcoding the number.
     const job = await queue.add('child', {});
-    expect(job.max_stalled).toBe(1);
+    expect(job.max_stalled).toBeGreaterThanOrEqual(1);
+    expect(job.max_stalled).toBeLessThanOrEqual(100);
+    // As of v0.14.3 the default is 5. If someone re-migrates the default up,
+    // this assertion will fire and they can update it intentionally.
+    expect(job.max_stalled).toBe(5);
   });
 
   test('per-job max_stalled override threads through INSERT', async () => {

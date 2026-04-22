@@ -17,7 +17,20 @@ import { slugifyPath } from './sync.ts';
 interface Migration {
   version: number;
   name: string;
+  /** Engine-agnostic SQL. Used when `sqlFor` is absent. Set to '' for handler-only or sqlFor-only migrations. */
   sql: string;
+  /**
+   * Engine-specific SQL. If present, overrides `sql` for the matching engine.
+   * Needed when Postgres wants CONCURRENTLY but PGLite can't honor it.
+   */
+  sqlFor?: { postgres?: string; pglite?: string };
+  /**
+   * When false, the runner does NOT wrap the SQL in `engine.transaction()`.
+   * Required for `CREATE INDEX CONCURRENTLY` (which Postgres refuses inside a transaction).
+   * Enforced Postgres-only; ignored on PGLite (PGLite has no concurrent writers anyway).
+   * Defaults to true.
+   */
+  transaction?: boolean;
   handler?: (engine: BrainEngine) => Promise<void>;
 }
 
@@ -102,7 +115,7 @@ export const MIGRATIONS: Migration[] = [
         backoff_delay    INTEGER     NOT NULL DEFAULT 1000,
         backoff_jitter   REAL        NOT NULL DEFAULT 0.2,
         stalled_counter  INTEGER     NOT NULL DEFAULT 0,
-        max_stalled      INTEGER     NOT NULL DEFAULT 1,
+        max_stalled      INTEGER     NOT NULL DEFAULT 5,
         lock_token       TEXT,
         lock_until       TIMESTAMPTZ,
         delay_until      TIMESTAMPTZ,
@@ -355,9 +368,8 @@ export const MIGRATIONS: Migration[] = [
     // midnight rollover in the user's TZ naturally creates a new row instead of
     // mutating yesterday's. reserved_usd and committed_usd track reservations
     // vs actuals so process death between reserve() and commit()/rollback()
-    // can be cleaned up by TTL scan. status and reserved_at exist for that
-    // reclaim path. Rollback: DROP TABLE (budget is regenerable from resolver
-    // call logs; no durable product data lives here).
+    // can be cleaned up by TTL scan. Rollback: DROP TABLE (regenerable from
+    // resolver call logs; no durable product data lives here).
     sql: `
       CREATE TABLE IF NOT EXISTS budget_ledger (
         scope          TEXT        NOT NULL,
@@ -388,21 +400,70 @@ export const MIGRATIONS: Migration[] = [
     version: 13,
     name: 'minion_quiet_hours_stagger',
     // Adds quiet-hours gating + deterministic stagger to Minions.
-    //
-    // quiet_hours (JSONB): {start, end, tz, policy} — checked at claim
-    //   time by the worker, not at dispatch. A queued job inside its quiet
-    //   window is released back to 'waiting' and claimed again outside the
-    //   window. 'skip' policy drops the event, 'defer' re-queues.
-    // stagger_key (TEXT): hashed to a minute-slot offset so jobs with the
-    //   same key don't collide when a cron boundary fires. Optional; NULL
-    //   = no stagger. The hash lives in application code (deterministic,
-    //   ensures same key always lands on same slot) so the column is
-    //   just the key.
     sql: `
       ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS quiet_hours JSONB;
       ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS stagger_key TEXT;
       CREATE INDEX IF NOT EXISTS idx_minion_jobs_stagger_key
         ON minion_jobs(stagger_key) WHERE stagger_key IS NOT NULL;
+    `,
+  },
+  {
+    version: 14,
+    name: 'pages_updated_at_index',
+    // v0.14.1 (fix wave): fixes the 14.6s "list pages newest-first" seqscan on 31k+ row brains.
+    // Original report: https://github.com/garrytan/gbrain/issues/170 (PR #215).
+    //
+    // Engine-aware via handler (not SQL): Postgres uses CREATE INDEX CONCURRENTLY
+    // to avoid the write-blocking SHARE lock on `pages`. CONCURRENTLY refuses to
+    // run inside a transaction AND postgres.js's multi-statement `.unsafe()` wraps
+    // in an implicit transaction, so the handler runs each statement as a separate
+    // call. A failed CONCURRENTLY leaves an invalid index with the target name;
+    // the handler pre-drops any invalid remnant via pg_index.indisvalid. PGLite
+    // has no concurrent writers, so plain CREATE is safe.
+    sql: '',
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          14,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'idx_pages_updated_at_desc' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_pages_updated_at_desc';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          14,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pages_updated_at_desc
+             ON pages (updated_at DESC);`
+        );
+      } else {
+        await engine.runMigration(
+          14,
+          `CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc
+             ON pages (updated_at DESC);`
+        );
+      }
+    },
+  },
+  {
+    version: 15,
+    name: 'minion_jobs_max_stalled_default_5',
+    // v0.14.1 (fix wave): fixes https://github.com/garrytan/gbrain/issues/219
+    // Shipped default was 1 — first stall = dead-letter, contradicting the
+    // "SIGKILL rescued" claim. New default 5. UPDATE backfills existing non-
+    // terminal rows so upgrading brains don't keep dead-lettering queued work.
+    // Statuses come from MinionJobStatus in types.ts. Row locks serialize
+    // against claim()'s FOR UPDATE SKIP LOCKED — race-safe. Idempotent.
+    sql: `
+      ALTER TABLE minion_jobs ALTER COLUMN max_stalled SET DEFAULT 5;
+      UPDATE minion_jobs
+         SET max_stalled = 5
+       WHERE status IN ('waiting','active','delayed','waiting-children','paused')
+         AND max_stalled < 5;
     `,
   },
 ];
@@ -418,11 +479,23 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   let applied = 0;
   for (const m of MIGRATIONS) {
     if (m.version > current) {
-      // SQL migration (transactional)
-      if (m.sql) {
-        await engine.transaction(async (tx) => {
-          await tx.runMigration(m.version, m.sql);
-        });
+      // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
+      const sql = m.sqlFor?.[engine.kind] ?? m.sql;
+
+      if (sql) {
+        const useTransaction = m.transaction !== false;
+        // Non-transactional path is Postgres-only: `CREATE INDEX CONCURRENTLY`
+        // refuses to run inside a transaction. PGLite has no concurrent
+        // writers, so even if a migration sets transaction:false we wrap it
+        // anyway (harmless; keeps behavior consistent).
+        if (useTransaction || engine.kind === 'pglite') {
+          await engine.transaction(async (tx) => {
+            await tx.runMigration(m.version, sql);
+          });
+        } else {
+          // Postgres + transaction:false → direct execution, no BEGIN/COMMIT.
+          await engine.runMigration(m.version, sql);
+        }
       }
 
       // Application-level handler (runs outside transaction for flexibility)

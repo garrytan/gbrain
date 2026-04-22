@@ -168,7 +168,7 @@ export interface OperationContext {
    */
   remote?: boolean;
   /**
-   * Subagent runtime context (v0.15+). Set by the subagent tool dispatcher when
+   * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
    * agent policy (e.g. put_page namespace rule).
    *
@@ -180,6 +180,13 @@ export interface OperationContext {
   jobId?: number;
   subagentId?: number;
   viaSubagent?: boolean;
+  /**
+   * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
+   * CLI callers populate this from `getCliOptions()`. MCP / library callers
+   * may leave it undefined — consumers default to quiet/no-progress for
+   * background work.
+   */
+  cliOpts?: { quiet: boolean; progressJson: boolean; progressInterval: number };
 }
 
 export interface Operation {

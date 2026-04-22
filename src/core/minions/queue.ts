@@ -134,27 +134,40 @@ export class MinionQueue {
 
       // 3. Insert child. Use ON CONFLICT for idempotency; if a concurrent submit
       //    raced past the fast-path SELECT, the unique index catches it here.
-      //    v12 adds quiet_hours + stagger_key passed through from opts.
-      // NOTE on max_stalled: thread per-job override on INSERT ONLY. An
-      // idempotency-key hit returns the EXISTING row unchanged — we do NOT
-      // UPDATE max_stalled on a re-submit, because second-submitter mutation
-      // of first-submitter behavior is a nasty footgun (codex iteration 3).
-      const insertSql = opts?.idempotency_key
-        ? `INSERT INTO minion_jobs (name, queue, status, priority, data, max_attempts, backoff_type,
+      //    quiet_hours + stagger_key always present (null fallback; schema
+      //    stores NULL). max_stalled is conditional: provided values get
+      //    clamped to [1, 100] and included in the INSERT; omitted values
+      //    skip the column so the schema DEFAULT (5 as of v0.14.1) kicks in.
+      //    Keeps the app layer from hardcoding the schema default constant.
+      //
+      //    Footgun note (codex iter 3): threading max_stalled on INSERT only is
+      //    deliberate. An idempotency-key hit returns the EXISTING row via the
+      //    fast-path SELECT above — we do NOT UPDATE max_stalled on a re-submit,
+      //    because letting a second submitter mutate the first submitter's
+      //    durability semantics is a nasty surprise.
+      const hasMaxStalled = opts?.max_stalled !== undefined && opts.max_stalled !== null;
+      const clampedMaxStalled = hasMaxStalled
+        ? Math.max(1, Math.min(100, Math.floor(opts!.max_stalled as number)))
+        : null;
+
+      const baseCols = `name, queue, status, priority, data, max_attempts, backoff_type,
             backoff_delay, backoff_jitter, delay_until, parent_job_id, on_child_fail,
             depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key,
-            quiet_hours, stagger_key, max_stalled)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21)
+            quiet_hours, stagger_key`;
+      const baseVals = `$1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20`;
+      const cols = hasMaxStalled ? `${baseCols}, max_stalled` : baseCols;
+      const vals = hasMaxStalled ? `${baseVals}, $21` : baseVals;
+
+      const insertSql = opts?.idempotency_key
+        ? `INSERT INTO minion_jobs (${cols})
+           VALUES (${vals})
            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
            RETURNING *`
-        : `INSERT INTO minion_jobs (name, queue, status, priority, data, max_attempts, backoff_type,
-            backoff_delay, backoff_jitter, delay_until, parent_job_id, on_child_fail,
-            depth, max_children, timeout_ms, remove_on_complete, remove_on_fail, idempotency_key,
-            quiet_hours, stagger_key, max_stalled)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21)
+        : `INSERT INTO minion_jobs (${cols})
+           VALUES (${vals})
            RETURNING *`;
 
-      const params = [
+      const params: unknown[] = [
         jobName,
         opts?.queue ?? 'default',
         childStatus,
@@ -175,8 +188,8 @@ export class MinionQueue {
         opts?.idempotency_key ?? null,
         opts?.quiet_hours ?? null,
         opts?.stagger_key ?? null,
-        opts?.max_stalled ?? 1,
       ];
+      if (hasMaxStalled) params.push(clampedMaxStalled);
 
       const inserted = await tx.executeRaw<Record<string, unknown>>(insertSql, params);
 

@@ -194,7 +194,13 @@ describe('buildSyncManifest edge cases', () => {
 describe('sync regression — #132 nested transaction deadlock', () => {
   test('src/commands/sync.ts does not wrap the add/modify loop in engine.transaction()', async () => {
     const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
-    const loopStart = source.indexOf('for (const path of [...filtered.added, ...filtered.modified]');
+    // Accept either of the historical loop shapes: the original inline
+    // `for (const path of [...filtered.added, ...filtered.modified])` or
+    // the v0.15.2 progress-wrapped variant where the list is hoisted into
+    // a local `addsAndMods` variable first.
+    const inlineIdx = source.indexOf('for (const path of [...filtered.added, ...filtered.modified]');
+    const hoistedIdx = source.indexOf('const addsAndMods = [...filtered.added, ...filtered.modified]');
+    const loopStart = inlineIdx !== -1 ? inlineIdx : hoistedIdx;
     expect(loopStart).toBeGreaterThan(-1);
     const prelude = source.slice(0, loopStart);
     const lastTxIdx = prelude.lastIndexOf('engine.transaction');

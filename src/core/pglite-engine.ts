@@ -24,6 +24,7 @@ import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } f
 type PGLiteDB = PGlite;
 
 export class PGLiteEngine implements BrainEngine {
+  readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
 
@@ -43,10 +44,32 @@ export class PGLiteEngine implements BrainEngine {
       throw new Error('Could not acquire PGLite lock. Another gbrain process is using the database.');
     }
 
-    this._db = await PGlite.create({
-      dataDir,
-      extensions: { vector, pg_trgm },
-    });
+    try {
+      this._db = await PGlite.create({
+        dataDir,
+        extensions: { vector, pg_trgm },
+      });
+    } catch (err) {
+      // v0.13.1: any PGLite.create() failure becomes actionable. Most commonly
+      // this is the macOS 26.3 WASM bug (#223). We deliberately do NOT suggest
+      // "missing migrations" as a cause — migrations run AFTER create(), so a
+      // create-time abort has nothing to do with them. Nest the original error
+      // message so debugging isn't erased.
+      const original = err instanceof Error ? err.message : String(err);
+      const wrapped = new Error(
+        `PGLite failed to initialize its WASM runtime.\n` +
+        `  This is most commonly the macOS 26.3 WASM bug: https://github.com/garrytan/gbrain/issues/223\n` +
+        `  Run \`gbrain doctor\` for a full diagnosis.\n` +
+        `  Original error: ${original}`
+      );
+      // Release the lock so a fresh process can try again; leaking the lock
+      // here turns a recoverable init error into a stuck-brain state.
+      if (this._lock?.acquired) {
+        try { await releaseLock(this._lock); } catch { /* ignore cleanup error */ }
+        this._lock = null;
+      }
+      throw wrapped;
+    }
   }
 
   async disconnect(): Promise<void> {

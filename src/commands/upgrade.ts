@@ -56,11 +56,16 @@ export async function runUpgrade(args: string[]) {
     // Save old version for post-upgrade migration detection
     saveUpgradeState(oldVersion, newVersion);
     // Run post-upgrade feature discovery (reads migration files from the NEW binary).
-    // Timeout bumped 30s → 300s because runPostUpgrade now tail-calls
-    // apply-migrations, which can do long work (schema, smoke, host-rewrite,
-    // autopilot install) on a v0.11.0→v0.11.1 jump. Codex H7.
+    // Timeout bumped 300s → 1800s (30 min) in v0.15.2 because v0.12.0 graph
+    // backfill on 50K+ brains regularly exceeded the old ceiling. The heartbeat
+    // wiring added in v0.15.2 makes the long wait observable; a hard 300s
+    // cap would still kill legit migrations mid-run. Override via
+    // GBRAIN_POST_UPGRADE_TIMEOUT_MS env var.
+    const postUpgradeTimeoutMs = Number(
+      process.env.GBRAIN_POST_UPGRADE_TIMEOUT_MS || 1_800_000,
+    );
     try {
-      execSync('gbrain post-upgrade', { stdio: 'inherit', timeout: 300_000 });
+      execSync('gbrain post-upgrade', { stdio: 'inherit', timeout: postUpgradeTimeoutMs });
     } catch (e) {
       // post-upgrade is best-effort, don't fail the upgrade. BUT leave a
       // trail so `gbrain doctor` can surface it and give the user a clear

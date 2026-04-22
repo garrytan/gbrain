@@ -20,6 +20,7 @@ import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
 
 export class PostgresEngine implements BrainEngine {
+  readonly kind = 'postgres' as const;
   private _sql: ReturnType<typeof postgres> | null = null;
 
   // Instance connection (for workers) or fall back to module global (backward compat)

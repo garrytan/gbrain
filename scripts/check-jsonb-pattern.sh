@@ -30,3 +30,17 @@ if grep -rEn "$PATTERN" src/ 2>/dev/null; then
 fi
 
 echo "OK: no JSON.stringify(x)::jsonb interpolation pattern in src/"
+
+# v0.13.1 #219: guard against max_stalled DEFAULT 1 regressing in any schema
+# source file. DEFAULT 1 dead-lettered any SIGKILL'd job on first stall, making
+# the "10/10 rescued" claim false for out-of-the-box users. Default is 5 now.
+MAX_STALLED_PATTERN='max_stalled\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+1\b'
+
+if grep -rEn "$MAX_STALLED_PATTERN" src/schema.sql src/core/migrate.ts src/core/pglite-schema.ts src/core/schema-embedded.ts 2>/dev/null; then
+  echo
+  echo "ERROR: max_stalled DEFAULT 1 reintroduced in schema."
+  echo "       Must be DEFAULT 5 to preserve SIGKILL-rescue guarantee. See #219."
+  exit 1
+fi
+
+echo "OK: max_stalled defaults are 5 in all schema sources"

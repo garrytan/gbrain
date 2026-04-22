@@ -103,17 +103,17 @@ export interface MinionJobInput {
   backoff_type?: BackoffType;
   backoff_delay?: number;
   backoff_jitter?: number;
+  /**
+   * Per-job override for how many stall windows are tolerated before the
+   * queue dead-letters the job. When omitted, the schema column DEFAULT
+   * applies (bumped 1 → 3 in v0.14, now 5 as of v0.13.1's audit). Clamped
+   * to [1, 100] on insert. For long-running handlers (LLM loops etc.) that
+   * should survive a worker kill mid-run, set max_stalled: 3+.
+   */
+  max_stalled?: number;
   delay?: number; // ms delay before eligible
   parent_job_id?: number;
   on_child_fail?: ChildFailPolicy;
-  /**
-   * Per-job override for how many stalls are tolerated before the queue
-   * dead-letters the job. Column default is 1 (first stall → dead), which
-   * defeats crash recovery for long-running handlers (LLM loops, etc.). For
-   * anything that should survive a mid-run worker kill, set max_stalled: 3+.
-   * v0.15+.
-   */
-  max_stalled?: number;
 
   // v7: subagent + parity
   /** Cap on live (non-terminal) children of THIS job. NULL/undefined = unlimited. */
