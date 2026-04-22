@@ -8,6 +8,7 @@ import {
   parseTimelineEntries,
   isAutoLinkEnabled,
   FRONTMATTER_LINK_MAP,
+  buildAliasMap,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -70,6 +71,109 @@ describe('extractEntityRefs', () => {
     const refs = extractEntityRefs('See [Standup](meetings/2026-01-15-standup).');
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
+  });
+
+  test('resolves bare display-name wikilink from title alias map', () => {
+    const aliasMap = new Map<string, string>([['alice chen', 'people/alice-chen']]);
+    const refs = extractEntityRefs('Met with [[Alice Chen]] yesterday.', aliasMap);
+    expect(refs).toContainEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people' });
+  });
+
+  test('resolves bare display-name wikilink from frontmatter alias map', () => {
+    const aliasMap = new Map<string, string>([['acme', 'companies/acme-ai']]);
+    const refs = extractEntityRefs('Partnered with [[Acme]].', aliasMap);
+    expect(refs).toContainEqual({ name: 'Acme', slug: 'companies/acme-ai', dir: 'companies' });
+  });
+
+  test('bare wikilink resolution is case-insensitive', () => {
+    const aliasMap = new Map<string, string>([['stripe', 'companies/stripe']]);
+    const refs = extractEntityRefs('Worked at [[StRiPe]].', aliasMap);
+    expect(refs).toContainEqual({ name: 'StRiPe', slug: 'companies/stripe', dir: 'companies' });
+  });
+
+  test('unknown bare wikilink does not resolve', () => {
+    const aliasMap = new Map<string, string>([['known', 'people/known']]);
+    const refs = extractEntityRefs('Met [[Unknown Person]].', aliasMap);
+    expect(refs).toEqual([]);
+  });
+
+  test('bare wikilinks inside code blocks do not resolve', () => {
+    const aliasMap = new Map<string, string>([['alice chen', 'people/alice-chen']]);
+    const refs = extractEntityRefs('```\n[[Alice Chen]]\n```', aliasMap);
+    expect(refs).toEqual([]);
+  });
+
+  test('mixed typed and bare wikilinks both resolve', () => {
+    const aliasMap = new Map<string, string>([['alice chen', 'people/alice-chen']]);
+    const refs = extractEntityRefs('See [[Alice Chen]] and [Bob](people/bob).', aliasMap);
+    expect(refs.map(r => r.slug)).toEqual(['people/bob', 'people/alice-chen']);
+  });
+});
+
+describe('buildAliasMap', () => {
+  test('builds map from title + aliases and resolves case-insensitive keys', async () => {
+    const now = new Date();
+    const fakeEngine = {
+      listPages: async () => [
+        {
+          id: 1,
+          slug: 'people/alice-chen',
+          type: 'person',
+          title: 'Alice Chen',
+          compiled_truth: '',
+          timeline: '',
+          frontmatter: { aliases: ['A. Chen', 'Alice C'] },
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+    } as unknown as BrainEngine;
+
+    const map = await buildAliasMap(fakeEngine);
+    expect(map.get('alice chen')).toBe('people/alice-chen');
+    expect(map.get('a. chen')).toBe('people/alice-chen');
+    expect(map.get('alice c')).toBe('people/alice-chen');
+  });
+
+  test('on alias collision picks lexicographically earliest slug and logs warning', async () => {
+    const now = new Date();
+    const fakeEngine = {
+      listPages: async () => [
+        {
+          id: 1,
+          slug: 'people/zoe',
+          type: 'person',
+          title: 'Zoe',
+          compiled_truth: '',
+          timeline: '',
+          frontmatter: { aliases: ['Founder'] },
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          id: 2,
+          slug: 'people/alice',
+          type: 'person',
+          title: 'Alice',
+          compiled_truth: '',
+          timeline: '',
+          frontmatter: { aliases: ['Founder'] },
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+    } as unknown as BrainEngine;
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (msg?: unknown) => { warnings.push(String(msg ?? '')); };
+    try {
+      const map = await buildAliasMap(fakeEngine);
+      expect(map.get('founder')).toBe('people/alice');
+      expect(warnings.some(w => w.includes('alias collision'))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 });
 

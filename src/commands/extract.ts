@@ -23,7 +23,7 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
-  extractFrontmatterLinks,
+  extractFrontmatterLinks, buildAliasMap,
   type UnresolvedFrontmatterRef,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
@@ -587,6 +587,7 @@ async function extractLinksFromDB(
   // cache so duplicate names (same person appearing on many pages) resolve
   // once, not once per mention.
   const resolver = makeResolver(engine, { mode: 'batch' });
+  const aliasMap = await buildAliasMap(engine);
   const unresolved: UnresolvedFrontmatterRef[] = [];
   const nullResolver = {
     resolve: async () => null as string | null,
@@ -636,6 +637,7 @@ async function extractLinksFromDB(
     const activeResolver = includeFrontmatter ? resolver : nullResolver;
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, activeResolver,
+      { aliasMap },
     );
     unresolved.push(...extracted.unresolved);
 

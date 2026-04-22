@@ -64,6 +64,18 @@ const WIKILINK_RE = new RegExp(
 );
 
 /**
+ * Match bare display-name wikilinks `[[Name]]` (no slash/path, no #anchor, no |display).
+ * These are resolved via alias map built from entity page title/frontmatter aliases.
+ */
+const BARE_WIKILINK_RE = /\[\[([^\[\]/#|]+)\]\]/g;
+
+const ENTITY_DIR_RE = new RegExp(`^${DIR_PATTERN}$`);
+
+function normalizeAlias(input: string): string {
+  return input.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
  * replacing them with whitespace of equivalent length. Preserves byte offsets
  * for any caller that cares about positions; for our extractors this is just
@@ -100,13 +112,61 @@ function stripCodeBlocks(content: string): string {
 }
 
 /**
+ * Build an alias map from entity pages: normalized title/aliases -> canonical slug.
+ *
+ * Collision policy: if multiple slugs claim the same alias, choose the
+ * lexicographically earliest slug for deterministic behavior and log a warning.
+ */
+export async function buildAliasMap(engine: BrainEngine): Promise<Map<string, string>> {
+  const pages = await engine.listPages();
+  const aliasToSlug = new Map<string, string>();
+
+  for (const page of pages) {
+    const dir = page.slug.split('/')[0];
+    if (!ENTITY_DIR_RE.test(dir)) continue;
+
+    const names = new Set<string>();
+    if (typeof page.title === 'string' && page.title.trim()) names.add(page.title);
+
+    const aliases = (page.frontmatter as Record<string, unknown> | undefined)?.aliases;
+    if (typeof aliases === 'string' && aliases.trim()) {
+      names.add(aliases);
+    } else if (Array.isArray(aliases)) {
+      for (const raw of aliases) {
+        if (typeof raw === 'string' && raw.trim()) names.add(raw);
+      }
+    }
+
+    for (const name of Array.from(names)) {
+      const key = normalizeAlias(name);
+      if (!key) continue;
+
+      const existing = aliasToSlug.get(key);
+      if (!existing) {
+        aliasToSlug.set(key, page.slug);
+        continue;
+      }
+      if (existing === page.slug) continue;
+
+      const winner = [existing, page.slug].sort()[0];
+      if (winner !== existing) aliasToSlug.set(key, winner);
+      console.warn(
+        `[link-extraction] alias collision for "${key}": ${existing} vs ${page.slug}; using ${winner}`,
+      );
+    }
+  }
+
+  return aliasToSlug;
+}
+
+/**
  * Extract `[Name](path-to-people-or-company)` references from arbitrary content.
  * Both filesystem-relative paths (with `../` and `.md`) and bare engine-style
  * slugs (`people/slug`) are matched. Returns one EntityRef per match (no dedup
  * here; caller dedups). Slugs appearing inside fenced or inline code blocks
  * are excluded — those are typically code samples, not real entity references.
  */
-export function extractEntityRefs(content: string): EntityRef[] {
+export function extractEntityRefs(content: string, aliasMap?: Map<string, string>): EntityRef[] {
   const stripped = stripCodeBlocks(content);
   const refs: EntityRef[] = [];
   let match: RegExpExecArray | null;
@@ -131,6 +191,19 @@ export function extractEntityRefs(content: string): EntityRef[] {
     const displayName = (match[2] || slug).trim();
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir });
+  }
+
+  // 3. Bare display-name wikilinks: [[Name]] -> resolve via alias map.
+  if (aliasMap && aliasMap.size > 0) {
+    const barePattern = new RegExp(BARE_WIKILINK_RE.source, BARE_WIKILINK_RE.flags);
+    while ((match = barePattern.exec(stripped)) !== null) {
+      const raw = match[1]?.trim();
+      if (!raw) continue;
+      const resolved = aliasMap.get(normalizeAlias(raw));
+      if (!resolved) continue;
+      const dir = resolved.split('/')[0];
+      refs.push({ name: raw, slug: resolved, dir });
+    }
   }
 
   return refs;
@@ -205,11 +278,12 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
+  opts?: { aliasMap?: Map<string, string> },
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
   // 1. Markdown entity refs.
-  for (const ref of extractEntityRefs(content)) {
+  for (const ref of extractEntityRefs(content, opts?.aliasMap)) {
     const idx = content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that
     // appear at sentence-or-paragraph distance from the slug — common in

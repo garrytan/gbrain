@@ -13,7 +13,7 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
-import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, buildAliasMap, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -385,8 +385,10 @@ async function runAutoLink(
   const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
   // Live-mode resolver: per-put throwaway cache, pg_trgm + optional search.
   const resolver = makeResolver(engine, { mode: 'live' });
+  const aliasMap = await buildAliasMap(engine);
   const { candidates, unresolved } = await extractPageLinks(
     slug, fullContent, parsed.frontmatter, parsed.type, resolver,
+    { aliasMap },
   );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
