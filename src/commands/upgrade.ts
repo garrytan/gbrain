@@ -43,6 +43,23 @@ export async function runUpgrade(args: string[]) {
       }
       break;
 
+    case 'source':
+      console.log('Source install detected. Upgrading via git pull...');
+      try {
+        const arg1 = process.argv[1] ?? '';
+        let gitDir = dirname(realpathSync(arg1));
+        for (let i = 0; i < 5; i++) {
+          if (existsSync(join(gitDir, '.git'))) break;
+          gitDir = dirname(gitDir);
+        }
+        execSync('git pull origin master', { cwd: gitDir, stdio: 'inherit', timeout: 60_000 });
+        execSync('bun install', { cwd: gitDir, stdio: 'inherit', timeout: 120_000 });
+        upgraded = true;
+      } catch {
+        console.error('Source upgrade failed. Try manually: cd <repo> && git pull origin master && bun install');
+      }
+      break;
+
     default:
       console.error('Could not detect installation method.');
       console.log('Try one of:');
