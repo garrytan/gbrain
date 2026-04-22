@@ -38,10 +38,26 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 // links (v0.12.1 pattern — migrations can time out on the 60s default).
 // Use the CURRENTLY-RUNNING binary path (not `gbrain` off $PATH). After
 // `gbrain upgrade` rewrites the binary, a bare `gbrain` could resolve to
-// an older installed copy via alias shadowing or stale PATH cache. The
-// active process.execPath is the one that loaded THIS migration module,
-// so recursing into it is always the right binary.
-const GBRAIN = process.execPath;
+// an older installed copy via alias shadowing or stale PATH cache.
+//
+// `process.execPath` alone is wrong for `bun link` dev installs: there,
+// execPath is `/path/to/bun` (the runtime), not the gbrain CLI — and
+// invoking `bun extract ...` makes Bun treat `extract` as an unknown
+// subcommand and fall through to `bun init`, which SCAFFOLDS A NEW
+// PROJECT in cwd (creates CLAUDE.md, README.md, tsconfig.json, index.ts,
+// .cursor/). That will OVERWRITE user files in whatever cwd this runs
+// from. Seen in the wild: v0.13.0 wedged migration on a `bun link`
+// install scaffolded bun boilerplate into ~/.hermes/.
+//
+// Correct invocation for both topologies:
+//   compiled binary: argv = [/path/to/gbrain, ...userArgs]
+//                    → `${argv[0]} extract ...`
+//   bun link dev:    argv = [/path/to/bun, /path/to/src/cli.ts, ...userArgs]
+//                    → `${argv[0]} ${argv[1]} extract ...`
+const _scriptPath = process.argv[1];
+const GBRAIN = _scriptPath && _scriptPath.endsWith('.ts')
+  ? `${process.execPath} ${_scriptPath}`  // dev: bun + cli.ts
+  : process.execPath;                      // compiled gbrain binary
 
 function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
