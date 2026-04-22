@@ -23,6 +23,10 @@ import { execSync, spawn, type ChildProcess } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
 import { loadConfig } from '../core/config.ts';
+import {
+  computeFailureBackoff,
+  DEFAULT_MAX_CONSECUTIVE_ERRORS,
+} from './autopilot-backoff.ts';
 
 function parseArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -77,7 +81,7 @@ export function resolveGbrainCliPath(): string {
 
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain autopilot [--repo <path>] [--interval N] [--json]\n       gbrain autopilot --install [--repo <path>]\n       gbrain autopilot --uninstall\n       gbrain autopilot --status [--json]\n\nSelf-maintaining brain daemon. Runs sync + extract + embed + backlinks in a loop.');
+    console.log('Usage: gbrain autopilot [--repo <path>] [--interval N] [--max-consecutive-errors N] [--json]\n       gbrain autopilot --install [--repo <path>]\n       gbrain autopilot --uninstall\n       gbrain autopilot --status [--json]\n\nSelf-maintaining brain daemon. Runs sync + extract + embed + backlinks in a loop.\n\n  --max-consecutive-errors N  Stop after N failed cycles in a row (default 20).\n                              Failing cycles back off exponentially so a single\n                              transient Postgres event does not trip the cap.');
     return;
   }
 
@@ -98,6 +102,10 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   const baseInterval = parseInt(parseArg(args, '--interval') || '300', 10);
   const jsonMode = args.includes('--json');
   const forceInline = args.includes('--inline');
+  const maxConsecutiveErrors = parseInt(
+    parseArg(args, '--max-consecutive-errors') || String(DEFAULT_MAX_CONSECUTIVE_ERRORS),
+    10,
+  );
 
   if (!repoPath) {
     console.error('No repo path. Use --repo or run gbrain sync --repo first.');
@@ -120,7 +128,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     writeFileSync(lockPath, String(process.pid));
   } catch { /* best-effort */ }
 
-  console.log(`Autopilot starting. Repo: ${repoPath}, interval: ${baseInterval}s`);
+  console.log(
+    `Autopilot starting. Repo: ${repoPath}, interval: ${baseInterval}s, max_consecutive_errors=${maxConsecutiveErrors}`,
+  );
 
   // Mode resolution: Minions dispatch when the user has opted in AND the
   // worker daemon can actually run (Postgres only; PGLite's exclusive file
@@ -277,12 +287,26 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     if (cycleOk) {
       consecutiveErrors = 0;
     } else {
-      consecutiveErrors++;
-      if (consecutiveErrors >= 5) {
-        console.error('5 consecutive cycle failures. Stopping autopilot.');
+      // Issue #168: instead of a hard exit after 5 failures (which a single
+      // transient Postgres event reliably trips), route the failure through
+      // computeFailureBackoff — the counter grows, the sleep interval grows
+      // exponentially, and we only stop at --max-consecutive-errors.
+      const r = computeFailureBackoff(
+        { consecutiveErrors },
+        { maxErrors: maxConsecutiveErrors, baseIntervalMs: interval * 1000 },
+      );
+      consecutiveErrors = r.consecutiveErrors;
+      if (r.shouldExit) {
+        console.error(
+          `${maxConsecutiveErrors} consecutive cycle failures. Stopping autopilot.`,
+        );
         void shutdown('cycle-failure-cap');
         break;
       }
+      interval = Math.ceil(r.sleepMs / 1000);
+      console.error(
+        `[autopilot] cycle failed (${consecutiveErrors}/${maxConsecutiveErrors}); backing off ${interval}s`,
+      );
     }
 
     // Wait for next cycle
