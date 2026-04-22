@@ -2,8 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_CURATED_LOG_DIR="${CURATED_LOG_DIR:-}"
+CLI_CURATED_STAGE="${CURATED_STAGE:-}"
 eval "$(/usr/bin/python3 "$SCRIPT_DIR/config_loader.py" shell)"
-LOG_DIR="$CURATED_LOG_DIR"
+LOG_DIR="${CLI_CURATED_LOG_DIR:-${CURATED_LOG_DIR:-$HOME/workspace/tools/gbrain-curated-logs}}"
+STAGE_DIR="${CLI_CURATED_STAGE:-${CURATED_STAGE:-$HOME/workspace/tools/gbrain-curated-stage}}"
 
 usage() {
   cat <<'EOF'
@@ -12,23 +15,16 @@ gbrain-curated — TT curated gbrain helper
 Usage:
   gbrain-curated help
   gbrain-curated status
+  gbrain-curated dashboard
+  gbrain-curated cleanup [keep]
   gbrain-curated smoke
   gbrain-curated regression
   gbrain-curated baseline
   gbrain-curated weekly
-  gbrain-curated refresh
+  gbrain-curated refresh [manifest.json]
+  gbrain-curated refresh-replay <manifest.json>
   gbrain-curated nightly
   gbrain-curated logs [smoke|regression|weekly|refresh|nightly]
-
-Commands:
-  status      Show compact snapshot from latest smoke/regression/weekly files
-  smoke       Run lightweight retrieval smoke check now
-  regression  Run full regression + drift check now
-  baseline    Re-capture regression baseline intentionally
-  weekly      Generate weekly local review snapshot now
-  refresh     Run refresh/import/extract + smoke now
-  nightly     Run embed/health/regression nightly pipeline now
-  logs        Print latest log/result path for a category
 EOF
 }
 
@@ -90,6 +86,59 @@ show_log() {
   esac
 }
 
+run_manifest_refresh() {
+  local manifest_path="$1"
+  local replay_flag="${2:-0}"
+  /usr/bin/python3 - <<'PY' "$SCRIPT_DIR" "$STAGE_DIR" "$LOG_DIR" "$manifest_path" "$replay_flag"
+import json, sys
+from pathlib import Path
+script_dir = Path(sys.argv[1])
+stage = Path(sys.argv[2])
+log_dir = Path(sys.argv[3])
+manifest = Path(sys.argv[4])
+replay = sys.argv[5] == '1'
+sys.path.insert(0, str(script_dir))
+from refresh_manifest_consumer import execute_refresh_plan
+payload = execute_refresh_plan(
+    manifest_path=manifest,
+    curated_stage=stage,
+    curated_log_dir=log_dir,
+    script_dir=script_dir,
+    replay=replay,
+)
+print(json.dumps(payload, ensure_ascii=False))
+raise SystemExit(0 if payload.get('ok') else 1)
+PY
+}
+
+render_dashboard() {
+  /usr/bin/python3 - <<'PY' "$SCRIPT_DIR" "$LOG_DIR"
+import json, sys
+from pathlib import Path
+script_dir = Path(sys.argv[1])
+log_dir = Path(sys.argv[2])
+sys.path.insert(0, str(script_dir))
+from refresh_manifest_consumer import build_control_plane_artifacts
+payload = build_control_plane_artifacts(log_dir=log_dir, output_dir=log_dir / 'control-plane')
+print(json.dumps(payload, ensure_ascii=False))
+PY
+}
+
+run_cleanup() {
+  local keep="${1:-20}"
+  /usr/bin/python3 - <<'PY' "$SCRIPT_DIR" "$LOG_DIR" "$keep"
+import json, sys
+from pathlib import Path
+script_dir = Path(sys.argv[1])
+log_dir = Path(sys.argv[2])
+keep = int(sys.argv[3])
+sys.path.insert(0, str(script_dir))
+from refresh_manifest_consumer import gc_old_manifests
+manifest_root = log_dir.parent / '.meta-fallback-manifests'
+print(json.dumps(gc_old_manifests(manifest_root, keep=keep), ensure_ascii=False))
+PY
+}
+
 cmd="${1:-help}"
 case "$cmd" in
   help|-h|--help)
@@ -97,6 +146,12 @@ case "$cmd" in
     ;;
   status)
     show_status
+    ;;
+  dashboard)
+    render_dashboard
+    ;;
+  cleanup)
+    run_cleanup "${2:-20}"
     ;;
   smoke)
     bash -ic "$SCRIPT_DIR/refresh-smoke-check.sh"
@@ -111,7 +166,18 @@ case "$cmd" in
     bash -ic "$SCRIPT_DIR/weekly-baseline-review.py"
     ;;
   refresh)
-    bash -ic "$SCRIPT_DIR/cron-refresh-import-extract.sh"
+    if [[ -n "${2:-}" ]]; then
+      run_manifest_refresh "$2" 0
+    else
+      bash -ic "$SCRIPT_DIR/cron-refresh-import-extract.sh"
+    fi
+    ;;
+  refresh-replay)
+    if [[ -z "${2:-}" ]]; then
+      echo 'refresh-replay requires a manifest path' >&2
+      exit 1
+    fi
+    run_manifest_refresh "$2" 1
     ;;
   nightly)
     bash -ic "$SCRIPT_DIR/cron-embed-health-regression.sh"

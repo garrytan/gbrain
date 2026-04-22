@@ -9,34 +9,47 @@ mkdir -p "$TMP_STAGE"
 
 copy_if_exists() {
   local src="$1"
-  local dst_dir="$2"
+  local dst="$2"
   if [[ -e "$src" ]]; then
-    mkdir -p "$dst_dir"
-    cp -R "$src" "$dst_dir/"
+    mkdir -p "$(dirname "$dst")"
+    cp -R "$src" "$dst"
   fi
 }
 
-mapfile -t INCLUDE_PATHS < <(/usr/bin/python3 - <<'PY' "$CURATED_INCLUDE_PATHS_JSON"
+if [[ -n "${CURATED_MANIFEST_INCLUDE_FILE:-}" && -f "${CURATED_MANIFEST_INCLUDE_FILE:-}" ]]; then
+  while IFS= read -r src; do
+    [[ -z "$src" ]] && continue
+    if [[ "$src" == "$VAULT_ROOT"/* ]]; then
+      rel="${src#"$VAULT_ROOT"/}"
+      copy_if_exists "$src" "$TMP_STAGE/$rel"
+    else
+      base="$(basename "$src")"
+      copy_if_exists "$src" "$TMP_STAGE/_manifest/$base"
+    fi
+  done < "$CURATED_MANIFEST_INCLUDE_FILE"
+else
+  mapfile -t INCLUDE_PATHS < <(/usr/bin/python3 - <<'PY' "$CURATED_INCLUDE_PATHS_JSON"
 import json, sys
 for item in json.loads(sys.argv[1]):
     print(item)
 PY
 )
 
-mapfile -t INCLUDE_FILES < <(/usr/bin/python3 - <<'PY' "$CURATED_INCLUDE_FILES_JSON"
+  mapfile -t INCLUDE_FILES < <(/usr/bin/python3 - <<'PY' "$CURATED_INCLUDE_FILES_JSON"
 import json, sys
 for item in json.loads(sys.argv[1]):
     print(item)
 PY
 )
 
-for rel in "${INCLUDE_PATHS[@]}"; do
-  copy_if_exists "$VAULT_ROOT/$rel" "$TMP_STAGE"
-done
+  for rel in "${INCLUDE_PATHS[@]}"; do
+    copy_if_exists "$VAULT_ROOT/$rel" "$TMP_STAGE/$rel"
+  done
 
-for rel in "${INCLUDE_FILES[@]}"; do
-  copy_if_exists "$VAULT_ROOT/$rel" "$TMP_STAGE"
-done
+  for rel in "${INCLUDE_FILES[@]}"; do
+    copy_if_exists "$VAULT_ROOT/$rel" "$TMP_STAGE/$rel"
+  done
+fi
 
 rm -rf "$CURATED_STAGE"
 mv "$TMP_STAGE" "$CURATED_STAGE"
