@@ -77,23 +77,6 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
-  // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
-    // Apply backlink boost in keyword-only path too. One getBacklinkCounts query
-    // per search request; not N+1.
-    if (keywordResults.length > 0) {
-      try {
-        const slugs = Array.from(new Set(keywordResults.map(r => r.slug)));
-        const counts = await engine.getBacklinkCounts(slugs);
-        applyBacklinkBoost(keywordResults, counts);
-        keywordResults.sort((a, b) => b.score - a.score);
-      } catch {
-        // Boost failure is non-fatal: keep unboosted ranking.
-      }
-    }
-    return dedupResults(keywordResults).slice(offset, offset + limit);
-  }
-
   // Determine query variants (optionally with expansion)
   // expandQuery already includes the original query in its return value,
   // so we use it directly instead of prepending query again
@@ -111,7 +94,7 @@ export async function hybridSearch(
   let vectorLists: SearchResult[][] = [];
   let queryEmbedding: Float32Array | null = null;
   try {
-    const embeddings = await Promise.all(queries.map(q => embed(q)));
+    const embeddings = await Promise.all(queries.map(q => embed(q, engine)));
     queryEmbedding = embeddings[0];
     vectorLists = await Promise.all(
       embeddings.map(emb => engine.searchVector(emb, searchOpts)),

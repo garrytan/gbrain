@@ -1,12 +1,38 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig } from '../core/config.ts';
 
+const DISPLAY_KEYS = [
+  ['embedding.provider', 'embedding_provider'],
+  ['embedding.model', 'embedding_model'],
+  ['embedding.base_url', 'embedding_base_url'],
+  ['embedding.dimensions', 'embedding_dimensions'],
+] as const;
+
 function redactUrl(url: string): string {
-  // Redact password in postgresql:// URLs
   return url.replace(
     /(postgresql:\/\/[^:]+:)([^@]+)(@)/,
     '$1***$3',
   );
+}
+
+function displayValue(key: string, value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  if (value.includes('postgresql://')) return redactUrl(value);
+  if (key.includes('key') || key.includes('secret')) return '***';
+  return value;
+}
+
+async function getConfigValue(engine: BrainEngine, key: string): Promise<string | null> {
+  const direct = await engine.getConfig(key);
+  if (direct !== null) return direct;
+
+  if (key.includes('.')) {
+    return engine.getConfig(key.replace(/\./g, '_'));
+  }
+  if (key.includes('_')) {
+    return engine.getConfig(key.replace(/_/g, '.'));
+  }
+  return null;
 }
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
@@ -20,22 +46,24 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error('No config found. Run: gbrain init');
       process.exit(1);
     }
+
+    const combined = new Map<string, unknown>(Object.entries(config));
+    for (const [primary, legacy] of DISPLAY_KEYS) {
+      const resolved = await getConfigValue(engine, primary) ?? await getConfigValue(engine, legacy);
+      if (resolved !== null) combined.set(primary, resolved);
+    }
+
     console.log('GBrain config:');
-    for (const [k, v] of Object.entries(config)) {
-      const display = typeof v === 'string' && v.includes('postgresql://')
-        ? redactUrl(v)
-        : typeof v === 'string' && (k.includes('key') || k.includes('secret'))
-          ? '***'
-          : v;
-      console.log(`  ${k}: ${display}`);
+    for (const [k, v] of combined.entries()) {
+      console.log(`  ${k}: ${displayValue(k, v)}`);
     }
     return;
   }
 
   if (action === 'get' && key) {
-    const val = await engine.getConfig(key);
-    if (val !== null) {
-      console.log(val);
+    const resolved = await getConfigValue(engine, key);
+    if (resolved !== null) {
+      console.log(resolved);
     } else {
       console.error(`Config key not found: ${key}`);
       process.exit(1);
