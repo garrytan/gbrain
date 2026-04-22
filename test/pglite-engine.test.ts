@@ -6,7 +6,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { buildPageChunks, importFromContent } from '../src/core/import-file.ts';
-import { runMigrations } from '../src/core/migrate.ts';
+import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
@@ -346,7 +346,7 @@ describe('PGLiteEngine: Search', () => {
     const pageEmbeddings = await engine.getPageEmbeddings('system');
     const upgraded = pageEmbeddings.find((entry) => entry.slug === 'systems/page-embedding-upgrade');
 
-    expect(await engine.getConfig('version')).toBe('8');
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
     expect(upgraded).toBeDefined();
     expect(Array.from(upgraded!.embedding!.slice(0, 3))).toEqual([1, 2, 3]);
   });
@@ -380,7 +380,7 @@ describe('PGLiteEngine: Search', () => {
     const pageEmbeddings = await engine.getPageEmbeddings('system');
     const upgraded = pageEmbeddings.find((entry) => entry.slug === 'systems/page-embedding-centroid-upgrade');
 
-    expect(await engine.getConfig('version')).toBe('8');
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
     expect(upgraded?.embedding).not.toBeNull();
     expect(Array.from(upgraded!.embedding!.slice(0, 3))).toEqual([2, 3, 4]);
   });

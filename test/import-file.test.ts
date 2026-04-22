@@ -22,6 +22,30 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
       if (prop === '_calls') return calls;
       if (prop === 'getTags') return overrides.getTags || (() => Promise.resolve([]));
       if (prop === 'getPage') return overrides.getPage || (() => Promise.resolve(null));
+      if (prop === 'putPage') {
+        return overrides.putPage || ((slug: string, page: Record<string, unknown>) => {
+          calls.push({ method: 'putPage', args: [slug, page] });
+          return Promise.resolve({
+            id: 1,
+            slug,
+            type: page.type,
+            title: page.title,
+            compiled_truth: page.compiled_truth,
+            timeline: page.timeline ?? '',
+            frontmatter: page.frontmatter ?? {},
+            content_hash: page.content_hash,
+          });
+        });
+      }
+      if (prop === 'upsertNoteManifestEntry') {
+        return overrides.upsertNoteManifestEntry || ((input: Record<string, unknown>) => {
+          calls.push({ method: 'upsertNoteManifestEntry', args: [input] });
+          return Promise.resolve({
+            ...input,
+            last_indexed_at: new Date(),
+          });
+        });
+      }
       // transaction: just call the fn with the same engine (no real DB transaction in tests)
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<any>) => fn(engine);
       return track(prop);

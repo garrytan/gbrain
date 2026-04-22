@@ -202,6 +202,110 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
 CREATE INDEX IF NOT EXISTS idx_retrieval_traces_task_created ON retrieval_traces(task_id, created_at DESC);
 
 -- ============================================================
+-- note_manifest_entries: deterministic structural extraction cache
+-- ============================================================
+CREATE TABLE IF NOT EXISTS note_manifest_entries (
+  scope_id           TEXT NOT NULL,
+  page_id            INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  slug               TEXT NOT NULL,
+  path               TEXT NOT NULL,
+  page_type          TEXT NOT NULL,
+  title              TEXT NOT NULL,
+  frontmatter        JSONB NOT NULL DEFAULT '{}',
+  aliases            JSONB NOT NULL DEFAULT '[]',
+  tags               JSONB NOT NULL DEFAULT '[]',
+  outgoing_wikilinks JSONB NOT NULL DEFAULT '[]',
+  outgoing_urls      JSONB NOT NULL DEFAULT '[]',
+  source_refs        JSONB NOT NULL DEFAULT '[]',
+  heading_index      JSONB NOT NULL DEFAULT '[]',
+  content_hash       TEXT NOT NULL,
+  extractor_version  TEXT NOT NULL,
+  last_indexed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (scope_id, page_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_manifest_scope_slug
+  ON note_manifest_entries(scope_id, slug);
+CREATE INDEX IF NOT EXISTS idx_note_manifest_scope_indexed
+  ON note_manifest_entries(scope_id, last_indexed_at DESC);
+
+-- ============================================================
+-- note_section_entries: deterministic section-level extraction cache
+-- ============================================================
+CREATE TABLE IF NOT EXISTS note_section_entries (
+  scope_id           TEXT NOT NULL,
+  page_id            INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  page_slug          TEXT NOT NULL,
+  page_path          TEXT NOT NULL,
+  section_id         TEXT NOT NULL,
+  parent_section_id  TEXT,
+  heading_slug       TEXT NOT NULL,
+  heading_path       JSONB NOT NULL DEFAULT '[]',
+  heading_text       TEXT NOT NULL,
+  depth              INTEGER NOT NULL,
+  line_start         INTEGER NOT NULL,
+  line_end           INTEGER NOT NULL,
+  section_text       TEXT NOT NULL,
+  outgoing_wikilinks JSONB NOT NULL DEFAULT '[]',
+  outgoing_urls      JSONB NOT NULL DEFAULT '[]',
+  source_refs        JSONB NOT NULL DEFAULT '[]',
+  content_hash       TEXT NOT NULL,
+  extractor_version  TEXT NOT NULL,
+  last_indexed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (scope_id, section_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_sections_scope_page
+  ON note_section_entries(scope_id, page_slug, line_start);
+CREATE INDEX IF NOT EXISTS idx_note_sections_scope_indexed
+  ON note_section_entries(scope_id, last_indexed_at DESC);
+
+-- ============================================================
+-- context_map_entries: persisted deterministic structural map artifacts
+-- ============================================================
+CREATE TABLE IF NOT EXISTS context_map_entries (
+  id                TEXT PRIMARY KEY,
+  scope_id          TEXT NOT NULL,
+  kind              TEXT NOT NULL,
+  title             TEXT NOT NULL,
+  build_mode        TEXT NOT NULL,
+  status            TEXT NOT NULL,
+  source_set_hash   TEXT NOT NULL,
+  extractor_version TEXT NOT NULL,
+  node_count        INTEGER NOT NULL,
+  edge_count        INTEGER NOT NULL,
+  community_count   INTEGER NOT NULL DEFAULT 0,
+  graph_json        JSONB NOT NULL DEFAULT '{}',
+  generated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  stale_reason      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_map_scope_generated
+  ON context_map_entries(scope_id, generated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_context_map_scope_kind
+  ON context_map_entries(scope_id, kind);
+
+-- ============================================================
+-- context_atlas_entries: persisted registry over context maps
+-- ============================================================
+CREATE TABLE IF NOT EXISTS context_atlas_entries (
+  id           TEXT PRIMARY KEY,
+  map_id       TEXT NOT NULL REFERENCES context_map_entries(id) ON DELETE CASCADE,
+  scope_id     TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  title        TEXT NOT NULL,
+  freshness    TEXT NOT NULL,
+  entrypoints  JSONB NOT NULL DEFAULT '[]',
+  budget_hint  INTEGER NOT NULL,
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_generated
+  ON context_atlas_entries(scope_id, generated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_kind
+  ON context_atlas_entries(scope_id, kind);
+
+-- ============================================================
 -- config: brain-level settings
 -- ============================================================
 CREATE TABLE IF NOT EXISTS config (

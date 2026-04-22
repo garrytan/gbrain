@@ -404,7 +404,7 @@ SEARCH
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
-  export [--dir ./out/]              Export to markdown
+  export [--dir ./out/] [--personal-export]  Export pages or curated personal markdown
 
 FILES
   files list [slug]                  List stored files

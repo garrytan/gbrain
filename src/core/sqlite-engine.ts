@@ -11,6 +11,25 @@ import { searchLocalVectors } from './search/vector-local.ts';
 import { slugifyPath } from './sync.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
+  NoteManifestEntry,
+  NoteManifestEntryInput,
+  NoteManifestFilters,
+  NoteManifestHeading,
+  NoteSectionEntry,
+  NoteSectionEntryInput,
+  NoteSectionFilters,
+  ContextMapEntry,
+  ContextMapEntryInput,
+  ContextMapFilters,
+  ContextAtlasEntry,
+  ContextAtlasEntryInput,
+  ContextAtlasFilters,
+  ProfileMemoryEntry,
+  ProfileMemoryEntryInput,
+  ProfileMemoryFilters,
+  PersonalEpisodeEntry,
+  PersonalEpisodeEntryInput,
+  PersonalEpisodeFilters,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
   Link, GraphNode,
@@ -223,6 +242,94 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_retrieval_traces_task_created ON retrieval_traces(task_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS note_manifest_entries (
+  scope_id TEXT NOT NULL,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,
+  path TEXT NOT NULL,
+  page_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  frontmatter TEXT NOT NULL DEFAULT '{}',
+  aliases TEXT NOT NULL DEFAULT '[]',
+  tags TEXT NOT NULL DEFAULT '[]',
+  outgoing_wikilinks TEXT NOT NULL DEFAULT '[]',
+  outgoing_urls TEXT NOT NULL DEFAULT '[]',
+  source_refs TEXT NOT NULL DEFAULT '[]',
+  heading_index TEXT NOT NULL DEFAULT '[]',
+  content_hash TEXT NOT NULL,
+  extractor_version TEXT NOT NULL,
+  last_indexed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (scope_id, page_id)
+);
+CREATE INDEX IF NOT EXISTS idx_note_manifest_scope_slug
+  ON note_manifest_entries(scope_id, slug);
+CREATE INDEX IF NOT EXISTS idx_note_manifest_scope_indexed
+  ON note_manifest_entries(scope_id, last_indexed_at DESC);
+
+CREATE TABLE IF NOT EXISTS note_section_entries (
+  scope_id TEXT NOT NULL,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  page_slug TEXT NOT NULL,
+  page_path TEXT NOT NULL,
+  section_id TEXT NOT NULL,
+  parent_section_id TEXT,
+  heading_slug TEXT NOT NULL,
+  heading_path TEXT NOT NULL DEFAULT '[]',
+  heading_text TEXT NOT NULL,
+  depth INTEGER NOT NULL,
+  line_start INTEGER NOT NULL,
+  line_end INTEGER NOT NULL,
+  section_text TEXT NOT NULL,
+  outgoing_wikilinks TEXT NOT NULL DEFAULT '[]',
+  outgoing_urls TEXT NOT NULL DEFAULT '[]',
+  source_refs TEXT NOT NULL DEFAULT '[]',
+  content_hash TEXT NOT NULL,
+  extractor_version TEXT NOT NULL,
+  last_indexed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (scope_id, section_id)
+);
+CREATE INDEX IF NOT EXISTS idx_note_sections_scope_page
+  ON note_section_entries(scope_id, page_slug, line_start);
+CREATE INDEX IF NOT EXISTS idx_note_sections_scope_indexed
+  ON note_section_entries(scope_id, last_indexed_at DESC);
+
+CREATE TABLE IF NOT EXISTS context_map_entries (
+  id TEXT PRIMARY KEY,
+  scope_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  build_mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  source_set_hash TEXT NOT NULL,
+  extractor_version TEXT NOT NULL,
+  node_count INTEGER NOT NULL,
+  edge_count INTEGER NOT NULL,
+  community_count INTEGER NOT NULL DEFAULT 0,
+  graph_json TEXT NOT NULL DEFAULT '{}',
+  generated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  stale_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_context_map_scope_generated
+  ON context_map_entries(scope_id, generated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_context_map_scope_kind
+  ON context_map_entries(scope_id, kind);
+
+CREATE TABLE IF NOT EXISTS context_atlas_entries (
+  id TEXT PRIMARY KEY,
+  map_id TEXT NOT NULL REFERENCES context_map_entries(id) ON DELETE CASCADE,
+  scope_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  freshness TEXT NOT NULL,
+  entrypoints TEXT NOT NULL DEFAULT '[]',
+  budget_hint INTEGER NOT NULL,
+  generated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_generated
+  ON context_atlas_entries(scope_id, generated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_kind
+  ON context_atlas_entries(scope_id, kind);
 
 CREATE TABLE IF NOT EXISTS access_tokens (
   id TEXT PRIMARY KEY,
@@ -1199,6 +1306,550 @@ export class SQLiteEngine implements BrainEngine {
     return rows.map(rowToRetrievalTrace);
   }
 
+  async upsertProfileMemoryEntry(input: ProfileMemoryEntryInput): Promise<ProfileMemoryEntry> {
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO profile_memory_entries (
+        id, scope_id, profile_type, subject, content, source_refs, sensitivity,
+        export_status, last_confirmed_at, superseded_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        scope_id = excluded.scope_id,
+        profile_type = excluded.profile_type,
+        subject = excluded.subject,
+        content = excluded.content,
+        source_refs = excluded.source_refs,
+        sensitivity = excluded.sensitivity,
+        export_status = excluded.export_status,
+        last_confirmed_at = excluded.last_confirmed_at,
+        superseded_by = excluded.superseded_by,
+        updated_at = excluded.updated_at
+    `, [
+      input.id,
+      input.scope_id,
+      input.profile_type,
+      input.subject,
+      input.content,
+      JSON.stringify(input.source_refs ?? []),
+      input.sensitivity,
+      input.export_status,
+      toNullableIso(input.last_confirmed_at),
+      input.superseded_by ?? null,
+      timestamp,
+      timestamp,
+    ]);
+
+    const row = this.database.query(`
+      SELECT id, scope_id, profile_type, subject, content, source_refs, sensitivity,
+             export_status, last_confirmed_at, superseded_by, created_at, updated_at
+      FROM profile_memory_entries
+      WHERE id = ?
+    `).get(input.id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Profile memory entry not found after upsert: ${input.id}`);
+    return rowToProfileMemoryEntry(row);
+  }
+
+  async getProfileMemoryEntry(id: string): Promise<ProfileMemoryEntry | null> {
+    const row = this.database.query(`
+      SELECT id, scope_id, profile_type, subject, content, source_refs, sensitivity,
+             export_status, last_confirmed_at, superseded_by, created_at, updated_at
+      FROM profile_memory_entries
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToProfileMemoryEntry(row) : null;
+  }
+
+  async listProfileMemoryEntries(filters?: ProfileMemoryFilters): Promise<ProfileMemoryEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.subject) {
+      clauses.push('subject = ?');
+      params.push(filters.subject);
+    }
+    if (filters?.profile_type) {
+      clauses.push('profile_type = ?');
+      params.push(filters.profile_type);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, scope_id, profile_type, subject, content, source_refs, sensitivity,
+             export_status, last_confirmed_at, superseded_by, created_at, updated_at
+      FROM profile_memory_entries
+      ${whereClause}
+      ORDER BY updated_at DESC, id ASC
+      LIMIT ?
+      OFFSET ?
+    `).all(...params) as Record<string, unknown>[];
+    return rows.map(rowToProfileMemoryEntry);
+  }
+
+  async deleteProfileMemoryEntry(id: string): Promise<void> {
+    this.database.run(`DELETE FROM profile_memory_entries WHERE id = ?`, [id]);
+  }
+
+  async createPersonalEpisodeEntry(input: PersonalEpisodeEntryInput): Promise<PersonalEpisodeEntry> {
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO personal_episode_entries (
+        id, scope_id, title, start_time, end_time, source_kind, summary,
+        source_refs, candidate_ids, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      input.id,
+      input.scope_id,
+      input.title,
+      toNullableIso(input.start_time),
+      toNullableIso(input.end_time),
+      input.source_kind,
+      input.summary,
+      JSON.stringify(input.source_refs ?? []),
+      JSON.stringify(input.candidate_ids ?? []),
+      timestamp,
+      timestamp,
+    ]);
+
+    const row = this.database.query(`
+      SELECT id, scope_id, title, start_time, end_time, source_kind, summary,
+             source_refs, candidate_ids, created_at, updated_at
+      FROM personal_episode_entries
+      WHERE id = ?
+    `).get(input.id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Personal episode entry not found after create: ${input.id}`);
+    return rowToPersonalEpisodeEntry(row);
+  }
+
+  async getPersonalEpisodeEntry(id: string): Promise<PersonalEpisodeEntry | null> {
+    const row = this.database.query(`
+      SELECT id, scope_id, title, start_time, end_time, source_kind, summary,
+             source_refs, candidate_ids, created_at, updated_at
+      FROM personal_episode_entries
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToPersonalEpisodeEntry(row) : null;
+  }
+
+  async listPersonalEpisodeEntries(filters?: PersonalEpisodeFilters): Promise<PersonalEpisodeEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.title) {
+      clauses.push('title = ?');
+      params.push(filters.title);
+    }
+    if (filters?.source_kind) {
+      clauses.push('source_kind = ?');
+      params.push(filters.source_kind);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, scope_id, title, start_time, end_time, source_kind, summary,
+             source_refs, candidate_ids, created_at, updated_at
+      FROM personal_episode_entries
+      ${whereClause}
+      ORDER BY start_time DESC, id ASC
+      LIMIT ?
+      OFFSET ?
+    `).all(...params) as Record<string, unknown>[];
+    return rows.map(rowToPersonalEpisodeEntry);
+  }
+
+  async deletePersonalEpisodeEntry(id: string): Promise<void> {
+    this.database.run(`DELETE FROM personal_episode_entries WHERE id = ?`, [id]);
+  }
+
+  async upsertNoteManifestEntry(input: NoteManifestEntryInput): Promise<NoteManifestEntry> {
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO note_manifest_entries (
+        scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
+        outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+        extractor_version, last_indexed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(scope_id, page_id) DO UPDATE SET
+        slug = excluded.slug,
+        path = excluded.path,
+        page_type = excluded.page_type,
+        title = excluded.title,
+        frontmatter = excluded.frontmatter,
+        aliases = excluded.aliases,
+        tags = excluded.tags,
+        outgoing_wikilinks = excluded.outgoing_wikilinks,
+        outgoing_urls = excluded.outgoing_urls,
+        source_refs = excluded.source_refs,
+        heading_index = excluded.heading_index,
+        content_hash = excluded.content_hash,
+        extractor_version = excluded.extractor_version,
+        last_indexed_at = excluded.last_indexed_at
+    `, [
+      input.scope_id,
+      input.page_id,
+      validateSlug(input.slug),
+      input.path,
+      input.page_type,
+      input.title,
+      JSON.stringify(input.frontmatter ?? {}),
+      JSON.stringify(input.aliases ?? []),
+      JSON.stringify(input.tags ?? []),
+      JSON.stringify(input.outgoing_wikilinks ?? []),
+      JSON.stringify(input.outgoing_urls ?? []),
+      JSON.stringify(input.source_refs ?? []),
+      JSON.stringify(input.heading_index ?? []),
+      input.content_hash,
+      input.extractor_version,
+      timestamp,
+    ]);
+
+    const row = this.database.query(`
+      SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
+             outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+             extractor_version, last_indexed_at
+      FROM note_manifest_entries
+      WHERE scope_id = ? AND page_id = ?
+    `).get(input.scope_id, input.page_id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Note manifest entry not found after upsert: ${input.scope_id}:${input.page_id}`);
+    return rowToNoteManifestEntry(row);
+  }
+
+  async getNoteManifestEntry(scopeId: string, slug: string): Promise<NoteManifestEntry | null> {
+    const row = this.database.query(`
+      SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
+             outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+             extractor_version, last_indexed_at
+      FROM note_manifest_entries
+      WHERE scope_id = ? AND slug = ?
+    `).get(scopeId, validateSlug(slug)) as Record<string, unknown> | null;
+    return row ? rowToNoteManifestEntry(row) : null;
+  }
+
+  async listNoteManifestEntries(filters?: NoteManifestFilters): Promise<NoteManifestEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.slug) {
+      clauses.push('slug = ?');
+      params.push(validateSlug(filters.slug));
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
+             outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+             extractor_version, last_indexed_at
+      FROM note_manifest_entries
+      ${whereClause}
+      ORDER BY last_indexed_at DESC, slug ASC
+      LIMIT ?
+      OFFSET ?
+    `).all(...params) as Record<string, unknown>[];
+    return rows.map(rowToNoteManifestEntry);
+  }
+
+  async deleteNoteManifestEntry(scopeId: string, slug: string): Promise<void> {
+    this.database.run(
+      `DELETE FROM note_manifest_entries WHERE scope_id = ? AND slug = ?`,
+      [scopeId, validateSlug(slug)],
+    );
+  }
+
+  async replaceNoteSectionEntries(
+    scopeId: string,
+    pageSlug: string,
+    entries: NoteSectionEntryInput[],
+  ): Promise<NoteSectionEntry[]> {
+    const normalizedSlug = validateSlug(pageSlug);
+    this.database.run(
+      `DELETE FROM note_section_entries WHERE scope_id = ? AND page_slug = ?`,
+      [scopeId, normalizedSlug],
+    );
+
+    const insert = this.database.query(`
+      INSERT INTO note_section_entries (
+        scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+        heading_path, heading_text, depth, line_start, line_end, section_text,
+        outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const timestamp = nowIso();
+
+    for (const entry of entries) {
+      insert.run([
+        scopeId,
+        entry.page_id,
+        validateSlug(entry.page_slug),
+        entry.page_path,
+        entry.section_id,
+        entry.parent_section_id,
+        entry.heading_slug,
+        JSON.stringify(entry.heading_path ?? []),
+        entry.heading_text,
+        entry.depth,
+        entry.line_start,
+        entry.line_end,
+        entry.section_text,
+        JSON.stringify(entry.outgoing_wikilinks ?? []),
+        JSON.stringify(entry.outgoing_urls ?? []),
+        JSON.stringify(entry.source_refs ?? []),
+        entry.content_hash,
+        entry.extractor_version,
+        timestamp,
+      ]);
+    }
+
+    return this.listNoteSectionEntries({
+      scope_id: scopeId,
+      page_slug: normalizedSlug,
+      limit: Math.max(entries.length, 1),
+    });
+  }
+
+  async getNoteSectionEntry(scopeId: string, sectionId: string): Promise<NoteSectionEntry | null> {
+    const row = this.database.query(`
+      SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+             heading_path, heading_text, depth, line_start, line_end, section_text,
+             outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
+      FROM note_section_entries
+      WHERE scope_id = ? AND section_id = ?
+    `).get(scopeId, sectionId) as Record<string, unknown> | null;
+    return row ? rowToNoteSectionEntry(row) : null;
+  }
+
+  async listNoteSectionEntries(filters?: NoteSectionFilters): Promise<NoteSectionEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.page_slug) {
+      clauses.push('page_slug = ?');
+      params.push(validateSlug(filters.page_slug));
+    }
+    if (filters?.section_id) {
+      clauses.push('section_id = ?');
+      params.push(filters.section_id);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+             heading_path, heading_text, depth, line_start, line_end, section_text,
+             outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
+      FROM note_section_entries
+      ${whereClause}
+      ORDER BY page_slug ASC, line_start ASC, section_id ASC
+      LIMIT ?
+      OFFSET ?
+    `).all(...params) as Record<string, unknown>[];
+    return rows.map(rowToNoteSectionEntry);
+  }
+
+  async deleteNoteSectionEntries(scopeId: string, pageSlug: string): Promise<void> {
+    this.database.run(
+      `DELETE FROM note_section_entries WHERE scope_id = ? AND page_slug = ?`,
+      [scopeId, validateSlug(pageSlug)],
+    );
+  }
+
+  async upsertContextMapEntry(input: ContextMapEntryInput): Promise<ContextMapEntry> {
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO context_map_entries (
+        id, scope_id, kind, title, build_mode, status, source_set_hash,
+        extractor_version, node_count, edge_count, community_count, graph_json,
+        generated_at, stale_reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        scope_id = excluded.scope_id,
+        kind = excluded.kind,
+        title = excluded.title,
+        build_mode = excluded.build_mode,
+        status = excluded.status,
+        source_set_hash = excluded.source_set_hash,
+        extractor_version = excluded.extractor_version,
+        node_count = excluded.node_count,
+        edge_count = excluded.edge_count,
+        community_count = excluded.community_count,
+        graph_json = excluded.graph_json,
+        generated_at = excluded.generated_at,
+        stale_reason = excluded.stale_reason
+    `, [
+      input.id,
+      input.scope_id,
+      input.kind,
+      input.title,
+      input.build_mode,
+      input.status,
+      input.source_set_hash,
+      input.extractor_version,
+      input.node_count,
+      input.edge_count,
+      input.community_count ?? 0,
+      JSON.stringify(input.graph_json ?? {}),
+      timestamp,
+      input.stale_reason ?? null,
+    ]);
+
+    const row = this.database.query(`
+      SELECT id, scope_id, kind, title, build_mode, status, source_set_hash,
+             extractor_version, node_count, edge_count, community_count, graph_json,
+             generated_at, stale_reason
+      FROM context_map_entries
+      WHERE id = ?
+    `).get(input.id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Context map entry not found after upsert: ${input.id}`);
+    return rowToContextMapEntry(row);
+  }
+
+  async getContextMapEntry(id: string): Promise<ContextMapEntry | null> {
+    const row = this.database.query(`
+      SELECT id, scope_id, kind, title, build_mode, status, source_set_hash,
+             extractor_version, node_count, edge_count, community_count, graph_json,
+             generated_at, stale_reason
+      FROM context_map_entries
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToContextMapEntry(row) : null;
+  }
+
+  async listContextMapEntries(filters?: ContextMapFilters): Promise<ContextMapEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.kind) {
+      clauses.push('kind = ?');
+      params.push(filters.kind);
+    }
+
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, scope_id, kind, title, build_mode, status, source_set_hash,
+             extractor_version, node_count, edge_count, community_count, graph_json,
+             generated_at, stale_reason
+      FROM context_map_entries
+      ${whereClause}
+      ORDER BY generated_at DESC, id ASC
+      LIMIT ?
+    `).all(...params) as Record<string, unknown>[];
+    return rows.map(rowToContextMapEntry);
+  }
+
+  async deleteContextMapEntry(id: string): Promise<void> {
+    this.database.run(`DELETE FROM context_map_entries WHERE id = ?`, [id]);
+  }
+
+  async upsertContextAtlasEntry(input: ContextAtlasEntryInput): Promise<ContextAtlasEntry> {
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO context_atlas_entries (
+        id, map_id, scope_id, kind, title, freshness, entrypoints, budget_hint, generated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        map_id = excluded.map_id,
+        scope_id = excluded.scope_id,
+        kind = excluded.kind,
+        title = excluded.title,
+        freshness = excluded.freshness,
+        entrypoints = excluded.entrypoints,
+        budget_hint = excluded.budget_hint,
+        generated_at = excluded.generated_at
+    `, [
+      input.id,
+      input.map_id,
+      input.scope_id,
+      input.kind,
+      input.title,
+      input.freshness,
+      JSON.stringify(input.entrypoints ?? []),
+      input.budget_hint,
+      timestamp,
+    ]);
+
+    const row = this.database.query(`
+      SELECT id, map_id, scope_id, kind, title, freshness, entrypoints, budget_hint, generated_at
+      FROM context_atlas_entries
+      WHERE id = ?
+    `).get(input.id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Context atlas entry not found after upsert: ${input.id}`);
+    return rowToContextAtlasEntry(row);
+  }
+
+  async getContextAtlasEntry(id: string): Promise<ContextAtlasEntry | null> {
+    const row = this.database.query(`
+      SELECT id, map_id, scope_id, kind, title, freshness, entrypoints, budget_hint, generated_at
+      FROM context_atlas_entries
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToContextAtlasEntry(row) : null;
+  }
+
+  async listContextAtlasEntries(filters?: ContextAtlasFilters): Promise<ContextAtlasEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.kind) {
+      clauses.push('kind = ?');
+      params.push(filters.kind);
+    }
+
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, map_id, scope_id, kind, title, freshness, entrypoints, budget_hint, generated_at
+      FROM context_atlas_entries
+      ${whereClause}
+      ORDER BY generated_at DESC, id ASC
+      LIMIT ?
+    `).all(...params) as Record<string, unknown>[];
+    return rows.map(rowToContextAtlasEntry);
+  }
+
+  async deleteContextAtlasEntry(id: string): Promise<void> {
+    this.database.run(`DELETE FROM context_atlas_entries WHERE id = ?`, [id]);
+  }
+
   async updateSlug(oldSlug: string, newSlug: string): Promise<void> {
     this.database.run(`UPDATE pages SET slug = ?, updated_at = ? WHERE slug = ? OR lower(slug) = ?`, [
       validateSlug(newSlug),
@@ -1382,6 +2033,149 @@ export class SQLiteEngine implements BrainEngine {
             );
             CREATE INDEX IF NOT EXISTS idx_retrieval_traces_task_created
               ON retrieval_traces(task_id, created_at DESC);
+          `);
+          break;
+        case 9:
+          this.database.exec(`
+            CREATE TABLE IF NOT EXISTS note_manifest_entries (
+              scope_id TEXT NOT NULL,
+              page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+              slug TEXT NOT NULL,
+              path TEXT NOT NULL,
+              page_type TEXT NOT NULL,
+              title TEXT NOT NULL,
+              frontmatter TEXT NOT NULL DEFAULT '{}',
+              aliases TEXT NOT NULL DEFAULT '[]',
+              tags TEXT NOT NULL DEFAULT '[]',
+              outgoing_wikilinks TEXT NOT NULL DEFAULT '[]',
+              outgoing_urls TEXT NOT NULL DEFAULT '[]',
+              source_refs TEXT NOT NULL DEFAULT '[]',
+              heading_index TEXT NOT NULL DEFAULT '[]',
+              content_hash TEXT NOT NULL,
+              extractor_version TEXT NOT NULL,
+              last_indexed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              PRIMARY KEY (scope_id, page_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_note_manifest_scope_slug
+              ON note_manifest_entries(scope_id, slug);
+            CREATE INDEX IF NOT EXISTS idx_note_manifest_scope_indexed
+              ON note_manifest_entries(scope_id, last_indexed_at DESC);
+          `);
+          break;
+        case 10:
+          this.database.exec(`
+            CREATE TABLE IF NOT EXISTS note_section_entries (
+              scope_id TEXT NOT NULL,
+              page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+              page_slug TEXT NOT NULL,
+              page_path TEXT NOT NULL,
+              section_id TEXT NOT NULL,
+              parent_section_id TEXT,
+              heading_slug TEXT NOT NULL,
+              heading_path TEXT NOT NULL DEFAULT '[]',
+              heading_text TEXT NOT NULL,
+              depth INTEGER NOT NULL,
+              line_start INTEGER NOT NULL,
+              line_end INTEGER NOT NULL,
+              section_text TEXT NOT NULL,
+              outgoing_wikilinks TEXT NOT NULL DEFAULT '[]',
+              outgoing_urls TEXT NOT NULL DEFAULT '[]',
+              source_refs TEXT NOT NULL DEFAULT '[]',
+              content_hash TEXT NOT NULL,
+              extractor_version TEXT NOT NULL,
+              last_indexed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              PRIMARY KEY (scope_id, section_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_note_sections_scope_page
+              ON note_section_entries(scope_id, page_slug, line_start);
+            CREATE INDEX IF NOT EXISTS idx_note_sections_scope_indexed
+              ON note_section_entries(scope_id, last_indexed_at DESC);
+          `);
+          break;
+        case 11:
+          this.database.exec(`
+            CREATE TABLE IF NOT EXISTS context_map_entries (
+              id TEXT PRIMARY KEY,
+              scope_id TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              title TEXT NOT NULL,
+              build_mode TEXT NOT NULL,
+              status TEXT NOT NULL,
+              source_set_hash TEXT NOT NULL,
+              extractor_version TEXT NOT NULL,
+              node_count INTEGER NOT NULL,
+              edge_count INTEGER NOT NULL,
+              community_count INTEGER NOT NULL DEFAULT 0,
+              graph_json TEXT NOT NULL DEFAULT '{}',
+              generated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              stale_reason TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_context_map_scope_generated
+              ON context_map_entries(scope_id, generated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_context_map_scope_kind
+              ON context_map_entries(scope_id, kind);
+          `);
+          break;
+        case 12:
+          this.database.exec(`
+            CREATE TABLE IF NOT EXISTS context_atlas_entries (
+              id TEXT PRIMARY KEY,
+              map_id TEXT NOT NULL REFERENCES context_map_entries(id) ON DELETE CASCADE,
+              scope_id TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              title TEXT NOT NULL,
+              freshness TEXT NOT NULL,
+              entrypoints TEXT NOT NULL DEFAULT '[]',
+              budget_hint INTEGER NOT NULL,
+              generated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_generated
+              ON context_atlas_entries(scope_id, generated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_kind
+              ON context_atlas_entries(scope_id, kind);
+          `);
+          break;
+        case 13:
+          this.database.exec(`
+            CREATE TABLE IF NOT EXISTS profile_memory_entries (
+              id TEXT PRIMARY KEY,
+              scope_id TEXT NOT NULL,
+              profile_type TEXT NOT NULL,
+              subject TEXT NOT NULL,
+              content TEXT NOT NULL,
+              source_refs TEXT NOT NULL DEFAULT '[]',
+              sensitivity TEXT NOT NULL,
+              export_status TEXT NOT NULL,
+              last_confirmed_at TEXT,
+              superseded_by TEXT,
+              created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_profile_memory_scope_subject
+              ON profile_memory_entries(scope_id, subject);
+            CREATE INDEX IF NOT EXISTS idx_profile_memory_scope_type
+              ON profile_memory_entries(scope_id, profile_type, updated_at DESC);
+          `);
+          break;
+        case 14:
+          this.database.exec(`
+            CREATE TABLE IF NOT EXISTS personal_episode_entries (
+              id TEXT PRIMARY KEY,
+              scope_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              start_time TEXT NOT NULL,
+              end_time TEXT,
+              source_kind TEXT NOT NULL,
+              summary TEXT NOT NULL,
+              source_refs TEXT NOT NULL DEFAULT '[]',
+              candidate_ids TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_personal_episode_scope_start
+              ON personal_episode_entries(scope_id, start_time DESC);
+            CREATE INDEX IF NOT EXISTS idx_personal_episode_scope_title
+              ON personal_episode_entries(scope_id, title);
           `);
           break;
       }
@@ -1626,6 +2420,11 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function toNullableIso(value: Date | string | null | undefined): string | null {
+  if (value == null) return null;
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
 function parseVersion(value: string | null): number {
   const parsed = parseInt(value || String(BASELINE_VERSION), 10);
   if (!Number.isFinite(parsed) || parsed < BASELINE_VERSION) return BASELINE_VERSION;
@@ -1804,6 +2603,117 @@ function rowToRetrievalTrace(row: Record<string, unknown>): RetrievalTrace {
   };
 }
 
+function rowToNoteManifestEntry(row: Record<string, unknown>): NoteManifestEntry {
+  return {
+    scope_id: String(row.scope_id),
+    page_id: Number(row.page_id),
+    slug: String(row.slug),
+    path: String(row.path),
+    page_type: row.page_type as PageType,
+    title: String(row.title),
+    frontmatter: parseJsonObject(row.frontmatter),
+    aliases: parseJsonArray(row.aliases),
+    tags: parseJsonArray(row.tags),
+    outgoing_wikilinks: parseJsonArray(row.outgoing_wikilinks),
+    outgoing_urls: parseJsonArray(row.outgoing_urls),
+    source_refs: parseJsonArray(row.source_refs),
+    heading_index: parseNoteManifestHeadingArray(row.heading_index),
+    content_hash: String(row.content_hash),
+    extractor_version: String(row.extractor_version),
+    last_indexed_at: new Date(String(row.last_indexed_at)),
+  };
+}
+
+function rowToNoteSectionEntry(row: Record<string, unknown>): NoteSectionEntry {
+  return {
+    scope_id: String(row.scope_id),
+    page_id: Number(row.page_id),
+    page_slug: String(row.page_slug),
+    page_path: String(row.page_path),
+    section_id: String(row.section_id),
+    parent_section_id: row.parent_section_id == null ? null : String(row.parent_section_id),
+    heading_slug: String(row.heading_slug),
+    heading_path: parseJsonArray(row.heading_path),
+    heading_text: String(row.heading_text),
+    depth: Number(row.depth),
+    line_start: Number(row.line_start),
+    line_end: Number(row.line_end),
+    section_text: String(row.section_text),
+    outgoing_wikilinks: parseJsonArray(row.outgoing_wikilinks),
+    outgoing_urls: parseJsonArray(row.outgoing_urls),
+    source_refs: parseJsonArray(row.source_refs),
+    content_hash: String(row.content_hash),
+    extractor_version: String(row.extractor_version),
+    last_indexed_at: new Date(String(row.last_indexed_at)),
+  };
+}
+
+function rowToContextMapEntry(row: Record<string, unknown>): ContextMapEntry {
+  return {
+    id: String(row.id),
+    scope_id: String(row.scope_id),
+    kind: String(row.kind),
+    title: String(row.title),
+    build_mode: String(row.build_mode),
+    status: String(row.status),
+    source_set_hash: String(row.source_set_hash),
+    extractor_version: String(row.extractor_version),
+    node_count: Number(row.node_count),
+    edge_count: Number(row.edge_count),
+    community_count: Number(row.community_count ?? 0),
+    graph_json: parseJsonObject(row.graph_json),
+    generated_at: new Date(String(row.generated_at)),
+    stale_reason: row.stale_reason == null ? null : String(row.stale_reason),
+  };
+}
+
+function rowToContextAtlasEntry(row: Record<string, unknown>): ContextAtlasEntry {
+  return {
+    id: String(row.id),
+    map_id: String(row.map_id),
+    scope_id: String(row.scope_id),
+    kind: String(row.kind),
+    title: String(row.title),
+    freshness: String(row.freshness),
+    entrypoints: parseJsonArray(row.entrypoints),
+    budget_hint: Number(row.budget_hint),
+    generated_at: new Date(String(row.generated_at)),
+  };
+}
+
+function rowToProfileMemoryEntry(row: Record<string, unknown>): ProfileMemoryEntry {
+  return {
+    id: String(row.id),
+    scope_id: String(row.scope_id),
+    profile_type: row.profile_type as ProfileMemoryEntry['profile_type'],
+    subject: String(row.subject),
+    content: String(row.content),
+    source_refs: parseJsonArray(row.source_refs),
+    sensitivity: row.sensitivity as ProfileMemoryEntry['sensitivity'],
+    export_status: row.export_status as ProfileMemoryEntry['export_status'],
+    last_confirmed_at: row.last_confirmed_at == null ? null : new Date(String(row.last_confirmed_at)),
+    superseded_by: row.superseded_by == null ? null : String(row.superseded_by),
+    created_at: new Date(String(row.created_at)),
+    updated_at: new Date(String(row.updated_at)),
+  };
+}
+
+function rowToPersonalEpisodeEntry(row: Record<string, unknown>): PersonalEpisodeEntry {
+  return {
+    id: String(row.id),
+    scope_id: String(row.scope_id),
+    title: String(row.title),
+    start_time: new Date(String(row.start_time)),
+    end_time: row.end_time == null ? null : new Date(String(row.end_time)),
+    source_kind: row.source_kind as PersonalEpisodeEntry['source_kind'],
+    summary: String(row.summary),
+    source_refs: parseJsonArray(row.source_refs),
+    candidate_ids: parseJsonArray(row.candidate_ids),
+    created_at: new Date(String(row.created_at)),
+    updated_at: new Date(String(row.updated_at)),
+  };
+}
+
 /**
  * Extract a focused text snippet around matching query terms.
  * Returns ~300-char window centered on the first match, with ellipsis markers.
@@ -1940,4 +2850,23 @@ function parseJsonArray(value: unknown): string[] {
     return JSON.parse(value) as string[];
   }
   return [];
+}
+
+function parseNoteManifestHeadingArray(value: unknown): NoteManifestHeading[] {
+  if (Array.isArray(value)) {
+    return value.map((heading) => normalizeNoteManifestHeading(heading as Record<string, unknown>));
+  }
+  if (typeof value === 'string' && value.length > 0) {
+    return (JSON.parse(value) as Array<Record<string, unknown>>).map(normalizeNoteManifestHeading);
+  }
+  return [];
+}
+
+function normalizeNoteManifestHeading(heading: Record<string, unknown>): NoteManifestHeading {
+  return {
+    slug: String(heading.slug ?? ''),
+    text: String(heading.text ?? ''),
+    depth: Number(heading.depth ?? 0),
+    line_start: Number(heading.line_start ?? 0),
+  };
 }

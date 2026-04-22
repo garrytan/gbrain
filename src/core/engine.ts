@@ -1,5 +1,23 @@
 import type {
   Page, PageInput, PageFilters,
+  NoteManifestEntry,
+  NoteManifestEntryInput,
+  NoteManifestFilters,
+  NoteSectionEntry,
+  NoteSectionEntryInput,
+  NoteSectionFilters,
+  ContextMapEntry,
+  ContextMapEntryInput,
+  ContextMapFilters,
+  ContextAtlasEntry,
+  ContextAtlasEntryInput,
+  ContextAtlasFilters,
+  ProfileMemoryEntry,
+  ProfileMemoryEntryInput,
+  ProfileMemoryFilters,
+  PersonalEpisodeEntry,
+  PersonalEpisodeEntryInput,
+  PersonalEpisodeFilters,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
   Link, GraphNode,
@@ -98,6 +116,46 @@ export interface BrainEngine {
   listTaskDecisions(taskId: string, opts?: { limit?: number }): Promise<TaskDecision[]>;
   putRetrievalTrace(input: RetrievalTraceInput): Promise<RetrievalTrace>;
   listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]>;
+
+  // Personal profile memory
+  upsertProfileMemoryEntry(input: ProfileMemoryEntryInput): Promise<ProfileMemoryEntry>;
+  getProfileMemoryEntry(id: string): Promise<ProfileMemoryEntry | null>;
+  listProfileMemoryEntries(filters?: ProfileMemoryFilters): Promise<ProfileMemoryEntry[]>;
+  deleteProfileMemoryEntry(id: string): Promise<void>;
+
+  // Personal episodes
+  createPersonalEpisodeEntry(input: PersonalEpisodeEntryInput): Promise<PersonalEpisodeEntry>;
+  getPersonalEpisodeEntry(id: string): Promise<PersonalEpisodeEntry | null>;
+  listPersonalEpisodeEntries(filters?: PersonalEpisodeFilters): Promise<PersonalEpisodeEntry[]>;
+  deletePersonalEpisodeEntry(id: string): Promise<void>;
+
+  // Note manifest
+  upsertNoteManifestEntry(input: NoteManifestEntryInput): Promise<NoteManifestEntry>;
+  getNoteManifestEntry(scopeId: string, slug: string): Promise<NoteManifestEntry | null>;
+  listNoteManifestEntries(filters?: NoteManifestFilters): Promise<NoteManifestEntry[]>;
+  deleteNoteManifestEntry(scopeId: string, slug: string): Promise<void>;
+
+  // Note sections
+  replaceNoteSectionEntries(
+    scopeId: string,
+    pageSlug: string,
+    entries: NoteSectionEntryInput[],
+  ): Promise<NoteSectionEntry[]>;
+  getNoteSectionEntry(scopeId: string, sectionId: string): Promise<NoteSectionEntry | null>;
+  listNoteSectionEntries(filters?: NoteSectionFilters): Promise<NoteSectionEntry[]>;
+  deleteNoteSectionEntries(scopeId: string, pageSlug: string): Promise<void>;
+
+  // Persisted context maps
+  upsertContextMapEntry(input: ContextMapEntryInput): Promise<ContextMapEntry>;
+  getContextMapEntry(id: string): Promise<ContextMapEntry | null>;
+  listContextMapEntries(filters?: ContextMapFilters): Promise<ContextMapEntry[]>;
+  deleteContextMapEntry(id: string): Promise<void>;
+
+  // Persisted context atlas registry
+  upsertContextAtlasEntry(input: ContextAtlasEntryInput): Promise<ContextAtlasEntry>;
+  getContextAtlasEntry(id: string): Promise<ContextAtlasEntry | null>;
+  listContextAtlasEntries(filters?: ContextAtlasFilters): Promise<ContextAtlasEntry[]>;
+  deleteContextAtlasEntry(id: string): Promise<void>;
 
   // Sync
   updateSlug(oldSlug: string, newSlug: string): Promise<void>;

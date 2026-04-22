@@ -4,6 +4,24 @@ import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
+  NoteManifestEntry,
+  NoteManifestEntryInput,
+  NoteManifestFilters,
+  NoteSectionEntry,
+  NoteSectionEntryInput,
+  NoteSectionFilters,
+  ContextMapEntry,
+  ContextMapEntryInput,
+  ContextMapFilters,
+  ContextAtlasEntry,
+  ContextAtlasEntryInput,
+  ContextAtlasFilters,
+  ProfileMemoryEntry,
+  ProfileMemoryEntryInput,
+  ProfileMemoryFilters,
+  PersonalEpisodeEntry,
+  PersonalEpisodeEntryInput,
+  PersonalEpisodeFilters,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
   Link, GraphNode,
@@ -36,6 +54,12 @@ import {
   importContentHash,
   rowToPage,
   rowToChunk,
+  rowToContextAtlasEntry,
+  rowToContextMapEntry,
+  rowToNoteManifestEntry,
+  rowToNoteSectionEntry,
+  rowToProfileMemoryEntry,
+  rowToPersonalEpisodeEntry,
   rowToRetrievalTrace,
   rowToSearchResult,
   rowToTaskAttempt,
@@ -1025,6 +1049,557 @@ export class PostgresEngine implements BrainEngine {
       LIMIT ${opts?.limit ?? 20}
     `;
     return (rows as Record<string, unknown>[]).map(rowToRetrievalTrace);
+  }
+
+  async upsertProfileMemoryEntry(input: ProfileMemoryEntryInput): Promise<ProfileMemoryEntry> {
+    const sql = this.sql;
+    const rows = await sql`
+      INSERT INTO profile_memory_entries (
+        id, scope_id, profile_type, subject, content, source_refs, sensitivity,
+        export_status, last_confirmed_at, superseded_by
+      ) VALUES (
+        ${input.id},
+        ${input.scope_id},
+        ${input.profile_type},
+        ${input.subject},
+        ${input.content},
+        ${JSON.stringify(input.source_refs ?? [])}::jsonb,
+        ${input.sensitivity},
+        ${input.export_status},
+        ${input.last_confirmed_at instanceof Date ? input.last_confirmed_at.toISOString() : input.last_confirmed_at ?? null},
+        ${input.superseded_by ?? null}
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        scope_id = EXCLUDED.scope_id,
+        profile_type = EXCLUDED.profile_type,
+        subject = EXCLUDED.subject,
+        content = EXCLUDED.content,
+        source_refs = EXCLUDED.source_refs,
+        sensitivity = EXCLUDED.sensitivity,
+        export_status = EXCLUDED.export_status,
+        last_confirmed_at = EXCLUDED.last_confirmed_at,
+        superseded_by = EXCLUDED.superseded_by,
+        updated_at = now()
+      RETURNING id, scope_id, profile_type, subject, content, source_refs, sensitivity,
+                export_status, last_confirmed_at, superseded_by, created_at, updated_at
+    `;
+    return rowToProfileMemoryEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async getProfileMemoryEntry(id: string): Promise<ProfileMemoryEntry | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, scope_id, profile_type, subject, content, source_refs, sensitivity,
+             export_status, last_confirmed_at, superseded_by, created_at, updated_at
+      FROM profile_memory_entries
+      WHERE id = ${id}
+    `;
+    if (rows.length === 0) return null;
+    return rowToProfileMemoryEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async listProfileMemoryEntries(filters?: ProfileMemoryFilters): Promise<ProfileMemoryEntry[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.subject) {
+      params.push(filters.subject);
+      clauses.push(`subject = $${params.length}`);
+    }
+    if (filters?.profile_type) {
+      params.push(filters.profile_type);
+      clauses.push(`profile_type = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT id, scope_id, profile_type, subject, content, source_refs, sensitivity,
+              export_status, last_confirmed_at, superseded_by, created_at, updated_at
+       FROM profile_memory_entries
+       ${whereClause}
+       ORDER BY updated_at DESC, id ASC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToProfileMemoryEntry);
+  }
+
+  async deleteProfileMemoryEntry(id: string): Promise<void> {
+    const sql = this.sql;
+    await sql`
+      DELETE FROM profile_memory_entries
+      WHERE id = ${id}
+    `;
+  }
+
+  async createPersonalEpisodeEntry(input: PersonalEpisodeEntryInput): Promise<PersonalEpisodeEntry> {
+    const sql = this.sql;
+    const rows = await sql`
+      INSERT INTO personal_episode_entries (
+        id, scope_id, title, start_time, end_time, source_kind, summary, source_refs, candidate_ids
+      ) VALUES (
+        ${input.id},
+        ${input.scope_id},
+        ${input.title},
+        ${input.start_time instanceof Date ? input.start_time.toISOString() : input.start_time},
+        ${input.end_time instanceof Date ? input.end_time.toISOString() : input.end_time ?? null},
+        ${input.source_kind},
+        ${input.summary},
+        ${JSON.stringify(input.source_refs ?? [])}::jsonb,
+        ${JSON.stringify(input.candidate_ids ?? [])}::jsonb
+      )
+      RETURNING id, scope_id, title, start_time, end_time, source_kind, summary,
+                source_refs, candidate_ids, created_at, updated_at
+    `;
+    return rowToPersonalEpisodeEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async getPersonalEpisodeEntry(id: string): Promise<PersonalEpisodeEntry | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, scope_id, title, start_time, end_time, source_kind, summary,
+             source_refs, candidate_ids, created_at, updated_at
+      FROM personal_episode_entries
+      WHERE id = ${id}
+    `;
+    if (rows.length === 0) return null;
+    return rowToPersonalEpisodeEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async listPersonalEpisodeEntries(filters?: PersonalEpisodeFilters): Promise<PersonalEpisodeEntry[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.title) {
+      params.push(filters.title);
+      clauses.push(`title = $${params.length}`);
+    }
+    if (filters?.source_kind) {
+      params.push(filters.source_kind);
+      clauses.push(`source_kind = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT id, scope_id, title, start_time, end_time, source_kind, summary,
+              source_refs, candidate_ids, created_at, updated_at
+       FROM personal_episode_entries
+       ${whereClause}
+       ORDER BY start_time DESC, id ASC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToPersonalEpisodeEntry);
+  }
+
+  async deletePersonalEpisodeEntry(id: string): Promise<void> {
+    const sql = this.sql;
+    await sql`
+      DELETE FROM personal_episode_entries
+      WHERE id = ${id}
+    `;
+  }
+
+  async upsertNoteManifestEntry(input: NoteManifestEntryInput): Promise<NoteManifestEntry> {
+    const sql = this.sql;
+    const rows = await sql`
+      INSERT INTO note_manifest_entries (
+        scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
+        outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+        extractor_version, last_indexed_at
+      ) VALUES (
+        ${input.scope_id},
+        ${input.page_id},
+        ${validateSlug(input.slug)},
+        ${input.path},
+        ${input.page_type},
+        ${input.title},
+        ${JSON.stringify(input.frontmatter ?? {})}::jsonb,
+        ${JSON.stringify(input.aliases ?? [])}::jsonb,
+        ${JSON.stringify(input.tags ?? [])}::jsonb,
+        ${JSON.stringify(input.outgoing_wikilinks ?? [])}::jsonb,
+        ${JSON.stringify(input.outgoing_urls ?? [])}::jsonb,
+        ${JSON.stringify(input.source_refs ?? [])}::jsonb,
+        ${JSON.stringify(input.heading_index ?? [])}::jsonb,
+        ${input.content_hash},
+        ${input.extractor_version},
+        now()
+      )
+      ON CONFLICT (scope_id, page_id) DO UPDATE SET
+        slug = EXCLUDED.slug,
+        path = EXCLUDED.path,
+        page_type = EXCLUDED.page_type,
+        title = EXCLUDED.title,
+        frontmatter = EXCLUDED.frontmatter,
+        aliases = EXCLUDED.aliases,
+        tags = EXCLUDED.tags,
+        outgoing_wikilinks = EXCLUDED.outgoing_wikilinks,
+        outgoing_urls = EXCLUDED.outgoing_urls,
+        source_refs = EXCLUDED.source_refs,
+        heading_index = EXCLUDED.heading_index,
+        content_hash = EXCLUDED.content_hash,
+        extractor_version = EXCLUDED.extractor_version,
+        last_indexed_at = EXCLUDED.last_indexed_at
+      RETURNING scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
+                outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+                extractor_version, last_indexed_at
+    `;
+    return rowToNoteManifestEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async getNoteManifestEntry(scopeId: string, slug: string): Promise<NoteManifestEntry | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
+             outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+             extractor_version, last_indexed_at
+      FROM note_manifest_entries
+      WHERE scope_id = ${scopeId} AND slug = ${validateSlug(slug)}
+    `;
+    if (rows.length === 0) return null;
+    return rowToNoteManifestEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async listNoteManifestEntries(filters?: NoteManifestFilters): Promise<NoteManifestEntry[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.slug) {
+      params.push(validateSlug(filters.slug));
+      clauses.push(`slug = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT scope_id, page_id, slug, path, page_type, title, frontmatter, aliases, tags,
+              outgoing_wikilinks, outgoing_urls, source_refs, heading_index, content_hash,
+              extractor_version, last_indexed_at
+       FROM note_manifest_entries
+       ${whereClause}
+       ORDER BY last_indexed_at DESC, slug ASC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToNoteManifestEntry);
+  }
+
+  async deleteNoteManifestEntry(scopeId: string, slug: string): Promise<void> {
+    const sql = this.sql;
+    await sql`
+      DELETE FROM note_manifest_entries
+      WHERE scope_id = ${scopeId} AND slug = ${validateSlug(slug)}
+    `;
+  }
+
+  async replaceNoteSectionEntries(
+    scopeId: string,
+    pageSlug: string,
+    entries: NoteSectionEntryInput[],
+  ): Promise<NoteSectionEntry[]> {
+    const sql = this.sql;
+    const normalizedSlug = validateSlug(pageSlug);
+
+    await sql`
+      DELETE FROM note_section_entries
+      WHERE scope_id = ${scopeId} AND page_slug = ${normalizedSlug}
+    `;
+
+    const timestamp = new Date().toISOString();
+    for (const entry of entries) {
+      await sql`
+        INSERT INTO note_section_entries (
+          scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+          heading_path, heading_text, depth, line_start, line_end, section_text,
+          outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
+        ) VALUES (
+          ${scopeId},
+          ${entry.page_id},
+          ${validateSlug(entry.page_slug)},
+          ${entry.page_path},
+          ${entry.section_id},
+          ${entry.parent_section_id ?? null},
+          ${entry.heading_slug},
+          ${JSON.stringify(entry.heading_path ?? [])}::jsonb,
+          ${entry.heading_text},
+          ${entry.depth},
+          ${entry.line_start},
+          ${entry.line_end},
+          ${entry.section_text},
+          ${JSON.stringify(entry.outgoing_wikilinks ?? [])}::jsonb,
+          ${JSON.stringify(entry.outgoing_urls ?? [])}::jsonb,
+          ${JSON.stringify(entry.source_refs ?? [])}::jsonb,
+          ${entry.content_hash},
+          ${entry.extractor_version},
+          ${timestamp}
+        )
+      `;
+    }
+
+    return this.listNoteSectionEntries({
+      scope_id: scopeId,
+      page_slug: normalizedSlug,
+      limit: Math.max(entries.length, 1),
+    });
+  }
+
+  async getNoteSectionEntry(scopeId: string, sectionId: string): Promise<NoteSectionEntry | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+             heading_path, heading_text, depth, line_start, line_end, section_text,
+             outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
+      FROM note_section_entries
+      WHERE scope_id = ${scopeId} AND section_id = ${sectionId}
+    `;
+    if (rows.length === 0) return null;
+    return rowToNoteSectionEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async listNoteSectionEntries(filters?: NoteSectionFilters): Promise<NoteSectionEntry[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.page_slug) {
+      params.push(validateSlug(filters.page_slug));
+      clauses.push(`page_slug = $${params.length}`);
+    }
+    if (filters?.section_id) {
+      params.push(filters.section_id);
+      clauses.push(`section_id = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT scope_id, page_id, page_slug, page_path, section_id, parent_section_id, heading_slug,
+              heading_path, heading_text, depth, line_start, line_end, section_text,
+              outgoing_wikilinks, outgoing_urls, source_refs, content_hash, extractor_version, last_indexed_at
+       FROM note_section_entries
+       ${whereClause}
+       ORDER BY page_slug ASC, line_start ASC, section_id ASC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToNoteSectionEntry);
+  }
+
+  async deleteNoteSectionEntries(scopeId: string, pageSlug: string): Promise<void> {
+    const sql = this.sql;
+    await sql`
+      DELETE FROM note_section_entries
+      WHERE scope_id = ${scopeId} AND page_slug = ${validateSlug(pageSlug)}
+    `;
+  }
+
+  async upsertContextMapEntry(input: ContextMapEntryInput): Promise<ContextMapEntry> {
+    const sql = this.sql;
+    const rows = await sql`
+      INSERT INTO context_map_entries (
+        id, scope_id, kind, title, build_mode, status, source_set_hash,
+        extractor_version, node_count, edge_count, community_count, graph_json,
+        generated_at, stale_reason
+      ) VALUES (
+        ${input.id},
+        ${input.scope_id},
+        ${input.kind},
+        ${input.title},
+        ${input.build_mode},
+        ${input.status},
+        ${input.source_set_hash},
+        ${input.extractor_version},
+        ${input.node_count},
+        ${input.edge_count},
+        ${input.community_count ?? 0},
+        ${JSON.stringify(input.graph_json ?? {})}::jsonb,
+        now(),
+        ${input.stale_reason ?? null}
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        scope_id = EXCLUDED.scope_id,
+        kind = EXCLUDED.kind,
+        title = EXCLUDED.title,
+        build_mode = EXCLUDED.build_mode,
+        status = EXCLUDED.status,
+        source_set_hash = EXCLUDED.source_set_hash,
+        extractor_version = EXCLUDED.extractor_version,
+        node_count = EXCLUDED.node_count,
+        edge_count = EXCLUDED.edge_count,
+        community_count = EXCLUDED.community_count,
+        graph_json = EXCLUDED.graph_json,
+        generated_at = EXCLUDED.generated_at,
+        stale_reason = EXCLUDED.stale_reason
+      RETURNING id, scope_id, kind, title, build_mode, status, source_set_hash,
+                extractor_version, node_count, edge_count, community_count, graph_json,
+                generated_at, stale_reason
+    `;
+    return rowToContextMapEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async getContextMapEntry(id: string): Promise<ContextMapEntry | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, scope_id, kind, title, build_mode, status, source_set_hash,
+             extractor_version, node_count, edge_count, community_count, graph_json,
+             generated_at, stale_reason
+      FROM context_map_entries
+      WHERE id = ${id}
+    `;
+    if (rows.length === 0) return null;
+    return rowToContextMapEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async listContextMapEntries(filters?: ContextMapFilters): Promise<ContextMapEntry[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.kind) {
+      params.push(filters.kind);
+      clauses.push(`kind = $${params.length}`);
+    }
+
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT id, scope_id, kind, title, build_mode, status, source_set_hash,
+              extractor_version, node_count, edge_count, community_count, graph_json,
+              generated_at, stale_reason
+       FROM context_map_entries
+       ${whereClause}
+       ORDER BY generated_at DESC, id ASC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToContextMapEntry);
+  }
+
+  async deleteContextMapEntry(id: string): Promise<void> {
+    const sql = this.sql;
+    await sql`
+      DELETE FROM context_map_entries
+      WHERE id = ${id}
+    `;
+  }
+
+  async upsertContextAtlasEntry(input: ContextAtlasEntryInput): Promise<ContextAtlasEntry> {
+    const sql = this.sql;
+    const rows = await sql`
+      INSERT INTO context_atlas_entries (
+        id, map_id, scope_id, kind, title, freshness, entrypoints, budget_hint, generated_at
+      ) VALUES (
+        ${input.id},
+        ${input.map_id},
+        ${input.scope_id},
+        ${input.kind},
+        ${input.title},
+        ${input.freshness},
+        ${JSON.stringify(input.entrypoints ?? [])}::jsonb,
+        ${input.budget_hint},
+        now()
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        map_id = EXCLUDED.map_id,
+        scope_id = EXCLUDED.scope_id,
+        kind = EXCLUDED.kind,
+        title = EXCLUDED.title,
+        freshness = EXCLUDED.freshness,
+        entrypoints = EXCLUDED.entrypoints,
+        budget_hint = EXCLUDED.budget_hint,
+        generated_at = EXCLUDED.generated_at
+      RETURNING id, map_id, scope_id, kind, title, freshness, entrypoints, budget_hint, generated_at
+    `;
+    return rowToContextAtlasEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async getContextAtlasEntry(id: string): Promise<ContextAtlasEntry | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, map_id, scope_id, kind, title, freshness, entrypoints, budget_hint, generated_at
+      FROM context_atlas_entries
+      WHERE id = ${id}
+    `;
+    if (rows.length === 0) return null;
+    return rowToContextAtlasEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async listContextAtlasEntries(filters?: ContextAtlasFilters): Promise<ContextAtlasEntry[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.kind) {
+      params.push(filters.kind);
+      clauses.push(`kind = $${params.length}`);
+    }
+
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT id, map_id, scope_id, kind, title, freshness, entrypoints, budget_hint, generated_at
+       FROM context_atlas_entries
+       ${whereClause}
+       ORDER BY generated_at DESC, id ASC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToContextAtlasEntry);
+  }
+
+  async deleteContextAtlasEntry(id: string): Promise<void> {
+    const sql = this.sql;
+    await sql`
+      DELETE FROM context_atlas_entries
+      WHERE id = ${id}
+    `;
   }
 
   // Sync

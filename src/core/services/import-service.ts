@@ -16,6 +16,8 @@ import { createConnectedEngine, supportsParallelWorkers } from '../engine-factor
 import { getEngineCapabilities } from '../engine-capabilities.ts';
 import { buildPageChunks, importFile } from '../import-file.ts';
 import { parseMarkdown, type ParsedMarkdown } from '../markdown.ts';
+import { buildNoteManifestEntry } from './note-manifest-service.ts';
+import { buildNoteSectionEntries } from './note-section-service.ts';
 import { slugifyPath } from '../sync.ts';
 import type { ChunkInput } from '../types.ts';
 import { importContentHash, validateSlug } from '../utils.ts';
@@ -177,7 +179,7 @@ async function commitPreparedImport(
       await tx.createVersion(prepared.slug);
     }
 
-    await tx.putPage(prepared.slug, {
+    const storedPage = await tx.putPage(prepared.slug, {
       type: prepared.parsed.type,
       title: prepared.parsed.title,
       compiled_truth: prepared.parsed.compiled_truth,
@@ -199,6 +201,40 @@ async function commitPreparedImport(
 
     await tx.deleteChunks(prepared.slug);
     await tx.upsertChunks(prepared.slug, prepared.chunks);
+    const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
+      page_id: storedPage.id,
+      slug: storedPage.slug,
+      path: prepared.relativePath,
+      tags: prepared.parsed.tags,
+      content_hash: prepared.hash,
+      page: {
+        type: storedPage.type,
+        title: storedPage.title,
+        compiled_truth: storedPage.compiled_truth,
+        timeline: storedPage.timeline,
+        frontmatter: storedPage.frontmatter,
+        content_hash: storedPage.content_hash,
+      },
+    }));
+    await tx.replaceNoteSectionEntries(
+      manifest.scope_id,
+      manifest.slug,
+      buildNoteSectionEntries({
+        scope_id: manifest.scope_id,
+        page_id: storedPage.id,
+        page_slug: storedPage.slug,
+        page_path: manifest.path,
+        page: {
+          type: storedPage.type,
+          title: storedPage.title,
+          compiled_truth: storedPage.compiled_truth,
+          timeline: storedPage.timeline,
+          frontmatter: storedPage.frontmatter,
+          content_hash: storedPage.content_hash,
+        },
+        manifest,
+      }),
+    );
   });
 
   return {

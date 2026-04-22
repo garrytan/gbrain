@@ -3,6 +3,8 @@ import type { BrainEngine } from './engine.ts';
 import { buildFrontmatterSearchText, parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { estimateTokenCount } from './embedding.ts';
+import { buildNoteManifestEntry } from './services/note-manifest-service.ts';
+import { buildNoteSectionEntries } from './services/note-section-service.ts';
 import { slugifyPath } from './sync.ts';
 import type { ChunkInput } from './types.ts';
 import { importContentHash, validateSlug } from './utils.ts';
@@ -26,6 +28,7 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
+  options?: { path?: string },
 ): Promise<ImportResult> {
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
@@ -47,12 +50,13 @@ export async function importFromContent(
   }
 
   const chunks = buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter);
+  const manifestPath = options?.path ?? `${validateSlug(slug)}.md`;
 
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug);
 
-    await tx.putPage(slug, {
+    const storedPage = await tx.putPage(slug, {
       type: parsed.type,
       title: parsed.title,
       compiled_truth: parsed.compiled_truth,
@@ -73,6 +77,40 @@ export async function importFromContent(
 
     await tx.deleteChunks(slug);
     await tx.upsertChunks(slug, chunks);
+    const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
+      page_id: storedPage.id,
+      slug: storedPage.slug,
+      path: manifestPath,
+      tags: parsed.tags,
+      content_hash: hash,
+      page: {
+        type: storedPage.type,
+        title: storedPage.title,
+        compiled_truth: storedPage.compiled_truth,
+        timeline: storedPage.timeline,
+        frontmatter: storedPage.frontmatter,
+        content_hash: storedPage.content_hash,
+      },
+    }));
+    await tx.replaceNoteSectionEntries(
+      manifest.scope_id,
+      manifest.slug,
+      buildNoteSectionEntries({
+        scope_id: manifest.scope_id,
+        page_id: storedPage.id,
+        page_slug: storedPage.slug,
+        page_path: manifest.path,
+        page: {
+          type: storedPage.type,
+          title: storedPage.title,
+          compiled_truth: storedPage.compiled_truth,
+          timeline: storedPage.timeline,
+          frontmatter: storedPage.frontmatter,
+          content_hash: storedPage.content_hash,
+        },
+        manifest,
+      }),
+    );
   });
 
   return { slug, status: 'imported', chunks: chunks.length };
@@ -118,7 +156,7 @@ export async function importFromFile(
     };
   }
 
-  return importFromContent(engine, expectedSlug, content);
+  return importFromContent(engine, expectedSlug, content, { path: relativePath });
 }
 
 // Backward compat
