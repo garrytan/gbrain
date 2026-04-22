@@ -1,6 +1,6 @@
 import { execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
+import { join, dirname } from 'path';
 import { VERSION } from '../version.ts';
 
 export async function runUpgrade(args: string[]) {
@@ -234,7 +234,7 @@ function isNewerThan(version: string, baseline: string): boolean {
   return false;
 }
 
-export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'unknown' {
+export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'source' | 'unknown' {
   const execPath = process.execPath || '';
 
   // Check if running from node_modules (bun/npm install)
@@ -254,6 +254,20 @@ export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'unknown' 
   } catch {
     // not available
   }
+
+  // Check if running from a git checkout (source-linked install)
+  try {
+    const arg1 = process.argv[1] ?? '';
+    if (arg1) {
+      let dir = dirname(realpathSync(arg1));
+      for (let i = 0; i < 5; i++) {
+        if (existsSync(join(dir, '.git'))) return 'source';
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+    }
+  } catch { /* ignore */ }
 
   return 'unknown';
 }
