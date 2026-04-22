@@ -21,6 +21,8 @@ import type {
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
 
+const DEFAULT_EMBEDDING_MODEL = process.env.GBRAIN_EMBED_MODEL || process.env.OPENAI_EMBED_MODEL || 'text-embedding-3-large';
+
 type PGLiteDB = PGlite;
 
 export class PGLiteEngine implements BrainEngine {
@@ -304,10 +306,10 @@ export class PGLiteEngine implements BrainEngine {
 
       if (embeddingStr) {
         rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || DEFAULT_EMBEDDING_MODEL, chunk.token_count || null);
       } else {
         rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || DEFAULT_EMBEDDING_MODEL, chunk.token_count || null);
       }
     }
 

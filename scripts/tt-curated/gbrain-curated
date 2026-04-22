@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="/home/tt/workspace/tools/gbrain/scripts/tt-curated"
+LOG_DIR="/home/tt/workspace/tools/gbrain-curated-logs"
+
+usage() {
+  cat <<'EOF'
+gbrain-curated — TT curated gbrain helper
+
+Usage:
+  gbrain-curated help
+  gbrain-curated status
+  gbrain-curated smoke
+  gbrain-curated regression
+  gbrain-curated baseline
+  gbrain-curated weekly
+  gbrain-curated refresh
+  gbrain-curated nightly
+  gbrain-curated logs [smoke|regression|weekly|refresh|nightly]
+
+Commands:
+  status      Show compact snapshot from latest smoke/regression/weekly files
+  smoke       Run lightweight retrieval smoke check now
+  regression  Run full regression + drift check now
+  baseline    Re-capture regression baseline intentionally
+  weekly      Generate weekly local review snapshot now
+  refresh     Run refresh/import/extract + smoke now
+  nightly     Run embed/health/regression nightly pipeline now
+  logs        Print latest log/result path for a category
+EOF
+}
+
+latest_file() {
+  local pattern="$1"
+  python - <<'PY' "$LOG_DIR" "$pattern"
+from pathlib import Path
+import sys
+log_dir = Path(sys.argv[1])
+pattern = sys.argv[2]
+files = sorted(log_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+print(files[0] if files else "")
+PY
+}
+
+show_status() {
+  python - <<'PY' "$LOG_DIR"
+import json, sys
+from pathlib import Path
+log_dir = Path(sys.argv[1])
+
+def load(name):
+    path = log_dir / name
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+smoke = load('refresh-smoke-last.json')
+reg = load('query-regression-last.json')
+weekly = load('weekly-baseline-review.json')
+
+print('gbrain curated status')
+if smoke:
+    print(f"- smoke: {'ok' if smoke.get('ok') else 'fail'} ({smoke.get('passed')}/{smoke.get('total')})")
+else:
+    print('- smoke: no snapshot')
+if reg:
+    print(f"- regression: {'ok' if reg.get('ok') else 'fail'} ({reg.get('passed')}/{reg.get('total')}) drift={reg.get('severe_drift_count')}")
+else:
+    print('- regression: no snapshot')
+if weekly:
+    r = weekly.get('regression', {})
+    s = weekly.get('smoke', {})
+    print(f"- weekly: regression={r.get('passed')}/{r.get('total')} smoke={s.get('passed')}/{s.get('total')}")
+else:
+    print('- weekly: no snapshot')
+PY
+}
+
+show_log() {
+  local kind="${1:-nightly}"
+  case "$kind" in
+    smoke) latest_file 'refresh-smoke-*.log' ;;
+    regression) printf '%s\n' "$LOG_DIR/query-regression-last.json" ;;
+    weekly) printf '%s\n' "$LOG_DIR/weekly-baseline-review.json" ;;
+    refresh) latest_file 'cron-refresh-import-extract-*.log' ;;
+    nightly) latest_file 'cron-embed-health-regression-*.log' ;;
+    *) echo "unknown log kind: $kind" >&2; exit 1 ;;
+  esac
+}
+
+cmd="${1:-help}"
+case "$cmd" in
+  help|-h|--help)
+    usage
+    ;;
+  status)
+    show_status
+    ;;
+  smoke)
+    bash -ic "$SCRIPT_DIR/refresh-smoke-check.sh"
+    ;;
+  regression)
+    bash -ic "$SCRIPT_DIR/query-regression.py"
+    ;;
+  baseline)
+    bash -ic "$SCRIPT_DIR/query-regression.py --write-baseline"
+    ;;
+  weekly)
+    bash -ic "$SCRIPT_DIR/weekly-baseline-review.py"
+    ;;
+  refresh)
+    bash -ic "$SCRIPT_DIR/cron-refresh-import-extract.sh"
+    ;;
+  nightly)
+    bash -ic "$SCRIPT_DIR/cron-embed-health-regression.sh"
+    ;;
+  logs)
+    show_log "${2:-nightly}"
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
