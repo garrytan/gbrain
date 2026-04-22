@@ -366,6 +366,18 @@ async function performFullSync(
   headCommit: string,
   opts: SyncOpts,
 ): Promise<SyncResult> {
+  if (opts.dryRun) {
+    console.log(`Sync dry run: full import of ${repoPath} (first sync)`);
+    return {
+      status: 'dry_run',
+      fromCommit: null,
+      toCommit: headCommit,
+      added: 0, modified: 0, deleted: 0, renamed: 0,
+      chunksCreated: 0,
+      pagesAffected: [],
+    };
+  }
+
   console.log(`Running full import of ${repoPath}...`);
   const { runImport } = await import('./import.ts');
   const importArgs = [repoPath];
