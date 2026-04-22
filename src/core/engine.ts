@@ -12,6 +12,10 @@ import type {
   ContextAtlasEntry,
   ContextAtlasEntryInput,
   ContextAtlasFilters,
+  MemoryCandidateEntry,
+  MemoryCandidateEntryInput,
+  MemoryCandidateFilters,
+  MemoryCandidateStatusPatch,
   ProfileMemoryEntry,
   ProfileMemoryEntryInput,
   ProfileMemoryFilters,
@@ -128,6 +132,13 @@ export interface BrainEngine {
   getPersonalEpisodeEntry(id: string): Promise<PersonalEpisodeEntry | null>;
   listPersonalEpisodeEntries(filters?: PersonalEpisodeFilters): Promise<PersonalEpisodeEntry[]>;
   deletePersonalEpisodeEntry(id: string): Promise<void>;
+
+  // Governance inbox foundations
+  createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry>;
+  getMemoryCandidateEntry(id: string): Promise<MemoryCandidateEntry | null>;
+  listMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<MemoryCandidateEntry[]>;
+  updateMemoryCandidateEntryStatus(id: string, patch: MemoryCandidateStatusPatch): Promise<MemoryCandidateEntry>;
+  deleteMemoryCandidateEntry(id: string): Promise<void>;
 
   // Note manifest
   upsertNoteManifestEntry(input: NoteManifestEntryInput): Promise<NoteManifestEntry>;

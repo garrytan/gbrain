@@ -19,6 +19,7 @@ import {
 } from './services/context-atlas-service.ts';
 import { getAtlasOrientationCard } from './services/atlas-orientation-card-service.ts';
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
+import { createMemoryInboxOperations, DEFAULT_MEMORY_INBOX_SCOPE_ID } from './operations-memory-inbox.ts';
 import { getStructuralContextAtlasOverview } from './services/context-atlas-overview-service.ts';
 import { getStructuralContextAtlasReport } from './services/context-atlas-report-service.ts';
 import { getBroadSynthesisRoute } from './services/broad-synthesis-route-service.ts';
@@ -67,6 +68,7 @@ export const MCP_INSTRUCTIONS = [
 export type ErrorCode =
   | 'page_not_found'
   | 'task_not_found'
+  | 'memory_candidate_not_found'
   | 'invalid_params'
   | 'embedding_failed'
   | 'storage_error'
@@ -1635,6 +1637,11 @@ const record_personal_episode: Operation = {
   },
   cliHints: { name: 'personal-episode-record' },
 };
+
+const memoryInboxOperations = createMemoryInboxOperations({
+  defaultScopeId: DEFAULT_MEMORY_INBOX_SCOPE_ID,
+  OperationError,
+});
 
 const write_profile_memory_entry: Operation = {
   name: 'write_profile_memory_entry',
@@ -3364,7 +3371,7 @@ export const operations: Operation[] = [
   // Resolution & chunks
   resolve_slugs, get_chunks,
   // Profile memory
-  get_profile_memory_entry, list_profile_memory_entries, upsert_profile_memory_entry, write_profile_memory_entry,
+  get_profile_memory_entry, list_profile_memory_entries, upsert_profile_memory_entry, ...memoryInboxOperations, write_profile_memory_entry,
   // Personal episodes
   get_personal_episode_entry, list_personal_episode_entries, record_personal_episode, write_personal_episode_entry,
   // Note manifest

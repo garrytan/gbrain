@@ -23,6 +23,10 @@ import type {
   ContextAtlasEntry,
   ContextAtlasEntryInput,
   ContextAtlasFilters,
+  MemoryCandidateEntry,
+  MemoryCandidateEntryInput,
+  MemoryCandidateFilters,
+  MemoryCandidateStatusPatch,
   ProfileMemoryEntry,
   ProfileMemoryEntryInput,
   ProfileMemoryFilters,
@@ -59,6 +63,7 @@ import {
   rowToChunk,
   rowToContextAtlasEntry,
   rowToContextMapEntry,
+  rowToMemoryCandidateEntry,
   rowToNoteManifestEntry,
   rowToNoteSectionEntry,
   rowToProfileMemoryEntry,
@@ -1162,6 +1167,122 @@ export class PGLiteEngine implements BrainEngine {
 
   async deletePersonalEpisodeEntry(id: string): Promise<void> {
     await this.db.query(`DELETE FROM personal_episode_entries WHERE id = $1`, [id]);
+  }
+
+  async createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry> {
+    const { rows } = await this.db.query(
+      `INSERT INTO memory_candidate_entries (
+        id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+        extraction_kind, confidence_score, importance_score, recurrence_score,
+        sensitivity, status, target_object_type, target_object_id, reviewed_at,
+        review_reason
+      ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      RETURNING id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+                extraction_kind, confidence_score, importance_score, recurrence_score,
+                sensitivity, status, target_object_type, target_object_id, reviewed_at,
+                review_reason, created_at, updated_at`,
+      [
+        input.id,
+        input.scope_id,
+        input.candidate_type,
+        input.proposed_content,
+        JSON.stringify(input.source_refs ?? []),
+        input.generated_by,
+        input.extraction_kind,
+        input.confidence_score,
+        input.importance_score,
+        input.recurrence_score,
+        input.sensitivity,
+        input.status,
+        input.target_object_type ?? null,
+        input.target_object_id ?? null,
+        input.reviewed_at instanceof Date ? input.reviewed_at.toISOString() : input.reviewed_at ?? null,
+        input.review_reason ?? null,
+      ],
+    );
+    return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async getMemoryCandidateEntry(id: string): Promise<MemoryCandidateEntry | null> {
+    const { rows } = await this.db.query(
+      `SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+              extraction_kind, confidence_score, importance_score, recurrence_score,
+              sensitivity, status, target_object_type, target_object_id, reviewed_at,
+              review_reason, created_at, updated_at
+       FROM memory_candidate_entries
+       WHERE id = $1`,
+      [id],
+    );
+    if (rows.length === 0) return null;
+    return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async listMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<MemoryCandidateEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.status) {
+      params.push(filters.status);
+      clauses.push(`status = $${params.length}`);
+    }
+    if (filters?.candidate_type) {
+      params.push(filters.candidate_type);
+      clauses.push(`candidate_type = $${params.length}`);
+    }
+    if (filters?.target_object_type) {
+      params.push(filters.target_object_type);
+      clauses.push(`target_object_type = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await this.db.query(
+      `SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+              extraction_kind, confidence_score, importance_score, recurrence_score,
+              sensitivity, status, target_object_type, target_object_id, reviewed_at,
+              review_reason, created_at, updated_at
+       FROM memory_candidate_entries
+       ${whereClause}
+       ORDER BY updated_at DESC, id ASC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToMemoryCandidateEntry);
+  }
+
+  async updateMemoryCandidateEntryStatus(id: string, patch: MemoryCandidateStatusPatch): Promise<MemoryCandidateEntry> {
+    const { rows } = await this.db.query(
+      `UPDATE memory_candidate_entries
+       SET status = $2,
+           reviewed_at = $3,
+           review_reason = $4,
+           updated_at = now()
+       WHERE id = $1
+       RETURNING id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+                 extraction_kind, confidence_score, importance_score, recurrence_score,
+                 sensitivity, status, target_object_type, target_object_id, reviewed_at,
+                 review_reason, created_at, updated_at`,
+      [
+        id,
+        patch.status,
+        patch.reviewed_at instanceof Date ? patch.reviewed_at.toISOString() : patch.reviewed_at ?? null,
+        patch.review_reason ?? null,
+      ],
+    );
+    if (rows.length === 0) throw new Error(`Memory candidate entry not found after status update: ${id}`);
+    return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async deleteMemoryCandidateEntry(id: string): Promise<void> {
+    await this.db.query(`DELETE FROM memory_candidate_entries WHERE id = $1`, [id]);
   }
 
   async upsertNoteManifestEntry(input: NoteManifestEntryInput): Promise<NoteManifestEntry> {

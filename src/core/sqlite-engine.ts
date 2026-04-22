@@ -24,6 +24,10 @@ import type {
   ContextAtlasEntry,
   ContextAtlasEntryInput,
   ContextAtlasFilters,
+  MemoryCandidateEntry,
+  MemoryCandidateEntryInput,
+  MemoryCandidateFilters,
+  MemoryCandidateStatusPatch,
   ProfileMemoryEntry,
   ProfileMemoryEntryInput,
   ProfileMemoryFilters,
@@ -1476,6 +1480,133 @@ export class SQLiteEngine implements BrainEngine {
     this.database.run(`DELETE FROM personal_episode_entries WHERE id = ?`, [id]);
   }
 
+  async createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry> {
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO memory_candidate_entries (
+        id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+        extraction_kind, confidence_score, importance_score, recurrence_score,
+        sensitivity, status, target_object_type, target_object_id, reviewed_at,
+        review_reason, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      input.id,
+      input.scope_id,
+      input.candidate_type,
+      input.proposed_content,
+      JSON.stringify(input.source_refs ?? []),
+      input.generated_by,
+      input.extraction_kind,
+      input.confidence_score,
+      input.importance_score,
+      input.recurrence_score,
+      input.sensitivity,
+      input.status,
+      input.target_object_type ?? null,
+      input.target_object_id ?? null,
+      toNullableIso(input.reviewed_at),
+      input.review_reason ?? null,
+      timestamp,
+      timestamp,
+    ]);
+
+    const row = this.database.query(`
+      SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+             extraction_kind, confidence_score, importance_score, recurrence_score,
+             sensitivity, status, target_object_type, target_object_id, reviewed_at,
+             review_reason, created_at, updated_at
+      FROM memory_candidate_entries
+      WHERE id = ?
+    `).get(input.id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Memory candidate entry not found after create: ${input.id}`);
+    return rowToMemoryCandidateEntry(row);
+  }
+
+  async getMemoryCandidateEntry(id: string): Promise<MemoryCandidateEntry | null> {
+    const row = this.database.query(`
+      SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+             extraction_kind, confidence_score, importance_score, recurrence_score,
+             sensitivity, status, target_object_type, target_object_id, reviewed_at,
+             review_reason, created_at, updated_at
+      FROM memory_candidate_entries
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToMemoryCandidateEntry(row) : null;
+  }
+
+  async listMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<MemoryCandidateEntry[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.scope_id) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.status) {
+      clauses.push('status = ?');
+      params.push(filters.status);
+    }
+    if (filters?.candidate_type) {
+      clauses.push('candidate_type = ?');
+      params.push(filters.candidate_type);
+    }
+    if (filters?.target_object_type) {
+      clauses.push('target_object_type = ?');
+      params.push(filters.target_object_type);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+             extraction_kind, confidence_score, importance_score, recurrence_score,
+             sensitivity, status, target_object_type, target_object_id, reviewed_at,
+             review_reason, created_at, updated_at
+      FROM memory_candidate_entries
+      ${whereClause}
+      ORDER BY updated_at DESC, id ASC
+      LIMIT ?
+      OFFSET ?
+    `).all(...params) as Record<string, unknown>[];
+    return rows.map(rowToMemoryCandidateEntry);
+  }
+
+  async updateMemoryCandidateEntryStatus(id: string, patch: MemoryCandidateStatusPatch): Promise<MemoryCandidateEntry> {
+    const timestamp = nowIso();
+    this.database.run(`
+      UPDATE memory_candidate_entries
+      SET status = ?,
+          reviewed_at = ?,
+          review_reason = ?,
+          updated_at = ?
+      WHERE id = ?
+    `, [
+      patch.status,
+      toNullableIso(patch.reviewed_at),
+      patch.review_reason ?? null,
+      timestamp,
+      id,
+    ]);
+
+    const row = this.database.query(`
+      SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+             extraction_kind, confidence_score, importance_score, recurrence_score,
+             sensitivity, status, target_object_type, target_object_id, reviewed_at,
+             review_reason, created_at, updated_at
+      FROM memory_candidate_entries
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Memory candidate entry not found after status update: ${id}`);
+    return rowToMemoryCandidateEntry(row);
+  }
+
+  async deleteMemoryCandidateEntry(id: string): Promise<void> {
+    this.database.run(`DELETE FROM memory_candidate_entries WHERE id = ?`, [id]);
+  }
+
   async upsertNoteManifestEntry(input: NoteManifestEntryInput): Promise<NoteManifestEntry> {
     const timestamp = nowIso();
     this.database.run(`
@@ -2178,6 +2309,36 @@ export class SQLiteEngine implements BrainEngine {
               ON personal_episode_entries(scope_id, title);
           `);
           break;
+        case 15:
+          this.database.exec(`
+            CREATE TABLE IF NOT EXISTS memory_candidate_entries (
+              id TEXT PRIMARY KEY,
+              scope_id TEXT NOT NULL,
+              candidate_type TEXT NOT NULL CHECK (candidate_type IN ('fact', 'relationship', 'note_update', 'procedure', 'profile_update', 'open_question', 'rationale')),
+              proposed_content TEXT NOT NULL,
+              source_refs TEXT NOT NULL DEFAULT '[]',
+              generated_by TEXT NOT NULL CHECK (generated_by IN ('agent', 'map_analysis', 'dream_cycle', 'manual', 'import')),
+              extraction_kind TEXT NOT NULL CHECK (extraction_kind IN ('extracted', 'inferred', 'ambiguous', 'manual')),
+              confidence_score REAL NOT NULL,
+              importance_score REAL NOT NULL,
+              recurrence_score REAL NOT NULL,
+              sensitivity TEXT NOT NULL CHECK (sensitivity IN ('public', 'work', 'personal', 'secret', 'unknown')),
+              status TEXT NOT NULL CHECK (status IN ('captured', 'candidate', 'staged_for_review')),
+              target_object_type TEXT CHECK (target_object_type IS NULL OR target_object_type IN ('curated_note', 'procedure', 'profile_memory', 'personal_episode', 'other')),
+              target_object_id TEXT,
+              reviewed_at TEXT,
+              review_reason TEXT,
+              created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+              updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_status
+              ON memory_candidate_entries(scope_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_type
+              ON memory_candidate_entries(scope_id, candidate_type, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_candidates_target
+              ON memory_candidate_entries(target_object_type, target_object_id);
+          `);
+          break;
       }
 
       await this.setConfig('version', String(version));
@@ -2709,6 +2870,29 @@ function rowToPersonalEpisodeEntry(row: Record<string, unknown>): PersonalEpisod
     summary: String(row.summary),
     source_refs: parseJsonArray(row.source_refs),
     candidate_ids: parseJsonArray(row.candidate_ids),
+    created_at: new Date(String(row.created_at)),
+    updated_at: new Date(String(row.updated_at)),
+  };
+}
+
+function rowToMemoryCandidateEntry(row: Record<string, unknown>): MemoryCandidateEntry {
+  return {
+    id: String(row.id),
+    scope_id: String(row.scope_id),
+    candidate_type: row.candidate_type as MemoryCandidateEntry['candidate_type'],
+    proposed_content: String(row.proposed_content),
+    source_refs: parseJsonArray(row.source_refs),
+    generated_by: row.generated_by as MemoryCandidateEntry['generated_by'],
+    extraction_kind: row.extraction_kind as MemoryCandidateEntry['extraction_kind'],
+    confidence_score: Number(row.confidence_score),
+    importance_score: Number(row.importance_score),
+    recurrence_score: Number(row.recurrence_score),
+    sensitivity: row.sensitivity as MemoryCandidateEntry['sensitivity'],
+    status: row.status as MemoryCandidateEntry['status'],
+    target_object_type: row.target_object_type == null ? null : row.target_object_type as MemoryCandidateEntry['target_object_type'],
+    target_object_id: row.target_object_id == null ? null : String(row.target_object_id),
+    reviewed_at: row.reviewed_at == null ? null : new Date(String(row.reviewed_at)),
+    review_reason: row.review_reason == null ? null : String(row.review_reason),
     created_at: new Date(String(row.created_at)),
     updated_at: new Date(String(row.updated_at)),
   };

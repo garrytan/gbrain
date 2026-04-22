@@ -7,6 +7,7 @@ import type {
   NoteSectionEntry,
   ContextMapEntry,
   ContextAtlasEntry,
+  MemoryCandidateEntry,
   ProfileMemoryEntry,
   PersonalEpisodeEntry,
   Chunk,
@@ -226,6 +227,29 @@ export function rowToPersonalEpisodeEntry(row: Record<string, unknown>): Persona
     summary: row.summary as string,
     source_refs: parseJsonStringArray(row.source_refs),
     candidate_ids: parseJsonStringArray(row.candidate_ids),
+    created_at: new Date(row.created_at as string),
+    updated_at: new Date(row.updated_at as string),
+  };
+}
+
+export function rowToMemoryCandidateEntry(row: Record<string, unknown>): MemoryCandidateEntry {
+  return {
+    id: row.id as string,
+    scope_id: row.scope_id as string,
+    candidate_type: row.candidate_type as MemoryCandidateEntry['candidate_type'],
+    proposed_content: row.proposed_content as string,
+    source_refs: parseJsonStringArray(row.source_refs),
+    generated_by: row.generated_by as MemoryCandidateEntry['generated_by'],
+    extraction_kind: row.extraction_kind as MemoryCandidateEntry['extraction_kind'],
+    confidence_score: Number(row.confidence_score),
+    importance_score: Number(row.importance_score),
+    recurrence_score: Number(row.recurrence_score),
+    sensitivity: row.sensitivity as MemoryCandidateEntry['sensitivity'],
+    status: row.status as MemoryCandidateEntry['status'],
+    target_object_type: (row.target_object_type as MemoryCandidateEntry['target_object_type'] | null) ?? null,
+    target_object_id: (row.target_object_id as string | null) ?? null,
+    reviewed_at: row.reviewed_at ? new Date(row.reviewed_at as string) : null,
+    review_reason: (row.review_reason as string | null) ?? null,
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
   };

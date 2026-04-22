@@ -689,6 +689,102 @@ export interface PersonalEpisodeFilters {
   offset?: number;
 }
 
+export type MemoryCandidateType =
+  | 'fact'
+  | 'relationship'
+  | 'note_update'
+  | 'procedure'
+  | 'profile_update'
+  | 'open_question'
+  | 'rationale';
+
+export type MemoryCandidateGeneratedBy =
+  | 'agent'
+  | 'map_analysis'
+  | 'dream_cycle'
+  | 'manual'
+  | 'import';
+
+export type MemoryCandidateExtractionKind =
+  | 'extracted'
+  | 'inferred'
+  | 'ambiguous'
+  | 'manual';
+
+export type MemoryCandidateSensitivity =
+  | 'public'
+  | 'work'
+  | 'personal'
+  | 'secret'
+  | 'unknown';
+
+export type MemoryCandidateStatus =
+  | 'captured'
+  | 'candidate'
+  | 'staged_for_review';
+
+export type MemoryCandidateTargetObjectType =
+  | 'curated_note'
+  | 'procedure'
+  | 'profile_memory'
+  | 'personal_episode'
+  | 'other';
+
+export interface MemoryCandidateEntry {
+  id: string;
+  scope_id: string;
+  candidate_type: MemoryCandidateType;
+  proposed_content: string;
+  source_refs: string[];
+  generated_by: MemoryCandidateGeneratedBy;
+  extraction_kind: MemoryCandidateExtractionKind;
+  confidence_score: number;
+  importance_score: number;
+  recurrence_score: number;
+  sensitivity: MemoryCandidateSensitivity;
+  status: MemoryCandidateStatus;
+  target_object_type: MemoryCandidateTargetObjectType | null;
+  target_object_id: string | null;
+  reviewed_at: Date | null;
+  review_reason: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface MemoryCandidateEntryInput {
+  id: string;
+  scope_id: string;
+  candidate_type: MemoryCandidateType;
+  proposed_content: string;
+  source_refs: string[];
+  generated_by: MemoryCandidateGeneratedBy;
+  extraction_kind: MemoryCandidateExtractionKind;
+  confidence_score: number;
+  importance_score: number;
+  recurrence_score: number;
+  sensitivity: MemoryCandidateSensitivity;
+  status: MemoryCandidateStatus;
+  target_object_type?: MemoryCandidateTargetObjectType | null;
+  target_object_id?: string | null;
+  reviewed_at?: Date | string | null;
+  review_reason?: string | null;
+}
+
+export interface MemoryCandidateFilters {
+  scope_id?: string;
+  status?: MemoryCandidateStatus;
+  candidate_type?: MemoryCandidateType;
+  target_object_type?: MemoryCandidateTargetObjectType;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MemoryCandidateStatusPatch {
+  status: MemoryCandidateStatus;
+  reviewed_at?: Date | string | null;
+  review_reason?: string | null;
+}
+
 export interface PersonalEpisodeLookupRoute {
   route_kind: 'personal_episode_lookup';
   personal_episode_id: string;

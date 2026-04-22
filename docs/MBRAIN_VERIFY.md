@@ -785,6 +785,41 @@ Expected:
 - `acceptance.phase4_status` matches the aggregated phase outcome
 - `test:phase4` runs the published Phase 4 suites, mixed-scope disclosure coverage, export-visibility coverage, mixed-scope bridge coverage, and the acceptance-pack test
 
+## Phase 5 memory inbox foundations
+
+Run:
+
+```bash
+bun test test/memory-inbox-schema.test.ts test/memory-inbox-engine.test.ts test/memory-inbox-service.test.ts test/memory-inbox-operations.test.ts test/phase5-memory-inbox-foundations.test.ts
+bun run bench:phase5-memory-inbox-foundations --json
+```
+
+Expected:
+
+- `memory_candidate_entries` exists across SQLite and PGLite schema initialization
+- create/get/list/delete persistence works across SQLite, PGLite, and Postgres when `DATABASE_URL` is configured
+- bounded status transitions stay limited to `captured -> candidate -> staged_for_review`
+- `create-memory-candidate`, `get-memory-candidate`, `list-memory-candidates`, and `advance-memory-candidate-status` stay available through the shared operation surface
+- benchmark reports `memory_inbox_foundations` and `memory_inbox_foundations_correctness`
+- `acceptance.phase5_status` matches the local foundation guardrail outcome
+
+## Phase 5 acceptance-pack
+
+Run:
+
+```bash
+bun test test/phase5-acceptance-pack.test.ts
+bun run bench:phase5-acceptance --json
+```
+
+Expected:
+
+- acceptance-pack test passes
+- benchmark summarizes every published Phase 5 benchmark slice
+- `acceptance.readiness_status` reports `pass` only when all published Phase 5 slices pass
+- `acceptance.phase5_status` matches the aggregated phase outcome
+- `test:phase5` runs the published Phase 5 suites and the acceptance-pack test
+
 ---
 
 ## 2. Skillpack Loaded

@@ -352,6 +352,38 @@ const MIGRATIONS: Migration[] = [
         ON personal_episode_entries(scope_id, title);
     `,
   },
+  {
+    version: 15,
+    name: 'memory_inbox_foundations',
+    sql: `
+      CREATE TABLE IF NOT EXISTS memory_candidate_entries (
+        id TEXT PRIMARY KEY,
+        scope_id TEXT NOT NULL,
+        candidate_type TEXT NOT NULL CHECK (candidate_type IN ('fact', 'relationship', 'note_update', 'procedure', 'profile_update', 'open_question', 'rationale')),
+        proposed_content TEXT NOT NULL,
+        source_refs JSONB NOT NULL DEFAULT '[]',
+        generated_by TEXT NOT NULL CHECK (generated_by IN ('agent', 'map_analysis', 'dream_cycle', 'manual', 'import')),
+        extraction_kind TEXT NOT NULL CHECK (extraction_kind IN ('extracted', 'inferred', 'ambiguous', 'manual')),
+        confidence_score DOUBLE PRECISION NOT NULL,
+        importance_score DOUBLE PRECISION NOT NULL,
+        recurrence_score DOUBLE PRECISION NOT NULL,
+        sensitivity TEXT NOT NULL CHECK (sensitivity IN ('public', 'work', 'personal', 'secret', 'unknown')),
+        status TEXT NOT NULL CHECK (status IN ('captured', 'candidate', 'staged_for_review')),
+        target_object_type TEXT CHECK (target_object_type IS NULL OR target_object_type IN ('curated_note', 'procedure', 'profile_memory', 'personal_episode', 'other')),
+        target_object_id TEXT,
+        reviewed_at TIMESTAMPTZ,
+        review_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_status
+        ON memory_candidate_entries(scope_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_type
+        ON memory_candidate_entries(scope_id, candidate_type, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_candidates_target
+        ON memory_candidate_entries(target_object_type, target_object_id);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
