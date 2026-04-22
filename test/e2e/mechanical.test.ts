@@ -944,7 +944,10 @@ describeE2E('E2E: RLS Verification', () => {
       SELECT tablename, rowsecurity FROM pg_tables
       WHERE schemaname = 'public'
         AND tablename IN ('pages','content_chunks','links','tags','raw_data',
-                           'page_versions','timeline_entries','ingest_log','config','files')
+                           'page_versions','timeline_entries','ingest_log','config','files',
+                           'minion_jobs','minion_inbox','minion_attachments',
+                           'subagent_messages','subagent_tool_executions',
+                           'subagent_rate_leases','gbrain_cycle_locks')
     `);
     const noRls = tables.filter((t: any) => !t.rowsecurity);
     // Some test DBs may not have BYPASSRLS privilege, so RLS might be skipped.
