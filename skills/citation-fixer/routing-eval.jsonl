@@ -1,0 +1,7 @@
+// Routing eval fixtures for skills/citation-fixer. Check 5 (W2, v0.17).
+// Layer A (structural) requires intents to contain trigger words from
+// the resolver. Paraphrase the trigger framing, not its meaning.
+{"intent": "please fix broken citations across the latest batch of pages", "expected_skill": "citation-fixer"}
+{"intent": "I think we need to fix broken citations in these brain pages", "expected_skill": "citation-fixer"}
+// Negative case: something that sounds similar but should NOT route here.
+{"intent": "What does this book say about mentorship", "expected_skill": null, "ambiguous_with": []}

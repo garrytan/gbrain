@@ -196,12 +196,13 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
 });
 
 describe('check-resolvable — unit: DEFERRED', () => {
-  it('exports two deferred check entries for Checks 5 and 6', () => {
-    expect(DEFERRED.length).toBe(2);
-    expect(DEFERRED[0].check).toBe(5);
-    expect(DEFERRED[0].name).toBe('trigger_routing_eval');
-    expect(DEFERRED[1].check).toBe(6);
-    expect(DEFERRED[1].name).toBe('brain_filing');
+  it('Check 5 shipped in v0.17, Check 6 still deferred', () => {
+    // Pre-v0.17: both Check 5 (routing eval) and Check 6 (brain filing)
+    // were deferred. v0.17 W2 ships Check 5; Check 6 is W3 of v0.17 and
+    // the last entry gets removed when it lands.
+    expect(DEFERRED.length).toBe(1);
+    expect(DEFERRED[0].check).toBe(6);
+    expect(DEFERRED[0].name).toBe('brain_filing');
   });
 });
 
@@ -224,6 +225,9 @@ describe('gbrain check-resolvable CLI — integration', () => {
     expect(r.stdout).toContain('gbrain check-resolvable');
     expect(r.stdout).toContain('--json');
     expect(r.stdout).toContain('--fix');
+    expect(r.stdout).toContain('--strict');
+    // Check 5 shipped in v0.17 (mentioned in the body); Check 6 is
+    // still deferred and must appear under "Deferred to separate issues".
     expect(r.stdout).toContain('Check 5');
     expect(r.stdout).toContain('Check 6');
   });
@@ -235,9 +239,11 @@ describe('gbrain check-resolvable CLI — integration', () => {
     const keys = Object.keys(r.json).sort();
     expect(keys).toEqual(['autoFix', 'deferred', 'error', 'message', 'ok', 'report', 'skillsDir']);
     expect(r.json.ok).toBe(true);
-    expect(r.json.deferred.length).toBe(2);
-    expect(r.json.deferred[0].check).toBe(5);
-    expect(r.json.deferred[1].check).toBe(6);
+    // Check 5 (trigger_routing_eval) shipped in v0.17 W2; only
+    // brain_filing remains in the deferred list.
+    expect(r.json.deferred.length).toBe(1);
+    expect(r.json.deferred[0].check).toBe(6);
+    expect(r.json.deferred[0].name).toBe('brain_filing');
   });
 
   it('--json success: autoFix is null when --fix was not passed', () => {
@@ -327,8 +333,9 @@ describe('gbrain check-resolvable CLI — integration', () => {
     const skillsDir = makeFixture([{ name: 'alpha', triggers: ['alpha'] }], created);
     const r = run(['--verbose', '--skills-dir', skillsDir]);
     expect(r.stdout).toContain('Deferred:');
-    expect(r.stdout).toContain('trigger_routing_eval');
+    // Check 5 shipped in v0.17 (W2); only brain_filing remains deferred.
     expect(r.stdout).toContain('brain_filing');
+    expect(r.stdout).not.toContain('trigger_routing_eval');
   });
 
   it('clean fixture human output says all skills reachable', () => {

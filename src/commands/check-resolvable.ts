@@ -57,14 +57,11 @@ export interface Flags {
   skillsDir: string | null;
 }
 
-// TBD: fill these issue URLs after filing the GitHub issues pre-PR.
-// grep for 'TBD-check-5' / 'TBD-check-6' before shipping.
+// Check 5 (trigger_routing_eval) landed in v0.17 (W2). Check 6
+// (brain_filing) is W3 of v0.17 and this entry is removed when it
+// lands. Leave the DEFERRED export in place — it's a stable public
+// field of the --json envelope and downstream consumers may check it.
 export const DEFERRED: DeferredCheck[] = [
-  {
-    check: 5,
-    name: 'trigger_routing_eval',
-    issue: 'https://github.com/garrytan/gbrain/issues?q=TBD-check-5',
-  },
   {
     check: 6,
     name: 'brain_filing',
@@ -91,8 +88,11 @@ Exit codes:
   0   clean (no errors; no warnings unless --strict)
   1   errors present, OR (with --strict) warnings present
 
+Check 5 (trigger routing eval) lands in v0.17 via W2: any
+skills/<name>/routing-eval.jsonl fixtures are evaluated and routing
+gaps surface as warnings.
+
 Deferred to separate issues (see --json .deferred[]):
-  - Check 5: trigger routing eval
   - Check 6: brain filing
 `;
 

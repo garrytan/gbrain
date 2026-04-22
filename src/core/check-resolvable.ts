@@ -14,6 +14,12 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
 import { findResolverFile, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
 import { loadOrDeriveManifest } from './skill-manifest.ts';
+import {
+  indexResolverTriggers,
+  lintRoutingFixtures,
+  loadRoutingFixtures,
+  runRoutingEval,
+} from './routing-eval.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,7 +33,18 @@ export interface ResolvableFix {
 }
 
 export interface ResolvableIssue {
-  type: 'unreachable' | 'mece_overlap' | 'mece_gap' | 'dry_violation' | 'missing_file' | 'orphan_trigger';
+  type:
+    | 'unreachable'
+    | 'mece_overlap'
+    | 'mece_gap'
+    | 'dry_violation'
+    | 'missing_file'
+    | 'orphan_trigger'
+    // Check 5 (W2): routing eval results surfaced as advisories.
+    | 'routing_miss'
+    | 'routing_ambiguous'
+    | 'routing_false_positive'
+    | 'routing_fixture_lint';
   severity: 'error' | 'warning';
   skill: string;
   message: string;
@@ -428,6 +445,50 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
     } catch {
       // Skip unreadable
     }
+  }
+
+  // Check 5 (W2, v0.17): structural routing eval. Surfaces as warnings
+  // only — routing issues are advisory. Agents running under --strict
+  // will fail on them; default runs see them as informational.
+  const loaded = loadRoutingFixtures(skillsDir);
+  if (loaded.fixtures.length > 0) {
+    const triggerIndex = indexResolverTriggers(resolverContent);
+    const lintIssues = lintRoutingFixtures(loaded.fixtures, triggerIndex);
+    for (const lint of lintIssues) {
+      issues.push({
+        type: 'routing_fixture_lint',
+        severity: 'warning',
+        skill: lint.fixture.expected_skill ?? 'unknown',
+        message: `Routing fixture lint (${lint.reason}): "${lint.fixture.intent}"`,
+        action: `Edit skills/<skill>/routing-eval.jsonl to fix: ${lint.detail}`,
+      });
+    }
+    const routingReport = runRoutingEval(resolverContent, loaded.fixtures);
+    for (const d of routingReport.details) {
+      if (d.outcome === 'pass') continue;
+      const kind =
+        d.outcome === 'missed'
+          ? 'routing_miss'
+          : d.outcome === 'ambiguous'
+            ? 'routing_ambiguous'
+            : 'routing_false_positive';
+      issues.push({
+        type: kind,
+        severity: 'warning',
+        skill: d.fixture.expected_skill ?? 'negative-case',
+        message: `Routing ${d.outcome} for intent "${d.fixture.intent}"`,
+        action: `Update routing-eval.jsonl fixture or broaden resolver triggers in RESOLVER.md (${d.note ?? 'no additional detail'})`,
+      });
+    }
+  }
+  for (const m of loaded.malformed) {
+    issues.push({
+      type: 'routing_fixture_lint',
+      severity: 'warning',
+      skill: 'routing-eval',
+      message: `Malformed routing fixture ${m.file}:${m.line}`,
+      action: `Fix the JSONL in routing-eval.jsonl at line ${m.line}: ${m.error}`,
+    });
   }
 
   const errors = issues.filter(i => i.severity === 'error');
