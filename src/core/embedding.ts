@@ -5,23 +5,40 @@
  * OpenAI text-embedding-3-large at 1536 dimensions.
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
+ *
+ * Environment variables:
+ *   GBRAIN_EMBEDDING_MODEL      - Embedding model name (default: text-embedding-3-large)
+ *   GBRAIN_EMBEDDING_BASE_URL   - Custom endpoint URL (e.g., http://localhost:11434/v1 for Ollama)
+ *   GBRAIN_EMBEDDING_DIMENSIONS - Embedding dimensions (default: 1536)
+ *   OPENAI_BASE_URL / OPENAI_API_KEY - Standard OpenAI SDK env vars
  */
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const MODEL = process.env.GBRAIN_EMBEDDING_MODEL || 'text-embedding-3-large';
+const DIMENSIONS = parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS || '1536', 10);
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
 
+// Support custom base URL for Ollama and other OpenAI-compatible endpoints
+const BASE_URL = process.env.GBRAIN_EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL;
+// Use explicit env var if set (including empty string), otherwise fall back to standard OpenAI env vars
+const API_KEY = process.env.GBRAIN_EMBEDDING_API_KEY !== undefined
+  ? process.env.GBRAIN_EMBEDDING_API_KEY
+  : (process.env.OPENAI_API_KEY || 'not-needed');
+
+
 let client: OpenAI | null = null;
 
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI();
+    client = new OpenAI({
+      baseURL: BASE_URL,
+      apiKey: API_KEY,
+    });
   }
   return client;
 }

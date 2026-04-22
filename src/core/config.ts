@@ -29,6 +29,9 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  embedding_model?: string;
+  embedding_base_url?: string;
+  embedding_dimensions?: number;
 }
 
 /**
@@ -57,6 +60,9 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
+    ...(process.env.GBRAIN_EMBEDDING_BASE_URL ? { embedding_base_url: process.env.GBRAIN_EMBEDDING_BASE_URL } : {}),
+    ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
   };
   return merged as GBrainConfig;
 }
