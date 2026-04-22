@@ -77,7 +77,15 @@ export function resolveGbrainCliPath(): string {
 
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain autopilot [--repo <path>] [--interval N] [--json]\n       gbrain autopilot --install [--repo <path>]\n       gbrain autopilot --uninstall\n       gbrain autopilot --status [--json]\n\nSelf-maintaining brain daemon. Runs sync + extract + embed + backlinks in a loop.');
+    console.log(
+      'Usage: gbrain autopilot [--repo <path>] [--interval N] [--json]\n' +
+      '       gbrain autopilot --install [--repo <path>]\n' +
+      '       gbrain autopilot --uninstall\n' +
+      '       gbrain autopilot --status [--json]\n\n' +
+      'Self-maintaining brain daemon. Runs the full maintenance cycle\n' +
+      '(lint + backlinks + sync + extract + embed + orphans) on an interval.\n\n' +
+      'For a one-shot cron-triggered cycle, see `gbrain dream`.',
+    );
     return;
   }
 
@@ -233,27 +241,32 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         }
       } catch (e) { logError('dispatch', e); cycleOk = false; }
     } else {
-      // Inline fallback — same as pre-v0.11.1 behavior.
-      // 1. Sync
+      // Inline fallback — delegate to runCycle so lint + backlinks +
+      // orphan sweep run too (previously this path only did sync +
+      // extract + embed, which didn't match the Minions-dispatch
+      // path's phase set). Now both converge on the same primitive.
       try {
-        const { performSync } = await import('./sync.ts');
-        const result = await performSync(engine, { repoPath, noEmbed: true });
-        if (result.status === 'synced') {
-          console.log(`[sync] +${result.added} ~${result.modified} -${result.deleted}`);
+        const { runCycle } = await import('../core/cycle.ts');
+        const report = await runCycle(engine, {
+          brainDir: repoPath,
+          // Autopilot daemon path: pulls by default (matches
+          // pre-v0.17 autopilot behavior). CLI dream defaults false
+          // for cron safety; that choice is scoped to dream only.
+          pull: true,
+          yieldBetweenPhases: async () => {
+            await new Promise(r => setImmediate(r));
+          },
+        });
+        if (report.status === 'failed' || report.status === 'partial') {
+          cycleOk = false;
         }
-      } catch (e) { logError('sync', e); cycleOk = false; }
-
-      // 2. Extract (full brain, incremental dedup handles repeats)
-      try {
-        const { runExtractCore } = await import('./extract.ts');
-        await runExtractCore(engine, { mode: 'all', dir: repoPath });
-      } catch (e) { logError('extract', e); cycleOk = false; }
-
-      // 3. Embed stale
-      try {
-        const { runEmbedCore } = await import('./embed.ts');
-        await runEmbedCore(engine, { stale: true });
-      } catch (e) { logError('embed', e); cycleOk = false; }
+        if (jsonMode) {
+          process.stderr.write(JSON.stringify({ event: 'cycle-inline', status: report.status, duration_ms: report.duration_ms, totals: report.totals }) + '\n');
+        } else {
+          const t = report.totals;
+          console.log(`[cycle-inline ${report.status}] lint=${t.lint_fixes} backlinks=${t.backlinks_added} synced=${t.pages_synced} extracted=${t.pages_extracted} embedded=${t.pages_embedded} orphans=${t.orphans_found}`);
+        }
+      } catch (e) { logError('cycle-inline', e); cycleOk = false; }
     }
 
     // 4. Health check + adaptive interval (same for both paths)

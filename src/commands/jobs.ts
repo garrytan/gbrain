@@ -569,58 +569,39 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     return await runBacklinksCore({ action, dir, dryRun: !!job.data.dryRun });
   });
 
-  // The killer handler. Autopilot submits ONE `autopilot-cycle` per cycle
-  // (idempotency_key on cycle slot) instead of a 4-job parent-child DAG,
-  // because Minions' parent/child is NOT a depends_on primitive (Codex
-  // H3/H4). Each step is wrapped in its own try/catch; the handler returns
-  // `{ partial: true, failed_steps: [...] }` when any step fails. It does
-  // NOT throw on partial failure — that would cause the Minion to retry,
-  // and an intermittent extract bug would block every future cycle.
+  // Autopilot-cycle handler: delegates to runCycle. Shares the exact same
+  // phase set and ordering as `gbrain dream` and autopilot's inline path —
+  // one source of truth for what the brain does overnight.
+  //
+  // Yields the event loop between phases so the worker's lock-renewal
+  // timer (src/core/minions/worker.ts) can fire. Without this the v0.14
+  // stall-death regression returns: long CPU-bound phases starve the
+  // renewal callback and the stalled-sweeper kills the job.
+  //
+  // Phase failures surface as report.status='partial' (via runCycle's
+  // derivation); the handler returns { partial, status, report } so
+  // `gbrain jobs get <id>` shows the full structured report. Does NOT
+  // throw on partial: a flaky phase must not block every future cycle.
   worker.register('autopilot-cycle', async (job) => {
-    const { performSync } = await import('./sync.ts');
-    const { runExtractCore } = await import('./extract.ts');
-    const { runEmbedCore } = await import('./embed.ts');
-    const { runBacklinksCore } = await import('./backlinks.ts');
-
+    const { runCycle } = await import('../core/cycle.ts');
     const repoPath = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? '.';
 
-    const steps: Record<string, unknown> = {};
-    const failed: string[] = [];
+    const report = await runCycle(engine, {
+      brainDir: repoPath,
+      pull: true, // autopilot daemon opts into git pull
+      yieldBetweenPhases: async () => {
+        // Yield to the event loop so worker lock-renewal can fire.
+        await new Promise<void>(r => setImmediate(r));
+      },
+    });
 
-    // Bug 8 — Between phases, yield to the event loop. The worker's lock
-    // renewal runs on a timer (src/core/minions/worker.ts); without a
-    // periodic yield, long CPU-bound phases starve the renewal callback
-    // and the job gets killed by the stalled-sweeper. A single
-    // `await new Promise(r => setImmediate(r))` gives the timer a chance
-    // to fire. The per-phase body is async+await already, so each phase
-    // internally yields on its own I/O boundaries — this is a belt for
-    // the gap between phases.
-    //
-    // Follow-up (deferred to v0.15): thread ctx.signal / ctx.shutdownSignal
-    // through each core fn so mid-phase cancellation works on huge brains.
-    const yieldToLoop = () => new Promise<void>(r => setImmediate(r));
-
-    try { steps.sync = await performSync(engine, { repoPath, noEmbed: true }); }
-    catch (e) { steps.sync = { error: e instanceof Error ? e.message : String(e) }; failed.push('sync'); }
-    await yieldToLoop();
-
-    try { steps.extract = await runExtractCore(engine, { mode: 'all', dir: repoPath }); }
-    catch (e) { steps.extract = { error: e instanceof Error ? e.message : String(e) }; failed.push('extract'); }
-    await yieldToLoop();
-
-    try { await runEmbedCore(engine, { stale: true }); steps.embed = { embedded: true }; }
-    catch (e) { steps.embed = { error: e instanceof Error ? e.message : String(e) }; failed.push('embed'); }
-    await yieldToLoop();
-
-    try { steps.backlinks = await runBacklinksCore({ action: 'fix', dir: repoPath }); }
-    catch (e) { steps.backlinks = { error: e instanceof Error ? e.message : String(e) }; failed.push('backlinks'); }
-
-    if (failed.length > 0) {
-      return { partial: true, failed_steps: failed, steps };
-    }
-    return { partial: false, steps };
+    return {
+      partial: report.status === 'partial' || report.status === 'failed',
+      status: report.status,
+      report,
+    };
   });
 
   // Shell handler: registered ONLY when GBRAIN_ALLOW_SHELL_JOBS=1 is set on the
