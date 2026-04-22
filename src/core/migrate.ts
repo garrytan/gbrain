@@ -726,7 +726,13 @@ export const MIGRATIONS: Migration[] = [
           ALTER TABLE budget_reservations ENABLE ROW LEVEL SECURITY;
           RAISE NOTICE 'v24: RLS enabled on 10 backfill tables (role % has BYPASSRLS)', current_user;
         ELSE
-          RAISE WARNING 'v24: Skipping RLS backfill: role % does not have BYPASSRLS privilege. Run as postgres role to enable.', current_user;
+          -- Fail the migration loudly instead of WARNING + version-bump.
+          -- The runner unconditionally records schema_version on success,
+          -- so a silent WARNING here would permanently lock the backfill out
+          -- on future runs even after switching to a bypass role. Raising
+          -- aborts the transaction, leaves schema_version at the prior value,
+          -- and lets the next invocation retry after the role is fixed.
+          RAISE EXCEPTION 'v24 rls_backfill_missing_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
         END IF;
       END $$;
     `,

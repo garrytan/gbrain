@@ -219,7 +219,18 @@ describe('migration v24 — rls_backfill_missing_tables', () => {
     const sql = v24!.sql || '';
     expect(sql).toContain('rolbypassrls');
     expect(sql).toContain('IF has_bypass THEN');
-    expect(sql).toMatch(/RAISE WARNING[^;]*BYPASSRLS/);
+  });
+
+  // Codex found: if v24 RAISE WARNINGs instead of raising on non-BYPASSRLS,
+  // the migration runner still bumps schema_version to 24, permanently
+  // skipping the backfill on future runs even after the role is fixed.
+  // The fix is to raise loudly so the transaction aborts, version stays
+  // at 23, and the next initSchema call retries after role reassignment.
+  test('fails loudly on non-BYPASSRLS roles instead of silently bumping version', () => {
+    const v24 = MIGRATIONS.find(m => m.version === 24);
+    const sql = v24!.sql || '';
+    expect(sql).toMatch(/RAISE EXCEPTION[^;]*BYPASSRLS/);
+    expect(sql).not.toMatch(/RAISE WARNING[^;]*BYPASSRLS/);
   });
 
   test('LATEST_VERSION has caught up to 24', () => {

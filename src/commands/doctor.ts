@@ -341,8 +341,13 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         });
       } else {
         const names = gaps.join(', ');
+        // Double-escape " inside identifiers so a pathological table name
+        // like `weird"table` renders as `"weird""table"` in the remediation
+        // SQL (matches how Postgres parses quoted identifiers). Doubling
+        // any existing " is the minimum needed to keep the output valid
+        // copy-paste SQL. Extremely rare in practice but cheap to get right.
         const fixes = gaps
-          .map(n => `ALTER TABLE "public"."${n}" ENABLE ROW LEVEL SECURITY;`)
+          .map(n => `ALTER TABLE "public"."${n.replace(/"/g, '""')}" ENABLE ROW LEVEL SECURITY;`)
           .join(' ');
         const exemptInfo = exempt.length > 0
           ? ` (${exempt.length} other table(s) explicitly exempt.)`

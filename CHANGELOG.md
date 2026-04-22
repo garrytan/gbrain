@@ -9,7 +9,7 @@ All notable changes to GBrain will be documented in this file.
 
 A follow-up to v0.18.0 that closes a latent security gap the multi-source work didn't touch. `gbrain` itself had been quietly shipping 10 public tables without RLS for months: `access_tokens`, `mcp_request_log`, `minion_inbox`, `minion_attachments`, `subagent_messages`, `subagent_tool_executions`, `subagent_rate_leases`, `gbrain_cycle_locks`, `budget_ledger`, `budget_reservations`. On Supabase, every one of those was reachable by the anon key. `access_tokens` and the subagent conversation history tables are the ones that stand out.
 
-This release closes the gap on three fronts at once: the check gets widened (so future misses surface), the base schema gets the missing 8 `ENABLE RLS` statements for tables it tracks (so fresh installs are secure), and new schema migration v24 `rls_backfill_missing_tables` enables RLS on all 10 of the affected tables in existing brains automatically when `gbrain doctor` or `gbrain apply-migrations` runs. The sources + file_migration_ledger tables introduced in v0.18.0 already had RLS from day one.
+This release closes the gap on three fronts at once: the check gets widened (so future misses surface), the base schema gets the missing 8 `ENABLE RLS` statements for tables it tracks (so fresh installs are secure), and new schema migration v24 `rls_backfill_missing_tables` enables RLS on all 10 of the affected tables in existing brains automatically. The v0.18.1 orchestrator (`src/commands/migrations/v0_18_1.ts`) invokes `gbrain init --migrate-only` during `gbrain apply-migrations --yes`, which is what `gbrain post-upgrade` calls; v24 runs there, not inside `gbrain doctor` itself. The `sources` and `file_migration_ledger` tables introduced in v0.18.0 already had RLS from day one.
 
 The severity also upgrades from `warn` to `fail`. Missing RLS is a security issue, not a suggestion. `gbrain doctor` will exit 1 when any public table is missing RLS. If you wrap `gbrain doctor` in a cron or CI health check, expect it to turn red if anything is still open.
 
@@ -22,8 +22,9 @@ Measured against v0.18.0.
 | Metric | BEFORE v0.18.1 | AFTER v0.18.1 | Δ |
 |--------|----------------|---------------|---|
 | Tables in `public` covered by the doctor RLS check | 10 (hardcoded list) | all (every `pg_tables` row) | +100% coverage |
-| gbrain-managed public tables with RLS on fresh install | 13 of 21 | 21 of 21 | +8 in schema |
-| Tables backfilled by migration v24 on existing brains | 0 | 10 | budget_ledger + budget_reservations covered too |
+| gbrain-managed public tables with RLS after full migration chain | 13 of 23 | 23 of 23 | +10 total |
+| — of which added in base schema v0.18.1 | 13 of 21 | 21 of 21 | +8 in schema |
+| — of which added via migration v24 (budget_ledger + budget_reservations, still migration-only) | 0 | 10 | migration-only tables now covered |
 | `gbrain doctor` severity for missing RLS | warn (exit 0) | fail (exit 1) | breaking |
 | Escape hatch for intentional anon-readable tables | None (silent misses) | `GBRAIN:RLS_EXEMPT reason=...` pg comment | new capability |
 | Identifier-safe remediation SQL (hyphens, reserved words) | No (`ALTER TABLE public.<name>`) | Yes (`ALTER TABLE "public"."<name>"`) | correctness |
@@ -42,9 +43,10 @@ Credit: Garry's OpenClaw for the original PR widening the check (#336). Codex fo
 
 ## To take advantage of v0.18.1
 
-`gbrain upgrade` should do this automatically. Migration v24 runs on the next
-`initSchema()` call, which happens on every CLI or long-running command startup. If
-`gbrain doctor` warns about a partial migration or still reports missing RLS:
+`gbrain upgrade` should do this automatically. It runs `gbrain post-upgrade`,
+which calls `gbrain apply-migrations --yes`, which runs the v0.18.1 orchestrator
+(`gbrain init --migrate-only` → schema migration v24 applied). If `gbrain doctor`
+still reports missing RLS after upgrade:
 
 1. **Apply migrations manually:**
    ```bash
@@ -74,7 +76,8 @@ Credit: Garry's OpenClaw for the original PR widening the check (#336). Codex fo
 ### Itemized changes
 
 - **Schema fix (fresh installs):** `src/schema.sql` now enables RLS on all 21 public tables in the base schema (13 before v0.18.1, +8 added here: `access_tokens`, `mcp_request_log`, `minion_inbox`, `minion_attachments`, `subagent_messages`, `subagent_tool_executions`, `subagent_rate_leases`, `gbrain_cycle_locks`). `src/core/schema-embedded.ts` regenerated.
-- **Schema migration (existing installs):** New migration `v24 rls_backfill_missing_tables` in `src/core/migrate.ts` enables RLS on all 10 affected tables idempotently (the 8 above plus `budget_ledger` and `budget_reservations`, which remain migration-only per v12). Gated on `rolbypassrls` — if the current role does not hold BYPASSRLS, the migration raises a warning and skips, matching the pattern used by the base schema's RLS block. Numbered v24 to slot after v0.18.0's v20-v23 sources-migration wave.
+- **Schema migration (existing installs):** New migration `v24 rls_backfill_missing_tables` in `src/core/migrate.ts` enables RLS on all 10 affected tables idempotently (the 8 above plus `budget_ledger` and `budget_reservations`, which remain migration-only per v12). Gated on `rolbypassrls`; if the current role does not hold BYPASSRLS, the migration `RAISE EXCEPTION`s and aborts so `schema_version` stays at 23. Next `initSchema` call after switching to a bypass role retries cleanly. Numbered v24 to slot after v0.18.0's v20-v23 sources-migration wave.
+- **Upgrade orchestrator:** New `src/commands/migrations/v0_18_1.ts` wires v24 into the `gbrain apply-migrations --yes` path via `gbrain init --migrate-only` (mirrors v0.18.0's Phase A). Without this, `gbrain doctor` and `connectEngine()` never call `initSchema()`, so v24 would sit in the registry but never apply on upgrade.
 - **Doctor check widened:** `src/commands/doctor.ts` RLS check now scans every public table from `pg_tables`, not a hardcoded 10-name allowlist. Severity upgraded `warn → fail`. Success message shows table count. Failure message includes per-table quoted `ALTER TABLE "public"."<name>" ENABLE ROW LEVEL SECURITY;` remediation SQL.
 - **Escape hatch — "write it in blood":** Doctor reads `obj_description` for each non-RLS public table. Tables whose comment matches `^GBRAIN:RLS_EXEMPT\s+reason=\S.{3,}` count as explicitly exempt. Exempt tables are enumerated by name on every successful doctor run so the exemption list never goes invisible. No CLI subcommand — deliberate friction; operators must set the comment in psql.
 - **PGLite skip:** PGLite is embedded and single-user with no PostgREST; the RLS check now skips on PGLite with an explicit `ok` message ("Skipped — no PostgREST exposure, RLS not applicable") instead of the misleading `warn` it emitted before. Partial polish: pgvector, jsonb_integrity, and markdown_body_completeness checks still hit the same `getConnection()` throw → warn pattern on PGLite. Separate follow-up.
