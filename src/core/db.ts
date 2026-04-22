@@ -106,6 +106,7 @@ export async function connect(config: EngineConfig): Promise<void> {
       max: resolvePoolSize(),
       idle_timeout: 20,
       connect_timeout: 10,
+      prepare: false,
       types: {
         // Register pgvector type
         bigint: postgres.BigInt,
