@@ -14,12 +14,16 @@
  *   try { ... } finally { await releaseLock(lock); }
  */
 
-import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, statSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
+import { spawnSync } from 'child_process';
 
 const LOCK_DIR_NAME = '.gbrain-lock';
 const LOCK_FILE = 'lock';
-const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes — embed jobs can be long
+// IMPORTANT: do not expire locks by age alone.
+// Long-running operations (embed/import/autopilot cycles) can legitimately hold
+// the lock for many minutes. Age-based eviction can create two live writers and
+// corrupt the data directory.
 
 export interface LockHandle {
   lockDir: string;
@@ -44,6 +48,28 @@ function isProcessAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function getProcessStartMs(pid: number): number | null {
+  const safePid = Number.isInteger(pid) && pid > 0 ? String(pid) : null;
+  if (!safePid) return null;
+  const res = spawnSync('ps', ['-o', 'etimes=', '-p', safePid], { encoding: 'utf-8' });
+  if (res.status !== 0) return null;
+  const elapsedSec = Number.parseInt(res.stdout.trim(), 10);
+  if (!Number.isFinite(elapsedSec) || elapsedSec < 0) return null;
+  return Date.now() - elapsedSec * 1000;
+}
+
+function isLikelySameProcess(pid: number, acquiredAtMs: number): boolean {
+  if (!Number.isFinite(acquiredAtMs) || acquiredAtMs <= 0) return true;
+  const startedAtMs = getProcessStartMs(pid);
+  // If we cannot verify start time, fail closed: keep waiting rather than
+  // risk deleting a lock owned by a live writer.
+  if (startedAtMs == null) return true;
+  // If the current PID appears to have started after the lock was acquired,
+  // this is likely PID reuse (old owner died; PID got recycled).
+  const SKEW_MS = 2_000;
+  return startedAtMs <= acquiredAtMs + SKEW_MS;
 }
 
 /**
@@ -79,12 +105,14 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
         if (!isProcessAlive(lockPid)) {
           // Stale lock — clean it up
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition, try again */ }
-        } else if (Date.now() - lockTime > STALE_THRESHOLD_MS) {
-          // Lock held for too long — assume stale (e.g., process hung)
-          // Still alive but probably stuck — force remove
+        } else if (!isLikelySameProcess(lockPid, lockTime)) {
+          // PID is alive but appears to have been reassigned since lock creation.
+          // Treat as stale lock from a dead owner.
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
         } else {
-          // Lock is held by a live process — wait and retry
+          // Lock is held by a live process — wait and retry.
+          // Never evict by age alone: long-running jobs are valid and age-based
+          // eviction can create concurrent writers.
           await new Promise(r => setTimeout(r, 1000));
           continue;
         }
