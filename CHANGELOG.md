@@ -2,6 +2,87 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.18.0] - 2026-04-22
+
+## **`gbrain doctor` now enforces Row Level Security on every public table.**
+## **Ten gbrain-managed tables that shipped without RLS are fixed in the base schema and backfilled for existing brains.**
+
+PR #336 started as "widen the doctor RLS check to scan all public tables instead of a hardcoded 10-table list." Once we actually looked, it turned out `gbrain` itself had been quietly shipping 10 public tables without RLS for months: `access_tokens`, `mcp_request_log`, `minion_inbox`, `minion_attachments`, `subagent_messages`, `subagent_tool_executions`, `subagent_rate_leases`, `gbrain_cycle_locks`, `budget_ledger`, `budget_reservations`. On Supabase, every one of those was reachable by the anon key. `access_tokens` and the subagent conversation history tables are the ones that stand out.
+
+This release closes the gap on three fronts at once: the check gets widened (so future misses surface), the base schema gets the missing 10 `ENABLE RLS` statements (so fresh installs are secure), and a new schema migration (v17 `rls_backfill_missing_tables`) enables RLS on existing brains automatically when `gbrain doctor` or `gbrain apply-migrations` runs.
+
+The severity also upgrades from `warn` to `fail`. Missing RLS is a security issue, not a suggestion. `gbrain doctor` will exit 1 when any public table is missing RLS. If you wrap `gbrain doctor` in a cron or CI health check, expect it to turn red if anything is still open.
+
+There is an escape hatch for tables you deliberately want readable by the anon key (analytics, public materialized views, plugin tables that use anon reads on purpose). It is a Postgres `COMMENT ON TABLE` with a `GBRAIN:RLS_EXEMPT reason=<why>` prefix. No CLI subcommand. You drop to psql and type the reason. Full details in [docs/guides/rls-and-you.md](docs/guides/rls-and-you.md). The escape hatch is deliberately painful because the default should be closed.
+
+### The numbers that matter
+
+Measured against the v0.17 schema + doctor check.
+
+| Metric | BEFORE v0.18 | AFTER v0.18 | Δ |
+|--------|--------------|-------------|---|
+| Tables in `public` covered by the doctor RLS check | 10 (hardcoded list) | all (every `pg_tables` row) | +100% coverage |
+| gbrain-managed public tables with RLS enabled on fresh install | 11 of 21 | 21 of 21 | +10 tables |
+| `gbrain doctor` severity for missing RLS | warn (exit 0) | fail (exit 1) | breaking |
+| Escape hatch for intentional anon-readable tables | None (silent misses) | `GBRAIN:RLS_EXEMPT reason=...` pg comment | new capability |
+| Identifier-safe remediation SQL (hyphens, reserved words) | No (`ALTER TABLE public.<name>`) | Yes (`ALTER TABLE "public"."<name>"`) | correctness |
+| PGLite doctor output for RLS | Misleading warn ("Could not check...") | Clean `ok` with skip reason | UX |
+| Exemption list surfaced on every doctor run | n/a | Yes, enumerated by name | audit signal |
+
+### What this means for your workflow
+
+Existing Supabase brains: run `gbrain doctor` after upgrading. The backfill migration runs automatically on the next `initSchema()` (which every gbrain connection does on startup), so by the time doctor runs you're clean. If doctor still fails, the message names the table and gives you the exact `ALTER TABLE` line.
+
+PGLite brains (the `gbrain init` default): nothing to do. RLS is irrelevant on embedded Postgres. Doctor skips the check with an explicit message.
+
+Cron and CI wrappers: audit them. The exit-code flip is the one breaking change in this release. If your wrapper pages on exit-1, that's correct behavior now. If you need a softer signal for a specific table that you've decided is anon-readable on purpose, use the GBRAIN:RLS_EXEMPT comment escape hatch. Don't silence the whole check.
+
+Credit: Garry's OpenClaw for the original PR widening the check. Codex found the schema gap during plan review.
+
+## To take advantage of v0.18.0
+
+`gbrain upgrade` should do this automatically. The schema migration runs on the next
+`initSchema()` call, which happens on every CLI or long-running command startup. If
+`gbrain doctor` warns about a partial migration or still reports missing RLS:
+
+1. **Apply migrations manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Re-run the health check:**
+   ```bash
+   gbrain doctor
+   ```
+3. **If specific tables still fail**, the doctor message names each one and gives you the fix. Example:
+   ```
+   1 table(s) WITHOUT Row Level Security: my_plugin_state. Fix: ALTER TABLE "public"."my_plugin_state" ENABLE ROW LEVEL SECURITY;
+   ```
+4. **If a table should stay readable by the anon key on purpose**, use the escape hatch (see `docs/guides/rls-and-you.md`):
+   ```sql
+   COMMENT ON TABLE public.my_analytics_view IS
+     'GBRAIN:RLS_EXEMPT reason=analytics-only, anon-readable ok, owner=you, date=2026-04-22';
+   ```
+5. **If any step fails or the numbers look wrong**, please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor --json`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+### Itemized changes
+
+- **Schema fix (fresh installs):** `src/schema.sql` now enables RLS on all 21 public tables in the base schema (11 before, +10 new: `access_tokens`, `mcp_request_log`, `minion_inbox`, `minion_attachments`, `subagent_messages`, `subagent_tool_executions`, `subagent_rate_leases`, `gbrain_cycle_locks`, `budget_ledger`, `budget_reservations`). `budget_ledger` + `budget_reservations` were previously migration-only (v12); promoted to the base schema so fresh installs pick up RLS from the standard gate. `src/core/schema-embedded.ts` regenerated.
+- **Schema migration (existing installs):** New migration `v17 rls_backfill_missing_tables` in `src/core/migrate.ts` enables RLS on all 10 tables idempotently. Gated on `rolbypassrls` — if the current role does not hold BYPASSRLS, the migration raises a warning and skips, matching the pattern used by the base schema's RLS block.
+- **Doctor check widened:** `src/commands/doctor.ts` RLS check now scans every public table from `pg_tables`, not a hardcoded 10-name allowlist. Severity upgraded `warn → fail`. Success message shows table count (`RLS enabled on 19/19 public tables`). Failure message includes per-table quoted `ALTER TABLE "public"."<name>" ENABLE ROW LEVEL SECURITY;` remediation SQL.
+- **Escape hatch — "write it in blood":** Doctor reads `obj_description` for each non-RLS public table. Tables whose comment matches `^GBRAIN:RLS_EXEMPT\s+reason=\S.{3,}` count as explicitly exempt. Exempt tables are enumerated by name on every successful doctor run so the exemption list never goes invisible. No CLI subcommand — deliberate friction; operators must set the comment in psql.
+- **PGLite skip:** PGLite is embedded and single-user with no PostgREST; the RLS check now skips on PGLite with an explicit `ok` message ("Skipped — no PostgREST exposure, RLS not applicable") instead of the misleading `warn` it emitted before. Partial polish: pgvector, jsonb_integrity, and markdown_body_completeness checks still hit the same `getConnection()` throw → warn pattern on PGLite. Separate follow-up.
+- **Tests:**
+  - `test/doctor.test.ts` gains four source-grep structural regression guards: scan has no `tablename IN` filter, status=fail with quoted-identifier remediation, PGLite skip wrapper present, `GBRAIN:RLS_EXEMPT` + `reason=` parsing present.
+  - `test/e2e/mechanical.test.ts` `E2E: RLS Verification` block rewritten: the old hardcoded-allowlist query test is replaced with a "every public table has RLS" assertion; four new CLI-spawn tests verify fail-on-no-RLS (with exit code + ALTER TABLE in JSON message), exempt-with-valid-reason passes, exempt-with-empty-reason still fails, and unrelated comment still fails. All helpers use `try/finally` with unique suffix-per-run table names so assertion failures never pollute subsequent tests.
+  - `test/migrate.test.ts` gains a structural guard for v17: exists, name matches, all 10 ALTER TABLE statements present, BYPASSRLS gating present, LATEST_VERSION ≥ 17.
+- **Docs:** new `docs/guides/rls-and-you.md` — one-page explainer covering why RLS matters, what to do when doctor fails, the escape hatch format + rules, auditing exemptions, PGLite behavior, self-hosted Postgres framing.
+- **Version reconciliation:** `VERSION` (`0.17.0` → `0.18.0`) and `package.json` (`0.16.4` → `0.18.0`) both land on `0.18.0`. `src/version.ts` reads from `package.json`, so runtime `gbrain --version` was stuck at `0.16.4` before this release. Now accurate.
+- **CHANGELOG privacy sweep:** replaced a stale `@Wintermute` credit in the 0.17.0 entry with "Garry's OpenClaw" per the [CLAUDE.md privacy rule](CLAUDE.md).
+
 ## [0.17.0] - 2026-04-22
 
 ## **`gbrain dream`. Run the brain maintenance cycle while you sleep.**
@@ -36,7 +117,7 @@ Autopilot users: nothing to do. Your daemon picks up the new phases on next cycl
 
 Reviewers/codex caught three plan-breakers during multi-round review that would have shipped silent DB writes on dry-run: (1) `performSync`'s full-sync path was ignoring `opts.dryRun`, (2) `runEmbedCore` had no dry-run mode and returned void, (3) `findOrphans` used `db.getConnection()` global and didn't compose with a passed engine. All three are fixed as preconditions (commits 1-3 of the 6-commit bisectable series).
 
-Credit: @Wintermute for the original `gbrain dream` thesis (PR #309). The brand-promise framing survived; the implementation got redesigned from scratch around the runCycle primitive after CEO + Eng + Codex + DX review found structural issues.
+Credit: Garry's OpenClaw for the original `gbrain dream` thesis (PR #309). The brand-promise framing survived; the implementation got redesigned from scratch around the runCycle primitive after CEO + Eng + Codex + DX review found structural issues.
 
 ## To take advantage of v0.17.0
 
