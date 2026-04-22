@@ -18,7 +18,7 @@ let owner: number; // a minion_jobs.id to own leases (FK target)
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
-  await engine.connect({ databaseUrl: '' });
+  await engine.connect({ database_url: '' });
   await engine.initSchema();
   queue = new MinionQueue(engine);
 });

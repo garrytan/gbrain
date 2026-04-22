@@ -41,7 +41,7 @@ export interface AggregatorResult {
 
 /** v0.15 aggregator: synchronous read from inbox, no LLM call. */
 export async function subagentAggregatorHandler(ctx: MinionJobContext): Promise<AggregatorResult> {
-  const data = (ctx.data ?? {}) as AggregatorHandlerData;
+  const data = (ctx.data ?? {}) as unknown as AggregatorHandlerData;
   const expectedIds = Array.isArray(data.children_ids) ? data.children_ids : [];
 
   if (expectedIds.length === 0) {

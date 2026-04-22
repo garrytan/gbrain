@@ -117,7 +117,7 @@ export async function repairJsonb(opts: RepairOpts = { dryRun: false }): Promise
         const rows = await sql.unsafe(
           `SELECT count(*)::int AS n FROM ${t.table} WHERE jsonb_typeof(${t.column}) = 'string'`,
         );
-        repaired = (rows[0] as { n: number }).n;
+        repaired = (rows[0] as unknown as { n: number }).n;
       } else {
         const rows = await sql.unsafe(
           `UPDATE ${t.table}

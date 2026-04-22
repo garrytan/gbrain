@@ -217,10 +217,9 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   phases.push(e);
 
   // F. Record
+  // a.status was narrowed to 'skipped' | 'complete' by the early return above.
   const overallStatus: 'complete' | 'partial' | 'failed' =
-    a.status === 'failed' ? 'failed' :
-    phases.some(p => p.status === 'failed') ? 'partial' :
-    'complete';
+    phases.some(p => p.status === 'failed') ? 'partial' : 'complete';
 
   return finalizeResult(phases, overallStatus);
 }

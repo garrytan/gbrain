@@ -22,8 +22,8 @@ describe('doctor command', () => {
   });
 
   test('Check interface supports issues array', async () => {
-    const { Check } = await import('../src/commands/doctor.ts');
-    // The Check type allows an optional issues array for resolver findings
+    // `Check` is a TypeScript interface — type-only, no runtime value.
+    // Importing it for type assertion is enough to validate the shape.
     const check: import('../src/commands/doctor.ts').Check = {
       name: 'resolver_health',
       status: 'warn',

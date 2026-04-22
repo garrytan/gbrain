@@ -269,7 +269,7 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
   if (ctx.signal.aborted) sigAbort();
   if (ctx.shutdownSignal.aborted) shutdownAbort();
 
-  const exitCode: number = await new Promise((resolve, reject) => {
+  const exitCode: number = await new Promise<number>((resolve, reject) => {
     proc.on('error', (err) => {
       reject(err);
     });

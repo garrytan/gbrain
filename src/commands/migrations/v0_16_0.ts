@@ -95,10 +95,9 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   const b = await phaseBVerify(opts);
   phases.push(b);
 
+  // a.status was narrowed to 'skipped' | 'complete' by the early return above.
   const status: 'complete' | 'partial' | 'failed' =
-    a.status === 'failed' ? 'failed' :
-    b.status === 'failed' ? 'partial' :
-    'complete';
+    b.status === 'failed' ? 'partial' : 'complete';
 
   return finalize(phases, status);
 }

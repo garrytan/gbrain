@@ -182,7 +182,7 @@ describe('schema migration v12 — minion_quiet_hours_stagger', () => {
     engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite', database_path: dbDir });
     await engine.initSchema();
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await engine.disconnect();

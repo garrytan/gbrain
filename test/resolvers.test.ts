@@ -242,7 +242,7 @@ describe('url_reachable resolver', () => {
   });
 
   test('200 response → reachable=true', async () => {
-    globalThis.fetch = (async () => new Response('', { status: 200 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response('', { status: 200 })) as unknown as typeof fetch;
     const r = await urlReachableResolver.resolve({
       input: { url: 'https://example.com/ok' },
       context: makeCtx(),
@@ -252,7 +252,7 @@ describe('url_reachable resolver', () => {
   });
 
   test('404 response → reachable=false with status + reason', async () => {
-    globalThis.fetch = (async () => new Response('', { status: 404 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response('', { status: 404 })) as unknown as typeof fetch;
     const r = await urlReachableResolver.resolve({
       input: { url: 'https://example.com/dead' },
       context: makeCtx(),
@@ -268,7 +268,7 @@ describe('url_reachable resolver', () => {
       callCount++;
       if (init?.method === 'HEAD') return new Response('', { status: 405 });
       return new Response('ok', { status: 200 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const r = await urlReachableResolver.resolve({
       input: { url: 'https://example.com/post-only' },
       context: makeCtx(),
@@ -283,7 +283,7 @@ describe('url_reachable resolver', () => {
       new Response('', { status: 200 }),
     ];
     let i = 0;
-    globalThis.fetch = (async () => responses[i++]) as typeof fetch;
+    globalThis.fetch = (async () => responses[i++]) as unknown as typeof fetch;
     const r = await urlReachableResolver.resolve({
       input: { url: 'https://example.com/redirect' },
       context: makeCtx(),
@@ -296,7 +296,7 @@ describe('url_reachable resolver', () => {
     globalThis.fetch = (async () => new Response('', {
       status: 302,
       headers: { location: 'http://127.0.0.1/admin' },
-    })) as typeof fetch;
+    })) as unknown as typeof fetch;
     const r = await urlReachableResolver.resolve({
       input: { url: 'https://example.com/redirects-to-local' },
       context: makeCtx(),
@@ -306,7 +306,7 @@ describe('url_reachable resolver', () => {
   });
 
   test('fetch network failure → reachable=false, confidence=1', async () => {
-    globalThis.fetch = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+    globalThis.fetch = (async () => { throw new TypeError('fetch failed'); }) as unknown as typeof fetch;
     const r = await urlReachableResolver.resolve({
       input: { url: 'https://nonexistent.example/' },
       context: makeCtx(),
@@ -338,7 +338,7 @@ describe('url_reachable resolver', () => {
       const err = new Error('aborted');
       err.name = 'AbortError';
       throw err;
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     ac.abort();
     try {
       await urlReachableResolver.resolve({
@@ -475,7 +475,7 @@ describe('x_handle_to_tweet resolver', () => {
     globalThis.fetch = (async () => new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
-    })) as typeof fetch;
+    })) as unknown as typeof fetch;
     const r = await xHandleToTweetResolver.resolve({
       input: { handle: 'garrytan', keywords: 'nothing matches' },
       context: makeCtx(),
@@ -491,7 +491,7 @@ describe('x_handle_to_tweet resolver', () => {
       data: [
         { id: '123', text: 'talking about building gbrain today', created_at: '2026-04-18T00:00:00Z' },
       ],
-    }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     const r = await xHandleToTweetResolver.resolve({
       input: { handle: 'garrytan', keywords: 'building gbrain' },
       context: makeCtx(),
@@ -505,7 +505,7 @@ describe('x_handle_to_tweet resolver', () => {
     process.env.X_API_BEARER_TOKEN = 'fake';
     globalThis.fetch = (async () => new Response(JSON.stringify({
       data: [{ id: '1', text: 'something unrelated entirely', created_at: '2026-04-18T00:00:00Z' }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     const r = await xHandleToTweetResolver.resolve({
       input: { handle: 'garrytan', keywords: 'gbrain knowledge runtime specific terms' },
       context: makeCtx(),
@@ -523,7 +523,7 @@ describe('x_handle_to_tweet resolver', () => {
     }));
     globalThis.fetch = (async () => new Response(JSON.stringify({ data }), {
       status: 200, headers: { 'content-type': 'application/json' },
-    })) as typeof fetch;
+    })) as unknown as typeof fetch;
     const r = await xHandleToTweetResolver.resolve({
       input: { handle: 'garrytan', keywords: 'completely different signal words unlikely to match' },
       context: makeCtx(),
@@ -535,7 +535,7 @@ describe('x_handle_to_tweet resolver', () => {
 
   test('401 → ResolverError(auth)', async () => {
     process.env.X_API_BEARER_TOKEN = 'fake';
-    globalThis.fetch = (async () => new Response('unauthorized', { status: 401 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response('unauthorized', { status: 401 })) as unknown as typeof fetch;
     try {
       await xHandleToTweetResolver.resolve({
         input: { handle: 'garrytan' },
@@ -549,7 +549,7 @@ describe('x_handle_to_tweet resolver', () => {
 
   test('403 → ResolverError(auth)', async () => {
     process.env.X_API_BEARER_TOKEN = 'fake';
-    globalThis.fetch = (async () => new Response('forbidden', { status: 403 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response('forbidden', { status: 403 })) as unknown as typeof fetch;
     try {
       await xHandleToTweetResolver.resolve({
         input: { handle: 'garrytan' },
@@ -563,7 +563,7 @@ describe('x_handle_to_tweet resolver', () => {
 
   test('500 → ResolverError(upstream) with body snippet', async () => {
     process.env.X_API_BEARER_TOKEN = 'fake';
-    globalThis.fetch = (async () => new Response('internal err', { status: 500 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response('internal err', { status: 500 })) as unknown as typeof fetch;
     try {
       await xHandleToTweetResolver.resolve({
         input: { handle: 'garrytan' },
@@ -582,7 +582,7 @@ describe('x_handle_to_tweet resolver', () => {
     globalThis.fetch = (async () => {
       calls++;
       return new Response('rate', { status: 429, headers: { 'retry-after': '0' } });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     try {
       await xHandleToTweetResolver.resolve({
         input: { handle: 'garrytan' },
@@ -603,7 +603,7 @@ describe('x_handle_to_tweet resolver', () => {
       return new Response(JSON.stringify({ data: [] }), {
         status: 200, headers: { 'content-type': 'application/json' },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     await xHandleToTweetResolver.resolve({
       input: { handle: 'garrytan', keywords: 'from:evil_user lang:ja to:someone normal words' },
       context: makeCtx(),

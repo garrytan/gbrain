@@ -30,7 +30,7 @@ import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
 function readQuietHoursConfig(job: MinionJob): QuietHoursConfig | null {
   const cfg = (job as MinionJob & { quiet_hours?: unknown }).quiet_hours;
   if (!cfg || typeof cfg !== 'object') return null;
-  return cfg as QuietHoursConfig;
+  return cfg as unknown as QuietHoursConfig;
 }
 
 /** Per-job in-flight state (isolated per job, not shared on the worker). */

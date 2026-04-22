@@ -32,7 +32,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-});
+}, 60_000);
 
 afterAll(async () => {
   await engine.disconnect();
@@ -55,7 +55,7 @@ const companyPage = (title: string, body = ''): PageInput => ({
 beforeEach(async () => {
   await truncateAll();
   brainDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-fs-'));
-});
+}, 15_000);
 
 function writeFile(rel: string, content: string) {
   const full = join(brainDir, rel);

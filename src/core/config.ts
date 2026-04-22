@@ -29,6 +29,13 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  /**
+   * Optional storage backend config (S3/Supabase/local). Shape matches
+   * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
+   * a cyclic import; callers pass this through `createStorage()` which
+   * validates the shape at runtime.
+   */
+  storage?: unknown;
 }
 
 /**

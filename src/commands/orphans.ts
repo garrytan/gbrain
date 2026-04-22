@@ -115,7 +115,7 @@ export async function queryOrphanPages(): Promise<{ slug: string; title: string;
     )
     ORDER BY p.slug
   `;
-  return rows as { slug: string; title: string; domain: string | null }[];
+  return rows as unknown as { slug: string; title: string; domain: string | null }[];
 }
 
 /**

@@ -201,7 +201,7 @@ describe('scanIntegrity', () => {
       timeline: '',
       frontmatter: { validate: false },
     });
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await engine.disconnect();

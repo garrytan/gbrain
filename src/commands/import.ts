@@ -38,12 +38,13 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
-  const dir = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
+  const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
-  if (!dir) {
+  if (!dirArg) {
     console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
     process.exit(1);
   }
+  const dir: string = dirArg;  // narrowed; survives closure capture
 
   // Collect all .md files
   const allFiles = collectMarkdownFiles(dir);

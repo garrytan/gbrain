@@ -12,7 +12,7 @@ let queue: MinionQueue;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
-  await engine.connect({ databaseUrl: '' }); // in-memory
+  await engine.connect({ database_url: '' }); // in-memory
   await engine.initSchema();
   queue = new MinionQueue(engine);
 });

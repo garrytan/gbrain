@@ -159,5 +159,5 @@ export async function withTransaction<T>(fn: (tx: ReturnType<typeof postgres>) =
   const conn = getConnection();
   return conn.begin(async (tx) => {
     return fn(tx as unknown as ReturnType<typeof postgres>);
-  });
+  }) as Promise<T>;
 }

@@ -25,7 +25,7 @@ const config: GBrainConfig = { engine: 'pglite' } as GBrainConfig;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
-  await engine.connect({ databaseUrl: '' });
+  await engine.connect({ database_url: '' });
   await engine.initSchema();
 });
 

@@ -2,6 +2,87 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.16.3] - 2026-04-22
+
+## **`gbrain agent run` actually runs now. The subagent SDK wiring that shipped broken in v0.16.0 is fixed.**
+## **Every `.ts` file in the repo typechecks on every `bun run test`. Silent regressions end here.**
+
+v0.16.0 shipped with the headline feature, `gbrain agent run`, unable to make a single LLM call. `makeSubagentHandler` cast `new Anthropic()` straight to `MessagesClient`, but the SDK exposes `.create()` at `sdk.messages.create`, not on the top-level client. Every subagent job in production died on the first call with `client.create is not a function`. The type system would have caught it. Nothing was running the type system.
+
+The root cause isn't the casting bug. It's that `bun test` transpiles TypeScript without type-checking it, and `bun test` was the entire CI pipeline. Invalid types ran until they hit runtime. This release fixes the symptom (one-line change, `deps.client ?? new Anthropic().messages`, which typechecks cleanly against `MessagesClient` because `sdk.messages` IS the right object) and closes the hole that let it ship (`tsc --noEmit` now runs on every `bun run test`, and the CI workflow runs `bun run test` not `bun test`). Two independent guards: anyone reverting to `new Anthropic()` fails the type check; a new regression test drives one handler turn through an injected fake SDK and fails loudly if the factory default branch breaks.
+
+Closing the CI gap surfaced 100+ pre-existing type errors across 30+ files: `databaseUrl` → `database_url` rename drift, missing `"meeting"` / `"note"` entries in the `PageType` union that both src and tests already used, a Buffer-as-BodyInit assignment in the Supabase uploader, dead-code comparisons against narrowed status types in the migration orchestrators, and several `as X` casts that TS 5.6 requires be spelled `as unknown as X`. All cleaned up. The first tsc run is green.
+
+### The numbers that matter
+
+From the merged branch after both the fix and the infra cleanup landed locally against master.
+
+| Metric | Before | After | Δ |
+|---|---|---|---|
+| `bun run typecheck` errors | 104 | 0 | -104 |
+| `gbrain agent run` in prod | 100% failure on first LLM call | Works | ✅ |
+| Test file count | ~75 | ~75 (+1 regression test block) | +1 |
+| `bun run test` pass rate | 1962 pass / 4 fail (PGLite flake under parallel load) | 1997 pass / 0 fail | +35 pass, -4 fail |
+| CI test-gate steps | `bun test` (no type check) | `bun run test` (jsonb guard + progress-to-stdout guard + `tsc --noEmit` + `bun test`) | 1→4 |
+| Regression guards on this bug class | 0 | 2 (compile-time via `tsc`, runtime via `makeAnthropic` injection test) | +2 |
+
+The 104 → 0 isn't a refactor. Every error was a real correctness signal TS had been trying to send that nobody was listening for. Most were trivial to fix (`as unknown as X`, one missing union member, one rename propagation). The Buffer/BodyInit one in Supabase upload is a live bug — `fetch(url, {body: buf})` works today in Node/Bun but has no type guarantee; the fix copies `data.buffer, data.byteOffset, data.byteLength` into a `Uint8Array` slice that is genuinely assignable to `BodyInit`.
+
+### What this means for operators
+
+`gbrain agent run "say hello"` against a Supabase brain completes end-to-end after this upgrade. No stuck subagent jobs, no `client.create is not a function` traceback. v0.16.0 users should upgrade immediately — the feature that release was named for did not work.
+
+### Itemized changes
+
+#### `gbrain agent run` now works against the real Anthropic SDK
+
+- `src/core/minions/handlers/subagent.ts` — factory default construction replaced with `const client: MessagesClient = deps.client ?? makeAnthropic().messages`. The SDK's `Messages` resource is already the right object; no helper, no wrapper, no `.bind()` needed (method-call semantics preserve `this`). `const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic())` adds a dependency-injection seam so tests can exercise the default branch without a real API key or network call.
+- `test/subagent-handler.test.ts` — new `describe('makeSubagentHandler default client construction')` block drives a full handler turn through a fake SDK injected via `makeAnthropic`. If anyone reverts `.messages` or reintroduces a `new Anthropic()` top-level cast, this test fails loudly.
+
+#### CI type-checking is now real
+
+- `package.json` — added `typescript@^5.6.0` as devDep; added `"typecheck": "tsc --noEmit"` script; chained `bun run typecheck` into `"test"` so local `bun run test` and CI run identical pipelines (grep guards + typecheck + bun test).
+- `.github/workflows/test.yml` — CI now runs `bun run test` (the npm script) instead of `bun test` (the runner). One line. Biggest-leverage change in the release.
+
+#### 100+ pre-existing type errors cleaned up
+
+So `tsc --noEmit` actually stays green. All mechanical, zero behavior change. Groups:
+
+- **`databaseUrl` → `database_url` rename drift** in 9 test fixtures (test/agent-cli, test/brain-allowlist, test/minions-shell, test/minions, test/queue-child-done, test/rate-leases, test/subagent-handler, test/subagent-transcript, test/wait-for-completion).
+- **`PageType` union** in `src/core/types.ts` gained `'meeting'` and `'note'` entries. Both were already used in src (`link-extraction.ts` had a code comment acknowledging the gap) and across 6 test files. The union was just out of date.
+- **`GBrainConfig.storage`** field declared in `src/core/config.ts` — the code at `src/commands/files.ts` and `src/core/operations.ts` was reading `config.storage` with 18 inferred-type errors.
+- **`ErrorCode`** union in `src/core/operations.ts` gained `'permission_denied'`; the code was throwing this exact string but the union disagreed.
+- **Dead-code comparisons** removed from `src/commands/migrations/v0_12_0.ts`, `v0_12_2.ts`, `v0_13_0.ts`, `v0_16_0.ts` — each orchestrator had an early-return on `a.status === 'failed'` followed later by a redundant check against a then-narrowed type. TS correctly flagged the later check as always-false.
+- **postgres.js `Row` callback typing** on `src/core/postgres-engine.ts` — 6 `.map((r: { slug: string }) => r.slug)` callbacks rewritten as `.map((r) => r.slug as string)` to match postgres.js's `Row` generic. Same behavior, correct signature.
+- **Buffer → BodyInit** in `src/core/storage/supabase.ts:58,129` — `body: data` (Buffer) replaced with `body: new Uint8Array(data.buffer, data.byteOffset, data.byteLength) as BodyInit`. Zero-copy view of the same bytes, structurally assignable to `BodyInit`, no runtime change.
+- **Various `as X` casts** upgraded to `as unknown as X` where TS 5.6's stricter structural-conversion rules rejected the single-step cast. Affected: `src/core/file-resolver.ts` (3), `src/core/minions/handlers/subagent-aggregator.ts`, `src/core/minions/worker.ts`, `src/commands/orphans.ts`, `src/commands/repair-jsonb.ts`, `src/core/postgres-engine.ts` (2 RowList → array conversions).
+
+#### Test suite stability
+
+- `bunfig.toml` — new file. Sets `[test].timeout = 60_000` globally. PGLite WASM init is slow enough that the default 5-second hook timeout flakes when many test files spin up PGLite instances in parallel on a loaded machine.
+- 8 test files (`test/wait-for-completion`, `test/extract-fs`, `test/subagent-handler`, `test/minions-shell`, `test/minions-quiet-hours`, `test/integrity`, `test/e2e/graph-quality`, `test/e2e/search-quality`) additionally declare `beforeAll(fn, 60_000)` / `beforeEach(fn, 15_000)` as explicit safety nets — redundant with `bunfig.toml` today, but stays as belt-and-suspenders if the bunfig schema ever changes.
+
+## To take advantage of v0.16.3
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about anything:
+
+1. **Verify your brain still runs:**
+   ```bash
+   gbrain doctor
+   ```
+2. **Verify the agent runtime works:**
+   ```bash
+   gbrain agent run "say hello"
+   ```
+   Should complete end-to-end. If it fails with `client.create is not a function`, the upgrade didn't land — run `gbrain upgrade` again.
+3. **No migrations required.** No schema changes in this release. Fix is in the handler code, not the DB.
+4. **If any step fails,** please file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - output of `gbrain agent run "say hello"`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+
+### Itemized changes
+
 ## [0.16.2] - 2026-04-22
 
 ## **The deployment guide now reads like a runbook an agent can execute line-by-line.**

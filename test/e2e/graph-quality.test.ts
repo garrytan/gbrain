@@ -22,7 +22,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-});
+}, 60_000);
 
 afterAll(async () => {
   await engine.disconnect();
@@ -44,7 +44,7 @@ function makeContext(): OperationContext {
 }
 
 describe('E2E graph quality (v0.10.1 pipeline)', () => {
-  beforeEach(truncateAll);
+  beforeEach(truncateAll, 15_000);
 
   test('full pipeline: seed -> link-extract -> timeline-extract -> verify', async () => {
     // Seed 5 pages with entity refs and timeline content.

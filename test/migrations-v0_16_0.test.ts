@@ -55,20 +55,20 @@ describe('v0.16.0 migration', () => {
   });
 
   test('phaseASchema skips on dry-run', () => {
-    const r = __testing.phaseASchema({ dryRun: true });
+    const r = __testing.phaseASchema({ dryRun: true, yes: true, noAutopilotInstall: true });
     expect(r.status).toBe('skipped');
     expect(r.detail).toBe('dry-run');
   });
 
   test('phaseBVerify skips on dry-run', async () => {
-    const r = await __testing.phaseBVerify({ dryRun: true });
+    const r = await __testing.phaseBVerify({ dryRun: true, yes: true, noAutopilotInstall: true });
     expect(r.status).toBe('skipped');
     expect(r.detail).toBe('dry-run');
   });
 
   test('orchestrator in dry-run returns complete with both phases skipped', async () => {
     const m = getMigration('0.16.0');
-    const result = await m!.orchestrator({ dryRun: true });
+    const result = await m!.orchestrator({ dryRun: true, yes: true, noAutopilotInstall: true });
     expect(result.version).toBe('0.16.0');
     expect(result.phases.length).toBe(2);
     expect(result.phases.every(p => p.status === 'skipped')).toBe(true);

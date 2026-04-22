@@ -71,6 +71,13 @@ export interface SubagentDeps {
   engine: BrainEngine;
   /** Anthropic client. Defaults to the SDK-constructed client. */
   client?: MessagesClient;
+  /**
+   * Anthropic SDK constructor. Defaults to `() => new Anthropic()`.
+   * Overridable in tests so the factory default-client branch is
+   * exercisable without an ANTHROPIC_API_KEY or a real API call.
+   * When `deps.client` is provided, this is unused.
+   */
+  makeAnthropic?: () => Anthropic;
   /** Config (MCP, brain, etc.). Defaults to loadConfig(). */
   config?: GBrainConfig;
   /** Rate-lease key. Defaults to `anthropic:messages`. */
@@ -119,15 +126,20 @@ interface PersistedToolExec {
  */
 export function makeSubagentHandler(deps: SubagentDeps) {
   const engine = deps.engine;
-  const client: MessagesClient =
-    deps.client ?? (new Anthropic() as unknown as MessagesClient);
+  // sdk.messages IS the MessagesClient-shaped object. The v0.16.0 bug was
+  // casting new Anthropic() (top level) to MessagesClient, but .create()
+  // lives at sdk.messages.create. Assigning sdk.messages directly gets the
+  // right object; JS method-call semantics preserve `this` at the call
+  // site (subagent.ts invokes client.create(...) with client === sdk.messages).
+  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
+  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
   const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
   const leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
 
   return async function subagentHandler(ctx: MinionJobContext): Promise<SubagentResult> {
-    const data = (ctx.data ?? {}) as SubagentHandlerData;
+    const data = (ctx.data ?? {}) as unknown as SubagentHandlerData;
     if (!data.prompt || typeof data.prompt !== 'string') {
       throw new Error('subagent job data.prompt is required (string)');
     }

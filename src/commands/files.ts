@@ -421,7 +421,7 @@ async function mirrorFiles(args: string[]) {
   // Write .supabase marker
   const marker = stringify({
     synced_at: new Date().toISOString(),
-    bucket: config.storage.bucket || 'brain-files',
+    bucket: (config.storage as { bucket?: string })?.bucket || 'brain-files',
     prefix: basename(dir) + '/',
     file_count: uploaded,
   });

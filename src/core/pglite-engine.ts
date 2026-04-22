@@ -113,7 +113,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async putPage(slug: string, page: PageInput): Promise<Page> {
     slug = validateSlug(slug);
-    const hash = page.content_hash || contentHash(page.compiled_truth, page.timeline || '');
+    const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
     const { rows } = await this.db.query(

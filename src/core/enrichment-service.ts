@@ -113,8 +113,8 @@ export async function enrichEntity(
   let timelineAdded = false;
   try {
     await engine.addTimelineEntry(slug, {
-      date: new Date().toISOString().split('T')[0],
-      content: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`,
+      date: new Date().toISOString().split('T')[0] ?? '',
+      summary: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`,
       source: request.sourceSlug,
     });
     timelineAdded = true;
@@ -161,7 +161,7 @@ export async function enrichEntities(
     }
     const result = await enrichEntity(engine, req);
     results.push(result);
-    config?.onProgress?.(results.length, requests.length, req.name);
+    config?.onProgress?.(results.length, requests.length, req.entityName);
   }
   return results;
 }

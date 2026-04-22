@@ -24,7 +24,8 @@ export type ErrorCode =
   | 'embedding_failed'
   | 'storage_error'
   | 'bucket_not_found'
-  | 'database_error';
+  | 'database_error'
+  | 'permission_denied';
 
 export class OperationError extends Error {
   constructor(

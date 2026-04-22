@@ -25,9 +25,12 @@ import { xHandleToTweetResolver } from '../core/resolvers/builtin/x-api/handle-t
  * to call from multiple entry points.
  */
 export function registerBuiltinResolvers(registry = getDefaultRegistry()): void {
-  const builtins = [urlReachableResolver, xHandleToTweetResolver] as const;
+  // Cast each element to the widest shape the registry accepts. The tuple
+  // element types diverge (different Input/Output generics) so the union
+  // type would not satisfy registry.register's single-signature parameter.
+  const builtins = [urlReachableResolver, xHandleToTweetResolver];
   for (const r of builtins) {
-    if (!registry.has(r.id)) registry.register(r);
+    if (!registry.has(r.id)) registry.register(r as Parameters<typeof registry.register>[0]);
   }
 }
 

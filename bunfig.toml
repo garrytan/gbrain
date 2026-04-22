@@ -1,0 +1,6 @@
+[test]
+# PGLite initialization can be slow under parallel test execution.
+# Default 5s is too short when many test files boot PGLite instances at once.
+# 60s is the empirical ceiling we observed before the first file's beforeAll
+# completed on a loaded machine.
+timeout = 60_000

@@ -33,7 +33,7 @@ describe('v0.13.0 — Frontmatter relationship indexing migration', () => {
 
   test('dry-run skips all side-effect phases', async () => {
     const { v0_13_0 } = await import('../src/commands/migrations/v0_13_0.ts');
-    const result = await v0_13_0.orchestrator({ yes: true, dryRun: true });
+    const result = await v0_13_0.orchestrator({ yes: true, dryRun: true, noAutopilotInstall: true });
     expect(result.version).toBe('0.13.0');
     for (const phase of result.phases) {
       expect(phase.status).toBe('skipped');
