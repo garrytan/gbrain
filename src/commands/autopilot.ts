@@ -56,6 +56,31 @@ function logError(phase: string, e: unknown) {
  *      binary without PATH). Never .ts source paths.
  *   4. Throw with a clear install hint.
  */
+/**
+ * Resolve after `ms`, or reject with an AbortError as soon as `signal` aborts.
+ *
+ * Used for the between-cycle sleep in the autopilot loop so that SIGTERM/SIGINT
+ * can interrupt a long (up to 600s adaptive) wait and let graceful shutdown
+ * complete within systemd's TimeoutStopSec window instead of being SIGKILLed
+ * with a stale lockfile left behind.
+ *
+ * Exported for unit testing; behavior mirrors Node's `setTimeout`-with-AbortSignal
+ * semantics but avoids pulling in `timers/promises` for cross-runtime use.
+ */
+export function sleepCancelable(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('aborted', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(new DOMException('aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
 export function resolveGbrainCliPath(): string {
   try {
     const which = execSync('which gbrain', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
@@ -142,6 +167,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   let workerProc: ChildProcess | null = null;
   let crashCount = 0;
 
+  // Cancelable between-cycle sleep. Without this, SIGTERM/SIGINT sets
+  // `stopping = true` but the loop only re-evaluates after the current
+  // `setTimeout` resolves — up to `interval` seconds (600s worst case after
+  // adaptive scaling). Under systemd's default TimeoutStopSec=90 that means
+  // SIGKILL beats the drain path, the lockfile leaks, and the next
+  // invocation has to wait out the 10-minute staleness check or be cleaned
+  // up by hand. Abort the timer on shutdown so the loop exits immediately.
+  const cycleAbort = new AbortController();
+
   if (useMinionsDispatch) {
     const cliPath = resolveGbrainCliPath();
     const startWorker = () => {
@@ -177,6 +211,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   const shutdown = async (sig: string) => {
     if (stopping) return;
     stopping = true;
+    // Abort the in-flight cycle sleep so the main loop exits immediately
+    // instead of running out the remainder of the current interval.
+    cycleAbort.abort();
     console.log(`Autopilot stopping (${sig}).`);
     if (workerProc) {
       try { workerProc.kill('SIGTERM'); } catch { /* already dead */ }
@@ -298,8 +335,14 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       }
     }
 
-    // Wait for next cycle
-    await new Promise(r => setTimeout(r, interval * 1000));
+    // Wait for next cycle (cancelable on SIGTERM/SIGINT)
+    try {
+      await sleepCancelable(interval * 1000, cycleAbort.signal);
+    } catch (e) {
+      // Only swallow the abort path; let unexpected rejections surface.
+      if (!(e instanceof DOMException) || e.name !== 'AbortError') throw e;
+      // Loop will exit via the `while (!stopping)` check on next iteration.
+    }
   }
 }
 
