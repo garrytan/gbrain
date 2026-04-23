@@ -64,7 +64,9 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Trigger | Skill |
 |---------|-------|
 | "Set up GBrain", first boot | `skills/setup/SKILL.md` |
-| "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
+| "Migrate from Obsidian/Notion/Logseq" (one-shot historical import) | `skills/migrate/SKILL.md` |
+| "Sync Notion", "set up Notion live sync" (ongoing, uses API) | Recipe: `recipes/notion-to-brain.md` |
+| "Sync Linear", "set up Linear integration" | Recipe: `recipes/linear-to-brain.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
