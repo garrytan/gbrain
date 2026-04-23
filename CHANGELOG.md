@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **`getChunks` no longer fetches the 6 KB embedding column it throws away.** Both engines' `getChunks(slug)` did `SELECT cc.*`, which pulls the full pgvector embedding over the wire, and `rowToChunk(row, includeEmbedding=false)` discarded it client-side. On Supabase / managed Postgres, where network egress is billed, this was measurable: `pg_stat_statements` on one production brain showed this exact query at 10.6M calls / 29.9M rows returned, costing ~22 GB of wasted egress per day — effectively the entire MCP baseline for that user. Fix is an explicit column list that omits `cc.embedding`; callers needing the vector already use `getChunksWithEmbeddings`. New regression test in `pglite-engine.test.ts` asserts `getChunks` returns `embedding: null` even when a vector is stored. PGLite gets the same treatment for parity.
+
 ## [0.18.0] - 2026-04-22
 
 ## **Multi-source brains. One database, many repos. Federated or isolated, you choose.**

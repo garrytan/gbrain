@@ -242,6 +242,24 @@ describe('PGLiteEngine: Chunks', () => {
     expect(chunks.length).toBe(1);
     expect(chunks[0].embedding).not.toBeNull();
   });
+
+  test('getChunks never returns embedding data (egress contract)', async () => {
+    // Regression guard: getChunks must NOT fetch the embedding column from the DB.
+    // On Supabase / managed Postgres, fetching pgvector-sized columns (~6 KB each)
+    // per MCP get_chunks call costs measurable egress. rowToChunk discards the
+    // value when includeEmbedding=false, so the SQL must select named columns
+    // (no cc.*) and skip cc.embedding. Callers needing the vector use
+    // getChunksWithEmbeddings.
+    await engine.putPage('test/no-embed', testPage);
+    const embedding = new Float32Array(1536).fill(0.5);
+    await engine.upsertChunks('test/no-embed', [
+      { chunk_index: 0, chunk_text: 'With embedding stored', chunk_source: 'compiled_truth', embedding },
+    ]);
+    const chunks = await engine.getChunks('test/no-embed');
+    expect(chunks.length).toBe(1);
+    expect(chunks[0].embedding).toBeNull();
+    expect(chunks[0].chunk_text).toBe('With embedding stored');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
