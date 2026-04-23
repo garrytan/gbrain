@@ -126,30 +126,36 @@ describe('composeResolvers — mount skills', () => {
     expect(names).toEqual(['alpha::ingest', 'beta::ingest']);
   });
 
-  test('host + mount same name → host wins, mount shadowed', () => {
+  test('host + mount same name → host wins BARE name, mount reachable via namespace', () => {
     const hostSkills = makeSkillsDir([{ name: 'ingest', trigger: 'host ingest' }]);
     const mountSkills = makeSkillsDir([{ name: 'ingest', trigger: 'mount ingest' }]);
     const mount = makeMount('yc-media', mountSkills);
     const result = composeResolvers(hostSkills, [mount]);
-    // Only host entry survives
-    expect(result.entries).toHaveLength(1);
-    expect(result.entries[0].brainId).toBe(HOST_BRAIN_ID);
-    expect(result.entries[0].qualifiedName).toBe('ingest');
-    // Shadow recorded
+    // Both entries survive: host wins bare 'ingest', but 'yc-media::ingest'
+    // must remain routable (the whole point of namespace-qualified form).
+    expect(result.entries).toHaveLength(2);
+    const host = result.entries.find(e => e.brainId === HOST_BRAIN_ID);
+    const mnt = result.entries.find(e => e.brainId === 'yc-media');
+    expect(host?.qualifiedName).toBe('ingest');
+    expect(mnt?.qualifiedName).toBe('yc-media::ingest');
+    // Shadow recorded so doctor can warn about local-customizing a remote skill
     expect(result.shadows).toHaveLength(1);
     expect(result.shadows[0].skillName).toBe('ingest');
     expect(result.shadows[0].shadowedMounts).toHaveLength(1);
     expect(result.shadows[0].shadowedMounts[0].mountId).toBe('yc-media');
-    // Not flagged as ambiguity — host wins, there's no ambiguity
+    // Not flagged as ambiguity — host wins the bare name cleanly
     expect(result.ambiguities).toEqual([]);
   });
 
-  test('host shadows one of two mounts — still only ambiguity when host does NOT win', () => {
+  test('host shadows two mounts → all three entries survive, shadow tracks both mounts', () => {
     const hostSkills = makeSkillsDir([{ name: 'ingest', trigger: 'host' }]);
     const m1Skills = makeSkillsDir([{ name: 'ingest', trigger: 'm1' }]);
     const m2Skills = makeSkillsDir([{ name: 'ingest', trigger: 'm2' }]);
     const result = composeResolvers(hostSkills, [makeMount('a', m1Skills), makeMount('b', m2Skills)]);
-    // No ambiguity: host shadows everything
+    // Host entry + both namespaced mount entries
+    expect(result.entries).toHaveLength(3);
+    expect(result.entries.map(e => e.qualifiedName).sort()).toEqual(['a::ingest', 'b::ingest', 'ingest']);
+    // No ambiguity: host wins bare name
     expect(result.ambiguities).toEqual([]);
     expect(result.shadows).toHaveLength(1);
     expect(result.shadows[0].shadowedMounts.map(m => m.mountId).sort()).toEqual(['a', 'b']);
@@ -185,13 +191,20 @@ describe('composeManifests', () => {
     expect(result.entries[0].brainId).toBe('yc-media');
   });
 
-  test('host wins on manifest collision (no mount duplicate)', () => {
+  test('manifest keeps namespace-qualified mount entry even when host shadows', () => {
+    // Bare-name resolution is composeResolvers' job. The manifest lists every
+    // addressable skill by its canonical name, so the namespace-qualified
+    // form must survive regardless of host shadow. This matches the
+    // corresponding composeResolvers shadow test.
     const hostSkills = makeSkillsDir([{ name: 'ingest', trigger: 'host' }]);
     const mountSkills = makeSkillsDir([{ name: 'ingest', trigger: 'mount' }]);
     const result = composeManifests(hostSkills, [makeMount('yc-media', mountSkills)]);
-    expect(result.entries).toHaveLength(1);
-    expect(result.entries[0].name).toBe('ingest');
-    expect(result.entries[0].brainId).toBe(HOST_BRAIN_ID);
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries.map(e => e.name).sort()).toEqual(['ingest', 'yc-media::ingest']);
+    const host = result.entries.find(e => e.name === 'ingest');
+    const mnt = result.entries.find(e => e.name === 'yc-media::ingest');
+    expect(host?.brainId).toBe(HOST_BRAIN_ID);
+    expect(mnt?.brainId).toBe('yc-media');
   });
 
   test('disabled mount excluded', () => {

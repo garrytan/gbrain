@@ -22,7 +22,7 @@
  *   gbrain mounts add --mcp-url         — HTTP MCP transport + OAuth (PR 2)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync } from 'fs';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
 import {
@@ -51,15 +51,21 @@ function readMountsFile(path: string = getMountsPath()): MountsFile {
 }
 
 /** Write mounts.json atomically with 0600 perms (contains no secrets, but
- *  is per-user config alongside config.json which IS secret-bearing). */
+ *  is per-user config alongside config.json which IS secret-bearing).
+ *
+ *  Unique tmp filename per call (pid + random). Two concurrent `gbrain
+ *  mounts add` invocations would otherwise clobber each other's `.tmp` file
+ *  and one writer's update would be lost. Unique tmp names make each
+ *  writer's atomic rename self-contained — last rename wins (read-modify-
+ *  write lost-update is a separate concern that a true file lock would
+ *  address, deferred to PR 1 under `gbrain mounts sync --lock`). */
 function writeMountsFile(file: MountsFile, path: string = getMountsPath()): void {
   mkdirSync(getMountsDir(), { recursive: true });
-  const tmpPath = path + '.tmp';
+  const tmpPath = `${path}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
   writeFileSync(tmpPath, JSON.stringify(file, null, 2) + '\n', { mode: 0o600 });
   try { chmodSync(tmpPath, 0o600); } catch { /* platform dep */ }
   // Atomic rename so readers never see a torn file.
-  const fs = require('fs') as typeof import('fs');
-  fs.renameSync(tmpPath, path);
+  renameSync(tmpPath, path);
 }
 
 // ── Argument parsing helpers ───────────────────────────────────────────

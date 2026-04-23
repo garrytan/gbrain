@@ -116,11 +116,18 @@ export interface BuildBrainToolsOpts {
   /** Optional filter: only include names in this set. */
   allowedNames?: ReadonlySet<string>;
   /**
-   * Connected-gbrains brain id (v0.19+). Omitted = 'host'. Propagated into
-   * every op context built for this subagent so child tool calls target the
-   * brain the parent job was resolved into, not the process-wide default.
-   * Fixes Codex finding #6 (brain-allowlist hardwiring config without brain
-   * awareness).
+   * Connected-gbrains brain id (v0.19+, PR 0 plumbing only).
+   *
+   * CURRENT BEHAVIOR: `brainId` is stamped onto each tool-call's
+   * `OperationContext.brainId` for audit / logging, but `ctx.engine` is
+   * still the engine passed in here (the parent job's engine). Ops
+   * targeting mounted brains via brainId WITHOUT a registry lookup will
+   * silently run against the parent engine.
+   *
+   * FUTURE (PR 1): `buildOpContext` will call `BrainRegistry.getBrain
+   * (brainId).engine` to select the right engine per dispatch. Once
+   * wired, `opCtx.engine` will match `opCtx.brainId`. Until then, treat
+   * brainId as metadata only.
    */
   brainId?: string;
 }

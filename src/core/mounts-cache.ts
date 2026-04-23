@@ -24,7 +24,7 @@
  * Only writeMountsCache touches disk.
  */
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, renameSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { parseResolverEntries } from './check-resolvable.ts';
@@ -227,20 +227,17 @@ export function composeResolvers(
   }
   shadows.sort((a, b) => a.skillName.localeCompare(b.skillName));
 
-  // Final entry list: host first, then mounts in mount-id order, shadows excluded
-  // from mount output (host version wins).
-  const shadowedSet = new Set(shadowedByName.keys());
+  // Final entry list: host first, then all mount entries in mount-id order.
+  // Shadow detection applies to BARE-NAME routing only (the host entry wins
+  // when the agent types `ingest`), NOT to namespace-qualified routing
+  // (`yc-media::ingest` must always resolve to the mount, even when shadowed
+  // by a host skill of the same short name). Codex review 2026-04-23 caught
+  // the earlier version that dropped shadowed mount entries — that broke
+  // the entire namespace-disambiguation model.
   const mountEntries: ComposedResolverEntry[] = [];
   mountEntriesByMount.sort((a, b) => a.mount.id.localeCompare(b.mount.id));
   for (const { entries } of mountEntriesByMount) {
-    for (const e of entries) {
-      if (e.isExternal) {
-        mountEntries.push(e);
-        continue;
-      }
-      const shortName = e.qualifiedName.split('::').pop() ?? '';
-      if (!shadowedSet.has(shortName)) mountEntries.push(e);
-    }
+    for (const e of entries) mountEntries.push(e);
   }
 
   return {
@@ -288,6 +285,12 @@ export function composeManifests(
   }));
   const hostNames = new Set(hostEntries.map(e => e.name));
 
+  // Mount entries always get their namespace-qualified name regardless of
+  // shadow by a host skill. The namespace form `yc-media::ingest` must stay
+  // routable even when host defines `ingest` (bare-name host-wins only
+  // governs un-namespaced resolution). Codex review caught the earlier
+  // version that silently dropped shadowed mount entries from the manifest,
+  // making the aggregated cache inconsistent with composeResolvers' output.
   const mountEntries: ManifestEntry[] = [];
   const seenMounts = [...mounts].sort((a, b) => a.id.localeCompare(b.id));
   for (const mount of seenMounts) {
@@ -295,7 +298,6 @@ export function composeManifests(
     const mountSkillsDir = join(mount.path, DEFAULT_SKILLS_SUBDIR);
     const skills = readManifestSkills(mountSkillsDir, opts.readFile);
     for (const s of skills) {
-      if (hostNames.has(s.name)) continue; // host shadow wins
       mountEntries.push({
         name: `${mount.id}::${s.name}`,
         absolutePath: join(mountSkillsDir, s.path),
@@ -303,6 +305,7 @@ export function composeManifests(
       });
     }
   }
+  void hostNames; // retained for future shadow metadata (PR 1 doctor warning)
 
   return { entries: [...hostEntries, ...mountEntries] };
 }
@@ -407,15 +410,21 @@ export function writeMountsCache(
   const resolverPath = join(cacheDir, 'RESOLVER.md');
   const manifestPath = join(cacheDir, 'manifest.json');
 
-  const resolverTmp = resolverPath + '.tmp';
-  const manifestTmp = manifestPath + '.tmp';
+  // Unique tmp names per call so concurrent `gbrain mounts add|remove`
+  // invocations don't clobber each other's .tmp file. The two-file swap
+  // (RESOLVER.md + manifest.json) is not itself atomic across files —
+  // readers may briefly observe RESOLVER.md(new) + manifest.json(old).
+  // That's acceptable: the aggregated cache is recomputable from
+  // mounts.json at any time, and doctor will flag divergence. A true
+  // generation-swap (cacheDir/current → new-gen dir) is deferred to PR 1.
+  const suffix = `${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
+  const resolverTmp = `${resolverPath}.tmp.${suffix}`;
+  const manifestTmp = `${manifestPath}.tmp.${suffix}`;
 
   writeFileSync(resolverTmp, renderResolverMarkdown(resolver), { mode: 0o644 });
   writeFileSync(manifestTmp, renderManifestJson(manifest), { mode: 0o644 });
 
   // Atomic swap via rename on each file.
-  // (renameSync is not imported; fs.renameSync is re-exported from fs.)
-  const { renameSync } = require('fs') as typeof import('fs');
   renameSync(resolverTmp, resolverPath);
   renameSync(manifestTmp, manifestPath);
 
