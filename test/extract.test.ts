@@ -141,4 +141,30 @@ describe('walkMarkdownFiles', () => {
   it('is a function', () => {
     expect(typeof walkMarkdownFiles).toBe('function');
   });
+
+  it('skips _-prefixed directories, matching the _-prefixed file behavior', async () => {
+    // Quarantine convention (e.g. `_pending/` for signal-detector ambient
+    // captures): users extend exclusions to skip these paths on sync. The
+    // walker already skipped `_foo.md` files but still recursed into
+    // `_pending/originals/`, so extract counted quarantined content that
+    // sync excluded (issue #202).
+    const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-walk-test-'));
+    try {
+      mkdirSync(join(root, 'concepts'));
+      mkdirSync(join(root, '_pending', 'originals'), { recursive: true });
+      writeFileSync(join(root, 'concepts', 'alpha.md'), '# alpha');
+      writeFileSync(join(root, '_pending', 'ambient.md'), '# ambient');
+      writeFileSync(join(root, '_pending', 'originals', 'buried.md'), '# buried');
+      writeFileSync(join(root, '_skip-me.md'), '# file-level skip');
+
+      const files = walkMarkdownFiles(root).map(f => f.relPath).sort();
+      expect(files).toEqual(['concepts/alpha.md']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
