@@ -157,7 +157,11 @@ Tell the user:
    - Application type: **Desktop app**
    - Name: anything (e.g., 'GBrain')
 5. Click **'Create'**. You'll see the Client ID and Client Secret.
-6. Copy both and paste them to me.
+6. In a **separate terminal** (not this chat), run:
+   `echo 'export GOOGLE_CLIENT_ID=\"your-id\"' >> ~/.zshenv`
+   `echo 'export GOOGLE_CLIENT_SECRET=\"your-secret\"' >> ~/.zshenv`
+   `source ~/.zshenv`
+   Then come back here — I'll verify they're set.
 
 Also enable the Calendar API:
 7. Go to https://console.cloud.google.com/apis/library/calendar-json.googleapis.com

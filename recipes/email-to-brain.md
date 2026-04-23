@@ -126,7 +126,11 @@ Tell the user:
    including inbox triage, searching by any criteria, reading emails, tracking threads'
    IMPORTANT: Be EXPANSIVE in the task purpose. Narrow purposes like 'email triage'
    will cause legitimate requests to fail verification.
-5. Copy the gateway URL and agent token"
+5. In a **separate terminal** (not this chat), run:
+   `echo 'export CLAWVISOR_GATEWAY_URL=\"your-url\"' >> ~/.zshenv`
+   `echo 'export CLAWVISOR_AGENT_TOKEN=\"your-token\"' >> ~/.zshenv`
+   `source ~/.zshenv`
+   Then come back here — I'll verify they're set."
 
 Validate:
 ```bash
