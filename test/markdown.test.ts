@@ -265,6 +265,7 @@ Some content.`;
     expect(parseMarkdown('', 'people/someone.md').type).toBe('person');
     expect(parseMarkdown('', 'concepts/thing.md').type).toBe('concept');
     expect(parseMarkdown('', 'companies/acme.md').type).toBe('company');
+    expect(parseMarkdown('', 'writing/post.md').type).toBe('writing');
   });
 
   test('infers type from wiki subdirectory paths', () => {

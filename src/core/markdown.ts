@@ -169,6 +169,7 @@ function inferType(filePath?: string): PageType {
   if (lower.includes('/projects/') || lower.includes('/project/')) return 'project';
   if (lower.includes('/sources/') || lower.includes('/source/')) return 'source';
   if (lower.includes('/media/')) return 'media';
+  if (lower.includes('/writing/')) return 'writing';
   return 'concept';
 }
 
