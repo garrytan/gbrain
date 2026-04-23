@@ -2783,6 +2783,29 @@ export class SQLiteEngine implements BrainEngine {
               ON canonical_handoff_entries(target_object_type, target_object_id);
           `);
           break;
+        case 21:
+          {
+            for (const table of [
+              'canonical_handoff_entries',
+              'memory_candidate_supersession_entries',
+              'memory_candidate_contradiction_entries',
+            ]) {
+              const columns = this.database.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+              const hasInteractionId = columns.some((column) => column.name === 'interaction_id');
+              if (!hasInteractionId) {
+                this.database.exec(`ALTER TABLE ${table} ADD COLUMN interaction_id TEXT;`);
+              }
+            }
+            this.database.exec(`
+              CREATE INDEX IF NOT EXISTS idx_canonical_handoff_interaction
+                ON canonical_handoff_entries(interaction_id);
+              CREATE INDEX IF NOT EXISTS idx_supersession_interaction
+                ON memory_candidate_supersession_entries(interaction_id);
+              CREATE INDEX IF NOT EXISTS idx_contradiction_interaction
+                ON memory_candidate_contradiction_entries(interaction_id);
+            `);
+          }
+          break;
       }
 
       await this.setConfig('version', String(version));

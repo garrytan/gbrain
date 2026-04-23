@@ -521,6 +521,27 @@ const MIGRATIONS: Migration[] = [
         ON canonical_handoff_entries(target_object_type, target_object_id);
     `,
   },
+  {
+    version: 21,
+    name: 'interaction_id_on_event_rows',
+    sql: `
+      ALTER TABLE canonical_handoff_entries
+        ADD COLUMN IF NOT EXISTS interaction_id TEXT;
+      ALTER TABLE memory_candidate_supersession_entries
+        ADD COLUMN IF NOT EXISTS interaction_id TEXT;
+      ALTER TABLE memory_candidate_contradiction_entries
+        ADD COLUMN IF NOT EXISTS interaction_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_canonical_handoff_interaction
+        ON canonical_handoff_entries(interaction_id)
+        WHERE interaction_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_supersession_interaction
+        ON memory_candidate_supersession_entries(interaction_id)
+        WHERE interaction_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_contradiction_interaction
+        ON memory_candidate_contradiction_entries(interaction_id)
+        WHERE interaction_id IS NOT NULL;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

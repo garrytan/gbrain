@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import postgres from 'postgres';
-import { runMigrations } from '../src/core/migrate.ts';
+import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
@@ -420,7 +420,7 @@ describe('memory-inbox schema', () => {
 
       await engine.initSchema();
 
-      expect(await engine.getConfig('version')).toBe('20');
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
       const preserved = await engine.listMemoryCandidateEntries({
         scope_id: 'workspace:default',
         limit: 10,
@@ -491,7 +491,7 @@ describe('memory-inbox schema', () => {
       await engine.setConfig('version', '15');
       await expect(engine.initSchema()).resolves.toBeUndefined();
 
-      expect(await engine.getConfig('version')).toBe('20');
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
       const preserved = await engine.listMemoryCandidateEntries({
         scope_id: 'workspace:default',
         limit: 10,
@@ -634,7 +634,7 @@ describe('memory-inbox schema', () => {
 
         await runMigrations(engine);
 
-        expect(await engine.getConfig('version')).toBe('20');
+        expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
         const preserved = await engine.listMemoryCandidateEntries({
           scope_id: 'workspace:default',
           limit: 10,
@@ -673,7 +673,7 @@ describe('memory-inbox schema', () => {
 
       await runMigrations(engine);
 
-      expect(await engine.getConfig('version')).toBe('20');
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
       const preserved = await engine.listMemoryCandidateEntries({
         scope_id: 'workspace:default',
         limit: 10,
