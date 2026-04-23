@@ -48,6 +48,9 @@ Pages where compiled_truth is older than the latest timeline entry. The assessme
 
 ### Orphan pages
 Pages with zero inbound links. Nobody references them.
+- Enumerate orphan work with `gbrain orphans` / `find_orphans`; treat this as authoritative over `gbrain health` / `get_health.orphan_pages`
+- Use `get_health.orphan_pages` only as a rough dashboard signal; do not use it to scope, verify, or close an orphan-remediation lane
+- During concurrent writes, even `find_orphans` can flutter by ±1; re-run after writes settle before claiming an exact final orphan count
 - Review orphans: are they genuinely isolated or just missing links?
 - Add links in gbrain from related pages or flag for deletion
 
