@@ -43,12 +43,20 @@ export class PostgresEngine implements BrainEngine {
       // "prepared statement does not exist" under load just like the module
       // singleton did before v0.15.4.
       const prepare = db.resolvePrepare(url);
+      // Session timeouts (statement_timeout + idle_in_transaction_session_timeout)
+      // keep orphan pgbouncer backends from holding locks for hours when the
+      // postgres.js client disconnects mid-transaction. See resolveSessionTimeouts
+      // in db.ts for context + env var overrides.
+      const timeouts = db.resolveSessionTimeouts();
       const opts: Record<string, unknown> = {
         max: size,
         idle_timeout: 20,
         connect_timeout: 10,
         types: { bigint: postgres.BigInt },
       };
+      if (Object.keys(timeouts).length > 0) {
+        opts.connection = timeouts;
+      }
       if (typeof prepare === 'boolean') {
         opts.prepare = prepare;
       }

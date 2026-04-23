@@ -71,6 +71,58 @@ export function resolvePoolSize(explicit?: number): number {
   return DEFAULT_POOL_SIZE_FALLBACK;
 }
 
+/**
+ * Session-level GUCs applied to every new backend connection. Prevents
+ * orphan pgbouncer sessions from holding locks or running queries
+ * indefinitely when the postgres.js client disconnects mid-transaction
+ * (typical cause: autopilot SIGKILL'd by launchd, worker crash-loop,
+ * or transient network drop).
+ *
+ * Observed failure mode these prevent: a single autopilot UPDATE on
+ * `minion_jobs.lock_until` left a pooler backend in `state='active'`
+ * / `wait_event='ClientRead'` for 24h+, holding a RowExclusiveLock
+ * that blocked every subsequent `ALTER TABLE minion_jobs ...`.
+ *
+ * Defaults are conservative (chosen not to interfere with bulk work
+ * like long-running embed passes or CREATE INDEX on large tables):
+ *   - statement_timeout = '5min'
+ *   - idle_in_transaction_session_timeout = '2min'
+ *
+ * Override per-GUC with env vars:
+ *   - GBRAIN_STATEMENT_TIMEOUT
+ *   - GBRAIN_IDLE_TX_TIMEOUT
+ *   - GBRAIN_CLIENT_CHECK_INTERVAL (Postgres 14+; empty default - opt-in
+ *     only since older self-hosted Postgres rejects this startup param)
+ *
+ * Set any env var to '0' or 'off' to disable that GUC entirely.
+ *
+ * Delivered via postgres.js's `connection` option, which sends these as
+ * startup parameters in the initial connection packet. Works correctly
+ * with PgBouncer session mode AND transaction mode: startup parameters
+ * pass through to the backend on connection creation and persist for the
+ * backend's lifetime (unlike `SET` commands which transaction-mode
+ * PgBouncer strips between transactions).
+ */
+const DEFAULT_STATEMENT_TIMEOUT = '5min';
+const DEFAULT_IDLE_TX_TIMEOUT = '2min';
+
+export function resolveSessionTimeouts(): Record<string, string> {
+  const out: Record<string, string> = {};
+  const add = (envKey: string, gucKey: string, defaultVal: string) => {
+    const raw = process.env[envKey];
+    if (raw === '0' || raw === 'off') return; // explicitly disabled
+    const val = raw ?? defaultVal;
+    if (val) out[gucKey] = val;
+  };
+  add('GBRAIN_STATEMENT_TIMEOUT', 'statement_timeout', DEFAULT_STATEMENT_TIMEOUT);
+  add('GBRAIN_IDLE_TX_TIMEOUT', 'idle_in_transaction_session_timeout', DEFAULT_IDLE_TX_TIMEOUT);
+  // client_connection_check_interval is opt-in: Postgres 14+ only, and some
+  // managed pooler tiers reject unknown startup parameters. Users can enable
+  // it explicitly once they know their Postgres version supports it.
+  add('GBRAIN_CLIENT_CHECK_INTERVAL', 'client_connection_check_interval', '');
+  return out;
+}
+
 export function getConnection(): ReturnType<typeof postgres> {
   if (!sql) {
     throw new GBrainError(
@@ -102,6 +154,7 @@ export async function connect(config: EngineConfig): Promise<void> {
 
   try {
     const prepare = resolvePrepare(url);
+    const timeouts = resolveSessionTimeouts();
     const opts: Record<string, unknown> = {
       max: resolvePoolSize(),
       idle_timeout: 20,
@@ -111,6 +164,9 @@ export async function connect(config: EngineConfig): Promise<void> {
         bigint: postgres.BigInt,
       },
     };
+    if (Object.keys(timeouts).length > 0) {
+      opts.connection = timeouts;
+    }
     if (typeof prepare === 'boolean') {
       opts.prepare = prepare;
       if (!prepare) {
