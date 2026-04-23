@@ -33,6 +33,8 @@ import {
   type MountEntry,
   type MountsFile,
 } from '../core/brain-registry.ts';
+import { findRepoRoot } from '../core/repo-root.ts';
+import { writeMountsCache, clearMountsCache } from '../core/mounts-cache.ts';
 import { GBrainError } from '../core/types.ts';
 
 function getMountsDir(): string { return join(homedir(), '.gbrain'); }
@@ -198,6 +200,13 @@ async function runAdd(args: string[]): Promise<void> {
     `  engine: ${parsed.engine}\n` +
     `  ${parsed.database_url ? `db_url: ${redactUrl(parsed.database_url)}` : `db_path: ${parsed.database_path}`}\n`,
   );
+
+  // Publish aggregated resolver + manifest to ~/.gbrain/mounts-cache/. This
+  // is the runtime ownership seam — host agents read the aggregated file
+  // instead of the checked-in skills/RESOLVER.md. When the current process
+  // isn't inside a gbrain repo, skip (a later mounts invocation from a
+  // repo-rooted cwd will publish the cache).
+  refreshMountsCache();
 }
 
 // ── Subcommand: list ────────────────────────────────────────────────────
@@ -274,6 +283,50 @@ function runRemove(args: string[]): void {
 
   writeMountsFile(file);
   process.stdout.write(`Mount "${id}" removed from mounts.json\n`);
+
+  // If removing the last mount, clear the cache entirely; otherwise
+  // rewrite with the remaining mounts so the aggregated resolver doesn't
+  // reference stale entries.
+  if (file.mounts.length === 0) {
+    try { clearMountsCache(); } catch { /* best effort */ }
+  } else {
+    refreshMountsCache();
+  }
+}
+
+/**
+ * Recompute + publish ~/.gbrain/mounts-cache/{RESOLVER.md,manifest.json}.
+ * Looks for the host skills dir via findRepoRoot(cwd). When not in a gbrain
+ * repo, skips with a stderr note — next mounts invocation from a
+ * repo-rooted cwd will publish. Failures are non-fatal: the mounts.json
+ * write already succeeded; a stale cache is recoverable via `gbrain mounts
+ * list` (PR 1 will add `gbrain mounts sync --cache` for explicit refresh).
+ */
+function refreshMountsCache(): void {
+  const repoRoot = findRepoRoot(process.cwd());
+  if (!repoRoot) {
+    process.stderr.write(
+      'NOTE: mounts-cache not refreshed (not inside a gbrain repo). ' +
+      'Run `gbrain mounts add|remove` from within a repo to publish ' +
+      'the aggregated resolver for host agents.\n',
+    );
+    return;
+  }
+  const hostSkillsDir = join(repoRoot, 'skills');
+  if (!existsSync(hostSkillsDir)) {
+    process.stderr.write(
+      `NOTE: mounts-cache not refreshed (${hostSkillsDir} does not exist).\n`,
+    );
+    return;
+  }
+  try {
+    const file = readMountsFile();
+    const { resolverPath } = writeMountsCache(hostSkillsDir, file.mounts);
+    process.stderr.write(`  cache: ${resolverPath}\n`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`WARN: failed to refresh mounts-cache: ${msg}\n`);
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
