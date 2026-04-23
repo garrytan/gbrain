@@ -20,6 +20,12 @@ mock.module('../src/core/embedding.ts', () => ({
     activeEmbedCalls--;
     return texts.map(() => new Float32Array(1536));
   },
+  // Preserve the full shape of embedding.ts so tests that load *after* this
+  // mock (Bun's mock.module is process-global) don't blow up with
+  // "Export named 'embed' not found".
+  embed: async (_text: string) => new Float32Array(1536),
+  EMBEDDING_MODEL: 'mock-embedding',
+  EMBEDDING_DIMENSIONS: 1536,
 }));
 
 // Import AFTER mocking.
