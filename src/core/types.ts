@@ -1426,7 +1426,8 @@ export interface TaskDecisionInput {
 export interface RetrievalTrace {
   id: string;
   task_id: string | null;
-  scope: TaskScope;
+  // widened from TaskScope — supports task-less traces
+  scope: ScopeGateScope;
   route: string[];
   source_refs: string[];
   verification: string[];
@@ -1437,7 +1438,8 @@ export interface RetrievalTrace {
 export interface RetrievalTraceInput {
   id: string;
   task_id?: string | null;
-  scope: TaskScope;
+  // widened from TaskScope — supports task-less traces
+  scope: ScopeGateScope;
   route?: string[];
   source_refs?: string[];
   verification?: string[];
