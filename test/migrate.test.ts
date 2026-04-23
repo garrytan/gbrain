@@ -509,3 +509,79 @@ describe('resolvePoolSize — env var + explicit override', () => {
     expect(resolvePoolSize(3)).toBe(3);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// resolveSessionTimeouts — GBRAIN_*_TIMEOUT env overrides
+// ─────────────────────────────────────────────────────────────────
+//
+// Guards: orphan pgbouncer backends that hold table locks for hours when
+// the postgres.js client disconnects mid-transaction. Session-level
+// statement_timeout + idle_in_transaction_session_timeout delivered as
+// startup parameters kill those backends on the server side.
+
+describe('resolveSessionTimeouts — env var overrides', () => {
+  const { resolveSessionTimeouts } = require('../src/core/db.ts');
+  const origStatement = process.env.GBRAIN_STATEMENT_TIMEOUT;
+  const origIdleTx = process.env.GBRAIN_IDLE_TX_TIMEOUT;
+  const origCheck = process.env.GBRAIN_CLIENT_CHECK_INTERVAL;
+
+  afterAll(() => {
+    const restore = (key: string, val: string | undefined) => {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    };
+    restore('GBRAIN_STATEMENT_TIMEOUT', origStatement);
+    restore('GBRAIN_IDLE_TX_TIMEOUT', origIdleTx);
+    restore('GBRAIN_CLIENT_CHECK_INTERVAL', origCheck);
+  });
+
+  const resetEnv = () => {
+    delete process.env.GBRAIN_STATEMENT_TIMEOUT;
+    delete process.env.GBRAIN_IDLE_TX_TIMEOUT;
+    delete process.env.GBRAIN_CLIENT_CHECK_INTERVAL;
+  };
+
+  test('returns statement_timeout + idle_in_transaction defaults when unset', () => {
+    resetEnv();
+    const t = resolveSessionTimeouts();
+    expect(t.statement_timeout).toBe('5min');
+    expect(t.idle_in_transaction_session_timeout).toBe('2min');
+    // client_connection_check_interval is opt-in only (Postgres 14+)
+    expect(t.client_connection_check_interval).toBeUndefined();
+  });
+
+  test('env vars override the defaults', () => {
+    resetEnv();
+    process.env.GBRAIN_STATEMENT_TIMEOUT = '10min';
+    process.env.GBRAIN_IDLE_TX_TIMEOUT = '30s';
+    process.env.GBRAIN_CLIENT_CHECK_INTERVAL = '15s';
+    const t = resolveSessionTimeouts();
+    expect(t.statement_timeout).toBe('10min');
+    expect(t.idle_in_transaction_session_timeout).toBe('30s');
+    expect(t.client_connection_check_interval).toBe('15s');
+  });
+
+  test("'0' disables a specific GUC", () => {
+    resetEnv();
+    process.env.GBRAIN_STATEMENT_TIMEOUT = '0';
+    const t = resolveSessionTimeouts();
+    expect(t.statement_timeout).toBeUndefined();
+    expect(t.idle_in_transaction_session_timeout).toBe('2min');
+  });
+
+  test("'off' disables a specific GUC", () => {
+    resetEnv();
+    process.env.GBRAIN_IDLE_TX_TIMEOUT = 'off';
+    const t = resolveSessionTimeouts();
+    expect(t.statement_timeout).toBe('5min');
+    expect(t.idle_in_transaction_session_timeout).toBeUndefined();
+  });
+
+  test('all three can be disabled independently', () => {
+    resetEnv();
+    process.env.GBRAIN_STATEMENT_TIMEOUT = '0';
+    process.env.GBRAIN_IDLE_TX_TIMEOUT = 'off';
+    const t = resolveSessionTimeouts();
+    expect(Object.keys(t)).toHaveLength(0);
+  });
+});
