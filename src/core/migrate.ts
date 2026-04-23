@@ -573,7 +573,31 @@ export const MIGRATIONS: Migration[] = [
     //
     // Idempotent: IF NOT EXISTS on ADD COLUMN, DROP IF EXISTS on the old
     // constraint, DO block guard on the new constraint creation.
+    //
+    // Pre-v0.17 schemas declared `files.page_slug TEXT REFERENCES pages(slug)
+    // ON UPDATE CASCADE ON DELETE SET NULL`. That FK implicitly depends on
+    // the UNIQUE constraint on `pages(slug)` (named `pages_slug_key` when the
+    // column was declared UNIQUE inline), so dropping the constraint below
+    // fails on every existing brain with:
+    //   ERROR: cannot drop constraint pages_slug_key on table pages because
+    //   other objects depend on it
+    //   DETAIL: constraint files_page_slug_fkey on table files depends on
+    //   index pages_slug_key
+    // `src/core/schema-embedded.ts` no longer declares the page_slug FK for
+    // new installs, but migration-path brains still carry it. Drop it first;
+    // migration 23 replaces the `page_slug`-based reference with a proper
+    // `files.page_id INTEGER REFERENCES pages(id)` column anyway.
     sql: `
+      -- Wrap in DO block with exception handler: PGLite has no 'files' table
+      -- (see schema notes), so a bare ALTER TABLE files ... would throw
+      -- 'relation "files" does not exist'. Catching undefined_table keeps
+      -- this migration safe to run on both engines.
+      DO $$ BEGIN
+        EXECUTE 'ALTER TABLE files DROP CONSTRAINT IF EXISTS files_page_slug_fkey';
+      EXCEPTION
+        WHEN undefined_table THEN NULL;
+      END $$;
+
       ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
         NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
 
