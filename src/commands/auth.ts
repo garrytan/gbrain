@@ -12,9 +12,15 @@ import postgres from 'postgres';
 import { createHash, randomBytes } from 'crypto';
 
 const DATABASE_URL = process.env.DATABASE_URL || process.env.GBRAIN_DATABASE_URL;
-if (!DATABASE_URL && process.argv[2] !== 'test') {
-  console.error('Set DATABASE_URL or GBRAIN_DATABASE_URL environment variable.');
-  process.exit(1);
+
+/** Subcommands that need a DB connection. `test` (smoke test) does not. */
+const NEEDS_DB = new Set(['create', 'list', 'revoke', 'register-client']);
+
+function ensureDatabaseUrl(cmd: string | undefined) {
+  if (cmd && NEEDS_DB.has(cmd) && !DATABASE_URL) {
+    console.error('Set DATABASE_URL or GBRAIN_DATABASE_URL environment variable.');
+    process.exit(1);
+  }
 }
 
 function hashToken(token: string): string {
@@ -216,26 +222,75 @@ async function test(url: string, token: string) {
   console.log(`\n🧠 Your brain is live! (${elapsed}s)`);
 }
 
-// CLI dispatch
-const [cmd, ...args] = process.argv.slice(2);
-switch (cmd) {
-  case 'create': await create(args[0]); break;
-  case 'list': await list(); break;
-  case 'revoke': await revoke(args[0]); break;
-  case 'test': {
-    const tokenIdx = args.indexOf('--token');
-    const url = args.find(a => !a.startsWith('--') && a !== args[tokenIdx + 1]);
-    const token = tokenIdx >= 0 ? args[tokenIdx + 1] : '';
-    await test(url || '', token || '');
-    break;
+async function registerClient(name: string, args: string[]) {
+  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S]'); process.exit(1); }
+  const grantsIdx = args.indexOf('--grant-types');
+  const scopesIdx = args.indexOf('--scopes');
+  const grantTypes = grantsIdx >= 0 && args[grantsIdx + 1]
+    ? args[grantsIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
+    : ['client_credentials'];
+  const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
+
+  const sql = postgres(DATABASE_URL!);
+  try {
+    const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
+    const provider = new GBrainOAuthProvider({ sql: sql as any });
+    const { clientId, clientSecret } = await provider.registerClientManual(
+      name, grantTypes, scopes, [],
+    );
+    console.log(`OAuth client registered: "${name}"\n`);
+    console.log(`  Client ID:     ${clientId}`);
+    console.log(`  Client Secret: ${clientSecret}\n`);
+    console.log(`  Grant types: ${grantTypes.join(', ')}`);
+    console.log(`  Scopes:      ${scopes}\n`);
+    console.log('Save the client secret — it will not be shown again.');
+    console.log(`Revoke with: bun run src/commands/auth.ts revoke-client "${clientId}"`);
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  } finally {
+    await sql.end();
   }
-  default:
-    console.log(`GBrain Token Management
+}
+
+function printHelp() {
+  console.log(`GBrain Token Management
 
 Usage:
-  bun run src/commands/auth.ts create <name>      Create a new access token
-  bun run src/commands/auth.ts list               List all tokens
-  bun run src/commands/auth.ts revoke <name>       Revoke a token
-  bun run src/commands/auth.ts test <url> --token <token>  Smoke test a remote MCP server
+  gbrain auth create <name>                                Create a legacy bearer token
+  gbrain auth list                                         List all tokens
+  gbrain auth revoke <name>                                 Revoke a legacy token
+  gbrain auth register-client <name> [options]             Register an OAuth 2.1 client
+     --grant-types <client_credentials,authorization_code>  (default: client_credentials)
+     --scopes "<read write admin>"                          (default: read)
+  gbrain auth test <url> --token <token>                   Smoke test a remote MCP server
 `);
+}
+
+/**
+ * Invoked by src/cli.ts for `gbrain auth <subcommand>` and by direct
+ * `bun run src/commands/auth.ts <subcommand>` (legacy path).
+ */
+export async function runAuth(args: string[]) {
+  const [cmd, ...rest] = args;
+  ensureDatabaseUrl(cmd);
+  switch (cmd) {
+    case 'create': await create(rest[0]); break;
+    case 'list': await list(); break;
+    case 'revoke': await revoke(rest[0]); break;
+    case 'register-client': await registerClient(rest[0], rest.slice(1)); break;
+    case 'test': {
+      const tokenIdx = rest.indexOf('--token');
+      const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
+      const token = tokenIdx >= 0 ? rest[tokenIdx + 1] : '';
+      await test(url || '', token || '');
+      break;
+    }
+    default: printHelp();
+  }
+}
+
+// Direct invocation (`bun run src/commands/auth.ts ...`). Skip when imported.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  await runAuth(process.argv.slice(2));
 }
