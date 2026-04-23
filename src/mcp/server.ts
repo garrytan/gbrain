@@ -68,6 +68,8 @@ export async function startMcpServer(engine: BrainEngine) {
     }
 
     try {
+      // Ensure engine is ready and sees any data written by other processes (e.g. CLI)
+      await engine.prepare();
       const result = await op.handler(ctx, safeParams);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (e: unknown) {
@@ -104,5 +106,6 @@ export async function handleToolCall(
     remote: false,
   };
 
+  await engine.prepare();
   return op.handler(ctx, params);
 }
