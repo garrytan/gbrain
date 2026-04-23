@@ -16,8 +16,20 @@ If you fetched this file by URL without cloning yet, the companion files live at
 
 ## Step 1: Install GBrain
 
+Choose install paths before cloning. On hosted agents, use a persistent volume;
+do not assume `$HOME` survives deploys or restarts. AlphaClaw/OpenClaw on Railway
+usually mounts the durable volume at `/data`.
+
 ```bash
-git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
+if [ -d /data ]; then
+  export GBRAIN_HOME="${GBRAIN_HOME:-/data/gbrain}"
+  export BRAIN_REPO="${BRAIN_REPO:-/data/brain}"
+else
+  export GBRAIN_HOME="${GBRAIN_HOME:-$HOME/gbrain}"
+  export BRAIN_REPO="${BRAIN_REPO:-$HOME/brain}"
+fi
+
+git clone https://github.com/garrytan/gbrain.git "$GBRAIN_HOME" && cd "$GBRAIN_HOME"
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"
 bun install && bun link
@@ -54,17 +66,17 @@ The user's markdown files (notes, docs, brain repo) are SEPARATE from this tool 
 Ask the user where their files are, or create a new brain repo:
 
 ```bash
-mkdir -p ~/brain && cd ~/brain && git init
+mkdir -p "$BRAIN_REPO" && cd "$BRAIN_REPO" && git init
 ```
 
-Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
+Read `$GBRAIN_HOME/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
 structure (people/, companies/, concepts/, etc.) inside the user's brain repo,
-NOT inside ~/gbrain.
+NOT inside `$GBRAIN_HOME`.
 
 ## Step 4: Import and Index
 
 ```bash
-gbrain import ~/brain/ --no-embed     # import markdown files
+gbrain import "$BRAIN_REPO/" --no-embed     # import markdown files
 gbrain embed --stale                  # generate vector embeddings
 gbrain query "key themes across these documents?"
 ```
@@ -95,7 +107,7 @@ and supports `--since YYYY-MM-DD` for incremental runs.
 
 ## Step 5: Load Skills
 
-Read `~/gbrain/skills/RESOLVER.md`. This is the skill dispatcher. It tells you which
+Read `$GBRAIN_HOME/skills/RESOLVER.md`. This is the skill dispatcher. It tells you which
 skill to read for any task. Save this to your memory permanently.
 
 The three most important skills to adopt immediately:
@@ -126,7 +138,7 @@ If skipped, minimal defaults are installed automatically.
 
 Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab):
 
-- **Live sync** (every 15 min): `gbrain sync --repo ~/brain && gbrain embed --stale`
+- **Live sync** (every 15 min): `gbrain sync --repo "$BRAIN_REPO" && gbrain embed --stale`
 - **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install)
 - **Dream cycle** (nightly): read `docs/guides/cron-schedule.md` for the full protocol.
   Entity sweep, citation fixes, memory consolidation. This is what makes the brain
@@ -135,7 +147,7 @@ Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab):
 
 ## Step 8: Integrations
 
-Run `gbrain integrations list`. Each recipe in `~/gbrain/recipes/` is a self-contained
+Run `gbrain integrations list`. Each recipe in `$GBRAIN_HOME/recipes/` is a self-contained
 installer. It tells you what credentials to ask for, how to validate, and what cron
 to register. Ask the user which integrations they want (email, calendar, voice, Twitter).
 
@@ -149,12 +161,12 @@ actually works) is the most important.
 ## Upgrade
 
 ```bash
-cd ~/gbrain && git pull origin master && bun install
+cd "$GBRAIN_HOME" && git pull origin master && bun install
 gbrain init                           # apply schema migrations (idempotent)
 gbrain post-upgrade                   # show migration notes for the version range
 ```
 
-Then read `~/gbrain/skills/migrations/v<NEW_VERSION>.md` (and any intermediate
+Then read `$GBRAIN_HOME/skills/migrations/v<NEW_VERSION>.md` (and any intermediate
 versions you skipped) and run any backfill or verification steps it lists. Skipping
 this is how features ship in the binary but stay dormant in the user's brain.
 
