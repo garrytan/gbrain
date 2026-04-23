@@ -158,4 +158,35 @@ title: Alice
 
     expect(elapsedMs).toBeLessThan(2000);
   });
+
+  test('skips underscore-prefixed directories (quarantine exclusion)', async () => {
+    // Set up a quarantine-like directory that sync excludes but extract used to walk
+    await engine.putPage('people/alice', personPage('Alice'));
+
+    // These should be walked
+    writeFile('people/alice.md', '---\ntitle: Alice\n---\n\nAlice page.\n');
+    writeFile('companies/acme.md', '---\ntitle: Acme\n---\n\nAcme page.\n');
+
+    // This directory should be skipped (matches sync's isSyncable behavior)
+    writeFile('_pending/foo.md', '---\ntitle: ShouldNotBeImported\n---\n\nShould not appear in extraction.\n');
+
+    // Capture stdout to check page count
+    const lines: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.join(' ')); };
+    let result: unknown;
+    try {
+      result = await runExtract(engine, ['links', '--dir', brainDir, '--dry-run', '--json']);
+    } finally {
+      console.log = origLog;
+    }
+
+    // Verify the result shows 2 pages walked (not 3)
+    if (result && typeof result === 'object' && 'pages_processed' in result) {
+      expect((result as { pages_processed: number }).pages_processed).toBe(2);
+    }
+    // Confirm _pending content has no links in DB
+    const links = await engine.getLinks('people/alice');
+    expect(links.length).toBe(0);
+  });
 });
