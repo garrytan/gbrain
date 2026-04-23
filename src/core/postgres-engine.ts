@@ -354,8 +354,13 @@ export class PostgresEngine implements BrainEngine {
 
   async getChunks(slug: string): Promise<Chunk[]> {
     const sql = this.sql;
+    // Explicit column list excludes cc.embedding (~6 KB pgvector per row). rowToChunk
+    // discards it anyway when includeEmbedding=false, so fetching it over the wire is
+    // pure network waste. Use getChunksWithEmbeddings when the vector is actually needed.
     const rows = await sql`
-      SELECT cc.* FROM content_chunks cc
+      SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+             cc.model, cc.token_count, cc.embedded_at, cc.created_at
+      FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE p.slug = ${slug}
       ORDER BY cc.chunk_index

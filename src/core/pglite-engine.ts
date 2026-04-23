@@ -330,8 +330,12 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async getChunks(slug: string): Promise<Chunk[]> {
+    // Explicit column list excludes cc.embedding. Matches postgres-engine.ts for
+    // parity and contract consistency; rowToChunk discards the column anyway.
     const { rows } = await this.db.query(
-      `SELECT cc.* FROM content_chunks cc
+      `SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+              cc.model, cc.token_count, cc.embedded_at, cc.created_at
+       FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
        WHERE p.slug = $1
        ORDER BY cc.chunk_index`,
