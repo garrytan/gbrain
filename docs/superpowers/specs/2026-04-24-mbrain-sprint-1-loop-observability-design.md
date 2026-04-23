@@ -2,7 +2,46 @@
 
 **Author:** scott.lee@rebellions.ai (via brainstorming session)
 **Date:** 2026-04-24
-**Status:** Design approved — ready for implementation plan
+**Status:** ⚠️ **SUPERSEDED — 2026-04-24** · see the three replacement specs below
+**Supersedes:** n/a
+**Superseded by:**
+- `2026-04-24-mbrain-sprint-0-tsc-baseline-design.md` — tsc CI track
+- `2026-04-24-mbrain-sprint-1-0-interaction-identity-design.md` — agent-turn foundation
+- `2026-04-24-mbrain-sprint-1-1-loop-observability-design.md` — trace fidelity + audit on top
+
+---
+
+## Supersession reason (2026-04-24)
+
+External review (see session transcript) identified two HIGH-severity problems
+with this spec:
+
+1. **Read/write correlation was structurally impossible.** `retrieval_traces` is
+   scoped to `task_id` (and the service throws when it is absent) while write
+   services (`promoteMemoryCandidateEntry`, `rejectMemoryCandidateEntry`,
+   `supersedeMemoryCandidateEntry`, `recordCanonicalHandoff`) do not receive
+   any turn or session context. The proposed "read-without-write backlog"
+   would have been a task-scoped approximation, not real loop compliance.
+2. **Promised metrics required string parsing.** `by_route_kind`,
+   `scope_defer_rate`, and `most_common_defer_reason` would have been derived
+   by regex-scraping the free-form `verification` array — directly against the
+   stated goal of structured aggregation.
+
+Plus four Medium/Low issues: the `collectDerivedConsulted` type sketch did not
+match current route types, the repo has ~836 pre-existing `tsc --noEmit`
+errors (single-commit cleanup unrealistic), `runMigrations` is forward-only so
+the proposed "reverse migration" does not exist in the framework, and
+`TaskThreadFilters` lacks `offset` causing silent undercount of tasks beyond
+1000.
+
+The replacement approach introduces **agent-turn identity** (Sprint 1.0) as a
+prerequisite, keeps tsc CI as its own Track A, and defers observability
+(Sprint 1.1) until that foundation exists. `interaction_id` is attached only
+to **immutable event rows** (handoff / supersession / contradiction) because
+`memory_candidate_entries` is a mutable state row whose status transitions
+would lose information in a single column.
+
+Do not implement this spec. Read the three replacement specs listed above.
 
 ---
 
