@@ -472,64 +472,107 @@ export const MIGRATIONS: Migration[] = [
     sql: '',
     handler: async (engine) => {
       if (engine.kind === 'pglite') return;
-      await engine.runMigration(19, `
-        -- 1a. source_id with DEFAULT 'default' (idempotent)
-        ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id TEXT
-          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
-        CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
 
-        -- 1b. page_id (nullable; pre-v0.17 files pointed at page_slug
-        --     which was ON DELETE SET NULL, so we keep the same nullable
-        --     semantic — orphaned files are legal).
-        ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id INTEGER
-          REFERENCES pages(id) ON DELETE SET NULL;
-        CREATE INDEX IF NOT EXISTS idx_files_page_id ON files(page_id);
-      `);
+      // Atomic: FK drop + UNIQUE swap + files.page_id addition +
+      // backfill + ledger, all in one transaction. Closes the
+      // pre-v23 integrity window where files_page_slug_fkey was
+      // dropped in v21 but the replacement files.page_id didn't
+      // exist until v23 ran — process death in between left files
+      // unconstrained while file_upload kept writing (codex finding).
+      //
+      // Rollback scenarios:
+      //   - Die mid-transaction → Postgres rolls back, files_page_slug_fkey
+      //     still exists, config.version stays at 22. Retry restarts cleanly.
+      //   - Die after commit but before setConfig(version=23) → all DDL
+      //     committed, config.version still 22, retry re-runs everything
+      //     with IF NOT EXISTS / NOT EXISTS guards idempotently.
+      await engine.transaction(async (tx) => {
+        // 0a. Drop files_page_slug_fkey (deferred from v21 to keep
+        //     the FK intact across v21/v22 and remove it inside the
+        //     same txn that adds the replacement page_id path).
+        //     Guard against PGLite just in case (already returned above).
+        await tx.runMigration(23, `
+          DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'files') THEN
+              ALTER TABLE files DROP CONSTRAINT IF EXISTS files_page_slug_fkey;
+            END IF;
+          END $$;
+        `);
 
-      await engine.runMigration(19, `
-        -- 1c. Backfill page_id from existing page_slug. Scoped to
-        --     source_id='default' because pre-v0.17 pages ALL lived in
-        --     the default source. Without this scope, after new sources
-        --     get added mid-migration, the JOIN could hit the wrong
-        --     page (different source, same slug).
-        UPDATE files f
-           SET page_id = p.id
-          FROM pages p
-         WHERE f.page_slug = p.slug
-           AND p.source_id = 'default'
-           AND f.page_id IS NULL;
-      `);
+        // 0b. Swap pages.UNIQUE(slug) → UNIQUE(source_id, slug).
+        //     Deferred from v21 so PR #356 closes the integrity
+        //     window. PGLite already did this swap in its v21 path.
+        await tx.runMigration(23, `
+          ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
+          DO $$ BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
+            ) THEN
+              ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
+                UNIQUE (source_id, slug);
+            END IF;
+          END $$;
+        `);
 
-      await engine.runMigration(19, `
-        -- 2. file_migration_ledger — drives the storage object rewrite
-        --    in the v0_18_0 orchestrator's phase B. Seeded from current
-        --    files rows; re-seed is idempotent via NOT EXISTS guard.
-        CREATE TABLE IF NOT EXISTS file_migration_ledger (
-          file_id           INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-          storage_path_old  TEXT   NOT NULL,
-          storage_path_new  TEXT   NOT NULL,
-          status            TEXT   NOT NULL DEFAULT 'pending',
-          error             TEXT,
-          updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-          CONSTRAINT chk_ledger_status CHECK (status IN ('pending','copy_done','db_updated','complete','failed'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_file_migration_ledger_status
-          ON file_migration_ledger(status) WHERE status != 'complete';
+        // 1a. source_id with DEFAULT 'default' (idempotent)
+        await tx.runMigration(23, `
+          ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id TEXT
+            NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+          CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
 
-        -- Seed the ledger with every existing file. New path prefixes
-        -- source_id so multi-source can land assets under their own
-        -- bucket path without collision.
-        INSERT INTO file_migration_ledger (file_id, storage_path_old, storage_path_new, status)
-        SELECT
-          f.id,
-          f.storage_path,
-          COALESCE(f.source_id, 'default') || '/' || f.storage_path,
-          'pending'
-        FROM files f
-        WHERE NOT EXISTS (
-          SELECT 1 FROM file_migration_ledger l WHERE l.file_id = f.id
-        );
-      `);
+          -- 1b. page_id (nullable; pre-v0.17 files pointed at page_slug
+          --     which was ON DELETE SET NULL, so we keep the same nullable
+          --     semantic — orphaned files are legal).
+          ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id INTEGER
+            REFERENCES pages(id) ON DELETE SET NULL;
+          CREATE INDEX IF NOT EXISTS idx_files_page_id ON files(page_id);
+        `);
+
+        // 1c. Backfill page_id from existing page_slug. Scoped to
+        //     source_id='default' because pre-v0.17 pages ALL lived in
+        //     the default source. Without this scope, after new sources
+        //     get added mid-migration, the JOIN could hit the wrong
+        //     page (different source, same slug).
+        await tx.runMigration(23, `
+          UPDATE files f
+             SET page_id = p.id
+            FROM pages p
+           WHERE f.page_slug = p.slug
+             AND p.source_id = 'default'
+             AND f.page_id IS NULL;
+        `);
+
+        // 2. file_migration_ledger — drives the storage object rewrite
+        //    in the v0_18_0 orchestrator's phase B. Seeded from current
+        //    files rows; re-seed is idempotent via NOT EXISTS guard.
+        await tx.runMigration(23, `
+          CREATE TABLE IF NOT EXISTS file_migration_ledger (
+            file_id           INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+            storage_path_old  TEXT   NOT NULL,
+            storage_path_new  TEXT   NOT NULL,
+            status            TEXT   NOT NULL DEFAULT 'pending',
+            error             TEXT,
+            updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT chk_ledger_status CHECK (status IN ('pending','copy_done','db_updated','complete','failed'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_file_migration_ledger_status
+            ON file_migration_ledger(status) WHERE status != 'complete';
+
+          -- Seed the ledger with every existing file. New path prefixes
+          -- source_id so multi-source can land assets under their own
+          -- bucket path without collision.
+          INSERT INTO file_migration_ledger (file_id, storage_path_old, storage_path_new, status)
+          SELECT
+            f.id,
+            f.storage_path,
+            COALESCE(f.source_id, 'default') || '/' || f.storage_path,
+            'pending'
+          FROM files f
+          WHERE NOT EXISTS (
+            SELECT 1 FROM file_migration_ledger l WHERE l.file_id = f.id
+          );
+        `);
+      });
     },
   },
   {
@@ -560,39 +603,53 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 21,
     name: 'pages_source_id_composite_unique',
-    // v0.18.0 Step 2 (Lane B) — adds pages.source_id with DEFAULT 'default'
-    // and swaps the global UNIQUE(slug) for the composite UNIQUE(source_id,
-    // slug). Lands alongside the engine SQL rewrite that makes every
-    // ON CONFLICT (slug) → ON CONFLICT (source_id, slug) so the constraint
-    // swap is atomic with the code that writes under it.
+    // v0.18.0 Step 2 (Lane B) — adds pages.source_id. Engine-split after
+    // codex caught the pre-v23 integrity window:
     //
-    // DEFAULT 'default' is load-bearing: closes the Codex-flagged race
+    //   Original v21 dropped files_page_slug_fkey and swapped
+    //   UNIQUE(slug) → UNIQUE(source_id, slug) in one go. Between v21
+    //   committing and v23 (which adds the replacement files.page_id
+    //   path), a process-death left files WITHOUT any FK to pages
+    //   while file_upload / `gbrain files` kept accepting writes.
+    //
+    // On Postgres: additive-only here. The FK drop + UNIQUE swap move
+    // into v23's handler (wrapped in engine.transaction) so they commit
+    // atomically with the files.page_id addition + backfill. See v23.
+    //
+    // On PGLite: no concurrent writers, no pool, no partial-state risk.
+    // Do the full add + swap here so PGLite brains reach the composite
+    // unique immediately (PGLite has no files table, so no FK drop
+    // needed).
+    //
+    // DEFAULT 'default' on source_id is load-bearing: closes the race
     // where an INSERT between ADD COLUMN and SET NOT NULL could leave
-    // source_id NULL. Because the default already references a valid
-    // sources row (seeded in v16), new INSERTs immediately get a valid FK.
-    //
-    // Idempotent: IF NOT EXISTS on ADD COLUMN, DROP IF EXISTS on the old
-    // constraint, DO block guard on the new constraint creation.
-    sql: `
-      ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
-        NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+    // source_id NULL. The default already references a valid sources
+    // row (seeded in v16), so new INSERTs immediately get a valid FK.
+    sql: '',
+    sqlFor: {
+      postgres: `
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
+          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
 
-      CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+        CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+      `,
+      pglite: `
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
+          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
 
-      -- Swap global UNIQUE(slug) → composite UNIQUE(source_id, slug). The
-      -- original constraint is named pages_slug_key by Postgres convention
-      -- when the column was declared UNIQUE inline. Both drops are
-      -- idempotent.
-      ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
-      DO $$ BEGIN
-        IF NOT EXISTS (
-          SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
-        ) THEN
-          ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
-            UNIQUE (source_id, slug);
-        END IF;
-      END $$;
-    `,
+        CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+
+        ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
+        DO $$ BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
+          ) THEN
+            ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
+              UNIQUE (source_id, slug);
+          END IF;
+        END $$;
+      `,
+    },
   },
   {
     version: 20,
@@ -758,8 +815,116 @@ export const MIGRATIONS: Migration[] = [
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
-  ? MIGRATIONS[MIGRATIONS.length - 1].version
+  ? Math.max(...MIGRATIONS.map(m => m.version))
   : 1;
+
+/**
+ * Row returned by `getIdleBlockers`. The shape is the public contract
+ * for both `gbrain doctor --locks` output and the internal DDL pre-flight.
+ */
+export interface IdleBlocker {
+  pid: number;
+  state: string;
+  query_start: string;
+  query: string;
+}
+
+/**
+ * Find idle-in-transaction connections older than 5 minutes that might
+ * block DDL. Postgres-only. Returns `[]` on PGLite, query failure, or
+ * no blockers. The query-failure path is intentionally silent because
+ * some managed Postgres configs restrict `pg_stat_activity` — a partial
+ * view of the server is still useful for doctor/pre-flight.
+ *
+ * Single source of truth shared by:
+ *   - `checkForBlockingConnections` (DDL pre-flight warning)
+ *   - `gbrain doctor --locks` (CLI diagnostic)
+ *   - any future `--exclusive` drain-wait logic
+ */
+export async function getIdleBlockers(engine: BrainEngine): Promise<IdleBlocker[]> {
+  if (engine.kind !== 'postgres') return [];
+  try {
+    return await engine.executeRaw<IdleBlocker>(
+      `SELECT pid, state, query_start::text, substring(query, 1, 120) as query
+       FROM pg_stat_activity
+       WHERE state = 'idle in transaction'
+         AND query_start < NOW() - INTERVAL '5 minutes'
+         AND pid != pg_backend_pid()`
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Check for idle-in-transaction connections that might block DDL.
+ * Returns true if blockers were found (logged as warnings).
+ */
+async function checkForBlockingConnections(engine: BrainEngine): Promise<boolean> {
+  const rows = await getIdleBlockers(engine);
+  if (rows.length > 0) {
+    console.warn(`\n⚠️  Found ${rows.length} idle-in-transaction connection(s) older than 5 minutes:`);
+    for (const r of rows) {
+      console.warn(`  PID ${r.pid} — idle since ${r.query_start}`);
+      console.warn(`    Query: ${r.query}`);
+    }
+    console.warn(`  These may block ALTER TABLE DDL. To kill: SELECT pg_terminate_backend(<pid>);\n`);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Wrap migration SQL execution with Supabase-compatible timeout.
+ * Uses SET LOCAL statement_timeout inside a transaction to override
+ * server-enforced timeouts (required for Supabase Postgres).
+ */
+async function runMigrationSQL(
+  engine: BrainEngine,
+  m: Migration,
+  sql: string,
+): Promise<void> {
+  const useTransaction = m.transaction !== false;
+
+  if (useTransaction || engine.kind === 'pglite') {
+    // Wrap in transaction with extended timeout for Supabase compatibility.
+    // SET LOCAL scopes the timeout to this transaction only.
+    await engine.transaction(async (tx) => {
+      if (engine.kind === 'postgres') {
+        try {
+          await tx.runMigration(m.version, "SET LOCAL statement_timeout = '600000'");
+        } catch {
+          // Non-fatal: PGLite or older Postgres versions may not support this
+        }
+      }
+      await tx.runMigration(m.version, sql);
+    });
+  } else {
+    // Postgres + transaction:false → can't use SET LOCAL (needs a txn),
+    // can't use plain SET on the pooled connection (leaks to other
+    // queries). Instead: reserve a dedicated backend, set session-level
+    // statement_timeout on just that connection, run the DDL there.
+    //
+    // On Supabase (both PgBouncer 6543 and direct 5432) a server-level
+    // statement_timeout of ~2 min is enforced. Without this override a
+    // CREATE INDEX CONCURRENTLY on a large table (e.g. 500K pages) hits
+    // the timeout and aborts. SET on the reserved connection cleanly
+    // overrides because the GUC scope is connection-local (session-scope
+    // is fine when nobody else uses the connection).
+    //
+    // The reserved-connection primitive is new in PR #356. See
+    // BrainEngine.withReservedConnection.
+    await engine.withReservedConnection(async (conn) => {
+      try {
+        await conn.executeRaw("SET statement_timeout = '600000'");
+      } catch {
+        // Non-fatal: some managed Postgres may restrict this GUC.
+        // Falling through means the DDL runs with the server default.
+      }
+      await conn.executeRaw(sql);
+    });
+  }
+}
 
 export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {
   const currentStr = await engine.getConfig('version');
@@ -771,39 +936,59 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   // be skipped on the next iteration.
   const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
 
-  let applied = 0;
-  for (const m of sorted) {
-    if (m.version > current) {
-      // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
-      const sql = m.sqlFor?.[engine.kind] ?? m.sql;
-
-      if (sql) {
-        const useTransaction = m.transaction !== false;
-        // Non-transactional path is Postgres-only: `CREATE INDEX CONCURRENTLY`
-        // refuses to run inside a transaction. PGLite has no concurrent
-        // writers, so even if a migration sets transaction:false we wrap it
-        // anyway (harmless; keeps behavior consistent).
-        if (useTransaction || engine.kind === 'pglite') {
-          await engine.transaction(async (tx) => {
-            await tx.runMigration(m.version, sql);
-          });
-        } else {
-          // Postgres + transaction:false → direct execution, no BEGIN/COMMIT.
-          await engine.runMigration(m.version, sql);
-        }
-      }
-
-      // Application-level handler (runs outside transaction for flexibility)
-      if (m.handler) {
-        await m.handler(engine);
-      }
-
-      // Update version after both SQL and handler succeed
-      await engine.setConfig('version', String(m.version));
-      console.log(`  Migration ${m.version} applied: ${m.name}`);
-      applied++;
-    }
+  const pending = sorted.filter(m => m.version > current);
+  if (pending.length === 0) {
+    return { applied: 0, current };
   }
 
-  return { applied, current: applied > 0 ? MIGRATIONS[MIGRATIONS.length - 1].version : current };
+  console.log(`  Schema version ${current} → ${LATEST_VERSION} (${pending.length} migration(s) pending)`);
+
+  // Pre-flight: warn about connections that might block DDL
+  await checkForBlockingConnections(engine);
+
+  let applied = 0;
+  for (const m of pending) {
+    console.log(`  [${m.version}] ${m.name}...`);
+
+    // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
+    const sql = m.sqlFor?.[engine.kind] ?? m.sql;
+
+    if (sql) {
+      try {
+        await runMigrationSQL(engine, m, sql);
+      } catch (err: unknown) {
+        // Actionable diagnostics for statement timeout (Postgres error 57014).
+        // Shape matches the 4-part error standard (what / why / fix / verify).
+        const code = (err as { code?: string })?.code;
+        if (code === '57014') {
+          console.error(`\n❌ Migration ${m.version} (${m.name}) hit statement_timeout (SQLSTATE 57014).`);
+          console.error('');
+          console.error('   Cause: another connection holds a lock on the target table, or the');
+          console.error('   server statement_timeout (~2 min on Supabase) is too short for this DDL.');
+          console.error('');
+          console.error('   Fix:');
+          console.error('     1. gbrain doctor --locks    # find idle-in-transaction blockers');
+          console.error('     2. Terminate blocker(s) shown by step 1 via pg_terminate_backend(<pid>)');
+          console.error('     3. gbrain apply-migrations --yes  # re-run from the version that failed');
+          console.error('');
+          console.error('   Verify:');
+          console.error('     gbrain doctor              # schema_version should match latest');
+          console.error('');
+        }
+        throw err;
+      }
+    }
+
+    // Application-level handler (runs outside transaction for flexibility)
+    if (m.handler) {
+      await m.handler(engine);
+    }
+
+    // Update version after both SQL and handler succeed
+    await engine.setConfig('version', String(m.version));
+    console.log(`  [${m.version}] ✓ ${m.name}`);
+    applied++;
+  }
+
+  return { applied, current: LATEST_VERSION };
 }

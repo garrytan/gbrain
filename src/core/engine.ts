@@ -60,6 +60,31 @@ export interface TimelineBatchInput {
   source_id?: string;
 }
 
+/**
+ * A single dedicated database connection, isolated from the engine's pool.
+ *
+ * Used by migration paths that need session-level GUCs (e.g.
+ * `SET statement_timeout = '600000'` before a `CREATE INDEX CONCURRENTLY`)
+ * without leaking into the shared pool, and by write-quiesce designs
+ * that need a session-lifetime Postgres advisory lock that survives
+ * across transaction boundaries.
+ *
+ * On Postgres: backed by postgres-js `sql.reserve()`; the same backend
+ * process serves every `executeRaw` call within the callback. Released
+ * automatically when the callback returns or throws.
+ *
+ * On PGLite: a thin pass-through. PGLite has no pool, so every call is
+ * already on the single backing connection. The interface is still
+ * exposed so cross-engine callers don't need to branch.
+ *
+ * Not safe to call from inside `transaction()`. The transaction holds a
+ * different backend; reserving a second one can deadlock on a row the
+ * transaction itself is waiting to write.
+ */
+export interface ReservedConnection {
+  executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+}
+
 /** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */
 export const MAX_SEARCH_LIMIT = 100;
 
@@ -79,6 +104,12 @@ export interface BrainEngine {
   disconnect(): Promise<void>;
   initSchema(): Promise<void>;
   transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
+  /**
+   * Run `fn` with a dedicated connection (Postgres: reserved backend;
+   * PGLite: pass-through). See `ReservedConnection` for semantics and
+   * usage constraints. Release is automatic.
+   */
+  withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T>;
 
   // Pages CRUD
   getPage(slug: string): Promise<Page | null>;

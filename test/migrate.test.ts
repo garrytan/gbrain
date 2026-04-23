@@ -1,6 +1,10 @@
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { LATEST_VERSION, runMigrations, MIGRATIONS } from '../src/core/migrate.ts';
+import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
+import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers } from '../src/core/migrate.ts';
+import type { IdleBlocker } from '../src/core/migrate.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
 describe('migrate', () => {
   test('LATEST_VERSION is a number >= 1', () => {
@@ -86,29 +90,42 @@ describe('migrate v21 — pages_source_id_composite_unique', () => {
     expect(v21!.name).toBe('pages_source_id_composite_unique');
   });
 
-  test('v21 adds pages.source_id with DEFAULT default REFERENCES sources', () => {
-    expect(v21!.sql).toContain('ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT');
+  // Post-codex restructure: v21 is engine-split.
+  // Postgres path = additive only (source_id + index). The UNIQUE swap
+  // and files_page_slug_fkey drop moved into v23's atomic transaction.
+  // PGLite path = full (add + unique swap) because PGLite has no
+  // concurrent writers so the integrity window doesn't apply.
+  test('v21 uses sqlFor for engine-specific paths (post-codex)', () => {
+    expect(v21!.sql).toBe('');
+    expect(v21!.sqlFor).toBeDefined();
+    expect(v21!.sqlFor!.postgres).toBeDefined();
+    expect(v21!.sqlFor!.pglite).toBeDefined();
+  });
+
+  test('v21 Postgres path: additive only (source_id + index)', () => {
+    const pg = v21!.sqlFor!.postgres!;
+    expect(pg).toContain('ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT');
     // DEFAULT 'default' closes the race where an INSERT between ADD COLUMN
     // and SET NOT NULL could leave source_id NULL (Codex second-pass review).
-    expect(v21!.sql).toContain("NOT NULL DEFAULT 'default' REFERENCES sources(id)");
+    expect(pg).toContain("NOT NULL DEFAULT 'default' REFERENCES sources(id)");
+    expect(pg).toContain('CREATE INDEX IF NOT EXISTS idx_pages_source_id');
+    // The UNIQUE swap and files FK drop must NOT be in the Postgres path.
+    // They moved into v23's atomic transaction to close the partial-state
+    // window codex identified.
+    expect(pg).not.toContain('pages_slug_key');
+    expect(pg).not.toContain('files_page_slug_fkey');
   });
 
-  test('v21 swaps UNIQUE(slug) → composite UNIQUE(source_id, slug)', () => {
-    // ON CONFLICT (source_id, slug) in putPage relies on this swap.
-    expect(v21!.sql).toContain('ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key');
-    expect(v21!.sql).toContain('pages_source_slug_key');
-    expect(v21!.sql).toContain('UNIQUE (source_id, slug)');
-  });
-
-  test('v21 creates source-scoped index for per-source scans', () => {
-    expect(v21!.sql).toContain('CREATE INDEX IF NOT EXISTS idx_pages_source_id');
-  });
-
-  test('v21 constraint add is guarded (idempotent re-run)', () => {
-    // DO block with IF NOT EXISTS guard means re-running the migration
-    // after partial failure doesn't error on the already-installed name.
-    expect(v21!.sql).toContain('IF NOT EXISTS');
-    expect(v21!.sql).toContain("WHERE conname = 'pages_source_slug_key'");
+  test('v21 PGLite path: additive + UNIQUE swap (no integrity window)', () => {
+    const pgl = v21!.sqlFor!.pglite!;
+    expect(pgl).toContain('ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT');
+    expect(pgl).toContain('CREATE INDEX IF NOT EXISTS idx_pages_source_id');
+    // PGLite swaps the unique here (no files table means no FK to drop).
+    expect(pgl).toContain('ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key');
+    expect(pgl).toContain('pages_source_slug_key');
+    expect(pgl).toContain('UNIQUE (source_id, slug)');
+    // PGLite path doesn't touch files (doesn't exist on PGLite).
+    expect(pgl).not.toContain('files_page_slug_fkey');
   });
 });
 
@@ -134,6 +151,19 @@ describe('migrate v23 — files_source_id_page_id_ledger', () => {
     expect(body).toContain('ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id');
     expect(body).toContain('ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id');
     expect(body).toContain('CREATE TABLE IF NOT EXISTS file_migration_ledger');
+  });
+
+  test('v23 is atomic: wraps all work in engine.transaction (integrity-window fix)', () => {
+    const body = v23!.handler!.toString();
+    // Codex caught: if files_page_slug_fkey is dropped in v21 but the
+    // replacement files.page_id is only added in v23, a process-death
+    // between v21 and v23 leaves files permanently unconstrained.
+    // Fix: move BOTH the FK drop AND the pages UNIQUE swap into v23,
+    // wrap everything in engine.transaction so it commits atomically.
+    expect(body).toContain('engine.transaction');
+    expect(body).toContain('files_page_slug_fkey');
+    expect(body).toContain('pages_slug_key');
+    expect(body).toContain('pages_source_slug_key');
   });
 
   test('v23 backfills files.page_id scoped to default source (Codex fix)', () => {
@@ -594,5 +624,176 @@ describe('resolvePoolSize — env var + explicit override', () => {
     expect(resolvePoolSize(3)).toBe(3);
     process.env.GBRAIN_POOL_SIZE = '7';
     expect(resolvePoolSize(3)).toBe(3);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// PR #356 regression guards — migration hardening
+// ─────────────────────────────────────────────────────────────────
+//
+// These tests guard the codex + eng review findings folded into PR #356.
+// If anyone refactors away the fixes, these catch it.
+
+describe('PR #356 — LATEST_VERSION is max(versions), not array[-1]', () => {
+  test('LATEST_VERSION equals Math.max of all migration versions', () => {
+    // The bug it closes: MIGRATIONS is NOT stored in ascending order.
+    // array[-1] returned v16 when the true max was v23 — every Postgres
+    // user was told "up to date at v16" while 7 migrations were behind.
+    // This regression guard catches any refactor back to array[-1].
+    const expectedMax = Math.max(...MIGRATIONS.map(m => m.version));
+    expect(LATEST_VERSION).toBe(expectedMax);
+  });
+
+  test('Math.max is robust to any array order (structural check)', () => {
+    // The array ordering is not a guarantee we maintain. v0.18.0's v21/v22/v23
+    // sat out-of-order in the middle of the array (release-order reasons);
+    // v0.18.1's v24 was appended sensibly. Both need to work. The invariant
+    // is: LATEST_VERSION equals max across any ordering. Scramble and verify.
+    const scrambled = [...MIGRATIONS].sort(() => Math.random() - 0.5);
+    const scrambledMax = Math.max(...scrambled.map(m => m.version));
+    expect(scrambledMax).toBe(LATEST_VERSION);
+
+    // Guard against regression to array[-1]: the production source must use
+    // Math.max, never indexed access to the last element.
+    const src = readFileSync(resolve('src/core/migrate.ts'), 'utf-8');
+    expect(src).toMatch(/LATEST_VERSION\s*=\s*MIGRATIONS\.length[\s\S]{0,200}Math\.max/);
+    expect(src).not.toMatch(/MIGRATIONS\[MIGRATIONS\.length\s*-\s*1\]\.version/);
+  });
+});
+
+describe('PR #356 — getIdleBlockers pg_stat_activity shape', () => {
+  // Minimal mock of BrainEngine — we only need kind + executeRaw.
+  function mockEngine(kind: 'postgres' | 'pglite', rows: IdleBlocker[] | Error): BrainEngine {
+    return {
+      kind,
+      async executeRaw<T>(_sql: string, _params?: unknown[]): Promise<T[]> {
+        if (rows instanceof Error) throw rows;
+        return rows as unknown as T[];
+      },
+    } as unknown as BrainEngine;
+  }
+
+  test('returns [] on PGLite (no pool, no idle-in-tx concept)', async () => {
+    const engine = mockEngine('pglite', [{ pid: 1, state: 'idle in transaction', query_start: 'x', query: 'y' }]);
+    const blockers = await getIdleBlockers(engine);
+    expect(blockers).toEqual([]);
+  });
+
+  test('returns rows from pg_stat_activity on Postgres', async () => {
+    const fixture: IdleBlocker[] = [
+      { pid: 12345, state: 'idle in transaction', query_start: '2026-04-22 06:00:00+00', query: 'BEGIN; SELECT * FROM pages' },
+    ];
+    const engine = mockEngine('postgres', fixture);
+    const blockers = await getIdleBlockers(engine);
+    expect(blockers).toEqual(fixture);
+  });
+
+  test('returns [] (not throw) when pg_stat_activity query fails', async () => {
+    // Some managed Postgres tenants restrict pg_stat_activity. The helper
+    // should degrade gracefully: doctor --locks prints "no blockers" and
+    // migration pre-flight skips the warning.
+    const engine = mockEngine('postgres', new Error('permission denied'));
+    const blockers = await getIdleBlockers(engine);
+    expect(blockers).toEqual([]);
+  });
+});
+
+describe('PR #356 — 57014 catch path emits actionable 4-part diagnostic', () => {
+  test('runMigrations surfaces SQLSTATE 57014 with fix + verify steps', async () => {
+    // Mock an engine whose runMigration throws a code-57014 error
+    // once; the catch branch should log the 4-part structure AND
+    // rethrow preserving err.code so callers can re-branch.
+    const err = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+
+    let caughtCode: string | undefined;
+    // getConfig returns '15' so pending starts with v16 (has sql content
+    // in the MIGRATIONS array). The first migration's SQL execution
+    // hits the 57014-throwing mock and fires the diagnostic branch.
+    const engine = {
+      kind: 'postgres' as const,
+      async getConfig(_k: string) { return '15'; },
+      async setConfig() {},
+      async executeRaw() { return []; },
+      async transaction<T>(fn: (e: BrainEngine) => Promise<T>): Promise<T> { return fn(engine as unknown as BrainEngine); },
+      async withReservedConnection() { throw new Error('unreached'); },
+      async runMigration() { throw err; },
+    } as unknown as BrainEngine;
+
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await runMigrations(engine);
+    } catch (e: unknown) {
+      caughtCode = (e as { code?: string }).code;
+    }
+    expect(caughtCode).toBe('57014');
+
+    // Assert the diagnostic lines hit stderr with the exact agent-driven shape:
+    // what happened, why, fix, verify.
+    const msgs = errSpy.mock.calls.map(c => String(c[0]));
+    const joined = msgs.join('\n');
+    expect(joined).toContain('statement_timeout');
+    expect(joined).toContain('SQLSTATE 57014');
+    expect(joined).toContain('gbrain doctor --locks');
+    expect(joined).toContain('gbrain apply-migrations --yes');
+    expect(joined).toContain('Verify:');
+    expect(joined).toContain('gbrain doctor');
+
+    errSpy.mockRestore();
+  });
+});
+
+describe('PR #356 — apply-migrations pre-flight schema-version warning', () => {
+  test('source contains the pre-flight check branch before plan execution', () => {
+    // Structural check: the pre-flight block compares the engine's
+    // reported schema version against LATEST_VERSION and warns if
+    // behind. If someone removes this branch, users who run
+    // apply-migrations expecting it to handle schema migrations get
+    // the silent-gaslight experience from the field report.
+    const source = readFileSync(resolve('src/commands/apply-migrations.ts'), 'utf-8');
+    expect(source).toContain('LATEST_VERSION');
+    expect(source).toContain('Schema version');
+    expect(source).toContain('is behind latest');
+  });
+});
+
+describe('PR #356 — setSessionDefaults is applied on both db.ts and postgres-engine.ts paths', () => {
+  test('structural: idle_in_transaction_session_timeout set via single helper', () => {
+    // After PR #356 extracted setSessionDefaults, both connect paths
+    // should call the helper, not inline the SET. Any regression
+    // that re-duplicates the block gets caught here.
+    const dbSrc = readFileSync(resolve('src/core/db.ts'), 'utf-8');
+    const pgSrc = readFileSync(resolve('src/core/postgres-engine.ts'), 'utf-8');
+
+    // Helper is defined in db.ts
+    expect(dbSrc).toContain('export async function setSessionDefaults');
+    expect(dbSrc).toContain('idle_in_transaction_session_timeout');
+
+    // connect() in db.ts calls the helper, doesn't inline the SET
+    // (the SET only appears inside the helper itself now).
+    const setMatches = dbSrc.match(/SET idle_in_transaction_session_timeout/g) || [];
+    expect(setMatches.length).toBe(1); // only in the helper
+
+    // postgres-engine.ts calls the helper too, doesn't duplicate
+    expect(pgSrc).toContain('db.setSessionDefaults');
+    expect(pgSrc).not.toContain("SET idle_in_transaction_session_timeout");
+  });
+});
+
+describe('PR #356 — non-transactional DDL runs via reserved connection', () => {
+  test('runMigrationSQL uses withReservedConnection for transaction:false branch', () => {
+    // The else-branch of runMigrationSQL (CREATE INDEX CONCURRENTLY etc.)
+    // must go through engine.withReservedConnection + SET statement_timeout,
+    // NOT engine.runMigration on the shared pool. Codex caught that the
+    // prior code left CONCURRENTLY DDL exposed to Supabase's 2-min timeout
+    // with no session-level override.
+    const source = readFileSync(resolve('src/core/migrate.ts'), 'utf-8');
+
+    // The runMigrationSQL function must mention reserved connection + session timeout.
+    const runFnIdx = source.indexOf('async function runMigrationSQL');
+    expect(runFnIdx).toBeGreaterThan(-1);
+    const fnBody = source.slice(runFnIdx, runFnIdx + 2500);
+    expect(fnBody).toContain('withReservedConnection');
+    expect(fnBody).toContain("SET statement_timeout = '600000'");
   });
 });
