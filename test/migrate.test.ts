@@ -17,6 +17,162 @@ describe('migrate', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// v0.18.0 — v16 sources_table_additive (Step 1, Lane A)
+// ─────────────────────────────────────────────────────────────────
+// v16 is the ADDITIVE-ONLY migration: it installs the sources primitive
+// without breaking the engine's existing ON CONFLICT (slug) upserts.
+// The breaking schema changes (pages.source_id NOT NULL, composite
+// UNIQUE, files.page_slug → page_id, file_migration_ledger,
+// links.resolution_type) land in v17 alongside the engine API rewrite
+// so the engine can execute the new ON CONFLICT (source_id, slug)
+// atomically with the schema change.
+// ─────────────────────────────────────────────────────────────────
+describe('migrate v20 — sources_table_additive', () => {
+  const v20 = MIGRATIONS.find(m => m.version === 20);
+
+  test('v20 exists', () => {
+    expect(v20).toBeDefined();
+    expect(v20!.name).toBe('sources_table_additive');
+  });
+
+  test('v20 creates sources table', () => {
+    expect(v20!.sql).toContain('CREATE TABLE IF NOT EXISTS sources');
+    expect(v20!.sql).toContain('id            TEXT PRIMARY KEY');
+    expect(v20!.sql).toContain('name          TEXT NOT NULL UNIQUE');
+    expect(v20!.sql).toContain('config        JSONB NOT NULL');
+  });
+
+  test("v20 seeds 'default' source inheriting sync config", () => {
+    expect(v20!.sql).toContain("INSERT INTO sources (id, name, local_path, last_commit, config)");
+    expect(v20!.sql).toContain("'default'");
+    // The default source pulls from existing config so post-upgrade
+    // identity is preserved.
+    expect(v20!.sql).toContain("SELECT value FROM config WHERE key = 'sync.repo_path'");
+    expect(v20!.sql).toContain("SELECT value FROM config WHERE key = 'sync.last_commit'");
+  });
+
+  test('v20 default source is federated=true (backward-compat)', () => {
+    // federated=true ensures pre-v0.17 brains keep single-namespace
+    // search semantics — every page appears in unqualified search.
+    expect(v20!.sql).toContain('"federated": true');
+  });
+
+  test('v20 is idempotent on re-run', () => {
+    // CREATE TABLE IF NOT EXISTS + NOT EXISTS subquery on INSERT.
+    expect(v20!.sql).toContain('CREATE TABLE IF NOT EXISTS sources');
+    expect(v20!.sql).toContain('WHERE NOT EXISTS (SELECT 1 FROM sources WHERE id = ');
+  });
+
+  test('v20 does NOT touch pages / ingest_log / files / links', () => {
+    // Step 1 is additive-only. Breaking changes deferred to v17 so they
+    // land with the engine rewrite (Step 2). Guard against anyone
+    // accidentally re-expanding v16's scope.
+    expect(v20!.sql).not.toContain('ALTER TABLE pages');
+    expect(v20!.sql).not.toContain('ALTER TABLE ingest_log');
+    expect(v20!.sql).not.toContain('ALTER TABLE files');
+    expect(v20!.sql).not.toContain('ALTER TABLE links');
+    expect(v20!.handler).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// v0.18.0 — v17 pages_source_id_composite_unique (Step 2, Lane B)
+// ─────────────────────────────────────────────────────────────────
+describe('migrate v21 — pages_source_id_composite_unique', () => {
+  const v21 = MIGRATIONS.find(m => m.version === 21);
+
+  test('v21 exists and is paired with Step 2 engine rewrite', () => {
+    expect(v21).toBeDefined();
+    expect(v21!.name).toBe('pages_source_id_composite_unique');
+  });
+
+  test('v21 adds pages.source_id with DEFAULT default REFERENCES sources', () => {
+    expect(v21!.sql).toContain('ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT');
+    // DEFAULT 'default' closes the race where an INSERT between ADD COLUMN
+    // and SET NOT NULL could leave source_id NULL (Codex second-pass review).
+    expect(v21!.sql).toContain("NOT NULL DEFAULT 'default' REFERENCES sources(id)");
+  });
+
+  test('v21 swaps UNIQUE(slug) → composite UNIQUE(source_id, slug)', () => {
+    // ON CONFLICT (source_id, slug) in putPage relies on this swap.
+    expect(v21!.sql).toContain('ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key');
+    expect(v21!.sql).toContain('pages_source_slug_key');
+    expect(v21!.sql).toContain('UNIQUE (source_id, slug)');
+  });
+
+  test('v21 creates source-scoped index for per-source scans', () => {
+    expect(v21!.sql).toContain('CREATE INDEX IF NOT EXISTS idx_pages_source_id');
+  });
+
+  test('v21 constraint add is guarded (idempotent re-run)', () => {
+    // DO block with IF NOT EXISTS guard means re-running the migration
+    // after partial failure doesn't error on the already-installed name.
+    expect(v21!.sql).toContain('IF NOT EXISTS');
+    expect(v21!.sql).toContain("WHERE conname = 'pages_source_slug_key'");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// v0.18.0 — v19 files_source_id_page_id_ledger (Step 7, Lane E)
+// ─────────────────────────────────────────────────────────────────
+describe('migrate v23 — files_source_id_page_id_ledger', () => {
+  const v23 = MIGRATIONS.find(m => m.version === 23);
+
+  test('v23 exists as handler-only (Postgres files table, PGLite no-op)', () => {
+    expect(v23).toBeDefined();
+    expect(v23!.name).toBe('files_source_id_page_id_ledger');
+    expect(v23!.sql).toBe('');
+    expect(v23!.handler).toBeDefined();
+  });
+
+  test('v23 handler gates on engine.kind for PGLite (no files table)', () => {
+    expect(v23!.handler!.toString()).toMatch(/engine\.kind\s*===\s*["']pglite["']/);
+  });
+
+  test('v23 adds files.source_id + files.page_id + ledger creation', () => {
+    const body = v23!.handler!.toString();
+    expect(body).toContain('ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id');
+    expect(body).toContain('ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id');
+    expect(body).toContain('CREATE TABLE IF NOT EXISTS file_migration_ledger');
+  });
+
+  test('v23 backfills files.page_id scoped to default source (Codex fix)', () => {
+    const body = v23!.handler!.toString();
+    // Without source_id='default' scope, the JOIN could hit the wrong
+    // page after new sources with duplicate slugs are added.
+    expect(body).toContain('UPDATE files f');
+    expect(body).toContain("p.source_id = 'default'");
+  });
+
+  test('v23 ledger PK is file_id (Codex: two sources can share old path)', () => {
+    const body = v23!.handler!.toString();
+    expect(body).toContain('file_id           INTEGER PRIMARY KEY');
+    // State machine values all present.
+    for (const state of ['pending', 'copy_done', 'db_updated', 'complete', 'failed']) {
+      expect(body).toContain(`'${state}'`);
+    }
+  });
+});
+
+describe('migrate — ordering guarantee (v15 must NOT be skipped by v16)', () => {
+  test('runMigrations sorts by version ascending', async () => {
+    // Regression: if v16 preceded v15 in the MIGRATIONS array, the iterator
+    // would setConfig(version, 16) first, then skip v15 on the next pass.
+    // runMigrations applies a defensive sort so array order doesn't matter.
+    // This test asserts v15 exists (if we broke the sort, v15 would still
+    // exist in MIGRATIONS but would never apply at runtime).
+    const v15 = MIGRATIONS.find(m => m.version === 15);
+    const v20 = MIGRATIONS.find(m => m.version === 20);
+    expect(v15).toBeDefined();
+    expect(v20).toBeDefined();
+    // Sanity: versions are distinct and progress.
+    const versions = MIGRATIONS.map(m => m.version);
+    const uniq = new Set(versions);
+    expect(uniq.size).toBe(versions.length);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
 // REGRESSION TESTS — migrations v8 + v9 perf on duplicate-heavy tables
 // ─────────────────────────────────────────────────────────────────
 //

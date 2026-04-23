@@ -694,7 +694,7 @@ describeE2E('E2E: file_list LIMIT enforcement', () => {
     await sql`
       INSERT INTO pages (slug, title, type, compiled_truth, frontmatter)
       VALUES (${testSlug}, ${'Test Limit Page'}, ${'note'}, ${'body'}, ${'{}'}::jsonb)
-      ON CONFLICT (slug) DO NOTHING
+      ON CONFLICT (source_id, slug) DO NOTHING
     `;
 
     // Insert 150 file rows for the same slug

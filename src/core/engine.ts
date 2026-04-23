@@ -28,6 +28,21 @@ export interface LinkBatchInput {
   origin_slug?: string;
   /** Frontmatter field name (e.g. 'key_people', 'investors'). */
   origin_field?: string;
+  /**
+   * v0.18.0: source id for each endpoint. When omitted, the engine JOINs
+   * against `source_id='default'`. Pass explicit values when the edge
+   * lives in a non-default source OR crosses sources.
+   *
+   * Without these fields, the batch JOIN `pages.slug = v.from_slug` fans
+   * out across every source containing that slug, silently creating wrong
+   * edges in a multi-source brain. The source_id filter eliminates the
+   * fan-out. Origin pages (frontmatter provenance) get their own
+   * source_id so reconciliation can't delete edges from another source's
+   * frontmatter.
+   */
+  from_source_id?: string;
+  to_source_id?: string;
+  origin_source_id?: string;
 }
 
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -37,6 +52,12 @@ export interface TimelineBatchInput {
   source?: string;
   summary: string;
   detail?: string;
+  /**
+   * v0.18.0: source id for the owning page. When omitted, the engine JOINs
+   * against `source_id='default'`. Without this, two pages sharing the
+   * same slug across sources would fan out timeline rows to both.
+   */
+  source_id?: string;
 }
 
 /** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */

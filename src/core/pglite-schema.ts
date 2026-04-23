@@ -20,11 +20,32 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ============================================================
+-- sources: multi-brain tenancy (v0.18.0). See src/schema.sql for design notes.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sources (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  local_path    TEXT,
+  last_commit   TEXT,
+  last_sync_at  TIMESTAMPTZ,
+  config        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO sources (id, name, config)
+  VALUES ('default', 'default', '{"federated": true}'::jsonb)
+  ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================
 -- pages: the core content table
 -- ============================================================
+-- v0.18.0 (Step 2): source_id scopes each page. Slugs are unique per
+-- source — see src/schema.sql for the design notes.
 CREATE TABLE IF NOT EXISTS pages (
   id            SERIAL PRIMARY KEY,
-  slug          TEXT    NOT NULL UNIQUE,
+  source_id     TEXT    NOT NULL DEFAULT 'default'
+                REFERENCES sources(id) ON DELETE CASCADE,
+  slug          TEXT    NOT NULL,
   type          TEXT    NOT NULL,
   title         TEXT    NOT NULL,
   compiled_truth TEXT   NOT NULL DEFAULT '',
@@ -32,12 +53,14 @@ CREATE TABLE IF NOT EXISTS pages (
   frontmatter   JSONB   NOT NULL DEFAULT '{}',
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -72,6 +95,8 @@ CREATE TABLE IF NOT EXISTS links (
   link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual')),
   origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
   origin_field   TEXT,
+  -- v0.18.0 Step 4: see src/schema.sql.
+  resolution_type TEXT   CHECK (resolution_type IS NULL OR resolution_type IN ('qualified', 'unqualified')),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT links_from_to_type_source_origin_unique
     UNIQUE NULLS NOT DISTINCT (from_page_id, to_page_id, link_type, link_source, origin_page_id)
@@ -141,7 +166,7 @@ CREATE TABLE IF NOT EXISTS page_versions (
 CREATE INDEX IF NOT EXISTS idx_versions_page ON page_versions(page_id);
 
 -- ============================================================
--- ingest_log
+-- ingest_log (v0.18.0 Step 1: source_id deferred to v17, see src/schema.sql)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS ingest_log (
   id            SERIAL PRIMARY KEY,

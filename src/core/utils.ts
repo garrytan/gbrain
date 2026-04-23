@@ -125,7 +125,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
 }
 
 export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
-  return {
+  const result: SearchResult = {
     slug: row.slug as string,
     page_id: row.page_id as number,
     title: row.title as string,
@@ -137,4 +137,12 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
     score: Number(row.score),
     stale: Boolean(row.stale),
   };
+  // v0.17.0: source_id comes from the p.source_id column in search
+  // SELECTs. Keep the field optional so pre-v0.17 engines that didn't
+  // join sources don't crash on the absent column — rowToSearchResult
+  // is shared by both paths.
+  if (typeof row.source_id === 'string') {
+    result.source_id = row.source_id;
+  }
+  return result;
 }

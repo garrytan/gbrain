@@ -609,3 +609,68 @@ describe('FRONTMATTER_LINK_MAP integrity', () => {
     expect(m!.dirHint).toContain('people');
   });
 });
+
+
+// ─────────────────────────────────────────────────────────────────
+// v0.18.0 Step 4 — qualified wikilink syntax [[source-id:dir/slug]]
+// ─────────────────────────────────────────────────────────────────
+describe("extractEntityRefs — v0.18.0 qualified wikilinks", () => {
+  test("[[wiki:topics/ai]] extracts with sourceId=wiki", () => {
+    const refs = extractEntityRefs("See [[concepts/ai]] vs [[wiki:concepts/ai]] for wiki-specific take.");
+    // One unqualified + one qualified.
+    expect(refs.length).toBe(2);
+    const qual = refs.find(r => r.sourceId === "wiki");
+    expect(qual).toBeDefined();
+    expect(qual!.slug).toBe("concepts/ai");
+    expect(qual!.name).toBe("concepts/ai");
+    const unqual = refs.find(r => r.sourceId === undefined);
+    expect(unqual).toBeDefined();
+    expect(unqual!.slug).toBe("concepts/ai");
+  });
+
+  test("[[gstack:projects/foo|Display Name]] preserves display + sourceId", () => {
+    const refs = extractEntityRefs("See [[gstack:projects/foo|The Foo Project]] for details.");
+    expect(refs.length).toBe(1);
+    expect(refs[0]).toEqual({ name: "The Foo Project", slug: "projects/foo", dir: "projects", sourceId: "gstack" });
+  });
+
+  test("qualified source-id format is validated (must match [a-z0-9-]+ kebab rules)", () => {
+    // Uppercase source IDs are not qualified — fall through to unqualified wikilink or no match.
+    const refs = extractEntityRefs("Legit: [[yc-media:concepts/seed]] Not legit: [[NotValid:concepts/x]]");
+    const qualified = refs.filter(r => r.sourceId);
+    expect(qualified.length).toBe(1);
+    expect(qualified[0].sourceId).toBe("yc-media");
+  });
+
+  test("masking prevents unqualified regex from matching inside a qualified link", () => {
+    // Without the mask, [[wiki:concepts/ai]] could also match as
+    // unqualified with slug "wiki:concepts/ai" (invalid dir) — the
+    // DIR_PATTERN whitelist normally blocks it, but masking is
+    // defense-in-depth.
+    const refs = extractEntityRefs("Ref: [[wiki:concepts/ai]]");
+    expect(refs.length).toBe(1);
+    expect(refs[0].sourceId).toBe("wiki");
+  });
+
+  test("markdown [Name](path) links always have no sourceId (unqualified by shape)", () => {
+    const refs = extractEntityRefs("[Alice](people/alice-chen) met [[wiki:people/bob]]");
+    const mdLink = refs.find(r => r.slug === "people/alice-chen");
+    expect(mdLink!.sourceId).toBeUndefined();
+    const wiki = refs.find(r => r.slug === "people/bob");
+    expect(wiki!.sourceId).toBe("wiki");
+  });
+});
+
+describe("v0.18.0 migration v22 — links_resolution_type", () => {
+  test("migration v22 exists with CHECK constraint", async () => {
+    const { MIGRATIONS } = await import("../src/core/migrate.ts");
+    const v22 = MIGRATIONS.find(m => m.version === 22);
+    expect(v22).toBeDefined();
+    expect(v22!.name).toBe("links_resolution_type");
+    expect(v22!.sql).toContain("ADD COLUMN IF NOT EXISTS resolution_type");
+    expect(v22!.sql).toContain("links_resolution_type_check");
+    expect(v22!.sql).toContain("qualified");
+    expect(v22!.sql).toContain("unqualified");
+  });
+});
+

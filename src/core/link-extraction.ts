@@ -24,7 +24,18 @@ export interface EntityRef {
   slug: string;
   /** Top-level directory ("people" | "companies" | etc.). */
   dir: string;
+  /**
+   * v0.17.0: source id when the link was qualified as `[[source:slug]]`.
+   * `null` means unqualified — the caller resolves via local-first fallback
+   * at extraction time. Mirrors links.resolution_type:
+   *   - sourceId set   → 'qualified'
+   *   - sourceId null  → 'unqualified'
+   */
+  sourceId?: string | null;
 }
+
+/** v0.17.0: how a link's target source was pinned at extraction time. */
+export type LinkResolutionType = 'qualified' | 'unqualified';
 
 /**
  * Directory prefix whitelist. These are the top-level slug dirs the extractor
@@ -60,6 +71,23 @@ const ENTITY_REF_RE = new RegExp(
  */
 const WIKILINK_RE = new RegExp(
   `\\[\\[(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  'g',
+);
+
+/**
+ * v0.17.0: qualified wikilink `[[source-id:dir/slug]]` or
+ * `[[source-id:dir/slug|Display Text]]`. The source-id segment pins the
+ * target to a specific sources(id) row, overriding the local-first
+ * fallback used by unqualified `[[slug]]` references.
+ *
+ * Captures: sourceId, slug (dir/...), displayName (optional).
+ *
+ * Matched BEFORE WIKILINK_RE so `[[wiki:topics/ai]]` isn't mis-parsed by
+ * the unqualified regex (the source prefix would not satisfy DIR_PATTERN
+ * anyway, but the two-pass approach keeps intent crystal-clear).
+ */
+const QUALIFIED_WIKILINK_RE = new RegExp(
+  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -112,6 +140,9 @@ export function extractEntityRefs(content: string): EntityRef[] {
   let match: RegExpExecArray | null;
 
   // 1. Markdown links: [Name](path)
+  //    Markdown links have no source-qualification syntax — they're
+  //    always unqualified. Omit sourceId so the shape stays compatible
+  //    with pre-v0.17 consumers doing strict equality.
   const mdPattern = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
@@ -121,9 +152,28 @@ export function extractEntityRefs(content: string): EntityRef[] {
     refs.push({ name, slug, dir });
   }
 
-  // 2. Obsidian wikilinks: [[path]] or [[path|Display Text]]
+  // 2a. v0.17.0 qualified wikilinks: [[source-id:path]] or [[source-id:path|Display]]
+  //     Must run BEFORE the unqualified pass or we'd double-emit. We also
+  //     mask out the matched spans so pass 2b can't grab them.
+  const qualifiedRanges: Array<[number, number]> = [];
+  const qualPattern = new RegExp(QUALIFIED_WIKILINK_RE.source, QUALIFIED_WIKILINK_RE.flags);
+  while ((match = qualPattern.exec(stripped)) !== null) {
+    const sourceId = match[1];
+    let slug = match[2].trim();
+    if (!slug) continue;
+    if (slug.includes('://')) continue;
+    if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+    const displayName = (match[3] || slug).trim();
+    const dir = slug.split('/')[0];
+    refs.push({ name: displayName, slug, dir, sourceId });
+    qualifiedRanges.push([match.index, match.index + match[0].length]);
+  }
+
+  // 2b. Unqualified Obsidian wikilinks: [[path]] or [[path|Display Text]]
+  //     Same shape rule: omit sourceId when unqualified.
+  const unmasked = maskRanges(stripped, qualifiedRanges);
   const wikiPattern = new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags);
-  while ((match = wikiPattern.exec(stripped)) !== null) {
+  while ((match = wikiPattern.exec(unmasked)) !== null) {
     let slug = match[1].trim();
     if (!slug) continue;
     if (slug.includes('://')) continue;
@@ -134,6 +184,20 @@ export function extractEntityRefs(content: string): EntityRef[] {
   }
 
   return refs;
+}
+
+/**
+ * Replace the byte ranges with spaces, preserving offsets. Used by
+ * extractEntityRefs to prevent the unqualified wikilink regex from
+ * matching inside a qualified wikilink span.
+ */
+function maskRanges(content: string, ranges: Array<[number, number]>): string {
+  if (ranges.length === 0) return content;
+  const chars = content.split('');
+  for (const [s, e] of ranges) {
+    for (let i = s; i < e && i < chars.length; i++) chars[i] = ' ';
+  }
+  return chars.join('');
 }
 
 // ─── Link candidates (richer than EntityRef) ────────────────────

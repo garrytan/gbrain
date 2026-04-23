@@ -154,3 +154,75 @@ describe('edge cases', () => {
     expect(deduped.filter(r => r.slug === 'a').length).toBeLessThanOrEqual(3);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// v0.18.0 Step 3 — source-aware dedup (REGRESSION-CRITICAL per Codex)
+// ─────────────────────────────────────────────────────────────────
+// Pre-v0.17 dedup collapsed on slug alone. Under multi-source
+// uniqueness, two same-slug pages in different sources ARE different
+// pages — collapsing them destroys cross-source recall. Codex flagged
+// this as a regression-critical path in the outside-voice review.
+describe('dedup — source-aware composite key (v0.18.0)', () => {
+  test('same slug across two sources does NOT collapse via dedupBySource layer', () => {
+    // Two pages, same slug, different sources. Both should survive
+    // Layer 1 (top-3-per-page) because they are DIFFERENT pages.
+    const results = [
+      makeResult({ slug: 'topics/ai', source_id: 'wiki',   score: 0.9, chunk_text: 'wiki take on ai' }),
+      makeResult({ slug: 'topics/ai', source_id: 'gstack', score: 0.85, chunk_text: 'gstack plans for ai' }),
+    ];
+    const deduped = dedupResults(results);
+    // Both pages represented — one result each.
+    const wikiHits = deduped.filter(r => r.source_id === 'wiki' && r.slug === 'topics/ai');
+    const gstackHits = deduped.filter(r => r.source_id === 'gstack' && r.slug === 'topics/ai');
+    expect(wikiHits.length).toBe(1);
+    expect(gstackHits.length).toBe(1);
+  });
+
+  test('same slug + same source DOES collapse to maxPerPage', () => {
+    // Control: same-source-same-slug behavior unchanged from pre-v0.17.
+    const results = [
+      makeResult({ slug: 'topics/ai', source_id: 'wiki', chunk_id: 1, score: 0.9, chunk_text: 'chunk one distinct content here' }),
+      makeResult({ slug: 'topics/ai', source_id: 'wiki', chunk_id: 2, score: 0.8, chunk_text: 'chunk two also distinct words' }),
+      makeResult({ slug: 'topics/ai', source_id: 'wiki', chunk_id: 3, score: 0.7, chunk_text: 'chunk three different terms again' }),
+    ];
+    const deduped = dedupResults(results);
+    // Default maxPerPage=2 → only 2 of the 3 wiki:topics/ai chunks survive.
+    const wikiHits = deduped.filter(r => r.source_id === 'wiki' && r.slug === 'topics/ai');
+    expect(wikiHits.length).toBeLessThanOrEqual(2);
+  });
+
+  test('missing source_id defaults to "default" for backward compat', () => {
+    // Pre-v0.17 brains (single source, rows with no source_id column)
+    // still dedup correctly: the fallback key groups them all under
+    // the 'default' source bucket.
+    const results = [
+      makeResult({ slug: 'topics/ai', chunk_id: 1, score: 0.9, chunk_text: 'chunk one distinct content words' }),
+      makeResult({ slug: 'topics/ai', chunk_id: 2, score: 0.8, chunk_text: 'chunk two totally different phrasing' }),
+      makeResult({ slug: 'topics/ai', chunk_id: 3, score: 0.7, chunk_text: 'chunk three new unique text here' }),
+    ];
+    const deduped = dedupResults(results);
+    // All three should group as one page (no source_id → default), so
+    // maxPerPage=2 cap applies.
+    expect(deduped.length).toBeLessThanOrEqual(2);
+  });
+
+  test('compiled_truth guarantee scopes to (source_id, slug), not slug alone', () => {
+    // Two pages, same slug, different sources. wiki's top-scoring chunk
+    // is timeline; gstack has only compiled_truth. The guarantee must
+    // swap in wiki's compiled_truth for wiki (without touching gstack)
+    // and must NOT accidentally pull gstack's compiled_truth into wiki.
+    const results = [
+      makeResult({ slug: 'topics/ai', source_id: 'wiki',   score: 0.9, chunk_source: 'timeline',       chunk_id: 1, chunk_text: 'wiki timeline chunk content here' }),
+      makeResult({ slug: 'topics/ai', source_id: 'wiki',   score: 0.5, chunk_source: 'compiled_truth', chunk_id: 2, chunk_text: 'wiki compiled truth content text' }),
+      makeResult({ slug: 'topics/ai', source_id: 'gstack', score: 0.7, chunk_source: 'compiled_truth', chunk_id: 3, chunk_text: 'gstack compiled truth something else' }),
+    ];
+    const deduped = dedupResults(results);
+    // Wiki ends up with a compiled_truth (swapped from its own source,
+    // not gstack's).
+    const wikiCompiledTruths = deduped.filter(
+      r => r.source_id === 'wiki' && r.slug === 'topics/ai' && r.chunk_source === 'compiled_truth',
+    );
+    expect(wikiCompiledTruths.length).toBe(1);
+    expect(wikiCompiledTruths[0].chunk_id).toBe(2); // wiki's own compiled_truth, NOT gstack's (id=3)
+  });
+});

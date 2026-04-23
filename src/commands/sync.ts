@@ -41,6 +41,14 @@ export interface SyncOpts {
   skipFailed?: boolean;
   /** Bug 9 — re-attempt unacknowledged failures explicitly (CLI --retry-failed). */
   retryFailed?: boolean;
+  /**
+   * v0.18.0 Step 5 — sync a specific named source. When set, sync reads
+   * local_path + last_commit from the sources table (not the global
+   * config.sync.* keys) and writes last_commit + last_sync_at back to
+   * the same row. Backward compat: when undefined, sync uses the
+   * pre-v0.17 global-config path unchanged.
+   */
+  sourceId?: string;
 }
 
 function git(repoPath: string, ...args: string[]): string {
@@ -50,11 +58,60 @@ function git(repoPath: string, ...args: string[]): string {
   }).trim();
 }
 
+// v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
+// is set, read/write the per-source row instead of the global config
+// keys. These wrappers centralize the branch so every read/write site
+// picks the right storage — future Step 5 work (failure-tracking per
+// source) hooks here too.
+async function readSyncAnchor(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  which: 'repo_path' | 'last_commit',
+): Promise<string | null> {
+  if (sourceId) {
+    const col = which === 'repo_path' ? 'local_path' : 'last_commit';
+    const rows = await engine.executeRaw<Record<string, string | null>>(
+      `SELECT ${col} AS value FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    return rows[0]?.value ?? null;
+  }
+  return await engine.getConfig(`sync.${which}`);
+}
+
+async function writeSyncAnchor(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  which: 'repo_path' | 'last_commit',
+  value: string,
+): Promise<void> {
+  if (sourceId) {
+    const col = which === 'repo_path' ? 'local_path' : 'last_commit';
+    // last_sync_at bookmarked on every last_commit advance.
+    if (which === 'last_commit') {
+      await engine.executeRaw(
+        `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+        [value, sourceId],
+      );
+    } else {
+      await engine.executeRaw(
+        `UPDATE sources SET ${col} = $1 WHERE id = $2`,
+        [value, sourceId],
+      );
+    }
+    return;
+  }
+  await engine.setConfig(`sync.${which}`, value);
+}
+
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   // Resolve repo path
-  const repoPath = opts.repoPath || await engine.getConfig('sync.repo_path');
+  const repoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (!repoPath) {
-    throw new Error('No repo path specified. Use --repo or run gbrain init with --repo first.');
+    const hint = opts.sourceId
+      ? `Source "${opts.sourceId}" has no local_path. Run: gbrain sources add ${opts.sourceId} --path <path>`
+      : `No repo path specified. Use --repo or run gbrain init with --repo first.`;
+    throw new Error(hint);
   }
 
   // Validate git repo
@@ -84,8 +141,8 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
   }
 
-  // Read sync state
-  const lastCommit = opts.full ? null : await engine.getConfig('sync.last_commit');
+  // Read sync state (source-scoped when sourceId is set, global otherwise)
+  const lastCommit = opts.full ? null : await readSyncAnchor(engine, opts.sourceId, 'last_commit');
 
   // Ancestry validation: if lastCommit exists, verify it's still in history
   if (lastCommit) {
@@ -175,7 +232,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
 
   if (totalChanges === 0) {
     // Update sync state even with no syncable changes (git advanced)
-    await engine.setConfig('sync.last_commit', headCommit);
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     return {
       status: 'up_to_date',
@@ -296,7 +353,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       );
       // Update last_run + repo_path (progress on infra) but NOT last_commit.
       await engine.setConfig('sync.last_run', new Date().toISOString());
-      await engine.setConfig('sync.repo_path', repoPath);
+      await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
       return {
         status: 'blocked_by_failures',
         fromCommit: lastCommit,
@@ -318,10 +375,11 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     }
   }
 
-  // Update sync state AFTER all changes succeed
-  await engine.setConfig('sync.last_commit', headCommit);
+  // Update sync state AFTER all changes succeed (source-scoped when
+  // opts.sourceId is set, global config otherwise).
+  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
   await engine.setConfig('sync.last_run', new Date().toISOString());
-  await engine.setConfig('sync.repo_path', repoPath);
+  await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
 
   // Log ingest
   await engine.logIngest({
@@ -423,7 +481,7 @@ async function performFullSync(
         `Fix the YAML in those files and re-run, or use '--skip-failed'.`,
       );
       await engine.setConfig('sync.last_run', new Date().toISOString());
-      await engine.setConfig('sync.repo_path', repoPath);
+      await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
       return {
         status: 'blocked_by_failures',
         fromCommit: null,
@@ -439,10 +497,12 @@ async function performFullSync(
     if (acked > 0) console.error(`  Acknowledged ${acked} failure(s) and advancing past them.`);
   }
 
-  // Persist sync state so next sync is incremental (C1 fix: was missing)
-  await engine.setConfig('sync.last_commit', headCommit);
+  // Persist sync state so next sync is incremental (C1 fix: was missing).
+  // v0.18.0 Step 5: routed through writeSyncAnchor so --source pins it
+  // to the right sources row rather than the global config.
+  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
   await engine.setConfig('sync.last_run', new Date().toISOString());
-  await engine.setConfig('sync.repo_path', repoPath);
+  await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
 
   // Full sync doesn't track pagesAffected, so fall back to embed --stale.
   // Before commit 2: runEmbed is void; use result.imported as best estimate of
@@ -482,7 +542,17 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
 
-  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed };
+  // v0.18.0 Step 5: --source resolves to a sources(id) row. Falls back
+  // to pre-v0.17 global config (sync.repo_path + sync.last_commit) when
+  // no flag, no env, no dotfile is present.
+  const explicitSource = args.find((a, i) => args[i - 1] === '--source') || null;
+  let sourceId: string | undefined = undefined;
+  if (explicitSource || process.env.GBRAIN_SOURCE) {
+    const { resolveSourceId } = await import('../core/source-resolver.ts');
+    sourceId = await resolveSourceId(engine, explicitSource);
+  }
+
+  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId };
 
   // Bug 9 — --retry-failed: before running normal sync, clear acknowledgment
   // flags so the sync picks them up as fresh work. The actual re-attempt
