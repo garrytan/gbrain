@@ -24,6 +24,16 @@ export interface RawManifestEntry {
   oldPath?: string;
 }
 
+export type SyncStrategy = 'markdown' | 'code' | 'auto';
+
+interface SyncableOptions {
+  strategy?: SyncStrategy;
+  include?: string[];
+  exclude?: string[];
+}
+
+const CODE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.rb', '.go']);
+
 /**
  * Parse the output of `git diff --name-status -M LAST..HEAD` into structured entries.
  *
@@ -72,12 +82,60 @@ export function buildSyncManifest(gitDiffOutput: string): SyncManifest {
   return manifest;
 }
 
+export function isCodeFilePath(path: string): boolean {
+  const lower = path.toLowerCase();
+  for (const ext of CODE_EXTENSIONS) {
+    if (lower.endsWith(ext)) return true;
+  }
+  return false;
+}
+
+function isMarkdownFilePath(path: string): boolean {
+  return path.endsWith('.md') || path.endsWith('.mdx');
+}
+
+function isAllowedByStrategy(path: string, strategy: SyncStrategy): boolean {
+  if (strategy === 'markdown') return isMarkdownFilePath(path);
+  if (strategy === 'code') return isCodeFilePath(path);
+  return isMarkdownFilePath(path) || isCodeFilePath(path);
+}
+
+function globToRegex(pattern: string): RegExp {
+  let regex = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      const next = pattern[i + 1];
+      if (next === '*') {
+        regex += '.*';
+        i++;
+      } else {
+        regex += '[^/]*';
+      }
+      continue;
+    }
+    if (ch === '?') { regex += '.'; continue; }
+    if ('\\.[]{}()+-^$|'.includes(ch)) { regex += `\\${ch}`; continue; }
+    regex += ch;
+  }
+  regex += '$';
+  return new RegExp(regex);
+}
+
+function matchesAnyGlob(path: string, patterns?: string[]): boolean {
+  if (!patterns || patterns.length === 0) return false;
+  const normalized = path.replace(/\\/g, '/');
+  return patterns.some((pattern) => globToRegex(pattern).test(normalized));
+}
+
 /**
  * Filter a file path to determine if it should be synced to GBrain.
+ * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
  */
-export function isSyncable(path: string): boolean {
-  // Must be .md or .mdx
-  if (!path.endsWith('.md') && !path.endsWith('.mdx')) return false;
+export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
+  const strategy = opts.strategy || 'markdown';
+
+  if (!isAllowedByStrategy(path, strategy)) return false;
 
   // Skip hidden directories
   if (path.split('/').some(p => p.startsWith('.'))) return false;
@@ -92,6 +150,9 @@ export function isSyncable(path: string): boolean {
 
   // Skip ops/ directory
   if (path.startsWith('ops/')) return false;
+
+  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return false;
+  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return false;
 
   return true;
 }
@@ -126,10 +187,29 @@ export function slugifyPath(filePath: string): string {
 }
 
 /**
+ * Slugify a code file path: flatten into a single slug segment with dots → hyphens.
+ * e.g. 'src/core/chunkers/code.ts' → 'src-core-chunkers-code-ts'
+ */
+export function slugifyCodePath(filePath: string): string {
+  let path = filePath.replace(/\\/g, '/');
+  path = path.replace(/^\.?\//, '');
+  return path
+    .split('/')
+    .map(segment => slugifySegment(segment.replace(/\./g, '-')))
+    .filter(Boolean)
+    .join('-');
+}
+
+/**
  * Convert a repo-relative file path to a GBrain page slug.
  */
-export function pathToSlug(filePath: string, repoPrefix?: string): string {
-  let slug = slugifyPath(filePath);
+export function pathToSlug(
+  filePath: string,
+  repoPrefix?: string,
+  options: { pageKind?: 'markdown' | 'code' } = {},
+): string {
+  const pageKind = options.pageKind || 'markdown';
+  let slug = pageKind === 'code' ? slugifyCodePath(filePath) : slugifyPath(filePath);
   if (repoPrefix) slug = `${repoPrefix}/${slug}`;
   return slug.toLowerCase();
 }

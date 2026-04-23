@@ -1,10 +1,12 @@
 import { readFileSync, statSync, lstatSync } from 'fs';
+import { basename } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
+import { chunkCodeText, detectCodeLanguage } from './chunkers/code.ts';
 import { embedBatch } from './embedding.ts';
-import { slugifyPath } from './sync.ts';
+import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageType } from './types.ts';
 
 /**
@@ -184,6 +186,12 @@ export async function importFromFile(
   }
 
   const content = readFileSync(filePath, 'utf-8');
+
+  // Route code files through the code import path
+  if (isCodeFilePath(relativePath)) {
+    return importCodeFile(engine, relativePath, content, opts);
+  }
+
   const parsed = parseMarkdown(content, relativePath);
 
   // Enforce path-authoritative slug. parseMarkdown prefers frontmatter.slug over
@@ -204,6 +212,83 @@ export async function importFromFile(
   // Pass the path-derived slug explicitly so that any future change to
   // parseMarkdown's precedence rules cannot re-introduce this bug.
   return importFromContent(engine, expectedSlug, content, opts);
+}
+
+/**
+ * Import a code file. Bypasses markdown parsing entirely.
+ * Uses tree-sitter code chunker for semantic splitting.
+ * Page type is 'code', slug includes file extension.
+ */
+export async function importCodeFile(
+  engine: BrainEngine,
+  relativePath: string,
+  content: string,
+  opts: { noEmbed?: boolean } = {},
+): Promise<ImportResult> {
+  const slug = slugifyCodePath(relativePath);
+  const lang = detectCodeLanguage(relativePath) || 'unknown';
+  const title = `${relativePath} (${lang})`;
+
+  const byteLength = Buffer.byteLength(content, 'utf-8');
+  if (byteLength > MAX_FILE_SIZE) {
+    return { slug, status: 'skipped', chunks: 0, error: `Code file too large (${byteLength} bytes)` };
+  }
+
+  // Hash for idempotency
+  const hash = createHash('sha256')
+    .update(JSON.stringify({ title, type: 'code', content, lang }))
+    .digest('hex');
+
+  const existing = await engine.getPage(slug);
+  if (existing?.content_hash === hash) {
+    return { slug, status: 'skipped', chunks: 0 };
+  }
+
+  // Chunk via tree-sitter code chunker
+  const codeChunks = await chunkCodeText(content, relativePath);
+  const chunks: ChunkInput[] = codeChunks.map((c, i) => ({
+    chunk_index: i,
+    chunk_text: c.text,
+    chunk_source: 'compiled_truth' as const,
+  }));
+
+  // Embed
+  if (!opts.noEmbed && chunks.length > 0) {
+    try {
+      const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
+      for (let i = 0; i < chunks.length; i++) {
+        chunks[i].embedding = embeddings[i];
+        chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
+      }
+    } catch (e: unknown) {
+      console.warn(`[gbrain] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Store
+  await engine.transaction(async (tx) => {
+    if (existing) await tx.createVersion(slug);
+
+    await tx.putPage(slug, {
+      type: 'code' as PageType,
+      title,
+      compiled_truth: content,
+      timeline: '',
+      frontmatter: { language: lang, file: relativePath },
+      content_hash: hash,
+    });
+
+    await tx.addTag(slug, 'code');
+    await tx.addTag(slug, lang);
+
+    if (chunks.length > 0) {
+      await tx.upsertChunks(slug, chunks);
+    } else {
+      await tx.deleteChunks(slug);
+    }
+  });
+
+  return { slug, status: 'imported', chunks: chunks.length };
 }
 
 // Backward compat

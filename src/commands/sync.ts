@@ -49,6 +49,8 @@ export interface SyncOpts {
    * pre-v0.17 global-config path unchanged.
    */
   sourceId?: string;
+  /** Multi-repo: sync strategy override (markdown, code, auto). */
+  strategy?: 'markdown' | 'code' | 'auto';
 }
 
 function git(repoPath: string, ...args: string[]): string {
@@ -184,16 +186,17 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   const diffOutput = git(repoPath, 'diff', '--name-status', '-M', `${lastCommit}..${headCommit}`);
   const manifest = buildSyncManifest(diffOutput);
 
-  // Filter to syncable files
+  // Filter to syncable files (strategy-aware)
+  const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
   const filtered: SyncManifest = {
-    added: manifest.added.filter(p => isSyncable(p)),
-    modified: manifest.modified.filter(p => isSyncable(p)),
-    deleted: manifest.deleted.filter(p => isSyncable(p)),
-    renamed: manifest.renamed.filter(r => isSyncable(r.to)),
+    added: manifest.added.filter(p => isSyncable(p, syncOpts)),
+    modified: manifest.modified.filter(p => isSyncable(p, syncOpts)),
+    deleted: manifest.deleted.filter(p => isSyncable(p, syncOpts)),
+    renamed: manifest.renamed.filter(r => isSyncable(r.to, syncOpts)),
   };
 
   // Delete pages that became un-syncable (modified but filtered out)
-  const unsyncableModified = manifest.modified.filter(p => !isSyncable(p));
+  const unsyncableModified = manifest.modified.filter(p => !isSyncable(p, syncOpts));
   for (const path of unsyncableModified) {
     const slug = pathToSlug(path);
     try {
@@ -541,6 +544,8 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   const noEmbed = args.includes('--no-embed');
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
+  const syncAll = args.includes('--all');
+  const strategyArg = args.find((a, i) => args[i - 1] === '--strategy') as SyncOpts['strategy'] | undefined;
 
   // v0.18.0 Step 5: --source resolves to a sources(id) row. Falls back
   // to pre-v0.17 global config (sync.repo_path + sync.last_commit) when
@@ -552,7 +557,37 @@ export async function runSync(engine: BrainEngine, args: string[]) {
     sourceId = await resolveSourceId(engine, explicitSource);
   }
 
-  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId };
+  // Multi-repo: --all syncs all configured repos (Wintermute's baseline;
+  // will be reconciled against the v0.18.0 sources system in a later layer).
+  if (syncAll) {
+    const { loadRepoConfigs } = await import('../core/multi-repo.ts');
+    const repos = loadRepoConfigs();
+    if (repos.length === 0) {
+      console.log('No repos configured. Use `gbrain repos add <path>` first.');
+      return;
+    }
+    for (const repo of repos) {
+      if (repo.syncEnabled === false) {
+        console.log(`Skipping disabled repo: ${repo.name}`);
+        continue;
+      }
+      console.log(`\n--- Syncing repo: ${repo.name} (${repo.strategy}) ---`);
+      const repoOpts: SyncOpts = {
+        repoPath: repo.path,
+        dryRun, full, noPull, noEmbed, skipFailed, retryFailed,
+        strategy: repo.strategy,
+      };
+      try {
+        const result = await performSync(engine, repoOpts);
+        printSyncResult(result);
+      } catch (e: unknown) {
+        console.error(`Error syncing ${repo.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return;
+  }
+
+  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId, strategy: strategyArg };
 
   // Bug 9 — --retry-failed: before running normal sync, clear acknowledgment
   // flags so the sync picks them up as fresh work. The actual re-attempt

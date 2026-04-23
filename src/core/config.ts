@@ -27,6 +27,14 @@ export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
   database_url?: string;
   database_path?: string;
+  repos?: Array<{
+    path: string;
+    name: string;
+    strategy: 'markdown' | 'code' | 'auto';
+    include?: string[];
+    exclude?: string[];
+    syncEnabled?: boolean;
+  }>;
   openai_api_key?: string;
   anthropic_api_key?: string;
   /**
