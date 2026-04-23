@@ -380,6 +380,35 @@ Content to chunk but not embed.
     expect(result.status).toBe('imported');
   });
 
+  test('lowercases caller-supplied slug so putPage and upsertChunks agree', async () => {
+    // Engine-level validateSlug lowercases, so putPage stored the page at the
+    // lowercased slug. If importFromContent leaves the caller's casing intact,
+    // the same-transaction tx.upsertChunks/getTags calls look up the page by
+    // the raw uppercase slug and throw "Page not found". See issue #200.
+    const content = `---
+type: concept
+title: TestUpper
+---
+
+Content that should succeed despite uppercase slug input.
+`;
+
+    const engine = mockEngine();
+    const result = await importFromContent(engine, 'claude-memory/TestUpper/test', content, { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('claude-memory/testupper/test');
+
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    expect(putCall).toBeTruthy();
+    expect(putCall.args[0]).toBe('claude-memory/testupper/test');
+
+    const chunkCall = calls.find((c: any) => c.method === 'upsertChunks');
+    expect(chunkCall).toBeTruthy();
+    expect(chunkCall.args[0]).toBe('claude-memory/testupper/test');
+  });
+
   test('assigns sequential chunk_index values', async () => {
     const filePath = join(TMP, 'indexed.md');
     const longText = Array(50).fill('This is a sentence that adds length to the content.').join(' ');
