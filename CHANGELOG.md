@@ -78,7 +78,7 @@ React admin dashboard baked into the binary. Seven screens designed through Stev
 - `oauth_tokens` (token hash, type=access|refresh, client_id, scopes, expires_at, resource)
 - `oauth_codes` (code hash, client_id, scopes, PKCE challenge, redirect_uri, state, expires_at)
 - Composite index on `mcp_request_log(created_at, token_name)` for the admin dashboard's time-range queries.
-- Migration v24 (`oauth_infrastructure`) creates everything idempotently. PGLite schema updated to include auth infrastructure because `serve --http` makes it network-accessible.
+- Migration v25 (`oauth_infrastructure`) creates everything idempotently. PGLite schema updated to include auth infrastructure because `serve --http` makes it network-accessible.
 
 **Operation contract:**
 - `Operation.scope?: 'read' | 'write' | 'admin'` ... added to interface, annotated on all 30 operations plus 11 new Minion ops via per-op audit (not derived from `mutating` flag).
@@ -104,6 +104,93 @@ React admin dashboard baked into the binary. Seven screens designed through Stev
 
 **Tests:**
 - `test/oauth.test.ts` ... 27 test cases covering provider: register, getClient, client_credentials exchange, auth_code flow with PKCE, refresh rotation, verifyAccessToken (OAuth + legacy fallback), revokeToken, sweepExpiredTokens, scope annotations on all 30 operations.
+
+## [0.18.2] - 2026-04-23
+
+## **Migrations survive a crash and Supabase's 2-min ceiling.**
+## **`gbrain doctor --locks` finds the connection blocking your upgrade.**
+
+The v0.18.0 production upgrade shipped a field report of 8 issues: statement timeouts, stale idle connections, a schema version that lied, a cryptic FK dependency error. The original PR #356 fix covered all 8. A codex plan-review pass found 3 more that neither the initial review nor the eng review caught. This release lands the lot.
+
+The quiet win: if your brain crashes mid-migration on Postgres, it rolls back cleanly now. Before v0.18.2, a process death between migrations 21 and 23 left your `files` table with no FK to `pages` while uploads kept going. The window is closed. DDL either commits entirely or not at all.
+
+The visible win: `gbrain doctor --locks` works. Before v0.18.2 the 57014 timeout error told you to run this command, but the flag didn't exist. Now it does. It shows you every idle-in-transaction backend older than 5 minutes and gives you the exact `pg_terminate_backend(<pid>)` to free them up. One command, one paste, done.
+
+The large-brain win: `CREATE INDEX CONCURRENTLY` no longer gets killed at 2 minutes. The migration runner now reserves a dedicated connection and sets session-level `statement_timeout='600000'` before running non-transactional DDL. Brains at 500K+ pages can run the next schema change without timing out silently.
+
+### The numbers that matter
+
+Counted against the v0.18.0 field report (the production upgrade that prompted this release):
+
+| Metric | BEFORE v0.18.2 | AFTER v0.18.2 | Δ |
+|--------|----------------|---------------|---|
+| Field-report issues causing production failure | 8 | 0 | −8 |
+| Integrity windows between migrations | 1 (v21 → v23) | 0 | −1 |
+| `CREATE INDEX CONCURRENTLY` exposed to 2-min timeout | yes | no (10-min override) | fixed |
+| Agent-runnable lock diagnostic | missing | `gbrain doctor --locks` | added |
+| Regression tests on hardening paths | structural SQL asserts only | 10 unit + 11 real-PG E2E | +21 |
+| 57014 error: references a flag that exists | no | yes | fixed |
+
+The striking number: 3 of the 11 findings in this release came from a second AI model (codex) reviewing the plan after the first model (Claude) had already cleared CEO + Eng review. Two-model review catches what one-model review misses. The migration-21 integrity window in particular would have shipped as a new bug if the plan hadn't been challenged.
+
+### What this means for your workflow
+
+Most users: run `gbrain upgrade`. Nothing else to do. Existing brains at schema v21 or v22 are safe, the old FK stayed intact through the original PR #356 path, and the new atomic commit means a future crash can't leave you stranded.
+
+If a migration hits `statement_timeout`, the error message now tells you exactly what to do: `gbrain doctor --locks` to find the blocker, terminate, re-run `gbrain apply-migrations --yes`, verify with `gbrain doctor`. Four commands, top-to-bottom.
+
+Running a 500K-page brain on Supabase? The next migration that touches a hot table won't hang silently on you.
+
+### Itemized changes
+
+#### Added
+
+- `gbrain doctor --locks`: lists idle-in-transaction backends older than 5 minutes with PID + `pg_terminate_backend` commands. Exits 1 when blockers found. `--json` emits structured output. Postgres-only; PGLite prints "not applicable".
+- `BrainEngine.withReservedConnection(fn)`: runs callback on a dedicated pool connection. Postgres via `sql.reserve()`, PGLite as a pass-through.
+
+#### Changed
+
+- Migration 21 split into engine-specific paths. Postgres is additive-only (adds `pages.source_id` + index). PGLite gets the full UNIQUE-key swap inline. The FK drop + UNIQUE swap that used to live in v21 moved into v23's handler.
+- Migration 23 handler now wraps its entire DDL sequence (FK drop, UNIQUE swap, `files.source_id` + `files.page_id` addition, `page_id` backfill, `file_migration_ledger` creation) in a single `engine.transaction()`. Atomic commit; process-death rolls back to v22 state.
+- Non-transactional migrations (`CREATE INDEX CONCURRENTLY`) now run on a reserved connection with session-level `SET statement_timeout='600000'`. Safe on PgBouncer transaction pooling because the connection is isolated from the shared pool.
+- 57014 (`statement_timeout`) diagnostic rewritten to the 4-part pattern: what happened, why, exact commands to fix, how to verify.
+
+#### Fixed
+
+- Migration 21 integrity window. Previously v21 dropped `files_page_slug_fkey` and persisted `config.version=21`, but the replacement `files.page_id` column wasn't added until v23. Process-death between them left `files` unconstrained while `file_upload` / `gbrain files` kept accepting writes. The FK drop now lives inside v23's atomic transaction.
+- `gbrain doctor --locks` flag referenced by the v0.18.0 57014 error message but not implemented. The flag exists now.
+
+#### For contributors
+
+- `setSessionDefaults(sql)` helper in `src/core/db.ts` absorbs the duplicated `idle_in_transaction_session_timeout` block from `postgres-engine.ts`. Both connect paths call the helper; the SET appears exactly once in source.
+- `getIdleBlockers(engine)` exported from `src/core/migrate.ts`: single source of truth for the `pg_stat_activity` query. Shared by the pre-flight warning and `gbrain doctor --locks`.
+- `ReservedConnection` interface exposes `executeRaw(sql, params?)` only. Minimal surface, easy to mock. Not safe to call from inside `transaction()`; the interface doc says so.
+- `test/e2e/helpers.ts` adds `runMigrationsUpTo(engine, targetVersion)` + `setConfigVersion(version)`: enables mid-chain migration tests that neither `gbrain init --migrate-only` nor the existing `setupDB()` supported.
+- `test/migrate.test.ts`: 10 new regression guards (`Math.max` robustness under array scrambling, `getIdleBlockers` shape across engines, 57014 catch path structural check, pre-flight warning, `setSessionDefaults` DRY, reserved-connection usage in `runMigrationSQL`).
+- `test/e2e/migrate-chain.test.ts` (new): 11 E2E tests against real Postgres covering post-chain schema invariants, `doctor --locks` real-connection detection, `runMigrationsUpTo` advancement semantics, `withReservedConnection` round-trip.
+
+Credit: codex plan-review caught the migration-21 integrity window, the non-transactional DDL timeout gap, and the missing `doctor --locks` CLI. The initial Claude review and the Claude-model eng review both missed them.
+
+## To take advantage of v0.18.2
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
+warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor              # schema_version should match latest
+   gbrain doctor --locks      # should exit 0 (no idle-in-tx blockers)
+   ```
+3. **If `statement_timeout` fires during migration,** the new 4-part diagnostic
+   tells you exactly what to do: run `gbrain doctor --locks`, terminate
+   blockers, re-run `gbrain apply-migrations --yes`.
+4. **If anything fails,** file an issue: https://github.com/garrytan/gbrain/issues
+   with output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` (if it
+   exists).
 
 ## [0.18.1] - 2026-04-22
 

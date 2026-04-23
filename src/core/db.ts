@@ -71,6 +71,29 @@ export function resolvePoolSize(explicit?: number): number {
   return DEFAULT_POOL_SIZE_FALLBACK;
 }
 
+/**
+ * Apply session-level defaults to a fresh connection. Called from both
+ * the module-level `connect()` singleton and the PostgresEngine
+ * instance-level pool so the idle-in-transaction session timeout is set
+ * uniformly.
+ *
+ * `idle_in_transaction_session_timeout = 5 min` was the v0.18.0 field
+ * report's headline production issue: a 24-hour idle connection was
+ * holding a lock on `pages` and blocking all DDL. 5 minutes is generous
+ * for any legitimate transaction but catches crashed writers. The GUC
+ * is session-scoped (safe for shared pools — no cross-statement leak).
+ *
+ * Wrapped in try/catch because some managed Postgres tenants restrict
+ * SET on the GUC; non-fatal if it fails.
+ */
+export async function setSessionDefaults(sql: ReturnType<typeof postgres>): Promise<void> {
+  try {
+    await sql`SET idle_in_transaction_session_timeout = '300000'`;
+  } catch {
+    // Non-fatal: some managed Postgres may restrict this GUC
+  }
+}
+
 export function getConnection(): ReturnType<typeof postgres> {
   if (!sql) {
     throw new GBrainError(
@@ -124,6 +147,8 @@ export async function connect(config: EngineConfig): Promise<void> {
     // Test connection
     await sql`SELECT 1`;
     connectedUrl = url;
+
+    await setSessionDefaults(sql);
   } catch (e: unknown) {
     sql = null;
     connectedUrl = null;

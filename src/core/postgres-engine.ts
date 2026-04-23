@@ -1,5 +1,5 @@
 import postgres from 'postgres';
-import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from './engine.ts';
+import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
@@ -54,6 +54,7 @@ export class PostgresEngine implements BrainEngine {
       }
       this._sql = postgres(url, opts);
       await this._sql`SELECT 1`;
+      await db.setSessionDefaults(this._sql);
     } else {
       // Module-level singleton (backward compat for CLI main engine)
       await db.connect(config);
@@ -96,6 +97,24 @@ export class PostgresEngine implements BrainEngine {
       Object.defineProperty(txEngine, '_sql', { value: tx as unknown as ReturnType<typeof postgres>, writable: false });
       return fn(txEngine);
     }) as Promise<T>;
+  }
+
+  async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {
+    const pool = this._sql || db.getConnection();
+    const reserved = await pool.reserve();
+    try {
+      const conn: ReservedConnection = {
+        async executeRaw<R = Record<string, unknown>>(query: string, params?: unknown[]): Promise<R[]> {
+          const rows = params === undefined
+            ? await reserved.unsafe(query)
+            : await reserved.unsafe(query, params as Parameters<typeof reserved.unsafe>[1]);
+          return rows as unknown as R[];
+        },
+      };
+      return await fn(conn);
+    } finally {
+      reserved.release();
+    }
   }
 
   // Pages CRUD

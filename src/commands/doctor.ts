@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
-import { LATEST_VERSION } from '../core/migrate.ts';
+import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
 import { findRepoRoot } from '../core/repo-root.ts';
@@ -33,6 +33,19 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   const fastMode = args.includes('--fast');
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
+  const locksMode = args.includes('--locks');
+
+  // --locks is a focused diagnostic: it runs the same pg_stat_activity
+  // query that `runMigrations` pre-flight uses, prints any idle-in-tx
+  // backends, and exits. Used by a user (or the migrate.ts error 57014
+  // message) who just hit a statement_timeout and needs to find the
+  // blocker. Referenced from migrate.ts's 57014 diagnostic — that
+  // message promised this flag exists.
+  if (locksMode) {
+    await runLocksCheck(engine, jsonOutput);
+    return;
+  }
+
   const checks: Check[] = [];
   let autoFixReport: AutoFixReport | null = null;
 
@@ -753,4 +766,59 @@ function outputResults(checks: Check[], json: boolean): boolean {
     console.log(`\nHealth score: ${score}/100. All checks passed.`);
   }
   return hasFail;
+}
+
+/**
+ * `gbrain doctor --locks` — list idle-in-transaction backends older
+ * than 5 minutes that could block DDL. Exits 0 on clean, 1 on blockers.
+ *
+ * Agents hitting a statement_timeout (SQLSTATE 57014) during migration
+ * need a one-command path to find and kill the blocker. migrate.ts's
+ * 57014 diagnostic references this flag by name; keep the two in sync.
+ *
+ * Postgres-only. PGLite has no pool, no idle-in-tx concept, so the
+ * check prints a one-liner and exits 0.
+ */
+async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): Promise<void> {
+  if (!engine) {
+    if (jsonOutput) {
+      console.log(JSON.stringify({ status: 'unavailable', reason: 'no_engine' }));
+    } else {
+      console.log('gbrain doctor --locks requires a database connection. Configure a URL and retry.');
+    }
+    process.exit(1);
+  }
+
+  if (engine.kind !== 'postgres') {
+    if (jsonOutput) {
+      console.log(JSON.stringify({ status: 'not_applicable', engine: engine.kind }));
+    } else {
+      console.log(`gbrain doctor --locks is Postgres-only. Current engine: ${engine.kind}. No blockers possible (no connection pool).`);
+    }
+    return;
+  }
+
+  const blockers = await getIdleBlockers(engine);
+
+  if (jsonOutput) {
+    console.log(JSON.stringify({ status: blockers.length === 0 ? 'ok' : 'blockers_found', blockers }, null, 2));
+    if (blockers.length > 0) process.exit(1);
+    return;
+  }
+
+  if (blockers.length === 0) {
+    console.log('✓ No idle-in-transaction backends older than 5 minutes.');
+    return;
+  }
+
+  console.log(`Found ${blockers.length} idle-in-transaction backend(s) older than 5 minutes:\n`);
+  for (const b of blockers) {
+    console.log(`  PID ${b.pid}  (idle since ${b.query_start})`);
+    console.log(`    Query: ${b.query}`);
+    console.log(`    Kill:  SELECT pg_terminate_backend(${b.pid});`);
+    console.log('');
+  }
+  console.log('These connections may block ALTER TABLE DDL during migration.');
+  console.log('After terminating, retry: gbrain apply-migrations --yes');
+  process.exit(1);
 }
