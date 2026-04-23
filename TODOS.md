@@ -198,6 +198,22 @@ board" — likely an advisor-role page prior plus verb-pattern combinations.
 ### ~~Constrained health_check DSL for third-party recipes~~
 **Completed:** v0.9.3 (2026-04-12). Typed DSL with 4 check types (`http`, `env_exists`, `command`, `any_of`). All 7 first-party recipes migrated. String health checks accepted with deprecation warning + metachar validation for non-embedded recipes.
 
+## P1 (new from v0.18.0 — test flakiness)
+
+### beforeAll hook timeouts under parallel test runner
+**What:** 17 tests across 9 files (dream, orphans, brain-allowlist, extract-db, multi-source-integration, core/cycle, migrations-v0_12_2, migrations-v0_13_1, oauth) fail with `beforeEach/afterEach hook timed out for this test` at the 7-10 second threshold when run via `bun run test` (parallel). Every test passes in isolation (`bun test path/to/file.test.ts` → 0 fail). Root cause is PGLite schema init racing under concurrent test files.
+
+**Why:** `bun run test` is the pre-ship gate and reports these as failures, forcing manual triage on every /ship. The tests themselves are correct — the runner is stressing PGLite boot. Bumping the hook timeout or running E2E-like tests with `--bail` or serial execution would clear the 18 false positives.
+
+**Fix options:**
+1. Bump per-test hook timeout to 30s in `bunfig.toml` (quick fix, low risk)
+2. Move PGLite-init-heavy tests to `test/e2e/` so they run serially via `scripts/run-e2e.sh` (follows existing pattern)
+3. Share a module-scoped PGLite instance across describe blocks within a file (biggest win — most fixture setup is identical)
+
+**Effort:** 30 min for option 1, ~2 hours for option 3.
+
+**Context:** Noticed during /ship merge wave on `garrytan/mcp-key-mgmt` (2026-04-16 branch merge of v0.18.0). Failure set stayed exactly 17-18 tests across multiple /ship runs, confirming deterministic flakes rather than real regressions. Blocking workaround: run the specific test file to verify after any suite change.
+
 ## P1 (new from v0.11.0 — Minions)
 
 ### Per-queue rate limiting for Minions
