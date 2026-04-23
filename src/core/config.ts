@@ -19,8 +19,10 @@ export type DbUrlSource =
   | 'config-file-path' // PGLite: config file present, no URL but database_path set
   | null;
 
-// Lazy-evaluated to avoid calling homedir() at module scope (breaks in serverless/bundled environments)
-function getConfigDir() { return join(homedir(), '.gbrain'); }
+// Lazy-evaluated to avoid calling homedir() at module scope (breaks in serverless/bundled environments).
+// GBRAIN_CONFIG_DIR overrides the default ~/.gbrain location so multiple brains (work vs personal)
+// can coexist on one machine without a config collision.
+function getConfigDir() { return process.env.GBRAIN_CONFIG_DIR || join(homedir(), '.gbrain'); }
 function getConfigPath() { return join(getConfigDir(), 'config.json'); }
 
 export interface GBrainConfig {
@@ -87,7 +89,7 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
 }
 
 export function configDir(): string {
-  return join(homedir(), '.gbrain');
+  return process.env.GBRAIN_CONFIG_DIR || join(homedir(), '.gbrain');
 }
 
 export function configPath(): string {
