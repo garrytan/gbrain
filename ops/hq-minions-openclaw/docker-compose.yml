@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: hq-minions-openclaw-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gbrain}
+      POSTGRES_USER: ${POSTGRES_USER:-gbrain}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gbrain_local_change_me}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - hq_minions_openclaw_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gbrain} -d ${POSTGRES_DB:-gbrain}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  hq_minions_openclaw_pgdata:
