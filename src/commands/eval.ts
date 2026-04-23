@@ -50,17 +50,28 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
   const k = opts.k ?? 5;
   const configA = buildConfig(opts, 'a');
 
+  const { createProgress } = await import('../core/progress.ts');
+  const { getCliOptions, cliOptsToProgressOptions } = await import('../core/cli-options.ts');
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+
   if (opts.configB || opts.configBPath) {
     // A/B comparison mode
     const configB = buildConfig(opts, 'b');
+    progress.start('eval.ab', qrels.length * 2);
+    const onProgress = (_done: number, _total: number, q: string) => progress.tick(1, q);
     const [reportA, reportB] = await Promise.all([
-      runEval(engine, qrels, configA, k),
-      runEval(engine, qrels, configB, k),
+      runEval(engine, qrels, configA, k, { onProgress }),
+      runEval(engine, qrels, configB, k, { onProgress }),
     ]);
+    progress.finish();
     printABTable(reportA, reportB, k);
   } else {
     // Single-run mode
-    const report = await runEval(engine, qrels, configA, k);
+    progress.start('eval.single', qrels.length);
+    const report = await runEval(engine, qrels, configA, k, {
+      onProgress: (_done, _total, q) => progress.tick(1, q),
+    });
+    progress.finish();
     printSingleTable(report);
   }
 }

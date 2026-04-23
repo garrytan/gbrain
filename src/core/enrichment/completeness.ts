@@ -1,7 +1,7 @@
 /**
  * CompletenessScorer — per-entity-type rubrics, 0.0–1.0 score per page.
  *
- * Replaces Wintermute's length-based heuristic ("compiled_truth > 500 chars")
+ * Replaces Garry's OpenClaw's length-based heuristic ("compiled_truth > 500 chars")
  * with a weighted rubric that actually reflects whether a page would be
  * useful to answer a query. Runs on demand; BrainWriter invokes it on
  * write to cache the score in frontmatter.

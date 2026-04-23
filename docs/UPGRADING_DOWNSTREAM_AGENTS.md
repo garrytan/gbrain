@@ -358,6 +358,106 @@ upcoming `gbrain crontab-to-minions <file>` helper is P1 in TODOS.
 
 ---
 
+## v0.16.0: durable agent runtime
+
+v0.15 ships `gbrain agent run` / `gbrain agent logs`, a new `subagent` handler
+type in Minions, and a plugin contract for host-repo subagent defs. None of the
+existing skills need surgery. The question for downstream agents is *how* to
+adopt the new runtime, not how to patch around a breaking change.
+
+### 1. Run a worker with an Anthropic key
+
+The subagent handlers (`subagent` and `subagent_aggregator`) are always
+registered on the worker. No separate opt-in flag — `ANTHROPIC_API_KEY` is
+the natural cost gate (no key, the SDK call fails on the first turn), and
+who-can-submit is already protected (`PROTECTED_JOB_NAMES` + trusted-submit:
+MCP callers get `permission_denied`; only `gbrain agent run` can insert
+these rows).
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... gbrain jobs work
+```
+
+Worker startup prints:
+
+```
+[minion worker] subagent handlers enabled
+```
+
+### 2. Ship your subagents as a plugin (OpenClaw + similar)
+
+Move your custom subagent definitions out of your gbrain fork and into your own
+repo as a plugin. Concretely:
+
+```
+~/<your-agent>/gbrain-plugin/
+├── gbrain.plugin.json
+└── subagents/
+    ├── meeting-ingestion.md
+    ├── signal-detector.md
+    └── daily-task-prep.md
+```
+
+`gbrain.plugin.json`:
+
+```json
+{
+  "name": "your-openclaw",
+  "version": "2026.4.20",
+  "plugin_version": "gbrain-plugin-v1"
+}
+```
+
+Each `subagents/*.md` is a plain-text agent definition — YAML frontmatter +
+body-as-system-prompt. Recognized frontmatter fields: `name`, `model`,
+`max_turns`, `allowed_tools` (must subset the derived brain-tool registry).
+
+Turn it on:
+
+```bash
+export GBRAIN_PLUGIN_PATH="$HOME/<your-agent>/gbrain-plugin"
+```
+
+Worker startup prints `[plugin-loader] loaded '<name>' v<ver> (N subagents)`
+per plugin; any rejection (bad manifest, unknown tool in `allowed_tools`,
+version mismatch) shows up as a loud warning at startup, not a silent dispatch-
+time failure. See `docs/guides/plugin-authors.md` for the full contract.
+
+### 3. Replace ephemeral subagent runs with durable ones
+
+If your agent currently spawns ephemeral subagents (OpenClaw `Agent()`, ad-hoc
+Anthropic API calls, etc.) for work that should survive crashes, sleeps, or
+worker restarts, migrate those to `gbrain agent run`. The durability is free:
+
+```bash
+gbrain agent run "analyze my last 50 journal pages for recurring themes" \
+  --subagent-def analyzer --fanout-manifest manifests/journal-pages.json
+```
+
+Every turn persists to `subagent_messages`, every tool call is a two-phase
+ledger, and `gbrain agent logs <job>` shows where it died + what the last
+successful call returned. No more "re-run from scratch because the session
+context evaporated."
+
+### 4. `put_page` from subagents writes under an agent namespace
+
+If you adopted the v0.15 subagent runtime, note that `put_page` calls
+originating from a subagent's tool dispatch MUST target
+`wiki/agents/<subagent_id>/...`. The schema shown to the model enforces this
+on first try; a server-side fail-closed check rejects anything else. This
+does NOT affect your skill files, CLI put_page calls, or MCP put_page —
+only tool-dispatched writes from inside an LLM loop.
+
+Aggregation output (the final "here's what all N children found" brain page)
+goes via a separate trusted CLI path, not through a subagent tool call, so
+it can write anywhere you want.
+
+Iron rule: **never grant an agent write access beyond its namespace**. The
+server-side check exists because dispatcher bugs happen; treat it as defense
+in depth, not the primary boundary.
+
+---
+
 ## Future versions
 
 When gbrain ships a new version, this doc will be updated with the diffs for that

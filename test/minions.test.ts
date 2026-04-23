@@ -12,7 +12,7 @@ let queue: MinionQueue;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
-  await engine.connect({ databaseUrl: '' }); // in-memory
+  await engine.connect({ database_url: '' }); // in-memory
   await engine.initSchema();
   queue = new MinionQueue(engine);
 });
@@ -267,6 +267,110 @@ describe('MinionQueue: Stall Detection', () => {
     expect(dead.length).toBe(1);
     expect(dead[0].status).toBe('dead');
     expect(requeued.length).toBe(0);
+  });
+});
+
+// --- v0.13.1 #219 — max_stalled default + input surface ---
+
+describe('MinionQueue: v0.13.1 max_stalled schema default (#219)', () => {
+  test('job submitted with no explicit max_stalled uses schema default of 5', async () => {
+    const job = await queue.add('noop', {});
+    expect(job.max_stalled).toBe(5);
+  });
+
+  test('default=5 rescues across 4 consecutive stalls, dead-letters on the 5th', async () => {
+    const job = await queue.add('noop', {});
+    // Job starts at max_stalled=5 (schema default).
+    for (let i = 0; i < 4; i++) {
+      await queue.claim(`tok-${i}`, 30000, 'default', ['noop']);
+      await engine.executeRaw(
+        "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+        [job.id]
+      );
+      const { requeued, dead } = await queue.handleStalled();
+      expect(dead.length).toBe(0);
+      expect(requeued.length).toBe(1);
+      expect(requeued[0].stalled_counter).toBe(i + 1);
+    }
+    // 5th stall = dead (5+1 >= 5 = wait, actually handleStalled gate is stalled_counter + 1 >= max_stalled).
+    // With stalled_counter now at 4, next stall: 4+1=5 >= 5 = dead.
+    await queue.claim('tok-final', 30000, 'default', ['noop']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1",
+      [job.id]
+    );
+    const { dead } = await queue.handleStalled();
+    expect(dead.length).toBe(1);
+    expect(dead[0].status).toBe('dead');
+  });
+});
+
+describe('MinionQueue: v0.13.1 MinionJobInput.max_stalled plumbing', () => {
+  test('honored end-to-end when provided', async () => {
+    const job = await queue.add('noop', {}, { max_stalled: 10 });
+    expect(job.max_stalled).toBe(10);
+  });
+
+  test('clamps input > 100 to 100', async () => {
+    const job = await queue.add('noop', {}, { max_stalled: 9999 });
+    expect(job.max_stalled).toBe(100);
+  });
+
+  test('clamps input < 1 to 1', async () => {
+    const job = await queue.add('noop', {}, { max_stalled: 0 });
+    expect(job.max_stalled).toBe(1);
+  });
+
+  test('clamps negative input to 1', async () => {
+    const job = await queue.add('noop', {}, { max_stalled: -5 });
+    expect(job.max_stalled).toBe(1);
+  });
+
+  test('non-integer inputs are floored before clamp', async () => {
+    const job = await queue.add('noop', {}, { max_stalled: 7.9 });
+    expect(job.max_stalled).toBe(7);
+  });
+
+  test('undefined leaves schema default intact (5)', async () => {
+    const job = await queue.add('noop', {}, { max_stalled: undefined });
+    expect(job.max_stalled).toBe(5);
+  });
+});
+
+describe('MinionQueue: v0.13.1 live-queue rescue regression (#219)', () => {
+  test('a row at max_stalled=1 is rescued by v13 backfill', async () => {
+    // Simulate a pre-v0.13.1 brain that inserted a row at the old default.
+    const job = await queue.add('noop', {});
+    await engine.executeRaw('UPDATE minion_jobs SET max_stalled = 1 WHERE id = $1', [job.id]);
+
+    // Run the v13 backfill UPDATE directly (matches migrate.ts v13 body).
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET max_stalled = 5
+         WHERE status IN ('waiting','active','delayed','waiting-children','paused')
+           AND max_stalled < 5`
+    );
+
+    const refetched = await queue.getJob(job.id);
+    expect(refetched!.max_stalled).toBe(5);
+  });
+
+  test('backfill does not touch terminal-status rows', async () => {
+    const job = await queue.add('noop', {});
+    // Mark completed and set max_stalled=1 (simulating historical data).
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'completed', max_stalled = 1, finished_at = now() WHERE id = $1`,
+      [job.id]
+    );
+
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET max_stalled = 5
+         WHERE status IN ('waiting','active','delayed','waiting-children','paused')
+           AND max_stalled < 5`
+    );
+
+    const refetched = await queue.getJob(job.id);
+    // Terminal rows intentionally untouched; historical data stays as-is.
+    expect(refetched!.max_stalled).toBe(1);
   });
 });
 

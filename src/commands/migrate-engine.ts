@@ -14,6 +14,8 @@ import type { EngineConfig } from '../core/types.ts';
 import { homedir } from 'os';
 import { join } from 'path';
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
+import { createProgress } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -146,6 +148,9 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 
   console.log(`Migrating ${pagesToMigrate.length} pages (${allPages.length} total, ${completedSet.size} already done)...`);
 
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('migrate.copy_pages', pagesToMigrate.length);
+
   let migrated = 0;
   for (const page of pagesToMigrate) {
     // Copy page
@@ -203,20 +208,21 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     manifest!.completed_slugs.push(page.slug);
     saveManifest(manifest!);
     migrated++;
-
-    if (migrated % 50 === 0 || migrated === pagesToMigrate.length) {
-      console.log(`  Progress: ${migrated}/${pagesToMigrate.length} pages`);
-    }
+    progress.tick(1, page.slug);
   }
+  progress.finish();
 
   // Copy links (after all pages exist in target)
   console.log('Copying links...');
+  progress.start('migrate.copy_links', allPages.length);
   for (const page of allPages) {
     const links = await sourceEngine.getLinks(page.slug);
     for (const link of links) {
       await targetEngine.addLink(link.from_slug, link.to_slug, link.context, link.link_type);
     }
+    progress.tick(1);
   }
+  progress.finish();
 
   // Copy config (selective)
   const configKeys = ['embedding_model', 'embedding_dimensions', 'chunk_strategy'];

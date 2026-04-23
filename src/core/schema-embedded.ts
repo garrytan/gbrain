@@ -10,11 +10,54 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ============================================================
+-- sources: multi-repo / multi-brain tenancy (v0.18.0)
+-- ============================================================
+-- A source is a logical brain-within-the-DB: wiki, gstack, yc-media, etc.
+-- Every page/file/ingest_log row carries source_id.
+--
+-- id:         immutable citation key. [a-z0-9-]{1,32} enforced at app layer.
+--             Used in [source:slug] citations, --source flag, wikilink syntax.
+-- name:       mutable display label. Rename via \`gbrain sources rename\`.
+-- local_path: optional git checkout root for filesystem-backed sources.
+-- config:     forward-compat JSONB. Currently used for federation + ACL slot.
+--             { "federated": bool, "access_policy": {...} }
+--             - federated=true (or missing-but-explicit on 'default'):
+--               participates in cross-source default search.
+--             - federated=false (default for new sources):
+--               only searched when explicitly named via --source.
+--             - access_policy: forward-compat slot, no enforcement in v0.17.
+--               Write-side lockdown: mutated only when ctx.remote=false.
+CREATE TABLE IF NOT EXISTS sources (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  local_path    TEXT,
+  last_commit   TEXT,
+  last_sync_at  TIMESTAMPTZ,
+  config        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Seed the default source. 'default' is federated=true for backward compat
+-- (pre-v0.17 brains behave exactly as before — every page appears in search).
+-- Pre-existing sync.repo_path / sync.last_commit are copied in by the v16
+-- migration, not here; fresh installs have no local_path until \`sources add\`
+-- or the first \`sync\`.
+INSERT INTO sources (id, name, config)
+  VALUES ('default', 'default', '{"federated": true}'::jsonb)
+  ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================
 -- pages: the core content table
 -- ============================================================
+-- v0.18.0 (Step 2): pages.source_id scopes each row to a sources(id) row.
+-- Slugs are unique per source, NOT globally. The default source is
+-- seeded in the sources block above so the DEFAULT 'default' FK is
+-- always valid at INSERT time.
 CREATE TABLE IF NOT EXISTS pages (
   id            SERIAL PRIMARY KEY,
-  slug          TEXT    NOT NULL UNIQUE,
+  source_id     TEXT    NOT NULL DEFAULT 'default'
+                REFERENCES sources(id) ON DELETE CASCADE,
+  slug          TEXT    NOT NULL,
   type          TEXT    NOT NULL,
   title         TEXT    NOT NULL,
   compiled_truth TEXT   NOT NULL DEFAULT '',
@@ -22,12 +65,17 @@ CREATE TABLE IF NOT EXISTS pages (
   frontmatter   JSONB   NOT NULL DEFAULT '{}',
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
+-- v0.13.1 #170: avoids 14.6s seqscan on large brains when listing pages newest-first.
+CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
+-- v0.18.0: source-scoped scans (per /plan-eng-review Section 4).
+CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -72,6 +120,11 @@ CREATE TABLE IF NOT EXISTS links (
   link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual')),
   origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
   origin_field   TEXT,
+  -- v0.18.0 Step 4: 'qualified' when the link was written as
+  -- [[source:slug]] (target source pinned). 'unqualified' when written
+  -- as bare [[slug]] and resolved via local-first fallback at
+  -- extraction time. NULL for legacy/manual/frontmatter edges.
+  resolution_type TEXT   CHECK (resolution_type IS NULL OR resolution_type IN ('qualified', 'unqualified')),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- NULLS NOT DISTINCT (PG15+) so two rows with link_source IS NULL or
   -- origin_page_id IS NULL collide as expected. Without this, every row with
@@ -146,6 +199,9 @@ CREATE INDEX IF NOT EXISTS idx_versions_page ON page_versions(page_id);
 -- ============================================================
 -- ingest_log
 -- ============================================================
+-- NOTE (v0.18.0 Step 1): ingest_log.source_id is NOT added yet — lands
+-- in v17 alongside the sync rewrite (Step 5), which starts writing
+-- source-scoped entries.
 CREATE TABLE IF NOT EXISTS ingest_log (
   id            SERIAL PRIMARY KEY,
   source_type   TEXT    NOT NULL,
@@ -200,9 +256,18 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
 -- ============================================================
 -- files: binary attachments stored in Supabase Storage
 -- ============================================================
+-- v0.18.0 Step 7: files gains source_id + page_id alongside the
+-- legacy page_slug (kept for backward compat until a later release).
+-- The file_migration_ledger below drives the storage object rewrite.
+-- page_slug FK had ON UPDATE CASCADE — removed because slugs are no
+-- longer global (composite UNIQUE) so CASCADE on-update is ambiguous.
+-- ON DELETE SET NULL is preserved via both page_slug and page_id.
 CREATE TABLE IF NOT EXISTS files (
   id           SERIAL PRIMARY KEY,
-  page_slug    TEXT   REFERENCES pages(slug) ON DELETE SET NULL ON UPDATE CASCADE,
+  source_id    TEXT   NOT NULL DEFAULT 'default'
+               REFERENCES sources(id) ON DELETE CASCADE,
+  page_slug    TEXT,
+  page_id      INTEGER REFERENCES pages(id) ON DELETE SET NULL,
   filename     TEXT   NOT NULL,
   storage_path TEXT   NOT NULL,
   mime_type    TEXT,
@@ -217,7 +282,29 @@ CREATE TABLE IF NOT EXISTS files (
 ALTER TABLE files DROP COLUMN IF EXISTS storage_url;
 
 CREATE INDEX IF NOT EXISTS idx_files_page ON files(page_slug);
+CREATE INDEX IF NOT EXISTS idx_files_page_id ON files(page_id);
+CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
 CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
+
+-- ============================================================
+-- file_migration_ledger (v0.18.0 Step 7)
+-- Drives the storage-object rewrite performed by the v0_18_0
+-- orchestrator's phase B. Keyed on file_id so two sources can share
+-- an old path during migration without PK collision (Codex second-
+-- pass caught this).
+-- Status state machine: pending → copy_done → db_updated → complete
+-- ============================================================
+CREATE TABLE IF NOT EXISTS file_migration_ledger (
+  file_id           INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+  storage_path_old  TEXT   NOT NULL,
+  storage_path_new  TEXT   NOT NULL,
+  status            TEXT   NOT NULL DEFAULT 'pending',
+  error             TEXT,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT chk_ledger_status CHECK (status IN ('pending','copy_done','db_updated','complete','failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_file_migration_ledger_status
+  ON file_migration_ledger(status) WHERE status != 'complete';
 
 -- ============================================================
 -- Trigger-based search_vector (spans pages + timeline_entries)
@@ -280,7 +367,7 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   backoff_delay    INTEGER     NOT NULL DEFAULT 1000,
   backoff_jitter   REAL        NOT NULL DEFAULT 0.2,
   stalled_counter  INTEGER     NOT NULL DEFAULT 0,
-  max_stalled      INTEGER     NOT NULL DEFAULT 3,
+  max_stalled      INTEGER     NOT NULL DEFAULT 5,
   lock_token       TEXT,
   lock_until       TIMESTAMPTZ,
   delay_until      TIMESTAMPTZ,
@@ -354,6 +441,80 @@ CREATE TABLE IF NOT EXISTS minion_attachments (
 CREATE INDEX IF NOT EXISTS idx_minion_attachments_job ON minion_attachments (job_id);
 ALTER TABLE minion_attachments ALTER COLUMN content SET STORAGE EXTERNAL;
 
+-- ============================================================
+-- Subagent runtime (v0.16.0) — durable LLM loops
+-- ============================================================
+-- Anthropic-native message blocks, one row per Messages API message. Parallel
+-- tool_use blocks in one assistant message live in content_blocks JSONB,
+-- not across rows.
+CREATE TABLE IF NOT EXISTS subagent_messages (
+  id                  BIGSERIAL PRIMARY KEY,
+  job_id              BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  message_idx         INTEGER     NOT NULL,
+  role                TEXT        NOT NULL,
+  content_blocks      JSONB       NOT NULL,
+  tokens_in           INTEGER,
+  tokens_out          INTEGER,
+  tokens_cache_read   INTEGER,
+  tokens_cache_create INTEGER,
+  model               TEXT,
+  ended_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uniq_subagent_messages_idx UNIQUE (job_id, message_idx),
+  CONSTRAINT chk_subagent_messages_role CHECK (role IN ('user','assistant'))
+);
+CREATE INDEX IF NOT EXISTS idx_subagent_messages_job ON subagent_messages (job_id, message_idx);
+
+-- Two-phase tool execution ledger. Before tool call: INSERT status='pending'.
+-- After success: UPDATE to 'complete' + output. On failure: 'failed' + error.
+-- Replay re-runs 'pending' rows only if the tool is idempotent.
+CREATE TABLE IF NOT EXISTS subagent_tool_executions (
+  id           BIGSERIAL PRIMARY KEY,
+  job_id       BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  message_idx  INTEGER     NOT NULL,
+  tool_use_id  TEXT        NOT NULL,
+  tool_name    TEXT        NOT NULL,
+  input        JSONB       NOT NULL,
+  status       TEXT        NOT NULL,
+  output       JSONB,
+  error        TEXT,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ended_at     TIMESTAMPTZ,
+  CONSTRAINT uniq_subagent_tools_use_id UNIQUE (job_id, tool_use_id),
+  CONSTRAINT chk_subagent_tools_status CHECK (status IN ('pending','complete','failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_subagent_tools_job ON subagent_tool_executions (job_id, status);
+
+-- Rate-lease table — concurrency cap on outbound providers (e.g.
+-- anthropic:messages). Acquire: INSERT if active < max_concurrent under
+-- advisory lock. Release: DELETE. Stale leases (expires_at past) auto-prune
+-- on next acquire so crashed workers can't strand capacity.
+CREATE TABLE IF NOT EXISTS subagent_rate_leases (
+  id            BIGSERIAL PRIMARY KEY,
+  key           TEXT        NOT NULL,
+  owner_job_id  BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  acquired_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at    TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_leases_key_expires ON subagent_rate_leases (key, expires_at);
+
+-- ============================================================
+-- Cycle coordination lock — v0.17 runCycle primitive
+-- ============================================================
+-- One row per active cycle. Any caller (autopilot daemon, Minions
+-- autopilot-cycle handler, gbrain dream CLI) tries to acquire this
+-- row before running a DB-write phase. Holders refresh ttl_expires_at
+-- between phases; crashed holders auto-release once TTL expires.
+-- Works through PgBouncer transaction pooling, unlike session-scoped
+-- pg_try_advisory_lock.
+CREATE TABLE IF NOT EXISTS gbrain_cycle_locks (
+  id              TEXT        PRIMARY KEY,
+  holder_pid      INT         NOT NULL,
+  holder_host     TEXT,
+  acquired_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ttl_expires_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
+
 -- NOTIFY trigger for real-time job events (Postgres only, not PGLite)
 CREATE OR REPLACE FUNCTION notify_minion_job_change() RETURNS trigger AS \$\$
 BEGIN
@@ -393,6 +554,16 @@ BEGIN
     ALTER TABLE config ENABLE ROW LEVEL SECURITY;
     ALTER TABLE files ENABLE ROW LEVEL SECURITY;
     ALTER TABLE minion_jobs ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE sources ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE file_migration_ledger ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE mcp_request_log ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE minion_inbox ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE minion_attachments ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE subagent_messages ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE subagent_tool_executions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE subagent_rate_leases ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE gbrain_cycle_locks ENABLE ROW LEVEL SECURITY;
     RAISE NOTICE 'RLS enabled on all tables (role % has BYPASSRLS)', current_user;
   ELSE
     RAISE WARNING 'Skipping RLS: role % does not have BYPASSRLS privilege. Run as postgres role to enable.', current_user;

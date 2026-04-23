@@ -15,7 +15,7 @@
  * Returns JSON when --json is passed: { path, score, total, items,
  * recommendation }. Exit code is 0 when score == total, 1 otherwise.
  *
- * Ported from ~/git/wintermute/workspace/scripts/skillify-check.mjs
+ * Ported from ~/git/your-openclaw/workspace/scripts/skillify-check.mjs
  * (genericized: paths computed from $PROJECT_ROOT + runtime test-dir
  * detection; replaces the manual `grep AGENTS.md` check with a reference
  * to `gbrain check-resolvable` which validates the resolver better).
@@ -23,6 +23,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, basename, dirname, resolve } from 'path';
+import { spawnSync } from 'child_process';
 
 function projectRoot(): string {
   // Walk up from cwd until we find a package.json — that's the repo root.
@@ -62,6 +63,45 @@ function check(name: string, passed: boolean, detail?: string): CheckItem {
 }
 function checkOptional(name: string, passed: boolean, detail?: string): CheckItem {
   return { name, passed, required: false, detail };
+}
+
+/**
+ * Invoke `gbrain check-resolvable --json` once and cache the result for the
+ * process lifetime. Binary-missing surfaces a loud error instead of silently
+ * passing — this is the critical guard the failure-mode audit flagged.
+ */
+interface ResolverResult {
+  ok: boolean;
+  detail: string;
+}
+let _resolverCache: ResolverResult | null = null;
+function runCheckResolvableCached(): ResolverResult {
+  if (_resolverCache) return _resolverCache;
+  try {
+    const res = spawnSync('gbrain', ['check-resolvable', '--json'], {
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    if (res.error || res.status === null) {
+      const reason = res.error?.message ?? 'spawn returned null status';
+      console.error(`[skillify] gbrain check-resolvable not runnable: ${reason}`);
+      _resolverCache = { ok: false, detail: `check-resolvable unavailable: ${reason}` };
+      return _resolverCache;
+    }
+    const payload = JSON.parse(res.stdout);
+    if (payload.ok === true) {
+      _resolverCache = { ok: true, detail: 'all skill-tree checks pass' };
+    } else {
+      const count = payload.report?.issues?.length ?? 0;
+      const err = payload.error ? ` (${payload.error})` : '';
+      _resolverCache = { ok: false, detail: `${count} issue(s)${err} — run: gbrain check-resolvable` };
+    }
+    return _resolverCache;
+  } catch (err) {
+    console.error(`[skillify] check-resolvable parse failed: ${err}`);
+    _resolverCache = { ok: false, detail: `check-resolvable parse error: ${err}` };
+    return _resolverCache;
+  }
 }
 
 /**
@@ -184,12 +224,13 @@ function runCheck(target: string): {
   }
   items.push(checkOptional('Resolver trigger eval', hasTriggerEval));
 
-  // 8. check-resolvable — we don't run it here (side effects + cost); we
-  // report whether the SKILL.md exists at all, which is the ground-truth
-  // input check-resolvable would consume.
-  items.push(checkOptional('check-resolvable input present',
-    existsSync(skillMd) && existsSync(RESOLVER_MD),
-    'run: gbrain check-resolvable'));
+  // 8. check-resolvable — invoke the real gate. Cached per process so
+  // iterating many skills only runs the subprocess once. Binary-missing
+  // is surfaced loudly so a silent false-pass can't happen.
+  const resolverResult = runCheckResolvableCached();
+  items.push(checkOptional('check-resolvable gate',
+    resolverResult.ok,
+    resolverResult.detail));
 
   // 9. E2E — same as item 4 but required.
   items.push(check('E2E test (either under e2e/ or integration test)', hasE2E, 'try /qa or test/e2e/'));

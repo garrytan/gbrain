@@ -116,6 +116,25 @@ ingest event.
 No separate output. Brain-ops is an always-on behavior layer, not a report generator.
 The output is updated brain pages and enriched responses.
 
+## Cross-source citation format (v0.18.0+)
+
+When a brain has multiple sources (wiki, gstack, yc-media, etc.), every
+citation MUST include the source id: `[source-id:slug]`. Example:
+
+> You told me about the retry budget approach — see
+> [wiki:topics/resilience] and [gstack:plans/retry-policy] for where
+> this came from.
+
+Rules:
+- The key is `sources.id` (immutable), never `sources.name` (mutable display).
+- Single-source brains still write `[default:slug]` OR may omit the prefix
+  for backward compat.
+- Every page payload returned by `search`, `query`, `get_page`, `list_pages`
+  carries `source_id` — always use it when citing, never guess.
+
+If a search result has `source_id: "gstack"` and `slug: "plans/foo"`,
+the citation is `[gstack:plans/foo]`. That's the whole rule.
+
 ## Anti-Patterns
 
 - Answering questions about people/companies without checking the brain first

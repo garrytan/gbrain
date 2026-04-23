@@ -39,7 +39,7 @@ This skill guarantees:
 - Back-links all entity mentions (Iron Law)
 - Citations on every fact written
 
-## Iron Law: Back-Linking (MANDATORY)
+> **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
 Every time this skill creates or updates a brain page that mentions a person or company:
 1. Check if that person/company has a brain page

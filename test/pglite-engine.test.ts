@@ -462,6 +462,119 @@ describe('PGLiteEngine: addTimelineEntriesBatch', () => {
   });
 });
 
+// v0.18.0: regression guards for the cross-source JOIN fan-out.
+// Before the fix, addLinksBatch/addTimelineEntriesBatch JOINed on pages.slug
+// only — so a page with the same slug in two sources would fan out and
+// silently create duplicate edges / entries. Source-id-qualified JOINs
+// eliminate the fan-out.
+describe('PGLiteEngine: batch ops source-awareness (v0.18.0)', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    // Register a second source and populate the same slugs in both.
+    const db = (engine as any).db;
+    await db.query(
+      `INSERT INTO sources (id, name) VALUES ('alt', 'alt')
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // default-source rows via putPage (schema DEFAULT 'default').
+    await engine.putPage('topics/ai', { type: 'concept', title: 'AI (default)', compiled_truth: '', timeline: '' });
+    await engine.putPage('topics/ml', { type: 'concept', title: 'ML (default)', compiled_truth: '', timeline: '' });
+    // alt-source rows with the same slugs, inserted via raw SQL.
+    await db.query(
+      `INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, source_id, updated_at)
+       VALUES ('topics/ai', 'concept', 'AI (alt)', '', '', '{}'::jsonb, 'h1', 'alt', now()),
+              ('topics/ml', 'concept', 'ML (alt)', '', '', '{}'::jsonb, 'h2', 'alt', now())`
+    );
+  });
+
+  test('addLinksBatch default source_id does NOT fan out across sources', async () => {
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'topics/ai', to_slug: 'topics/ml', link_type: 'mention' },
+    ]);
+    // Exactly one edge, not two. Before the fix this was 2.
+    expect(inserted).toBe(1);
+    const db = (engine as any).db;
+    const { rows } = await db.query(
+      `SELECT f.source_id AS from_src, t.source_id AS to_src
+       FROM links l
+       JOIN pages f ON f.id = l.from_page_id
+       JOIN pages t ON t.id = l.to_page_id`
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].from_src).toBe('default');
+    expect(rows[0].to_src).toBe('default');
+  });
+
+  test('addLinksBatch with explicit alt source_id lands in alt only', async () => {
+    const inserted = await engine.addLinksBatch([
+      {
+        from_slug: 'topics/ai', to_slug: 'topics/ml', link_type: 'mention',
+        from_source_id: 'alt', to_source_id: 'alt',
+      },
+    ]);
+    expect(inserted).toBe(1);
+    const db = (engine as any).db;
+    const { rows } = await db.query(
+      `SELECT f.source_id AS from_src, t.source_id AS to_src
+       FROM links l
+       JOIN pages f ON f.id = l.from_page_id
+       JOIN pages t ON t.id = l.to_page_id`
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].from_src).toBe('alt');
+    expect(rows[0].to_src).toBe('alt');
+  });
+
+  test('addLinksBatch supports cross-source edges', async () => {
+    const inserted = await engine.addLinksBatch([
+      {
+        from_slug: 'topics/ai', to_slug: 'topics/ml', link_type: 'mention',
+        from_source_id: 'default', to_source_id: 'alt',
+      },
+    ]);
+    expect(inserted).toBe(1);
+    const db = (engine as any).db;
+    const { rows } = await db.query(
+      `SELECT f.source_id AS from_src, t.source_id AS to_src
+       FROM links l
+       JOIN pages f ON f.id = l.from_page_id
+       JOIN pages t ON t.id = l.to_page_id`
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].from_src).toBe('default');
+    expect(rows[0].to_src).toBe('alt');
+  });
+
+  test('addTimelineEntriesBatch default source_id does NOT fan out across sources', async () => {
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'topics/ai', date: '2024-01-15', summary: 'Founded' },
+    ]);
+    // Exactly one entry (default source), not two. Before the fix this was 2.
+    expect(inserted).toBe(1);
+    const db = (engine as any).db;
+    const { rows } = await db.query(
+      `SELECT p.source_id FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id`
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].source_id).toBe('default');
+  });
+
+  test('addTimelineEntriesBatch with explicit alt source_id lands in alt only', async () => {
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'topics/ai', date: '2024-01-15', summary: 'Founded', source_id: 'alt' },
+    ]);
+    expect(inserted).toBe(1);
+    const db = (engine as any).db;
+    const { rows } = await db.query(
+      `SELECT p.source_id FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id`
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].source_id).toBe('alt');
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // Raw Data, Versions, Config, IngestLog
 // ─────────────────────────────────────────────────────────────────
@@ -889,5 +1002,42 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     const h2 = await engine.getHealth();
     expect(h2.orphan_pages).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// v0.13.1 — PGLite.create() error-wrap (structural guard for #223)
+// ─────────────────────────────────────────────────────────────────
+describe('PGLiteEngine: v0.13.1 error-wrap on connect() (#223)', () => {
+  test('pglite-engine.ts source contains the wrap with #223 hint and nested original error', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/pglite-engine.ts', 'utf-8');
+    // Structural: the try/catch block must wrap PGlite.create() (the actual
+    // abort site, NOT engine-factory.ts). The error message must name the
+    // issue and suggest gbrain doctor. Must NOT suggest "missing migrations"
+    // as a cause (that was conflating #218 and #223 — migrations run AFTER
+    // create()).
+    expect(src).toContain('this._db = await PGlite.create');
+    expect(src).toContain('https://github.com/garrytan/gbrain/issues/223');
+    expect(src).toContain('gbrain doctor');
+    expect(src).toContain('Original error:');
+    // Regression guard: the user-visible error MESSAGE must not re-introduce
+    // the misleading "missing migrations" hint. (A source comment explaining
+    // *why* we removed it is fine — match only inside the wrapped Error body.)
+    const wrapStart = src.indexOf('const wrapped = new Error(');
+    expect(wrapStart).toBeGreaterThan(-1);
+    const wrapEnd = src.indexOf(');', wrapStart);
+    const errBody = src.slice(wrapStart, wrapEnd);
+    expect(errBody).not.toContain('missing migrations');
+    expect(errBody).not.toContain('apply-migrations');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// v0.13.1 — Engine kind discriminator
+// ─────────────────────────────────────────────────────────────────
+describe('PGLiteEngine: v0.13.1 kind discriminator', () => {
+  test('exposes readonly kind = pglite', () => {
+    expect(engine.kind).toBe('pglite');
   });
 });

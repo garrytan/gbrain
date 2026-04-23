@@ -5,6 +5,8 @@ import { cpus, totalmem, homedir } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
 import { loadConfig } from '../core/config.ts';
+import { createProgress } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -36,12 +38,13 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
-  const dir = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
+  const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
-  if (!dir) {
+  if (!dirArg) {
     console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
     process.exit(1);
   }
+  const dir: string = dirArg;  // narrowed; survives closure capture
 
   // Collect all .md files
   const allFiles = collectMarkdownFiles(dir);
@@ -81,12 +84,12 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   const failures: Array<{ path: string; error: string }> = []; // Bug 9
   const startTime = Date.now();
 
-  function logProgress() {
-    const elapsed = (Date.now() - startTime) / 1000;
-    const rate = elapsed > 0 ? Math.round(processed / elapsed) : 0;
-    const remaining = rate > 0 ? Math.round((files.length - processed) / rate) : 0;
-    const pct = Math.round((processed / files.length) * 100);
-    console.log(`[gbrain import] ${processed}/${files.length} (${pct}%) | ${rate} files/sec | imported: ${imported} | skipped: ${skipped} | errors: ${errors} | ETA: ${remaining}s`);
+  // Progress on stderr so stdout stays clean for the final summary / --json payload.
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('import.files', files.length);
+
+  function tickProgress() {
+    progress.tick(1, `imported=${imported} skipped=${skipped} errors=${errors}`);
   }
 
   async function processFile(eng: BrainEngine, filePath: string) {
@@ -119,8 +122,8 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
       failures.push({ path: relativePath, error: msg });
     }
     processed++;
+    tickProgress();
     if (processed % 100 === 0 || processed === files.length) {
-      logProgress();
       // Save checkpoint every 100 files — track completed file set, not just a counter
       if (processed % 100 === 0) {
         try {
@@ -179,6 +182,8 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
       await processFile(engine, filePath);
     }
   }
+
+  progress.finish();
 
   // Error summary
   for (const [err, count] of Object.entries(errorCounts)) {

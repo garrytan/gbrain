@@ -4,6 +4,8 @@ import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
 import { humanSize } from '../core/file-resolver.ts';
+import { createProgress } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 /** Size threshold: files >= 100 MB use TUS resumable upload */
 const SIZE_THRESHOLD = 100 * 1024 * 1024;
@@ -306,13 +308,14 @@ async function syncFiles(dir?: string) {
   let uploaded = 0;
   let skipped = 0;
 
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('files.sync', files.length);
+
   for (let i = 0; i < files.length; i++) {
     const filePath = files[i];
     const relativePath = relative(dir, filePath);
 
-    if ((i + 1) % 50 === 0 || i === files.length - 1) {
-      process.stdout.write(`\r  ${i + 1}/${files.length} processed, ${uploaded} uploaded, ${skipped} skipped`);
-    }
+    progress.tick(1);
 
     const hash = fileHash(filePath);
     const filename = basename(filePath);
@@ -343,7 +346,9 @@ async function syncFiles(dir?: string) {
     uploaded++;
   }
 
-  console.log(`\n\nFiles sync complete: ${uploaded} uploaded, ${skipped} skipped (unchanged)`);
+  progress.finish();
+  // Stdout summary preserved for scripts/tests that grep for it.
+  console.log(`Files sync complete: ${uploaded} uploaded, ${skipped} skipped (unchanged)`);
 }
 
 async function verifyFiles() {
@@ -416,7 +421,7 @@ async function mirrorFiles(args: string[]) {
   // Write .supabase marker
   const marker = stringify({
     synced_at: new Date().toISOString(),
-    bucket: config.storage.bucket || 'brain-files',
+    bucket: (config.storage as { bucket?: string })?.bucket || 'brain-files',
     prefix: basename(dir) + '/',
     file_count: uploaded,
   });

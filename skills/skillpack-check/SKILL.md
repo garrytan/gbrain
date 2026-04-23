@@ -4,7 +4,7 @@ version: 1.0.0
 description: |
   Run `gbrain skillpack-check` to produce an agent-readable JSON health report
   for the gbrain install. Wraps `gbrain doctor` + `gbrain apply-migrations
-  --list` so a host agent (Wintermute's morning-briefing, any OpenClaw cron)
+  --list` so a host agent (your OpenClaw's morning-briefing, any OpenClaw cron)
   can see at a glance whether the skillpack needs attention.
 
   Use when the user asks "is gbrain healthy?", when a cron fires a morning
@@ -40,7 +40,7 @@ Exit code:
 
 ## When to run
 
-- **Daily cron** (e.g. Wintermute's `morning-briefing`): `gbrain skillpack-check --quiet`.
+- **Daily cron** (e.g. your OpenClaw's `morning-briefing`): `gbrain skillpack-check --quiet`.
   Exit code alone tells you if anything is wrong; surface a one-liner in the
   briefing only when exit != 0. No JSON noise in happy-path briefings.
 - **On demand**: `gbrain skillpack-check` for the full JSON when debugging.

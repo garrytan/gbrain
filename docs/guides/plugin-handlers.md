@@ -4,8 +4,8 @@ GBrain's Minion worker ships with seven built-in handlers: `sync`,
 `embed`, `lint`, `import`, `extract`, `backlinks`, `autopilot-cycle`.
 These cover every background operation the gbrain CLI itself performs.
 
-Host platforms (Wintermute, other OpenClaw deployments, future hosts)
-register their own handlers via a plugin bootstrap that imports
+Host platforms (OpenClaw deployments, future hosts) register their own
+handlers via a plugin bootstrap that imports
 `gbrain/minions`. No `handlers.json`-style data file — handlers are
 code, loaded by the worker, with the same trust model as any other
 code in the host's repo.
@@ -58,7 +58,7 @@ async function main() {
 main().catch(err => { console.error(err); process.exit(1); });
 ```
 
-Ship this as a separate binary in the host repo (e.g. `wintermute-worker`)
+Ship this as a separate binary in the host repo (e.g. `your-openclaw-worker`)
 or as a side-effect module that the stock `gbrain jobs work` command
 auto-loads on startup (configurable via a host-provided entry point).
 

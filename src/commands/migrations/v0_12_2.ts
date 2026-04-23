@@ -22,6 +22,7 @@
 
 import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
+import { childGlobalFlags } from '../../core/cli-options.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // ── Phase A — Schema ────────────────────────────────────────
@@ -29,7 +30,9 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 60_000, env: process.env });
+    // Propagate global progress flags so the child shows the same mode the
+    // parent orchestrator is running in.
+    execSync('gbrain init --migrate-only' + childGlobalFlags(), { stdio: 'inherit', timeout: 60_000, env: process.env });
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -42,7 +45,8 @@ function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
 function phaseBRepair(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'jsonb_repair', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain repair-jsonb', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    // stdio: 'inherit' — child's stderr progress streams straight through.
+    execSync('gbrain repair-jsonb' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: process.env });
     return { name: 'jsonb_repair', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -55,8 +59,14 @@ function phaseBRepair(opts: OrchestratorOpts): OrchestratorPhaseResult {
 function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'verify', status: 'skipped', detail: 'dry-run' };
   try {
+    // Explicit stdio discipline: we must parse JSON off child.stdout, so
+    // pipe stdout but let child.stderr (progress) pass straight through.
+    // Any accidental stdout progress from the child would break JSON.parse
+    // (per Codex review #12). NOTE: we deliberately do NOT pass
+    // --progress-json here — this child is parsed, not watched.
     const out = execSync('gbrain repair-jsonb --dry-run --json', {
       encoding: 'utf-8', timeout: 60_000, env: process.env,
+      stdio: ['ignore', 'pipe', 'inherit'],
     });
     const parsed = JSON.parse(out) as { total_repaired?: number; engine?: string };
     const remaining = parsed.total_repaired ?? 0;
@@ -95,10 +105,9 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   const c = phaseCVerify(opts);
   phases.push(c);
 
+  // a.status and b.status were narrowed to 'skipped' | 'complete' by early returns above.
   const overallStatus: 'complete' | 'partial' | 'failed' =
-    a.status === 'failed' || b.status === 'failed' ? 'failed' :
-    c.status === 'failed' ? 'partial' :
-    'complete';
+    c.status === 'failed' ? 'partial' : 'complete';
 
   return finalizeResult(phases, overallStatus);
 }

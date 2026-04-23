@@ -275,7 +275,7 @@ Inject the key patterns into the agent's system context or AGENTS.md:
 1. **Brain-agent loop** (Section 2): read before responding, write after learning
 2. **Entity detection** (Section 3): spawn on every message, capture people/companies/ideas
 3. **Source attribution** (Section 7): every fact needs `[Source: ...]`
-4. **Iron law back-linking** (Section 15.4): every mention links back to the entity page
+> **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
 Tell the user: "The production agent guide is at docs/GBRAIN_SKILLPACK.md. It covers
 the brain-agent loop, entity detection, enrichment, meeting ingestion, and cron

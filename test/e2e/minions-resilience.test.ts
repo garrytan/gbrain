@@ -61,9 +61,12 @@ describeE2E('E2E: Minions resilience (OpenClaw real-world patterns)', () => {
 
       // 50 concurrent submits racing through SELECT ... FOR UPDATE on parent.
       // The PG row lock serializes them; only the first 10 see live_count < 10.
+      // Use a non-protected name — this test is about max_children semantics,
+      // not the v0.15 subagent runtime specifically. `subagent` became a
+      // PROTECTED_JOB_NAME in v0.15 (CLI-only; trusted submit required).
       const results = await Promise.allSettled(
         Array.from({ length: 50 }, (_, i) =>
-          queue.add(`subagent`, { i }, { parent_job_id: parent.id })
+          queue.add(`child_worker`, { i }, { parent_job_id: parent.id })
         )
       );
 

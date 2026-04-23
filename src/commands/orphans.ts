@@ -13,7 +13,8 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import * as db from '../core/db.ts';
+import { createProgress, startHeartbeat } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 // --- Types ---
 
@@ -97,37 +98,50 @@ export function deriveDomain(frontmatterDomain: string | null | undefined, slug:
 // --- Core query ---
 
 /**
- * Find pages with no inbound links.
- * Returns raw rows from the DB (all pages regardless of filter).
+ * Find pages with no inbound links via the engine's built-in helper.
+ * Returns raw rows (all pages regardless of filter).
+ *
+ * As of v0.17: takes an engine argument. Composes with runCycle which
+ * passes an explicit engine. No more db.getConnection() global — fixes
+ * the PGLite-vs-Postgres + test-fixture coupling codex flagged.
  */
-export async function queryOrphanPages(): Promise<{ slug: string; title: string; domain: string | null }[]> {
-  const sql = db.getConnection();
-  const rows = await sql`
-    SELECT
-      p.slug,
-      COALESCE(p.title, p.slug) AS title,
-      p.frontmatter->>'domain' AS domain
-    FROM pages p
-    WHERE NOT EXISTS (
-      SELECT 1 FROM links l WHERE l.to_page_id = p.id
-    )
-    ORDER BY p.slug
-  `;
-  return rows as { slug: string; title: string; domain: string | null }[];
+export async function queryOrphanPages(
+  engine: BrainEngine,
+): Promise<{ slug: string; title: string; domain: string | null }[]> {
+  return engine.findOrphanPages();
 }
 
 /**
  * Find orphan pages, with optional pseudo-page filtering.
  * Returns structured OrphanResult with totals.
+ *
+ * As of v0.17: `engine` is required. See queryOrphanPages for rationale.
  */
-export async function findOrphans(includePseudo: boolean = false): Promise<OrphanResult> {
-  const allOrphans = await queryOrphanPages();
-  const totalPages = allOrphans.length; // pages with no inbound links
-
-  // Count total pages in DB for the summary line
-  const sql = db.getConnection();
-  const [{ count: totalPagesCount }] = await sql`SELECT count(*)::int AS count FROM pages`;
-  const total = Number(totalPagesCount);
+export async function findOrphans(
+  engine: BrainEngine,
+  opts: { includePseudo?: boolean } = {},
+): Promise<OrphanResult> {
+  const includePseudo = !!opts.includePseudo;
+  // The NOT EXISTS anti-join over pages × links can take seconds on 50K-page
+  // brains. Heartbeat every second so agents see the scan is alive. Keyset
+  // pagination was considered and rejected: without an index on
+  // links.to_page_id it does no useful work. Adding that index is a
+  // follow-up (v0.14.3 schema migration).
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('orphans.scan');
+  const stopHb = startHeartbeat(progress, 'scanning pages for missing inbound links…');
+  let allOrphans: { slug: string; title: string; domain: string | null }[];
+  let total: number;
+  try {
+    allOrphans = await engine.findOrphanPages();
+    // Count total pages in DB for the summary line
+    const stats = await engine.getStats();
+    total = stats.page_count;
+  } finally {
+    stopHb();
+    progress.finish();
+  }
+  const _totalPages = allOrphans.length; // pages with no inbound links (preserved for ref)
 
   const filtered = includePseudo
     ? allOrphans
@@ -189,7 +203,7 @@ export function formatOrphansText(result: OrphanResult): string {
 
 // --- CLI entry point ---
 
-export async function runOrphans(_engine: BrainEngine, args: string[]) {
+export async function runOrphans(engine: BrainEngine, args: string[]) {
   const json = args.includes('--json');
   const count = args.includes('--count');
   const includePseudo = args.includes('--include-pseudo');
@@ -211,7 +225,7 @@ Summary line: N orphans out of M linkable pages (K total; K-M excluded)
     return;
   }
 
-  const result = await findOrphans(includePseudo);
+  const result = await findOrphans(engine, { includePseudo });
 
   if (count) {
     console.log(String(result.total_orphans));

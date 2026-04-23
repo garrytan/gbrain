@@ -10,6 +10,8 @@ GBrain is those patterns, generalized. 26 skills. Install in 30 minutes. Your ag
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
+> **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
+
 ## Install
 
 ### On an agent platform (recommended)
@@ -28,6 +30,11 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 
 That's it. The agent clones the repo, installs GBrain, sets up the brain, loads 26 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
 
+If your agent doesn't auto-read `AGENTS.md`, point it at that file first:
+`https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` is the non-Claude
+agent operating protocol (install, read order, trust boundary, common tasks). For
+the full doc map, use `llms.txt` at the same URL root.
+
 ### Standalone CLI (no agent)
 
 ```bash
@@ -36,6 +43,11 @@ gbrain init                     # local brain, ready in 2 seconds
 gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
 ```
+
+**Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
+postinstall hook on global installs, so schema migrations never run and the CLI
+aborts with `Aborted()` the first time it opens PGLite. Use `git clone + bun install
+&& bun link` as shown above. See [#218](https://github.com/garrytan/gbrain/issues/218).
 
 ```
 3 results (hybrid search, 0.12s):
@@ -217,6 +229,25 @@ gbrain skillpack-check | jq       # full JSON: {healthy, summary, actions[], doc
 If anything's off, `actions[]` tells you the exact command to run. For deeper troubleshooting: [`docs/guides/minions-fix.md`](docs/guides/minions-fix.md).
 
 Moving gateway crons to Minions (deterministic scripts, zero LLM tokens per fire): [`docs/guides/minions-shell-jobs.md`](docs/guides/minions-shell-jobs.md).
+
+## Durable agents: `gbrain agent` (v0.15)
+
+Your subagent runs survive crashes now. OpenClaw died mid-run? The worker re-claims on restart and replays from the last committed turn. Fan-out across 50 shards, one shard crashes — the aggregator still claims after every child reaches a terminal state and writes a mixed-outcome summary. Tool calls persist as a two-phase ledger (`pending` → `complete | failed`) so replay is safe by construction, not by hope.
+
+```bash
+# Submit a single-subagent run
+gbrain agent run "summarize my last 10 journal pages"
+
+# Fan out N prompts across N subagent children + 1 aggregator
+gbrain agent run "analyze every page" \
+  --fanout-manifest manifests/pages.json \
+  --subagent-def analyzer
+
+# Tail a running job (heartbeat per turn + full transcript on completion)
+gbrain agent logs 1247 --follow --since 5m
+```
+
+Durability is the point: every Anthropic turn commits to `subagent_messages`, every tool call to `subagent_tool_executions`. Worker kills, OpenClaw crashes, timeouts — all resumable. Host repos (your OpenClaw, etc.) ship their own subagent definitions via `GBRAIN_PLUGIN_PATH` + a `gbrain.plugin.json` manifest: see [`docs/guides/plugin-authors.md`](docs/guides/plugin-authors.md). Requires `ANTHROPIC_API_KEY` on the worker.
 
 ## Skillify: your skills tree stops being a black box
 

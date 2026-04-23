@@ -1,11 +1,14 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
   shouldExclude,
   deriveDomain,
   formatOrphansText,
+  findOrphans,
+  queryOrphanPages,
   type OrphanPage,
   type OrphanResult,
 } from '../src/commands/orphans.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 // --- shouldExclude ---
 
@@ -199,5 +202,91 @@ describe('formatOrphansText', () => {
     };
     const out = formatOrphansText(result);
     expect(out).toContain('2 orphans out of 100 linkable pages (120 total; 20 excluded)');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// findOrphans + queryOrphanPages with explicit engine (v0.17 change)
+// ────────────────────────────────────────────────────────────────
+
+describe('findOrphans (engine-injected)', () => {
+  let engine: PGLiteEngine;
+
+  beforeEach(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterEach(async () => {
+    await engine.disconnect();
+  });
+
+  test('returns pages with no inbound links, excluding pseudo-pages', async () => {
+    // Build a tiny brain: alice links to bob. alice is an orphan (nothing
+    // points to her), bob is not (alice points to him). _atlas is a pseudo
+    // page that should be excluded by default.
+    await engine.putPage('people/alice', {
+      type: 'person',
+      title: 'Alice',
+      compiled_truth: 'Alice works with Bob.',
+      timeline: '',
+    });
+    await engine.putPage('people/bob', {
+      type: 'person',
+      title: 'Bob',
+      compiled_truth: 'Bob.',
+      timeline: '',
+    });
+    await engine.putPage('_atlas', {
+      type: 'concept',
+      title: 'Atlas',
+      compiled_truth: 'pseudo-page',
+      timeline: '',
+    });
+    // Create the link alice -> bob.
+    await engine.addLink('people/alice', 'people/bob', 'mentioned', 'references', 'markdown');
+
+    const result = await findOrphans(engine);
+
+    const slugs = result.orphans.map(o => o.slug).sort();
+    expect(slugs).toEqual(['people/alice']); // _atlas excluded by default; bob has a backlink
+    expect(result.total_orphans).toBe(1);
+    expect(result.total_pages).toBe(3);
+    expect(result.excluded).toBeGreaterThanOrEqual(1); // _atlas was filtered
+  });
+
+  test('includePseudo: true surfaces pseudo-pages too', async () => {
+    await engine.putPage('_atlas', {
+      type: 'concept',
+      title: 'Atlas',
+      compiled_truth: 'pseudo',
+      timeline: '',
+    });
+
+    const result = await findOrphans(engine, { includePseudo: true });
+
+    const slugs = result.orphans.map(o => o.slug).sort();
+    expect(slugs).toContain('_atlas');
+  });
+
+  test('queryOrphanPages delegates to the passed engine (no global db)', async () => {
+    await engine.putPage('topic/standalone', {
+      type: 'concept',
+      title: 'Standalone',
+      compiled_truth: 'no inbound links',
+      timeline: '',
+    });
+
+    const rows = await queryOrphanPages(engine);
+    const slugs = rows.map(r => r.slug);
+    expect(slugs).toContain('topic/standalone');
+  });
+
+  test('zero pages: empty result (no crash on empty brain)', async () => {
+    const result = await findOrphans(engine);
+    expect(result.orphans).toEqual([]);
+    expect(result.total_orphans).toBe(0);
+    expect(result.total_pages).toBe(0);
   });
 });

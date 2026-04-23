@@ -32,7 +32,19 @@ export async function embed(text: string): Promise<Float32Array> {
   return result[0];
 }
 
-export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
+export interface EmbedBatchOptions {
+  /**
+   * Optional callback fired after each 100-item sub-batch completes.
+   * CLI wrappers tick a reporter; Minion handlers can call
+   * job.updateProgress here instead of hooking the per-page callback.
+   */
+  onBatchComplete?: (done: number, total: number) => void;
+}
+
+export async function embedBatch(
+  texts: string[],
+  options: EmbedBatchOptions = {},
+): Promise<Float32Array[]> {
   const truncated = texts.map(t => t.slice(0, MAX_CHARS));
   const results: Float32Array[] = [];
 
@@ -41,6 +53,7 @@ export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
     const batch = truncated.slice(i, i + BATCH_SIZE);
     const batchResults = await embedBatchWithRetry(batch);
     results.push(...batchResults);
+    options.onBatchComplete?.(results.length, truncated.length);
   }
 
   return results;

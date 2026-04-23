@@ -36,17 +36,18 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 // and swaps the unique constraint. Schema build time on 46K pages is
 // ~10s (ALTER + index builds). Bumped timeout accounts for slow Supabase
 // links (v0.12.1 pattern — migrations can time out on the 60s default).
-// Use the CURRENTLY-RUNNING binary path (not `gbrain` off $PATH). After
-// `gbrain upgrade` rewrites the binary, a bare `gbrain` could resolve to
-// an older installed copy via alias shadowing or stale PATH cache. The
-// active process.execPath is the one that loaded THIS migration module,
-// so recursing into it is always the right binary.
-const GBRAIN = process.execPath;
+//
+// Shell out to the canonical `gbrain` shim on PATH (`/usr/local/bin/gbrain`
+// by default). An earlier revision resolved via the active Node/Bun runtime
+// binary, but on bun-installed trees that binary is `bun` — the spawned
+// `bun extract ...` gets reinterpreted as `bun run extract` and crashes the
+// upgrade mid-migration. The shim is already the canonical wrapper; trust
+// it. Regression guarded by test/migrations-v0_13_0.test.ts.
 
 function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync(`${GBRAIN} init --migrate-only`, { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 600_000, env: process.env });
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -63,7 +64,7 @@ function phaseBBackfill(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // `--include-frontmatter` is the v0.13 flag that enables the canonical
     // frontmatter link extractor. Default-OFF in the CLI for back-compat;
     // the migration explicitly opts in because this is the canonical backfill.
-    execSync(`${GBRAIN} extract links --source db --include-frontmatter`, {
+    execSync('gbrain extract links --source db --include-frontmatter', {
       stdio: 'inherit',
       timeout: 1_800_000,  // 30 min hard cap; typical 2-5 min on 46K pages
       env: process.env,
@@ -88,7 +89,7 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // docs-only brains, and brains with no entity pages legitimately
     // produce 0. Phase B's own stdout shows `Links: created N` which is
     // the authoritative signal — user sees it during upgrade.
-    const out = execSync(`${GBRAIN} call get_stats`, {
+    const out = execSync('gbrain call get_stats', {
       encoding: 'utf-8', timeout: 60_000, env: process.env,
     });
     const parsed = JSON.parse(out) as { link_count?: number; page_count?: number };
@@ -128,10 +129,9 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   const c = phaseCVerify(opts);
   phases.push(c);
 
+  // a.status and b.status were narrowed to 'skipped' | 'complete' by early returns above.
   const overallStatus: 'complete' | 'partial' | 'failed' =
-    a.status === 'failed' || b.status === 'failed' ? 'failed' :
-    c.status === 'failed' ? 'partial' :
-    'complete';
+    c.status === 'failed' ? 'partial' : 'complete';
 
   return finalizeResult(phases, overallStatus);
 }

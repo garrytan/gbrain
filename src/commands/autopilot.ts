@@ -44,35 +44,48 @@ function logError(phase: string, e: unknown) {
 /**
  * Resolve the gbrain CLI entrypoint for spawning the worker child.
  *
- * Codex caught the bug in earlier plan drafts: `process.execPath` is the
- * Bun (or Node) runtime binary on source installs, not `gbrain`. Blindly
- * using it would spawn `bun jobs work`, which does not work.
+ * A .ts source path is never a valid spawn target — spawning it fails with
+ * EACCES because TypeScript source isn't executable. The canonical install
+ * puts a shim at `/usr/local/bin/gbrain` (or wherever `which gbrain`
+ * resolves to) that already wraps the right runtime+entrypoint; prefer it.
  *
  * Order of resolution:
- *   1. argv[1] if it clearly points at a gbrain entry (cli.ts or /gbrain).
- *   2. process.execPath when running as the compiled binary.
- *   3. `which gbrain` for installs where the binary is on $PATH.
- *   4. Throw — nothing on $PATH, no way to supervise the worker.
+ *   1. `which gbrain` — the shim on PATH, canonical for installed builds.
+ *   2. process.execPath if it ends with /gbrain (compiled binary, no shim).
+ *   3. argv[1] if it ends with /gbrain (e.g., direct invocation of compiled
+ *      binary without PATH). Never .ts source paths.
+ *   4. Throw with a clear install hint.
  */
 export function resolveGbrainCliPath(): string {
-  const arg1 = process.argv[1] ?? '';
-  if (arg1.endsWith('/gbrain') || arg1.endsWith('/cli.ts') || arg1.endsWith('\\gbrain.exe')) {
-    return arg1;
-  }
+  try {
+    const which = execSync('which gbrain', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (which) return which;
+  } catch { /* not on $PATH — fall through */ }
+
   const exec = process.execPath ?? '';
   if (exec.endsWith('/gbrain') || exec.endsWith('\\gbrain.exe')) {
     return exec;
   }
-  try {
-    const which = execSync('which gbrain', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    if (which) return which;
-  } catch { /* not on $PATH */ }
-  throw new Error('Could not resolve the gbrain CLI path. Install gbrain so it is on $PATH, or run autopilot from the compiled binary directly.');
+
+  const arg1 = process.argv[1] ?? '';
+  if (arg1.endsWith('/gbrain') || arg1.endsWith('\\gbrain.exe')) {
+    return arg1;
+  }
+
+  throw new Error('Could not resolve the gbrain CLI path. Install gbrain so it is on $PATH (e.g. /usr/local/bin/gbrain), or run autopilot from the compiled binary directly.');
 }
 
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain autopilot [--repo <path>] [--interval N] [--json]\n       gbrain autopilot --install [--repo <path>]\n       gbrain autopilot --uninstall\n       gbrain autopilot --status [--json]\n\nSelf-maintaining brain daemon. Runs sync + extract + embed + backlinks in a loop.');
+    console.log(
+      'Usage: gbrain autopilot [--repo <path>] [--interval N] [--json]\n' +
+      '       gbrain autopilot --install [--repo <path>]\n' +
+      '       gbrain autopilot --uninstall\n' +
+      '       gbrain autopilot --status [--json]\n\n' +
+      'Self-maintaining brain daemon. Runs the full maintenance cycle\n' +
+      '(lint + backlinks + sync + extract + embed + orphans) on an interval.\n\n' +
+      'For a one-shot cron-triggered cycle, see `gbrain dream`.',
+    );
     return;
   }
 
@@ -228,27 +241,32 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         }
       } catch (e) { logError('dispatch', e); cycleOk = false; }
     } else {
-      // Inline fallback — same as pre-v0.11.1 behavior.
-      // 1. Sync
+      // Inline fallback — delegate to runCycle so lint + backlinks +
+      // orphan sweep run too (previously this path only did sync +
+      // extract + embed, which didn't match the Minions-dispatch
+      // path's phase set). Now both converge on the same primitive.
       try {
-        const { performSync } = await import('./sync.ts');
-        const result = await performSync(engine, { repoPath, noEmbed: true });
-        if (result.status === 'synced') {
-          console.log(`[sync] +${result.added} ~${result.modified} -${result.deleted}`);
+        const { runCycle } = await import('../core/cycle.ts');
+        const report = await runCycle(engine, {
+          brainDir: repoPath,
+          // Autopilot daemon path: pulls by default (matches
+          // pre-v0.17 autopilot behavior). CLI dream defaults false
+          // for cron safety; that choice is scoped to dream only.
+          pull: true,
+          yieldBetweenPhases: async () => {
+            await new Promise(r => setImmediate(r));
+          },
+        });
+        if (report.status === 'failed' || report.status === 'partial') {
+          cycleOk = false;
         }
-      } catch (e) { logError('sync', e); cycleOk = false; }
-
-      // 2. Extract (full brain, incremental dedup handles repeats)
-      try {
-        const { runExtractCore } = await import('./extract.ts');
-        await runExtractCore(engine, { mode: 'all', dir: repoPath });
-      } catch (e) { logError('extract', e); cycleOk = false; }
-
-      // 3. Embed stale
-      try {
-        const { runEmbedCore } = await import('./embed.ts');
-        await runEmbedCore(engine, { stale: true });
-      } catch (e) { logError('embed', e); cycleOk = false; }
+        if (jsonMode) {
+          process.stderr.write(JSON.stringify({ event: 'cycle-inline', status: report.status, duration_ms: report.duration_ms, totals: report.totals }) + '\n');
+        } else {
+          const t = report.totals;
+          console.log(`[cycle-inline ${report.status}] lint=${t.lint_fixes} backlinks=${t.backlinks_added} synced=${t.pages_synced} extracted=${t.pages_extracted} embedded=${t.pages_embedded} orphans=${t.orphans_found}`);
+        }
+      } catch (e) { logError('cycle-inline', e); cycleOk = false; }
     }
 
     // 4. Health check + adaptive interval (same for both paths)

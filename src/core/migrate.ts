@@ -17,7 +17,20 @@ import { slugifyPath } from './sync.ts';
 interface Migration {
   version: number;
   name: string;
+  /** Engine-agnostic SQL. Used when `sqlFor` is absent. Set to '' for handler-only or sqlFor-only migrations. */
   sql: string;
+  /**
+   * Engine-specific SQL. If present, overrides `sql` for the matching engine.
+   * Needed when Postgres wants CONCURRENTLY but PGLite can't honor it.
+   */
+  sqlFor?: { postgres?: string; pglite?: string };
+  /**
+   * When false, the runner does NOT wrap the SQL in `engine.transaction()`.
+   * Required for `CREATE INDEX CONCURRENTLY` (which Postgres refuses inside a transaction).
+   * Enforced Postgres-only; ignored on PGLite (PGLite has no concurrent writers anyway).
+   * Defaults to true.
+   */
+  transaction?: boolean;
   handler?: (engine: BrainEngine) => Promise<void>;
 }
 
@@ -102,7 +115,7 @@ export const MIGRATIONS: Migration[] = [
         backoff_delay    INTEGER     NOT NULL DEFAULT 1000,
         backoff_jitter   REAL        NOT NULL DEFAULT 0.2,
         stalled_counter  INTEGER     NOT NULL DEFAULT 0,
-        max_stalled      INTEGER     NOT NULL DEFAULT 1,
+        max_stalled      INTEGER     NOT NULL DEFAULT 5,
         lock_token       TEXT,
         lock_until       TIMESTAMPTZ,
         delay_until      TIMESTAMPTZ,
@@ -355,9 +368,8 @@ export const MIGRATIONS: Migration[] = [
     // midnight rollover in the user's TZ naturally creates a new row instead of
     // mutating yesterday's. reserved_usd and committed_usd track reservations
     // vs actuals so process death between reserve() and commit()/rollback()
-    // can be cleaned up by TTL scan. status and reserved_at exist for that
-    // reclaim path. Rollback: DROP TABLE (budget is regenerable from resolver
-    // call logs; no durable product data lives here).
+    // can be cleaned up by TTL scan. Rollback: DROP TABLE (regenerable from
+    // resolver call logs; no durable product data lives here).
     sql: `
       CREATE TABLE IF NOT EXISTS budget_ledger (
         scope          TEXT        NOT NULL,
@@ -388,21 +400,359 @@ export const MIGRATIONS: Migration[] = [
     version: 13,
     name: 'minion_quiet_hours_stagger',
     // Adds quiet-hours gating + deterministic stagger to Minions.
-    //
-    // quiet_hours (JSONB): {start, end, tz, policy} — checked at claim
-    //   time by the worker, not at dispatch. A queued job inside its quiet
-    //   window is released back to 'waiting' and claimed again outside the
-    //   window. 'skip' policy drops the event, 'defer' re-queues.
-    // stagger_key (TEXT): hashed to a minute-slot offset so jobs with the
-    //   same key don't collide when a cron boundary fires. Optional; NULL
-    //   = no stagger. The hash lives in application code (deterministic,
-    //   ensures same key always lands on same slot) so the column is
-    //   just the key.
     sql: `
       ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS quiet_hours JSONB;
       ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS stagger_key TEXT;
       CREATE INDEX IF NOT EXISTS idx_minion_jobs_stagger_key
         ON minion_jobs(stagger_key) WHERE stagger_key IS NOT NULL;
+    `,
+  },
+  {
+    version: 14,
+    name: 'pages_updated_at_index',
+    // v0.14.1 (fix wave): fixes the 14.6s "list pages newest-first" seqscan on 31k+ row brains.
+    // Original report: https://github.com/garrytan/gbrain/issues/170 (PR #215).
+    //
+    // Engine-aware via handler (not SQL): Postgres uses CREATE INDEX CONCURRENTLY
+    // to avoid the write-blocking SHARE lock on `pages`. CONCURRENTLY refuses to
+    // run inside a transaction AND postgres.js's multi-statement `.unsafe()` wraps
+    // in an implicit transaction, so the handler runs each statement as a separate
+    // call. A failed CONCURRENTLY leaves an invalid index with the target name;
+    // the handler pre-drops any invalid remnant via pg_index.indisvalid. PGLite
+    // has no concurrent writers, so plain CREATE is safe.
+    sql: '',
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          14,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'idx_pages_updated_at_desc' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_pages_updated_at_desc';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          14,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pages_updated_at_desc
+             ON pages (updated_at DESC);`
+        );
+      } else {
+        await engine.runMigration(
+          14,
+          `CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc
+             ON pages (updated_at DESC);`
+        );
+      }
+    },
+  },
+  {
+    version: 23,
+    name: 'files_source_id_page_id_ledger',
+    // v0.18.0 Step 7 (Lane E) — additive only: adds files.source_id and
+    // files.page_id columns + creates the file_migration_ledger that
+    // drives phase-B storage object rewrites. Does NOT drop page_slug
+    // yet (kept for backward compat; a later release cleans up once the
+    // page_id FK is proven). PGLite has no files table, so this
+    // migration is Postgres-only via a handler gate.
+    //
+    // Ledger PK is file_id (not storage_path_old) — two sources CAN
+    // share an old path during migration, so a composite would be
+    // wrong. Codex second-pass review caught this.
+    //
+    // State machine per row:
+    //   pending → copy_done → db_updated → complete
+    //   any state → failed (with error detail)
+    //
+    // Phase B in the v0_18_0 orchestrator processes `status != complete`
+    // rows. Re-runnable: resumes from whichever state it stopped in.
+    sql: '',
+    handler: async (engine) => {
+      if (engine.kind === 'pglite') return;
+      await engine.runMigration(19, `
+        -- 1a. source_id with DEFAULT 'default' (idempotent)
+        ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id TEXT
+          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+        CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
+
+        -- 1b. page_id (nullable; pre-v0.17 files pointed at page_slug
+        --     which was ON DELETE SET NULL, so we keep the same nullable
+        --     semantic — orphaned files are legal).
+        ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id INTEGER
+          REFERENCES pages(id) ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS idx_files_page_id ON files(page_id);
+      `);
+
+      await engine.runMigration(19, `
+        -- 1c. Backfill page_id from existing page_slug. Scoped to
+        --     source_id='default' because pre-v0.17 pages ALL lived in
+        --     the default source. Without this scope, after new sources
+        --     get added mid-migration, the JOIN could hit the wrong
+        --     page (different source, same slug).
+        UPDATE files f
+           SET page_id = p.id
+          FROM pages p
+         WHERE f.page_slug = p.slug
+           AND p.source_id = 'default'
+           AND f.page_id IS NULL;
+      `);
+
+      await engine.runMigration(19, `
+        -- 2. file_migration_ledger — drives the storage object rewrite
+        --    in the v0_18_0 orchestrator's phase B. Seeded from current
+        --    files rows; re-seed is idempotent via NOT EXISTS guard.
+        CREATE TABLE IF NOT EXISTS file_migration_ledger (
+          file_id           INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+          storage_path_old  TEXT   NOT NULL,
+          storage_path_new  TEXT   NOT NULL,
+          status            TEXT   NOT NULL DEFAULT 'pending',
+          error             TEXT,
+          updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+          CONSTRAINT chk_ledger_status CHECK (status IN ('pending','copy_done','db_updated','complete','failed'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_file_migration_ledger_status
+          ON file_migration_ledger(status) WHERE status != 'complete';
+
+        -- Seed the ledger with every existing file. New path prefixes
+        -- source_id so multi-source can land assets under their own
+        -- bucket path without collision.
+        INSERT INTO file_migration_ledger (file_id, storage_path_old, storage_path_new, status)
+        SELECT
+          f.id,
+          f.storage_path,
+          COALESCE(f.source_id, 'default') || '/' || f.storage_path,
+          'pending'
+        FROM files f
+        WHERE NOT EXISTS (
+          SELECT 1 FROM file_migration_ledger l WHERE l.file_id = f.id
+        );
+      `);
+    },
+  },
+  {
+    version: 22,
+    name: 'links_resolution_type',
+    // v0.18.0 Step 4 (Lane B) — adds links.resolution_type column so
+    // each edge records whether its target source was pinned at
+    // extraction time via `[[source:slug]]` (qualified) or resolved
+    // via local-first fallback (unqualified). Unqualified edges are
+    // candidates for re-resolution via `gbrain extract
+    // --refresh-unqualified` when the source topology changes.
+    //
+    // Nullable because legacy edges (pre-v0.17) have no resolution
+    // concept. `frontmatter` and `manual` edges remain NULL — they're
+    // not subject to staleness under source churn.
+    sql: `
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS resolution_type TEXT;
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'links_resolution_type_check'
+        ) THEN
+          ALTER TABLE links ADD CONSTRAINT links_resolution_type_check
+            CHECK (resolution_type IS NULL OR resolution_type IN ('qualified', 'unqualified'));
+        END IF;
+      END $$;
+    `,
+  },
+  {
+    version: 21,
+    name: 'pages_source_id_composite_unique',
+    // v0.18.0 Step 2 (Lane B) — adds pages.source_id with DEFAULT 'default'
+    // and swaps the global UNIQUE(slug) for the composite UNIQUE(source_id,
+    // slug). Lands alongside the engine SQL rewrite that makes every
+    // ON CONFLICT (slug) → ON CONFLICT (source_id, slug) so the constraint
+    // swap is atomic with the code that writes under it.
+    //
+    // DEFAULT 'default' is load-bearing: closes the Codex-flagged race
+    // where an INSERT between ADD COLUMN and SET NOT NULL could leave
+    // source_id NULL. Because the default already references a valid
+    // sources row (seeded in v16), new INSERTs immediately get a valid FK.
+    //
+    // Idempotent: IF NOT EXISTS on ADD COLUMN, DROP IF EXISTS on the old
+    // constraint, DO block guard on the new constraint creation.
+    sql: `
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
+        NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+
+      CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+
+      -- Swap global UNIQUE(slug) → composite UNIQUE(source_id, slug). The
+      -- original constraint is named pages_slug_key by Postgres convention
+      -- when the column was declared UNIQUE inline. Both drops are
+      -- idempotent.
+      ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
+        ) THEN
+          ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
+            UNIQUE (source_id, slug);
+        END IF;
+      END $$;
+    `,
+  },
+  {
+    version: 20,
+    name: 'sources_table_additive',
+    // v0.18.0 Step 1 (Lane A) — **additive only** so Step 1 is a safe
+    // standalone commit. This migration installs the sources primitive
+    // WITHOUT breaking the engine's existing ON CONFLICT (slug) upserts.
+    //
+    // What this migration does now:
+    //   - CREATE sources table
+    //   - INSERT default source (federated=true, inherits sync.repo_path
+    //     and sync.last_commit from config so post-upgrade identity is
+    //     preserved)
+    //
+    // What this migration does NOT do yet (deferred to v17 which ships
+    // with Step 2 engine rewrite, so they land atomically):
+    //   - ALTER pages ADD source_id
+    //   - DROP UNIQUE(slug) + ADD UNIQUE(source_id, slug)
+    //   - files.page_slug → page_id rewrite
+    //   - file_migration_ledger
+    //   - links.resolution_type
+    //
+    // The v0.18.0 orchestrator's phaseCVerify allows this split: it
+    // checks for sources('default'), but the "composite UNIQUE" +
+    // "pages.source_id NOT NULL" assertions only run after v17 lands.
+    //
+    // Idempotent via IF NOT EXISTS. Safe to re-run.
+    sql: `
+      CREATE TABLE IF NOT EXISTS sources (
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL UNIQUE,
+        local_path    TEXT,
+        last_commit   TEXT,
+        last_sync_at  TIMESTAMPTZ,
+        config        JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      -- Seed 'default' source, inheriting the existing sync.repo_path /
+      -- sync.last_commit config values. federated=true for backward compat.
+      -- Pre-v0.17 brains behave exactly as before.
+      INSERT INTO sources (id, name, local_path, last_commit, config)
+      SELECT
+        'default',
+        'default',
+        (SELECT value FROM config WHERE key = 'sync.repo_path'),
+        (SELECT value FROM config WHERE key = 'sync.last_commit'),
+        '{"federated": true}'::jsonb
+      WHERE NOT EXISTS (SELECT 1 FROM sources WHERE id = 'default');
+    `,
+  },
+  {
+    version: 15,
+    name: 'minion_jobs_max_stalled_default_5',
+    // v0.14.1 (fix wave): fixes https://github.com/garrytan/gbrain/issues/219
+    // Shipped default was 1 — first stall = dead-letter, contradicting the
+    // "SIGKILL rescued" claim. New default 5. UPDATE backfills existing non-
+    // terminal rows so upgrading brains don't keep dead-lettering queued work.
+    // Statuses come from MinionJobStatus in types.ts. Row locks serialize
+    // against claim()'s FOR UPDATE SKIP LOCKED — race-safe. Idempotent.
+    sql: `
+      ALTER TABLE minion_jobs ALTER COLUMN max_stalled SET DEFAULT 5;
+      UPDATE minion_jobs
+         SET max_stalled = 5
+       WHERE status IN ('waiting','active','delayed','waiting-children','paused')
+         AND max_stalled < 5;
+    `,
+  },
+  {
+    version: 16,
+    name: 'cycle_locks_table',
+    // v0.17 brain maintenance cycle (runCycle primitive).
+    // PgBouncer transaction pooling strips session-scoped advisory locks
+    // (pg_try_advisory_lock) across connection checkouts, so we can't use
+    // them as the cycle-coordination primitive. A row with a TTL works
+    // through every pooler: any backend can SELECT/UPDATE/DELETE it, no
+    // session state required.
+    //
+    // Acquire: INSERT ... ON CONFLICT (id) DO UPDATE ... WHERE ttl_expires_at < NOW()
+    //          returning ... — empty RETURNING = lock held by live holder.
+    // Refresh: UPDATE ... SET ttl_expires_at = NOW() + interval '30 min'
+    //          WHERE id = 'gbrain-cycle' AND holder_pid = <my pid> — between phases.
+    // Release: DELETE WHERE id = 'gbrain-cycle' AND holder_pid = <my pid>.
+    sql: `
+      CREATE TABLE IF NOT EXISTS gbrain_cycle_locks (
+        id TEXT PRIMARY KEY,
+        holder_pid INT NOT NULL,
+        holder_host TEXT,
+        acquired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ttl_expires_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
+    `,
+  },
+  {
+    version: 24,
+    name: 'rls_backfill_missing_tables',
+    // v0.18.1 RLS hardening: 10 gbrain-managed public tables shipped
+    // without RLS enabled (access_tokens, mcp_request_log, minion_inbox,
+    // minion_attachments, subagent_messages, subagent_tool_executions,
+    // subagent_rate_leases, gbrain_cycle_locks, budget_ledger,
+    // budget_reservations). Supabase exposes the public schema via
+    // PostgREST, so tables without RLS are readable by anyone with the
+    // anon key.
+    //
+    // Numbered v24 to slot after v0.18.0's v20-v23 sources-migration
+    // wave. The 'sources' and 'file_migration_ledger' tables added in
+    // v0.18.0 already get RLS from schema.sql's base DO block; v24
+    // backfills the 10 older tables that never had it.
+    //
+    // Gated on BYPASSRLS matching the pattern in schema.sql: enabling RLS
+    // on a table in a session that does NOT hold BYPASSRLS would lock
+    // the session out of its own data. RAISE WARNING is visible to the
+    // migration runner's log stream.
+    sql: `
+      DO $$
+      DECLARE
+        has_bypass BOOLEAN;
+      BEGIN
+        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        IF NOT has_bypass THEN
+          -- Fail the migration loudly instead of WARNING + version-bump.
+          -- The runner unconditionally records schema_version on success,
+          -- so a silent WARNING here would permanently lock the backfill out
+          -- on future runs even after switching to a bypass role. Raising
+          -- aborts the transaction, leaves schema_version at the prior value,
+          -- and lets the next invocation retry after the role is fixed.
+          RAISE EXCEPTION 'v24 rls_backfill_missing_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+        END IF;
+
+        -- These 8 are guaranteed to exist: schema.sql creates them (idempotent
+        -- via IF NOT EXISTS) on every initSchema call, and initSchema runs
+        -- before this migration. Bare ALTER TABLE is safe.
+        ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE mcp_request_log ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE minion_inbox ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE minion_attachments ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE subagent_messages ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE subagent_tool_executions ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE subagent_rate_leases ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE gbrain_cycle_locks ENABLE ROW LEVEL SECURITY;
+
+        -- budget_ledger + budget_reservations are migration-only (v12). Not
+        -- in schema.sql, not re-created on every initSchema. In normal flow
+        -- v12 runs before v24 so they exist, but if an operator manually
+        -- dropped them (unusual — budget data is regenerable from resolver
+        -- logs) or was pinned to a pre-v12 gbrain version when the table
+        -- went away, the bare ALTER would fail with 42P01 and abort v24.
+        -- information_schema.tables lookup makes the statement self-healing.
+        IF EXISTS (SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'budget_ledger') THEN
+          ALTER TABLE budget_ledger ENABLE ROW LEVEL SECURITY;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'budget_reservations') THEN
+          ALTER TABLE budget_reservations ENABLE ROW LEVEL SECURITY;
+        END IF;
+
+        RAISE NOTICE 'v24: RLS backfill complete (role % has BYPASSRLS)', current_user;
+      END $$;
     `,
   },
 ];
@@ -415,14 +765,32 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   const currentStr = await engine.getConfig('version');
   const current = parseInt(currentStr || '1', 10);
 
+  // Sort by version ascending so array insertion order doesn't affect
+  // correctness. Migrations MUST run in version order; if v16 accidentally
+  // precedes v15 in MIGRATIONS, setConfig(version, 16) would cause v15 to
+  // be skipped on the next iteration.
+  const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
+
   let applied = 0;
-  for (const m of MIGRATIONS) {
+  for (const m of sorted) {
     if (m.version > current) {
-      // SQL migration (transactional)
-      if (m.sql) {
-        await engine.transaction(async (tx) => {
-          await tx.runMigration(m.version, m.sql);
-        });
+      // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
+      const sql = m.sqlFor?.[engine.kind] ?? m.sql;
+
+      if (sql) {
+        const useTransaction = m.transaction !== false;
+        // Non-transactional path is Postgres-only: `CREATE INDEX CONCURRENTLY`
+        // refuses to run inside a transaction. PGLite has no concurrent
+        // writers, so even if a migration sets transaction:false we wrap it
+        // anyway (harmless; keeps behavior consistent).
+        if (useTransaction || engine.kind === 'pglite') {
+          await engine.transaction(async (tx) => {
+            await tx.runMigration(m.version, sql);
+          });
+        } else {
+          // Postgres + transaction:false → direct execution, no BEGIN/COMMIT.
+          await engine.runMigration(m.version, sql);
+        }
       }
 
       // Application-level handler (runs outside transaction for flexibility)

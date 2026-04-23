@@ -103,6 +103,14 @@ export interface MinionJobInput {
   backoff_type?: BackoffType;
   backoff_delay?: number;
   backoff_jitter?: number;
+  /**
+   * Per-job override for how many stall windows are tolerated before the
+   * queue dead-letters the job. When omitted, the schema column DEFAULT
+   * applies (bumped 1 → 3 in v0.14, now 5 as of v0.13.1's audit). Clamped
+   * to [1, 100] on insert. For long-running handlers (LLM loops etc.) that
+   * should survive a worker kill mid-run, set max_stalled: 3+.
+   */
+  max_stalled?: number;
   delay?: number; // ms delay before eligible
   parent_job_id?: number;
   on_child_fail?: ChildFailPolicy;
@@ -202,14 +210,37 @@ export function rowToInboxMessage(row: Record<string, unknown>): InboxMessage {
   };
 }
 
-// --- Child-done inbox message (auto-posted on completeJob) ---
+// --- Child-done inbox message (auto-posted on every terminal transition) ---
 
-/** Posted into the parent's inbox when a child completes successfully. */
+/**
+ * Posted into the parent's inbox when a child reaches a terminal state.
+ *
+ * Pre-v0.15: only success paths (completeJob) emitted this. Failed/dead/
+ * cancelled children produced no payload, which stranded aggregator-style
+ * parents that needed to wait for N children regardless of outcome.
+ *
+ * v0.15: failJob, cancelJob, and handleTimeouts also emit child_done with
+ * the appropriate `outcome`, so the aggregator handler can count "N children
+ * resolved" without worrying about which rail each one took.
+ *
+ * Backwards compatible: old ChildDoneMessage consumers only read child_id,
+ * job_name, and result (non-null on success). Outcome and error are additive.
+ */
+export type ChildOutcome = 'complete' | 'failed' | 'dead' | 'cancelled' | 'timeout';
+
 export interface ChildDoneMessage {
   type: 'child_done';
   child_id: number;
   job_name: string;
   result: unknown;
+  /**
+   * Terminal outcome. When absent (from a pre-v0.15 writer that didn't set
+   * it), consumers should treat the message as 'complete' — the legacy writer
+   * only emitted on success paths.
+   */
+  outcome?: ChildOutcome;
+  /** Set when outcome !== 'complete'. Mirrors minion_jobs.error_text. */
+  error?: string | null;
 }
 
 // --- Attachments (v7) ---
@@ -328,5 +359,120 @@ export function rowToMinionJob(row: Record<string, unknown>): MinionJob {
     started_at: row.started_at ? new Date(row.started_at as string) : null,
     finished_at: row.finished_at ? new Date(row.finished_at as string) : null,
     updated_at: new Date(row.updated_at as string),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Subagent runtime (v0.15+)
+// ---------------------------------------------------------------------------
+
+/**
+ * Input payload for the 'subagent' handler. Shape is intentionally narrow —
+ * tool registry and provider config resolve via handler-side defaults + env,
+ * not per-job data, so restart/replay uses the same behavior.
+ */
+export interface SubagentHandlerData {
+  /** Top-level user turn kicking off the loop. */
+  prompt: string;
+  /** Optional subagent definition path (skills/subagents/*.md or plugin). */
+  subagent_def?: string;
+  /** Anthropic model id. Defaults to sonnet at handler resolution time. */
+  model?: string;
+  /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
+  max_turns?: number;
+  /**
+   * Whitelist of tool names the agent may call. MUST be a subset of the
+   * derived registry names — invalid entries are rejected at tool-dispatch
+   * time, not silently ignored. Empty array = no tools.
+   */
+  allowed_tools?: string[];
+  /** System prompt override. When omitted, the handler builds one. */
+  system?: string;
+  /** Template variables for subagent_def. Arbitrary JSON-serializable. */
+  input_vars?: Record<string, unknown>;
+}
+
+/**
+ * Input for the 'subagent_aggregator' handler. Claims AFTER all children
+ * resolve and aggregates their results into a brain page.
+ */
+export interface AggregatorHandlerData {
+  /** The subagent child job ids this aggregator is waiting on. */
+  children_ids: number[];
+  /**
+   * Optional template for the synthesis prompt. When omitted, the handler
+   * uses a generic "summarize these N results" prompt.
+   */
+  aggregate_prompt_template?: string;
+  /**
+   * Target slug for the aggregated brain page. When present, a trusted-CLI
+   * put_page (viaSubagent=false) writes the final aggregation there.
+   */
+  output_slug?: string;
+}
+
+/** Tool execution context passed to every ToolDef.execute. */
+export interface ToolCtx {
+  /** Engine for DB-backed tools (brain_query, put_page, etc.). */
+  engine: import('../engine.ts').BrainEngine;
+  /** The subagent job id (used for audit + put_page namespace enforcement). */
+  jobId: number;
+  /** Always true for LLM-invoked tools — matches MCP trust boundary. */
+  remote: true;
+  /** Fired on cooperative abort (timeout, lock loss, cancel, SIGTERM). */
+  signal?: AbortSignal;
+}
+
+/**
+ * A tool the subagent can call. Names match Anthropic's constraint
+ * `^[a-zA-Z0-9_-]{1,64}$` — no dots. The input_schema is the JSONSchema
+ * shipped to the Anthropic Messages API verbatim; ToolDef is the single
+ * Anthropic-compatible envelope, not an MCP McpToolDef (those have a
+ * different shape — ".inputSchema" vs ".input_schema").
+ *
+ * `idempotent: true` is required for the two-phase replay path: on resume,
+ * a 'pending' row can be re-executed. Non-idempotent tools need a separate
+ * resume policy and are not supported in v0.15.
+ */
+export interface ToolDef {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  idempotent: boolean;
+  execute(input: unknown, ctx: ToolCtx): Promise<unknown>;
+}
+
+/**
+ * Anthropic content-block subset we persist in subagent_messages.content_blocks.
+ * This is structural — we don't gatekeep on unknown block types (future SDK
+ * additions pass through). Use the string-literal discriminant on 'type'.
+ */
+export type ContentBlock =
+  | { type: 'text'; text: string; [k: string]: unknown }
+  | { type: 'tool_use'; id: string; name: string; input: unknown; [k: string]: unknown }
+  | { type: 'tool_result'; tool_use_id: string; content: unknown; is_error?: boolean; [k: string]: unknown }
+  | { type: string; [k: string]: unknown };
+
+/** Stop reason reported to the caller when the subagent loop terminates. */
+export type SubagentStopReason =
+  | 'end_turn'    // Anthropic says end_turn and last message has no tool_use
+  | 'max_turns'   // hit max_turns budget before end_turn
+  | 'refusal'     // detected via stop_reason + content shape
+  | 'error';      // unrecoverable (empty response retry exhausted, etc.)
+
+/** Terminal result payload emitted by the subagent handler. */
+export interface SubagentResult {
+  /** Concatenated text from the final assistant message. */
+  result: string;
+  /** Number of assistant turns consumed. */
+  turns_count: number;
+  /** Why the loop stopped. */
+  stop_reason: SubagentStopReason;
+  /** Rollup of tokens across all turns. */
+  tokens: {
+    in: number;
+    out: number;
+    cache_read: number;
+    cache_create: number;
   };
 }

@@ -26,6 +26,8 @@ import {
   extractFrontmatterLinks,
   type UnresolvedFrontmatterRef,
 } from '../core/link-extraction.ts';
+import { createProgress } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -415,6 +417,12 @@ async function extractLinksFromDir(
   const files = walkMarkdownFiles(brainDir);
   const allSlugs = new Set(files.map(f => f.relPath.replace('.md', '')));
 
+  // Progress stream on stderr (separate from the action-events --json writes
+  // to stdout, which tests grep for). Rate-gated; respects global --quiet /
+  // --progress-json flags.
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('extract.links_fs', files.length);
+
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   // Without this, the same link extracted from N files would print N times in --dry-run.
   const dryRunSeen = dryRun ? new Set<string>() : null;
@@ -454,11 +462,10 @@ async function extractLinksFromDir(
         }
       }
     } catch { /* skip unreadable */ }
-    if (jsonMode && !dryRun && (i % 100 === 0 || i === files.length - 1)) {
-      process.stderr.write(JSON.stringify({ event: 'progress', phase: 'extracting_links', done: i + 1, total: files.length }) + '\n');
-    }
+    progress.tick(1);
   }
   await flush();
+  progress.finish();
 
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';
@@ -471,6 +478,9 @@ async function extractTimelineFromDir(
   engine: BrainEngine, brainDir: string, dryRun: boolean, jsonMode: boolean,
 ): Promise<{ created: number; pages: number }> {
   const files = walkMarkdownFiles(brainDir);
+
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('extract.timeline_fs', files.length);
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
@@ -510,11 +520,10 @@ async function extractTimelineFromDir(
         }
       }
     } catch { /* skip unreadable */ }
-    if (jsonMode && !dryRun && (i % 100 === 0 || i === files.length - 1)) {
-      process.stderr.write(JSON.stringify({ event: 'progress', phase: 'extracting_timeline', done: i + 1, total: files.length }) + '\n');
-    }
+    progress.tick(1);
   }
   await flush();
+  progress.finish();
 
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';
@@ -585,6 +594,9 @@ async function extractLinksFromDB(
   const allSlugs = await engine.getAllSlugs();
   const slugList = Array.from(allSlugs);
   let processed = 0, created = 0;
+
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('extract.links_db', slugList.length);
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
@@ -661,11 +673,10 @@ async function extractLinksFromDB(
       }
     }
     processed++;
-    if (jsonMode && !dryRun && (processed % 500 === 0 || i === slugList.length - 1)) {
-      process.stderr.write(JSON.stringify({ event: 'progress', phase: 'extracting_links_db', done: processed, total: slugList.length }) + '\n');
-    }
+    progress.tick(1);
   }
   await flush();
+  progress.finish();
 
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';
@@ -698,6 +709,9 @@ async function extractTimelineFromDB(
   const allSlugs = await engine.getAllSlugs();
   const slugList = Array.from(allSlugs);
   let processed = 0, created = 0;
+
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('extract.timeline_db', slugList.length);
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
@@ -753,11 +767,10 @@ async function extractTimelineFromDB(
       }
     }
     processed++;
-    if (jsonMode && !dryRun && (processed % 500 === 0 || i === slugList.length - 1)) {
-      process.stderr.write(JSON.stringify({ event: 'progress', phase: 'extracting_timeline_db', done: processed, total: slugList.length }) + '\n');
-    }
+    progress.tick(1);
   }
   await flush();
+  progress.finish();
 
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';

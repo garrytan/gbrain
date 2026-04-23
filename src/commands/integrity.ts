@@ -361,8 +361,14 @@ async function cmdAuto(args: string[]): Promise<void> {
   let bucketErr = 0;
   let pagesProcessed = 0;
 
+  const { createProgress } = await import('../core/progress.ts');
+  const { getCliOptions, cliOptsToProgressOptions } = await import('../core/cli-options.ts');
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+
   try {
     const allSlugs = [...(await engine.getAllSlugs())].sort();
+    const toScan = allSlugs.filter(s => !seen.has(s));
+    progress.start('integrity.auto', toScan.length);
     for (const slug of allSlugs) {
       if (pagesProcessed >= limit) break;
       if (seen.has(slug)) continue;
@@ -371,6 +377,7 @@ async function cmdAuto(args: string[]): Promise<void> {
       if (!page) continue;
 
       pagesProcessed++;
+      progress.tick(1, slug);
 
       // Bare-tweet handling
       if (!skipTweet) {
@@ -455,6 +462,8 @@ async function cmdAuto(args: string[]): Promise<void> {
         }
       }
     }
+
+    progress.finish();
 
     // Summary
     console.log('');

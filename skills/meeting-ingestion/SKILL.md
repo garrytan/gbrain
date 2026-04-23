@@ -34,7 +34,7 @@ This skill guarantees:
 - Meeting is NOT fully ingested until enrich runs for every entity
 - Back-links created bidirectionally
 
-## Iron Law: Back-Linking (MANDATORY)
+> **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
 Every attendee and company mentioned MUST get a back-link from their page to
 the meeting page. An unlinked mention is a broken brain.

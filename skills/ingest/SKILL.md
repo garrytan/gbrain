@@ -29,7 +29,7 @@ Ingest meetings, articles, media, documents, and conversations into the brain.
 - State sections are rewritten with current best understanding, never appended to.
 - Entity detection fires on every inbound message; notable entities get pages or updates.
 
-## Iron Law: Back-Linking (MANDATORY)
+> **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
 Every mention of a person or company with a brain page MUST create a back-link
 FROM that entity's page TO the page mentioning them. An unlinked mention is a

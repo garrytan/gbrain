@@ -73,7 +73,7 @@ F. Install       gbrain autopilot --install (env-aware)
 G. Record        append completed.jsonl status:"complete"
 ```
 
-If Phase E emits TODOs for host-specific handlers (e.g. Wintermute's
+If Phase E emits TODOs for host-specific handlers (e.g. your OpenClaw's
 ~29 non-gbrain crons), the migration finishes with `status: "partial"`.
 Your host agent walks the TODOs using `skills/migrations/v0.11.0.md` +
 `docs/guides/plugin-handlers.md`, ships handler registrations in the

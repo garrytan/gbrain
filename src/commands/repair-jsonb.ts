@@ -31,6 +31,8 @@
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import * as db from '../core/db.ts';
+import { createProgress, startHeartbeat } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 interface RepairTarget {
   table: string;
@@ -97,28 +99,44 @@ export async function repairJsonb(opts: RepairOpts = { dryRun: false }): Promise
   await db.connect(engineCfg);
   const sql = db.getConnection();
 
+  // Progress on stderr only. Stdout is reserved for the JSON summary that
+  // migrations/v0_12_2.ts parses via JSON.parse — stray progress lines on
+  // stdout would break the orchestrator (per Codex review #12).
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('repair_jsonb.run', TARGETS.length);
+
   for (const t of TARGETS) {
+    const phase = `repair_jsonb.${t.table}.${t.column}`;
+    progress.heartbeat(phase);
+    // Heartbeat the caller while each UPDATE runs (minutes on 50K-row tables).
+    const stopHb = startHeartbeat(progress, `${t.table}.${t.column}`);
     let repaired = 0;
 
-    if (opts.dryRun) {
-      const rows = await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${t.table} WHERE jsonb_typeof(${t.column}) = 'string'`,
-      );
-      repaired = (rows[0] as { n: number }).n;
-    } else {
-      const rows = await sql.unsafe(
-        `UPDATE ${t.table}
-         SET ${t.column} = (${t.column} #>> '{}')::jsonb
-         WHERE jsonb_typeof(${t.column}) = 'string'
-         RETURNING 1`,
-      );
-      repaired = rows.length;
+    try {
+      if (opts.dryRun) {
+        const rows = await sql.unsafe(
+          `SELECT count(*)::int AS n FROM ${t.table} WHERE jsonb_typeof(${t.column}) = 'string'`,
+        );
+        repaired = (rows[0] as unknown as { n: number }).n;
+      } else {
+        const rows = await sql.unsafe(
+          `UPDATE ${t.table}
+           SET ${t.column} = (${t.column} #>> '{}')::jsonb
+           WHERE jsonb_typeof(${t.column}) = 'string'
+           RETURNING 1`,
+        );
+        repaired = rows.length;
+      }
+    } finally {
+      stopHb();
     }
 
+    progress.tick(1, `${t.table}.${t.column}=${repaired}`);
     result.per_target.push({ table: t.table, column: t.column, rows_repaired: repaired });
     result.total_repaired += repaired;
   }
 
+  progress.finish();
   return result;
 }
 

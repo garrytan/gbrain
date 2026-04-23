@@ -65,6 +65,21 @@ describe('postgres-engine / search path timeout isolation', () => {
     expect(vector).toMatch(/SET\s+LOCAL\s+statement_timeout/);
   });
 
+  test('connect() with poolSize honors resolvePrepare (PgBouncer regression guard)', () => {
+    // Regression: worker-instance pools were NOT honoring the prepare decision
+    // before v0.15.4. Module singleton connect() in db.ts was fixed by #284 but
+    // PostgresEngine.connect({poolSize}) (the branch used by `gbrain jobs work`)
+    // silently ignored it — agents running background work against Supabase
+    // pooler URLs still hit `prepared statement "..." does not exist` under
+    // load. Source-level grep is enough: runtime mocking of postgres.js's
+    // tagged-template interface is painful under bun ESM and the wiring is
+    // simple enough that if `resolvePrepare` name appears and a conditional
+    // `prepare` key appears in the options literal, the wire-up is live.
+    const stripped = stripComments(SRC);
+    expect(stripped).toMatch(/db\.resolvePrepare\s*\(\s*url\s*\)/);
+    expect(stripped).toMatch(/typeof\s+prepare\s*===\s*['"]boolean['"]/);
+  });
+
   test('neither search method clears the timeout with `SET statement_timeout = 0`', () => {
     // The reset-to-zero pattern was the other half of the leak: if SET
     // LOCAL is in play, COMMIT handles the reset and an explicit

@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -31,10 +31,13 @@
     "build": "bun build --compile --outfile bin/gbrain src/cli.ts",
     "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts",
     "build:schema": "bash scripts/build-schema.sh",
-    "test": "scripts/check-jsonb-pattern.sh && bun test",
-    "test:e2e": "bun test test/e2e/",
+    "build:llms": "bun run scripts/build-llms.ts",
+    "test": "scripts/check-jsonb-pattern.sh && scripts/check-progress-to-stdout.sh && bun run typecheck && bun test",
+    "test:e2e": "bash scripts/run-e2e.sh",
+    "typecheck": "tsc --noEmit",
     "check:jsonb": "scripts/check-jsonb-pattern.sh",
-    "postinstall": "gbrain --version >/dev/null 2>&1 && gbrain apply-migrations --yes --non-interactive 2>/dev/null || true",
+    "check:progress": "scripts/check-progress-to-stdout.sh",
+    "postinstall": "command -v gbrain >/dev/null 2>&1 && gbrain apply-migrations --yes --non-interactive || echo '[gbrain] postinstall skipped. If installed via bun install -g github:...: run `gbrain doctor` and `gbrain apply-migrations --yes` manually. See https://github.com/garrytan/gbrain/issues/218' 1>&2",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin"
   },
@@ -46,7 +49,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
     "@aws-sdk/client-s3": "^3.1028.0",
-    "@electric-sql/pglite": "^0.4.4",
+    "@electric-sql/pglite": "0.4.3",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "gray-matter": "^4.0.3",
     "marked": "^18.0.0",
@@ -55,7 +58,11 @@
     "postgres": "^3.4.0"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
   },
+  "trustedDependencies": [
+    "@electric-sql/pglite"
+  ],
   "license": "MIT"
 }

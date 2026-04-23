@@ -32,6 +32,7 @@
 
 import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
+import { childGlobalFlags } from '../../core/cli-options.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // ── Phase A — Schema ────────────────────────────────────────
@@ -42,7 +43,7 @@ function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // 10-minute budget. Migrations v8/v9 dedup with helper-index should be sub-second
     // even on 80K-duplicate brains, but the outer wall-clock cap shouldn't be the
     // failure mode (the prior 60s ceiling tripped Garry's production upgrade).
-    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain init --migrate-only' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: process.env });
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -92,7 +93,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // --source db is idempotent: the UNIQUE constraint on
     // (from_page_id, to_page_id, link_type) and ON CONFLICT DO NOTHING
     // make re-runs cheap. Empty brains return 0/0 quickly.
-    execSync('gbrain extract links --source db', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain extract links --source db' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: process.env });
     return { name: 'backfill_links', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -103,7 +104,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
 function phaseDBackfillTimeline(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'backfill_timeline', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain extract timeline --source db', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain extract timeline --source db' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: process.env });
     return { name: 'backfill_timeline', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -216,10 +217,9 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   phases.push(e);
 
   // F. Record
+  // a.status was narrowed to 'skipped' | 'complete' by the early return above.
   const overallStatus: 'complete' | 'partial' | 'failed' =
-    a.status === 'failed' ? 'failed' :
-    phases.some(p => p.status === 'failed') ? 'partial' :
-    'complete';
+    phases.some(p => p.status === 'failed') ? 'partial' : 'complete';
 
   return finalizeResult(phases, overallStatus);
 }

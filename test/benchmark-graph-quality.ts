@@ -425,7 +425,7 @@ async function measureBaselineRelational(
   }
   const ENTITY_REF_RE = /\[[^\]]+\]\(([^)]+)\)|\b((?:people|companies|meetings|concepts)\/[a-z0-9-]+)\b/gi;
 
-  const perQuery: Array<{ question: string; expected: number; found: number }> = [];
+  const perQuery: Array<{ question: string; expected: number; found: number; returned: number }> = [];
   let totalExpected = 0, totalFound = 0;
   let totalReturned = 0, totalValid = 0;
 

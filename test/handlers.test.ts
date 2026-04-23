@@ -3,9 +3,10 @@
  *
  * Covers:
  *   - Every expected handler name is registered.
- *   - autopilot-cycle handler returns { partial: true, failed_steps: [...] }
- *     when any step throws — does NOT throw itself (critical for preventing
- *     intermittent extract bugs from blocking every future cycle via retry).
+ *   - autopilot-cycle handler returns { partial, status, report } (v0.17
+ *     runCycle-backed shape) when any step fails — does NOT throw itself
+ *     (critical invariant: an intermittent phase failure must not cause
+ *     the Minion to retry and block every future cycle).
  */
 
 import { describe, test, expect, beforeAll, afterAll, mock } from 'bun:test';
@@ -22,7 +23,7 @@ beforeAll(async () => {
   await engine.initSchema();
   worker = new MinionWorker(engine, { queue: 'test' });
   await registerBuiltinHandlers(worker, engine);
-});
+}, 30_000);
 
 afterAll(async () => {
   await engine.disconnect();
@@ -48,15 +49,16 @@ describe('registerBuiltinHandlers', () => {
 });
 
 describe('autopilot-cycle handler — partial failure does NOT throw', () => {
-  test('step failure returns partial:true + failed_steps, no throw', async () => {
-    // Call the handler directly with a context that points at a nonexistent
-    // repo. Every step will fail (sync throws on missing .git, extract
-    // throws on missing dir, embed tries to list pages which is fine against
-    // the test engine, backlinks throws on missing dir). The handler should
-    // STILL return successfully — never throw.
+  test('phase failure returns partial:true + structured report, no throw', async () => {
+    // Call the handler directly with a job pointing at a nonexistent repo.
+    // Filesystem-dependent phases (lint, backlinks, sync) all fail because
+    // the dir / .git repo isn't there. DB-dependent phases (extract,
+    // embed, orphans) run fine against the in-memory test engine.
     //
-    // This is the critical invariant: an intermittent bug in one step must
-    // not cause the Minion to retry + block every future cycle.
+    // CRITICAL INVARIANT: the handler must return successfully even when
+    // phases fail. Throwing would cause the Minion to retry, blocking
+    // every future cycle on an intermittent bug. v0.17 moves this
+    // guarantee into runCycle itself (per-phase try/catch in cycle.ts).
     const handler = (worker as any).handlers.get('autopilot-cycle');
     expect(handler).toBeDefined();
 
@@ -68,24 +70,34 @@ describe('autopilot-cycle handler — partial failure does NOT throw', () => {
 
     expect(result).toBeDefined();
     expect((result as any).partial).toBe(true);
-    expect(Array.isArray((result as any).failed_steps)).toBe(true);
-    // sync + extract + backlinks all fail on missing repo (embed operates
-    // on the DB directly and doesn't touch the repo path, so it doesn't fail).
-    expect((result as any).failed_steps).toContain('sync');
-    expect((result as any).failed_steps).toContain('extract');
-    expect((result as any).failed_steps).toContain('backlinks');
+    // v0.17 shape: { partial, status, report }. The report's phases array
+    // replaces the old failed_steps list.
+    expect(['partial', 'failed']).toContain((result as any).status);
+    const report = (result as any).report;
+    expect(report).toBeDefined();
+    expect(report.schema_version).toBe('1');
+    expect(Array.isArray(report.phases)).toBe(true);
+    // The filesystem-dependent phases should have failed on a missing dir.
+    const failedPhases = report.phases
+      .filter((p: any) => p.status === 'fail')
+      .map((p: any) => p.phase);
+    expect(failedPhases).toContain('lint');
+    expect(failedPhases).toContain('backlinks');
+    expect(failedPhases).toContain('sync');
   });
 
-  test('all steps succeed → partial:false', async () => {
-    // Smoke: invoke against a real (if empty) brain dir. If every step
-    // completes, partial is false.
+  test('all phases succeed → result has structured report (smoke)', async () => {
+    // Smoke: invoke against a real (if empty) git repo. If every phase
+    // completes (or gracefully skips), the handler returns a result
+    // object with the full runCycle report. Some phases may still warn
+    // (empty repo has nothing to lint/sync) — the invariant is that the
+    // handler never throws.
     const fs = await import('fs');
     const { execSync } = await import('child_process');
     const { tmpdir } = await import('os');
     const { join } = await import('path');
     const dir = fs.mkdtempSync(join(tmpdir(), 'gbrain-autopilot-cycle-'));
     try {
-      // Initialize as a git repo so sync doesn't fail on .git lookup.
       execSync('git init', { cwd: dir, stdio: 'pipe' });
       execSync('git config user.email test@example.com', { cwd: dir, stdio: 'pipe' });
       execSync('git config user.name Test', { cwd: dir, stdio: 'pipe' });
@@ -97,11 +109,12 @@ describe('autopilot-cycle handler — partial failure does NOT throw', () => {
         signal: { aborted: false } as any,
         job: { id: 2, name: 'autopilot-cycle' } as any,
       });
-      // Empty repo: some steps may still fail (backlinks needs .md files)
-      // but the handler MUST return a result object, never throw.
+      // The handler MUST return a result object, never throw, regardless
+      // of individual phase outcomes.
       expect(result).toBeDefined();
       expect(typeof (result as any).partial).toBe('boolean');
-      expect('steps' in (result as any)).toBe(true);
+      expect('report' in (result as any)).toBe(true);
+      expect((result as any).report.schema_version).toBe('1');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

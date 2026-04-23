@@ -24,6 +24,7 @@ import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } f
 type PGLiteDB = PGlite;
 
 export class PGLiteEngine implements BrainEngine {
+  readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
 
@@ -43,10 +44,32 @@ export class PGLiteEngine implements BrainEngine {
       throw new Error('Could not acquire PGLite lock. Another gbrain process is using the database.');
     }
 
-    this._db = await PGlite.create({
-      dataDir,
-      extensions: { vector, pg_trgm },
-    });
+    try {
+      this._db = await PGlite.create({
+        dataDir,
+        extensions: { vector, pg_trgm },
+      });
+    } catch (err) {
+      // v0.13.1: any PGLite.create() failure becomes actionable. Most commonly
+      // this is the macOS 26.3 WASM bug (#223). We deliberately do NOT suggest
+      // "missing migrations" as a cause — migrations run AFTER create(), so a
+      // create-time abort has nothing to do with them. Nest the original error
+      // message so debugging isn't erased.
+      const original = err instanceof Error ? err.message : String(err);
+      const wrapped = new Error(
+        `PGLite failed to initialize its WASM runtime.\n` +
+        `  This is most commonly the macOS 26.3 WASM bug: https://github.com/garrytan/gbrain/issues/223\n` +
+        `  Run \`gbrain doctor\` for a full diagnosis.\n` +
+        `  Original error: ${original}`
+      );
+      // Release the lock so a fresh process can try again; leaking the lock
+      // here turns a recoverable init error into a stuck-brain state.
+      if (this._lock?.acquired) {
+        try { await releaseLock(this._lock); } catch { /* ignore cleanup error */ }
+        this._lock = null;
+      }
+      throw wrapped;
+    }
   }
 
   async disconnect(): Promise<void> {
@@ -90,13 +113,18 @@ export class PGLiteEngine implements BrainEngine {
 
   async putPage(slug: string, page: PageInput): Promise<Page> {
     slug = validateSlug(slug);
-    const hash = page.content_hash || contentHash(page.compiled_truth, page.timeline || '');
+    const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
+    // v0.18.0 Step 2: source_id relies on the schema DEFAULT 'default' so
+    // existing callers still target the default source without threading
+    // a parameter. ON CONFLICT target becomes (source_id, slug) since the
+    // global UNIQUE(slug) was dropped in migration v17. Step 5+ will
+    // surface an explicit sourceId param on putPage for multi-source sync.
     const { rows } = await this.db.query(
       `INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, now())
-       ON CONFLICT (slug) DO UPDATE SET
+       ON CONFLICT (source_id, slug) DO UPDATE SET
          type = EXCLUDED.type,
          title = EXCLUDED.title,
          compiled_truth = EXCLUDED.compiled_truth,
@@ -182,7 +210,7 @@ export class PGLiteEngine implements BrainEngine {
 
     const { rows } = await this.db.query(
       `SELECT
-        p.slug, p.id as page_id, p.title, p.type,
+        p.slug, p.id as page_id, p.title, p.type, p.source_id,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
         ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS score,
         CASE WHEN p.updated_at < (
@@ -212,7 +240,7 @@ export class PGLiteEngine implements BrainEngine {
 
     const { rows } = await this.db.query(
       `SELECT
-        p.slug, p.id as page_id, p.title, p.type,
+        p.slug, p.id as page_id, p.title, p.type, p.source_id,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
         1 - (cc.embedding <=> $1::vector) AS score,
         CASE WHEN p.updated_at < (
@@ -347,8 +375,14 @@ export class PGLiteEngine implements BrainEngine {
 
   async addLinksBatch(links: LinkBatchInput[]): Promise<number> {
     if (links.length === 0) return 0;
-    // unnest() pattern: 7 array-typed bound parameters regardless of batch size.
-    // Same shape as PostgresEngine (v0.13). Avoids the 65535-parameter cap.
+    // unnest() pattern: 10 array-typed bound parameters regardless of batch
+    // size. Same shape as PostgresEngine (v0.18). Avoids the 65535-parameter
+    // cap.
+    //
+    // v0.18.0: every JOIN composite-keys on (slug, source_id) so the batch
+    // can't fan out across sources when the same slug exists in multiple
+    // sources. Origin JOIN uses LEFT JOIN on a composite key — NULL
+    // origin_slug leaves origin_page_id NULL, same as pre-v0.18.
     const fromSlugs = links.map(l => l.from_slug);
     const toSlugs = links.map(l => l.to_slug);
     const linkTypes = links.map(l => l.link_type || '');
@@ -356,17 +390,20 @@ export class PGLiteEngine implements BrainEngine {
     const linkSources = links.map(l => l.link_source || 'markdown');
     const originSlugs = links.map(l => l.origin_slug || null);
     const originFields = links.map(l => l.origin_field || null);
+    const fromSourceIds = links.map(l => l.from_source_id || 'default');
+    const toSourceIds = links.map(l => l.to_source_id || 'default');
+    const originSourceIds = links.map(l => l.origin_source_id || 'default');
     const result = await this.db.query(
       `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
        SELECT f.id, t.id, v.link_type, v.context, v.link_source, o.id, v.origin_field
-       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
-         AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field)
-       JOIN pages f ON f.slug = v.from_slug
-       JOIN pages t ON t.slug = v.to_slug
-       LEFT JOIN pages o ON o.slug = v.origin_slug
+       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[])
+         AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field, from_source_id, to_source_id, origin_source_id)
+       JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
+       JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
+       LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id
        ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
        RETURNING 1`,
-      [fromSlugs, toSlugs, linkTypes, contexts, linkSources, originSlugs, originFields]
+      [fromSlugs, toSlugs, linkTypes, contexts, linkSources, originSlugs, originFields, fromSourceIds, toSourceIds, originSourceIds]
     );
     return result.rows.length;
   }
@@ -632,6 +669,21 @@ export class PGLiteEngine implements BrainEngine {
     return result;
   }
 
+  async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+    const { rows } = await this.db.query(
+      `SELECT
+         p.slug,
+         COALESCE(p.title, p.slug) AS title,
+         p.frontmatter->>'domain' AS domain
+       FROM pages p
+       WHERE NOT EXISTS (
+         SELECT 1 FROM links l WHERE l.to_page_id = p.id
+       )
+       ORDER BY p.slug`
+    );
+    return rows as Array<{ slug: string; title: string; domain: string | null }>;
+  }
+
   // Tags
   async addTag(slug: string, tag: string): Promise<void> {
     await this.db.query(
@@ -686,22 +738,21 @@ export class PGLiteEngine implements BrainEngine {
 
   async addTimelineEntriesBatch(entries: TimelineBatchInput[]): Promise<number> {
     if (entries.length === 0) return 0;
-    // unnest() pattern: 5 array-typed bound parameters regardless of batch size.
     const slugs = entries.map(e => e.slug);
     const dates = entries.map(e => e.date);
-    // Normalize optional fields to '' to match per-row addTimelineEntry + NOT NULL DDL.
     const sources = entries.map(e => e.source || '');
     const summaries = entries.map(e => e.summary);
     const details = entries.map(e => e.detail || '');
+    const sourceIds = entries.map(e => e.source_id || 'default');
     const result = await this.db.query(
       `INSERT INTO timeline_entries (page_id, date, source, summary, detail)
        SELECT p.id, v.date::date, v.source, v.summary, v.detail
-       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
-         AS v(slug, date, source, summary, detail)
-       JOIN pages p ON p.slug = v.slug
+       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+         AS v(slug, date, source, summary, detail, source_id)
+       JOIN pages p ON p.slug = v.slug AND p.source_id = v.source_id
        ON CONFLICT (page_id, date, summary) DO NOTHING
        RETURNING 1`,
-      [slugs, dates, sources, summaries, details]
+      [slugs, dates, sources, summaries, details, sourceIds]
     );
     return result.rows.length;
   }

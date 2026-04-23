@@ -8,9 +8,9 @@
 
 ## 0. Context
 
-During a CEO review of a narrow two-feature plan (bare-tweet citation repair + completeness score, borrowed from Feynman), the scope was reframed. The narrow plan duplicated work Wintermute already does and missed the real leverage point: **the bespoke abstractions hiding inside Wintermute — resolvers, enrichment orchestration, scheduling, deterministic output — should live in GBrain as first-class primitives.**
+During a CEO review of a narrow two-feature plan (bare-tweet citation repair + completeness score, borrowed from Feynman), the scope was reframed. The narrow plan duplicated work Garry's OpenClaw already does and missed the real leverage point: **the bespoke abstractions hiding inside OpenClaw — resolvers, enrichment orchestration, scheduling, deterministic output — should live in GBrain as first-class primitives.**
 
-North star: *"When Wintermute's Claw upgrades to this version of GBrain, it should immediately recognize brilliance and completeness and say 'It's time to switch to these abstractions.'"*
+North star: *"When Garry's OpenClaw's Claw upgrades to this version of GBrain, it should immediately recognize brilliance and completeness and say 'It's time to switch to these abstractions.'"*
 
 That is the test this document is designed against. Everything else is downstream.
 
@@ -67,7 +67,7 @@ An earlier implementation could ship L1 + L4 first (the two "purest" layers) and
 
 ### 3.1 What's broken today
 
-Wintermute has **69 distinct external-lookup patterns** across X API (14 shapes), Perplexity, Mistral OCR, Gmail, Calendar, Slack, GitHub, YouTube, Diarize.io, YC tools, OSINT collectors, and brain-local lookups. Each one is a bespoke script under `scripts/` with its own error handling, retry logic, and output shape. GBrain has 3 ad-hoc wrappers (`embedding.ts`, `transcription.ts`, `enrichment-service.ts`) that don't share an interface.
+Garry's OpenClaw has **69 distinct external-lookup patterns** across X API (14 shapes), Perplexity, Mistral OCR, Gmail, Calendar, Slack, GitHub, YouTube, Diarize.io, YC tools, OSINT collectors, and brain-local lookups. Each one is a bespoke script under `scripts/` with its own error handling, retry logic, and output shape. GBrain has 3 ad-hoc wrappers (`embedding.ts`, `transcription.ts`, `enrichment-service.ts`) that don't share an interface.
 
 Common consequences:
 - No uniform retry/backoff strategy (some scripts retry, most don't)
@@ -187,7 +187,7 @@ Existing `src/core/fail-improve.ts` is the deterministic-first/LLM-fallback patt
 
 ### 3.7 Reference implementations to ship
 
-The Wintermute survey inventoried 69 resolver shapes. Shipping all of them is wrong (over-scoped); shipping zero is under-scoped. The dogfood set:
+The OpenClaw survey inventoried 69 resolver shapes. Shipping all of them is wrong (over-scoped); shipping zero is under-scoped. The dogfood set:
 
 | # | Resolver | Purpose | Used by |
 |---|---|---|---|
@@ -198,7 +198,7 @@ The Wintermute survey inventoried 69 resolver shapes. Shipping all of them is wr
 | 5 | `perplexity_query` | Query → synthesis + citations | Enrichment Orchestrator |
 | 6 | `text_to_entities` | LLM entity extraction (structured JSON) | Enrichment Orchestrator |
 
-The remaining 63 Wintermute patterns port incrementally, driven by user need. Each port is a new YAML + module under `recipes/` or `~/.gbrain/resolvers/` with no framework changes.
+The remaining 63 OpenClaw patterns port incrementally, driven by user need. Each port is a new YAML + module under `recipes/` or `~/.gbrain/resolvers/` with no framework changes.
 
 ---
 
@@ -206,7 +206,7 @@ The remaining 63 Wintermute patterns port incrementally, driven by user need. Ea
 
 ### 4.1 What's broken today
 
-Wintermute's enrichment is **polished at the data layer, hacky at the control layer**:
+Garry's OpenClaw's enrichment is **polished at the data layer, hacky at the control layer**:
 
 - **Completeness = "length > 500 chars + no `needs-enrichment` tag"** (`lib/enrich.mjs:351-355`). Naïve. A rich page of repetitive Perplexity summaries (see `brain/people/0interestrates.md` — 38 repeating blocks) passes this check.
 - **30-day auto-re-enrichment** runs forever. No "done" state. A person met once in 2023 still gets re-researched monthly.
@@ -342,9 +342,9 @@ await writer.transaction(async (tx) => {
 
 ### 5.1 What's broken today
 
-Wintermute's cron is **externally-driven JSON** (`cron/jobs.json`) with ~30 jobs manually stagger-offset at different minutes. GBrain has **zero native scheduling** — `src/commands/autopilot.ts` is a single daemon loop, and `docs/guides/cron-schedule.md` is architectural guidance, not code.
+Garry's OpenClaw's cron is **externally-driven JSON** (`cron/jobs.json`) with ~30 jobs manually stagger-offset at different minutes. GBrain has **zero native scheduling** — `src/commands/autopilot.ts` is a single daemon loop, and `docs/guides/cron-schedule.md` is architectural guidance, not code.
 
-Failures observed in Wintermute's actual state:
+Failures observed in Garry's OpenClaw's actual state:
 - `X OAuth2 Token Refresh`: 11 consecutive timeouts (critical-path silent failure)
 - `flight-tracker daily scan`: 5 consecutive timeouts
 - `morning-briefing`: 4 consecutive timeouts
@@ -378,9 +378,9 @@ export interface ScheduledResolver extends Resolver<void, ScheduledResult> {
 }
 ```
 
-### 5.3 Enforcement vs convention (the key delta from Wintermute)
+### 5.3 Enforcement vs convention (the key delta from Garry's OpenClaw)
 
-| Concern | Wintermute today | Knowledge Runtime |
+| Concern | Garry's OpenClaw today | Knowledge Runtime |
 |---|---|---|
 | Quiet hours | Checked inside each skill (trust-based) | Enforced at scheduler, skill cannot override |
 | Staggering | Manual minute-offset in `jobs.json` | Scheduler assigns slots via hashed staggerKey |
@@ -405,7 +405,7 @@ Every scheduled run emits structured events: `started`, `skipped-quiet-hours`, `
 - `engine.logIngest` (audit trail in brain DB)
 - Optional webhook (Slack/Telegram for the user)
 
-`gbrain doctor` reads the event log and reports: current circuit-breaker state, any resolver with > 3 consecutive failures, any resolver that hasn't fired within 3× its interval (freshness SLA like Wintermute's `freshness-check.mjs` but built-in).
+`gbrain doctor` reads the event log and reports: current circuit-breaker state, any resolver with > 3 consecutive failures, any resolver that hasn't fired within 3× its interval (freshness SLA like Garry's OpenClaw's `freshness-check.mjs` but built-in).
 
 ---
 
@@ -415,9 +415,9 @@ Every scheduled run emits structured events: `started`, `skipped-quiet-hours`, `
 
 **Iron Law: LLM picks WHAT. Code guarantees WHERE and HOW.**
 
-Wintermute's existing `lib/enrich.mjs:buildTweetEntry` is close to this — tweet URLs are built from `tweet.id` returned by the X API, never from LLM memory. But:
+Garry's OpenClaw's existing `lib/enrich.mjs:buildTweetEntry` is close to this — tweet URLs are built from `tweet.id` returned by the X API, never from LLM memory. But:
 
-- A past incident: *"Sub-agent test #2 FAILED — hallucinated 'Philip Leung' entity links across all daily files. LLM rewriting of daily files is too error-prone."* (Wintermute memory log, 2026-04-13.)
+- A past incident: *"Sub-agent test #2 FAILED — hallucinated 'Philip Leung' entity links across all daily files. LLM rewriting of daily files is too error-prone."* (Garry's OpenClaw memory log, 2026-04-13.)
 - Back-links depend on `appendTimeline` being called everywhere; skips are silent.
 - Slug collisions are unchecked (no conflict detection on `slugify`).
 - Citation format is post-hoc linted weekly, not pre-write enforced.
@@ -461,7 +461,7 @@ export class Scaffolder {
     // "[Source: [X/garrytan, 2026-04-18](https://x.com/garrytan/status/123456)]"
   }
   emailCitation(account: string, messageId: string, subject: string): string {
-    // deterministic Gmail URL per Wintermute pattern
+    // deterministic Gmail URL per OpenClaw pattern
   }
   sourceCitation(resolverResult: ResolverResult<unknown>): string {
     // pulls .source, .fetchedAt, .raw from the result
@@ -563,7 +563,7 @@ Each phase ships independently, passes full E2E, is feature-flagged, and is reve
 - L4 core: `BrainWriter.transaction`, `Scaffolder`, `SlugRegistry` with conflict detection.
 - Pre-write validators: citation, link, back-link, triple-HR.
 - Migrate `src/commands/publish.ts` + `src/commands/backlinks.ts` to route through BrainWriter.
-- **Now** Wintermute's "Philip Leung" hallucination is structurally impossible — LLM output passes through JSON-Schema validator before reaching Scaffolder.
+- **Now** Garry's OpenClaw's "Philip Leung" hallucination is structurally impossible — LLM output passes through JSON-Schema validator before reaching Scaffolder.
 
 ### Phase 3 — `gbrain integrity` command (human: ~0.5 wk / CC: ~2 h)
 - Ship the originally-scoped user-facing feature on top of the new foundation.
@@ -582,14 +582,14 @@ Each phase ships independently, passes full E2E, is feature-flagged, and is reve
 - Migrate `src/commands/autopilot.ts` to a ScheduledResolver set.
 - Ship `gbrain schedule list|run|pause|tail` CLI for observability.
 
-### Phase 6 — Port 5–8 Wintermute resolvers (human: ~1.5 wk / CC: ~6 h)
+### Phase 6 — Port 5–8 OpenClaw resolvers (human: ~1.5 wk / CC: ~6 h)
 - `perplexity_query`, `text_to_entities`, `mistral_ocr_pdf`, `x_search_all`, `x_user_to_tweets`, `gmail_query_to_threads`, `calendar_date_to_events`.
 - Each ships as YAML + TS module under `resolvers/builtin/` — **proof of the plugin format.**
 
-### Phase 7 — Wintermute Claw Adoption Integration (human: ~1 wk / CC: ~4 h)
-- Write `docs/wintermute/ADOPTION.md` showing Wintermute how to replace its 69 bespoke scripts with calls to `gbrain registry.resolve(...)`.
-- Ship a `gbrain claw-bridge` subcommand that proxies Wintermute's current script invocations to the resolver registry — zero-edit adoption path.
-- **This is the test of the north star.** If Wintermute can stand up a 1-line shim and drop `scripts/x-api-client.mjs`, the abstraction succeeded.
+### Phase 7 — OpenClaw Adoption Integration (human: ~1 wk / CC: ~4 h)
+- Write `docs/openclaw/ADOPTION.md` showing your OpenClaw how to replace its 69 bespoke scripts with calls to `gbrain registry.resolve(...)`.
+- Ship a `gbrain claw-bridge` subcommand that proxies Garry's OpenClaw's current script invocations to the resolver registry — zero-edit adoption path.
+- **This is the test of the north star.** If your OpenClaw can stand up a 1-line shim and drop `scripts/x-api-client.mjs`, the abstraction succeeded.
 
 Total: human: ~10 weeks / CC: ~42 hours / calendar with single implementer: ~3–4 weeks.
 
@@ -649,7 +649,7 @@ src/commands/
   integrity.ts                     # ships in Phase 3, replaces Feynman Phase A/B
   schedule.ts                      # gbrain schedule list|run|pause|tail (Phase 5)
 
-docs/wintermute/
+docs/openclaw/
   ADOPTION.md                      # written in Phase 7
 ```
 
@@ -685,19 +685,19 @@ Every Resolver implementation tested against the interface spec. Table-driven: r
 - Simulate API timeout mid-transaction; transaction must roll back completely.
 - Corrupted state file; scheduler must escalate, not silently skip.
 
-### Regression tests vs. Wintermute behavior
-For each Wintermute pattern we port (e.g. X-handle → tweet URL), a regression test proves the new resolver produces the same answer on real-world inputs from the brain audit. This is the "Wintermute would adopt" proof.
+### Regression tests vs. Garry's OpenClaw behavior
+For each OpenClaw pattern we port (e.g. X-handle → tweet URL), a regression test proves the new resolver produces the same answer on real-world inputs from the brain audit. This is the "your OpenClaw would adopt" proof.
 
 ---
 
 ## 11. Open Questions (flagged for CEO re-review)
 
-1. **Scope shape.** Is this the right four-layer decomposition, or are some layers better left to Wintermute (e.g. Scheduling lives above GBrain, not in it)?
+1. **Scope shape.** Is this the right four-layer decomposition, or are some layers better left to OpenClaw (e.g. Scheduling lives above GBrain, not in it)?
 2. **Phase 3 user-value break.** Does Phase 3 (user-visible `gbrain integrity`) ship early enough, or do we need an even smaller MVP?
 3. **LLM-as-resolver.** Should `text_to_entities` be a Resolver, or does that blur the "code vs LLM" line the invariant relies on?
 4. **Plugin format.** YAML + TS module (§3.5) vs. pure TS module with decorator-style metadata. Latter is more type-safe; former is more discoverable.
 5. **Cross-resolver transactions.** Do we support "atomic fetch-from-Perplexity + write-to-brain" at the L2 layer? Current design says yes; implementation is tricky (Perplexity call isn't rollbackable).
-6. **Wintermute bridge scope.** Phase 7 `gbrain claw-bridge` — is that worth a phase of its own, or should adoption be documentation-only?
+6. **OpenClaw bridge scope.** Phase 7 `gbrain claw-bridge` — is that worth a phase of its own, or should adoption be documentation-only?
 7. **Completeness rubric coverage.** Do we define rubrics for all 9 PageTypes upfront, or ship people/company/meeting first and extend incrementally?
 8. **Budget config UX.** Hard daily cap is strict; should we also expose a soft-cap warning mode, and how is the cap set (env var? config file? prompt on first use?)
 9. **Backwards compat.** `src/commands/publish.ts` and `src/commands/backlinks.ts` have been running cleanly for weeks. Refactoring through BrainWriter carries migration risk. Acceptable?
@@ -705,12 +705,12 @@ For each Wintermute pattern we port (e.g. X-handle → tweet URL), a regression 
 
 ---
 
-## 12. Verification (the "Wintermute would adopt" test)
+## 12. Verification (the "your OpenClaw would adopt" test)
 
 The design succeeds iff:
 
 - [ ] A user can add a new resolver by dropping a YAML + TS module in `~/.gbrain/resolvers/` without editing GBrain source.
-- [ ] Wintermute can delete `scripts/x-api-client.mjs` and replace all callers with 1-line `await registry.resolve('x_handle_to_tweet', ...)`.
+- [ ] Your OpenClaw can delete `scripts/x-api-client.mjs` and replace all callers with 1-line `await registry.resolve('x_handle_to_tweet', ...)`.
 - [ ] No brain page can be written with a bare tweet reference, a missing back-link, or an unverified URL (validators catch it pre-commit).
 - [ ] Running `gbrain integrity --auto --confidence 0.8` over a real brain fixes ≥1,000 of the 1,424 known bare-tweet citations without human review.
 - [ ] Full E2E test suite passes on both PGLite + Postgres engines.

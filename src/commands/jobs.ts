@@ -57,8 +57,10 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
 
 USAGE
   gbrain jobs submit <name> [--params JSON] [--follow] [--priority N]
-                            [--delay Nms] [--timeout-ms Nms] [--max-attempts N]
-                            [--queue Q] [--dry-run]
+                            [--delay Nms] [--max-attempts N] [--max-stalled N]
+                            [--backoff-type fixed|exponential] [--backoff-delay Nms]
+                            [--backoff-jitter 0..1] [--timeout-ms Nms]
+                            [--idempotency-key K] [--queue Q] [--dry-run]
   gbrain jobs list [--status S] [--queue Q] [--limit N]
   gbrain jobs get <id>
   gbrain jobs cancel <id>
@@ -104,13 +106,26 @@ HANDLER TYPES (built in)
       const priority = parseInt(parseFlag(args, '--priority') ?? '0', 10);
       const delay = parseInt(parseFlag(args, '--delay') ?? '0', 10);
       const maxAttempts = parseInt(parseFlag(args, '--max-attempts') ?? '3', 10);
-      const queueName = parseFlag(args, '--queue') ?? 'default';
+      const maxStalledRaw = parseFlag(args, '--max-stalled');
+      const maxStalled = maxStalledRaw !== undefined ? parseInt(maxStalledRaw, 10) : undefined;
+      // v0.13.1 field audit: expose retry/backoff/timeout/idempotency knobs so
+      // users can tune Minions behavior without dropping into TypeScript.
+      const backoffTypeRaw = parseFlag(args, '--backoff-type');
+      const backoffType = backoffTypeRaw === 'fixed' || backoffTypeRaw === 'exponential'
+        ? backoffTypeRaw
+        : undefined;
+      const backoffDelayRaw = parseFlag(args, '--backoff-delay');
+      const backoffDelay = backoffDelayRaw !== undefined ? parseInt(backoffDelayRaw, 10) : undefined;
+      const backoffJitterRaw = parseFlag(args, '--backoff-jitter');
+      const backoffJitter = backoffJitterRaw !== undefined ? parseFloat(backoffJitterRaw) : undefined;
       const timeoutMsRaw = parseFlag(args, '--timeout-ms');
       const timeoutMs = timeoutMsRaw !== undefined ? parseInt(timeoutMsRaw, 10) : undefined;
       if (timeoutMsRaw !== undefined && (isNaN(timeoutMs!) || timeoutMs! <= 0)) {
         console.error('Error: --timeout-ms must be a positive integer (milliseconds)');
         process.exit(1);
       }
+      const idempotencyKey = parseFlag(args, '--idempotency-key');
+      const queueName = parseFlag(args, '--queue') ?? 'default';
       const dryRun = hasFlag(args, '--dry-run');
       const follow = hasFlag(args, '--follow');
 
@@ -120,8 +135,13 @@ HANDLER TYPES (built in)
         console.log(`  Queue: ${queueName}`);
         console.log(`  Priority: ${priority}`);
         console.log(`  Max attempts: ${maxAttempts}`);
+        if (maxStalled !== undefined) console.log(`  Max stalled: ${maxStalled}`);
+        if (backoffType) console.log(`  Backoff type: ${backoffType}`);
+        if (backoffDelay !== undefined) console.log(`  Backoff delay: ${backoffDelay}ms`);
+        if (backoffJitter !== undefined) console.log(`  Backoff jitter: ${backoffJitter}`);
+        if (timeoutMs !== undefined) console.log(`  Timeout: ${timeoutMs}ms`);
+        if (idempotencyKey) console.log(`  Idempotency key: ${idempotencyKey}`);
         if (delay > 0) console.log(`  Delay: ${delay}ms`);
-        if (timeoutMs) console.log(`  Timeout: ${timeoutMs}ms`);
         console.log(`  Data: ${JSON.stringify(data)}`);
         return;
       }
@@ -142,8 +162,13 @@ HANDLER TYPES (built in)
         priority,
         delay: delay > 0 ? delay : undefined,
         max_attempts: maxAttempts,
-        queue: queueName,
+        max_stalled: maxStalled,
+        backoff_type: backoffType,
+        backoff_delay: backoffDelay,
+        backoff_jitter: backoffJitter,
         timeout_ms: timeoutMs,
+        idempotency_key: idempotencyKey,
+        queue: queueName,
       }, trusted);
 
       // Submission audit log (operational trace, not forensic insurance).
@@ -353,6 +378,8 @@ HANDLER TYPES (built in)
         process.exit(1);
       }
 
+      const sigkillRescue = hasFlag(args, '--sigkill-rescue');
+
       const worker = new MinionWorker(engine, { queue: 'smoke', pollInterval: 100 });
       worker.register('noop', async () => ({ ok: true, at: new Date().toISOString() }));
 
@@ -370,22 +397,64 @@ HANDLER TYPES (built in)
       await workerPromise;
 
       const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(2);
-      if (final?.status === 'completed') {
-        const cfg = (await import('../core/config.ts')).loadConfig();
-        const engineLabel = cfg?.engine ?? 'unknown';
-        console.log(`SMOKE PASS — Minions healthy in ${elapsedSec}s (engine: ${engineLabel})`);
-        if (engineLabel === 'pglite') {
-          console.log('Note: the `gbrain jobs work` daemon requires Postgres. PGLite');
-          console.log('supports inline execution only (`submit --follow`).');
-        }
-        try { await queue.removeJob(job.id); } catch { /* non-fatal cleanup */ }
-        process.exit(0);
-      } else {
+      if (final?.status !== 'completed') {
         console.error(`SMOKE FAIL — job #${job.id} status: ${final?.status ?? 'timeout'} (${elapsedSec}s elapsed)`);
         if (final?.error_text) console.error(`  Error: ${final.error_text}`);
         process.exit(1);
       }
-      break;
+
+      // --sigkill-rescue: regression case for #219. Simulates a SIGKILL
+      // mid-flight by directly manipulating lock_until via handleStalled.
+      // Verifies that with the v0.13.1 schema default (max_stalled=5), a
+      // stalled job is REQUEUED rather than dead-lettered on first stall.
+      // Full subprocess-level SIGKILL lives in test/e2e/minions.test.ts.
+      if (sigkillRescue) {
+        const rescueJob = await queue.add('noop', {}, { queue: 'smoke' });
+
+        // Transition to active with a past lock_until, mimicking a worker
+        // that claimed and then got SIGKILL'd mid-run.
+        await engine.executeRaw(
+          `UPDATE minion_jobs
+              SET status='active',
+                  lock_token='smoke-sigkill-rescue',
+                  lock_until=now() - interval '1 minute',
+                  started_at=now() - interval '2 minute',
+                  attempts_started = attempts_started + 1
+            WHERE id=$1`,
+          [rescueJob.id]
+        );
+
+        const result = await queue.handleStalled();
+        const afterStall = await queue.getJob(rescueJob.id);
+
+        if (afterStall?.status === 'dead') {
+          console.error(
+            `SMOKE FAIL (--sigkill-rescue) — job #${rescueJob.id} was dead-lettered on first stall. ` +
+            `This is the #219 regression: schema default max_stalled should rescue, not dead-letter. ` +
+            `handleStalled: ${JSON.stringify(result)}`
+          );
+          process.exit(1);
+        }
+        if (afterStall?.status !== 'waiting') {
+          console.error(
+            `SMOKE FAIL (--sigkill-rescue) — unexpected status after stall: ${afterStall?.status}. ` +
+            `Expected 'waiting' (rescued). handleStalled: ${JSON.stringify(result)}`
+          );
+          process.exit(1);
+        }
+        try { await queue.removeJob(rescueJob.id); } catch { /* non-fatal cleanup */ }
+      }
+
+      const cfg = (await import('../core/config.ts')).loadConfig();
+      const engineLabel = cfg?.engine ?? 'unknown';
+      const tag = sigkillRescue ? ' + SIGKILL rescue' : '';
+      console.log(`SMOKE PASS — Minions healthy${tag} in ${elapsedSec}s (engine: ${engineLabel})`);
+      if (engineLabel === 'pglite') {
+        console.log('Note: the `gbrain jobs work` daemon requires Postgres. PGLite');
+        console.log('supports inline execution only (`submit --follow`).');
+      }
+      try { await queue.removeJob(job.id); } catch { /* non-fatal cleanup */ }
+      process.exit(0);
     }
 
     case 'work': {
@@ -442,11 +511,20 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
 
   worker.register('embed', async (job) => {
     const { runEmbedCore } = await import('./embed.ts');
+    // Primary Minion progress channel is job.updateProgress (DB-backed,
+    // readable via `gbrain jobs get <id>`). Stderr from the worker daemon
+    // only emits coarse job-start / job-done lines; per-page detail lives
+    // in the DB. Per Codex review #20.
     await runEmbedCore(engine, {
       slug: typeof job.data.slug === 'string' ? job.data.slug : undefined,
       slugs: Array.isArray(job.data.slugs) ? (job.data.slugs as string[]) : undefined,
       all: !!job.data.all,
       stale: job.data.all ? false : (job.data.stale !== false),
+      onProgress: (done, total, embedded) => {
+        // Fire-and-forget: progress updates are best-effort and must not
+        // block the worker loop.
+        job.updateProgress({ done, total, embedded, phase: 'embed.pages' }).catch(() => {});
+      },
     });
     return { embedded: true };
   });
@@ -491,58 +569,39 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     return await runBacklinksCore({ action, dir, dryRun: !!job.data.dryRun });
   });
 
-  // The killer handler. Autopilot submits ONE `autopilot-cycle` per cycle
-  // (idempotency_key on cycle slot) instead of a 4-job parent-child DAG,
-  // because Minions' parent/child is NOT a depends_on primitive (Codex
-  // H3/H4). Each step is wrapped in its own try/catch; the handler returns
-  // `{ partial: true, failed_steps: [...] }` when any step fails. It does
-  // NOT throw on partial failure — that would cause the Minion to retry,
-  // and an intermittent extract bug would block every future cycle.
+  // Autopilot-cycle handler: delegates to runCycle. Shares the exact same
+  // phase set and ordering as `gbrain dream` and autopilot's inline path —
+  // one source of truth for what the brain does overnight.
+  //
+  // Yields the event loop between phases so the worker's lock-renewal
+  // timer (src/core/minions/worker.ts) can fire. Without this the v0.14
+  // stall-death regression returns: long CPU-bound phases starve the
+  // renewal callback and the stalled-sweeper kills the job.
+  //
+  // Phase failures surface as report.status='partial' (via runCycle's
+  // derivation); the handler returns { partial, status, report } so
+  // `gbrain jobs get <id>` shows the full structured report. Does NOT
+  // throw on partial: a flaky phase must not block every future cycle.
   worker.register('autopilot-cycle', async (job) => {
-    const { performSync } = await import('./sync.ts');
-    const { runExtractCore } = await import('./extract.ts');
-    const { runEmbedCore } = await import('./embed.ts');
-    const { runBacklinksCore } = await import('./backlinks.ts');
-
+    const { runCycle } = await import('../core/cycle.ts');
     const repoPath = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? '.';
 
-    const steps: Record<string, unknown> = {};
-    const failed: string[] = [];
+    const report = await runCycle(engine, {
+      brainDir: repoPath,
+      pull: true, // autopilot daemon opts into git pull
+      yieldBetweenPhases: async () => {
+        // Yield to the event loop so worker lock-renewal can fire.
+        await new Promise<void>(r => setImmediate(r));
+      },
+    });
 
-    // Bug 8 — Between phases, yield to the event loop. The worker's lock
-    // renewal runs on a timer (src/core/minions/worker.ts); without a
-    // periodic yield, long CPU-bound phases starve the renewal callback
-    // and the job gets killed by the stalled-sweeper. A single
-    // `await new Promise(r => setImmediate(r))` gives the timer a chance
-    // to fire. The per-phase body is async+await already, so each phase
-    // internally yields on its own I/O boundaries — this is a belt for
-    // the gap between phases.
-    //
-    // Follow-up (deferred to v0.15): thread ctx.signal / ctx.shutdownSignal
-    // through each core fn so mid-phase cancellation works on huge brains.
-    const yieldToLoop = () => new Promise<void>(r => setImmediate(r));
-
-    try { steps.sync = await performSync(engine, { repoPath, noEmbed: true }); }
-    catch (e) { steps.sync = { error: e instanceof Error ? e.message : String(e) }; failed.push('sync'); }
-    await yieldToLoop();
-
-    try { steps.extract = await runExtractCore(engine, { mode: 'all', dir: repoPath }); }
-    catch (e) { steps.extract = { error: e instanceof Error ? e.message : String(e) }; failed.push('extract'); }
-    await yieldToLoop();
-
-    try { await runEmbedCore(engine, { stale: true }); steps.embed = { embedded: true }; }
-    catch (e) { steps.embed = { error: e instanceof Error ? e.message : String(e) }; failed.push('embed'); }
-    await yieldToLoop();
-
-    try { steps.backlinks = await runBacklinksCore({ action: 'fix', dir: repoPath }); }
-    catch (e) { steps.backlinks = { error: e instanceof Error ? e.message : String(e) }; failed.push('backlinks'); }
-
-    if (failed.length > 0) {
-      return { partial: true, failed_steps: failed, steps };
-    }
-    return { partial: false, steps };
+    return {
+      partial: report.status === 'partial' || report.status === 'failed',
+      status: report.status,
+      report,
+    };
   });
 
   // Shell handler: registered ONLY when GBRAIN_ALLOW_SHELL_JOBS=1 is set on the
@@ -555,5 +614,38 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     process.stderr.write('[minion worker] shell handler enabled (GBRAIN_ALLOW_SHELL_JOBS=1)\n');
   } else {
     process.stderr.write('[minion worker] shell handler disabled (set GBRAIN_ALLOW_SHELL_JOBS=1 to enable)\n');
+  }
+
+  // v0.15 subagent handlers: always-on. Unlike shell (which needs an env
+  // flag because of RCE surface), subagent only calls the Anthropic API
+  // with the operator's own ANTHROPIC_API_KEY — no key, the SDK call
+  // fails immediately. Who-can-submit is already gated by
+  // PROTECTED_JOB_NAMES + TrustedSubmitOpts (MCP can't submit subagent
+  // jobs; only the CLI path with allowProtectedSubmit can). No separate
+  // cost-ceremony env flag needed.
+  const { makeSubagentHandler } = await import('../core/minions/handlers/subagent.ts');
+  const { subagentAggregatorHandler } = await import('../core/minions/handlers/subagent-aggregator.ts');
+  worker.register('subagent', makeSubagentHandler({ engine }));
+  worker.register('subagent_aggregator', subagentAggregatorHandler);
+  process.stderr.write('[minion worker] subagent handlers enabled\n');
+
+  // Plugin discovery — one line per discovered plugin (mirrors the
+  // openclaw-seam startup line convention from v0.11+). Loaded
+  // unconditionally; empty GBRAIN_PLUGIN_PATH is a no-op.
+  try {
+    const { loadPluginsFromEnv } = await import('../core/minions/plugin-loader.ts');
+    const { BRAIN_TOOL_ALLOWLIST } = await import('../core/minions/tools/brain-allowlist.ts');
+    const validNames = new Set<string>();
+    for (const n of BRAIN_TOOL_ALLOWLIST) validNames.add(`brain_${n}`);
+    const loaded = loadPluginsFromEnv({ validAgentToolNames: validNames });
+    for (const w of loaded.warnings) process.stderr.write(w + '\n');
+    for (const p of loaded.plugins) {
+      process.stderr.write(
+        `[plugin-loader] loaded '${p.manifest.name}' v${p.manifest.version} (${p.subagents.length} subagents)\n`,
+      );
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`[plugin-loader] discovery failed: ${msg}\n`);
   }
 }

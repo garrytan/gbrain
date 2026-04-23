@@ -5,7 +5,7 @@
  * WHERE and HOW. Every user-visible URL, every citation, every wikilink is
  * assembled from resolver outputs or structured IDs — never from LLM text.
  *
- * Example (from the Wintermute memory log, 2026-04-13): an agent was asked
+ * Example (from Garry's OpenClaw memory log, 2026-04-13): an agent was asked
  * to rewrite daily files and it invented a "Philip Leung" entity that didn't
  * exist. With the Scaffolder, the LLM writes "the attendee was mentioned
  * again" and code writes the actual `[Philip Leung](people/philip-leung.md)`
@@ -65,7 +65,7 @@ export interface EmailCitationInput {
  * Canonical email citation with a deep link that opens the actual thread:
  *   [Source: email "Subject line", 2026-04-18](https://mail.google.com/mail/u/?authuser=...#inbox/...)
  *
- * URL shape matches the pattern Wintermute's ingest pipeline builds from API
+ * URL shape matches the pattern Garry's OpenClaw's ingest pipeline builds from API
  * responses, so brain-page links and agent-generated links use the same
  * format (cross-tool consistency).
  */

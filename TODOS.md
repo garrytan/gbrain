@@ -1,5 +1,21 @@
 # TODOS
 
+## check-resolvable
+
+### File tracking issues for Checks 5 + 6 (deferred in PR #325)
+**Priority:** P2
+
+**What:** `src/commands/check-resolvable.ts` currently points `DEFERRED[].issue` at GitHub issue search URLs (`?q=TBD-check-5`, `?q=TBD-check-6`). File real tracking issues and grep-replace both placeholders with the real URLs.
+
+**Why:** v0.16.4 shipped `gbrain check-resolvable` with 4 of the 6 checks from the original spec. Checks 5 (trigger routing eval) and 6 (brain filing) were explicitly deferred during plan-ceo-review because they each need new detection logic. The CLI's `deferred[]` JSON field is meant to surface these to agents so they know the coverage boundary — the TBD placeholders do the right thing mechanically but aren't clickable.
+
+**How:**
+1. `gh issue create -t "check-resolvable Check 5: trigger routing eval" -b "..."` — detection: every skill's own frontmatter trigger should match the RESOLVER.md entry pointing at that skill. Needs new issue type (e.g. `mis_route`).
+2. `gh issue create -t "check-resolvable Check 6: brain filing validation" -b "..."` — detection: scan SKILL.md body for brain paths (e.g., `brain/people/`, `brain/companies/`), cross-reference with `skills/_brain-filing-rules.md`. Flag mutating skills missing entries.
+3. Replace `TBD-check-5` and `TBD-check-6` in `src/commands/check-resolvable.ts` with the real issue URLs.
+
+**Effort:** ~15 min mechanical (issue filing + grep-replace). Implementation of the checks themselves is a separate, larger piece of work — the TODO here is just the issue filing + URL swap.
+
 ## P1 (BrainBench v1.1 — categories deferred from PR #188)
 
 ### BrainBench Cat 5: Source Attribution / Provenance
@@ -173,7 +189,7 @@ board" — likely an advisor-role page prior plus verb-pattern combinations.
 
 **Cons:** Requires adding `sender_id` or `access_tier` to `OperationContext`. Each mutating operation needs a permission check. Medium implementation effort.
 
-**Context:** From CEO review + Codex outside voice (2026-04-13). Prompt-layer access control works in practice (same model as Wintermute) but is not sufficient for remote MCP where direct tool calls bypass the agent's prompt.
+**Context:** From CEO review + Codex outside voice (2026-04-13). Prompt-layer access control works in practice (same model as Garry's OpenClaw) but is not sufficient for remote MCP where direct tool calls bypass the agent's prompt.
 
 **Depends on:** v0.10.0 GStackBrain skill layer (shipped).
 
