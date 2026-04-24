@@ -64,8 +64,18 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
-  };
-  return merged as GBrainConfig;
+  } as GBrainConfig;
+
+  // The config file is the supported place for `gbrain init --api-key`
+  // credentials. Long-running MCP/OpenClaw child processes are often launched
+  // with a minimal environment, so downstream embedding/search code that reads
+  // `process.env.OPENAI_API_KEY` must still see the configured key. Env wins
+  // above; this only hydrates when the env var is absent.
+  if (merged.openai_api_key && !process.env.OPENAI_API_KEY) {
+    process.env.OPENAI_API_KEY = merged.openai_api_key;
+  }
+
+  return merged;
 }
 
 export function saveConfig(config: GBrainConfig): void {
