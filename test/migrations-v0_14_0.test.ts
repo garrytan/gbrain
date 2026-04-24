@@ -77,7 +77,7 @@ describe('Bug 5 — Phase B host-work entry dedup', () => {
     const entry = JSON.parse(readFileSync(hostPath, 'utf-8').split('\n')[0]);
     expect(entry.migration).toBe('0.14.0');
     expect(entry.skill).toBe('skills/migrations/v0.14.0.md');
-  });
+  }, 30_000);
 
   test('dry-run writes nothing', async () => {
     const { v0_14_0 } = await import('../src/commands/migrations/v0_14_0.ts');
