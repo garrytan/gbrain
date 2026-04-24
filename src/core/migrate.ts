@@ -811,6 +811,9 @@ export const MIGRATIONS: Migration[] = [
         RAISE NOTICE 'v24: RLS backfill complete (role % has BYPASSRLS)', current_user;
       END $$;
     `,
+    sqlFor: {
+      pglite: '',
+    },
   },
 ];
 
