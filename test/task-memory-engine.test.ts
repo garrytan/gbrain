@@ -149,6 +149,27 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
       await harness.cleanup();
     }
   });
+
+  test(`${createHarness.name} listTaskThreads honors limit and offset`, async () => {
+    const harness = await createHarness();
+
+    try {
+      for (const suffix of ['a', 'b', 'c']) {
+        await harness.engine.createTaskThread({
+          id: `task-page-${harness.label}-${suffix}`,
+          scope: 'work',
+          title: `Paged task ${suffix}`,
+          status: 'active',
+        });
+      }
+
+      const page = await harness.engine.listTaskThreads({ limit: 1, offset: 1 });
+
+      expect(page.map((thread) => thread.id)).toEqual([`task-page-${harness.label}-b`]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
 }
 
 const databaseUrl = process.env.DATABASE_URL;

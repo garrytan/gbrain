@@ -51,6 +51,7 @@ import type {
   TaskWorkingSetInput,
   RetrievalTrace,
   RetrievalTraceInput,
+  RetrievalTraceWindowFilters,
 } from './types.ts';
 
 export interface BrainEngine {
@@ -128,6 +129,7 @@ export interface BrainEngine {
   listTaskDecisions(taskId: string, opts?: { limit?: number }): Promise<TaskDecision[]>;
   putRetrievalTrace(input: RetrievalTraceInput): Promise<RetrievalTrace>;
   listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]>;
+  listRetrievalTracesByWindow(filters: RetrievalTraceWindowFilters): Promise<RetrievalTrace[]>;
 
   // Personal profile memory
   upsertProfileMemoryEntry(input: ProfileMemoryEntryInput): Promise<ProfileMemoryEntry>;
@@ -154,6 +156,9 @@ export interface BrainEngine {
   createCanonicalHandoffEntry(input: CanonicalHandoffEntryInput): Promise<CanonicalHandoffEntry | null>;
   getCanonicalHandoffEntry(id: string): Promise<CanonicalHandoffEntry | null>;
   listCanonicalHandoffEntries(filters?: CanonicalHandoffFilters): Promise<CanonicalHandoffEntry[]>;
+  listCanonicalHandoffEntriesByInteractionIds(interactionIds: string[]): Promise<CanonicalHandoffEntry[]>;
+  listMemoryCandidateSupersessionEntriesByInteractionIds(interactionIds: string[]): Promise<MemoryCandidateSupersessionEntry[]>;
+  listMemoryCandidateContradictionEntriesByInteractionIds(interactionIds: string[]): Promise<MemoryCandidateContradictionEntry[]>;
   deleteMemoryCandidateEntry(id: string): Promise<void>;
 
   // Note manifest

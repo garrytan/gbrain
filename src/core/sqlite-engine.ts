@@ -57,6 +57,7 @@ import type {
   EngineConfig,
   RetrievalTrace,
   RetrievalTraceInput,
+  RetrievalTraceWindowFilters,
   TaskAttempt,
   TaskAttemptInput,
   TaskDecision,
@@ -1146,7 +1147,9 @@ export class SQLiteEngine implements BrainEngine {
 
   async listTaskThreads(filters?: TaskThreadFilters): Promise<TaskThread[]> {
     const clauses: string[] = [];
-    const params: unknown[] = [];
+    const params: Array<string | number> = [];
+    const limit = filters?.limit ?? 50;
+    const offset = filters?.offset ?? 0;
 
     if (filters?.scope) {
       clauses.push('scope = ?');
@@ -1157,14 +1160,14 @@ export class SQLiteEngine implements BrainEngine {
       params.push(filters.status);
     }
 
-    params.push(filters?.limit ?? 50);
+    params.push(limit, offset);
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.database.query(`
       SELECT id, scope, title, goal, status, repo_path, branch_name, current_summary, created_at, updated_at
       FROM task_threads
       ${where}
       ORDER BY updated_at DESC, id DESC
-      LIMIT ?
+      LIMIT ? OFFSET ?
     `).all(...params) as Record<string, unknown>[];
 
     return rows.map(rowToTaskThread);
@@ -1338,6 +1341,34 @@ export class SQLiteEngine implements BrainEngine {
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `).all(taskId, opts?.limit ?? 20) as Record<string, unknown>[];
+    return rows.map(rowToRetrievalTrace);
+  }
+
+  async listRetrievalTracesByWindow(filters: RetrievalTraceWindowFilters): Promise<RetrievalTrace[]> {
+    const clauses = ['created_at >= ?', 'created_at < ?'];
+    const params: Array<string | number> = [
+      filters.since.toISOString(),
+      filters.until.toISOString(),
+    ];
+
+    if (filters.task_id !== undefined) {
+      clauses.push('task_id = ?');
+      params.push(filters.task_id);
+    }
+    if (filters.scope !== undefined) {
+      clauses.push('scope = ?');
+      params.push(filters.scope);
+    }
+
+    params.push(filters.limit ?? 500, filters.offset ?? 0);
+    const rows = this.database.query(`
+      SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+      FROM retrieval_traces
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ? OFFSET ?
+    `).all(...params) as Record<string, unknown>[];
     return rows.map(rowToRetrievalTrace);
   }
 
@@ -1804,6 +1835,21 @@ export class SQLiteEngine implements BrainEngine {
     return row ? rowToMemoryCandidateSupersessionEntry(row) : null;
   }
 
+  async listMemoryCandidateSupersessionEntriesByInteractionIds(
+    interactionIds: string[],
+  ): Promise<MemoryCandidateSupersessionEntry[]> {
+    if (interactionIds.length === 0) return [];
+    const placeholders = interactionIds.map(() => '?').join(', ');
+    const rows = this.database.query(`
+      SELECT id, scope_id, superseded_candidate_id, replacement_candidate_id,
+             reviewed_at, review_reason, interaction_id, created_at, updated_at
+      FROM memory_candidate_supersession_entries
+      WHERE interaction_id IN (${placeholders})
+      ORDER BY created_at DESC, id ASC
+    `).all(...interactionIds) as Record<string, unknown>[];
+    return rows.map(rowToMemoryCandidateSupersessionEntry);
+  }
+
   async createMemoryCandidateContradictionEntry(
     input: MemoryCandidateContradictionEntryInput,
   ): Promise<MemoryCandidateContradictionEntry | null> {
@@ -1880,6 +1926,21 @@ export class SQLiteEngine implements BrainEngine {
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
     return row ? rowToMemoryCandidateContradictionEntry(row) : null;
+  }
+
+  async listMemoryCandidateContradictionEntriesByInteractionIds(
+    interactionIds: string[],
+  ): Promise<MemoryCandidateContradictionEntry[]> {
+    if (interactionIds.length === 0) return [];
+    const placeholders = interactionIds.map(() => '?').join(', ');
+    const rows = this.database.query(`
+      SELECT id, scope_id, candidate_id, challenged_candidate_id, outcome, supersession_entry_id,
+             reviewed_at, review_reason, interaction_id, created_at, updated_at
+      FROM memory_candidate_contradiction_entries
+      WHERE interaction_id IN (${placeholders})
+      ORDER BY created_at DESC, id ASC
+    `).all(...interactionIds) as Record<string, unknown>[];
+    return rows.map(rowToMemoryCandidateContradictionEntry);
   }
 
   async createCanonicalHandoffEntry(
@@ -1978,6 +2039,21 @@ export class SQLiteEngine implements BrainEngine {
       LIMIT ?
       OFFSET ?
     `).all(...params) as Record<string, unknown>[];
+    return rows.map(rowToCanonicalHandoffEntry);
+  }
+
+  async listCanonicalHandoffEntriesByInteractionIds(
+    interactionIds: string[],
+  ): Promise<CanonicalHandoffEntry[]> {
+    if (interactionIds.length === 0) return [];
+    const placeholders = interactionIds.map(() => '?').join(', ');
+    const rows = this.database.query(`
+      SELECT id, scope_id, candidate_id, target_object_type, target_object_id, source_refs,
+             reviewed_at, review_reason, interaction_id, created_at, updated_at
+      FROM canonical_handoff_entries
+      WHERE interaction_id IN (${placeholders})
+      ORDER BY created_at DESC, id ASC
+    `).all(...interactionIds) as Record<string, unknown>[];
     return rows.map(rowToCanonicalHandoffEntry);
   }
 
