@@ -913,6 +913,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     const report = await runCycle(engine, {
       brainDir: repoPath,
       pull: true, // autopilot daemon opts into git pull
+      signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.
         await new Promise<void>(r => setImmediate(r));

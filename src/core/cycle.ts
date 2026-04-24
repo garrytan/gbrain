@@ -140,6 +140,14 @@ export interface CycleOpts {
    * + refreshes the cycle-lock-table TTL.
    */
   yieldBetweenPhases?: () => Promise<void>;
+  /**
+   * AbortSignal from the Minions worker. When aborted (timeout, cancel,
+   * lock-loss), runCycle bails between phases and returns a 'failed' report
+   * instead of running the next phase. Without this, a timed-out
+   * autopilot-cycle handler ignores the abort and runs until the worker
+   * wedges (the 98-waiting-0-active incident on 2026-04-24).
+   */
+  signal?: AbortSignal;
 }
 
 // ─── Lock primitives ───────────────────────────────────────────────
@@ -341,6 +349,20 @@ async function safeYield(hook?: () => Promise<void>) {
     await hook();
   } catch (e) {
     console.warn(`[cycle] yieldBetweenPhases hook error (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/**
+ * Check if the abort signal has fired. Called between phases so that a
+ * timed-out Minions job bails promptly instead of grinding through all
+ * remaining phases while the worker thinks it's still at capacity.
+ */
+function checkAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const reason = signal.reason instanceof Error
+      ? signal.reason.message
+      : String(signal.reason || 'aborted');
+    throw new Error(`[cycle] aborted between phases: ${reason}`);
   }
 }
 
@@ -644,6 +666,7 @@ export async function runCycle(
   try {
     // ── Phase 1: lint ────────────────────────────────────────────
     if (phases.includes('lint')) {
+      checkAborted(opts.signal);
       progress.start('cycle.lint');
       const { result, duration_ms } = await timePhase(() => runPhaseLint(opts.brainDir, dryRun));
       result.duration_ms = duration_ms;
@@ -654,6 +677,7 @@ export async function runCycle(
 
     // ── Phase 2: backlinks ──────────────────────────────────────
     if (phases.includes('backlinks')) {
+      checkAborted(opts.signal);
       progress.start('cycle.backlinks');
       const { result, duration_ms } = await timePhase(() => runPhaseBacklinks(opts.brainDir, dryRun));
       result.duration_ms = duration_ms;
@@ -664,6 +688,7 @@ export async function runCycle(
 
     // ── Phase 3: sync ───────────────────────────────────────────
     if (phases.includes('sync')) {
+      checkAborted(opts.signal);
       if (!engine) {
         phaseResults.push({
           phase: 'sync',
@@ -684,6 +709,7 @@ export async function runCycle(
 
     // ── Phase 4: extract ────────────────────────────────────────
     if (phases.includes('extract')) {
+      checkAborted(opts.signal);
       if (!engine) {
         phaseResults.push({
           phase: 'extract',
@@ -704,6 +730,7 @@ export async function runCycle(
 
     // ── Phase 5: embed ──────────────────────────────────────────
     if (phases.includes('embed')) {
+      checkAborted(opts.signal);
       if (!engine) {
         phaseResults.push({
           phase: 'embed',
@@ -724,6 +751,7 @@ export async function runCycle(
 
     // ── Phase 6: orphans ────────────────────────────────────────
     if (phases.includes('orphans')) {
+      checkAborted(opts.signal);
       if (!engine) {
         phaseResults.push({
           phase: 'orphans',
