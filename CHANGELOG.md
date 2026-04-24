@@ -2,6 +2,53 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.19.1] - 2026-04-23
+
+## **The Gmail backfill tax just fell 20×.**
+## **Import 20 years of mail for $2, not $25.**
+
+Most people never load their Gmail archive into gbrain because the embedding bill is real. A typical 20-year archive is 300K-700K messages, ~150M tokens. At `text-embedding-3-large` pricing that's roughly $20-$35 just to embed, on a corpus where 60-80% of volume is noreply noise, receipts, newsletters, and calendar chatter. This release ships two levers that compound: a `GBRAIN_EMBEDDING_MODEL` env var for picking `text-embedding-3-small` (6.5× cheaper at ~90% retrieval quality) and a `scripts/filter-gmail-mbox.ts` pre-filter that strips the noise before ingest. Both together cut the bill roughly 20×. And a correctness fix that matters the moment you use the feature: chunks embedded with `-small` no longer get mislabeled `-large` in the database.
+
+### The cost ladder
+
+All figures below are mechanical math from OpenAI's published embedding prices applied to a 150M-token archive. No gbrain benchmark number here is fabricated, and no number is measured either: your real archive will vary with how much of it is promotional mail, how many forwarded threads, how long each message is. Order of magnitude is the point.
+
+| Lever | Relative cost | How |
+|---|---|---|
+| Default (`text-embedding-3-large`, no filter) | 1× | (existing behavior) |
+| `GBRAIN_EMBEDDING_MODEL=text-embedding-3-small` | ~0.15× | env var, one line |
+| Pre-filter mbox before sync | ~0.3× | one script run |
+| Both combined | **~0.05×** | env var + script |
+
+A 500K-message archive that used to cost ~$25 to embed drops to roughly $1-2 with both levers on. That is not "faster embedding" or "better compression." That is a correctness gate: most users literally stopped at the pricing page. Now the pricing page doesn't bite.
+
+### What this means for you
+
+If you've been meaning to import a multi-year email archive and kept finding reasons not to, the reason is gone. Request a Gmail-only Google Takeout in `.mbx` format, run `bun scripts/filter-gmail-mbox.ts <input.mbox> ./gmail-backfill`, export `GBRAIN_EMBEDDING_MODEL=text-embedding-3-small`, and `gbrain sync ./gmail-backfill`. Full writeup at [`docs/integrations/gmail-archive-backfill.md`](docs/integrations/gmail-archive-backfill.md), including the mixed-model consistency warning (one brain, one embedding space, don't mix).
+
+### Itemized changes
+
+**`GBRAIN_EMBEDDING_MODEL` env var**
+- `src/core/embedding.ts` — new `resolveEmbeddingModel()` reads the env var at each call, validates against `['text-embedding-3-large', 'text-embedding-3-small']`, throws on anything else. Default unchanged (`text-embedding-3-large`).
+- `test/embedding.test.ts` — 7 cases covering default/unset/empty/whitespace, explicit selection of each allowed value, rejection of `ada-002` and `gpt-4`, and error-message shape.
+
+**Chunk model stamping correctness**
+- `src/commands/embed.ts` + `src/core/import-file.ts` — call `resolveEmbeddingModel()` and stamp the result on `ChunkInput.model` for every chunk they just embedded. Previously the callers left `model` unset, and the engine fallback hardcoded `'text-embedding-3-large'` at `pglite-engine.ts:284,287` and `postgres-engine.ts:317,320`. Setting `GBRAIN_EMBEDDING_MODEL=text-embedding-3-small` would have embedded with `-small` but stamped `-large` in the DB, silently breaking any mixed-model accounting.
+- `embed.ts` stale-only path is careful: chunks that didn't get re-embedded preserve their existing stored model, only the re-embedded subset picks up the new one.
+- `test/embed.test.ts` — new case exercises the mixed-model flow (one stale chunk + one fresh chunk, env var set to `-small`, assert the stale one gets stamped `-small` and the fresh one keeps `-large`).
+
+**Gmail mbox pre-filter**
+- `scripts/filter-gmail-mbox.ts` — standalone Bun script. Splits mbox by `^From ` boundaries, parses headers (case-insensitive, RFC 5322 folded continuations), decodes MIME bodies (quoted-printable, base64, multipart text/plain extraction), strips quoted replies (`^>` lines and `On … wrote:` blocks), sanitizes slugs, and writes `YYYY/MM/{slug}-{sha1-8}.md` with `type: email` frontmatter plus From/To/Subject/Date/Message-ID. Drops by default: noreply/no-reply/notifications/alerts/donotreply/mailer-daemon/postmaster/bounces senders, anything with a `List-Unsubscribe` header, and `text/calendar` MIME. `--keep domain1,domain2` override for high-signal automated senders (banks, airlines, booking confirmations).
+- `test/filter-gmail-mbox.test.ts` — 26 cases covering mbox split (boundary, `>From` quoted-body protection, empty input), header parse (folded continuations, case-insensitive lookup), email extraction (angle brackets, bare, lowercasing), drop logic (all three reasons, `--keep` substring match), body decode (QP, base64, multipart), quoted-reply strip, slug sanitize, and markdown emission (including null-on-empty-body).
+
+**Docs**
+- `docs/integrations/gmail-archive-backfill.md` — the one-shot backfill playbook: cost ladder, mechanics, consistency warning, what-not-to-do list.
+- `docs/integrations/README.md` — one new row linking to the Gmail backfill guide.
+- `docs/architecture/infra-layer.md` — embedding stage now reads "OpenAI, 1536 dimensions; model via GBRAIN_EMBEDDING_MODEL" instead of hardcoding the default.
+- `CLAUDE.md` — updated `src/core/embedding.ts` entry to document the env var + stamping contract; added entries for `scripts/filter-gmail-mbox.ts`, `test/embedding.test.ts`, `test/filter-gmail-mbox.test.ts`.
+
+**No schema changes. No migration. Existing brains unaffected (default behavior unchanged).**
+
 ## [0.19.0] - 2026-04-22
 
 ## **Your OpenClaw finally learns. Say "skillify it!" and every new failure becomes a durable skill.**

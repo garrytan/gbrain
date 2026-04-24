@@ -44,6 +44,7 @@ These require manual setup (no self-installing recipe yet):
 |-------|-------------|
 | [Credential Gateway](credential-gateway.md) | Set up ClawVisor or Hermes for Gmail, Calendar, Contacts access |
 | [Meeting & Call Webhooks](meeting-webhooks.md) | Circleback meeting transcripts + Quo/OpenPhone SMS/calls |
+| [Gmail Archive Backfill](gmail-archive-backfill.md) | Google Takeout mbox → filtered markdown → cheap embed for decades of mail |
 
 ## How to Read a Recipe
 

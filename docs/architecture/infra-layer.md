@@ -19,7 +19,7 @@ CHUNKING (3 strategies, configurable)
   ├── Semantic: embed sentences, cosine similarity, Savitzky-Golay smoothing
   └── LLM-guided: Claude Haiku identifies topic shifts in 128-word candidates
   ↓
-EMBEDDING (OpenAI text-embedding-3-large, 1536 dimensions)
+EMBEDDING (OpenAI, 1536 dimensions; model via GBRAIN_EMBEDDING_MODEL)
   → batch 100, exponential backoff, non-fatal if fails
   ↓
 DATABASE TRANSACTION (atomic: page + chunks + tags + version)
