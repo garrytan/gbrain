@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { saveConfig, loadConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
+import { registerMcpServerInOpenClaw } from './register-mcp.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -117,6 +118,7 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
     };
     saveConfig(config);
+    const mcpRegistration = registerMcpServerInOpenClaw({ gbrainConfig: config });
 
     const stats = await engine.getStats();
 
@@ -133,6 +135,18 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
         console.log('  gbrain stats                            (verify links > 0)');
       } else {
         console.log('Next: gbrain import <dir>');
+      }
+      if (mcpRegistration.status === 'registered') {
+        console.log(`OpenClaw MCP: registered gbrain at ${mcpRegistration.openclawConfigPath}`);
+        console.log('Restart your OpenClaw gateway so all gbrain tools are discoverable.');
+      } else if (mcpRegistration.status === 'already_registered') {
+        console.log('OpenClaw MCP: gbrain already registered.');
+        console.log('Restart your OpenClaw gateway if it is currently running.');
+      } else if (mcpRegistration.status === 'missing_openclaw_config') {
+        console.log(`OpenClaw MCP: skipped (config not found at ${mcpRegistration.openclawConfigPath}).`);
+        console.log('Run `gbrain register-mcp` after OpenClaw creates its config.');
+      } else {
+        console.log('OpenClaw MCP: skipped (no gbrain config available).');
       }
       console.log('');
       console.log('When you outgrow local: gbrain migrate --to supabase');
@@ -200,6 +214,7 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
     };
     saveConfig(config);
+    const mcpRegistration = registerMcpServerInOpenClaw({ gbrainConfig: config });
     console.log('Config saved to ~/.gbrain/config.json');
 
     const stats = await engine.getStats();
@@ -216,6 +231,18 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
         console.log('  gbrain stats                            (verify links > 0)');
       } else {
         console.log('Next: gbrain import <dir>');
+      }
+      if (mcpRegistration.status === 'registered') {
+        console.log(`OpenClaw MCP: registered gbrain at ${mcpRegistration.openclawConfigPath}`);
+        console.log('Restart your OpenClaw gateway so all gbrain tools are discoverable.');
+      } else if (mcpRegistration.status === 'already_registered') {
+        console.log('OpenClaw MCP: gbrain already registered.');
+        console.log('Restart your OpenClaw gateway if it is currently running.');
+      } else if (mcpRegistration.status === 'missing_openclaw_config') {
+        console.log(`OpenClaw MCP: skipped (config not found at ${mcpRegistration.openclawConfigPath}).`);
+        console.log('Run `gbrain register-mcp` after OpenClaw creates its config.');
+      } else {
+        console.log('OpenClaw MCP: skipped (no gbrain config available).');
       }
       reportModStatus();
     }
