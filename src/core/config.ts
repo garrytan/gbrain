@@ -19,8 +19,14 @@ export type DbUrlSource =
   | 'config-file-path' // PGLite: config file present, no URL but database_path set
   | null;
 
-// Lazy-evaluated to avoid calling homedir() at module scope (breaks in serverless/bundled environments)
-function getConfigDir() { return join(homedir(), '.gbrain'); }
+// Resolve HOME at CALL time, not module-load time. Bun/Node cache os.homedir()
+// on first call and ignore later HOME mutations, which breaks test isolation
+// (tests set process.env.HOME = tmpdir in beforeEach but homedir() is already
+// frozen, so loadConfig() reads the real ~/.gbrain/config.json and
+// createEngine().connect() hits prod). Prefer process.env.HOME when set.
+// Matches src/commands/migrations/v0_14_0.ts:35 pattern.
+function resolveHome(): string { return process.env.HOME || homedir(); }
+function getConfigDir() { return join(resolveHome(), '.gbrain'); }
 function getConfigPath() { return join(getConfigDir(), 'config.json'); }
 
 export interface GBrainConfig {
