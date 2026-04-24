@@ -136,17 +136,102 @@ export interface CodeChunkOptions {
   fallbackOverlapWords?: number;
 }
 
-// Map each supported language to its embedded-asset path (resolved by Bun).
-// At runtime, these are file paths the tree-sitter runtime can read.
-const GRAMMAR_PATHS: Record<SupportedCodeLanguage, string> = {
-  typescript: G_TYPESCRIPT, tsx: G_TSX, javascript: G_JAVASCRIPT,
-  python: G_PYTHON, ruby: G_RUBY, go: G_GO,
-  rust: G_RUST, java: G_JAVA, c_sharp: G_CSHARP, cpp: G_CPP, c: G_C,
-  php: G_PHP, swift: G_SWIFT, kotlin: G_KOTLIN, scala: G_SCALA, lua: G_LUA,
-  elixir: G_ELIXIR, elm: G_ELM, ocaml: G_OCAML, dart: G_DART, zig: G_ZIG,
-  solidity: G_SOLIDITY, bash: G_BASH, css: G_CSS, html: G_HTML, vue: G_VUE,
-  json: G_JSON, yaml: G_YAML, toml: G_TOML,
+/**
+ * v0.20.0 Cathedral II Layer 4 (B1) — LanguageEntry manifest.
+ *
+ * Before Cathedral II, languages were hardcoded in two places: GRAMMAR_PATHS
+ * (Bun asset imports) and DISPLAY_LANG (display names). The plan's B1 tier
+ * wants one manifest that supports (a) embedded grammars that ship with
+ * `bun --compile` today, (b) lazy-loaded grammars resolved from
+ * node_modules/tree-sitter-wasms at runtime for source-installs, and (c)
+ * user-registered grammars so downstream consumers can extend coverage
+ * without forking the chunker.
+ *
+ * v0.20.0 ships the 29 embedded grammars we already had. The lazy-loader
+ * + registerLanguage hook are in place as forward-compat — a v0.20.x
+ * follow-up (or user) can register additional grammars without touching
+ * the chunker core.
+ *
+ * Structure:
+ *   - `embeddedPath` → Bun asset path, takes priority when present.
+ *   - `lazyLoader` → async function returning path OR Uint8Array. Used
+ *     when embeddedPath is absent. Runs at most once per process
+ *     (result cached alongside the parsed Language via `languageCache`).
+ *   - `displayName` → human-readable name used in embedded chunk headers
+ *     so both the agent and a human reader see "TypeScript", not
+ *     "typescript", in the structured header line.
+ */
+export interface LanguageEntry {
+  displayName: string;
+  embeddedPath?: string;
+  lazyLoader?: () => Promise<string | Uint8Array>;
+}
+
+const LANGUAGE_MANIFEST: Record<SupportedCodeLanguage, LanguageEntry> = {
+  typescript: { displayName: 'TypeScript', embeddedPath: G_TYPESCRIPT },
+  tsx:        { displayName: 'TSX',        embeddedPath: G_TSX },
+  javascript: { displayName: 'JavaScript', embeddedPath: G_JAVASCRIPT },
+  python:     { displayName: 'Python',     embeddedPath: G_PYTHON },
+  ruby:       { displayName: 'Ruby',       embeddedPath: G_RUBY },
+  go:         { displayName: 'Go',         embeddedPath: G_GO },
+  rust:       { displayName: 'Rust',       embeddedPath: G_RUST },
+  java:       { displayName: 'Java',       embeddedPath: G_JAVA },
+  c_sharp:    { displayName: 'C#',         embeddedPath: G_CSHARP },
+  cpp:        { displayName: 'C++',        embeddedPath: G_CPP },
+  c:          { displayName: 'C',          embeddedPath: G_C },
+  php:        { displayName: 'PHP',        embeddedPath: G_PHP },
+  swift:      { displayName: 'Swift',      embeddedPath: G_SWIFT },
+  kotlin:     { displayName: 'Kotlin',     embeddedPath: G_KOTLIN },
+  scala:      { displayName: 'Scala',      embeddedPath: G_SCALA },
+  lua:        { displayName: 'Lua',        embeddedPath: G_LUA },
+  elixir:     { displayName: 'Elixir',     embeddedPath: G_ELIXIR },
+  elm:        { displayName: 'Elm',        embeddedPath: G_ELM },
+  ocaml:      { displayName: 'OCaml',      embeddedPath: G_OCAML },
+  dart:       { displayName: 'Dart',       embeddedPath: G_DART },
+  zig:        { displayName: 'Zig',        embeddedPath: G_ZIG },
+  solidity:   { displayName: 'Solidity',   embeddedPath: G_SOLIDITY },
+  bash:       { displayName: 'Bash',       embeddedPath: G_BASH },
+  css:        { displayName: 'CSS',        embeddedPath: G_CSS },
+  html:       { displayName: 'HTML',       embeddedPath: G_HTML },
+  vue:        { displayName: 'Vue',        embeddedPath: G_VUE },
+  json:       { displayName: 'JSON',       embeddedPath: G_JSON },
+  yaml:       { displayName: 'YAML',       embeddedPath: G_YAML },
+  toml:       { displayName: 'TOML',       embeddedPath: G_TOML },
 };
+
+/**
+ * Extension registry for lazy-registered languages (beyond the 29
+ * embedded core). Keyed on SupportedCodeLanguage string; registrations
+ * here take priority over LANGUAGE_MANIFEST on conflict so hot-fix
+ * overrides during a session work without a restart.
+ *
+ * This is the extension point Layer 9 (Magika) uses to wire extensionless
+ * language detection, and the v0.20.x+ follow-up point for full
+ * tree-sitter-wasms (~165 langs) coverage. Not exposed in the MCP
+ * surface — purely a developer-facing hook.
+ */
+const dynamicLanguages: Map<string, LanguageEntry> = new Map();
+
+export function registerLanguage(lang: string, entry: LanguageEntry): void {
+  dynamicLanguages.set(lang, entry);
+}
+
+export function unregisterLanguage(lang: string): void {
+  dynamicLanguages.delete(lang);
+  languageCache.delete(lang as SupportedCodeLanguage);
+}
+
+export function listRegisteredLanguages(): string[] {
+  return [
+    ...Object.keys(LANGUAGE_MANIFEST),
+    ...Array.from(dynamicLanguages.keys()),
+  ];
+}
+
+function getLanguageEntry(language: string): LanguageEntry | undefined {
+  // dynamicLanguages wins on conflict (hot-fix overrides).
+  return dynamicLanguages.get(language) ?? LANGUAGE_MANIFEST[language as SupportedCodeLanguage];
+}
 
 // Per-language top-level AST node types that count as semantic units.
 // Languages not in this map fall through to the recursive text chunker
@@ -614,18 +699,13 @@ function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
-const DISPLAY_LANG: Record<SupportedCodeLanguage, string> = {
-  typescript: 'TypeScript', tsx: 'TSX', javascript: 'JavaScript',
-  python: 'Python', ruby: 'Ruby', go: 'Go', rust: 'Rust', java: 'Java',
-  c_sharp: 'C#', cpp: 'C++', c: 'C', php: 'PHP', swift: 'Swift',
-  kotlin: 'Kotlin', scala: 'Scala', lua: 'Lua', elixir: 'Elixir',
-  elm: 'Elm', ocaml: 'OCaml', dart: 'Dart', zig: 'Zig', solidity: 'Solidity',
-  bash: 'Bash', css: 'CSS', html: 'HTML', vue: 'Vue', json: 'JSON',
-  yaml: 'YAML', toml: 'TOML',
-};
-
+// v0.20.0 Cathedral II Layer 4: display name derived from the language
+// manifest. Single source of truth — adding a new language via
+// registerLanguage() automatically exposes its displayName to chunk
+// headers without a parallel DISPLAY_LANG edit.
 function displayLang(lang: SupportedCodeLanguage): string {
-  return DISPLAY_LANG[lang];
+  const entry = getLanguageEntry(lang);
+  return entry?.displayName ?? lang;
 }
 
 function countLines(text: string): number {
@@ -652,12 +732,24 @@ async function ensureInit(): Promise<void> {
 
 async function loadLanguage(language: SupportedCodeLanguage): Promise<any> {
   if (languageCache.has(language)) return languageCache.get(language);
-  const P = await getParser();
-  const grammarPath = GRAMMAR_PATHS[language];
-  if (!grammarPath) {
-    throw new Error(`No embedded grammar for language: ${language}`);
+  const entry = getLanguageEntry(language);
+  if (!entry) {
+    throw new Error(`No grammar entry for language: ${language}`);
   }
-  const lang = await (P as any).Language.load(grammarPath);
+  const P = await getParser();
+  // Resolve grammar source: embedded path wins if set (zero-cost path for
+  // the 29 core grammars that ship in every bun --compile binary). Lazy
+  // loader fallback for registered-at-runtime languages (tree-sitter-wasms
+  // npm resolution, user extensions via registerLanguage).
+  let grammarSource: string | Uint8Array;
+  if (entry.embeddedPath) {
+    grammarSource = entry.embeddedPath;
+  } else if (entry.lazyLoader) {
+    grammarSource = await entry.lazyLoader();
+  } else {
+    throw new Error(`Language entry for ${language} has neither embeddedPath nor lazyLoader`);
+  }
+  const lang = await (P as any).Language.load(grammarSource);
   languageCache.set(language, lang);
   return lang;
 }
