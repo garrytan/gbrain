@@ -1,5 +1,93 @@
 import { describe, test, expect } from 'bun:test';
+import { execFileSync } from 'child_process';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { performSync } from '../src/commands/sync.ts';
 import { buildSyncManifest, isSyncable, pathToSlug } from '../src/core/sync.ts';
+
+function git(repoPath: string, ...args: string[]): string {
+  return execFileSync('git', ['-C', repoPath, ...args], {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function createSyncMockEngine(configSeed: Record<string, string>) {
+  const config = new Map(Object.entries(configSeed));
+  const pages = new Map<string, any>();
+  const tags = new Map<string, Set<string>>();
+  const chunks = new Map<string, any[]>();
+  let inTransaction = false;
+  let transactionCalls = 0;
+
+  const engine = {
+    async getConfig(key: string) {
+      return config.get(key) ?? null;
+    },
+    async setConfig(key: string, value: string) {
+      config.set(key, value);
+    },
+    async getPage(slug: string) {
+      return pages.get(slug) ?? null;
+    },
+    async putPage(slug: string, page: any) {
+      const stored = { id: pages.size + 1, slug, ...page };
+      pages.set(slug, stored);
+      return stored;
+    },
+    async deletePage(slug: string) {
+      pages.delete(slug);
+      tags.delete(slug);
+      chunks.delete(slug);
+    },
+    async updateSlug(oldSlug: string, newSlug: string) {
+      const page = pages.get(oldSlug);
+      if (!page) throw new Error(`missing page: ${oldSlug}`);
+      pages.delete(oldSlug);
+      pages.set(newSlug, { ...page, slug: newSlug });
+    },
+    async createVersion() {
+      return { id: 1 };
+    },
+    async getTags(slug: string) {
+      return [...(tags.get(slug) ?? new Set<string>())];
+    },
+    async addTag(slug: string, tag: string) {
+      const existing = tags.get(slug) ?? new Set<string>();
+      existing.add(tag);
+      tags.set(slug, existing);
+    },
+    async removeTag(slug: string, tag: string) {
+      tags.get(slug)?.delete(tag);
+    },
+    async upsertChunks(slug: string, nextChunks: any[]) {
+      chunks.set(slug, nextChunks);
+    },
+    async deleteChunks(slug: string) {
+      chunks.delete(slug);
+    },
+    async logIngest() {},
+    async transaction<T>(fn: (tx: BrainEngine) => Promise<T>) {
+      if (inTransaction) throw new Error('nested transaction');
+      inTransaction = true;
+      transactionCalls += 1;
+      try {
+        return await fn(engine as unknown as BrainEngine);
+      } finally {
+        inTransaction = false;
+      }
+    },
+    _pages: pages,
+    _chunks: chunks,
+    get _transactionCalls() {
+      return transactionCalls;
+    },
+  };
+
+  return engine as typeof engine & BrainEngine;
+}
 
 describe('buildSyncManifest', () => {
   test('parses A/M/D entries from single commit', () => {
@@ -188,5 +276,61 @@ describe('buildSyncManifest edge cases', () => {
     expect(manifest.modified).toEqual([]);
     expect(manifest.deleted).toEqual([]);
     expect(manifest.renamed).toEqual([]);
+  });
+});
+
+describe('performSync transaction boundaries', () => {
+  test('imports batches above ten files without nesting import transactions', async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), 'gbrain-sync-unit-'));
+
+    try {
+      git(repoPath, 'init');
+      git(repoPath, 'config', 'user.email', 'test@example.com');
+      git(repoPath, 'config', 'user.name', 'Test User');
+
+      writeFileSync(join(repoPath, 'seed.md'), [
+        '---',
+        'type: concept',
+        'title: Seed',
+        '---',
+        '',
+        'Baseline content.',
+      ].join('\n'));
+      git(repoPath, 'add', '-A');
+      git(repoPath, 'commit', '-m', 'seed');
+      const baseCommit = git(repoPath, 'rev-parse', 'HEAD');
+
+      mkdirSync(join(repoPath, 'notes'), { recursive: true });
+      for (let i = 1; i <= 11; i += 1) {
+        writeFileSync(join(repoPath, 'notes', `batch-${i}.md`), [
+          '---',
+          'type: concept',
+          `title: Batch ${i}`,
+          'tags: [sync-test]',
+          '---',
+          '',
+          `Batch note ${i} should import during the same incremental sync.`,
+        ].join('\n'));
+      }
+      git(repoPath, 'add', '-A');
+      git(repoPath, 'commit', '-m', 'add batch');
+
+      const engine = createSyncMockEngine({ 'sync.last_commit': baseCommit });
+      const result = await performSync(engine, {
+        repoPath,
+        noPull: true,
+        noEmbed: true,
+        noExtract: true,
+      });
+
+      expect(result.status).toBe('synced');
+      expect(result.added).toBe(11);
+      expect(result.pagesAffected).toHaveLength(11);
+      expect(engine._pages.size).toBe(11);
+      expect(engine._chunks.size).toBe(11);
+      expect(engine._transactionCalls).toBe(11);
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true });
+    }
   });
 });

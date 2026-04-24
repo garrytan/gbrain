@@ -204,7 +204,6 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   }
 
   // Process adds and modifies
-  const useTransaction = (filtered.added.length + filtered.modified.length) > 10;
   const processAddsModifies = async () => {
     for (const path of [...filtered.added, ...filtered.modified]) {
       const filePath = join(repoPath, path);
@@ -222,11 +221,9 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     }
   };
 
-  if (useTransaction) {
-    await engine.transaction(async () => { await processAddsModifies(); });
-  } else {
-    await processAddsModifies();
-  }
+  // importFile() already wraps each page write in its own transaction. Do not
+  // add an outer batch transaction here: PGLite cannot safely nest them.
+  await processAddsModifies();
 
   const elapsed = Date.now() - start;
 
