@@ -35,6 +35,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
   const locksMode = args.includes('--locks');
+  const allPages = args.includes('--all-pages');
 
   // --locks is a focused diagnostic: it runs the same pg_stat_activity
   // query that `runMigrations` pre-flight uses, prints any idle-in-tx
@@ -502,7 +503,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // 7. Embedding health
   progress.heartbeat('embeddings');
   try {
-    const health = await engine.getHealth();
+    const health = await engine.getHealth(allPages);
     const pct = (health.embed_coverage * 100).toFixed(0);
     if (health.embed_coverage >= 0.9) {
       checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing` });
@@ -519,16 +520,18 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
   progress.heartbeat('graph_coverage');
   try {
-    const health = await engine.getHealth();
+    const health = await engine.getHealth(allPages);
     const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
     const timelinePct = ((health.timeline_coverage ?? 0) * 100).toFixed(0);
     if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
-      checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%` });
+      const scope = allPages ? 'all-pages' : 'entity';
+      checks.push({ name: 'graph_coverage', status: 'ok', message: `${scope} link coverage ${linkPct}%, timeline ${timelinePct}%` });
     } else {
+      const scope = allPages ? 'all-pages' : 'entity';
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain link-extract && gbrain timeline-extract`,
+        message: `${scope} link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain link-extract && gbrain timeline-extract`,
       });
     }
 
