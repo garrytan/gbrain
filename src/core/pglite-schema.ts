@@ -63,7 +63,18 @@ CREATE TABLE IF NOT EXISTS pages (
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+-- Guarded for existing brains where pages was created pre-v21 (no source_id
+-- column yet). Migration v21 adds the column; this index gets re-attempted
+-- via IF NOT EXISTS on the next initSchema. Fresh installs (CREATE TABLE
+-- above adds source_id) enter the branch immediately.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='pages' AND column_name='source_id'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id)';
+  END IF;
+END $$;
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
