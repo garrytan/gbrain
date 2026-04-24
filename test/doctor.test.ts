@@ -54,6 +54,7 @@ describe('doctor command', () => {
           available: true,
           implementation: 'local-http',
           model: 'nomic-embed-text',
+          dimensions: 768,
         },
         rewrite: {
           mode: 'heuristic',
@@ -109,8 +110,9 @@ describe('doctor command', () => {
         embedding: {
           mode: 'local',
           available: true,
-          implementation: 'ollama',
+          implementation: 'local-http',
           model: 'nomic-embed-text',
+          dimensions: 768,
         },
         rewrite: {
           mode: 'heuristic',

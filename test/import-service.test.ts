@@ -11,6 +11,34 @@ import {
 import { runImport } from '../src/commands/import.ts';
 
 const tempDirs: string[] = [];
+type ImportServiceDeps = NonNullable<Parameters<typeof runImportService>[2]>;
+
+const defaultImportDeps = {
+  createConnectedEngine: async () => {
+    throw new Error('not used');
+  },
+  importFile: async () => {
+    throw new Error('not used');
+  },
+  prepareImportFile: async () => {
+    throw new Error('not used');
+  },
+  commitPreparedImport: async () => {
+    throw new Error('not used');
+  },
+  loadConfig: () => null,
+  getEngineCapabilities: () => ({
+    rawPostgresAccess: false,
+    parallelWorkers: false,
+    stagedImportConcurrency: false,
+    localVectorPrefilter: 'none',
+  }),
+  supportsParallelWorkers: () => false,
+} as unknown as ImportServiceDeps;
+
+function importDeps(overrides: Partial<ImportServiceDeps>): ImportServiceDeps {
+  return { ...defaultImportDeps, ...overrides };
+}
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -88,10 +116,7 @@ describe('import service', () => {
     const firstSummary = await runImportService(
       engine,
       { rootDir, workers: 1, checkpointPath },
-      {
-        createConnectedEngine: async () => {
-          throw new Error('not used');
-        },
+      importDeps({
         importFile: async (_engine, filePath) => {
           const relativePath = relative(rootDir, filePath);
           attemptedFilesByRun[runIndex].push(relativePath);
@@ -100,9 +125,7 @@ describe('import service', () => {
           }
           return { slug: filePath, status: 'imported' as const, chunks: 1 };
         },
-        loadConfig: () => null,
-        supportsParallelWorkers: () => false,
-      },
+      }),
     );
 
     expect(firstSummary.errors).toBe(1);
@@ -118,18 +141,13 @@ describe('import service', () => {
     const secondSummary = await runImportService(
       engine,
       { rootDir, workers: 1, checkpointPath },
-      {
-        createConnectedEngine: async () => {
-          throw new Error('not used');
-        },
+      importDeps({
         importFile: async (_engine, filePath) => {
           const relativePath = relative(rootDir, filePath);
           attemptedFilesByRun[runIndex].push(relativePath);
           return { slug: filePath, status: 'imported' as const, chunks: 1 };
         },
-        loadConfig: () => null,
-        supportsParallelWorkers: () => false,
-      },
+      }),
     );
 
     expect(secondSummary.errors).toBe(0);
@@ -156,16 +174,11 @@ describe('import service', () => {
     const summary = await runImportService(
       engine,
       { rootDir, workers: 1 },
-      {
-        createConnectedEngine: async () => {
-          throw new Error('not used');
-        },
+      importDeps({
         importFile: async () => {
           throw new Error('boom');
         },
-        loadConfig: () => null,
-        supportsParallelWorkers: () => false,
-      },
+      }),
     );
 
     expect(summary.errors).toBe(1);

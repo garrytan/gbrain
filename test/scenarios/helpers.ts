@@ -10,6 +10,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { SQLiteEngine } from '../../src/core/sqlite-engine.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { TaskStatus } from '../../src/core/types.ts';
 
 export interface ScenarioEngineHandle {
   engine: BrainEngine;
@@ -51,7 +52,7 @@ export async function seedWorkTaskThread(
   overrides: {
     title?: string;
     scope?: 'work' | 'personal' | 'mixed';
-    status?: 'in_progress' | 'paused' | 'completed' | 'abandoned';
+    status?: TaskStatus;
     workingSet?: {
       active_paths?: string[];
       active_symbols?: string[];
@@ -67,7 +68,7 @@ export async function seedWorkTaskThread(
     scope: overrides.scope ?? 'work',
     title: overrides.title ?? `Scenario task ${taskId}`,
     goal: 'Validate scenario behavior end to end.',
-    status: overrides.status ?? 'in_progress',
+    status: overrides.status ?? 'active',
     repo_path: '/fixture/repo',
     branch_name: 'scenario-branch',
     current_summary: 'Seeded from the scenario-test helper for contract validation.',

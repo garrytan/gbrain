@@ -23,7 +23,7 @@ function createFakeProvider() {
       capability: {
         available: true,
         mode: 'local' as const,
-        implementation: 'test-local',
+        implementation: 'test-local' as const,
         model: 'test-local-v1',
         dimensions: 3,
       },
@@ -60,7 +60,7 @@ function createMappedProvider(vectors: Record<string, number[]>) {
     capability: {
       available: true,
       mode: 'local' as const,
-      implementation: 'test-local',
+      implementation: 'test-local' as const,
       model: 'test-local-v1',
       dimensions: Object.values(vectors)[0]?.length ?? null,
     },
@@ -200,7 +200,7 @@ describe('local/offline profile semantics', () => {
   test('query rewrite provider none returns the original query without contacting a runtime', async () => {
     const originalFetch = globalThis.fetch;
     const fetchSpy = mock(async () => new Response('{}'));
-    globalThis.fetch = fetchSpy as typeof fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     try {
       const { expandQuery } = await import('../src/core/search/expansion.ts');
@@ -234,7 +234,7 @@ describe('local/offline profile semantics', () => {
         headers: { 'content-type': 'application/json' },
       });
     });
-    globalThis.fetch = fetchSpy as typeof fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     try {
       const { expandQuery } = await import('../src/core/search/expansion.ts');
@@ -276,7 +276,7 @@ describe('local/offline profile semantics', () => {
         headers: { 'content-type': 'application/json' },
       });
     });
-    globalThis.fetch = fetchSpy as typeof fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     try {
       const { expandQuery } = await import('../src/core/search/expansion.ts');
@@ -312,7 +312,7 @@ describe('local/offline profile semantics', () => {
     }), {
       headers: { 'content-type': 'application/json' },
     }));
-    globalThis.fetch = fetchSpy as typeof fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     try {
       const { expandQuery } = await import('../src/core/search/expansion.ts');
@@ -341,7 +341,7 @@ describe('local/offline profile semantics', () => {
       status: 503,
       statusText: 'Service Unavailable',
     }));
-    globalThis.fetch = fetchSpy as typeof fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     try {
       const { expandQuery } = await import('../src/core/search/expansion.ts');
@@ -373,7 +373,7 @@ describe('local/offline profile semantics', () => {
 
     const originalFetch = globalThis.fetch;
     const fetchSpy = mock(async () => new Response('{}'));
-    globalThis.fetch = fetchSpy as typeof fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
     const capture = captureConsole();
 
     try {
@@ -401,7 +401,7 @@ describe('local/offline profile semantics', () => {
 
     const originalFetch = globalThis.fetch;
     const fetchSpy = mock(async () => new Response('{}'));
-    globalThis.fetch = fetchSpy as typeof fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
     const capture = captureConsole();
 
     try {
@@ -523,7 +523,7 @@ describe('local/offline embedding flow', () => {
         headers: { 'content-type': 'application/json' },
       });
     });
-    globalThis.fetch = fetchSpy as typeof fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     try {
       const provider = getEmbeddingProvider({
@@ -602,7 +602,7 @@ describe('local/offline embedding flow', () => {
         headers: { 'content-type': 'application/json' },
       });
     });
-    globalThis.fetch = fetchSpy as typeof fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     try {
       const provider = getEmbeddingProvider({
@@ -969,7 +969,7 @@ Timeline sentence.
       capability: {
         available: true,
         mode: 'local',
-        implementation: 'test-local',
+        implementation: 'test-local' as const,
         model: 'test-local-v2',
         dimensions: 3,
       },

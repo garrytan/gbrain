@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import type { MemoryCandidateEntryInput, MemoryCandidateStatus } from '../src/core/types.ts';
+import type { MemoryCandidateCreateStatus, MemoryCandidateEntryInput } from '../src/core/types.ts';
 import {
   advanceMemoryCandidateStatus,
   MemoryInboxServiceError,
@@ -16,7 +16,7 @@ import { supersedeMemoryCandidateEntry } from '../src/core/services/memory-inbox
 async function seedCandidate(
   engine: SQLiteEngine,
   id: string,
-  status: MemoryCandidateStatus = 'captured',
+  status: MemoryCandidateCreateStatus = 'captured',
   overrides: Partial<MemoryCandidateEntryInput> = {},
 ) {
   return engine.createMemoryCandidateEntry({

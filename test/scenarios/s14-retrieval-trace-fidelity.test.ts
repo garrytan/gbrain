@@ -89,10 +89,12 @@ describe('S14 — retrieval trace fidelity', () => {
       expect(traces.length).toBe(1);
       const trace = traces[0]!;
       const mapId = (result.route?.payload as { map_id?: string } | undefined)?.map_id;
-      expect(typeof mapId).toBe('string');
+      if (typeof mapId !== 'string') {
+        throw new Error('Expected route payload to include map_id');
+      }
       expect(trace.source_refs).toContain('page:systems/mbrain');
       expect(trace.source_refs.some((ref) => ref.startsWith('section:concepts/note-manifest#'))).toBe(true);
-      expect(trace.source_refs).not.toContain(mapId!);
+      expect(trace.source_refs).not.toContain(mapId);
       expect(trace.derived_consulted).toEqual([mapId]);
     } finally {
       await handle.teardown();
