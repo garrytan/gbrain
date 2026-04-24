@@ -135,7 +135,7 @@ strict behavior when unset.
 - `skills/soul-audit/SKILL.md` — 6-phase interview for SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md
 - `skills/webhook-transforms/SKILL.md` — External events to brain signals
 - `skills/data-research/SKILL.md` — Structured data research: email-to-tracker pipeline with parameterized YAML recipes
-- `skills/minion-orchestrator/SKILL.md` — Background job orchestration: submit, fan out children with depth/cap/timeouts, collect results via child_done inbox
+- `skills/minion-orchestrator/SKILL.md` — Unified background-work skill (v0.19.2 consolidation of the former `minion-orchestrator` + `gbrain-jobs` split). Two lanes: shell jobs via `gbrain jobs submit shell --params '{"cmd":"..."}'` (operator/CLI only; MCP throws `permission_denied` for protected names) and LLM subagents via `gbrain agent run` (user-facing entrypoint). Shared Preconditions block, parent-child DAGs with depth/cap/timeouts, `child_done` inbox for fan-in, PGLite `--follow` inline path for dev. Triggers narrowed from bare `"gbrain jobs"` to `"gbrain jobs submit"` + `"submit a gbrain job"` so `stats`/`prune`/`retry` questions fall through to `gbrain --help`.
 - `templates/` — SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md templates
 - `skills/migrations/` — Version migration files with feature_pitch YAML frontmatter
 - `src/commands/publish.ts` — Deterministic brain page publisher (code+skill pair, zero LLM calls)
@@ -205,7 +205,7 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/lint.test.ts` (LLM artifact detection, code fence stripping, frontmatter validation),
 `test/report.test.ts` (report format, directory structure),
 `test/skills-conformance.test.ts` (skill frontmatter + required sections validation),
-`test/resolver.test.ts` (RESOLVER.md coverage, routing validation),
+`test/resolver.test.ts` (RESOLVER.md coverage, routing validation + v0.19.2 round-trip: every quoted RESOLVER.md trigger must match a frontmatter `triggers:` entry in the target skill, and every `name="<word>"` reference in any SKILL.md must resolve to a declared op in `src/core/operations.ts` or a Minions handler in `PROTECTED_JOB_NAMES`),
 `test/search.test.ts` (RRF normalization, compiled truth boost, cosine similarity, dedup key),
 `test/dedup.test.ts` (source-aware dedup, compiled truth guarantee, layer interactions),
 `test/intent.test.ts` (query intent classification: entity/temporal/event/general),
@@ -245,6 +245,7 @@ E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_U
 - `test/e2e/postgres-jsonb.test.ts` — v0.12.2 regression test. Round-trips all 5 JSONB write sites (pages.frontmatter, raw_data.data, ingest_log.pages_updated, files.metadata, page_versions.frontmatter) against real Postgres and asserts `jsonb_typeof='object'` plus `->>'key'` returns the expected scalar. The test that should have caught the original double-encode bug.
 - `test/e2e/jsonb-roundtrip.test.ts` — v0.12.3 companion regression against the 4 doctor-scanned JSONB sites. Assertion-level overlap with `postgres-jsonb.test.ts` is intentional defense-in-depth: if doctor's scan surface ever drifts from the actual write surface, one of these tests catches it.
 - `test/e2e/upgrade.test.ts` runs check-update E2E against real GitHub API (network required)
+- `test/e2e/minions-shell-pglite.test.ts` (v0.19.2) exercises the PGLite `--follow` inline shell-job path (in-memory, no `DATABASE_URL` required) — the path the consolidated minion-orchestrator skill documents for dev use
 - Tier 2 (`skills.test.ts`) requires OpenClaw + API keys, runs nightly in CI
 - If `.env.testing` doesn't exist in this directory, check sibling worktrees for one:
   `find ../  -maxdepth 2 -name .env.testing -print -quit` and copy it here if found.
@@ -296,7 +297,7 @@ stop and remove it before starting a new one.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 28 skills
+Read the skill files in `skills/` before doing brain operations. GBrain ships 29 skills
 organized by `skills/RESOLVER.md` (`AGENTS.md` is also accepted as of v0.19):
 
 **Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
@@ -306,10 +307,18 @@ briefing, migrate, setup, publish.
 meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
 
 **Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
-testing, soul-audit, webhook-transforms, data-research, minion-orchestrator.
+testing, soul-audit, webhook-transforms, data-research, minion-orchestrator. As of
+v0.19.2, `minion-orchestrator` is the single unified skill for both lanes of background
+work (shell jobs via `gbrain jobs submit shell`, LLM subagents via `gbrain agent run`) ...
+the prior `gbrain-jobs` skill was merged in, Preconditions are shared, and trigger
+routing is narrowed to what the skill actually covers.
 
 **Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).
+
+**Operational health (v0.19.1):** smoke-test (8 post-restart health checks with auto-fix
+for Bun, CLI, DB, worker, Zod CJS, gateway, API key, brain repo; user-extensible via
+`~/.gbrain/smoke-tests.d/*.sh`).
 
 **Conventions:** `skills/conventions/` has cross-cutting rules (quality, brain-first,
 model-routing, test-before-bulk, cross-modal). `skills/_brain-filing-rules.md` and
