@@ -424,4 +424,10 @@ describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
     expect(remoteBlock).toContain('partialCount >= 3');
     expect(remoteBlock).toMatch(/WEDGED MIGRATION\(s\) on brain host/);
   });
+
+  test('graph coverage warning points at current extract command', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain('gbrain extract all --source db');
+    expect(source).not.toContain('gbrain link-extract && gbrain timeline-extract');
+  });
 });

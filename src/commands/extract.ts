@@ -786,6 +786,20 @@ async function extractLinksFromDB(
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
+  // Dry-run should report net-new rows, not merely extracted candidates.
+  // Cache existing outgoing links by from_slug so --dry-run mirrors ON CONFLICT behavior.
+  const existingLinksByFrom = dryRun ? new Map<string, Set<string>>() : null;
+  async function existingLinkKeys(fromSlug: string): Promise<Set<string>> {
+    if (!existingLinksByFrom) return new Set();
+    const cached = existingLinksByFrom.get(fromSlug);
+    if (cached) return cached;
+    const keys = new Set<string>();
+    for (const link of await engine.getLinks(fromSlug)) {
+      keys.add(`${link.from_slug}::${link.to_slug}::${link.link_type}::${link.link_source ?? 'markdown'}::${link.origin_slug ?? ''}`);
+    }
+    existingLinksByFrom.set(fromSlug, keys);
+    return keys;
+  }
 
   const batch: LinkBatchInput[] = [];
   async function flush() {
@@ -832,10 +846,14 @@ async function extractLinksFromDB(
       const fromSlug = c.fromSlug ?? slug;
       if (!allSlugs.has(c.targetSlug)) continue;
       if (!allSlugs.has(fromSlug)) continue;
+      const linkSource = c.linkSource ?? 'markdown';
+      const originSlug = c.originSlug ?? '';
+      const key = `${fromSlug}::${c.targetSlug}::${c.linkType}::${linkSource}::${originSlug}`;
       if (dryRunSeen) {
-        const key = `${fromSlug}::${c.targetSlug}::${c.linkType}::${c.linkSource ?? 'markdown'}`;
         if (dryRunSeen.has(key)) continue;
         dryRunSeen.add(key);
+        const existing = await existingLinkKeys(fromSlug);
+        if (existing.has(key)) continue;
         if (jsonMode) {
           process.stdout.write(JSON.stringify({
             action: 'add_link', from: fromSlug, to: c.targetSlug,
@@ -901,6 +919,22 @@ async function extractTimelineFromDB(
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
+  // Dry-run should report net-new rows, not merely parsed timeline candidates.
+  // Cache existing timeline entries by slug so --dry-run mirrors ON CONFLICT behavior.
+  const existingTimelineBySlug = dryRun ? new Map<string, Set<string>>() : null;
+  async function existingTimelineKeys(slug: string): Promise<Set<string>> {
+    if (!existingTimelineBySlug) return new Set();
+    const cached = existingTimelineBySlug.get(slug);
+    if (cached) return cached;
+    const keys = new Set<string>();
+    for (const entry of await engine.getTimeline(slug)) {
+      const rawDate = String(entry.date);
+      const parsedDate = rawDate.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? new Date(rawDate).toISOString().slice(0, 10);
+      keys.add(`${slug}::${parsedDate}::${entry.summary}`);
+    }
+    existingTimelineBySlug.set(slug, keys);
+    return keys;
+  }
 
   const batch: TimelineBatchInput[] = [];
   async function flush() {
@@ -938,6 +972,8 @@ async function extractTimelineFromDB(
         const key = `${slug}::${entry.date}::${entry.summary}`;
         if (dryRunSeen.has(key)) continue;
         dryRunSeen.add(key);
+        const existing = await existingTimelineKeys(slug);
+        if (existing.has(key)) continue;
         if (jsonMode) {
           process.stdout.write(JSON.stringify({
             action: 'add_timeline', slug, date: entry.date,

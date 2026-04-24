@@ -1233,7 +1233,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${entityCount} entity pages). Run: gbrain extract all`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${entityCount} entity pages). Run: gbrain extract all --source db`,
       });
     }
 
