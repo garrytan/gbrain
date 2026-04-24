@@ -68,7 +68,7 @@ export async function assessHistoricalValidity(
   );
   const candidateEvidenceAt = getCandidateEvidenceTimestamp(candidate, handoff);
   const newerPromotedPeerExists = peers.some((peer) =>
-    peer.status === 'promoted' && getPeerEvidenceTimestamp(peer) > candidateEvidenceAt
+    peer.status === 'promoted' && getPeerEvidenceTimestamp(peer) > candidateEvidenceAt.getTime()
   );
   if (newerPromotedPeerExists) {
     return buildAssessment(candidate.id, handoff.id, 'deny', true, 'supersede', ['newer_promoted_candidate_exists']);

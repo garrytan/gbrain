@@ -23,10 +23,13 @@ function isProcessAlive(pid: number): boolean {
 }
 
 export async function acquireLock(dataDir: string | undefined, opts?: { timeoutMs?: number }): Promise<LockHandle> {
-  const lockDir = getLockDir(dataDir);
-
-  if (!lockDir) {
+  if (!dataDir) {
     return { lockDir: '', acquired: true };
+  }
+
+  const lockDir = getLockDir(dataDir);
+  if (!lockDir) {
+    throw new Error('PGLite lock path could not be resolved');
   }
 
   mkdirSync(dataDir, { recursive: true });

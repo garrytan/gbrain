@@ -275,7 +275,7 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY sim DESC
       LIMIT 5
     `;
-    return fuzzy.map((r: { slug: string }) => r.slug);
+    return fuzzy.map((row) => String(row.slug));
   }
 
   private async withSearchTimeout<T>(fn: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
@@ -638,7 +638,7 @@ export class PostgresEngine implements BrainEngine {
       WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
       ORDER BY tag
     `;
-    return rows.map((r: { tag: string }) => r.tag);
+    return rows.map((row) => String(row.tag));
   }
 
   // Timeline

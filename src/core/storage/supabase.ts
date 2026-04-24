@@ -37,7 +37,7 @@ export class SupabaseStorage implements StorageBackend {
         'Content-Type': mime || 'application/octet-stream',
         'x-upsert': 'true',
       },
-      body: data,
+      body: new Uint8Array(data),
     });
     if (!res.ok) {
       const body = await res.text();

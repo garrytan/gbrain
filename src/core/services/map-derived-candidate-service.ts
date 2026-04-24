@@ -37,16 +37,17 @@ export async function captureMapDerivedCandidates(
   const boundedLimit = normalizeCaptureLimit(input.limit, reportResult.report.recommended_reads.length);
   const reads = reportResult.report.recommended_reads.slice(0, boundedLimit);
   const candidates: MemoryCandidateEntry[] = [];
+  const reportStatus = reportResult.report.status;
+  const mapStatus = normalizeMapStatus(reportStatus);
 
   for (const [index, read] of reads.entries()) {
-    const mapStatus = reportResult.report.status;
     const candidate = await engine.createMemoryCandidateEntry({
       id: crypto.randomUUID(),
       scope_id: reportResult.report.scope_id,
       candidate_type: 'note_update',
       proposed_content: `Context map recommends reviewing ${read.label} (${read.path}) in ${reportResult.report.title}.`,
       source_refs: [
-        `Context map report, map_id=${reportResult.report.map_id}, status=${mapStatus}`,
+        `Context map report, map_id=${reportResult.report.map_id}, status=${reportStatus}`,
         `Context map recommended read, path=${read.path}, page_slug=${read.page_slug}${read.section_id ? `, section_id=${read.section_id}` : ''}`,
       ],
       generated_by: 'map_analysis',
@@ -66,9 +67,16 @@ export async function captureMapDerivedCandidates(
 
   return {
     selection_reason: reportResult.selection_reason,
-    map_status: reportResult.report.status,
+    map_status: mapStatus,
     candidates,
   };
+}
+
+function normalizeMapStatus(status: string): 'ready' | 'stale' | null {
+  if (status === 'ready' || status === 'stale') {
+    return status;
+  }
+  return null;
 }
 
 function normalizeCaptureLimit(limit: number | undefined, reportReadCount: number): number {

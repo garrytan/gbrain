@@ -237,9 +237,11 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // Update local config
   const newConfig: MBrainConfig = {
     engine: opts.targetEngine,
-    ...(opts.targetEngine === 'postgres'
-      ? { database_url: targetConfig.database_url }
-      : { database_path: targetConfig.database_path }),
+    database_url: targetConfig.database_url,
+    database_path: targetConfig.database_path,
+    offline: false,
+    embedding_provider: 'none',
+    query_rewrite_provider: 'none',
   };
   saveConfig(newConfig);
 

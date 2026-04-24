@@ -47,7 +47,7 @@ import {
   listStructuralContextMapEntries,
 } from './services/context-map-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, rebuildNoteManifestEntries } from './services/note-manifest-service.ts';
-import { findStructuralPath, getStructuralNeighbors } from './services/note-structural-graph-service.ts';
+import { findStructuralPath, getStructuralNeighbors, type StructuralNodeId } from './services/note-structural-graph-service.ts';
 import { rebuildNoteSectionEntries } from './services/note-section-service.ts';
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
 import * as db from './db.ts';
@@ -66,6 +66,10 @@ export const MCP_INSTRUCTIONS = [
 ].join('\n\n');
 
 // --- Types ---
+
+function structuralNodeId(value: string): StructuralNodeId {
+  return value as StructuralNodeId;
+}
 
 export type ErrorCode =
   | 'page_not_found'
@@ -2124,7 +2128,7 @@ const get_note_structural_neighbors: Operation = {
   },
   handler: async (ctx, p) => {
     try {
-      return await getStructuralNeighbors(ctx.engine, String(p.node_id), {
+      return await getStructuralNeighbors(ctx.engine, structuralNodeId(String(p.node_id)), {
         scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
         limit: (p.limit as number) ?? 20,
       });
@@ -2154,8 +2158,8 @@ const find_note_structural_path: Operation = {
     try {
       return await findStructuralPath(
         ctx.engine,
-        String(p.from_node_id),
-        String(p.to_node_id),
+        structuralNodeId(String(p.from_node_id)),
+        structuralNodeId(String(p.to_node_id)),
         {
           scope_id: String(p.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID),
           max_depth: (p.max_depth as number) ?? 6,

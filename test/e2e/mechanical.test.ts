@@ -27,7 +27,13 @@ const describeE2E = skip ? describe.skip : describe;
 function makeCtx(): OperationContext {
   return {
     engine: getEngine(),
-    config: { engine: 'postgres', database_url: process.env.DATABASE_URL! },
+    config: {
+      engine: 'postgres',
+      database_url: process.env.DATABASE_URL!,
+      offline: false,
+      embedding_provider: 'none',
+      query_rewrite_provider: 'none',
+    },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
   };

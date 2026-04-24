@@ -91,10 +91,10 @@ export async function resolveFile(
 
 export function parseRedirect(path: string): RedirectInfo {
   const content = readFileSync(path, 'utf-8');
-  return parseYaml(content) as RedirectInfo;
+  return parseYaml(content) as unknown as RedirectInfo;
 }
 
 export function parseMarker(path: string): MarkerInfo {
   const content = readFileSync(path, 'utf-8');
-  return parseYaml(content) as MarkerInfo;
+  return parseYaml(content) as unknown as MarkerInfo;
 }
