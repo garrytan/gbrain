@@ -163,6 +163,67 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // Read/parse failure is itself best-effort; skip silently.
   }
 
+  // 3b-bis. Supervisor health (filesystem-only: PID liveness + audit log).
+  // Reads the default PID file (`~/.gbrain/supervisor.pid` unless the user
+  // overrode with GBRAIN_SUPERVISOR_PID_FILE) and the latest audit file
+  // written by src/core/minions/handlers/supervisor-audit.ts. Surfaces
+  // supervisor_running / last_start / crashes_24h / max_crashes_exceeded.
+  // Does NOT run the supervisor itself — this is a read-only health check.
+  try {
+    const { DEFAULT_PID_FILE } = await import('../core/minions/supervisor.ts');
+    const { readSupervisorEvents } = await import('../core/minions/handlers/supervisor-audit.ts');
+
+    let supervisorPid: number | null = null;
+    let running = false;
+    if (existsSync(DEFAULT_PID_FILE)) {
+      try {
+        const line = readFileSync(DEFAULT_PID_FILE, 'utf8').trim().split('\n')[0];
+        const parsed = parseInt(line, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          supervisorPid = parsed;
+          try { process.kill(parsed, 0); running = true; } catch { running = false; }
+        }
+      } catch { /* unreadable */ }
+    }
+
+    const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
+    const crashes24h = events.filter(e => e.event === 'worker_exited').length;
+    const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
+
+    // Only surface a Check if the supervisor was ever observed (stops the
+    // "never used the supervisor" install from getting a warn about it).
+    if (supervisorPid !== null || events.length > 0) {
+      if (maxCrashesEvent) {
+        checks.push({
+          name: 'supervisor',
+          status: 'fail',
+          message: `Supervisor gave up at ${maxCrashesEvent.ts} (max_crashes_exceeded). Restart with: gbrain jobs supervisor start --detach`,
+        });
+      } else if (!running && events.length > 0) {
+        checks.push({
+          name: 'supervisor',
+          status: 'warn',
+          message: `Supervisor not running (last_start=${lastStart ?? 'unknown'}). Restart with: gbrain jobs supervisor start --detach`,
+        });
+      } else if (crashes24h > 3) {
+        checks.push({
+          name: 'supervisor',
+          status: 'warn',
+          message: `Supervisor running but worker crashed ${crashes24h}x in last 24h. Check ~/.gbrain/audit/supervisor-*.jsonl for causes.`,
+        });
+      } else {
+        checks.push({
+          name: 'supervisor',
+          status: 'ok',
+          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h}`,
+        });
+      }
+    }
+  } catch {
+    // Audit read / import failure is best-effort; skip silently.
+  }
+
   // 3c. Sync failure trail (Bug 9). sync.ts gates the `sync.last_commit`
   // bookmark when per-file parse errors happen, and appends each failure
   // to ~/.gbrain/sync-failures.jsonl with the commit hash + exact error.
