@@ -715,6 +715,106 @@ const MIGRATIONS: Migration[] = [
       DROP FUNCTION IF EXISTS mbrain_repair_jsonb_scalar_string(JSONB, TEXT[]);
     `,
   },
+  {
+    version: 23,
+    name: 'retrieval_trace_fidelity_columns',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('retrieval_traces') IS NOT NULL THEN
+          ALTER TABLE retrieval_traces
+            ADD COLUMN IF NOT EXISTS derived_consulted JSONB NOT NULL DEFAULT '[]';
+          ALTER TABLE retrieval_traces
+            ADD COLUMN IF NOT EXISTS write_outcome TEXT NOT NULL DEFAULT 'no_durable_write'
+            CHECK (write_outcome IN (
+              'no_durable_write',
+              'operational_write',
+              'candidate_created',
+              'promoted',
+              'rejected',
+              'superseded'
+            ));
+          ALTER TABLE retrieval_traces
+            ADD COLUMN IF NOT EXISTS selected_intent TEXT
+            CHECK (selected_intent IS NULL OR selected_intent IN (
+              'task_resume',
+              'broad_synthesis',
+              'precision_lookup',
+              'mixed_scope_bridge',
+              'personal_profile_lookup',
+              'personal_episode_lookup'
+            ));
+          ALTER TABLE retrieval_traces
+            ADD COLUMN IF NOT EXISTS scope_gate_policy TEXT
+            CHECK (scope_gate_policy IS NULL OR scope_gate_policy IN ('allow', 'deny', 'defer'));
+          ALTER TABLE retrieval_traces
+            ADD COLUMN IF NOT EXISTS scope_gate_reason TEXT;
+
+          WITH backfill AS (
+            SELECT rt.id, substring(entry.value FROM 8) AS selected_intent
+            FROM retrieval_traces rt
+            CROSS JOIN LATERAL jsonb_array_elements_text(rt.verification) AS entry(value)
+            WHERE entry.value LIKE 'intent:%'
+              AND substring(entry.value FROM 8) IN (
+                'task_resume',
+                'broad_synthesis',
+                'precision_lookup',
+                'mixed_scope_bridge',
+                'personal_profile_lookup',
+                'personal_episode_lookup'
+              )
+          )
+          UPDATE retrieval_traces rt
+          SET selected_intent = backfill.selected_intent
+          FROM backfill
+          WHERE rt.id = backfill.id
+            AND rt.selected_intent IS NULL;
+
+          WITH gate_backfill AS (
+            SELECT
+              rt.id,
+              max(CASE
+                WHEN entry.value LIKE 'scope_gate:%' THEN substring(entry.value FROM 12)
+                ELSE NULL
+              END) AS scope_gate_policy,
+              max(CASE
+                WHEN entry.value LIKE 'scope_gate_reason:%' THEN substring(entry.value FROM 19)
+                ELSE NULL
+              END) AS scope_gate_reason
+            FROM retrieval_traces rt
+            CROSS JOIN LATERAL jsonb_array_elements_text(rt.verification) AS entry(value)
+            WHERE entry.value LIKE 'scope_gate:%'
+               OR entry.value LIKE 'scope_gate_reason:%'
+            GROUP BY rt.id
+          )
+          UPDATE retrieval_traces rt
+          SET scope_gate_policy = COALESCE(
+                CASE
+                  WHEN gate_backfill.scope_gate_policy IN ('allow', 'deny', 'defer')
+                    THEN gate_backfill.scope_gate_policy
+                  ELSE NULL
+                END,
+                rt.scope_gate_policy
+              ),
+              scope_gate_reason = COALESCE(gate_backfill.scope_gate_reason, rt.scope_gate_reason)
+          FROM gate_backfill
+          WHERE rt.id = gate_backfill.id
+            AND (
+              (rt.scope_gate_policy IS NULL AND gate_backfill.scope_gate_policy IN ('allow', 'deny', 'defer'))
+              OR (rt.scope_gate_reason IS NULL AND gate_backfill.scope_gate_reason IS NOT NULL)
+            );
+
+          CREATE INDEX IF NOT EXISTS idx_retrieval_traces_write_outcome
+            ON retrieval_traces(write_outcome, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_retrieval_traces_selected_intent
+            ON retrieval_traces(selected_intent, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_retrieval_traces_gate_policy
+            ON retrieval_traces(scope_gate_policy, created_at DESC)
+            WHERE scope_gate_policy IS NOT NULL;
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

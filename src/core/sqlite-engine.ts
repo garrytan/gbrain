@@ -259,11 +259,19 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
   scope TEXT NOT NULL,
   route TEXT NOT NULL DEFAULT '[]',
   source_refs TEXT NOT NULL DEFAULT '[]',
+  derived_consulted TEXT NOT NULL DEFAULT '[]',
   verification TEXT NOT NULL DEFAULT '[]',
+  write_outcome TEXT NOT NULL DEFAULT 'no_durable_write',
+  selected_intent TEXT,
+  scope_gate_policy TEXT,
+  scope_gate_reason TEXT,
   outcome TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_retrieval_traces_task_created ON retrieval_traces(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_retrieval_traces_write_outcome ON retrieval_traces(write_outcome, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_retrieval_traces_selected_intent ON retrieval_traces(selected_intent, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_retrieval_traces_gate_policy ON retrieval_traces(scope_gate_policy, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS note_manifest_entries (
   scope_id TEXT NOT NULL,
@@ -1295,21 +1303,28 @@ export class SQLiteEngine implements BrainEngine {
     const timestamp = nowIso();
     this.database.run(`
       INSERT INTO retrieval_traces (
-        id, task_id, scope, route, source_refs, verification, outcome, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       input.id,
       input.task_id ?? null,
       input.scope,
       JSON.stringify(input.route ?? []),
       JSON.stringify(input.source_refs ?? []),
+      JSON.stringify(input.derived_consulted ?? []),
       JSON.stringify(input.verification ?? []),
+      input.write_outcome ?? 'no_durable_write',
+      input.selected_intent ?? null,
+      input.scope_gate_policy ?? null,
+      input.scope_gate_reason ?? null,
       input.outcome,
       timestamp,
     ]);
 
     const row = this.database.query(`
-      SELECT id, task_id, scope, route, source_refs, verification, outcome, created_at
+      SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
       FROM retrieval_traces
       WHERE id = ?
     `).get(input.id) as Record<string, unknown> | null;
@@ -1319,7 +1334,8 @@ export class SQLiteEngine implements BrainEngine {
 
   async listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]> {
     const rows = this.database.query(`
-      SELECT id, task_id, scope, route, source_refs, verification, outcome, created_at
+      SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
       FROM retrieval_traces
       WHERE task_id = ?
       ORDER BY created_at DESC, id DESC
@@ -2524,12 +2540,23 @@ export class SQLiteEngine implements BrainEngine {
               scope TEXT NOT NULL,
               route TEXT NOT NULL DEFAULT '[]',
               source_refs TEXT NOT NULL DEFAULT '[]',
+              derived_consulted TEXT NOT NULL DEFAULT '[]',
               verification TEXT NOT NULL DEFAULT '[]',
+              write_outcome TEXT NOT NULL DEFAULT 'no_durable_write',
+              selected_intent TEXT,
+              scope_gate_policy TEXT,
+              scope_gate_reason TEXT,
               outcome TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
             CREATE INDEX IF NOT EXISTS idx_retrieval_traces_task_created
               ON retrieval_traces(task_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_retrieval_traces_write_outcome
+              ON retrieval_traces(write_outcome, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_retrieval_traces_selected_intent
+              ON retrieval_traces(selected_intent, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_retrieval_traces_gate_policy
+              ON retrieval_traces(scope_gate_policy, created_at DESC);
           `);
           break;
         case 9:
@@ -2815,11 +2842,111 @@ export class SQLiteEngine implements BrainEngine {
             `);
           }
           break;
+        case 22:
+          // Postgres/PGLite-only JSONB scalar-string repair; SQLite stores JSON as text.
+          break;
+        case 23:
+          {
+            this.ensureRetrievalTraceFidelitySchema();
+            this.backfillRetrievalTraceFidelityFields();
+          }
+          break;
       }
 
       await this.setConfig('version', String(version));
       });
     }
+  }
+
+  private ensureRetrievalTraceFidelitySchema(): void {
+    const columns = this.database.query(`PRAGMA table_info(retrieval_traces)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    const additions = [
+      ['derived_consulted', `ALTER TABLE retrieval_traces ADD COLUMN derived_consulted TEXT NOT NULL DEFAULT '[]'`],
+      ['write_outcome', `ALTER TABLE retrieval_traces ADD COLUMN write_outcome TEXT NOT NULL DEFAULT 'no_durable_write'`],
+      ['selected_intent', `ALTER TABLE retrieval_traces ADD COLUMN selected_intent TEXT`],
+      ['scope_gate_policy', `ALTER TABLE retrieval_traces ADD COLUMN scope_gate_policy TEXT`],
+      ['scope_gate_reason', `ALTER TABLE retrieval_traces ADD COLUMN scope_gate_reason TEXT`],
+    ] as const;
+
+    for (const [column, sql] of additions) {
+      if (!names.has(column)) {
+        this.database.exec(`${sql};`);
+      }
+    }
+
+    this.database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_retrieval_traces_write_outcome
+        ON retrieval_traces(write_outcome, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_retrieval_traces_selected_intent
+        ON retrieval_traces(selected_intent, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_retrieval_traces_gate_policy
+        ON retrieval_traces(scope_gate_policy, created_at DESC);
+    `);
+  }
+
+  private backfillRetrievalTraceFidelityFields(): void {
+    this.database.exec(`
+      UPDATE retrieval_traces
+      SET selected_intent = (
+        SELECT substr(value, 8)
+        FROM json_each(retrieval_traces.verification)
+        WHERE value LIKE 'intent:%'
+          AND substr(value, 8) IN (
+            'task_resume',
+            'broad_synthesis',
+            'precision_lookup',
+            'mixed_scope_bridge',
+            'personal_profile_lookup',
+            'personal_episode_lookup'
+          )
+        LIMIT 1
+      )
+      WHERE selected_intent IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM json_each(retrieval_traces.verification)
+          WHERE value LIKE 'intent:%'
+            AND substr(value, 8) IN (
+              'task_resume',
+              'broad_synthesis',
+              'precision_lookup',
+              'mixed_scope_bridge',
+              'personal_profile_lookup',
+              'personal_episode_lookup'
+            )
+        );
+
+      UPDATE retrieval_traces
+      SET scope_gate_policy = (
+            SELECT substr(value, 12)
+            FROM json_each(retrieval_traces.verification)
+            WHERE value LIKE 'scope_gate:%'
+              AND substr(value, 12) IN ('allow', 'deny', 'defer')
+            LIMIT 1
+          )
+      WHERE scope_gate_policy IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM json_each(retrieval_traces.verification)
+          WHERE value LIKE 'scope_gate:%'
+            AND substr(value, 12) IN ('allow', 'deny', 'defer')
+        );
+
+      UPDATE retrieval_traces
+      SET scope_gate_reason = (
+            SELECT substr(value, 19)
+            FROM json_each(retrieval_traces.verification)
+            WHERE value LIKE 'scope_gate_reason:%'
+            LIMIT 1
+          )
+      WHERE scope_gate_reason IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM json_each(retrieval_traces.verification)
+          WHERE value LIKE 'scope_gate_reason:%'
+        );
+    `);
   }
 
   private memoryCandidateStatusCheckAllows(status: string): boolean {
@@ -3381,7 +3508,12 @@ function rowToRetrievalTrace(row: Record<string, unknown>): RetrievalTrace {
     scope: row.scope as RetrievalTrace['scope'],
     route: parseJsonArray(row.route),
     source_refs: parseJsonArray(row.source_refs),
+    derived_consulted: parseJsonArray(row.derived_consulted),
     verification: parseJsonArray(row.verification),
+    write_outcome: (row.write_outcome as RetrievalTrace['write_outcome'] | null) ?? 'no_durable_write',
+    selected_intent: (row.selected_intent as RetrievalTrace['selected_intent'] | null) ?? null,
+    scope_gate_policy: (row.scope_gate_policy as RetrievalTrace['scope_gate_policy'] | null) ?? null,
+    scope_gate_reason: row.scope_gate_reason == null ? null : String(row.scope_gate_reason),
     outcome: String(row.outcome ?? ''),
     created_at: new Date(String(row.created_at)),
   };

@@ -1021,6 +1021,14 @@ export interface RetrievalRouteSelectorResult {
 
 export type ScopeGateScope = 'work' | 'personal' | 'mixed' | 'unknown';
 export type ScopeGatePolicy = 'allow' | 'defer' | 'deny';
+
+export type RetrievalTraceWriteOutcome =
+  | 'no_durable_write'
+  | 'operational_write'
+  | 'candidate_created'
+  | 'promoted'
+  | 'rejected'
+  | 'superseded';
 export type ScopeGateIntent = RetrievalRouteIntent;
 
 export interface ScopeGateDecisionInput {
@@ -1436,7 +1444,12 @@ export interface RetrievalTrace {
   scope: ScopeGateScope;
   route: string[];
   source_refs: string[];
+  derived_consulted: string[];
   verification: string[];
+  write_outcome: RetrievalTraceWriteOutcome;
+  selected_intent: RetrievalRouteIntent | null;
+  scope_gate_policy: ScopeGatePolicy | null;
+  scope_gate_reason: string | null;
   outcome: string;
   created_at: Date;
 }
@@ -1448,7 +1461,12 @@ export interface RetrievalTraceInput {
   scope: ScopeGateScope;
   route?: string[];
   source_refs?: string[];
+  derived_consulted?: string[];
   verification?: string[];
+  write_outcome?: RetrievalTraceWriteOutcome;
+  selected_intent?: RetrievalRouteIntent | null;
+  scope_gate_policy?: ScopeGatePolicy | null;
+  scope_gate_reason?: string | null;
   outcome: string;
 }
 

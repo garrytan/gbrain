@@ -1044,17 +1044,24 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const rows = await sql`
       INSERT INTO retrieval_traces (
-        id, task_id, scope, route, source_refs, verification, outcome
+        id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome
       ) VALUES (
         ${input.id},
         ${input.task_id ?? null},
         ${input.scope},
         ${sql.json(input.route ?? [])},
         ${sql.json(input.source_refs ?? [])},
+        ${sql.json(input.derived_consulted ?? [])},
         ${sql.json(input.verification ?? [])},
+        ${input.write_outcome ?? 'no_durable_write'},
+        ${input.selected_intent ?? null},
+        ${input.scope_gate_policy ?? null},
+        ${input.scope_gate_reason ?? null},
         ${input.outcome}
       )
-      RETURNING id, task_id, scope, route, source_refs, verification, outcome, created_at
+      RETURNING id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
     `;
     return rowToRetrievalTrace(rows[0] as Record<string, unknown>);
   }
@@ -1062,7 +1069,8 @@ export class PostgresEngine implements BrainEngine {
   async listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]> {
     const sql = this.sql;
     const rows = await sql`
-      SELECT id, task_id, scope, route, source_refs, verification, outcome, created_at
+      SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
       FROM retrieval_traces
       WHERE task_id = ${taskId}
       ORDER BY created_at DESC, id DESC

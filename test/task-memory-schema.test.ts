@@ -5,6 +5,14 @@ import { join } from 'path';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
+const RETRIEVAL_TRACE_FIDELITY_COLUMNS = [
+  'derived_consulted',
+  'write_outcome',
+  'selected_intent',
+  'scope_gate_policy',
+  'scope_gate_reason',
+];
+
 describe('task-memory schema', () => {
   const tempPaths: string[] = [];
 
@@ -42,6 +50,11 @@ describe('task-memory schema', () => {
       'task_working_sets',
     ]);
 
+    const columns = db
+      .query(`PRAGMA table_info(retrieval_traces)`)
+      .all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining(RETRIEVAL_TRACE_FIDELITY_COLUMNS));
+
     await engine.disconnect();
   });
 
@@ -68,6 +81,16 @@ describe('task-memory schema', () => {
       'task_threads',
       'task_working_sets',
     ]);
+
+    const columns = await (engine as any).db.query(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'retrieval_traces'`,
+    );
+    expect(columns.rows.map((row: { column_name: string }) => row.column_name)).toEqual(
+      expect.arrayContaining(RETRIEVAL_TRACE_FIDELITY_COLUMNS),
+    );
 
     await engine.disconnect();
   });
