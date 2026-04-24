@@ -75,6 +75,9 @@ CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
+-- Note: vector dimensions must match your embedding provider.
+-- bge-m3 (Ollama) = 1024 dims, text-embedding-3-large (OpenAI) = 1536 dims.
+-- Change dimension below and re-run import with --fresh to re-embed existing data.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS content_chunks (
   id            SERIAL PRIMARY KEY,
@@ -82,8 +85,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  embedding     vector(1024),
+  model         TEXT    NOT NULL DEFAULT 'bge-m3',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -217,8 +220,8 @@ CREATE TABLE IF NOT EXISTS config (
 
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
-  ('embedding_model', 'text-embedding-3-large'),
-  ('embedding_dimensions', '1536'),
+  ('embedding_model', 'bge-m3'),
+  ('embedding_dimensions', '1024'),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
 

@@ -1,29 +1,38 @@
 /**
  * Embedding Service
- * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * Supports two backends:
+ * - OpenAI text-embedding-3-large (1536 dimensions) via OpenAI API
+ * - Ollama with bge-m3 (1024 dimensions) for local inference
+ *
+ * Set OLLAMA_URL to enable Ollama backend.
+ * e.g. OLLAMA_URL=http://localhost:11434
+ *
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+// Config
+const OLLAMA_URL = process.env['OLLAMA_URL'] ?? '';
+const USE_OLLAMA = Boolean(OLLAMA_URL);
+const OPENAI_MODEL = 'text-embedding-3-large';
+const OLLAMA_MODEL = 'bge-m3';
+const DIMENSIONS = 1024; // bge-m3 uses 1024 dims; OpenAI uses 1536
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
 
-let client: OpenAI | null = null;
+let openAIClient: OpenAI | null = null;
 
-function getClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI();
+function getOpenAIClient(): OpenAI {
+  if (!openAIClient) {
+    openAIClient = new OpenAI();
   }
-  return client;
+  return openAIClient;
 }
 
 export async function embed(text: string): Promise<Float32Array> {
@@ -51,7 +60,9 @@ export async function embedBatch(
   // Process in batches of BATCH_SIZE
   for (let i = 0; i < truncated.length; i += BATCH_SIZE) {
     const batch = truncated.slice(i, i + BATCH_SIZE);
-    const batchResults = await embedBatchWithRetry(batch);
+    const batchResults = USE_OLLAMA
+      ? await embedBatchOllama(batch)
+      : await embedBatchOpenAI(batch);
     results.push(...batchResults);
     options.onBatchComplete?.(results.length, truncated.length);
   }
@@ -59,22 +70,19 @@ export async function embedBatch(
   return results;
 }
 
-async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
+async function embedBatchOpenAI(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await getClient().embeddings.create({
-        model: MODEL,
+      const response = await getOpenAIClient().embeddings.create({
+        model: OPENAI_MODEL,
         input: texts,
-        dimensions: DIMENSIONS,
+        dimensions: 1536,
       });
 
-      // Sort by index to maintain order
       const sorted = response.data.sort((a, b) => a.index - b.index);
       return sorted.map(d => new Float32Array(d.embedding));
     } catch (e: unknown) {
       if (attempt === MAX_RETRIES - 1) throw e;
-
-      // Check for rate limit with Retry-After header
       let delay = exponentialDelay(attempt);
 
       if (e instanceof OpenAI.APIError && e.status === 429) {
@@ -90,9 +98,30 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
       await sleep(delay);
     }
   }
+  throw new Error('OpenAI embedding failed after all retries');
+}
 
-  // Should not reach here
-  throw new Error('Embedding failed after all retries');
+async function embedBatchOllama(texts: string[]): Promise<Float32Array[]> {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`${OLLAMA_URL}/api/embed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: OLLAMA_MODEL, input: texts }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama embedding failed: ${response.status} ${response.statusText}`);
+      }
+
+      const data = (await response.json()) as { embeddings: number[][] };
+      return data.embeddings.map(embedding => new Float32Array(embedding));
+    } catch (e: unknown) {
+      if (attempt === MAX_RETRIES - 1) throw e;
+      await sleep(exponentialDelay(attempt));
+    }
+  }
+  throw new Error('Ollama embedding failed after all retries');
 }
 
 function exponentialDelay(attempt: number): number {
@@ -104,4 +133,4 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
+export { OPENAI_MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS, USE_OLLAMA };
