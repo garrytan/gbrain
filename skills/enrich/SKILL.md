@@ -53,6 +53,8 @@ A brain page should read like an intelligence dossier, not a LinkedIn scrape.
 Facts are table stakes. Texture is the value -- what do they believe, what are
 they building, what makes them tick, where are they headed.
 
+> **Convention:** See `skills/conventions/quality.md` for citation formats.
+
 ## Citation Requirements (MANDATORY)
 
 Every fact must carry an inline `[Source: ...]` citation.
@@ -106,7 +108,7 @@ Extract people, companies, concepts from the incoming signal.
 For each entity:
 - `gbrain search "name"` -- does a page already exist?
 - **If yes:** UPDATE path (add new signal, update compiled truth if material)
-- **If no:** CREATE path (check notability gate first, then create)
+- **If no:** CREATE path (check notability gate first -- see `skills/_brain-filing-rules.md` -- then create)
 
 ### Step 3: Extract signal from source
 
