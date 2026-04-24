@@ -7,6 +7,7 @@ import { importFile } from '../core/import-file.ts';
 import { loadConfig } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { isSyncable } from '../core/sync.ts';
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -296,6 +297,14 @@ export function collectMarkdownFiles(dir: string): string[] {
       if (stat.isDirectory()) {
         walk(full);
       } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
+        // Apply the same filter `gbrain sync` uses so the two walkers can't
+        // disagree about what counts as a page. Without this, scaffolding
+        // files (README.md / index.md / log.md / schema.md) and ops/ paths
+        // leak into `gbrain import` even though `gbrain sync` correctly
+        // skips them, polluting the pages table with orphan scaffolding
+        // rows that drag brain_score's noOrphans factor down. See #345.
+        const relPath = relative(dir, full).replace(/\\/g, '/');
+        if (!isSyncable(relPath)) continue;
         files.push(full);
       }
     }
