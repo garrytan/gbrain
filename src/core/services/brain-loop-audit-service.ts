@@ -5,13 +5,18 @@ import type {
   AuditBrainLoopReport,
   AuditLinkedWriteCounts,
   AuditTaskCompliance,
+  CanonicalHandoffEntry,
   MemoryCandidateEntry,
+  MemoryCandidateContradictionEntry,
+  MemoryCandidateSupersessionEntry,
   RetrievalTrace,
   ScopeGateScope,
+  TaskScope,
   TaskThread,
 } from '../types.ts';
 
 const TRACE_BATCH_SIZE = 500;
+const LINKED_WRITE_LOOKUP_BATCH_SIZE = 500;
 const TASK_BATCH_SIZE = 500;
 const TASK_SCAN_CAP = 5000;
 const CANDIDATE_BATCH_SIZE = 100;
@@ -33,7 +38,10 @@ export async function auditBrainLoop(
   const traceIds = traces.map((trace) => trace.id);
   const linkedWrites = await countLinkedWrites(engine, traceIds);
   const approximate = await approximateUnlinkedCandidateEvents(engine, since, until);
-  const taskCompliance = await computeTaskCompliance(engine, traces, limit);
+  const taskCompliance = await computeTaskCompliance(engine, traces, limit, {
+    task_id: input.task_id,
+    scope: input.scope,
+  });
   const canonicalRefCount = traces.reduce((sum, trace) => sum + trace.source_refs.length, 0);
   const derivedRefCount = traces.reduce((sum, trace) => sum + trace.derived_consulted.length, 0);
 
@@ -100,11 +108,20 @@ async function countLinkedWrites(
     };
   }
 
-  const [handoffs, supersessions, contradictions] = await Promise.all([
-    engine.listCanonicalHandoffEntriesByInteractionIds(traceIds),
-    engine.listMemoryCandidateSupersessionEntriesByInteractionIds(traceIds),
-    engine.listMemoryCandidateContradictionEntriesByInteractionIds(traceIds),
-  ]);
+  const handoffs: CanonicalHandoffEntry[] = [];
+  const supersessions: MemoryCandidateSupersessionEntry[] = [];
+  const contradictions: MemoryCandidateContradictionEntry[] = [];
+  for (const chunk of chunkArray(traceIds, LINKED_WRITE_LOOKUP_BATCH_SIZE)) {
+    const [handoffBatch, supersessionBatch, contradictionBatch] = await Promise.all([
+      engine.listCanonicalHandoffEntriesByInteractionIds(chunk),
+      engine.listMemoryCandidateSupersessionEntriesByInteractionIds(chunk),
+      engine.listMemoryCandidateContradictionEntriesByInteractionIds(chunk),
+    ]);
+    handoffs.push(...handoffBatch);
+    supersessions.push(...supersessionBatch);
+    contradictions.push(...contradictionBatch);
+  }
+
   const linkedTraceIds = new Set<string>();
   for (const handoff of handoffs) {
     if (handoff.interaction_id) linkedTraceIds.add(handoff.interaction_id);
@@ -155,17 +172,12 @@ async function computeTaskCompliance(
   engine: BrainEngine,
   traces: RetrievalTrace[],
   limit: number,
+  filters: {
+    task_id?: string;
+    scope?: ScopeGateScope;
+  } = {},
 ): Promise<AuditTaskCompliance> {
-  const tasks: TaskThread[] = [];
-  let cappedAt: number | null = null;
-  for (let offset = 0; offset < TASK_SCAN_CAP; offset += TASK_BATCH_SIZE) {
-    const batch = await engine.listTaskThreads({ limit: TASK_BATCH_SIZE, offset });
-    tasks.push(...batch);
-    if (batch.length < TASK_BATCH_SIZE) break;
-    if (offset + TASK_BATCH_SIZE >= TASK_SCAN_CAP) {
-      cappedAt = TASK_SCAN_CAP;
-    }
-  }
+  const { tasks, cappedAt } = await listTaskThreadsForCompliance(engine, filters);
 
   const lastTraceByTask = new Map<string, RetrievalTrace>();
   for (const trace of traces) {
@@ -190,6 +202,49 @@ async function computeTaskCompliance(
     task_scan_capped_at: cappedAt,
     top_backlog: backlog,
   };
+}
+
+async function listTaskThreadsForCompliance(
+  engine: BrainEngine,
+  filters: {
+    task_id?: string;
+    scope?: ScopeGateScope;
+  },
+): Promise<{ tasks: TaskThread[]; cappedAt: number | null }> {
+  if (filters.task_id !== undefined) {
+    const task = await engine.getTaskThread(filters.task_id);
+    if (!task || (filters.scope !== undefined && task.scope !== filters.scope)) {
+      return { tasks: [], cappedAt: null };
+    }
+    return { tasks: [task], cappedAt: null };
+  }
+
+  if (filters.scope !== undefined && !isTaskScope(filters.scope)) {
+    return { tasks: [], cappedAt: null };
+  }
+
+  const tasks: TaskThread[] = [];
+  const baseFilters = filters.scope === undefined ? {} : { scope: filters.scope };
+  for (let offset = 0; tasks.length < TASK_SCAN_CAP; offset += TASK_BATCH_SIZE) {
+    const remaining = TASK_SCAN_CAP - tasks.length;
+    const limit = Math.min(TASK_BATCH_SIZE, remaining);
+    const batch = await engine.listTaskThreads({ ...baseFilters, limit, offset });
+    tasks.push(...batch);
+    if (batch.length < limit) {
+      return { tasks, cappedAt: null };
+    }
+  }
+
+  const overflow = await engine.listTaskThreads({
+    ...baseFilters,
+    limit: 1,
+    offset: TASK_SCAN_CAP,
+  });
+  return { tasks, cappedAt: overflow.length > 0 ? TASK_SCAN_CAP : null };
+}
+
+function isTaskScope(scope: ScopeGateScope): scope is TaskScope {
+  return scope === 'work' || scope === 'personal' || scope === 'mixed';
 }
 
 function normalizeDate(input: Date | string | undefined, fallback: Date): Date {
@@ -258,6 +313,14 @@ function ratio(canonicalRefCount: number, derivedRefCount: number): number {
 function isInWindow(value: Date | string, since: Date, until: Date): boolean {
   const date = value instanceof Date ? value : new Date(value);
   return date >= since && date < until;
+}
+
+function chunkArray<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function buildSummaryLines(
