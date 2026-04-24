@@ -370,7 +370,12 @@ export function rowToRetrievalTrace(row: Record<string, unknown>): RetrievalTrac
     scope: row.scope as RetrievalTrace['scope'],
     route: parseJsonStringArray(row.route),
     source_refs: parseJsonStringArray(row.source_refs),
+    derived_consulted: parseJsonStringArray(row.derived_consulted),
     verification: parseJsonStringArray(row.verification),
+    write_outcome: (row.write_outcome as RetrievalTrace['write_outcome'] | null) ?? 'no_durable_write',
+    selected_intent: (row.selected_intent as RetrievalTrace['selected_intent'] | null) ?? null,
+    scope_gate_policy: (row.scope_gate_policy as RetrievalTrace['scope_gate_policy'] | null) ?? null,
+    scope_gate_reason: (row.scope_gate_reason as string | null) ?? null,
     outcome: (row.outcome as string | null) ?? '',
     created_at: new Date(row.created_at as string),
   };

@@ -262,7 +262,12 @@ test('record_retrieval_trace derives scope from the task thread and persists the
     outcome: 'resume path assembled',
     route: ['task_thread', 'working_set', 'attempts'],
     source_refs: ['task-thread:task-1'],
+    derived_consulted: ['context-map:workspace'],
     verification: ['current branch verified'],
+    write_outcome: 'operational_write',
+    selected_intent: 'task_resume',
+    scope_gate_policy: 'allow',
+    scope_gate_reason: 'explicit_work_scope',
   });
 
   expect(calls).toHaveLength(1);
@@ -272,7 +277,12 @@ test('record_retrieval_trace derives scope from the task thread and persists the
     outcome: 'resume path assembled',
     route: ['task_thread', 'working_set', 'attempts'],
     source_refs: ['task-thread:task-1'],
+    derived_consulted: ['context-map:workspace'],
     verification: ['current branch verified'],
+    write_outcome: 'operational_write',
+    selected_intent: 'task_resume',
+    scope_gate_policy: 'allow',
+    scope_gate_reason: 'explicit_work_scope',
   });
   expect((result as any).created_at).toBeInstanceOf(Date);
 });

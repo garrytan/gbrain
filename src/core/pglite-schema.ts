@@ -206,7 +206,12 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
   scope        TEXT NOT NULL,
   route        JSONB NOT NULL DEFAULT '[]',
   source_refs  JSONB NOT NULL DEFAULT '[]',
+  derived_consulted JSONB NOT NULL DEFAULT '[]',
   verification JSONB NOT NULL DEFAULT '[]',
+  write_outcome TEXT NOT NULL DEFAULT 'no_durable_write',
+  selected_intent TEXT,
+  scope_gate_policy TEXT,
+  scope_gate_reason TEXT,
   outcome      TEXT NOT NULL DEFAULT '',
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );

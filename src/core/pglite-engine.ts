@@ -997,16 +997,23 @@ export class PGLiteEngine implements BrainEngine {
   async putRetrievalTrace(input: RetrievalTraceInput): Promise<RetrievalTrace> {
     const { rows } = await this.db.query(
       `INSERT INTO retrieval_traces (
-        id, task_id, scope, route, source_refs, verification, outcome
-      ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7)
-      RETURNING id, task_id, scope, route, source_refs, verification, outcome, created_at`,
+        id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome
+      ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)
+      RETURNING id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at`,
       [
         input.id,
         input.task_id ?? null,
         input.scope,
         JSON.stringify(input.route ?? []),
         JSON.stringify(input.source_refs ?? []),
+        JSON.stringify(input.derived_consulted ?? []),
         JSON.stringify(input.verification ?? []),
+        input.write_outcome ?? 'no_durable_write',
+        input.selected_intent ?? null,
+        input.scope_gate_policy ?? null,
+        input.scope_gate_reason ?? null,
         input.outcome,
       ],
     );
@@ -1015,7 +1022,8 @@ export class PGLiteEngine implements BrainEngine {
 
   async listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]> {
     const { rows } = await this.db.query(
-      `SELECT id, task_id, scope, route, source_refs, verification, outcome, created_at
+      `SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
        FROM retrieval_traces
        WHERE task_id = $1
        ORDER BY created_at DESC, id DESC

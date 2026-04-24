@@ -63,8 +63,15 @@ test('retrieval route selector persists a task-scoped trace for successful broad
       'canonical_follow_through',
     ]);
     expect(result.trace?.source_refs).toContain('page:systems/mbrain');
+    expect(result.trace?.derived_consulted).toEqual([
+      (result.route?.payload as { map_id?: string } | undefined)?.map_id,
+    ]);
     expect(result.trace?.verification).toContain('intent:broad_synthesis');
     expect(result.trace?.verification).toContain('selection_reason:selected_fresh_match');
+    expect(result.trace?.selected_intent).toBe('broad_synthesis');
+    expect(result.trace?.write_outcome).toBe('no_durable_write');
+    expect(result.trace?.scope_gate_policy).toBeNull();
+    expect(result.trace?.scope_gate_reason).toBeNull();
     expect(result.trace?.outcome).toBe('broad_synthesis route selected');
   } finally {
     await engine.disconnect();
@@ -272,8 +279,13 @@ test('retrieval route selector persists scope-gate evidence when explicit scope 
     expect(result.route).toBeNull();
     expect(result.scope_gate?.resolved_scope).toBe('personal');
     expect(result.scope_gate?.policy).toBe('deny');
+    expect(result.trace?.scope).toBe('personal');
     expect(result.trace?.verification).toContain('scope_gate:deny');
     expect(result.trace?.verification).toContain('scope_gate_reason:unsupported_scope_intent');
+    expect(result.trace?.scope_gate_policy).toBe('deny');
+    expect(result.trace?.scope_gate_reason).toBe('unsupported_scope_intent');
+    expect(result.trace?.selected_intent).toBe('precision_lookup');
+    expect(result.trace?.write_outcome).toBe('no_durable_write');
     expect(result.trace?.outcome).toBe('precision_lookup route unavailable');
   } finally {
     await engine.disconnect();

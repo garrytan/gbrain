@@ -51,6 +51,7 @@ import { rebuildNoteSectionEntries } from './services/note-section-service.ts';
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
 import * as db from './db.ts';
 import { getUnsupportedCapabilityReason } from './offline-profile.ts';
+import type { RetrievalRouteIntent, RetrievalTraceWriteOutcome, ScopeGatePolicy } from './types.ts';
 
 // --- MCP server instructions ---
 //
@@ -133,6 +134,30 @@ export interface Operation {
     aliases?: Record<string, string>;
   };
 }
+
+const RETRIEVAL_TRACE_WRITE_OUTCOMES = [
+  'no_durable_write',
+  'operational_write',
+  'candidate_created',
+  'promoted',
+  'rejected',
+  'superseded',
+] as const satisfies readonly RetrievalTraceWriteOutcome[];
+
+const RETRIEVAL_ROUTE_INTENTS = [
+  'task_resume',
+  'broad_synthesis',
+  'precision_lookup',
+  'mixed_scope_bridge',
+  'personal_profile_lookup',
+  'personal_episode_lookup',
+] as const satisfies readonly RetrievalRouteIntent[];
+
+const SCOPE_GATE_POLICIES = [
+  'allow',
+  'defer',
+  'deny',
+] as const satisfies readonly ScopeGatePolicy[];
 
 export interface ParseOpArgsOptions {
   warn?: (msg: string) => void;
@@ -1019,6 +1044,21 @@ function parseStringListParam(value: unknown, key: string): string[] | undefined
     .split(/\r?\n|,/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function parseEnumParam<T extends string>(
+  value: unknown,
+  key: string,
+  allowed: readonly T[],
+): T | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new OperationError('invalid_params', `${key} must be a string.`);
+  }
+  if (!(allowed as readonly string[]).includes(value)) {
+    throw new OperationError('invalid_params', `${key} must be one of: ${allowed.join(', ')}.`);
+  }
+  return value as T;
 }
 
 function parseOptionalDateParam(value: unknown, key: string): Date | undefined {
@@ -2907,14 +2947,24 @@ const record_retrieval_trace: Operation = {
     outcome: { type: 'string', required: true, description: 'Trace outcome summary' },
     route: { type: 'array', items: { type: 'string' }, description: 'Ordered retrieval route' },
     source_refs: { type: 'array', items: { type: 'string' }, description: 'Source references consulted' },
+    derived_consulted: { type: 'array', items: { type: 'string' }, description: 'Derived artifacts consulted separately from canonical source refs' },
     verification: { type: 'array', items: { type: 'string' }, description: 'Verification steps performed' },
+    write_outcome: { type: 'string', enum: [...RETRIEVAL_TRACE_WRITE_OUTCOMES], description: 'Structured write outcome for the trace' },
+    selected_intent: { type: 'string', enum: [...RETRIEVAL_ROUTE_INTENTS], description: 'Structured retrieval intent selected for the trace' },
+    scope_gate_policy: { type: 'string', enum: [...SCOPE_GATE_POLICIES], description: 'Structured scope gate policy, when evaluated' },
+    scope_gate_reason: { type: 'string', description: 'Structured scope gate reason, when evaluated' },
   },
   mutating: true,
   handler: async (ctx, p) => {
     const taskId = String(p.task_id);
     const route = parseStringListParam(p.route, 'route') ?? [];
     const sourceRefs = parseStringListParam(p.source_refs, 'source_refs') ?? [];
+    const derivedConsulted = parseStringListParam(p.derived_consulted, 'derived_consulted') ?? [];
     const verification = parseStringListParam(p.verification, 'verification') ?? [];
+    const writeOutcome = parseEnumParam(p.write_outcome, 'write_outcome', RETRIEVAL_TRACE_WRITE_OUTCOMES);
+    const selectedIntent = parseEnumParam(p.selected_intent, 'selected_intent', RETRIEVAL_ROUTE_INTENTS);
+    const scopeGatePolicy = parseEnumParam(p.scope_gate_policy, 'scope_gate_policy', SCOPE_GATE_POLICIES);
+    const scopeGateReason = typeof p.scope_gate_reason === 'string' ? p.scope_gate_reason : undefined;
 
     if (ctx.dryRun) {
       return {
@@ -2924,7 +2974,12 @@ const record_retrieval_trace: Operation = {
         outcome: String(p.outcome),
         route,
         source_refs: sourceRefs,
+        derived_consulted: derivedConsulted,
         verification,
+        write_outcome: writeOutcome,
+        selected_intent: selectedIntent,
+        scope_gate_policy: scopeGatePolicy,
+        scope_gate_reason: scopeGateReason,
       };
     }
 
@@ -2935,7 +2990,12 @@ const record_retrieval_trace: Operation = {
       scope: thread.scope,
       route,
       source_refs: sourceRefs,
+      derived_consulted: derivedConsulted,
       verification,
+      write_outcome: writeOutcome,
+      selected_intent: selectedIntent,
+      scope_gate_policy: scopeGatePolicy,
+      scope_gate_reason: scopeGateReason ?? null,
       outcome: String(p.outcome),
     });
   },

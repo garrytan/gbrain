@@ -34,7 +34,7 @@ for the full spec (14 scenarios + invariant catalog + rollout plan).
 | S11 | `s11-code-claim-verification.test.ts` | L4 | 🔲 2 `todo` (subsystem not implemented) |
 | S12 | `s12-baseline-gated-acceptance.test.ts` | E1 | ✅ green (tests regression-fail case) |
 | S13 | `s13-personal-export-boundary.test.ts` | I5, G2 | ✅ green |
-| S14 | `s14-retrieval-trace-fidelity.test.ts` | L6 | ✅ green + 1 `todo` (`derived_consulted` field not persisted) |
+| S14 | `s14-retrieval-trace-fidelity.test.ts` | L6 | ✅ green |
 
 Legend:
 - ✅ green = passes on current code
@@ -53,6 +53,4 @@ Legend:
 - **L1** request-level intent classifier (spec §5)
 - **L2** canonical-first ranking in broad synthesis (spec §5)
 - **L4** code claim verification subsystem (spec §5)
-- **L6** `derived_consulted` field in retrieval traces (spec §5, small schema migration)
-
 Each is documented as a `test.todo` in the corresponding scenario file.

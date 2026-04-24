@@ -297,8 +297,8 @@ async function persistSelectedRouteTrace(
   const thread = taskId != null ? await engine.getTaskThread(taskId) : null;
   const threadMissing = taskId != null && thread == null;
 
-  const scope: ScopeGateScope = thread?.scope
-    ?? selected.scope_gate?.resolved_scope
+  const scope: ScopeGateScope = selected.scope_gate?.resolved_scope
+    ?? thread?.scope
     ?? 'unknown';
 
   return engine.putRetrievalTrace({
@@ -307,12 +307,17 @@ async function persistSelectedRouteTrace(
     scope,
     route: selected.route?.retrieval_route ?? [],
     source_refs: collectSourceRefs(selected.route),
+    derived_consulted: collectDerivedConsulted(selected.route),
     verification: [
       `intent:${selected.selected_intent}`,
       `selection_reason:${selected.selection_reason}`,
       ...buildScopeGateVerification(selected.scope_gate),
       ...(threadMissing ? [formatMissingTaskVerification(taskId)] : []),
     ],
+    write_outcome: 'no_durable_write',
+    selected_intent: selected.selected_intent,
+    scope_gate_policy: selected.scope_gate?.policy ?? null,
+    scope_gate_reason: selected.scope_gate?.decision_reason ?? null,
     outcome: selected.route
       ? `${selected.selected_intent} route selected`
       : `${selected.selected_intent} route unavailable`,
@@ -390,4 +395,26 @@ function collectSourceRefs(route: RetrievalRouteSelection | null): string[] {
   }).filter((value): value is string => value !== null);
 
   return [...new Set(collected)];
+}
+
+function collectDerivedConsulted(route: RetrievalRouteSelection | null): string[] {
+  if (!route) return [];
+
+  switch (route.route_kind) {
+  case 'broad_synthesis': {
+    const payload = route.payload as BroadSynthesisRoute;
+    return payload.map_id ? [payload.map_id] : [];
+  }
+  case 'mixed_scope_bridge': {
+    const payload = route.payload as MixedScopeBridgeRoute;
+    return payload.work_route.map_id ? [payload.work_route.map_id] : [];
+  }
+  case 'task_resume':
+  case 'precision_lookup':
+  case 'personal_profile_lookup':
+  case 'personal_episode_lookup':
+    return [];
+  default:
+    return [];
+  }
 }

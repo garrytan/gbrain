@@ -20,6 +20,8 @@
 import { describe, expect, test } from 'bun:test';
 import { allocateSqliteBrain, seedWorkTaskThread } from './helpers.ts';
 import { selectRetrievalRoute } from '../../src/core/services/retrieval-route-selector-service.ts';
+import { importFromContent } from '../../src/core/import-file.ts';
+import { buildStructuralContextMapEntry } from '../../src/core/services/context-map-service.ts';
 
 describe('S14 — retrieval trace fidelity', () => {
   test('a persisted task_resume trace records scope, route, verification, and outcome', async () => {
@@ -52,19 +54,50 @@ describe('S14 — retrieval trace fidelity', () => {
     }
   });
 
-  // L6 GAP — the trace schema does not separate canonical reads from
-  // derived consultations. Broad-synthesis consults context maps (derived
-  // orientation) and curated notes (canonical content). The current trace
-  // flattens both into `source_refs`. Per the contract these must be
-  // distinguishable.
-  //
-  // Minimum fix: add `derived_consulted JSONB NOT NULL DEFAULT '[]'` to the
-  // retrieval_traces table (via migration) and have the selector populate
-  // it from the route payload's map references. Until that lands, this test
-  // is marked as a placeholder so the gap is visible in the scenario index.
-  test.todo(
-    "S14 gap — retrieval_traces needs a `derived_consulted` field distinct from canonical `source_refs` (spec §5, fix: add schema column + selector populate)",
-  );
+  test('a persisted broad_synthesis trace separates canonical reads from derived consultations', async () => {
+    const handle = await allocateSqliteBrain('s14-derived');
+
+    try {
+      await seedWorkTaskThread(handle.engine, 'task-derived');
+      await importFromContent(handle.engine, 'systems/mbrain', [
+        '---',
+        'type: system',
+        'title: MBrain',
+        '---',
+        '# Overview',
+        'See [[concepts/note-manifest]].',
+      ].join('\n'), { path: 'systems/mbrain.md' });
+      await importFromContent(handle.engine, 'concepts/note-manifest', [
+        '---',
+        'type: concept',
+        'title: Note Manifest',
+        '---',
+        '# Purpose',
+        'Indexes [[systems/mbrain]].',
+      ].join('\n'), { path: 'concepts/note-manifest.md' });
+      await buildStructuralContextMapEntry(handle.engine);
+
+      const result = await selectRetrievalRoute(handle.engine, {
+        intent: 'broad_synthesis',
+        task_id: 'task-derived',
+        query: 'mbrain',
+        persist_trace: true,
+      });
+
+      expect(result.route).not.toBeNull();
+      const traces = await handle.engine.listRetrievalTraces('task-derived', { limit: 5 });
+      expect(traces.length).toBe(1);
+      const trace = traces[0]!;
+      const mapId = (result.route?.payload as { map_id?: string } | undefined)?.map_id;
+      expect(typeof mapId).toBe('string');
+      expect(trace.source_refs).toContain('page:systems/mbrain');
+      expect(trace.source_refs.some((ref) => ref.startsWith('section:concepts/note-manifest#'))).toBe(true);
+      expect(trace.source_refs).not.toContain(mapId!);
+      expect(trace.derived_consulted).toEqual([mapId]);
+    } finally {
+      await handle.teardown();
+    }
+  });
 
   // L6 also requires `outcome` to reflect whether the interaction produced
   // writes. Current code uses `${intent} route selected` as a free-form
