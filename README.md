@@ -30,6 +30,11 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 
 That's it. The agent clones the repo, installs GBrain, sets up the brain, loads 29 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
 
+Hosted agents should install GBrain and the brain repo on persistent storage.
+For AlphaClaw/OpenClaw on Railway, use `/data/gbrain` and `/data/brain`;
+the `~/gbrain` and `~/brain` defaults are only safe when the home directory
+survives deploys and restarts.
+
 If your agent doesn't auto-read `AGENTS.md`, point it at that file first:
 `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` is the non-Claude
 agent operating protocol (install, read order, trust boundary, common tasks). For

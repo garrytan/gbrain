@@ -6,7 +6,17 @@ start here.
 
 ## Install (5 min)
 
-1. Clone: `git clone https://github.com/garrytan/gbrain ~/gbrain && cd ~/gbrain`
+1. Choose persistent paths, then clone:
+   ```bash
+   if [ -d /data ]; then
+     export GBRAIN_HOME="${GBRAIN_HOME:-/data/gbrain}"
+     export BRAIN_REPO="${BRAIN_REPO:-/data/brain}"
+   else
+     export GBRAIN_HOME="${GBRAIN_HOME:-$HOME/gbrain}"
+     export BRAIN_REPO="${BRAIN_REPO:-$HOME/brain}"
+   fi
+   git clone https://github.com/garrytan/gbrain "$GBRAIN_HOME" && cd "$GBRAIN_HOME"
+   ```
 2. Install: `bun install`
 3. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
