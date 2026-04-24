@@ -128,6 +128,50 @@ function stripCodeBlocks(content: string): string {
 }
 
 /**
+ * A code-reference found in markdown prose. Created by extractCodeRefs and
+ * consumed by importFromFile's tail to build doc↔impl edges (v0.19.0 E1).
+ */
+export interface CodeRef {
+  /** Raw matched path (e.g. 'src/core/sync.ts'). */
+  path: string;
+  /** Optional line number from 'src/foo.ts:42'. */
+  line?: number;
+  /** Index in the source string. */
+  index: number;
+}
+
+// v0.19.0 E1 — markdown guides that cite 'src/core/sync.ts:42' create an
+// edge to the code page that imported that file. Regex is anchored against
+// the common gbrain repo layout directories so arbitrary prose like
+// "in foo/bar.js" doesn't generate false positives.
+//
+// The extension list is aligned with detectCodeLanguage in chunkers/code.ts.
+// Paths NOT matching these extensions are ignored because they wouldn't
+// have a code page to edge to anyway.
+const CODE_REF_REGEX = /\b((?:src|lib|app|test|tests|scripts|docs|packages|internal|cmd|examples)\/[\w\-./]+\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|go|rs|java|cs|cpp|cc|hpp|c|h|php|swift|kt|scala|lua|ex|exs|elm|ml|dart|zig|sol|sh|bash|css|html|vue|json|yaml|yml|toml))(?::(\d+))?\b/g;
+
+/**
+ * Extract code-path references (e.g. 'src/core/sync.ts:42') from markdown
+ * prose. Deduped by path.
+ */
+export function extractCodeRefs(content: string): CodeRef[] {
+  const seen = new Set<string>();
+  const refs: CodeRef[] = [];
+  let match: RegExpExecArray | null;
+  // Using a fresh regex object per call to avoid lastIndex state leaking
+  // across invocations.
+  const re = new RegExp(CODE_REF_REGEX.source, 'g');
+  while ((match = re.exec(content)) !== null) {
+    const path = match[1]!;
+    if (seen.has(path)) continue;
+    seen.add(path);
+    const line = match[2] ? parseInt(match[2], 10) : undefined;
+    refs.push({ path, line, index: match.index });
+  }
+  return refs;
+}
+
+/**
  * Extract `[Name](path-to-people-or-company)` references from arbitrary content.
  * Both filesystem-relative paths (with `../` and `.md`) and bare engine-style
  * slugs (`people/slug`) are matched. Returns one EntityRef per match (no dedup

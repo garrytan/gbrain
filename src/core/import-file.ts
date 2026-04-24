@@ -5,6 +5,7 @@ import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
+import { extractCodeRefs } from './link-extraction.ts';
 import { embedBatch } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageType } from './types.ts';
@@ -153,6 +154,28 @@ export async function importFromContent(
       // Content is empty — delete stale chunks so they don't ghost in search results
       await tx.deleteChunks(slug);
     }
+
+    // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
+    // (e.g. 'src/core/sync.ts:42'), create bidirectional edges to the code
+    // page. addLink's inner SELECT naturally drops edges to non-existent
+    // pages, so a guide imported before its code repo is synced writes no
+    // edges here — they'll land when importCodeFile runs the reverse scan
+    // (A3 backfill, Layer 6 deferred piece).
+    const codeRefs = extractCodeRefs(parsed.compiled_truth + '\n' + (parsed.timeline || ''));
+    for (const ref of codeRefs) {
+      const codeSlug = slugifyCodePath(ref.path);
+      // Forward: markdown guide → code page (this guide documents that code)
+      await tx.addLink(
+        slug, codeSlug,
+        ref.line ? `cited at ${ref.path}:${ref.line}` : ref.path,
+        'documents', 'markdown', slug, 'compiled_truth',
+      );
+      // Reverse: code page → markdown guide (this code is documented by the guide)
+      await tx.addLink(
+        codeSlug, slug,
+        ref.path, 'documented_by', 'markdown', slug, 'compiled_truth',
+      );
+    }
   });
 
   return { slug, status: 'imported', chunks: chunks.length, parsedPage };
@@ -261,13 +284,41 @@ export async function importCodeFile(
     end_line: c.metadata.endLine,
   }));
 
-  // Embed
-  if (!opts.noEmbed && chunks.length > 0) {
+  // v0.19.0 E2 — incremental chunking. Embedding calls dominate the cost
+  // of a sync; re-embedding unchanged chunks wastes money without
+  // improving retrieval. Look up existing chunks by slug and, for any
+  // whose chunk_text exactly matches the new chunk at the same index,
+  // reuse the existing embedding. Only truly new/changed chunks hit the
+  // OpenAI API. Order matters: our chunk_index is semantic (tree-sitter
+  // order), so a matching (chunk_index, text_hash) means a verbatim
+  // preserved symbol.
+  const existingChunks = existing ? await engine.getChunks(slug) : [];
+  const existingByKey = new Map<string, typeof existingChunks[number]>();
+  for (const ec of existingChunks) {
+    existingByKey.set(`${ec.chunk_index}:${ec.chunk_text}`, ec);
+  }
+  const needsEmbedIndexes: number[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const key = `${chunks[i]!.chunk_index}:${chunks[i]!.chunk_text}`;
+    const matched = existingByKey.get(key);
+    if (matched && matched.embedding) {
+      // Reuse the existing embedding verbatim. No API call, no cost.
+      chunks[i]!.embedding = matched.embedding as Float32Array;
+      chunks[i]!.token_count = matched.token_count ?? undefined;
+    } else {
+      needsEmbedIndexes.push(i);
+    }
+  }
+
+  // Embed only the new/changed chunks.
+  if (!opts.noEmbed && needsEmbedIndexes.length > 0) {
     try {
-      const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
-      for (let i = 0; i < chunks.length; i++) {
-        chunks[i].embedding = embeddings[i];
-        chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
+      const textsToEmbed = needsEmbedIndexes.map((i) => chunks[i]!.chunk_text);
+      const embeddings = await embedBatch(textsToEmbed);
+      for (let j = 0; j < needsEmbedIndexes.length; j++) {
+        const i = needsEmbedIndexes[j]!;
+        chunks[i]!.embedding = embeddings[j]!;
+        chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
       }
     } catch (e: unknown) {
       console.warn(`[gbrain] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
