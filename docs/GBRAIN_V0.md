@@ -62,7 +62,7 @@ There's already a production-grade RAG system (Ruby on Rails, Postgres + pgvecto
 | Database | Postgres + pgvector | Proven RAG patterns, production-tested. World-class hybrid search. |
 | Hosting | Supabase Pro ($25/mo) | Zero-ops. Managed Postgres, pgvector, connection pooling. 8GB storage. |
 | Runtime | Bun + TypeScript | Consistent with GStack ecosystem. Fast. Compiles to single binary. |
-| Embeddings | OpenAI text-embedding-3-large | 1536 dims (reduced from 3072 via dimensions API). ~$0.13/1M tokens. |
+| Embeddings | OpenAI text-embedding-3-large | 1536 dims (reduced from 3072 via dimensions API). ~$0.13/1M tokens. Configurable via `GBRAIN_EMBEDDING_MODEL` (`text-embedding-3-small` = 6.5× cheaper for bulk historical backfills). |
 | LLM (chunking/expansion) | Claude Haiku | Cheapest model for topic boundary detection and query expansion. |
 | Background jobs | Trigger.dev | Serverless. Embed backfill, stale detection, orphan audit, tag consistency. |
 | Distribution | npm package + compiled binary + MCP server | Library for OpenClaw, CLI for humans, MCP for agents. |
