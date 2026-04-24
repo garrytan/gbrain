@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import type { MemoryCandidateEntryInput, MemoryCandidateStatus } from '../src/core/types.ts';
+import type { MemoryCandidateCreateStatus, MemoryCandidateEntryInput } from '../src/core/types.ts';
 import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../src/core/services/canonical-handoff-service.ts';
@@ -11,7 +11,7 @@ import { recordCanonicalHandoff } from '../src/core/services/canonical-handoff-s
 async function seedCandidate(
   engine: SQLiteEngine,
   id: string,
-  status: MemoryCandidateStatus = 'captured',
+  status: MemoryCandidateCreateStatus = 'captured',
   overrides: Partial<MemoryCandidateEntryInput> = {},
 ) {
   return engine.createMemoryCandidateEntry({

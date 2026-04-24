@@ -20,9 +20,11 @@ import { describe, test } from 'bun:test';
 describe('S9 — canonical-first synthesis', () => {
   test.todo(
     'S9 — broad synthesis returns curated note before map-derived edge when both exist for the same entity (spec §5, fix: add ranking step in broad-synthesis-route-service)',
+    () => {},
   );
 
   test.todo(
     'S9 contradiction surface — when curated and map disagree, the map-derived claim becomes a Memory Candidate instead of co-equal synthesis material',
+    () => {},
   );
 });

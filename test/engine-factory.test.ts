@@ -8,6 +8,15 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
 const originalEnv = { ...process.env };
 let tempHome: string;
+type TestSql = ReturnType<typeof db.getConnection>;
+
+function setPostgresSql(engine: PostgresEngine, sql: TestSql | null): void {
+  Object.defineProperty(engine, '_sql', {
+    value: sql,
+    writable: true,
+    configurable: true,
+  });
+}
 
 function writeConfig(config: Record<string, unknown>) {
   const dir = join(tempHome, '.mbrain');
@@ -121,12 +130,12 @@ describe('engine factory', () => {
   });
 
   test('createConnectedEngine registers the explicit postgres engine for legacy db.getConnection callers', async () => {
-    const fakeSql = (() => []) as unknown as ReturnType<typeof db.getConnection>;
-    const connectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function () {
-      (this as PostgresEngine & { _sql: typeof fakeSql })._sql = fakeSql;
+    const fakeSql = (() => []) as unknown as TestSql;
+    const connectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function (this: PostgresEngine) {
+      setPostgresSql(this, fakeSql);
     });
-    const disconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function () {
-      (this as PostgresEngine & { _sql: typeof fakeSql })._sql = null;
+    const disconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function (this: PostgresEngine) {
+      setPostgresSql(this, null);
     });
 
     try {
@@ -150,18 +159,18 @@ describe('engine factory', () => {
 
   test('db.disconnect tears down the compatibility owner even after a later direct PostgresEngine.connect', async () => {
     let connectCount = 0;
-    const sqlFor = new Map<PostgresEngine, ReturnType<typeof db.getConnection>>();
+    const sqlFor = new Map<PostgresEngine, TestSql>();
     const disconnectInstances: PostgresEngine[] = [];
 
-    const connectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function () {
+    const connectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function (this: PostgresEngine) {
       connectCount += 1;
-      const fakeSql = Object.assign(async () => [], { label: `sql-${connectCount}` }) as unknown as ReturnType<typeof db.getConnection>;
-      (this as PostgresEngine & { _sql: typeof fakeSql })._sql = fakeSql;
-      sqlFor.set(this as PostgresEngine, fakeSql);
+      const fakeSql = Object.assign(async () => [], { label: `sql-${connectCount}` }) as unknown as TestSql;
+      setPostgresSql(this, fakeSql);
+      sqlFor.set(this, fakeSql);
     });
-    const disconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function () {
-      disconnectInstances.push(this as PostgresEngine);
-      (this as PostgresEngine & { _sql: ReturnType<typeof db.getConnection> | null })._sql = null;
+    const disconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function (this: PostgresEngine) {
+      disconnectInstances.push(this);
+      setPostgresSql(this, null);
     });
 
     try {
@@ -184,7 +193,9 @@ describe('engine factory', () => {
       await db.disconnect();
 
       expect(disconnectInstances).toEqual([compatibilityOwner]);
-      expect(explicitEngine.sql).toBe(sqlFor.get(explicitEngine));
+      const explicitSql = sqlFor.get(explicitEngine);
+      expect(explicitSql).toBeDefined();
+      expect(explicitEngine.sql).toBe(explicitSql!);
       await explicitEngine.disconnect();
     } finally {
       connectSpy.mockRestore();
@@ -196,17 +207,17 @@ describe('engine factory', () => {
     const postgresDisconnects: PostgresEngine[] = [];
     const sqliteDisconnects: SQLiteEngine[] = [];
 
-    const postgresConnectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function () {
-      const fakeSql = (() => []) as unknown as ReturnType<typeof db.getConnection>;
-      (this as PostgresEngine & { _sql: typeof fakeSql })._sql = fakeSql;
+    const postgresConnectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function (this: PostgresEngine) {
+      const fakeSql = (() => []) as unknown as TestSql;
+      setPostgresSql(this, fakeSql);
     });
-    const postgresDisconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function () {
-      postgresDisconnects.push(this as PostgresEngine);
-      (this as PostgresEngine & { _sql: ReturnType<typeof db.getConnection> | null })._sql = null;
+    const postgresDisconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function (this: PostgresEngine) {
+      postgresDisconnects.push(this);
+      setPostgresSql(this, null);
     });
     const sqliteConnectSpy = spyOn(SQLiteEngine.prototype, 'connect').mockImplementation(async function () {});
-    const sqliteDisconnectSpy = spyOn(SQLiteEngine.prototype, 'disconnect').mockImplementation(async function () {
-      sqliteDisconnects.push(this as SQLiteEngine);
+    const sqliteDisconnectSpy = spyOn(SQLiteEngine.prototype, 'disconnect').mockImplementation(async function (this: SQLiteEngine) {
+      sqliteDisconnects.push(this);
     });
 
     try {
@@ -253,23 +264,23 @@ describe('engine factory', () => {
     const sqliteDisconnects: SQLiteEngine[] = [];
     const disconnectError = new Error('first stale owner failed to close');
 
-    const postgresConnectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function () {
-      const fakeSql = (() => []) as unknown as ReturnType<typeof db.getConnection>;
-      (this as PostgresEngine & { _sql: typeof fakeSql })._sql = fakeSql;
-      postgresOwners.push(this as PostgresEngine);
+    const postgresConnectSpy = spyOn(PostgresEngine.prototype, 'connect').mockImplementation(async function (this: PostgresEngine) {
+      const fakeSql = (() => []) as unknown as TestSql;
+      setPostgresSql(this, fakeSql);
+      postgresOwners.push(this);
     });
-    const postgresDisconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function () {
-      postgresDisconnects.push(this as PostgresEngine);
-      (this as PostgresEngine & { _sql: ReturnType<typeof db.getConnection> | null })._sql = null;
+    const postgresDisconnectSpy = spyOn(PostgresEngine.prototype, 'disconnect').mockImplementation(async function (this: PostgresEngine) {
+      postgresDisconnects.push(this);
+      setPostgresSql(this, null);
       if (this === postgresOwners[1]) {
         throw disconnectError;
       }
     });
-    const sqliteConnectSpy = spyOn(SQLiteEngine.prototype, 'connect').mockImplementation(async function () {
-      sqliteConnects.push(this as SQLiteEngine);
+    const sqliteConnectSpy = spyOn(SQLiteEngine.prototype, 'connect').mockImplementation(async function (this: SQLiteEngine) {
+      sqliteConnects.push(this);
     });
-    const sqliteDisconnectSpy = spyOn(SQLiteEngine.prototype, 'disconnect').mockImplementation(async function () {
-      sqliteDisconnects.push(this as SQLiteEngine);
+    const sqliteDisconnectSpy = spyOn(SQLiteEngine.prototype, 'disconnect').mockImplementation(async function (this: SQLiteEngine) {
+      sqliteDisconnects.push(this);
     });
 
     try {

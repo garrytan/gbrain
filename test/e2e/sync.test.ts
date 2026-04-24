@@ -90,7 +90,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
     });
 
     expect(result.status).toBe('first_sync');
@@ -112,7 +111,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
     });
 
     expect(result.status).toBe('up_to_date');
@@ -140,7 +138,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
     });
 
     expect(result.status).toBe('synced');
@@ -177,7 +174,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
     });
 
     expect(result.status).toBe('synced');
@@ -214,7 +210,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
     });
 
     expect(result.status).toBe('synced');
@@ -239,7 +234,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
     });
 
     // These should not create pages
@@ -283,7 +277,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
       full: true,
     });
 
@@ -313,7 +306,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
       dryRun: true,
     });
 
@@ -328,7 +320,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
     });
   });
 
@@ -350,7 +341,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
     });
 
     expect(result.status).toBe('synced');
@@ -383,7 +373,6 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
     const result = await performSync(engine, {
       repoPath,
       noPull: true,
-      noEmbed: true,
     });
 
     expect(result.status).toBe('synced');

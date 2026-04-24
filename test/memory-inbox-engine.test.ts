@@ -258,6 +258,9 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
         reviewed_at: new Date('2026-04-22T06:21:30.000Z'),
         review_reason: 'Contradiction record should persist across reopen.',
       });
+      if (!contradiction) {
+        throw new Error('Expected contradiction entry to be created');
+      }
       expect(contradiction.outcome).toBe('superseded');
       expect(await reopened.createMemoryCandidateContradictionEntry({
         id: `${promotedId}:invalid-contradiction`,

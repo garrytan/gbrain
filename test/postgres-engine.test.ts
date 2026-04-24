@@ -133,27 +133,27 @@ describe('PostgresEngine search wiring', () => {
       expect.objectContaining({ target: 'reserved', kind: 'tag' }),
       { target: 'reserved', kind: 'release' },
     ]);
-    expect((calls[1] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).text).toContain(
+    expect((calls[1] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "current_setting('statement_timeout')",
     );
-    expect((calls[2] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).text).toContain(
+    expect((calls[2] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "set_config('statement_timeout', '8s', false)",
     );
-    expect((calls[3] as Extract<SqlCall, { target: 'reserved'; kind: 'unsafe' }>).query).toContain(
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
       'AND p.type = $2',
     );
-    expect((calls[3] as Extract<SqlCall, { target: 'reserved'; kind: 'unsafe' }>).query).toContain(
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
       'AND p.slug != ALL($3::text[])',
     );
-    expect((calls[3] as Extract<SqlCall, { target: 'reserved'; kind: 'unsafe' }>).values).toEqual([
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).values).toEqual([
       'keyword',
       'person',
       ['people/alice'],
     ]);
-    expect((calls[4] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).text).toContain(
+    expect((calls[4] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "set_config('statement_timeout', <??>, false)",
     );
-    expect((calls[4] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).values).toEqual(['15s']);
+    expect((calls[4] as Extract<SqlCall, { kind: 'tag' }>).values).toEqual(['15s']);
   });
 
   test('searchKeyword inside transaction-scoped sql uses SET LOCAL and does not reserve a new connection', async () => {
@@ -180,7 +180,7 @@ describe('PostgresEngine search wiring', () => {
       expect.objectContaining({ target: 'root', kind: 'tag' }),
       expect.objectContaining({ target: 'root', kind: 'unsafe' }),
     ]);
-    expect((calls[0] as Extract<SqlCall, { target: 'root'; kind: 'tag' }>).text).toContain(
+    expect((calls[0] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "set_config('statement_timeout', '8s', true)",
     );
   });
@@ -197,10 +197,10 @@ describe('PostgresEngine search wiring', () => {
     await expect(engine.searchKeyword('keyword')).rejects.toThrow('simulated query failure');
     expect(calls).toHaveLength(6);
     expect(calls[0]).toEqual({ target: 'root', kind: 'reserve' });
-    expect((calls[4] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).text).toContain(
+    expect((calls[4] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "set_config('statement_timeout', <??>, false)",
     );
-    expect((calls[4] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).values).toEqual(['30s']);
+    expect((calls[4] as Extract<SqlCall, { kind: 'tag' }>).values).toEqual(['30s']);
     expect(calls[5]).toEqual({ target: 'reserved', kind: 'release' });
   });
 
@@ -230,29 +230,29 @@ describe('PostgresEngine search wiring', () => {
 
     expect(results.map((entry: any) => entry.slug)).toEqual(['projects/apollo']);
     expect(calls[0]).toEqual({ target: 'root', kind: 'reserve' });
-    expect((calls[1] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).text).toContain(
+    expect((calls[1] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "current_setting('statement_timeout')",
     );
-    expect((calls[2] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).text).toContain(
+    expect((calls[2] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "set_config('statement_timeout', '8s', false)",
     );
-    expect((calls[3] as Extract<SqlCall, { target: 'reserved'; kind: 'unsafe' }>).query).toContain(
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
       'AND p.type = $2',
     );
-    expect((calls[3] as Extract<SqlCall, { target: 'reserved'; kind: 'unsafe' }>).query).toContain(
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
       'AND p.slug != ALL($3::text[])',
     );
-    expect((calls[3] as Extract<SqlCall, { target: 'reserved'; kind: 'unsafe' }>).query).toContain('LIMIT $4');
-    expect((calls[3] as Extract<SqlCall, { target: 'reserved'; kind: 'unsafe' }>).values).toEqual([
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain('LIMIT $4');
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).values).toEqual([
       '[1,0,0]',
       'project',
       ['projects/apollo'],
       7,
     ]);
-    expect((calls[4] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).text).toContain(
+    expect((calls[4] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "set_config('statement_timeout', <??>, false)",
     );
-    expect((calls[4] as Extract<SqlCall, { target: 'reserved'; kind: 'tag' }>).values).toEqual(['45s']);
+    expect((calls[4] as Extract<SqlCall, { kind: 'tag' }>).values).toEqual(['45s']);
     expect(calls[5]).toEqual({ target: 'reserved', kind: 'release' });
   });
 });

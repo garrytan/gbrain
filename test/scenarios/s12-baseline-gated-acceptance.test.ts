@@ -47,7 +47,7 @@ function buildPhaseSummaries(
       acceptance_notes: [],
       regression_reasons: comparable === 'fail' ? ['p95_regression'] : [],
       source_manifest: [],
-    } as Phase8LongitudinalPhaseSummary;
+    } as unknown as Phase8LongitudinalPhaseSummary;
   });
 }
 

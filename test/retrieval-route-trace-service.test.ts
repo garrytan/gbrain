@@ -63,9 +63,11 @@ test('retrieval route selector persists a task-scoped trace for successful broad
       'canonical_follow_through',
     ]);
     expect(result.trace?.source_refs).toContain('page:systems/mbrain');
-    expect(result.trace?.derived_consulted).toEqual([
-      (result.route?.payload as { map_id?: string } | undefined)?.map_id,
-    ]);
+    const mapId = (result.route?.payload as { map_id?: string } | undefined)?.map_id;
+    if (typeof mapId !== 'string') {
+      throw new Error('Expected route payload to include map_id');
+    }
+    expect(result.trace?.derived_consulted).toEqual([mapId]);
     expect(result.trace?.verification).toContain('intent:broad_synthesis');
     expect(result.trace?.verification).toContain('selection_reason:selected_fresh_match');
     expect(result.trace?.selected_intent).toBe('broad_synthesis');

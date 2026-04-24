@@ -77,5 +77,5 @@ describe('S5 — mixed-scope bridge decomposition', () => {
   // precision_lookup + personal) have no decomposer. See spec §5, fix direction:
   // add classifyIntents() that emits a list of sub-intents for one natural
   // request.
-  test.todo('S5 gap — general request-level intent classifier (resume + synthesis, etc.)');
+  test.todo('S5 gap — general request-level intent classifier (resume + synthesis, etc.)', () => {});
 });

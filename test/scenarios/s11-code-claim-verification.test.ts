@@ -23,9 +23,11 @@ import { describe, test } from 'bun:test';
 describe('S11 — code claim verification gates staleness', () => {
   test.todo(
     'S11 — reverify_code_claims marks stale file/symbol claims from a prior trace without deleting the historical record',
+    () => {},
   );
 
   test.todo(
     'S11 — resume on branch B explicitly reports code-claim freshness when the trace originated on branch A',
+    () => {},
   );
 });
