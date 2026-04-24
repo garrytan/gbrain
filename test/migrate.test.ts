@@ -277,6 +277,11 @@ describe('migration v24 — rls_backfill_missing_tables', () => {
   // skipping the backfill on future runs even after the role is fixed.
   // The fix is to raise loudly so the transaction aborts, version stays
   // at 23, and the next initSchema call retries after role reassignment.
+  test('uses a PGLite no-op override so local brains skip Postgres-only RLS ALTER TABLEs', () => {
+    const v24 = MIGRATIONS.find(m => m.version === 24);
+    expect(v24?.sqlFor?.pglite).toBe('');
+  });
+
   test('fails loudly on non-BYPASSRLS roles instead of silently bumping version', () => {
     const v24 = MIGRATIONS.find(m => m.version === 24);
     const sql = v24!.sql || '';
@@ -286,6 +291,51 @@ describe('migration v24 — rls_backfill_missing_tables', () => {
 
   test('LATEST_VERSION has caught up to 24', () => {
     expect(LATEST_VERSION).toBeGreaterThanOrEqual(24);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// PGLite initSchema regression — v0.18.x mid-migration installs
+// ─────────────────────────────────────────────────────────────────
+// A brain parked before v21 has pages without source_id. The latest
+// PGLite schema must remain replay-safe in that state so initSchema()
+// can reach the migration loop instead of failing early on
+// idx_pages_source_id.
+
+describe('PGLite initSchema — mid-migration upgrade path', () => {
+  test('upgrades a v13-shaped brain where pages.source_id is still absent', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+
+      await db.exec(`
+        ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
+        ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
+        DROP INDEX IF EXISTS idx_pages_source_id;
+        ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
+        DROP TABLE IF EXISTS sources CASCADE;
+        DROP TABLE IF EXISTS gbrain_cycle_locks;
+        ALTER TABLE links DROP CONSTRAINT IF EXISTS links_resolution_type_check;
+        ALTER TABLE links DROP COLUMN IF EXISTS resolution_type;
+      `);
+      await engine.setConfig('version', '13');
+
+      await engine.initSchema();
+
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+
+      const pageCols = await db.query(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'pages' ORDER BY ordinal_position",
+      );
+      expect(pageCols.rows.some((r: { column_name: string }) => r.column_name === 'source_id')).toBe(true);
+
+      const sources = await db.query("SELECT id FROM sources WHERE id = 'default'");
+      expect(sources.rows).toHaveLength(1);
+    } finally {
+      await engine.disconnect();
+    }
   });
 });
 
