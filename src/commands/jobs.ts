@@ -492,16 +492,19 @@ HANDLER TYPES (built in)
       }
 
       // --wedge-rescue: regression case for the v0.19.1 production incident.
-      // Simulates a wedged worker holding a row lock via a pending txn: the
-      // lock-renewal UPDATE blocks, lock_until falls below now(), handleStalled
-      // sees the candidate but FOR UPDATE SKIP LOCKED skips (row lock held),
-      // handleTimeouts is disqualified (lock_until > now() fails).
-      // Only handleWallClockTimeouts' no-constraint sweep evicts.
+      // In prod, a wedged worker held a row lock via a pending txn. The
+      // lock-renewal UPDATE blocked, lock_until fell below now(), handleStalled
+      // saw the candidate but FOR UPDATE SKIP LOCKED skipped (row lock held),
+      // handleTimeouts was disqualified (lock_until > now() fails).
+      // Only handleWallClockTimeouts' no-constraint sweep evicted.
       //
-      // The smoke is direct (not via a second connection). We forge the wedged
-      // state by hand — set status='active', started_at far in the past, and
-      // drop lock_until — then invoke the three sweeps in order, asserting
-      // only wall-clock evicts.
+      // The smoke is single-connection, so we can't simulate a row lock held
+      // by another txn. Instead we forge the state where BOTH handleStalled
+      // and handleTimeouts are disqualified so only wall-clock fires:
+      //   - lock_until far in the future → handleStalled skips (not a stall)
+      //   - timeout_at = NULL → handleTimeouts skips (needs NOT NULL)
+      //   - started_at 10s ago with timeout_ms=1000 → wall-clock matches
+      //     (2 × timeout_ms = 2000ms threshold exceeded)
       if (wedgeRescue) {
         const wedgedJob = await queue.add('noop', {}, {
           queue: 'smoke',
@@ -511,9 +514,9 @@ HANDLER TYPES (built in)
           `UPDATE minion_jobs
               SET status='active',
                   lock_token='smoke-wedge-rescue',
-                  lock_until=now() - interval '1 second',
+                  lock_until=now() + interval '30 seconds',
                   started_at=now() - interval '10 seconds',
-                  timeout_at=now() - interval '8 seconds',
+                  timeout_at=NULL,
                   attempts_started = attempts_started + 1
             WHERE id=$1`,
           [wedgedJob.id]
