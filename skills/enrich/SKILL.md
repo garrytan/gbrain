@@ -80,10 +80,7 @@ When sources conflict, note the contradiction with both citations.
 - Any ingest pipeline encounters a notable entity
 
 ### Do NOT enrich
-- Random mentions with no relationship signal
-- Bot/spam accounts
-- Entities with no substantive connection to the user's work
-- Same page enriched within the past week (unless new signal warrants it)
+Delegate the notability decision to `skills/_brain-filing-rules.md`; if the gate fails, skip enrichment.
 
 ## Enrichment Tiers
 
@@ -175,7 +172,7 @@ the raw data shows exactly what the API returned.
 
 #### CREATE path
 
-1. Check notability gate (see `skills/_brain-filing-rules.md`)
+1. Apply the notability gate by reading `skills/_brain-filing-rules.md`; do not inline or reinterpret the gate here.
 2. Check filing rules -- where does this entity go?
 3. Create page with the appropriate template (below)
 4. Fill compiled truth with citations
