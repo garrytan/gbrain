@@ -84,6 +84,25 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
+    const { rows: sourceIdRows } = await this.db.query(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM information_schema.columns
+         WHERE table_name = 'pages'
+           AND column_name = 'source_id'
+       ) AS exists`
+    );
+    const missingPagesSourceId = !(sourceIdRows[0] as { exists?: boolean } | undefined)?.exists;
+
+    // Upgrade path for pre-v0.18 brains: let numbered migrations add
+    // pages.source_id before the latest embedded schema references it.
+    if (missingPagesSourceId) {
+      const { applied } = await runMigrations(this);
+      if (applied > 0) {
+        console.log(`  ${applied} migration(s) applied`);
+      }
+    }
+
     await this.db.exec(PGLITE_SCHEMA_SQL);
 
     const { applied } = await runMigrations(this);

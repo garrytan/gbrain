@@ -76,9 +76,30 @@ export class PostgresEngine implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
+      const pagesSourceId = await conn<{ exists: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = current_schema()
+            AND table_name = 'pages'
+            AND column_name = 'source_id'
+        ) AS exists
+      `;
+      const missingPagesSourceId = !pagesSourceId[0]?.exists;
+
+      // Upgrade path for pre-v0.18 brains: run numbered migrations before the
+      // latest schema blob so additive migrations can introduce pages.source_id
+      // before SCHEMA_SQL tries to create indexes/constraints that reference it.
+      if (missingPagesSourceId) {
+        const { applied } = await runMigrations(this);
+        if (applied > 0) {
+          console.log(`  ${applied} migration(s) applied`);
+        }
+      }
+
       await conn.unsafe(SCHEMA_SQL);
 
-      // Run any pending migrations automatically
+      // Fresh installs and already-modern brains still need the normal pass.
       const { applied } = await runMigrations(this);
       if (applied > 0) {
         console.log(`  ${applied} migration(s) applied`);
