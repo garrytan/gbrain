@@ -130,6 +130,24 @@ describe('gbrain extract links --source db', () => {
     expect(links.length).toBe(0);
   });
 
+  test('--dry-run reports net-new links, not existing candidates', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) joined as CEO.'));
+    await runExtract(engine, ['links', '--source', 'db']);
+
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = ((...args: unknown[]) => { lines.push(args.join(' ')); }) as any;
+    try {
+      await runExtract(engine, ['links', '--source', 'db', '--dry-run', '--json']);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const summary = JSON.parse(lines[lines.length - 1]);
+    expect(summary.links_created).toBe(0);
+  });
+
   test('--type filter only processes matching pages', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('people/bob', personPage('Bob', '[Alice](people/alice) is great.'));
@@ -227,6 +245,26 @@ describe('gbrain extract timeline --source db', () => {
 
     const entries = await engine.getTimeline('people/alice');
     expect(entries.length).toBe(0);
+  });
+
+  test('--dry-run reports net-new timeline entries, not existing candidates', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: '',
+      timeline: '- **2026-01-15** | Test event',
+    });
+    await runExtract(engine, ['timeline', '--source', 'db']);
+
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = ((...args: unknown[]) => { lines.push(args.join(' ')); }) as any;
+    try {
+      await runExtract(engine, ['timeline', '--source', 'db', '--dry-run', '--json']);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const summary = JSON.parse(lines[lines.length - 1]);
+    expect(summary.timeline_entries_created).toBe(0);
   });
 });
 

@@ -154,4 +154,10 @@ describe('doctor command', () => {
     // requirement to write a real justification, not just the prefix.
     expect(rlsBlock).toMatch(/reason=/);
   });
+
+  test('graph coverage warning points at current extract command', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain('gbrain extract all --source db');
+    expect(source).not.toContain('gbrain link-extract && gbrain timeline-extract');
+  });
 });
