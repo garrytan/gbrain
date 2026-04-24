@@ -29,3 +29,29 @@ jobs:
           bun-version: latest
       - run: bun install
       - run: bun test
+
+  postgres-jsonb:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mbrain_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - run: bun test test/postgres-jsonb-engine.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mbrain_test

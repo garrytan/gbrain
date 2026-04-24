@@ -196,7 +196,7 @@ export class PostgresEngine implements BrainEngine {
 
     const rows = await sql`
       INSERT INTO pages (slug, type, title, compiled_truth, timeline, search_text, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${searchText}, ${JSON.stringify(frontmatter)}::jsonb, ${hash}, now())
+      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${searchText}, ${sql.json(frontmatter)}, ${hash}, now())
       ON CONFLICT (slug) DO UPDATE SET
         type = EXCLUDED.type,
         title = EXCLUDED.title,
@@ -678,7 +678,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     await sql`
       INSERT INTO raw_data (page_id, source, data)
-      SELECT id, ${source}, ${JSON.stringify(data)}::jsonb
+      SELECT id, ${source}, ${sql.json(data)}
       FROM pages WHERE slug = ${slug}
       ON CONFLICT (page_id, source) DO UPDATE SET
         data = EXCLUDED.data,
@@ -768,7 +768,7 @@ export class PostgresEngine implements BrainEngine {
       UPDATE pages
       SET compiled_truth = ${version.compiled_truth},
           search_text = ${searchText},
-          frontmatter = ${JSON.stringify(frontmatter)}::jsonb,
+          frontmatter = ${sql.json(frontmatter)},
           content_hash = ${hash},
           updated_at = now()
       WHERE slug = ${slug}
@@ -846,7 +846,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     await sql`
       INSERT INTO ingest_log (source_type, source_ref, pages_updated, summary)
-      VALUES (${entry.source_type}, ${entry.source_ref}, ${JSON.stringify(entry.pages_updated)}::jsonb, ${entry.summary})
+      VALUES (${entry.source_type}, ${entry.source_ref}, ${sql.json(entry.pages_updated)}, ${entry.summary})
     `;
   }
 
@@ -957,12 +957,12 @@ export class PostgresEngine implements BrainEngine {
         task_id, active_paths, active_symbols, blockers, open_questions, next_steps, verification_notes, last_verified_at, updated_at
       ) VALUES (
         ${input.task_id},
-        ${JSON.stringify(input.active_paths ?? [])}::jsonb,
-        ${JSON.stringify(input.active_symbols ?? [])}::jsonb,
-        ${JSON.stringify(input.blockers ?? [])}::jsonb,
-        ${JSON.stringify(input.open_questions ?? [])}::jsonb,
-        ${JSON.stringify(input.next_steps ?? [])}::jsonb,
-        ${JSON.stringify(input.verification_notes ?? [])}::jsonb,
+        ${sql.json(input.active_paths ?? [])},
+        ${sql.json(input.active_symbols ?? [])},
+        ${sql.json(input.blockers ?? [])},
+        ${sql.json(input.open_questions ?? [])},
+        ${sql.json(input.next_steps ?? [])},
+        ${sql.json(input.verification_notes ?? [])},
         ${input.last_verified_at instanceof Date ? input.last_verified_at.toISOString() : input.last_verified_at ?? null},
         now()
       )
@@ -990,8 +990,8 @@ export class PostgresEngine implements BrainEngine {
         ${input.task_id},
         ${input.summary},
         ${input.outcome},
-        ${JSON.stringify(input.applicability_context ?? {})}::jsonb,
-        ${JSON.stringify(input.evidence ?? [])}::jsonb
+        ${sql.json(input.applicability_context ?? {})},
+        ${sql.json(input.evidence ?? [])}
       )
       RETURNING id, task_id, summary, outcome, applicability_context, evidence, created_at
     `;
@@ -1020,8 +1020,8 @@ export class PostgresEngine implements BrainEngine {
         ${input.task_id},
         ${input.summary},
         ${input.rationale},
-        ${JSON.stringify(input.consequences ?? [])}::jsonb,
-        ${JSON.stringify(input.validity_context ?? {})}::jsonb
+        ${sql.json(input.consequences ?? [])},
+        ${sql.json(input.validity_context ?? {})}
       )
       RETURNING id, task_id, summary, rationale, consequences, validity_context, created_at
     `;
@@ -1049,9 +1049,9 @@ export class PostgresEngine implements BrainEngine {
         ${input.id},
         ${input.task_id ?? null},
         ${input.scope},
-        ${JSON.stringify(input.route ?? [])}::jsonb,
-        ${JSON.stringify(input.source_refs ?? [])}::jsonb,
-        ${JSON.stringify(input.verification ?? [])}::jsonb,
+        ${sql.json(input.route ?? [])},
+        ${sql.json(input.source_refs ?? [])},
+        ${sql.json(input.verification ?? [])},
         ${input.outcome}
       )
       RETURNING id, task_id, scope, route, source_refs, verification, outcome, created_at
@@ -1083,7 +1083,7 @@ export class PostgresEngine implements BrainEngine {
         ${input.profile_type},
         ${input.subject},
         ${input.content},
-        ${JSON.stringify(input.source_refs ?? [])}::jsonb,
+        ${sql.json(input.source_refs ?? [])},
         ${input.sensitivity},
         ${input.export_status},
         ${input.last_confirmed_at instanceof Date ? input.last_confirmed_at.toISOString() : input.last_confirmed_at ?? null},
@@ -1175,8 +1175,8 @@ export class PostgresEngine implements BrainEngine {
         ${input.end_time instanceof Date ? input.end_time.toISOString() : input.end_time ?? null},
         ${input.source_kind},
         ${input.summary},
-        ${JSON.stringify(input.source_refs ?? [])}::jsonb,
-        ${JSON.stringify(input.candidate_ids ?? [])}::jsonb
+        ${sql.json(input.source_refs ?? [])},
+        ${sql.json(input.candidate_ids ?? [])}
       )
       RETURNING id, scope_id, title, start_time, end_time, source_kind, summary,
                 source_refs, candidate_ids, created_at, updated_at
@@ -1660,13 +1660,13 @@ export class PostgresEngine implements BrainEngine {
         ${input.path},
         ${input.page_type},
         ${input.title},
-        ${JSON.stringify(input.frontmatter ?? {})}::jsonb,
-        ${JSON.stringify(input.aliases ?? [])}::jsonb,
-        ${JSON.stringify(input.tags ?? [])}::jsonb,
-        ${JSON.stringify(input.outgoing_wikilinks ?? [])}::jsonb,
-        ${JSON.stringify(input.outgoing_urls ?? [])}::jsonb,
-        ${JSON.stringify(input.source_refs ?? [])}::jsonb,
-        ${JSON.stringify(input.heading_index ?? [])}::jsonb,
+        ${sql.json(input.frontmatter ?? {})},
+        ${sql.json(input.aliases ?? [])},
+        ${sql.json(input.tags ?? [])},
+        ${sql.json(input.outgoing_wikilinks ?? [])},
+        ${sql.json(input.outgoing_urls ?? [])},
+        ${sql.json(input.source_refs ?? [])},
+        ${sql.json(input.heading_index ?? [])},
         ${input.content_hash},
         ${input.extractor_version},
         now()
@@ -1775,15 +1775,15 @@ export class PostgresEngine implements BrainEngine {
           ${entry.section_id},
           ${entry.parent_section_id ?? null},
           ${entry.heading_slug},
-          ${JSON.stringify(entry.heading_path ?? [])}::jsonb,
+          ${sql.json(entry.heading_path ?? [])},
           ${entry.heading_text},
           ${entry.depth},
           ${entry.line_start},
           ${entry.line_end},
           ${entry.section_text},
-          ${JSON.stringify(entry.outgoing_wikilinks ?? [])}::jsonb,
-          ${JSON.stringify(entry.outgoing_urls ?? [])}::jsonb,
-          ${JSON.stringify(entry.source_refs ?? [])}::jsonb,
+          ${sql.json(entry.outgoing_wikilinks ?? [])},
+          ${sql.json(entry.outgoing_urls ?? [])},
+          ${sql.json(entry.source_refs ?? [])},
           ${entry.content_hash},
           ${entry.extractor_version},
           ${timestamp}
@@ -1875,7 +1875,7 @@ export class PostgresEngine implements BrainEngine {
         ${input.node_count},
         ${input.edge_count},
         ${input.community_count ?? 0},
-        ${JSON.stringify(input.graph_json ?? {})}::jsonb,
+        ${sql.json(input.graph_json ?? {})},
         now(),
         ${input.stale_reason ?? null}
       )
@@ -1963,7 +1963,7 @@ export class PostgresEngine implements BrainEngine {
         ${input.kind},
         ${input.title},
         ${input.freshness},
-        ${JSON.stringify(input.entrypoints ?? [])}::jsonb,
+        ${sql.json(input.entrypoints ?? [])},
         ${input.budget_hint},
         now()
       )

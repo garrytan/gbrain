@@ -542,6 +542,179 @@ const MIGRATIONS: Migration[] = [
         WHERE interaction_id IS NOT NULL;
     `,
   },
+  {
+    version: 22,
+    name: 'postgres_jsonb_scalar_string_repair',
+    sql: `
+      CREATE OR REPLACE FUNCTION mbrain_repair_jsonb_scalar_string(value JSONB, expected_types TEXT[])
+      RETURNS JSONB AS $$
+      DECLARE
+        parsed JSONB;
+      BEGIN
+        IF jsonb_typeof(value) <> 'string' THEN
+          RETURN value;
+        END IF;
+
+        BEGIN
+          parsed := (value #>> '{}')::jsonb;
+        EXCEPTION WHEN others THEN
+          RETURN value;
+        END;
+
+        IF jsonb_typeof(parsed) = ANY(expected_types) THEN
+          RETURN parsed;
+        END IF;
+
+        RETURN value;
+      END;
+      $$ LANGUAGE plpgsql;
+
+      DO $$
+      BEGIN
+        IF to_regclass('pages') IS NOT NULL THEN
+          UPDATE pages
+          SET frontmatter = mbrain_repair_jsonb_scalar_string(frontmatter, ARRAY['object'])
+          WHERE jsonb_typeof(frontmatter) = 'string';
+        END IF;
+
+        IF to_regclass('raw_data') IS NOT NULL THEN
+          UPDATE raw_data
+          SET data = mbrain_repair_jsonb_scalar_string(data, ARRAY['object', 'array'])
+          WHERE jsonb_typeof(data) = 'string';
+        END IF;
+
+        IF to_regclass('page_versions') IS NOT NULL THEN
+          UPDATE page_versions
+          SET frontmatter = mbrain_repair_jsonb_scalar_string(frontmatter, ARRAY['object'])
+          WHERE jsonb_typeof(frontmatter) = 'string';
+        END IF;
+
+        IF to_regclass('ingest_log') IS NOT NULL THEN
+          UPDATE ingest_log
+          SET pages_updated = mbrain_repair_jsonb_scalar_string(pages_updated, ARRAY['array'])
+          WHERE jsonb_typeof(pages_updated) = 'string';
+        END IF;
+
+        IF to_regclass('task_working_sets') IS NOT NULL THEN
+          UPDATE task_working_sets
+          SET active_paths = mbrain_repair_jsonb_scalar_string(active_paths, ARRAY['array']),
+              active_symbols = mbrain_repair_jsonb_scalar_string(active_symbols, ARRAY['array']),
+              blockers = mbrain_repair_jsonb_scalar_string(blockers, ARRAY['array']),
+              open_questions = mbrain_repair_jsonb_scalar_string(open_questions, ARRAY['array']),
+              next_steps = mbrain_repair_jsonb_scalar_string(next_steps, ARRAY['array']),
+              verification_notes = mbrain_repair_jsonb_scalar_string(verification_notes, ARRAY['array'])
+          WHERE jsonb_typeof(active_paths) = 'string'
+             OR jsonb_typeof(active_symbols) = 'string'
+             OR jsonb_typeof(blockers) = 'string'
+             OR jsonb_typeof(open_questions) = 'string'
+             OR jsonb_typeof(next_steps) = 'string'
+             OR jsonb_typeof(verification_notes) = 'string';
+        END IF;
+
+        IF to_regclass('task_attempts') IS NOT NULL THEN
+          UPDATE task_attempts
+          SET applicability_context = mbrain_repair_jsonb_scalar_string(applicability_context, ARRAY['object']),
+              evidence = mbrain_repair_jsonb_scalar_string(evidence, ARRAY['array'])
+          WHERE jsonb_typeof(applicability_context) = 'string'
+             OR jsonb_typeof(evidence) = 'string';
+        END IF;
+
+        IF to_regclass('task_decisions') IS NOT NULL THEN
+          UPDATE task_decisions
+          SET consequences = mbrain_repair_jsonb_scalar_string(consequences, ARRAY['array']),
+              validity_context = mbrain_repair_jsonb_scalar_string(validity_context, ARRAY['object'])
+          WHERE jsonb_typeof(consequences) = 'string'
+             OR jsonb_typeof(validity_context) = 'string';
+        END IF;
+
+        IF to_regclass('retrieval_traces') IS NOT NULL THEN
+          UPDATE retrieval_traces
+          SET route = mbrain_repair_jsonb_scalar_string(route, ARRAY['array']),
+              source_refs = mbrain_repair_jsonb_scalar_string(source_refs, ARRAY['array']),
+              verification = mbrain_repair_jsonb_scalar_string(verification, ARRAY['array'])
+          WHERE jsonb_typeof(route) = 'string'
+             OR jsonb_typeof(source_refs) = 'string'
+             OR jsonb_typeof(verification) = 'string';
+        END IF;
+
+        IF to_regclass('profile_memory_entries') IS NOT NULL THEN
+          UPDATE profile_memory_entries
+          SET source_refs = mbrain_repair_jsonb_scalar_string(source_refs, ARRAY['array'])
+          WHERE jsonb_typeof(source_refs) = 'string';
+        END IF;
+
+        IF to_regclass('personal_episode_entries') IS NOT NULL THEN
+          UPDATE personal_episode_entries
+          SET source_refs = mbrain_repair_jsonb_scalar_string(source_refs, ARRAY['array']),
+              candidate_ids = mbrain_repair_jsonb_scalar_string(candidate_ids, ARRAY['array'])
+          WHERE jsonb_typeof(source_refs) = 'string'
+             OR jsonb_typeof(candidate_ids) = 'string';
+        END IF;
+
+        IF to_regclass('memory_candidate_entries') IS NOT NULL THEN
+          UPDATE memory_candidate_entries
+          SET source_refs = mbrain_repair_jsonb_scalar_string(source_refs, ARRAY['array'])
+          WHERE jsonb_typeof(source_refs) = 'string';
+        END IF;
+
+        IF to_regclass('canonical_handoff_entries') IS NOT NULL THEN
+          UPDATE canonical_handoff_entries
+          SET source_refs = mbrain_repair_jsonb_scalar_string(source_refs, ARRAY['array'])
+          WHERE jsonb_typeof(source_refs) = 'string';
+        END IF;
+
+        IF to_regclass('note_manifest_entries') IS NOT NULL THEN
+          UPDATE note_manifest_entries
+          SET frontmatter = mbrain_repair_jsonb_scalar_string(frontmatter, ARRAY['object']),
+              aliases = mbrain_repair_jsonb_scalar_string(aliases, ARRAY['array']),
+              tags = mbrain_repair_jsonb_scalar_string(tags, ARRAY['array']),
+              outgoing_wikilinks = mbrain_repair_jsonb_scalar_string(outgoing_wikilinks, ARRAY['array']),
+              outgoing_urls = mbrain_repair_jsonb_scalar_string(outgoing_urls, ARRAY['array']),
+              source_refs = mbrain_repair_jsonb_scalar_string(source_refs, ARRAY['array']),
+              heading_index = mbrain_repair_jsonb_scalar_string(heading_index, ARRAY['array'])
+          WHERE jsonb_typeof(frontmatter) = 'string'
+             OR jsonb_typeof(aliases) = 'string'
+             OR jsonb_typeof(tags) = 'string'
+             OR jsonb_typeof(outgoing_wikilinks) = 'string'
+             OR jsonb_typeof(outgoing_urls) = 'string'
+             OR jsonb_typeof(source_refs) = 'string'
+             OR jsonb_typeof(heading_index) = 'string';
+        END IF;
+
+        IF to_regclass('note_section_entries') IS NOT NULL THEN
+          UPDATE note_section_entries
+          SET heading_path = mbrain_repair_jsonb_scalar_string(heading_path, ARRAY['array']),
+              outgoing_wikilinks = mbrain_repair_jsonb_scalar_string(outgoing_wikilinks, ARRAY['array']),
+              outgoing_urls = mbrain_repair_jsonb_scalar_string(outgoing_urls, ARRAY['array']),
+              source_refs = mbrain_repair_jsonb_scalar_string(source_refs, ARRAY['array'])
+          WHERE jsonb_typeof(heading_path) = 'string'
+             OR jsonb_typeof(outgoing_wikilinks) = 'string'
+             OR jsonb_typeof(outgoing_urls) = 'string'
+             OR jsonb_typeof(source_refs) = 'string';
+        END IF;
+
+        IF to_regclass('context_map_entries') IS NOT NULL THEN
+          UPDATE context_map_entries
+          SET graph_json = mbrain_repair_jsonb_scalar_string(graph_json, ARRAY['object'])
+          WHERE jsonb_typeof(graph_json) = 'string';
+        END IF;
+
+        IF to_regclass('context_atlas_entries') IS NOT NULL THEN
+          UPDATE context_atlas_entries
+          SET entrypoints = mbrain_repair_jsonb_scalar_string(entrypoints, ARRAY['array'])
+          WHERE jsonb_typeof(entrypoints) = 'string';
+        END IF;
+
+        IF to_regclass('files') IS NOT NULL THEN
+          UPDATE files
+          SET metadata = mbrain_repair_jsonb_scalar_string(metadata, ARRAY['object'])
+          WHERE jsonb_typeof(metadata) = 'string';
+        END IF;
+      END $$;
+
+      DROP FUNCTION IF EXISTS mbrain_repair_jsonb_scalar_string(JSONB, TEXT[]);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
