@@ -623,7 +623,7 @@ export function makeResolver(
       const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
 
       // Step 1: already a slug? (dir/name shape, lowercase, hyphenated)
-      if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(trimmed)) {
+      if (/^[a-z][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)+$/.test(trimmed)) {
         const page = await engine.getPage(trimmed);
         if (page) {
           cache.set(cacheKey, trimmed);
