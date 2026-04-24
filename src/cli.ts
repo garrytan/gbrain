@@ -19,7 +19,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -377,6 +377,22 @@ async function handleCliOnly(command: string, args: string[]) {
         // DB unavailable — still run filesystem checks
         await runDoctor(null, args, getDbUrlSource());
       }
+    }
+    return;
+  }
+
+  if (command === 'smoke-test') {
+    // Run smoke tests — no DB connection needed, the script handles its own checks
+    const { execSync } = await import('child_process');
+    const { resolve, dirname } = await import('path');
+    const { fileURLToPath } = await import('url');
+    const scriptDir = dirname(fileURLToPath(import.meta.url));
+    const scriptPath = resolve(scriptDir, '..', 'scripts', 'smoke-test.sh');
+    try {
+      execSync(`bash "${scriptPath}"`, { stdio: 'inherit', env: { ...process.env } });
+    } catch (e: any) {
+      // Non-zero exit = some tests failed (exit code = failure count)
+      process.exit(e.status ?? 1);
     }
     return;
   }

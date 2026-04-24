@@ -63,6 +63,20 @@ For gbrain-evals consumers:
 2. `bun install && bun run eval:run`
 3. Follow `gbrain-evals/eval/RUNBOOK.md` for full category runs and scorecard reproduction.
 
+## [0.19.1] - 2026-04-24
+
+### Added
+
+- New `gbrain smoke-test` CLI command. Runs 8 post-restart health checks with auto-fix: Bun runtime, gbrain CLI loads, database reachable via doctor, worker process liveness, OpenClaw Codex plugin Zod CJS (auto-reinstall when the zod@4 package ships without `core.cjs`), OpenClaw gateway responding, embedding API key present, brain repo exists. User-extensible via drop-in scripts at `~/.gbrain/smoke-tests.d/*.sh`. Designed to run from OpenClaw bootstrap hooks so every container restart automatically verifies and repairs the environment.
+- `skills/smoke-test/` skill with full documentation, pattern for adding new tests, and a growing known-issue database (starting with the Zod `core.cjs` publish bug discovered 2026-04-23).
+- `smoke-test` routing entry in `skills/RESOLVER.md` under Operational, so agents reach the skill on "post-restart health", "did the container restart break anything", and "smoke test" triggers.
+
+### Fixed
+
+- Doctor's `resolver_health` check now passes on fresh installs: `skills/smoke-test/` is wired into `RESOLVER.md` so the cascade that was flagging it unreachable (and dragging `gbrain doctor` to exit 1 on healthy brains) no longer fires.
+- `skills/smoke-test/SKILL.md` gains the required `## Anti-Patterns` and `## Output Format` sections, so `test/skills-conformance.test.ts` no longer flags it.
+- `llms-full.txt` regenerated to reflect the new RESOLVER row. The drift guard in `test/build-llms.test.ts` now passes.
+
 ## [0.19.0] - 2026-04-22
 
 ## **Your OpenClaw finally learns. Say "skillify it!" and every new failure becomes a durable skill.**

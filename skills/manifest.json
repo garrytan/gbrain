@@ -2,7 +2,7 @@
   "name": "gbrain",
   "version": "0.10.0",
   "conformance_version": "1.0.0",
-  "description": "Personal knowledge brain with hybrid RAG search — GStack mod for agent platforms",
+  "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
   "skills": [
     {
       "name": "ingest",
@@ -143,6 +143,11 @@
       "name": "skillpack-check",
       "path": "skillpack-check/SKILL.md",
       "description": "Agent-readable gbrain health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
+    },
+    {
+      "name": "smoke-test",
+      "path": "smoke-test/SKILL.md",
+      "description": "Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments"
     }
   ],
   "dependencies": {
