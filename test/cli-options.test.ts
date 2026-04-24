@@ -64,9 +64,31 @@ describe('parseGlobalFlags', () => {
   });
 
   test('all global flags combined', () => {
-    const r = parseGlobalFlags(['--quiet', '--progress-json', '--progress-interval=250', 'sync']);
-    expect(r.cliOpts).toEqual({ quiet: true, progressJson: true, progressInterval: 250 });
-    expect(r.rest).toEqual(['sync']);
+    const r = parseGlobalFlags(['--quiet', '--progress-json', '--progress-interval=250', '--dry-run', 'sync']);
+    expect(r.cliOpts).toEqual({ quiet: true, progressJson: true, progressInterval: 250, dryRun: true });
+    // --dry-run is a pass-through global — set on cliOpts AND left in rest
+    // so CLI_ONLY commands (doctor, dream, lint, etc.) can parse it locally.
+    // Ordering within `rest` follows the original argv ordering.
+    expect(r.rest).toEqual(['--dry-run', 'sync']);
+  });
+
+  test('--dry-run: sets dryRun=true AND passes through to rest', () => {
+    const r = parseGlobalFlags(['put', 'concepts/foo', '--dry-run', '--content', 'x']);
+    expect(r.cliOpts.dryRun).toBe(true);
+    expect(r.rest).toContain('--dry-run');
+    expect(r.rest).toEqual(['put', 'concepts/foo', '--dry-run', '--content', 'x']);
+  });
+
+  test('--dry-run leading before subcommand', () => {
+    const r = parseGlobalFlags(['--dry-run', 'put', 'concepts/foo']);
+    expect(r.cliOpts.dryRun).toBe(true);
+    // Flag passes through — ordering preserved minus stripped flags (none here).
+    expect(r.rest).toEqual(['--dry-run', 'put', 'concepts/foo']);
+  });
+
+  test('dryRun defaults to false when --dry-run absent', () => {
+    const r = parseGlobalFlags(['put', 'concepts/foo']);
+    expect(r.cliOpts.dryRun).toBe(false);
   });
 });
 
@@ -78,7 +100,7 @@ describe('getCliOptions / setCliOptions singleton', () => {
 
   test('setCliOptions applies + getCliOptions returns a copy', () => {
     _resetCliOptionsForTest();
-    setCliOptions({ quiet: false, progressJson: true, progressInterval: 250 });
+    setCliOptions({ quiet: false, progressJson: true, progressInterval: 250, dryRun: false });
     expect(getCliOptions().progressJson).toBe(true);
     expect(getCliOptions().progressInterval).toBe(250);
   });
@@ -138,12 +160,12 @@ describe('CLI integration: progress streams to the right channel', () => {
 
 describe('cliOptsToProgressOptions', () => {
   test('--quiet → quiet mode', () => {
-    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: false, progressInterval: 1000 });
+    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: false, progressInterval: 1000, dryRun: false });
     expect(opts.mode).toBe('quiet');
   });
 
   test('--progress-json → json mode with interval', () => {
-    const opts = cliOptsToProgressOptions({ quiet: false, progressJson: true, progressInterval: 500 });
+    const opts = cliOptsToProgressOptions({ quiet: false, progressJson: true, progressInterval: 500, dryRun: false });
     expect(opts.mode).toBe('json');
     expect(opts.minIntervalMs).toBe(500);
   });
@@ -155,7 +177,7 @@ describe('cliOptsToProgressOptions', () => {
   });
 
   test('quiet takes priority over progressJson', () => {
-    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: true, progressInterval: 1000 });
+    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: true, progressInterval: 1000, dryRun: false });
     expect(opts.mode).toBe('quiet');
   });
 });

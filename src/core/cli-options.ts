@@ -15,12 +15,14 @@ export interface CliOptions {
   quiet: boolean;
   progressJson: boolean;
   progressInterval: number; // ms
+  dryRun: boolean;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
   quiet: false,
   progressJson: false,
   progressInterval: 1000,
+  dryRun: false,
 };
 
 /**
@@ -32,6 +34,8 @@ export const DEFAULT_CLI_OPTIONS: CliOptions = {
  *   --progress-json
  *   --progress-interval=<ms>
  *   --progress-interval <ms>   (space-separated form)
+ *   --dry-run                  (cross-cutting; honored by any mutating op
+ *                               that checks ctx.dryRun)
  *
  * Unknown flags are passed through unchanged — per-command parsers see them.
  */
@@ -47,6 +51,16 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
     }
     if (a === '--progress-json') {
       cliOpts.progressJson = true;
+      continue;
+    }
+    if (a === '--dry-run') {
+      // Cross-cutting: honored by every mutating op (`ctx.dryRun`) AND by
+      // CLI_ONLY commands that parse their own --dry-run from subArgs
+      // (doctor, dream, lint, check-resolvable, repair-jsonb). We therefore
+      // set cliOpts here but KEEP --dry-run in `rest` so the per-command
+      // parsers still find it. parseOpArgs() has a matching carveout.
+      cliOpts.dryRun = true;
+      rest.push(a);
       continue;
     }
     if (a === '--progress-interval' && i + 1 < argv.length) {
@@ -143,5 +157,6 @@ export function childGlobalFlags(cliOpts?: CliOptions): string {
   if (opts.progressInterval !== DEFAULT_CLI_OPTIONS.progressInterval) {
     parts.push(`--progress-interval=${opts.progressInterval}`);
   }
+  if (opts.dryRun) parts.push('--dry-run');
   return parts.length > 0 ? ' ' + parts.join(' ') : '';
 }

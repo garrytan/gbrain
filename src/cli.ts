@@ -118,12 +118,31 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
     const arg = args[i];
     if (arg.startsWith('--')) {
       const key = arg.slice(2).replace(/-/g, '_');
+      // Cross-cutting global flag: parseGlobalFlags() already set
+      // cliOpts.dryRun and left `--dry-run` in the arg stream so CLI_ONLY
+      // commands can parse it locally. Skip here so the strict-unknown
+      // check below doesn't reject it on op-backed commands.
+      if (key === 'dry_run') continue;
       const paramDef = op.params[key];
-      if (paramDef?.type === 'boolean') {
+      // Reject unknown flags. Silently absorbing them caused this whole family
+      // of bugs: --file consumed the path into a ghost key, --cotent (typo of
+      // --content) ate the user's content. Fail loud — list the recognized
+      // flags so the caller can self-correct.
+      if (!paramDef) {
+        const cmd = op.cliHints?.name ?? op.name;
+        const recognized = Object.keys(op.params).map(k => `--${k.replace(/_/g, '-')}`).sort();
+        console.error(`Error: unknown flag ${arg} for \`gbrain ${cmd}\``);
+        console.error(`  Recognized flags: ${recognized.join(', ')}`);
+        process.exit(1);
+      }
+      if (paramDef.type === 'boolean') {
         params[key] = true;
       } else if (i + 1 < args.length) {
         params[key] = args[++i];
-        if (paramDef?.type === 'number') params[key] = Number(params[key]);
+        if (paramDef.type === 'number') params[key] = Number(params[key]);
+      } else {
+        console.error(`Error: flag ${arg} requires a value`);
+        process.exit(1);
       }
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
@@ -146,16 +165,17 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   return params;
 }
 
-function makeContext(engine: BrainEngine, params: Record<string, unknown>): OperationContext {
+function makeContext(engine: BrainEngine, _params: Record<string, unknown>): OperationContext {
+  const cliOpts = getCliOptions();
   return {
     engine,
     config: loadConfig() || { engine: 'postgres' },
     logger: { info: console.log, warn: console.warn, error: console.error },
-    dryRun: (params.dry_run as boolean) || false,
+    dryRun: cliOpts.dryRun,
     // Local CLI invocation — the user owns the machine; do not apply remote-caller
     // confinement (e.g., cwd-locked file_upload).
     remote: false,
-    cliOpts: getCliOptions(),
+    cliOpts,
   };
 }
 
@@ -550,7 +570,7 @@ SETUP
 
 PAGES
   get <slug>                         Read a page
-  put <slug> [< file.md]             Write/update a page
+  put <slug> [--file PATH|--content TEXT]  Write/update a page (or pipe markdown via stdin)
   delete <slug>                      Delete a page
   list [--type T] [--tag T] [-n N]   List pages
 

@@ -137,3 +137,51 @@ describe('CLI dispatch integration', () => {
     expect(tools[0]).toHaveProperty('parameters');
   });
 });
+
+describe('strict flag parsing (v0.18.3+)', () => {
+  test('unknown --flag on a command prints error + recognized flags, exits 1', async () => {
+    // Prior to v0.18.3 the parser silently absorbed --file into a ghost key;
+    // now it rejects any flag not declared on the op. `put --bogus-flag foo`
+    // is mutating, but dispatch fails at parse time before any DB connect.
+    const proc = Bun.spawn(
+      ['bun', 'run', 'src/cli.ts', 'put', 'concepts/x', '--bogus-flag', 'foo'],
+      {
+        cwd: new URL('..', import.meta.url).pathname,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('unknown flag --bogus-flag');
+    expect(stderr).toContain('Recognized flags:');
+    // put_page now lists --content and --file (plus slug, which isn't a --flag).
+    expect(stderr).toContain('--content');
+    expect(stderr).toContain('--file');
+  });
+
+  test('unknown --flag typo caught (regression guard for --cotent etc.)', async () => {
+    // Typo-class silent-absorb bug: before v0.18.3, `--cotent foo` sent foo
+    // into a ghost key and stdin-fallback filled content with an empty read.
+    const proc = Bun.spawn(
+      ['bun', 'run', 'src/cli.ts', 'put', 'concepts/x', '--cotent', 'hi'],
+      {
+        cwd: new URL('..', import.meta.url).pathname,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('unknown flag --cotent');
+  });
+
+  test('help hint shows --file / --content, not `[< file.md]`', () => {
+    // The top-level `gbrain --help` used to say `put <slug> [< file.md]`,
+    // which read flag-shaped and misled agents into guessing --file.
+    expect(cliSource).not.toMatch(/put <slug> \[< file\.md\]/);
+    expect(cliSource).toContain('--file PATH');
+  });
+});

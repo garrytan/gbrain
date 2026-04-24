@@ -3,7 +3,7 @@
  * Each operation defines its schema, handler, and optional CLI hints.
  */
 
-import { lstatSync, realpathSync } from 'fs';
+import { lstatSync, readFileSync, realpathSync, statSync } from 'fs';
 import { resolve, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
@@ -187,7 +187,7 @@ export interface OperationContext {
    * may leave it undefined — consumers default to quiet/no-progress for
    * background work.
    */
-  cliOpts?: { quiet: boolean; progressJson: boolean; progressInterval: number };
+  cliOpts?: { quiet: boolean; progressJson: boolean; progressInterval: number; dryRun: boolean };
 }
 
 export interface Operation {
@@ -240,16 +240,57 @@ const get_page: Operation = {
   cliHints: { name: 'get', positional: ['slug'] },
 };
 
+const PUT_FILE_MAX_BYTES = 5_000_000; // 5MB — matches the stdin cap in cli.ts
+
 const put_page: Operation = {
   name: 'put_page',
   description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
-    content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
+    // `content` is effectively required but exactly one of {content, file,
+    // piped stdin} must be present. Expressing that "one of N" is awkward in
+    // the flat required-check, so validate in the handler (below) after
+    // --file → content resolution.
+    content: { type: 'string', description: 'Full markdown content with YAML frontmatter (or use --file / pipe via stdin)' },
+    file: { type: 'string', description: 'Path to a markdown file to read (local CLI only; alternative to --content)' },
   },
   mutating: true,
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+
+    // Resolve --file into content before any side-effectful branch so the
+    // mutex + size cap + remote-denial fire on dry-run too (preview the
+    // validation, not the write).
+    if (p.file) {
+      if (ctx.remote === true) {
+        throw new OperationError(
+          'permission_denied',
+          '--file is not available for remote/MCP callers. Pass content directly via the `content` param.',
+        );
+      }
+      if (p.content) {
+        throw new OperationError(
+          'invalid_params',
+          'Cannot use both --file and --content — pick one.',
+        );
+      }
+      const filePath = resolve(p.file as string);
+      const st = statSync(filePath);
+      if (st.size > PUT_FILE_MAX_BYTES) {
+        throw new OperationError(
+          'invalid_params',
+          `File exceeds ${PUT_FILE_MAX_BYTES} bytes (${st.size}). Split into smaller inputs.`,
+        );
+      }
+      p.content = readFileSync(filePath, 'utf-8');
+    }
+
+    if (typeof p.content !== 'string' || p.content.length === 0) {
+      throw new OperationError(
+        'invalid_params',
+        'put_page requires content. Pass --content "...", --file <path>, or pipe markdown via stdin.',
+      );
+    }
 
     // Subagent namespace enforcement (v0.15+). Runs BEFORE the dry-run
     // short-circuit so preview calls surface the same rejection. Confines

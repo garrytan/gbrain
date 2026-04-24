@@ -583,7 +583,8 @@ SETUP
 
 PAGES
   gbrain get <slug>                     Read a page (fuzzy slug matching)
-  gbrain put <slug> [< file.md]         Write/update (auto-versions)
+  gbrain put <slug> --file PATH         Write/update from file (auto-versions)
+  gbrain put <slug> --content "..."     Write/update inline (or pipe via stdin)
   gbrain delete <slug>                  Delete a page
   gbrain list [--type T] [--tag T]      List with filters
 
