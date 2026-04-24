@@ -2530,6 +2530,27 @@ export class SQLiteEngine implements BrainEngine {
             );
           `);
           break;
+        case 5:
+          this.database.run(
+            `INSERT INTO config (key, value) VALUES ('embedding_model', ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+            [DEFAULT_EMBEDDING_MODEL],
+          );
+          this.database.run(
+            `INSERT INTO config (key, value) VALUES ('embedding_dimensions', '768')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          );
+          this.database.run(
+            `UPDATE content_chunks SET embedding = NULL, embedded_at = NULL, model = ?`,
+            [DEFAULT_EMBEDDING_MODEL],
+          );
+          {
+            const columns = this.database.query(`PRAGMA table_info(pages)`).all() as Array<{ name: string }>;
+            if (columns.some((column) => column.name === 'page_embedding')) {
+              this.database.exec(`UPDATE pages SET page_embedding = NULL`);
+            }
+          }
+          break;
         case 6:
           {
             const columns = this.database.query(`PRAGMA table_info(pages)`).all() as Array<{ name: string }>;
@@ -2580,6 +2601,9 @@ export class SQLiteEngine implements BrainEngine {
               END;
             `);
           }
+          break;
+        case 7:
+          // Page embedding column is ensured by initSchema() for SQLite.
           break;
         case 8:
           this.database.exec(`
@@ -2956,6 +2980,8 @@ export class SQLiteEngine implements BrainEngine {
         case 24:
           this.ensureBrainLoopAuditIndexes();
           break;
+        default:
+          throw new Error(`SQLite migration ${version} is not implemented`);
       }
 
       await this.setConfig('version', String(version));

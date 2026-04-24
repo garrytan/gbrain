@@ -801,6 +801,55 @@ Original symbol map.
 });
 
 describe('SQLiteEngine migrations', () => {
+  test('migration v5 resets stale SQLite embedding state', async () => {
+    await putPage('concepts/legacy-vector.md', {
+      type: 'concept',
+      title: 'Legacy Vector',
+      compiled_truth: 'Legacy vector content.',
+      timeline: '',
+      frontmatter: {},
+    });
+    await putChunks('concepts/legacy-vector.md', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Legacy vector content.',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array([0.1, 0.2]),
+        model: 'legacy-model',
+      },
+    ]);
+
+    const db = (engine as any).database as Database;
+    db.run(`UPDATE config SET value = ? WHERE key = 'version'`, ['4']);
+    db.run(`
+      INSERT INTO config (key, value) VALUES ('embedding_model', 'legacy-model')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+    db.run(`
+      INSERT INTO config (key, value) VALUES ('embedding_dimensions', '384')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+
+    await engine.initSchema();
+
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+    expect(await engine.getConfig('embedding_model')).toBe('nomic-embed-text');
+    expect(await engine.getConfig('embedding_dimensions')).toBe('768');
+
+    const chunks = await engine.getChunks('concepts/legacy-vector.md');
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.model).toBe('nomic-embed-text');
+    expect(chunks[0]?.embedding).toBeNull();
+    expect(chunks[0]?.embedded_at).toBeNull();
+
+    const row = db.query(`
+      SELECT page_embedding
+      FROM pages
+      WHERE slug = 'concepts/legacy-vector.md'
+    `).get() as { page_embedding: Uint8Array | null } | null;
+    expect(row?.page_embedding).toBeNull();
+  });
+
   test('migration v6 backfills searchable frontmatter beyond the first 100 pages', async () => {
     for (let index = 0; index < 150; index += 1) {
       await putPage(`systems/system-${index}.md`, {
