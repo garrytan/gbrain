@@ -57,28 +57,99 @@ bunx tsc --noEmit --pretty false 2>&1 | rg -c "runMigration|SQLiteEngine"
 
 Expected: nonzero count.
 
-### Task 2a.2: Add `runMigration` to `SQLiteEngine`
+### Task 2a.2: Narrow Shared SQL Migration Capability
 
 **Files:**
 
+- Modify: `src/core/engine.ts`
+- Modify: `src/core/migrate.ts`
 - Modify: `src/core/sqlite-engine.ts`
 - Test: `test/task-memory-engine.test.ts`
 - Test: `test/sqlite-engine.test.ts`
 - Test: `test/scenarios/helpers.ts`
 
-- [ ] **Step 1: Add the method**
+- [ ] **Step 1: Remove shared SQL migration from the base engine contract**
 
-In `src/core/sqlite-engine.ts`, add this public method inside `class SQLiteEngine` near the existing schema/migration methods:
+In `src/core/engine.ts`, remove `runMigration(version: number, sql: string): Promise<void>` from `BrainEngine`.
+
+Reason: SQLite has its own migration ladder in `SQLiteEngine.initSchema() -> runSqliteMigrations()`. The shared migration SQL in `src/core/migrate.ts` is Postgres/PGLite-flavored and includes constructs such as `JSONB`, `SERIAL`, `DO $$`, and `ALTER ... DROP CONSTRAINT`, so advertising shared SQL migration capability on every `BrainEngine` is incorrect.
+
+- [ ] **Step 2: Add a narrower SQL migration capability type**
+
+In `src/core/migrate.ts`, add:
 
 ```ts
-async runMigration(_version: number, sql: string): Promise<void> {
-  this.database.exec(sql);
-}
+type SqlMigrationEngine = BrainEngine & {
+  runMigration(version: number, sql: string): Promise<void>;
+};
 ```
 
-Do not update `config.version` here. The migration runner owns version advancement after SQL and migration handlers both succeed.
+Then change:
 
-- [ ] **Step 2: Run focused runtime tests**
+```ts
+export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {
+```
+
+to:
+
+```ts
+export async function runMigrations(engine: SqlMigrationEngine): Promise<{ applied: number; current: number }> {
+```
+
+Inside the transaction callback, cast only the transactional engine passed to the callback:
+
+```ts
+await (tx as SqlMigrationEngine).runMigration(m.version, m.sql);
+```
+
+Do not add `runMigration` to `SQLiteEngine`. That would make SQLite appear compatible with the shared Postgres/PGLite migration SQL when it is not.
+
+- [ ] **Step 3: Guard the SQLite-only migration ladder**
+
+In `src/core/sqlite-engine.ts`, make SQLite migration 5 mirror the local parts of the embedding upgrade:
+
+```ts
+case 5:
+  this.database.run(
+    `INSERT INTO config (key, value) VALUES ('embedding_model', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [DEFAULT_EMBEDDING_MODEL],
+  );
+  this.database.run(
+    `INSERT INTO config (key, value) VALUES ('embedding_dimensions', '768')
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  );
+  this.database.run(
+    `UPDATE content_chunks SET embedding = NULL, embedded_at = NULL, model = ?`,
+    [DEFAULT_EMBEDDING_MODEL],
+  );
+  {
+    const columns = this.database.query(`PRAGMA table_info(pages)`).all() as Array<{ name: string }>;
+    if (columns.some((column) => column.name === 'page_embedding')) {
+      this.database.exec(`UPDATE pages SET page_embedding = NULL`);
+    }
+  }
+  break;
+```
+
+Make intentional SQLite no-op migration 7 explicit:
+
+```ts
+case 7:
+  // Page embedding column is ensured by initSchema() for SQLite.
+  break;
+```
+
+At the end of the switch, add:
+
+```ts
+default:
+  throw new Error(`SQLite migration ${version} is not implemented`);
+```
+
+This prevents future shared migrations from being silently marked applied on SQLite without a corresponding SQLite case.
+
+- [ ] **Step 4: Run focused runtime tests**
 
 ```bash
 bun test test/task-memory-engine.test.ts test/sqlite-engine.test.ts test/scenarios/s01-fresh-install.test.ts --timeout 60000
@@ -86,7 +157,7 @@ bun test test/task-memory-engine.test.ts test/sqlite-engine.test.ts test/scenari
 
 Expected: zero failures.
 
-- [ ] **Step 3: Confirm the cascade is gone**
+- [ ] **Step 5: Confirm the cascade is gone**
 
 ```bash
 bunx tsc --noEmit --pretty false 2>&1 | rg "runMigration|SQLiteEngine"
@@ -94,18 +165,18 @@ bunx tsc --noEmit --pretty false 2>&1 | rg "runMigration|SQLiteEngine"
 
 Expected: no output.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/core/sqlite-engine.ts
-git commit -m "fix(tsc): align SQLiteEngine with BrainEngine"
+git add src/core/engine.ts src/core/migrate.ts src/core/sqlite-engine.ts test/sqlite-engine.test.ts docs/superpowers/plans/2026-04-25-mbrain-sprint-0-tsc-baseline-current-plan.md
+git commit -m "fix(tsc): narrow shared migration capability"
 ```
 
 ### Task 2a.3: Review and Merge Gate
 
 - [ ] **Step 1: Request critical subagent review**
 
-Ask the reviewer to check that `runMigration` does not bypass migration version semantics and that no unrelated cleanup landed.
+Ask the reviewer to check that shared SQL migrations are no longer part of the base `BrainEngine` contract, SQLite still uses only its own migration ladder, and no unrelated cleanup landed.
 
 - [ ] **Step 2: Run PR gate**
 
@@ -121,7 +192,7 @@ Expected: all pass.
 
 ```bash
 git push -u origin sprint-0.1-tsc-engine-contract
-gh pr create --base master --head sprint-0.1-tsc-engine-contract --title "Sprint 0.1: align SQLiteEngine with BrainEngine" --body-file /tmp/mbrain-sprint-0.1-pr-body.md
+gh pr create --base master --head sprint-0.1-tsc-engine-contract --title "Sprint 0.1: narrow shared migration capability" --body-file /tmp/mbrain-sprint-0.1-pr-body.md
 ```
 
 ## PR 2b: SQL, JSON, and Mapper Type Boundaries

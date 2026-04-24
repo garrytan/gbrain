@@ -25,6 +25,10 @@ interface Migration {
   handler?: (engine: BrainEngine) => Promise<void>;
 }
 
+type SqlMigrationEngine = BrainEngine & {
+  runMigration(version: number, sql: string): Promise<void>;
+};
+
 // Migrations are embedded here, not loaded from files.
 // Add new migrations at the end. Never modify existing ones.
 const MIGRATIONS: Migration[] = [
@@ -844,7 +848,7 @@ export const LATEST_VERSION = MIGRATIONS.length > 0
   ? MIGRATIONS[MIGRATIONS.length - 1].version
   : 1;
 
-export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {
+export async function runMigrations(engine: SqlMigrationEngine): Promise<{ applied: number; current: number }> {
   const currentStr = await engine.getConfig('version');
   const current = parseInt(currentStr || '1', 10);
 
@@ -854,7 +858,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
       // SQL migration (transactional)
       if (m.sql) {
         await engine.transaction(async (tx) => {
-          await tx.runMigration(m.version, m.sql);
+          await (tx as SqlMigrationEngine).runMigration(m.version, m.sql);
         });
       }
 
