@@ -20,6 +20,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Fix broken citations", "citations are broken", "fix citations", "citation audit" | `skills/citation-fixer/SKILL.md` |
 | "Research", "track", "extract from email", "investor updates", "donations" | `skills/data-research/SKILL.md` |
 | Share a brain page as a link | `skills/publish/SKILL.md` |
+| "validate frontmatter", "check frontmatter", "brain lint", "fix frontmatter" | `skills/frontmatter-guard/SKILL.md` |
 
 ## Content & media ingestion
 
@@ -58,7 +59,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
 | "Validate skills", skill health check | `skills/testing/SKILL.md` |
 | Webhook setup, external event processing | `skills/webhook-transforms/SKILL.md` |
-| "Spawn agent", "background task", "parallel tasks", "steer agent", "pause/resume agent" | `skills/minion-orchestrator/SKILL.md` |
+| "Spawn agent", "background task", "parallel tasks", "steer agent", "pause/resume agent", "gbrain jobs submit", "submit a gbrain job", "submit a shell job", "shell job" | `skills/minion-orchestrator/SKILL.md` |
 
 ## Setup & migration
 

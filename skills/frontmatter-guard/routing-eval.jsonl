@@ -1,0 +1,5 @@
+// Routing eval fixtures for skills/frontmatter-guard. Check 5 (W2, v0.19).
+{"intent": "can you validate the frontmatter on these brain pages I just wrote", "expected_skill": "frontmatter-guard"}
+{"intent": "run a brain lint to find broken frontmatter across the repo", "expected_skill": "frontmatter-guard"}
+// Negative: general brain health is maintain, not frontmatter-guard
+{"intent": "check overall brain health and run maintenance", "expected_skill": null, "ambiguous_with": []}
