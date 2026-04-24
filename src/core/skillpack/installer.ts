@@ -183,9 +183,10 @@ function acquireLock(workspace: string, opts: InstallOptions): void {
   const existing = readLock(workspace);
   const staleMs = opts.lockStaleMs ?? DEFAULT_LOCK_STALE_MS;
   if (existing) {
-    const age = Date.now() - existing.mtimeMs;
-    // `staleMs: 0` in tests means "any age counts as stale". Use >=
-    // so a just-written lock qualifies when the threshold is 0.
+    // macOS statSync returns mtimeMs with nanosecond precision, which can be
+    // fractionally ahead of Date.now(). Clamp negative ages to 0 so a just-
+    // written lock still qualifies as age=0 when staleMs=0.
+    const age = Math.max(0, Date.now() - existing.mtimeMs);
     const stale = age >= staleMs;
     if (stale && !opts.forceUnlock) {
       throw new InstallError(

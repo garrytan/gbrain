@@ -47,6 +47,9 @@ If you've been meaning to import a multi-year email archive and kept finding rea
 - `docs/architecture/infra-layer.md` — embedding stage now reads "OpenAI, 1536 dimensions; model via GBRAIN_EMBEDDING_MODEL" instead of hardcoding the default.
 - `CLAUDE.md` — updated `src/core/embedding.ts` entry to document the env var + stamping contract; added entries for `scripts/filter-gmail-mbox.ts`, `test/embedding.test.ts`, `test/filter-gmail-mbox.test.ts`.
 
+**Skillpack lockfile fix (macOS)**
+- `src/core/skillpack/installer.ts` — `acquireLock` now clamps negative lock ages to zero. On macOS, `statSync().mtimeMs` returns nanosecond-precision values that can be fractionally ahead of `Date.now()` right after a write, producing a negative age that made `--force-unlock` fall through the wrong branch. Unblocked `test/skillpack-install.test.ts` case `D-CX-11` and any real install racing the lock on APFS.
+
 **No schema changes. No migration. Existing brains unaffected (default behavior unchanged).**
 
 ## [0.19.0] - 2026-04-22
