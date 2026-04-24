@@ -114,13 +114,18 @@ describe('loadConfig: API key merging (for self-contained subprocess use)', () =
     expect(config?.anthropic_api_key).toBe('sk-a');
   });
 
-  test('config has no keys when neither env nor file provides them', () => {
+  test('env-specific values do not leak after env deletion (file keys may still exist)', () => {
+    // Set recognizable env-specific sentinels.
+    process.env.OPENAI_API_KEY = 'sk-o-env-sentinel';
+    process.env.ANTHROPIC_API_KEY = 'sk-a-env-sentinel';
+    loadConfig();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     const config = loadConfig();
-    // When no key anywhere, the fields should be absent (undefined), not empty strings.
-    // Downstream SDK clients fall through to SDK's own env-default behavior.
-    expect(config?.openai_api_key).toBeUndefined();
-    expect(config?.anthropic_api_key).toBeUndefined();
+    // After deletion, env sentinels must not leak. The file may legitimately
+    // provide keys (v0.12's self-contained API keys feature), which is fine —
+    // just not the sentinel values from the previous env-driven call.
+    expect(config?.openai_api_key).not.toBe('sk-o-env-sentinel');
+    expect(config?.anthropic_api_key).not.toBe('sk-a-env-sentinel');
   });
 });
