@@ -168,6 +168,10 @@ function inferType(filePath?: string): PageType {
   if (lower.includes('/civic/')) return 'civic';
   if (lower.includes('/projects/') || lower.includes('/project/')) return 'project';
   if (lower.includes('/sources/') || lower.includes('/source/')) return 'source';
+  if (lower.includes('/meetings/')) return 'meeting';
+  if (lower.includes('/meeting/')) return 'meeting';
+  if (lower.includes('/notes/')) return 'note';
+  if (lower.includes('/note/')) return 'note';
   if (lower.includes('/media/')) return 'media';
   return 'concept';
 }
