@@ -20,6 +20,10 @@ mock.module('../src/core/embedding.ts', () => ({
     activeEmbedCalls--;
     return texts.map(() => new Float32Array(1536));
   },
+  resolveEmbeddingModel: () => {
+    const raw = process.env.GBRAIN_EMBEDDING_MODEL?.trim();
+    return raw || 'text-embedding-3-large';
+  },
 }));
 
 // Import AFTER mocking.
@@ -51,6 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.GBRAIN_EMBED_CONCURRENCY;
+  delete process.env.GBRAIN_EMBEDDING_MODEL;
 });
 
 describe('runEmbed --all (parallel)', () => {
@@ -103,6 +108,36 @@ describe('runEmbed --all (parallel)', () => {
 
     expect(totalEmbedCalls).toBe(5);
     expect(maxConcurrentEmbedCalls).toBe(1);
+  });
+
+  test('stamps resolved model on re-embedded chunks, preserves existing model on untouched chunks', async () => {
+    // Page with 2 chunks: one stale (gets re-embedded), one fresh (stays put).
+    const pages = [{ slug: 'mixed' }];
+    const chunksBySlug = new Map<string, any[]>([
+      ['mixed', [
+        { chunk_index: 0, chunk_text: 'stale text', chunk_source: 'compiled_truth', embedded_at: null, model: 'text-embedding-3-large', token_count: 2 },
+        { chunk_index: 1, chunk_text: 'fresh text', chunk_source: 'compiled_truth', embedded_at: '2026-01-01', model: 'text-embedding-3-large', token_count: 2 },
+      ]],
+    ]);
+
+    const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      upsertChunks: async (slug: string, chunks: any[]) => { upsertCalls.push({ slug, chunks }); },
+    });
+
+    process.env.GBRAIN_EMBEDDING_MODEL = 'text-embedding-3-small';
+    process.env.GBRAIN_EMBED_CONCURRENCY = '1';
+
+    await runEmbed(engine, ['--stale']);
+
+    expect(upsertCalls.length).toBe(1);
+    const written = upsertCalls[0].chunks;
+    // Stale chunk (index 0): re-embedded, so stamped with resolved model.
+    expect(written.find((c: any) => c.chunk_index === 0).model).toBe('text-embedding-3-small');
+    // Fresh chunk (index 1): untouched, so existing model preserved.
+    expect(written.find((c: any) => c.chunk_index === 1).model).toBe('text-embedding-3-large');
   });
 
   test('skips pages whose chunks are all already embedded when --stale', async () => {

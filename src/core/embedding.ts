@@ -2,14 +2,36 @@
  * Embedding Service
  * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * OpenAI text-embedding-3-large (default) or text-embedding-3-small
+ * (6.5× cheaper, ~90% retrieval quality) at 1536 dimensions. Pick via
+ * GBRAIN_EMBEDDING_MODEL env var. Historical backfills of large archives
+ * (e.g. 20+ years of Gmail) are the canonical use case for -small.
+ *
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
+const ALLOWED_MODELS = [
+  'text-embedding-3-large',
+  'text-embedding-3-small',
+] as const;
+type AllowedModel = (typeof ALLOWED_MODELS)[number];
+const DEFAULT_MODEL: AllowedModel = 'text-embedding-3-large';
+
+export function resolveEmbeddingModel(): AllowedModel {
+  const raw = process.env.GBRAIN_EMBEDDING_MODEL?.trim();
+  if (!raw) return DEFAULT_MODEL;
+  if ((ALLOWED_MODELS as readonly string[]).includes(raw)) {
+    return raw as AllowedModel;
+  }
+  throw new Error(
+    `GBRAIN_EMBEDDING_MODEL=${raw} is not supported. ` +
+      `Allowed values: ${ALLOWED_MODELS.join(', ')}.`,
+  );
+}
+
 const DIMENSIONS = 1536;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
@@ -63,7 +85,7 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const response = await getClient().embeddings.create({
-        model: MODEL,
+        model: resolveEmbeddingModel(),
         input: texts,
         dimensions: DIMENSIONS,
       });
@@ -104,4 +126,4 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
+export { DIMENSIONS as EMBEDDING_DIMENSIONS };

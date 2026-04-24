@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { embedBatch } from '../core/embedding.ts';
+import { embedBatch, resolveEmbeddingModel } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
@@ -199,11 +199,13 @@ async function embedPage(
   for (let j = 0; j < toEmbed.length; j++) {
     embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
   }
+  const resolvedModel = resolveEmbeddingModel();
   const updated: ChunkInput[] = chunks.map(c => ({
     chunk_index: c.chunk_index,
     chunk_text: c.chunk_text,
     chunk_source: c.chunk_source,
     embedding: embeddingMap.get(c.chunk_index),
+    model: embeddingMap.has(c.chunk_index) ? resolvedModel : c.model,
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
@@ -265,11 +267,13 @@ async function embedAll(
         embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
       }
       // Preserve ALL chunks, only update embeddings for stale ones
+      const resolvedModel = resolveEmbeddingModel();
       const updated: ChunkInput[] = chunks.map(c => ({
         chunk_index: c.chunk_index,
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
+        model: embeddingMap.has(c.chunk_index) ? resolvedModel : c.model,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(page.slug, updated);
