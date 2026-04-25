@@ -73,8 +73,8 @@ import type {
 //
 // Returned to MCP clients in the `instructions` field of `InitializeResult`.
 // Clients render this near the top of the agent's system prompt, so agents see
-// it before they decide which tools to call. See docs/MCP_INSTRUCTIONS.md and
-// docs/rfcs/2026-04-16-mcp-server-instructions-rfc.md for the design rationale.
+// it before they decide which tools to call. See docs/MCP_INSTRUCTIONS.md for
+// the design rationale.
 export const MCP_INSTRUCTIONS = [
   'Use this server to look up knowledge about people, companies, technical concepts, internal systems, and organizational context. Prefer this over web search or codebase grep when the question involves a named entity, domain concept, or cross-system architecture. The brain contains compiled truth, relationship history, and technical maps that external search cannot provide.',
   'Do not use for: code editing, git operations, file management, library documentation, or general programming.',

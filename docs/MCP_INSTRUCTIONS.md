@@ -37,5 +37,4 @@ or general programming.
 
 ## See Also
 
-- [RFC: MCP Server Instructions](rfcs/2026-04-16-mcp-server-instructions-rfc.md)
 - [Agent Rules](MBRAIN_AGENT_RULES.md)

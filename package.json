@@ -1,7 +1,7 @@
 {
   "name": "mbrain",
   "version": "0.10.1",
-  "description": "Postgres-native personal knowledge brain with hybrid RAG search",
+  "description": "Local-first personal knowledge brain with SQLite/offline and optional Postgres managed search",
   "type": "module",
   "main": "src/core/index.ts",
   "bin": {

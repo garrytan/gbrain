@@ -310,8 +310,10 @@ describe('doctor command', () => {
     expect(output).toContain('unsupported_capabilities');
     expect(output).toContain('files/storage commands require Postgres raw database access');
     expect(output).toContain('pgvector');
-    expect(output).toContain('Skipped: pgvector check is Postgres-only for sqlite mode');
-    expect(output).toContain('Skipped: RLS check is Postgres-only for sqlite mode');
+    expect(output).toContain('[OK] pgvector: Not applicable: pgvector check is managed Postgres-only for sqlite mode');
+    expect(output).toContain('[OK] rls: Not applicable: RLS check is managed Postgres-only for sqlite mode');
+    expect(output).not.toContain('[WARN] pgvector');
+    expect(output).not.toContain('[WARN] rls');
   });
 
   test('doctor reports offline profile provider details for local sqlite mode', async () => {
@@ -367,6 +369,10 @@ describe('doctor command', () => {
     expect(checksByName.offline_profile.message).toContain('enabled');
     expect(checksByName.unsupported_capabilities.message).toContain('file/storage');
     expect(checksByName.unsupported_capabilities.message).toContain('check-update');
+    expect(checksByName.pgvector.status).toBe('ok');
+    expect(checksByName.pgvector.message).toContain('Not applicable');
+    expect(checksByName.rls.status).toBe('ok');
+    expect(checksByName.rls.message).toContain('Not applicable');
   });
 
 

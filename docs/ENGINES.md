@@ -12,11 +12,11 @@ Different users have different constraints:
 
 | User | Needs | Best engine |
 |------|-------|-------------|
-| Power user (you) | World-class search, 7K+ pages, zero-ops | PostgresEngine + Supabase |
-| Open source hacker | Single file, no server, git-friendly | SQLiteEngine (Phase 0 contract path) |
+| Single-user personal brain | Single file, no server, local/offline operation | SQLiteEngine |
+| Managed large brain | pgvector at scale, remote MCP deployment, cloud file/storage workflows | PostgresEngine + Supabase or self-hosted Postgres |
 | Team/enterprise | Multi-user, RLS, audit trail | PostgresEngine + self-hosted |
 | Researcher | Analytics, bulk exports, embeddings | DuckDBEngine (someday) |
-| Edge/mobile | Offline-first, sync later | SQLiteEngine + sync (someday) |
+| Edge/mobile | Offline-first with sync later | TursoEngine/libSQL (someday) |
 
 The engine interface means we do not have to choose a single storage story. Postgres remains the full cloud path, while SQLite and PGLite already cover honest local-path usage and still leave room for more engines later.
 
@@ -89,13 +89,13 @@ export interface BrainEngine {
 
 **Slug-based API, not ID-based.** Every method takes slugs, not numeric IDs. The engine resolves slugs to IDs internally. This keeps the interface portable... slugs are strings, IDs are database-specific.
 
-**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that. This is intentional: embedding is an external API call (OpenAI), not a storage concern. All engines share the same embedding service.
+**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that through the configured provider: local Ollama-compatible runtimes for SQLite/local mode, or hosted providers when configured. All engines share the same embedding service.
 
 **Chunking is NOT in the engine.** Same logic. `src/core/chunkers/` handles chunking. The engine stores and retrieves chunks. All engines share the same chunkers.
 
-**Search returns `SearchResult[]`, not raw rows.** The engine is responsible for its own search implementation (tsvector vs FTS5, pgvector vs sqlite-vss) but must return a uniform result type. RRF fusion and dedup happen above the engine, in `src/core/search/hybrid.ts`.
+**Search returns `SearchResult[]`, not raw rows.** The engine is responsible for its own search implementation (tsvector vs FTS5, pgvector HNSW vs stored vectors + local cosine scan) but must return a uniform result type. RRF fusion and dedup happen above the engine, in `src/core/search/hybrid.ts`.
 
-**`traverseGraph` exists but is engine-specific.** Postgres uses recursive CTEs. SQLite would use a loop with depth tracking. The interface is the same: give me a slug and max depth, return the graph.
+**`traverseGraph` exists but is engine-specific.** Postgres uses recursive CTEs. SQLite uses a loop with depth tracking. The interface is the same: give me a slug and max depth, return the graph.
 
 ## How search works across engines
 
@@ -117,16 +117,16 @@ export interface BrainEngine {
         |                       |   |                   |
 +-------v-------+  +-------v---+   +-------v---+  +----v--------+
 | Postgres:     |  | SQLite:   |   | Postgres: |  | SQLite:     |
-| tsvector +    |  | FTS5 +    |   | pgvector  |  | sqlite-vss  |
-| ts_rank +     |  | bm25      |   | HNSW      |  | or vec0     |
-| websearch_to_ |  |           |   | cosine    |  |             |
-| tsquery       |  |           |   |           |  |             |
+| tsvector +    |  | FTS5 +    |   | pgvector  |  | stored      |
+| ts_rank +     |  | bm25      |   | HNSW      |  | vectors +   |
+| websearch_to_ |  |           |   | cosine    |  | local       |
+| tsquery       |  |           |   |           |  | cosine scan |
 +---------------+  +-----------+   +-----------+  +-------------+
 ```
 
 RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They operate on `SearchResult[]` arrays. Only the raw keyword and vector searches are engine-specific.
 
-## PostgresEngine (v0, ships)
+## Optional Managed/Remote Postgres Path
 
 **Dependencies:** `postgres` (porsager/postgres), `pgvector`
 
@@ -137,11 +137,9 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 - Recursive CTEs for graph traversal
 - Trigger-based search_vector (spans pages + timeline_entries)
 - JSONB for frontmatter with GIN index
-- Connection pooling via Supabase Supavisor (port 6543)
+- Connection pooling through managed providers such as Supabase Supavisor
 
-**Hosting:** Supabase Pro ($25/mo). Zero-ops. Managed Postgres with pgvector built in.
-
-**Why not self-hosted for v0:** The brain should be infrastructure agents use, not something you maintain. Self-hosted Postgres with Docker is a welcome community PR, but v0 optimizes for zero ops.
+**Hosting:** Supabase is one managed option; self-hosted Postgres also works when the required extensions and schema are available. Use this path when you need managed scale, remote MCP deployment, or cloud file/storage workflows.
 
 ## Adding a new engine
 
@@ -175,11 +173,11 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 
 ## Capability matrix
 
-| Capability | PostgresEngine | SQLiteEngine (Phase 0 contract path) | Notes |
+| Capability | PostgresEngine | SQLiteEngine | Notes |
 |-----------|---------------|----------------------|-------|
 | CRUD | Full | Full | |
 | Keyword search | tsvector + ts_rank | FTS5 + bm25 | Different ranking algorithms |
-| Vector search | pgvector HNSW | sqlite-vss or vec0 | Different index types |
+| Vector search | pgvector HNSW | stored vectors + local cosine scan | SQLite avoids extension dependencies for local/offline installs |
 | Fuzzy slug | pg_trgm similarity (`%` operator) | case-insensitive LIKE pattern | Postgres matches fuzzy typos; SQLite requires substring match |
 | Graph traversal | Recursive CTE | Loop with depth tracking | Same interface |
 | Transactions | Full ACID | Full ACID | Both support this |
@@ -189,7 +187,7 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 
 ## Current local paths and future engine ideas
 
-**SQLiteEngine.** Current Phase 0 local-path engine. See `docs/SQLITE_ENGINE.md` for the implementation plan, parity work, and local-first trade-offs. Single file, no server, git-friendly.
+**SQLiteEngine.** Current shipped local/offline engine for a single-user personal brain. It stores the brain in one SQLite database, uses FTS5 for keyword search, stores page/chunk embeddings, and performs vector recall with a local cosine scan. Single file, no server, git-friendly.
 
 **PGLiteEngine.** Current embedded-Postgres local-path engine. It keeps local execution on-device while preserving more Postgres semantics than SQLite.
 

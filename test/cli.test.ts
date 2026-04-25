@@ -109,6 +109,9 @@ describe('CLI version', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
     expect(pkg.name).toBe('mbrain');
     expect(pkg.bin).toMatchObject({ mbrain: 'src/cli.ts' });
+    expect(pkg.description).toContain('Local-first');
+    expect(pkg.description).toContain('SQLite');
+    expect(pkg.description).not.toContain('Postgres-native');
   });
 
   test('VERSION matches package.json', async () => {
@@ -807,6 +810,8 @@ describe('CLI dispatch integration', () => {
     const exitCode = await proc.exited;
     expect(stdout).toContain('Usage: mbrain init');
     expect(stdout).toContain('--local');
+    expect(stdout).toContain('Recommended personal path: local SQLite');
+    expect(stdout).toContain('Bare mbrain init remains local PGLite for compatibility');
     expect(stdout).toContain('--pglite');
     expect(stdout).toContain('--supabase');
     expect(exitCode).toBe(0);
@@ -846,6 +851,10 @@ describe('CLI dispatch integration', () => {
     expect(stdout).toContain('doctor [--json]');
     expect(stdout).toContain('embed [<slug>|--all|--stale]');
     expect(stdout).toContain('import <dir> [--no-embed]');
+    expect(stdout).toContain('Health check (engine, schema, embeddings, local/managed capabilities)');
+    expect(stdout).toContain('Keyword search (engine-native)');
+    expect(stdout).not.toContain('Health check (pgvector, RLS, schema, embeddings)');
+    expect(stdout).not.toContain('Keyword search (tsvector)');
     expect(exitCode).toBe(0);
   });
 
