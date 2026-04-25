@@ -26,6 +26,18 @@ import type {
   MemoryCandidateContradictionEntryInput,
   MemoryCandidateEntryInput,
   MemoryCandidateFilters,
+  MemoryMutationEvent,
+  MemoryMutationEventFilters,
+  MemoryMutationEventInput,
+  MemoryRealm,
+  MemoryRealmFilters,
+  MemoryRealmInput,
+  MemorySession,
+  MemorySessionFilters,
+  MemorySessionAttachment,
+  MemorySessionAttachmentFilters,
+  MemorySessionAttachmentInput,
+  MemorySessionInput,
   MemoryCandidatePromotionPatch,
   MemoryCandidateStatusEvent,
   MemoryCandidateStatusEventFilters,
@@ -72,13 +84,23 @@ import { ensurePageChunks } from './page-chunks.ts';
 import {
   validateSlug,
   contentHash,
+  applyMemoryRealmUpsertDefaults,
+  hasOwn,
   importContentHash,
+  normalizeMemoryMutationEventInput,
+  normalizeMemoryRealmInput,
+  normalizeMemorySessionAttachmentInput,
+  normalizeMemorySessionInput,
   rowToPage,
   rowToChunk,
   rowToContextAtlasEntry,
   rowToContextMapEntry,
   rowToMemoryCandidateEntry,
   rowToMemoryCandidateContradictionEntry,
+  rowToMemoryMutationEvent,
+  rowToMemoryRealm,
+  rowToMemorySession,
+  rowToMemorySessionAttachment,
   rowToMemoryCandidateStatusEvent,
   rowToMemoryCandidateSupersessionEntry,
   rowToCanonicalHandoffEntry,
@@ -236,6 +258,17 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
       FROM pages WHERE slug = ${slug}
+    `;
+    if (rows.length === 0) return null;
+    return rowToPage(rows[0]);
+  }
+
+  async getPageForUpdate(slug: string): Promise<Page | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
+      FROM pages WHERE slug = ${slug}
+      FOR UPDATE
     `;
     if (rows.length === 0) return null;
     return rowToPage(rows[0]);
@@ -1561,6 +1594,385 @@ export class PostgresEngine implements BrainEngine {
     return sortByCreatedAtDescIdDesc(entries);
   }
 
+  async createMemoryMutationEvent(input: MemoryMutationEventInput): Promise<MemoryMutationEvent> {
+    const sql = this.sql;
+    const event = normalizeMemoryMutationEventInput(input);
+    const createdAt = toNullableIso(event.created_at) ?? new Date().toISOString();
+    const rows = await sql.unsafe(
+      `INSERT INTO memory_mutation_events (
+        id, session_id, realm_id, actor, operation, target_kind, target_id, scope_id,
+        source_refs, expected_target_snapshot_hash, current_target_snapshot_hash, result,
+        conflict_info, dry_run, metadata, redaction_visibility, created_at, decided_at, applied_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12,
+        $13::jsonb, $14, $15::jsonb, $16, $17, $18, $19
+      )
+      RETURNING id, session_id, realm_id, actor, operation, target_kind, target_id, scope_id,
+                source_refs, expected_target_snapshot_hash, current_target_snapshot_hash, result,
+                conflict_info, dry_run, metadata, redaction_visibility, created_at, decided_at, applied_at`,
+      [
+        event.id,
+        event.session_id,
+        event.realm_id,
+        event.actor,
+        event.operation,
+        event.target_kind,
+        event.target_id,
+        event.scope_id ?? null,
+        JSON.stringify(event.source_refs),
+        event.expected_target_snapshot_hash ?? null,
+        event.current_target_snapshot_hash ?? null,
+        event.result,
+        event.conflict_info == null ? null : JSON.stringify(event.conflict_info),
+        event.dry_run ?? false,
+        JSON.stringify(event.metadata ?? {}),
+        event.redaction_visibility ?? 'visible',
+        createdAt,
+        toNullableIso(event.decided_at),
+        toNullableIso(event.applied_at),
+      ],
+    );
+    return rowToMemoryMutationEvent(rows[0] as Record<string, unknown>);
+  }
+
+  async listMemoryMutationEvents(filters?: MemoryMutationEventFilters): Promise<MemoryMutationEvent[]> {
+    const sql = this.sql;
+    const { limit, offset } = normalizeMemoryMutationPagination(filters);
+    if (limit === 0) return [];
+    const params: PostgresParam[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.session_id !== undefined) {
+      params.push(filters.session_id);
+      clauses.push(`session_id = $${params.length}`);
+    }
+    if (filters?.realm_id !== undefined) {
+      params.push(filters.realm_id);
+      clauses.push(`realm_id = $${params.length}`);
+    }
+    if (filters?.actor !== undefined) {
+      params.push(filters.actor);
+      clauses.push(`actor = $${params.length}`);
+    }
+    if (filters?.operation !== undefined) {
+      params.push(filters.operation);
+      clauses.push(`operation = $${params.length}`);
+    }
+    if (filters?.target_kind !== undefined) {
+      params.push(filters.target_kind);
+      clauses.push(`target_kind = $${params.length}`);
+    }
+    if (filters?.target_id !== undefined) {
+      params.push(filters.target_id);
+      clauses.push(`target_id = $${params.length}`);
+    }
+    if (filters?.scope_id !== undefined) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.result !== undefined) {
+      params.push(filters.result);
+      clauses.push(`result = $${params.length}`);
+    }
+    if (filters?.created_since !== undefined) {
+      params.push(filters.created_since.toISOString());
+      clauses.push(`created_at >= $${params.length}`);
+    }
+    if (filters?.created_until !== undefined) {
+      params.push(filters.created_until.toISOString());
+      clauses.push(`created_at < $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT id, session_id, realm_id, actor, operation, target_kind, target_id, scope_id,
+              source_refs, expected_target_snapshot_hash, current_target_snapshot_hash, result,
+              conflict_info, dry_run, metadata, redaction_visibility, created_at, decided_at, applied_at
+       FROM memory_mutation_events
+       ${whereClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToMemoryMutationEvent);
+  }
+
+  async upsertMemoryRealm(input: MemoryRealmInput): Promise<MemoryRealm> {
+    const sql = this.sql;
+    const normalized = normalizeMemoryRealmInput(input);
+    const realm = applyMemoryRealmUpsertDefaults(normalized, null);
+    const descriptionSupplied = hasOwn(normalized, 'description');
+    const defaultAccessSupplied = hasOwn(normalized, 'default_access');
+    const retentionPolicySupplied = hasOwn(normalized, 'retention_policy');
+    const exportPolicySupplied = hasOwn(normalized, 'export_policy');
+    const agentInstructionsSupplied = hasOwn(normalized, 'agent_instructions');
+    const archivedAtSupplied = hasOwn(normalized, 'archived_at');
+    const rows = await sql`
+      INSERT INTO memory_realms (
+        id, name, description, scope, default_access, retention_policy,
+        export_policy, agent_instructions, archived_at
+      ) VALUES (
+        ${realm.id},
+        ${realm.name},
+        ${realm.description},
+        ${realm.scope},
+        ${realm.default_access},
+        ${realm.retention_policy},
+        ${realm.export_policy},
+        ${realm.agent_instructions},
+        ${toNullableIso(realm.archived_at)}
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        description = CASE WHEN ${descriptionSupplied} THEN EXCLUDED.description ELSE memory_realms.description END,
+        scope = EXCLUDED.scope,
+        default_access = CASE WHEN ${defaultAccessSupplied} THEN EXCLUDED.default_access ELSE memory_realms.default_access END,
+        retention_policy = CASE WHEN ${retentionPolicySupplied} THEN EXCLUDED.retention_policy ELSE memory_realms.retention_policy END,
+        export_policy = CASE WHEN ${exportPolicySupplied} THEN EXCLUDED.export_policy ELSE memory_realms.export_policy END,
+        agent_instructions = CASE WHEN ${agentInstructionsSupplied} THEN EXCLUDED.agent_instructions ELSE memory_realms.agent_instructions END,
+        archived_at = CASE WHEN ${archivedAtSupplied} THEN EXCLUDED.archived_at ELSE memory_realms.archived_at END,
+        updated_at = now()
+      RETURNING id, name, description, scope, default_access, retention_policy,
+                export_policy, agent_instructions, archived_at, created_at, updated_at
+    `;
+    return rowToMemoryRealm(rows[0] as Record<string, unknown>);
+  }
+
+  async getMemoryRealm(id: string): Promise<MemoryRealm | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, name, description, scope, default_access, retention_policy,
+             export_policy, agent_instructions, archived_at, created_at, updated_at
+      FROM memory_realms
+      WHERE id = ${id}
+    `;
+    if (rows.length === 0) return null;
+    return rowToMemoryRealm(rows[0] as Record<string, unknown>);
+  }
+
+  async listMemoryRealms(filters?: MemoryRealmFilters): Promise<MemoryRealm[]> {
+    const sql = this.sql;
+    const { limit, offset } = normalizeMemoryRealmPagination(filters);
+    if (limit === 0) return [];
+    const params: PostgresParam[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope !== undefined) {
+      params.push(filters.scope);
+      clauses.push(`scope = $${params.length}`);
+    }
+    if (filters?.include_archived !== true) {
+      clauses.push('archived_at IS NULL');
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT id, name, description, scope, default_access, retention_policy,
+              export_policy, agent_instructions, archived_at, created_at, updated_at
+       FROM memory_realms
+       ${whereClause}
+       ORDER BY updated_at DESC, id DESC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToMemoryRealm);
+  }
+
+  async createMemorySession(input: MemorySessionInput): Promise<MemorySession> {
+    const sql = this.sql;
+    const normalized = normalizeMemorySessionInput(input);
+    await sql`
+      INSERT INTO memory_sessions (
+        id, task_id, status, actor_ref, expires_at
+      ) VALUES (
+        ${normalized.id},
+        ${normalized.task_id ?? null},
+        'active',
+        ${normalized.actor_ref ?? null},
+        ${toNullableIso(normalized.expires_at)}
+      )
+    `;
+    const session = await this.getMemorySession(normalized.id);
+    if (!session) throw new Error(`Memory session not found after create: ${normalized.id}`);
+    return session;
+  }
+
+  async getMemorySession(id: string): Promise<MemorySession | null> {
+    const rows = await this.sql`
+      SELECT id,
+             task_id,
+             CASE
+               WHEN status = 'active'
+                 AND expires_at IS NOT NULL
+                 AND expires_at <= now()
+               THEN 'expired'
+               ELSE status
+             END AS status,
+             actor_ref,
+             created_at,
+             closed_at,
+             expires_at
+      FROM memory_sessions
+      WHERE id = ${id}
+    `;
+    if (rows.length === 0) return null;
+    return rowToMemorySession(rows[0] as Record<string, unknown>);
+  }
+
+  async listMemorySessions(filters?: MemorySessionFilters): Promise<MemorySession[]> {
+    const sql = this.sql;
+    const { limit, offset } = normalizeMemorySessionPagination(filters);
+    if (limit === 0) return [];
+    const params: PostgresParam[] = [];
+    const clauses: string[] = [];
+    const effectiveStatusSql = `
+      CASE
+        WHEN s.status = 'active'
+          AND s.expires_at IS NOT NULL
+          AND s.expires_at <= now()
+        THEN 'expired'
+        ELSE s.status
+      END
+    `;
+
+    if (filters?.status !== undefined) {
+      params.push(filters.status);
+      clauses.push(`${effectiveStatusSql} = $${params.length}`);
+    }
+    if (filters?.task_id !== undefined) {
+      params.push(filters.task_id);
+      clauses.push(`s.task_id = $${params.length}`);
+    }
+    if (filters?.actor_ref !== undefined) {
+      params.push(filters.actor_ref);
+      clauses.push(`s.actor_ref = $${params.length}`);
+    }
+    if (filters?.realm_id !== undefined) {
+      params.push(filters.realm_id);
+      clauses.push(`
+        EXISTS (
+          SELECT 1
+          FROM memory_session_attachments msa
+          WHERE msa.session_id = s.id
+            AND msa.realm_id = $${params.length}
+        )
+      `);
+    }
+    if (filters?.created_since !== undefined) {
+      params.push(toNullableIso(filters.created_since));
+      clauses.push(`s.created_at >= $${params.length}`);
+    }
+    if (filters?.created_until !== undefined) {
+      params.push(toNullableIso(filters.created_until));
+      clauses.push(`s.created_at < $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT s.id, s.task_id, ${effectiveStatusSql} AS status, s.actor_ref, s.created_at, s.closed_at, s.expires_at
+       FROM memory_sessions s
+       ${whereClause}
+       ORDER BY s.created_at DESC, s.id DESC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToMemorySession);
+  }
+
+  async closeMemorySession(id: string): Promise<MemorySession | null> {
+    const rows = await this.sql`
+      UPDATE memory_sessions
+      SET status = 'closed',
+          closed_at = COALESCE(closed_at, now())
+      WHERE id = ${id}
+        AND status = 'active'
+        AND (expires_at IS NULL OR expires_at > now())
+      RETURNING id, task_id, status, actor_ref, created_at, closed_at, expires_at
+    `;
+    if (rows.length === 0) return null;
+    return rowToMemorySession(rows[0] as Record<string, unknown>);
+  }
+
+  async attachMemoryRealmToSession(input: MemorySessionAttachmentInput): Promise<MemorySessionAttachment> {
+    const attachment = normalizeMemorySessionAttachmentInput(input);
+    const rows = await this.sql`
+      INSERT INTO memory_session_attachments (
+        session_id, realm_id, access, instructions
+      )
+      SELECT
+        ${attachment.session_id},
+        ${attachment.realm_id},
+        ${attachment.access},
+        ${attachment.instructions}
+      WHERE EXISTS (
+        SELECT 1
+        FROM memory_sessions
+        WHERE id = ${attachment.session_id}
+          AND status = 'active'
+          AND (expires_at IS NULL OR expires_at > now())
+      )
+      ON CONFLICT (session_id, realm_id) DO UPDATE SET
+        access = EXCLUDED.access,
+        instructions = EXCLUDED.instructions,
+        attached_at = now()
+      RETURNING session_id, realm_id, access, instructions, attached_at
+    `;
+    if (rows.length === 0) {
+      const session = await this.getMemorySession(attachment.session_id);
+      if (!session) throw new Error(`Memory session not found: ${attachment.session_id}`);
+      if (session.status === 'expired') {
+        throw new Error(`Memory session is expired: ${attachment.session_id}`);
+      }
+      if (session.status !== 'active') {
+        throw new Error(`Memory session is closed: ${attachment.session_id}`);
+      }
+      throw new Error(`Memory session attachment was not applied: ${attachment.session_id}:${attachment.realm_id}`);
+    }
+    return rowToMemorySessionAttachment(rows[0] as Record<string, unknown>);
+  }
+
+  async listMemorySessionAttachments(
+    filters?: MemorySessionAttachmentFilters,
+  ): Promise<MemorySessionAttachment[]> {
+    const sql = this.sql;
+    const { limit, offset } = normalizeMemorySessionAttachmentPagination(filters);
+    if (limit === 0) return [];
+    const params: PostgresParam[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.session_id !== undefined) {
+      params.push(filters.session_id);
+      clauses.push(`session_id = $${params.length}`);
+    }
+    if (filters?.realm_id !== undefined) {
+      params.push(filters.realm_id);
+      clauses.push(`realm_id = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT session_id, realm_id, access, instructions, attached_at
+       FROM memory_session_attachments
+       ${whereClause}
+       ORDER BY attached_at DESC, session_id DESC, realm_id DESC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToMemorySessionAttachment);
+  }
+
   async updateMemoryCandidateEntryStatus(id: string, patch: MemoryCandidateStatusPatch): Promise<MemoryCandidateEntry | null> {
     const sql = this.sql;
     const current = await this.getMemoryCandidateEntry(id);
@@ -2388,6 +2800,62 @@ function sortByCreatedAtDescIdDesc<T extends { created_at: Date; id: string }>(e
     const createdDelta = b.created_at.getTime() - a.created_at.getTime();
     return createdDelta !== 0 ? createdDelta : b.id.localeCompare(a.id);
   });
+}
+
+function normalizeMemoryMutationPagination(
+  filters?: MemoryMutationEventFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory mutation event limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory mutation event offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
+function normalizeMemoryRealmPagination(
+  filters?: MemoryRealmFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory realm limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory realm offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
+function normalizeMemorySessionPagination(
+  filters?: MemorySessionFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory session limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory session offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
+function normalizeMemorySessionAttachmentPagination(
+  filters?: MemorySessionAttachmentFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory session attachment limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory session attachment offset must be a non-negative integer');
+  }
+  return { limit, offset };
 }
 
 function vectorValueToFloat32(value: unknown): Float32Array | null {

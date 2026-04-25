@@ -9,6 +9,14 @@ import type {
   ContextAtlasEntry,
   MemoryCandidateEntry,
   MemoryCandidateContradictionEntry,
+  MemoryMutationEvent,
+  MemoryMutationEventInput,
+  MemoryRealm,
+  MemoryRealmInput,
+  MemorySession,
+  MemorySessionAttachment,
+  MemorySessionAttachmentInput,
+  MemorySessionInput,
   MemoryCandidateStatusEvent,
   MemoryCandidateSupersessionEntry,
   CanonicalHandoffEntry,
@@ -276,6 +284,346 @@ export function rowToMemoryCandidateStatusEvent(
   };
 }
 
+export function rowToMemoryMutationEvent(row: Record<string, unknown>): MemoryMutationEvent {
+  return {
+    id: row.id as string,
+    session_id: row.session_id as string,
+    realm_id: row.realm_id as string,
+    actor: row.actor as string,
+    operation: row.operation as MemoryMutationEvent['operation'],
+    target_kind: row.target_kind as MemoryMutationEvent['target_kind'],
+    target_id: normalizeRequiredMemoryMutationString('target_id', row.target_id),
+    scope_id: (row.scope_id as string | null) ?? null,
+    source_refs: normalizeMemoryMutationSourceRefs(parseJsonStringArray(row.source_refs)),
+    expected_target_snapshot_hash: (row.expected_target_snapshot_hash as string | null) ?? null,
+    current_target_snapshot_hash: (row.current_target_snapshot_hash as string | null) ?? null,
+    result: row.result as MemoryMutationEvent['result'],
+    conflict_info: parseNullableJsonObject(row.conflict_info),
+    dry_run: Boolean(row.dry_run),
+    metadata: parseJsonObject(row.metadata),
+    redaction_visibility: row.redaction_visibility as MemoryMutationEvent['redaction_visibility'],
+    created_at: new Date(row.created_at as string),
+    decided_at: row.decided_at == null ? null : new Date(row.decided_at as string),
+    applied_at: row.applied_at == null ? null : new Date(row.applied_at as string),
+  };
+}
+
+export function normalizeMemoryMutationEventInput(input: MemoryMutationEventInput): MemoryMutationEventInput {
+  const targetId = normalizeRequiredMemoryMutationString('target_id', input.target_id);
+  const sourceRefs = normalizeMemoryMutationSourceRefs(input.source_refs);
+
+  if (input.result === 'dry_run' && input.dry_run === false) {
+    throw new Error('memory mutation dry_run cannot be false when result is dry_run');
+  }
+  if (input.result !== 'dry_run' && input.dry_run === true) {
+    throw new Error('memory mutation dry_run can only be true when result is dry_run');
+  }
+
+  return {
+    ...input,
+    target_id: targetId,
+    source_refs: sourceRefs,
+    dry_run: input.result === 'dry_run',
+  };
+}
+
+export function rowToMemoryRealm(row: Record<string, unknown>): MemoryRealm {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    description: (row.description as string | null) ?? '',
+    scope: row.scope as MemoryRealm['scope'],
+    default_access: row.default_access as MemoryRealm['default_access'],
+    retention_policy: (row.retention_policy as string | null) ?? 'retain',
+    export_policy: (row.export_policy as string | null) ?? 'private',
+    agent_instructions: (row.agent_instructions as string | null) ?? '',
+    archived_at: row.archived_at == null ? null : new Date(row.archived_at as string),
+    created_at: new Date(row.created_at as string),
+    updated_at: new Date(row.updated_at as string),
+  };
+}
+
+export function normalizeMemoryRealmInput(input: MemoryRealmInput): MemoryRealmInput {
+  const id = normalizeRequiredMemoryRealmString('id', input.id);
+  const name = normalizeRequiredMemoryRealmString('name', input.name);
+  if (!['work', 'personal', 'mixed'].includes(input.scope)) {
+    throw new Error('memory realm scope must be one of: work, personal, mixed');
+  }
+  if (input.default_access !== undefined && !['read_only', 'read_write'].includes(input.default_access)) {
+    throw new Error('memory realm default_access must be one of: read_only, read_write');
+  }
+
+  const normalized: MemoryRealmInput = {
+    id,
+    name,
+    scope: input.scope,
+  };
+
+  if (input.description !== undefined) {
+    normalized.description = normalizeOptionalMemoryRealmString('description', input.description);
+  }
+  if (input.default_access !== undefined) {
+    normalized.default_access = input.default_access;
+  }
+  if (input.retention_policy !== undefined) {
+    normalized.retention_policy = normalizeOptionalMemoryRealmString('retention_policy', input.retention_policy);
+  }
+  if (input.export_policy !== undefined) {
+    normalized.export_policy = normalizeOptionalMemoryRealmString('export_policy', input.export_policy);
+  }
+  if (input.agent_instructions !== undefined) {
+    normalized.agent_instructions = normalizeOptionalMemoryRealmString('agent_instructions', input.agent_instructions);
+  }
+  if (input.archived_at !== undefined) {
+    normalized.archived_at = normalizeOptionalMemoryRealmTimestamp('archived_at', input.archived_at);
+  }
+
+  return normalized;
+}
+
+export function hasOwn(value: object, field: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, field);
+}
+
+export function applyMemoryRealmUpsertDefaults(
+  input: MemoryRealmInput,
+  existing: MemoryRealm | null,
+): Required<MemoryRealmInput> {
+  return {
+    id: input.id,
+    name: input.name,
+    description: hasOwn(input, 'description')
+      ? input.description ?? ''
+      : existing?.description ?? '',
+    scope: input.scope,
+    default_access: hasOwn(input, 'default_access')
+      ? input.default_access ?? 'read_only'
+      : existing?.default_access ?? 'read_only',
+    retention_policy: hasOwn(input, 'retention_policy')
+      ? input.retention_policy ?? 'retain'
+      : existing?.retention_policy ?? 'retain',
+    export_policy: hasOwn(input, 'export_policy')
+      ? input.export_policy ?? 'private'
+      : existing?.export_policy ?? 'private',
+    agent_instructions: hasOwn(input, 'agent_instructions')
+      ? input.agent_instructions ?? ''
+      : existing?.agent_instructions ?? '',
+    archived_at: hasOwn(input, 'archived_at')
+      ? input.archived_at ?? null
+      : existing?.archived_at ?? null,
+  };
+}
+
+export function rowToMemorySession(row: Record<string, unknown>): MemorySession {
+  const expiresAt = row.expires_at == null ? null : new Date(row.expires_at as string);
+  return {
+    id: row.id as string,
+    task_id: (row.task_id as string | null) ?? null,
+    status: row.status as MemorySession['status'],
+    actor_ref: (row.actor_ref as string | null) ?? null,
+    created_at: new Date(row.created_at as string),
+    closed_at: row.closed_at == null ? null : new Date(row.closed_at as string),
+    expires_at: expiresAt,
+  };
+}
+
+export function normalizeMemorySessionInput(input: MemorySessionInput): MemorySessionInput {
+  const normalized: MemorySessionInput = {
+    id: normalizeRequiredMemorySessionString('id', input.id),
+  };
+  if (input.task_id !== undefined) {
+    normalized.task_id = normalizeOptionalMemorySessionString('task_id', input.task_id);
+  }
+  if (input.actor_ref !== undefined) {
+    normalized.actor_ref = normalizeOptionalMemorySessionString('actor_ref', input.actor_ref);
+  }
+  if (input.expires_at !== undefined) {
+    normalized.expires_at = normalizeOptionalMemorySessionTimestamp('expires_at', input.expires_at);
+  }
+  return normalized;
+}
+
+export function applyMemorySessionCreateDefaults(input: MemorySessionInput): {
+  id: string;
+  task_id: string | null;
+  status: MemorySession['status'];
+  actor_ref: string | null;
+  expires_at: Date | null;
+} {
+  const expiresAt = input.expires_at === undefined
+    ? null
+    : normalizeOptionalMemorySessionTimestamp('expires_at', input.expires_at);
+  return {
+    id: input.id,
+    task_id: input.task_id ?? null,
+    status: effectiveMemorySessionStatus('active', expiresAt),
+    actor_ref: input.actor_ref ?? null,
+    expires_at: expiresAt,
+  };
+}
+
+export function rowToMemorySessionAttachment(row: Record<string, unknown>): MemorySessionAttachment {
+  return {
+    session_id: row.session_id as string,
+    realm_id: row.realm_id as string,
+    access: row.access as MemorySessionAttachment['access'],
+    instructions: (row.instructions as string | null) ?? '',
+    attached_at: new Date(row.attached_at as string),
+  };
+}
+
+export function normalizeMemorySessionAttachmentInput(
+  input: MemorySessionAttachmentInput,
+): Required<MemorySessionAttachmentInput> {
+  const access = input.access;
+  if (!['read_only', 'read_write'].includes(access)) {
+    throw new Error('memory session attachment access must be one of: read_only, read_write');
+  }
+  return {
+    session_id: normalizeRequiredMemorySessionString('session_id', input.session_id),
+    realm_id: normalizeRequiredMemorySessionString('realm_id', input.realm_id),
+    access,
+    instructions: input.instructions === undefined
+      ? ''
+      : normalizeMemorySessionAttachmentInstructions(input.instructions),
+  };
+}
+
+function normalizeRequiredMemoryRealmString(field: string, value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`memory realm ${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function normalizeOptionalMemoryRealmString(field: string, value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error(`memory realm ${field} must be a string`);
+  }
+  return value;
+}
+
+function normalizeRequiredMemorySessionString(field: string, value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`memory session ${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function normalizeOptionalMemorySessionString(field: string, value: unknown): string | null {
+  if (value === null) return null;
+  return normalizeRequiredMemorySessionString(field, value);
+}
+
+function normalizeOptionalMemorySessionTimestamp(
+  field: string,
+  value: Date | string | null,
+): Date | null {
+  if (value === null) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new Error(`memory session ${field} must be a valid timestamp`);
+    }
+    return value;
+  }
+  if (typeof value !== 'string') {
+    throw new Error(`memory session ${field} must be a valid timestamp`);
+  }
+  const parsed = parseValidIsoTimestamp(value);
+  if (!parsed) {
+    throw new Error(`memory session ${field} must be a valid timestamp`);
+  }
+  return parsed;
+}
+
+function effectiveMemorySessionStatus(
+  status: MemorySession['status'],
+  expiresAt: Date | null,
+  now = new Date(),
+): MemorySession['status'] {
+  if (status === 'active' && expiresAt !== null && expiresAt.getTime() <= now.getTime()) {
+    return 'expired';
+  }
+  return status;
+}
+
+function normalizeMemorySessionAttachmentInstructions(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error('memory session attachment instructions must be a string');
+  }
+  return value;
+}
+
+const ISO_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
+
+export function parseValidIsoTimestamp(value: string): Date | null {
+  const match = ISO_TIMESTAMP_RE.exec(value);
+  if (!match) return null;
+
+  const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw, millisecondRaw = '', zoneRaw] = match;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const second = Number(secondRaw);
+
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate()) return null;
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  if (zoneRaw !== 'Z') {
+    const offsetHour = Number(zoneRaw.slice(1, 3));
+    const offsetMinute = Number(zoneRaw.slice(4, 6));
+    if (offsetHour > 23 || offsetMinute > 59) return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  if (zoneRaw === 'Z') {
+    const milliseconds = millisecondRaw.padEnd(3, '0');
+    const normalized = `${yearRaw}-${monthRaw}-${dayRaw}T${hourRaw}:${minuteRaw}:${secondRaw}.${milliseconds}Z`;
+    if (parsed.toISOString() !== normalized) return null;
+  }
+  return parsed;
+}
+
+function normalizeOptionalMemoryRealmTimestamp(
+  field: string,
+  value: Date | string | null,
+): Date | null {
+  if (value === null) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new Error(`memory realm ${field} must be a valid timestamp`);
+    }
+    return value;
+  }
+  if (typeof value !== 'string') {
+    throw new Error(`memory realm ${field} must be a valid timestamp`);
+  }
+  const parsed = parseValidIsoTimestamp(value);
+  if (!parsed) {
+    throw new Error(`memory realm ${field} must be a valid timestamp`);
+  }
+  return parsed;
+}
+
+function normalizeMemoryMutationSourceRefs(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('memory mutation source_refs must be a non-empty array of strings');
+  }
+  return value.map((ref, index) =>
+    normalizeRequiredMemoryMutationString(`source_refs[${index}]`, ref),
+  );
+}
+
+function normalizeRequiredMemoryMutationString(field: string, value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`memory mutation ${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
 export function rowToMemoryCandidateSupersessionEntry(
   row: Record<string, unknown>,
 ): MemoryCandidateSupersessionEntry {
@@ -403,6 +751,11 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
   if (!value) return {};
   if (typeof value === 'string') return JSON.parse(value) as Record<string, unknown>;
   return value as Record<string, unknown>;
+}
+
+function parseNullableJsonObject(value: unknown): Record<string, unknown> | null {
+  if (value == null) return null;
+  return parseJsonObject(value);
 }
 
 function parseJsonStringArray(value: unknown): string[] {

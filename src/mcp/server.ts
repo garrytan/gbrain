@@ -25,12 +25,15 @@ export async function startMcpServer(engine: BrainEngine) {
       inputSchema: {
         type: 'object' as const,
         properties: Object.fromEntries(
-          Object.entries(op.params).map(([k, v]) => [k, {
-            type: v.type === 'array' ? 'array' : v.type,
-            ...(v.description ? { description: v.description } : {}),
-            ...(v.enum ? { enum: v.enum } : {}),
-            ...(v.items ? { items: { type: v.items.type } } : {}),
-          }]),
+          Object.entries(op.params).map(([k, v]) => {
+            const baseType = v.type === 'array' ? 'array' : v.type;
+            return [k, {
+              type: v.nullable ? [baseType, 'null'] : baseType,
+              ...(v.description ? { description: v.description } : {}),
+              ...(v.enum ? { enum: v.enum } : {}),
+              ...(v.items ? { items: { type: v.items.type } } : {}),
+            }];
+          }),
         ),
         required: Object.entries(op.params)
           .filter(([, v]) => v.required)

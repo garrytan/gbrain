@@ -17,6 +17,18 @@ import type {
   MemoryCandidateContradictionEntryInput,
   MemoryCandidateEntryInput,
   MemoryCandidateFilters,
+  MemoryMutationEvent,
+  MemoryMutationEventFilters,
+  MemoryMutationEventInput,
+  MemoryRealm,
+  MemoryRealmFilters,
+  MemoryRealmInput,
+  MemorySession,
+  MemorySessionFilters,
+  MemorySessionAttachment,
+  MemorySessionAttachmentFilters,
+  MemorySessionAttachmentInput,
+  MemorySessionInput,
   MemoryCandidatePromotionPatch,
   MemoryCandidateStatusEvent,
   MemoryCandidateStatusEventFilters,
@@ -66,6 +78,7 @@ export interface BrainEngine {
 
   // Pages CRUD
   getPage(slug: string): Promise<Page | null>;
+  getPageForUpdate(slug: string): Promise<Page | null>;
   putPage(slug: string, page: PageInput): Promise<Page>;
   deletePage(slug: string): Promise<void>;
   listPages(filters?: PageFilters): Promise<Page[]>;
@@ -167,6 +180,23 @@ export interface BrainEngine {
   listMemoryCandidateSupersessionEntriesByInteractionIds(interactionIds: string[]): Promise<MemoryCandidateSupersessionEntry[]>;
   listMemoryCandidateContradictionEntriesByInteractionIds(interactionIds: string[]): Promise<MemoryCandidateContradictionEntry[]>;
   deleteMemoryCandidateEntry(id: string): Promise<void>;
+
+  // Memory mutation ledger
+  createMemoryMutationEvent(input: MemoryMutationEventInput): Promise<MemoryMutationEvent>;
+  listMemoryMutationEvents(filters?: MemoryMutationEventFilters): Promise<MemoryMutationEvent[]>;
+
+  // Memory realms
+  upsertMemoryRealm(input: MemoryRealmInput): Promise<MemoryRealm>;
+  getMemoryRealm(id: string): Promise<MemoryRealm | null>;
+  listMemoryRealms(filters?: MemoryRealmFilters): Promise<MemoryRealm[]>;
+
+  // Memory sessions and realm attachments
+  createMemorySession(input: MemorySessionInput): Promise<MemorySession>;
+  getMemorySession(id: string): Promise<MemorySession | null>;
+  listMemorySessions(filters?: MemorySessionFilters): Promise<MemorySession[]>;
+  closeMemorySession(id: string): Promise<MemorySession | null>;
+  attachMemoryRealmToSession(input: MemorySessionAttachmentInput): Promise<MemorySessionAttachment>;
+  listMemorySessionAttachments(filters?: MemorySessionAttachmentFilters): Promise<MemorySessionAttachment[]>;
 
   // Note manifest
   upsertNoteManifestEntry(input: NoteManifestEntryInput): Promise<NoteManifestEntry>;

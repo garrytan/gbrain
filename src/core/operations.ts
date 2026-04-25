@@ -3,6 +3,7 @@
  * Each operation defines its schema, handler, and optional CLI hints.
  */
 
+import { randomUUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { BrainEngine } from './engine.ts';
@@ -22,6 +23,9 @@ import { getAtlasOrientationCard } from './services/atlas-orientation-card-servi
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
 import { createBrainLoopAuditOperations } from './operations-brain-loop-audit.ts';
 import { createMemoryInboxOperations, DEFAULT_MEMORY_INBOX_SCOPE_ID } from './operations-memory-inbox.ts';
+import { createMemoryControlPlaneOperations } from './operations-memory-control-plane.ts';
+import { createMemoryMutationLedgerOperations } from './operations-memory-mutation-ledger.ts';
+import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
 import { getStructuralContextAtlasOverview } from './services/context-atlas-overview-service.ts';
 import { getStructuralContextAtlasReport } from './services/context-atlas-report-service.ts';
 import { getBroadSynthesisRoute } from './services/broad-synthesis-route-service.ts';
@@ -69,6 +73,7 @@ import type {
   RetrievalTraceWriteOutcome,
   ScopeGatePolicy,
 } from './types.ts';
+import { validateSlug } from './utils.ts';
 
 // --- MCP server instructions ---
 //
@@ -95,6 +100,7 @@ export type ErrorCode =
   | 'invalid_params'
   | 'embedding_failed'
   | 'storage_error'
+  | 'write_conflict'
   | 'bucket_not_found'
   | 'database_error'
   | 'unsupported_capability';
@@ -123,6 +129,7 @@ export class OperationError extends Error {
 export interface ParamDef {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   required?: boolean;
+  nullable?: boolean;
   description?: string;
   default?: unknown;
   enum?: string[];
@@ -1267,21 +1274,323 @@ function assertPutPageSourceAttribution(slug: string, content: string): void {
   );
 }
 
+function optionalPutPageString(field: string, value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new OperationError('invalid_params', `${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function putPageSlug(value: unknown): string {
+  const raw = optionalPutPageString('slug', value);
+  if (raw === undefined) {
+    throw new OperationError('invalid_params', 'slug must be a non-empty string');
+  }
+  try {
+    return validateSlug(raw);
+  } catch (error) {
+    throw new OperationError('invalid_params', error instanceof Error ? error.message : 'slug is invalid');
+  }
+}
+
+function putPageContent(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new OperationError('invalid_params', 'content must be a string');
+  }
+  return value;
+}
+
+function putPageExpectedContentHash(value: unknown): string | undefined {
+  const expected = optionalPutPageString('expected_content_hash', value);
+  if (expected === undefined) return undefined;
+  if (!/^[a-fA-F0-9]{64}$/.test(expected)) {
+    throw new OperationError('invalid_params', 'expected_content_hash must be a SHA-256 hex content hash');
+  }
+  return expected.toLowerCase();
+}
+
+function putPageSourceRefs(value: unknown): string[] {
+  let parsed: string[] | undefined;
+  if (value === undefined) {
+    return ['Source: mbrain put_page operation'];
+  } else if (Array.isArray(value)) {
+    parsed = value.map((ref, index) => putPageSourceRef(ref, `source_refs[${index}]`));
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('[')) {
+      let rawRefs: unknown;
+      try {
+        rawRefs = JSON.parse(trimmed);
+      } catch {
+        rawRefs = undefined;
+      }
+      if (rawRefs !== undefined) {
+        if (!Array.isArray(rawRefs)) {
+          throw new OperationError('invalid_params', 'source_refs JSON value must be an array.');
+        }
+        parsed = rawRefs.map((ref, index) => putPageSourceRef(ref, `source_refs[${index}]`));
+      } else {
+        parsed = parsePutPageSourceRefString(value);
+      }
+    } else {
+      parsed = parsePutPageSourceRefString(value);
+    }
+  } else {
+    throw new OperationError('invalid_params', 'source_refs must be an array or string list.');
+  }
+
+  const refs = parsed?.map((ref) => ref.trim()).filter((ref) => ref.length > 0) ?? [];
+  if (refs.length === 0) {
+    throw new OperationError('invalid_params', 'source_refs must be a non-empty array of strings');
+  }
+  return refs;
+}
+
+function parsePutPageSourceRefString(value: string): string[] {
+  const trimmed = value.trim();
+  if (trimmed === '') return [];
+  return trimmed
+    .split(/\r?\n/)
+    .map((ref) => ref.trim())
+    .filter((ref) => ref.length > 0);
+}
+
+function putPageSourceRef(value: unknown, key: string): string {
+  if (typeof value !== 'string') {
+    throw new OperationError('invalid_params', `${key} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new OperationError('invalid_params', `${key} must be a non-empty string`);
+  }
+  return trimmed;
+}
+
+function putPageMetadata(value: unknown): Record<string, unknown> | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new OperationError('invalid_params', 'metadata must be an object');
+  }
+  assertJsonSerializable(value, 'metadata', new WeakSet<object>());
+  return value as Record<string, unknown>;
+}
+
+function assertJsonSerializable(value: unknown, path: string, seen: WeakSet<object>): void {
+  if (value === null) return;
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return;
+    case 'number':
+      if (!Number.isFinite(value)) {
+        throw new OperationError('invalid_params', `${path} must be JSON-serializable`);
+      }
+      return;
+    case 'object': {
+      const objectValue = value as Record<string, unknown>;
+      if (seen.has(objectValue)) {
+        throw new OperationError('invalid_params', `${path} must be JSON-serializable`);
+      }
+      seen.add(objectValue);
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => assertJsonSerializable(item, `${path}[${index}]`, seen));
+        seen.delete(objectValue);
+        return;
+      }
+      const proto = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null) {
+        throw new OperationError('invalid_params', `${path} must be JSON-serializable object data`);
+      }
+      for (const [key, entry] of Object.entries(objectValue)) {
+        assertJsonSerializable(entry, `${path}.${key}`, seen);
+      }
+      seen.delete(objectValue);
+      return;
+    }
+    default:
+      throw new OperationError('invalid_params', `${path} must be JSON-serializable`);
+  }
+}
+
+function putPageAuditContext(p: Record<string, unknown>) {
+  return {
+    session_id: optionalPutPageString('session_id', p.session_id) ?? `put_page:direct:${randomUUID()}`,
+    realm_id: optionalPutPageString('realm_id', p.realm_id) ?? 'work',
+    actor: optionalPutPageString('actor', p.actor) ?? 'mbrain:put_page',
+    scope_id: optionalPutPageString('scope_id', p.scope_id) ?? 'workspace:default',
+    source_refs: putPageSourceRefs(p.source_refs),
+    metadata: putPageMetadata(p.metadata),
+    redaction_visibility: 'visible' as const,
+  };
+}
+
+type PutPageAuditContext = ReturnType<typeof putPageAuditContext>;
+
+async function recordPutPageConflict(
+  engine: BrainEngine,
+  audit: PutPageAuditContext,
+  input: {
+    slug: string;
+    expectedContentHash: string;
+    currentContentHash: string | null;
+    conflictInfo: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    await recordMemoryMutationEvent(engine, {
+      ...audit,
+      operation: 'put_page',
+      target_kind: 'page',
+      target_id: input.slug,
+      expected_target_snapshot_hash: input.expectedContentHash,
+      current_target_snapshot_hash: input.currentContentHash,
+      result: 'conflict',
+      conflict_info: input.conflictInfo,
+      dry_run: false,
+    });
+  } catch {
+    // Conflict auditing is best effort so write_conflict remains the surfaced failure.
+  }
+}
+
+function putPageOperationResult(result: { slug: string; status: string; chunks: number; error?: string }) {
+  return {
+    slug: result.slug,
+    status: result.status === 'imported' ? 'created_or_updated' : result.status,
+    chunks: result.chunks,
+    ...(result.error ? { error: result.error } : {}),
+  };
+}
+
 const put_page: Operation = {
   name: 'put_page',
   description: 'Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Rejects generic, numeric-only, or globally bucketed documentation slugs. Chunks, embeds, and reconciles tags.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
+    expected_content_hash: { type: 'string', description: 'Optional optimistic write precondition. Existing page content_hash must match before writing.' },
+    session_id: { type: 'string', description: 'Optional audit session id. Defaults to put_page:direct.' },
+    realm_id: { type: 'string', description: 'Optional audit realm id. Defaults to work.' },
+    actor: { type: 'string', description: 'Optional audit actor. Defaults to mbrain:put_page.' },
+    scope_id: { type: 'string', description: 'Optional audit scope id. Defaults to workspace:default.' },
+    source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional non-empty audit provenance references.' },
+    metadata: { type: 'object', description: 'Optional audit metadata object.' },
   },
   mutating: true,
   handler: async (ctx, p) => {
-    const content = String(p.content);
-    assertWritableSlugQuality(p.slug as string);
-    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    assertPutPageSourceAttribution(String(p.slug), content);
-    const result = await importFromContent(ctx.engine, p.slug as string, content);
-    return { slug: result.slug, status: result.status === 'imported' ? 'created_or_updated' : result.status, chunks: result.chunks };
+    const slug = putPageSlug(p.slug);
+    const content = putPageContent(p.content);
+    assertWritableSlugQuality(slug);
+    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
+    assertPutPageSourceAttribution(slug, content);
+    const audit = putPageAuditContext(p);
+    const expectedContentHash = putPageExpectedContentHash(p.expected_content_hash);
+    const outcome = await ctx.engine.transaction(async (tx) => {
+      const existing = expectedContentHash !== undefined
+        ? await tx.getPageForUpdate(slug)
+        : await tx.getPage(slug);
+      const previousHash = existing?.content_hash ?? null;
+
+      if (expectedContentHash !== undefined && !existing) {
+        return {
+          kind: 'conflict' as const,
+          conflict: {
+            slug,
+            expectedContentHash,
+            currentContentHash: null,
+            conflictInfo: {
+              reason: 'missing_page',
+              expected_content_hash: expectedContentHash,
+            },
+          },
+          error: new OperationError('write_conflict', `Page not found for expected content hash: ${slug}`),
+        };
+      }
+
+      if (expectedContentHash !== undefined && previousHash !== expectedContentHash) {
+        return {
+          kind: 'conflict' as const,
+          conflict: {
+            slug,
+            expectedContentHash,
+            currentContentHash: previousHash,
+            conflictInfo: {
+              reason: 'content_hash_mismatch',
+              expected_content_hash: expectedContentHash,
+              current_content_hash: previousHash,
+            },
+          },
+          error: new OperationError('write_conflict', `content hash mismatch for ${slug}`),
+        };
+      }
+
+      const result = await importFromContent(tx, slug, content);
+      if (result.status === 'imported') {
+        const finalPage = await tx.getPage(slug);
+        if (!finalPage?.content_hash) {
+          throw new OperationError('storage_error', `put_page import did not produce a final content hash for ${slug}`);
+        }
+        await recordMemoryMutationEvent(tx, {
+          ...audit,
+          operation: 'put_page',
+          target_kind: 'page',
+          target_id: slug,
+          expected_target_snapshot_hash: expectedContentHash ?? previousHash,
+          current_target_snapshot_hash: finalPage.content_hash,
+          result: 'applied',
+          conflict_info: null,
+          dry_run: false,
+        });
+      } else if (result.error) {
+        await recordMemoryMutationEvent(tx, {
+          ...audit,
+          operation: 'put_page',
+          target_kind: 'page',
+          target_id: slug,
+          expected_target_snapshot_hash: expectedContentHash ?? previousHash,
+          current_target_snapshot_hash: previousHash,
+          result: 'failed',
+          conflict_info: null,
+          dry_run: false,
+          metadata: {
+            ...(audit.metadata ?? {}),
+            import_status: result.status,
+            error: result.error,
+          },
+        });
+      } else {
+        const finalPage = await tx.getPage(slug);
+        const currentHash = finalPage?.content_hash ?? previousHash;
+        if (!currentHash) {
+          throw new OperationError('storage_error', `put_page import skipped without a current content hash for ${slug}`);
+        }
+        await recordMemoryMutationEvent(tx, {
+          ...audit,
+          operation: 'put_page',
+          target_kind: 'page',
+          target_id: slug,
+          expected_target_snapshot_hash: expectedContentHash ?? previousHash,
+          current_target_snapshot_hash: currentHash,
+          result: 'applied',
+          conflict_info: null,
+          dry_run: false,
+          metadata: {
+            ...(audit.metadata ?? {}),
+            import_status: result.status,
+            skipped_reason: 'content_hash_unchanged',
+          },
+        });
+      }
+
+      return { kind: 'result' as const, result };
+    });
+
+    if (outcome.kind === 'conflict') {
+      await recordPutPageConflict(ctx.engine, audit, outcome.conflict);
+      throw outcome.error;
+    }
+    return putPageOperationResult(outcome.result);
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
@@ -1880,6 +2189,15 @@ const memoryInboxOperations = createMemoryInboxOperations({
 });
 
 const brainLoopAuditOperations = createBrainLoopAuditOperations({
+  OperationError,
+});
+
+const memoryMutationLedgerOperations = createMemoryMutationLedgerOperations({
+  OperationError,
+  allowPrivilegedLedgerRecord: () => process.env.MBRAIN_ENABLE_PRIVILEGED_LEDGER_RECORD === '1',
+});
+
+const memoryControlPlaneOperations = createMemoryControlPlaneOperations({
   OperationError,
 });
 
@@ -3772,7 +4090,7 @@ export const operations: Operation[] = [
   // Context atlas registry
   build_context_atlas, get_context_atlas_entry, list_context_atlas_entries, select_context_atlas_entry, get_context_atlas_overview, get_context_atlas_report, get_atlas_orientation_card, get_atlas_orientation_bundle,
   // Operational memory
-  list_tasks, start_task, update_task, resume_task, get_task_working_set, record_retrieval_trace, list_task_traces, list_task_attempts, list_task_decisions, refresh_task_working_set, record_attempt, record_decision, ...brainLoopAuditOperations,
+  list_tasks, start_task, update_task, resume_task, get_task_working_set, record_retrieval_trace, list_task_traces, list_task_attempts, list_task_decisions, refresh_task_working_set, record_attempt, record_decision, ...brainLoopAuditOperations, ...memoryMutationLedgerOperations, ...memoryControlPlaneOperations,
   // Ingest log
   log_ingest, get_ingest_log,
   // Files

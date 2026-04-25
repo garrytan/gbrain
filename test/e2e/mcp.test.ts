@@ -31,12 +31,15 @@ describe('E2E: MCP Tool Generation', () => {
       inputSchema: {
         type: 'object' as const,
         properties: Object.fromEntries(
-          Object.entries(op.params).map(([k, v]) => [k, {
-            type: v.type === 'array' ? 'array' : v.type,
-            ...(v.description ? { description: v.description } : {}),
-            ...(v.enum ? { enum: v.enum } : {}),
-            ...(v.items ? { items: { type: v.items.type } } : {}),
-          }]),
+          Object.entries(op.params).map(([k, v]) => {
+            const baseType = v.type === 'array' ? 'array' : v.type;
+            return [k, {
+              type: v.nullable ? [baseType, 'null'] : baseType,
+              ...(v.description ? { description: v.description } : {}),
+              ...(v.enum ? { enum: v.enum } : {}),
+              ...(v.items ? { items: { type: v.items.type } } : {}),
+            }];
+          }),
         ),
         required: Object.entries(op.params)
           .filter(([, v]) => v.required)
@@ -65,6 +68,21 @@ describe('E2E: MCP Tool Generation', () => {
     expect(names).toContain('get_health');
     expect(names).toContain('sync_brain');
     expect(names).toContain('file_upload');
+    expect(names).toContain('list_memory_mutation_events');
+    expect(names).toContain('record_memory_mutation_event');
+    expect(names).toContain('upsert_memory_realm');
+    expect(names).toContain('get_memory_session');
+    expect(names).toContain('list_memory_sessions');
+    const recordMutationEvent = tools.find((tool) => tool.name === 'record_memory_mutation_event');
+    expect((recordMutationEvent?.inputSchema.properties as any).privileged.type).toBe('boolean');
+    expect(recordMutationEvent?.inputSchema.required).toContain('privileged');
+    expect(recordMutationEvent?.inputSchema.required).toContain('privileged_reason');
+    expect(recordMutationEvent?.inputSchema.required).toContain('target_id');
+    expect(recordMutationEvent?.inputSchema.required).toContain('source_refs');
+    expect((recordMutationEvent?.inputSchema.properties as any).source_ref).toBeUndefined();
+    expect((recordMutationEvent?.inputSchema.properties as any).mutation_dry_run.type).toBe('boolean');
+    const upsertMemoryRealm = tools.find((tool) => tool.name === 'upsert_memory_realm');
+    expect((upsertMemoryRealm?.inputSchema.properties as any).archived_at.type).toEqual(['string', 'null']);
   });
 
   test('MCP server module can be imported', async () => {
