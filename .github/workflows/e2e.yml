@@ -37,9 +37,20 @@ jobs:
           bun-version: latest
       - run: bun install
       - name: Run Tier 1 E2E tests
-        run: bun test test/e2e/mechanical.test.ts test/e2e/mcp.test.ts
+        # Run every test/e2e/*.test.ts via scripts/run-e2e.sh (what
+        # `bun run test:e2e` invokes). Previously this listed only
+        # mechanical.test.ts + mcp.test.ts, leaving 18 files untested
+        # in CI. The other files (cycle.test.ts, minions-shell.test.ts,
+        # sync.test.ts, upgrade.test.ts, etc) are mechanical too and
+        # run cleanly against the same Postgres service. skills.test.ts
+        # is included but skips gracefully when API keys are not set
+        # (Tier 2 below sets them and runs skills properly).
+        run: bun run test:e2e
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          # Required for test/e2e/minions-shell.test.ts. Safe in CI
+          # runner against the ephemeral test container.
+          GBRAIN_ALLOW_SHELL_JOBS: '1'
 
   tier2:
     name: Tier 2 (LLM Skills)
