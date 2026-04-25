@@ -9,7 +9,8 @@ import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 
 export interface Check {
@@ -59,7 +60,8 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // --- Filesystem checks (always run, no DB needed) ---
 
   // 1. Resolver health
-  const repoRoot = findRepoRoot();
+  const commandRepoRoot = findRepoRoot(dirname(fileURLToPath(import.meta.url)));
+  const repoRoot = findRepoRoot() ?? commandRepoRoot;
   if (repoRoot) {
     const skillsDir = join(repoRoot, 'skills');
 
@@ -524,7 +526,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain link-extract && gbrain timeline-extract`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain extract links --source db --include-frontmatter && gbrain extract timeline --source db`,
       });
     }
 

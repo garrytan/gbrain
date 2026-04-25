@@ -86,6 +86,13 @@ describe('doctor command', () => {
   // v0.12.2 reliability wave — doctor detects JSONB double-encode + truncated
   // bodies and points users at the standalone `gbrain repair-jsonb` command.
   // Detection only; repair lives in src/commands/repair-jsonb.ts.
+  test('doctor uses current extract command hints and installed repo fallback', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain('gbrain extract links --source db --include-frontmatter');
+    expect(source).toContain('gbrain extract timeline --source db');
+    expect(source).toContain('findRepoRoot(dirname(fileURLToPath(import.meta.url)))');
+  });
+
   test('doctor source contains jsonb_integrity and markdown_body_completeness checks', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
     expect(source).toContain('jsonb_integrity');
