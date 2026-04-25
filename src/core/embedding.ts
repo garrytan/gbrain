@@ -9,7 +9,7 @@
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
+const MODEL = process.env.GBRAIN_EMBEDDING_MODEL ?? 'text-embedding-3-large';
 const DIMENSIONS = 1536;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;

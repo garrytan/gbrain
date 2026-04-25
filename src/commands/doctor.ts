@@ -484,12 +484,20 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     if (health.embed_coverage >= 0.9) {
       checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing` });
     } else if (health.embed_coverage > 0) {
-      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed --stale` });
+      checks.push({
+        name: 'embeddings',
+        status: 'warn',
+        message: `${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed --stale. Query still works with keyword-only fallback if embeddings are unavailable.`,
+      });
     } else {
-      checks.push({ name: 'embeddings', status: 'warn', message: 'No embeddings yet. Run: gbrain embed --stale' });
+      checks.push({
+        name: 'embeddings',
+        status: 'warn',
+        message: 'No embeddings yet. Run: gbrain embed --stale. Query still works with keyword-only fallback if your provider does not support /embeddings.',
+      });
     }
   } catch {
-    checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
+    checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health. Query may still work via keyword-only fallback.' });
   }
 
   // 8. Graph health (link + timeline coverage on entity pages).

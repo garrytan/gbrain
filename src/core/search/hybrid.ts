@@ -77,10 +77,7 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
-  // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
-    // Apply backlink boost in keyword-only path too. One getBacklinkCounts query
-    // per search request; not N+1.
+  const returnKeywordOnly = async (): Promise<SearchResult[]> => {
     if (keywordResults.length > 0) {
       try {
         const slugs = Array.from(new Set(keywordResults.map(r => r.slug)));
@@ -91,7 +88,20 @@ export async function hybridSearch(
         // Boost failure is non-fatal: keep unboosted ranking.
       }
     }
-    return dedupResults(keywordResults).slice(offset, offset + limit);
+
+    const deduped = dedupResults(keywordResults, opts?.dedupOpts);
+    if (deduped.length === 0 && opts?.detail === 'low') {
+      return hybridSearch(engine, query, { ...opts, detail: 'high' });
+    }
+
+    return deduped.slice(offset, offset + limit);
+  };
+
+  // Skip vector search entirely if no OpenAI key is configured.
+  // Also keep a stable keyword-only path for providers that expose chat/completions
+  // but not /embeddings.
+  if (!process.env.OPENAI_API_KEY) {
+    return returnKeywordOnly();
   }
 
   // Determine query variants (optionally with expansion)
@@ -117,11 +127,12 @@ export async function hybridSearch(
       embeddings.map(emb => engine.searchVector(emb, searchOpts)),
     );
   } catch {
-    // Embedding failure is non-fatal, fall back to keyword-only
+    // Embedding failure is non-fatal; treat unsupported providers the same as no embeddings.
+    return returnKeywordOnly();
   }
 
   if (vectorLists.length === 0) {
-    return dedupResults(keywordResults).slice(offset, offset + limit);
+    return returnKeywordOnly();
   }
 
   // Merge all result lists via RRF (includes normalization + boost)
