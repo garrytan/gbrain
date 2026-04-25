@@ -17,7 +17,7 @@ bun test test/scenarios/
 See `docs/superpowers/specs/2026-04-23-mbrain-scenario-test-design.md`
 for the full spec (14 scenarios + invariant catalog + rollout plan).
 
-## Scenarios in this PR
+## Current Scenario Contract
 
 | # | File | Invariants | Status |
 |---|---|---|---|
@@ -45,14 +45,15 @@ for the full spec (14 scenarios + invariant catalog + rollout plan).
 Legend:
 - ✅ green = passes on current code
 
-## Code change delivered in this PR
+The redesign scenario suite currently has zero placeholder tests. It covers the
+original S1-S14 redesign contracts plus S15-S20 loop-observability and
+interaction-identity contracts. Run this as part of final acceptance:
 
-- **I4 engine-level enforcement**: `promoteMemoryCandidateEntry` on all three
-  engines (SQLite / PGLite / Postgres) now refuses to promote a candidate
-  unless `source_refs` contains at least one non-blank provenance entry.
-  Defense-in-depth behind the service-layer preflight check so direct engine
-  callers cannot bypass I4.
+```sh
+if rg -n "test\\.todo|todo\\(" test/scenarios; then
+  echo "Scenario placeholders remain"
+  exit 1
+fi
+```
 
-Sprint 1.1B adds S15/S16 audit scenarios so loop observability is checked from
-structured trace columns and `interaction_id` linked-write rows, not from
-best-effort timestamp correlation.
+It should produce no matches and exit 0.

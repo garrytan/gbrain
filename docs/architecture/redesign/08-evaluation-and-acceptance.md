@@ -275,3 +275,35 @@ The redesign is complete only when the measurement contract says it is complete.
 - measurable, comparable results across phases
 
 If the redesign cannot prove those outcomes, it is not finished, regardless of how good the architecture sounds on paper.
+
+## Redesign Completion Appendix
+
+As of the final acceptance closure, the redesign completion boundary is
+implemented and measurable:
+
+- `audit_brain_loop` is the loop-observability verification surface. It reports
+  trace counts, intent/scope/gate distributions, canonical-vs-derived read
+  ratios, linked write counts, approximate unlinked candidate activity, task
+  compliance, and summary lines from structured trace columns and
+  `interaction_id` joins.
+- `retrieval_traces.id` is the durable interaction identity for the implemented
+  loop-observability path. Governance writes that participate in the audited
+  loop link back through `interaction_id`.
+- `test/scenarios` has zero placeholders. S5, S9, and S11 now exercise
+  request-level decomposition, canonical-first broad synthesis, and stale code
+  claim verification respectively.
+- CI runs `bunx tsc --noEmit --pretty false` before the default `bun test`
+  job, so new production behavior lands under the TypeScript gate.
+- Code-sensitive resume facts are reverified before being presented as current
+  task state. Historical operational records are preserved even when a claim is
+  stale or unverifiable.
+
+The following remain outside this completion boundary unless promoted into a
+new spec:
+
+- trace retention, pruning, or TTL policy
+- a dashboard or scheduled cron runner for loop observability
+- a full `memory_candidate_status_events` event log
+- an active-only task-compliance metric
+- richer AST-aware code-claim verification beyond the current path, symbol, and
+  branch-sensitive checks

@@ -1294,3 +1294,55 @@ Expected:
 - `pending_baseline` exits successfully but must be reported as incomplete evidence, not full closure
 - `fail` exits non-zero
 - `test:phase8` runs the longitudinal, dream-cycle, acceptance-pack, and memory-inbox operation inventory tests
+
+## Final redesign acceptance
+
+Run these gates from a clean branch based on latest `origin/master`:
+
+```bash
+if rg -n "test\\.todo|todo\\(" test/scenarios; then
+  echo "Scenario placeholders remain"
+  exit 1
+fi
+bunx tsc --noEmit --pretty false
+bun run test:scenarios
+FINAL_ACCEPTANCE_TEST_HOME=$(mktemp -d /tmp/mbrain-final-acceptance-test-home.XXXXXX)
+env HOME="$FINAL_ACCEPTANCE_TEST_HOME" bun test --timeout 60000
+bun run build
+git diff --check
+git status --short
+```
+
+Expected:
+
+- the placeholder scan prints no matches and exits 0
+- TypeScript emits no errors
+- `test:scenarios` passes all non-Postgres-local scenarios
+- the full Bun suite has zero failures
+- the build succeeds
+- the diff has no whitespace errors
+- `git status --short` shows only intentional final-acceptance files before
+  commit, and no untracked files are accidentally omitted
+
+Verify the audit CLI against an initialized local SQLite brain:
+
+```bash
+FINAL_ACCEPTANCE_CLI_HOME=$(mktemp -d /tmp/mbrain-final-acceptance-cli-home.XXXXXX)
+
+env HOME="$FINAL_ACCEPTANCE_CLI_HOME" \
+  bun run src/cli.ts init --local \
+  --path "$FINAL_ACCEPTANCE_CLI_HOME/mbrain.db" \
+  --json
+
+env HOME="$FINAL_ACCEPTANCE_CLI_HOME" \
+  bun run src/cli.ts audit-brain-loop --since 24h --json
+```
+
+Expected:
+
+- the audit command returns valid JSON shaped like `AuditBrainLoopReport`
+- the report includes `window`, `total_traces`, intent/scope/gate
+  distributions, canonical-vs-derived counts, linked-write counts,
+  approximate candidate activity, task compliance, and summary lines
+- an empty local brain reports zero activity explicitly rather than failing or
+  inventing activity

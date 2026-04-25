@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Finish the remaining redesign work after PR #42 so `mbrain` can keep proving the brain-agent loop runs, keep strict type regressions out of CI, and close the remaining scenario contract gaps.
+**Goal:** Record the completed redesign work through PR #51 and define the final acceptance closure gate for `mbrain`.
 
 **Architecture:** The completion path remains loop-first: `retrieval_traces.id` is the agent-turn identity, linked governance event rows attach by `interaction_id`, and audit reads trace/write joins instead of free-form strings. Canonical Markdown and operational records remain truth; maps, atlases, embeddings, and audit reports are orientation or evaluation artifacts unless explicitly promoted through governance.
 
@@ -12,26 +12,30 @@
 
 ## Current Integrated State
 
-As of 2026-04-25 on `origin/master` after PR #42:
+As of 2026-04-25 on `origin/master` after PR #51:
 
 - PR #38 is merged: Sprint 1.0 interaction identity foundation.
 - PR #39 is merged: Postgres JSONB persistence correctness and legacy scalar-string repair.
 - PR #40 is merged: Sprint 1.1A retrieval trace fidelity fields.
 - PR #41 is merged: redesign completion roadmap.
 - PR #42 is merged: Sprint 1.1B brain-loop audit.
-- Latest merge commit: `528b07d Merge pull request #42 from meghendra6/sprint-1.1b-loop-audit`.
+- PR #43 is merged: completion-roadmap refresh.
+- PR #44-#48 are merged: Sprint 0 TypeScript baseline cleanup and CI enforcement.
+- PR #49 is merged: L1 request-level decomposition, closing S5.
+- PR #50 is merged: L2 canonical-first broad synthesis ranking, closing S9.
+- PR #51 is merged: L4 code-claim verification before reuse, closing S11.
+- Latest merge commit: `c8c41c2 Merge pull request #51 from meghendra6/sprint-4-code-claim-verification`.
 - `audit_brain_loop` exists and reports trace counts, intent/scope/gate distributions, canonical-vs-derived counts, linked write counts, approximate unlinked-candidate counts, task compliance, and summary lines.
-- PR #42 final local verification passed with `bun test --timeout 60000`: `1156 pass / 140 skip / 5 todo / 0 fail`.
-- PR #42 final GitHub checks passed: `test`, `postgres-jsonb`, `gitleaks`, and `Tier 1 (Mechanical)`. `Tier 2 (LLM Skills)` was skipped by workflow conditions.
-- Current `test/scenarios` placeholders remain: S5 has 1 `test.todo`, S9 has 2 `test.todo`, and S11 has 2 `test.todo`.
-- `bunx tsc --noEmit --pretty false` still fails on latest `origin/master`. Baseline re-measured on 2026-04-25: `851` `error TS` lines.
+- `bunx tsc --noEmit --pretty false` is green locally and is enforced in CI before `bun test`.
+- `test/scenarios` has zero placeholders; S5, S9, and S11 are real green tests.
+- Final local verification before closure PR: scenarios `61 pass / 2 skip / 0 fail`; full suite `1219 pass / 145 skip / 0 fail`.
 
-The redesign is not complete. The remaining contract gaps are:
+The only remaining item in this roadmap is final acceptance closure:
 
-- `tsc` is not green and therefore cannot be enforced in CI.
-- Scenario contract placeholders remain for L1 request-level intent decomposition, L2 canonical-first broad synthesis, and L4 code claim verification.
-- Final acceptance does not yet require zero scenario placeholders, clean `tsc`, full suite success, and a working CLI audit report on the final integrated state.
-- Task compliance semantics are currently "all task threads in scope." An optional active-only compliance metric is a future policy decision, not a current completion blocker.
+- update verification and acceptance docs with the completed state
+- record the redesign completion retrospective
+- verify zero scenario placeholders, clean `tsc`, full suite success, build success, diff cleanliness, and CLI audit JSON on the final integrated state
+- merge the closure PR after final subagent review and GitHub CI
 
 ## Completion Definition
 
@@ -52,56 +56,48 @@ The redesign is not complete. The remaining contract gaps are:
 | Order | Scope | Branch Name | Depends On | Merge Gate | Status |
 |---|---|---|---|---|---|
 | 1 | Sprint 1.1B loop audit | `sprint-1.1b-loop-audit` | `master` after PR #40 | Audit scenarios green, full tests green | Done in PR #42, merge `528b07d` |
-| 2a | Sprint 0 tsc baseline: engine contract | `sprint-0.1-tsc-engine-contract` | `origin/master` after PR #42 | `runMigration`/`SQLiteEngine` TypeScript family eliminated, focused tests green | Next |
-| 2b | Sprint 0 tsc baseline: SQL/JSON binding types | `sprint-0.2-tsc-sql-json` | 2a | SQL binding, JSON parameter, and mapper callback TypeScript families eliminated | Pending |
-| 2c | Sprint 0 tsc baseline: domain boundary types | `sprint-0.3-tsc-domain-boundaries` | 2b | config, file resolver, pglite lock, services, and storage TypeScript families eliminated | Pending |
-| 2d | Sprint 0 tsc baseline: test fixture types | `sprint-0.4-tsc-test-fixtures` | 2c | test/scenario fixture TypeScript families eliminated | Pending |
-| 2e | Sprint 0 tsc baseline: CI enforcement | `sprint-0.5-tsc-ci` | 2d | `bunx tsc --noEmit --pretty false` green locally and in CI before `bun test` | Pending |
-| 3 | L1 request decomposition | `sprint-2-request-decomposition` | Sprint 0 typecheck CI merged | S5 placeholder replaced and green | Pending |
-| 4 | L2 canonical-first ranking | `sprint-3-canonical-first-ranking` | Sprint 0 typecheck CI merged | S9 placeholders replaced and green | Pending |
-| 5 | L4 code claim verification | `sprint-4-code-claim-verification` | Sprint 0 typecheck CI merged | S11 placeholders replaced and green | Pending |
-| 6 | Final acceptance closure | `sprint-final-acceptance-closure` | 2a-5 | No scenario placeholders, `tsc` green, full suite green, CLI audit verified | Pending |
+| 2a | Sprint 0 tsc baseline: engine contract | `sprint-0.1-tsc-engine-contract` | `origin/master` after PR #42 | `runMigration`/`SQLiteEngine` TypeScript family eliminated, focused tests green | Done in PR #44, merge `c1991ec` |
+| 2b | Sprint 0 tsc baseline: SQL/JSON binding types | `sprint-0.2-tsc-sql-json-mappers` | 2a | SQL binding, JSON parameter, and mapper callback TypeScript families eliminated | Done in PR #45, merge `6e9b046` |
+| 2c | Sprint 0 tsc baseline: domain boundary types | `sprint-0.3-tsc-domain-boundaries` | 2b | config, file resolver, pglite lock, services, and storage TypeScript families eliminated | Done in PR #46, merge `e70dab4` |
+| 2d | Sprint 0 tsc baseline: test fixture types | `sprint-0.4-tsc-test-fixtures` | 2c | test/scenario fixture TypeScript families eliminated | Done in PR #47, merge `f20be12` |
+| 2e | Sprint 0 tsc baseline: CI enforcement | `sprint-0.5-tsc-ci` | 2d | `bunx tsc --noEmit --pretty false` green locally and in CI before `bun test` | Done in PR #48, merge `54a65e1` |
+| 3 | L1 request decomposition | `sprint-2-request-decomposition` | Sprint 0 typecheck CI merged | S5 placeholder replaced and green | Done in PR #49, merge `b5227f2` |
+| 4 | L2 canonical-first ranking | `sprint-3-canonical-first-ranking` | Sprint 0 typecheck CI merged | S9 placeholders replaced and green | Done in PR #50, merge `8c750bc` |
+| 5 | L4 code claim verification | `sprint-4-code-claim-verification` | Sprint 0 typecheck CI merged | S11 placeholders replaced and green | Done in PR #51, merge `c8c41c2` |
+| 6 | Final acceptance closure | `sprint-final-acceptance-closure` | 2a-5 | No scenario placeholders, `tsc` green, full suite green, CLI audit verified | Current |
 
-## Remaining Work
+## Completed Work
 
 ### Track A: TypeScript Baseline and CI
 
 Detailed plan: `docs/superpowers/plans/2026-04-25-mbrain-sprint-0-tsc-baseline-current-plan.md`.
 
-Purpose:
+Result:
 
-- Remove the current `851` TypeScript errors.
-- Preserve runtime behavior while tightening types.
-- Add `bunx tsc --noEmit --pretty false` to CI only after local `tsc` is clean.
+- The previous TypeScript baseline was removed across PR #44-#48.
+- Runtime behavior was preserved while tightening types.
+- `bunx tsc --noEmit --pretty false` now runs in CI before `bun test`.
 
-Execution rule:
-
-- Do not implement L1, L2, or L4 feature work until Track A is merged. Those PRs add new production code and should land under the typecheck gate.
-
-### Track B: Remaining Scenario Contracts
+### Track B: Scenario Contracts
 
 Detailed plan: `docs/superpowers/plans/2026-04-25-mbrain-remaining-redesign-contracts-plan.md`.
 
-Purpose:
+Result:
 
-- Replace S5 L1 request decomposition placeholder with a deterministic request planner.
-- Replace S9 L2 canonical-first ranking placeholders by making broad synthesis prefer curated canonical notes over map-derived suggestions.
-- Replace S11 L4 code claim verification placeholders by distinguishing historical memory from current workspace truth.
-- Close final acceptance with zero scenario placeholders, clean `tsc`, full tests, build, and CLI audit verification.
-
-Execution rule:
-
-- Keep L1, L2, and L4 as separate semantic PRs. Do not combine request decomposition, broad-synthesis ranking, and code-claim verification.
+- S5 L1 request decomposition is implemented by a deterministic request planner.
+- S9 L2 canonical-first ranking prefers curated canonical notes over map-derived suggestions for the implemented conflict path.
+- S11 L4 code-claim verification distinguishes historical memory from current workspace truth before task resume repeats code-sensitive facts.
+- The final acceptance closure is the only remaining PR.
 
 ## Retrospective Adjustments
 
-The architecture does not need a redesign after PR #42. The core choice remains correct: measurement only became reliable after interaction identity existed, trace fidelity existed, and linked writes could be joined by `interaction_id`.
+The architecture does not need a redesign after PR #51. The core choice remains correct: measurement only became reliable after interaction identity existed, trace fidelity existed, and linked writes could be joined by `interaction_id`.
 
-The execution plan does need these changes:
+The execution lessons are:
 
-- PR #42 is now a completed foundation, not a next action.
-- The next action is Sprint 0.1 because `SQLiteEngine` not satisfying `BrainEngine` creates a large `tsc` cascade. Fixing that first makes the remaining TypeScript inventory easier to review.
-- Sprint 0 must be split into small PRs. A single "make tsc green" PR would be too broad and would violate the review discipline used successfully during PR #42.
+- Foundation first was correct: interaction identity, trace fidelity, audit, typecheck, and scenario contracts each landed as separate reviewable PRs.
+- Splitting Sprint 0 into small PRs kept type cleanup mechanical and prevented a broad "make tsc green" branch from hiding behavior changes.
+- L1, L2, and L4 stayed separate semantic PRs, which made subagent review findings easier to reproduce with focused tests.
 - Critical subagent review remains required after each meaningful implementation commit, but review findings are hypotheses. They must be checked against design docs, code, and tests before implementation.
 - Local worktree state must be treated carefully. New implementation starts from a clean worktree based on latest `origin/master`; do not reuse stale or dirty branches for new PRs.
 
@@ -128,20 +124,19 @@ Each PR follows the same checkpoint loop:
 
 ## Execution Recommendation
 
-Proceed in this order:
+Proceed with PR 6 only:
 
-1. Implement Track A PR 2a (`sprint-0.1-tsc-engine-contract`).
-2. Continue Track A PRs 2b-2e until `bunx tsc --noEmit --pretty false` is green and CI enforces it.
-3. Implement PR 3 (`sprint-2-request-decomposition`) to close S5.
-4. Implement PR 4 (`sprint-3-canonical-first-ranking`) to close S9.
-5. Implement PR 5 (`sprint-4-code-claim-verification`) to close S11.
-6. Implement PR 6 (`sprint-final-acceptance-closure`) to update final docs and verify the integrated system.
+1. Update final verification, acceptance, scenario, roadmap, and retrospective docs.
+2. Run zero-placeholder scan, `tsc`, scenarios, full tests, build, diff check, and CLI audit verification.
+3. Request final critical subagent review and fix all valid findings.
+4. Open and merge `sprint-final-acceptance-closure` only after GitHub CI is green.
 
-This order avoids the earlier mistake of mixing observability, schema, CI, and feature semantics in one PR. It also keeps the audit available while later memory improvements land, which lets the project keep checking whether reads and writes are actually paired by agent turns.
+No additional implementation PR is required inside the current redesign
+completion boundary.
 
 ## Self-Review
 
-- Spec coverage: PR #42 covers Sprint 1.1B. Track A covers `2026-04-24-mbrain-sprint-0-tsc-baseline-design.md`. Track B covers remaining scenario invariants L1, L2, and L4 from `2026-04-23-mbrain-scenario-test-design.md`. Final acceptance closes `08-evaluation-and-acceptance.md`.
-- Dependency check: L1/L2/L4 now depend on Track A so new feature work is protected by CI typecheck.
+- Spec coverage: PR #42 covers Sprint 1.1B. Track A covers `2026-04-24-mbrain-sprint-0-tsc-baseline-design.md`. Track B covers scenario invariants L1, L2, and L4 from `2026-04-23-mbrain-scenario-test-design.md`. Final acceptance closes `08-evaluation-and-acceptance.md`.
+- Dependency check: L1/L2/L4 landed after Track A, so new feature work was protected by CI typecheck.
 - Type consistency: Stable names remain `AuditBrainLoopReport`, `RetrievalTraceWindowFilters`, `audit_brain_loop`, `plan_retrieval_request`, and `reverify_code_claims`.
 - Scope control: Candidate status-event logs, dashboards, pruning, cron automation, and active-only compliance are explicitly excluded from this completion boundary.

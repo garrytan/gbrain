@@ -10,17 +10,27 @@
 
 ---
 
+## Completion Update
+
+As of 2026-04-25 after PR #51:
+
+- PR 3 / S5 is complete in PR #49.
+- PR 4 / S9 is complete in PR #50.
+- PR 5 / S11 is complete in PR #51.
+- `test/scenarios` has zero placeholders.
+- `bunx tsc --noEmit --pretty false` is green and enforced in CI.
+- Only PR 6, final acceptance closure, remains from this plan.
+
 ## Preconditions
 
-Do not start this plan until Sprint 0 typecheck cleanup is merged:
+This precondition is now satisfied. Sprint 0 typecheck cleanup landed in PR #44
+through PR #48:
 
 ```bash
 bunx tsc --noEmit --pretty false
 ```
 
 Expected: command exits 0 with no output.
-
-Reason: this plan adds new production behavior. It should land under the CI typecheck gate.
 
 ## PR 3: L1 Request-Level Intent Decomposition
 
@@ -763,29 +773,43 @@ Branch: `sprint-final-acceptance-closure`
 - [ ] **Step 1: Confirm no scenario placeholders**
 
 ```bash
-rg -n "test\\.todo|todo\\(" test/scenarios
+if rg -n "test\\.todo|todo\\(" test/scenarios; then
+  echo "Scenario placeholders remain"
+  exit 1
+fi
 ```
 
-Expected: no output.
+Expected: no matches and exit 0.
 
 - [ ] **Step 2: Run final local gates**
 
 ```bash
 bunx tsc --noEmit --pretty false
 bun run test:scenarios
-bun test --timeout 60000
+FINAL_ACCEPTANCE_TEST_HOME=$(mktemp -d /tmp/mbrain-final-acceptance-test-home.XXXXXX)
+env HOME="$FINAL_ACCEPTANCE_TEST_HOME" bun test --timeout 60000
 bun run build
 git diff --check
+git status --short
 ```
 
-Expected: all pass.
+Expected: all pass. Before commit, `git status --short` must show only the
+intended final-acceptance docs and no accidental untracked files.
 
 - [ ] **Step 3: Verify CLI audit**
 
 Against an initialized local SQLite brain, run:
 
 ```bash
-bun run src/cli.ts audit-brain-loop --since 24h --json
+FINAL_ACCEPTANCE_CLI_HOME=$(mktemp -d /tmp/mbrain-final-acceptance-cli-home.XXXXXX)
+
+env HOME="$FINAL_ACCEPTANCE_CLI_HOME" \
+  bun run src/cli.ts init --local \
+  --path "$FINAL_ACCEPTANCE_CLI_HOME/mbrain.db" \
+  --json
+
+env HOME="$FINAL_ACCEPTANCE_CLI_HOME" \
+  bun run src/cli.ts audit-brain-loop --since 24h --json
 ```
 
 Expected: valid JSON matching `AuditBrainLoopReport`.
@@ -809,7 +833,8 @@ In `docs/MBRAIN_VERIFY.md`, add the final gate:
 ```bash
 bunx tsc --noEmit --pretty false
 bun run test:scenarios
-bun test --timeout 60000
+FINAL_ACCEPTANCE_TEST_HOME=$(mktemp -d /tmp/mbrain-final-acceptance-test-home.XXXXXX)
+env HOME="$FINAL_ACCEPTANCE_TEST_HOME" bun test --timeout 60000
 bun run build
 ```
 
@@ -825,7 +850,8 @@ In `docs/architecture/redesign/08-evaluation-and-acceptance.md`, add a short com
 - [ ] **Step 4: Commit and open PR**
 
 ```bash
-git add docs/superpowers/specs/2026-04-25-mbrain-redesign-completion-retrospective.md docs/MBRAIN_VERIFY.md docs/architecture/redesign/08-evaluation-and-acceptance.md test/scenarios/README.md
+git add docs/superpowers/specs/2026-04-25-mbrain-redesign-completion-retrospective.md docs/MBRAIN_VERIFY.md docs/architecture/redesign/08-evaluation-and-acceptance.md docs/superpowers/plans/2026-04-24-mbrain-redesign-completion-roadmap.md docs/superpowers/plans/2026-04-25-mbrain-remaining-redesign-contracts-plan.md test/scenarios/README.md
+git diff --cached --check
 git commit -m "docs: close mbrain redesign acceptance plan"
 git push -u origin sprint-final-acceptance-closure
 gh pr create --base master --head sprint-final-acceptance-closure --title "Close mbrain redesign acceptance" --body-file /tmp/mbrain-final-acceptance-pr-body.md
