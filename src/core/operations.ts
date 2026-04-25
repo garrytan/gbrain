@@ -1713,6 +1713,25 @@ const upsert_profile_memory_entry: Operation = {
   cliHints: { name: 'profile-memory-upsert' },
 };
 
+const delete_profile_memory_entry: Operation = {
+  name: 'delete_profile_memory_entry',
+  description: 'Delete one canonical profile-memory entry by id.',
+  params: {
+    id: { type: 'string', required: true, description: 'Profile-memory entry id' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    const id = String(p.id).trim();
+    if (id.length === 0) {
+      throw new OperationError('invalid_params', 'id must be a non-empty string');
+    }
+    if (ctx.dryRun) return { dry_run: true, action: 'delete_profile_memory_entry', id };
+    await ctx.engine.deleteProfileMemoryEntry(id);
+    return { status: 'deleted', id };
+  },
+  cliHints: { name: 'profile-memory-delete', positional: ['id'] },
+};
+
 const get_personal_episode_entry: Operation = {
   name: 'get_personal_episode_entry',
   description: 'Get one canonical personal-episode entry by id.',
@@ -1798,6 +1817,25 @@ const record_personal_episode: Operation = {
     });
   },
   cliHints: { name: 'personal-episode-record' },
+};
+
+const delete_personal_episode_entry: Operation = {
+  name: 'delete_personal_episode_entry',
+  description: 'Delete one canonical personal-episode entry by id.',
+  params: {
+    id: { type: 'string', required: true, description: 'Personal-episode entry id' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    const id = String(p.id).trim();
+    if (id.length === 0) {
+      throw new OperationError('invalid_params', 'id must be a non-empty string');
+    }
+    if (ctx.dryRun) return { dry_run: true, action: 'delete_personal_episode_entry', id };
+    await ctx.engine.deletePersonalEpisodeEntry(id);
+    return { status: 'deleted', id };
+  },
+  cliHints: { name: 'personal-episode-delete', positional: ['id'] },
 };
 
 const memoryInboxOperations = createMemoryInboxOperations({
@@ -3688,9 +3726,9 @@ export const operations: Operation[] = [
   // Resolution & chunks
   resolve_slugs, get_chunks,
   // Profile memory
-  get_profile_memory_entry, list_profile_memory_entries, upsert_profile_memory_entry, ...memoryInboxOperations, write_profile_memory_entry,
+  get_profile_memory_entry, list_profile_memory_entries, upsert_profile_memory_entry, delete_profile_memory_entry, ...memoryInboxOperations, write_profile_memory_entry,
   // Personal episodes
-  get_personal_episode_entry, list_personal_episode_entries, record_personal_episode, write_personal_episode_entry,
+  get_personal_episode_entry, list_personal_episode_entries, record_personal_episode, delete_personal_episode_entry, write_personal_episode_entry,
   // Note manifest
   get_note_manifest_entry, list_note_manifest_entries, rebuild_note_manifest,
   // Note sections

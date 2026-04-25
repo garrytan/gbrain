@@ -73,6 +73,25 @@ describe('local SQLite long-term memory lifecycle', () => {
     const oldProfile = h.call<any>('get_profile_memory_entry', { id: 'profile-caffeine-old' });
     expect(oldProfile.superseded_by).toBe('profile-caffeine-new');
 
+    h.call('write_profile_memory_entry', {
+      id: 'profile-delete-me',
+      requested_scope: 'personal',
+      profile_type: 'routine',
+      subject: 'temporary retention probe',
+      content: 'This profile memory exists only to verify SQLite forgetting.',
+      source_ref: 'User, direct message, 2026-04-20 10:05 KST',
+    });
+    const deleteMeProfile = h.call<any>('get_profile_memory_entry', { id: 'profile-delete-me' });
+    expect(deleteMeProfile.content).toContain('verify SQLite forgetting');
+    expect(h.call<{ status: string; id: string }>('delete_profile_memory_entry', {
+      id: 'profile-delete-me',
+    })).toMatchObject({ status: 'deleted', id: 'profile-delete-me' });
+    expect(h.call<any | null>('get_profile_memory_entry', { id: 'profile-delete-me' })).toBeNull();
+    const profilesAfterDelete = h.call<any[]>('list_profile_memory_entries', {
+      subject: 'temporary retention probe',
+    });
+    expect(profilesAfterDelete.map(entry => entry.id)).not.toContain('profile-delete-me');
+
     h.call('record_personal_episode', {
       id: 'episode-caffeine-change',
       title: 'Caffeine preference changed',
@@ -90,6 +109,25 @@ describe('local SQLite long-term memory lifecycle', () => {
     });
     expect(episodeRoute.route.summary).toContain('corrected');
     expect(episodeRoute.route.candidate_ids).toContain('candidate-caffeine-new');
+
+    h.call('record_personal_episode', {
+      id: 'episode-delete-me',
+      title: 'Temporary retention episode',
+      start_time: '2026-04-20T02:00:00Z',
+      source_kind: 'chat',
+      summary: 'This episode exists only to verify SQLite forgetting.',
+      source_ref: 'User, direct message, 2026-04-20 11:00 KST',
+    });
+    const deleteMeEpisode = h.call<any>('get_personal_episode_entry', { id: 'episode-delete-me' });
+    expect(deleteMeEpisode.summary).toContain('verify SQLite forgetting');
+    expect(h.call<{ status: string; id: string }>('delete_personal_episode_entry', {
+      id: 'episode-delete-me',
+    })).toMatchObject({ status: 'deleted', id: 'episode-delete-me' });
+    expect(h.call<any | null>('get_personal_episode_entry', { id: 'episode-delete-me' })).toBeNull();
+    const episodesAfterDelete = h.call<any[]>('list_personal_episode_entries', {
+      title: 'Temporary retention episode',
+    });
+    expect(episodesAfterDelete.map(entry => entry.id)).not.toContain('episode-delete-me');
 
     const task = h.runJson<any>([
       'task-start',
@@ -137,6 +175,28 @@ describe('local SQLite long-term memory lifecycle', () => {
     expect(resume.latest_trace_route).toEqual(['profile_memory', 'personal_episode', 'memory_inbox']);
 
     h.call('create_memory_candidate_entry', {
+      id: 'candidate-delete-me',
+      candidate_type: 'fact',
+      proposed_content: 'Temporary candidate exists only to verify SQLite forgetting.',
+      source_ref: 'User, direct message, 2026-04-20 11:05 KST',
+      sensitivity: 'personal',
+      target_object_type: 'profile_memory',
+      target_object_id: 'profile-delete-me',
+    });
+    const deleteMeCandidate = h.call<any>('get_memory_candidate_entry', { id: 'candidate-delete-me' });
+    expect(deleteMeCandidate.proposed_content).toContain('verify SQLite forgetting');
+    expect(deleteMeCandidate.source_refs).toContain('User, direct message, 2026-04-20 11:05 KST');
+    expect(h.call<{ status: string; id: string }>('delete_memory_candidate_entry', {
+      id: 'candidate-delete-me',
+    })).toMatchObject({ status: 'deleted', id: 'candidate-delete-me' });
+    expect(h.call<any | null>('get_memory_candidate_entry', { id: 'candidate-delete-me' })).toBeNull();
+    const candidatesAfterDelete = h.call<any[]>('list_memory_candidate_entries', {
+      status: 'captured',
+      limit: 50,
+    });
+    expect(candidatesAfterDelete.map(candidate => candidate.id)).not.toContain('candidate-delete-me');
+
+    h.call('create_memory_candidate_entry', {
       id: 'candidate-old-procedure',
       candidate_type: 'profile_update',
       proposed_content: 'Old local profile memory update: use espresso reminder.',
@@ -172,6 +232,7 @@ describe('local SQLite long-term memory lifecycle', () => {
       candidate_id: 'candidate-old-procedure',
       reviewed_at: '2026-01-01T00:00:00Z',
       review_reason: 'Handed off to profile memory.',
+      interaction_id: trace.id,
     });
     const staleValidity = h.call<any>('assess_historical_validity', {
       candidate_id: 'candidate-old-procedure',
@@ -217,6 +278,7 @@ describe('local SQLite long-term memory lifecycle', () => {
       candidate_id: 'candidate-new-procedure',
       reviewed_at: '2026-04-20T00:00:00Z',
       review_reason: 'Handed off to corrected profile memory.',
+      interaction_id: trace.id,
     });
     const supersession = h.call<any>('supersede_memory_candidate_entry', {
       superseded_candidate_id: 'candidate-old-procedure',
@@ -258,6 +320,12 @@ describe('local SQLite long-term memory lifecycle', () => {
     const rejected = h.call<any>('get_memory_candidate_entry', { id: 'candidate-rejected-rumor' });
     expect(rejected.status).toBe('rejected');
     expect(rejected.review_reason).toContain('Insufficient provenance');
+    expect(rejected.source_refs).toContain('Ambiguous note, 2026-04-21');
+    const rejectedCandidates = h.call<any[]>('list_memory_candidate_entries', {
+      status: 'rejected',
+      limit: 20,
+    });
+    expect(rejectedCandidates.map(candidate => candidate.id)).toContain('candidate-rejected-rumor');
 
     const events = h.call<any[]>('list_memory_candidate_status_events', {
       interaction_id: trace.id,
@@ -272,8 +340,18 @@ describe('local SQLite long-term memory lifecycle', () => {
       task_id: task.id,
       json: true,
     });
-    expect(audit.candidate_status_events.linked_event_count).toBeGreaterThanOrEqual(5);
+    expect(audit.candidate_status_events.created_count).toBe(2);
+    expect(audit.candidate_status_events.advanced_count).toBe(2);
+    expect(audit.candidate_status_events.promoted_count).toBe(2);
+    expect(audit.candidate_status_events.rejected_count).toBe(1);
+    expect(audit.candidate_status_events.superseded_count).toBe(1);
+    expect(audit.candidate_status_events.linked_event_count).toBe(8);
+    expect(audit.candidate_status_events.unlinked_event_count).toBe(0);
+    expect(audit.candidate_status_events.traces_with_candidate_events).toBe(1);
+    expect(audit.linked_writes.handoff_count).toBe(2);
+    expect(audit.linked_writes.supersession_count).toBe(1);
+    expect(audit.linked_writes.contradiction_count).toBe(0);
     expect(audit.linked_writes.traces_with_any_linked_write).toBe(1);
     expect(audit.linked_writes.traces_without_linked_write).toBe(0);
-  });
+  }, 60_000);
 });

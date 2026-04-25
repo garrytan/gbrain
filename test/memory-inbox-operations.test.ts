@@ -26,6 +26,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
     'get_memory_candidate_entry',
     'list_memory_candidate_entries',
     'list_memory_candidate_status_events',
+    'delete_memory_candidate_entry',
     'create_memory_candidate_entry',
     'rank_memory_candidate_entries',
     'capture_map_derived_candidates',
@@ -48,6 +49,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   const get = operations.find((operation) => operation.name === 'get_memory_candidate_entry');
   const list = operations.find((operation) => operation.name === 'list_memory_candidate_entries');
   const listStatusEvents = operations.find((operation) => operation.name === 'list_memory_candidate_status_events');
+  const deleteCandidate = operations.find((operation) => operation.name === 'delete_memory_candidate_entry');
   const rank = operations.find((operation) => operation.name === 'rank_memory_candidate_entries');
   const captureMapDerived = operations.find((operation) => operation.name === 'capture_map_derived_candidates');
   const reviewBacklog = operations.find((operation) => operation.name === 'list_memory_candidate_review_backlog');
@@ -66,6 +68,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(get?.cliHints?.name).toBe('get-memory-candidate');
   expect(list?.cliHints?.name).toBe('list-memory-candidates');
   expect(listStatusEvents?.cliHints?.name).toBe('list-memory-candidate-status-events');
+  expect(deleteCandidate?.cliHints?.name).toBe('delete-memory-candidate');
   expect(rank?.cliHints?.name).toBe('rank-memory-candidates');
   expect(captureMapDerived?.cliHints?.name).toBe('capture-map-derived-candidates');
   expect(reviewBacklog?.cliHints?.name).toBe('list-memory-candidate-review-backlog');
@@ -82,12 +85,14 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(create?.params.status?.enum).toEqual(['captured', 'candidate', 'staged_for_review']);
   expect(list?.params.status?.enum).toEqual(['captured', 'candidate', 'staged_for_review', 'rejected', 'promoted', 'superseded']);
   expect(listStatusEvents?.params.interaction_id?.type).toBe('string');
+  expect(deleteCandidate?.params.id?.type).toBe('string');
   expect(create?.params.interaction_id?.type).toBe('string');
   expect(advance?.params.interaction_id?.type).toBe('string');
   expect(reject?.params.interaction_id?.type).toBe('string');
   expect(promote?.params.interaction_id?.type).toBe('string');
   expect(supersede?.params.interaction_id?.type).toBe('string');
   expect(contradiction?.params.interaction_id?.type).toBe('string');
+  expect(recordCanonicalHandoff?.params.interaction_id?.type).toBe('string');
   expect(advance?.params.next_status?.description).toContain('depends on the current stored status');
 });
 
@@ -139,13 +144,14 @@ test('memory inbox lifecycle operations reject blank interaction ids', async () 
   const engine = new SQLiteEngine();
   const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
   const listStatusEvents = operations.find((operation) => operation.name === 'list_memory_candidate_status_events');
+  const deleteCandidate = operations.find((operation) => operation.name === 'delete_memory_candidate_entry');
   const advance = operations.find((operation) => operation.name === 'advance_memory_candidate_status');
   const reject = operations.find((operation) => operation.name === 'reject_memory_candidate_entry');
   const promote = operations.find((operation) => operation.name === 'promote_memory_candidate_entry');
   const supersede = operations.find((operation) => operation.name === 'supersede_memory_candidate_entry');
   const contradiction = operations.find((operation) => operation.name === 'resolve_memory_candidate_contradiction');
 
-  if (!create || !listStatusEvents || !advance || !reject || !promote || !supersede || !contradiction) {
+  if (!create || !listStatusEvents || !deleteCandidate || !advance || !reject || !promote || !supersede || !contradiction) {
     throw new Error('memory inbox lifecycle operations are missing');
   }
 
@@ -169,6 +175,10 @@ test('memory inbox lifecycle operations reject blank interaction ids', async () 
 
     await expect(listStatusEvents.handler(ctx, {
       interaction_id: '   ',
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+
+    await expect(deleteCandidate.handler(ctx, {
+      id: '   ',
     })).rejects.toMatchObject({ code: 'invalid_params' });
 
     await expect(advance.handler(ctx, {

@@ -128,6 +128,11 @@ export function assertFails(result: CliResult, args: string[]): void {
 
 export function parseJsonSuffix<T = any>(stdout: string): T {
   const trimmed = stdout.trim();
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    // Fall through to tolerate human-readable prefixes before JSON payloads.
+  }
   for (let index = 0; index < trimmed.length; index++) {
     const char = trimmed[index];
     if (char !== '{' && char !== '[') continue;

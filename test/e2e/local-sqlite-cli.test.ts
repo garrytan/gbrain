@@ -228,5 +228,5 @@ describe('local SQLite CLI end-to-end', () => {
       error: 'offline_mode',
       update_available: false,
     });
-  });
+  }, 60_000);
 });

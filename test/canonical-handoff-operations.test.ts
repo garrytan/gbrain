@@ -10,6 +10,7 @@ test('canonical handoff operations are registered with CLI hints', () => {
   const list = operations.find((operation) => operation.name === 'list_canonical_handoff_entries');
 
   expect(record?.cliHints?.name).toBe('record-canonical-handoff');
+  expect(record?.params.interaction_id?.type).toBe('string');
   expect(list?.cliHints?.name).toBe('list-canonical-handoffs');
 });
 
@@ -54,9 +55,11 @@ test('canonical handoff operations record and list explicit handoff rows', async
     const handoff = await record.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
       candidate_id: 'candidate-handoff-op',
       review_reason: 'Explicitly handed off for canonical procedure update.',
+      interaction_id: 'trace-handoff-op',
     });
 
     expect((handoff as any).handoff.target_object_type).toBe('procedure');
+    expect((handoff as any).handoff.interaction_id).toBe('trace-handoff-op');
 
     const listed = await list.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
       scope_id: 'workspace:default',

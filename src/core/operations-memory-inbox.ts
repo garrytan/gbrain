@@ -319,6 +319,27 @@ export function createMemoryInboxOperations(
     cliHints: { name: 'list-memory-candidate-status-events', aliases: { n: 'limit' } },
   };
 
+  const delete_memory_candidate_entry: Operation = {
+    name: 'delete_memory_candidate_entry',
+    description: 'Delete one memory-inbox candidate by id.',
+    params: {
+      id: { type: 'string', required: true, description: 'Memory candidate entry id' },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const id = normalizeOptionalNonEmptyString(deps, 'id', p.id);
+      if (!id) {
+        throw invalidParams(deps, 'id must be a non-empty string');
+      }
+      if (ctx.dryRun) {
+        return { dry_run: true, action: 'delete_memory_candidate_entry', id };
+      }
+      await ctx.engine.deleteMemoryCandidateEntry(id);
+      return { status: 'deleted', id };
+    },
+    cliHints: { name: 'delete-memory-candidate', positional: ['id'] },
+  };
+
   const create_memory_candidate_entry: Operation = {
     name: 'create_memory_candidate_entry',
     description: 'Create one canonical memory-inbox candidate in captured state by default.',
@@ -528,6 +549,7 @@ export function createMemoryInboxOperations(
       candidate_id: { type: 'string', required: true, description: 'Promoted memory candidate id' },
       reviewed_at: { type: 'string', description: 'Optional ISO timestamp for handoff review metadata' },
       review_reason: { type: 'string', description: 'Optional handoff review reason for auditability' },
+      interaction_id: { type: 'string', description: 'Optional retrieval trace id for handoff attribution' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -537,11 +559,13 @@ export function createMemoryInboxOperations(
       if (p.review_reason != null && typeof p.review_reason !== 'string') {
         throw invalidParams(deps, 'review_reason must be a string or null');
       }
+      const interactionId = normalizeOptionalNonEmptyString(deps, 'interaction_id', p.interaction_id);
       if (ctx.dryRun) {
         return {
           dry_run: true,
           action: 'record_canonical_handoff',
           candidate_id: p.candidate_id,
+          interaction_id: interactionId ?? null,
         };
       }
 
@@ -550,6 +574,7 @@ export function createMemoryInboxOperations(
           candidate_id: p.candidate_id,
           reviewed_at: normalizeOptionalIsoTimestamp(deps, 'reviewed_at', p.reviewed_at),
           review_reason: typeof p.review_reason === 'string' ? p.review_reason : undefined,
+          interaction_id: interactionId,
         });
       } catch (error) {
         if (error instanceof MemoryInboxServiceError) {
@@ -955,6 +980,7 @@ export function createMemoryInboxOperations(
     get_memory_candidate_entry,
     list_memory_candidate_entries,
     list_memory_candidate_status_events,
+    delete_memory_candidate_entry,
     create_memory_candidate_entry,
     rank_memory_candidate_entries,
     capture_map_derived_candidates,
