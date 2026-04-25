@@ -19,7 +19,16 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test']);
+//
+// `dream-cycle` (episodic-to-semantic promotion, src/core/promotion.ts) is
+// distinct from `dream` (one-shot 6-phase maintenance via runCycle). They
+// coexist: `dream` runs every autopilot tick; `dream-cycle` is the nightly
+// rate-limited promotion phase that consolidates recurring timeline patterns
+// into compiled_truth. The promotion phase ALSO runs as phase 7 inside
+// runCycle (see src/core/cycle.ts), so autopilot picks it up automatically.
+// `dream-cycle` is the user-facing CLI for manual one-off runs with custom
+// config knobs.
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'dream-cycle', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -496,6 +505,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runAutopilot(engine, args);
         return; // autopilot doesn't disconnect (long-running)
       }
+      case 'dream-cycle': {
+        const { runDreamCycleCommand } = await import('./commands/dream-cycle.ts');
+        await runDreamCycleCommand(engine, args);
+        break;
+      }
       case 'graph-query': {
         const { runGraphQuery } = await import('./commands/graph-query.ts');
         await runGraphQuery(engine, args);
@@ -642,6 +656,7 @@ ADMIN
   revert <slug> <version-id>         Revert to version
   features [--json] [--auto-fix]     Scan usage + recommend unused features
   autopilot [--repo] [--interval N]  Self-maintaining brain daemon
+  dream-cycle [--dry-run] [--json]   Episodic-to-semantic promotion
   config [show|get|set] <key> [val]  Brain config
   serve                              MCP server (stdio)
   call <tool> '<json>'               Raw tool invocation
