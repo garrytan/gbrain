@@ -261,7 +261,10 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   const entries: ExtractedTimelineEntry[] = [];
 
   // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
-  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*[—–-]\s*(.+)$/gm;
+  // Require whitespace around the source/summary dash. Without this, dates
+  // inside trailing citations like `[Source: email, 2026-04-15]` are split
+  // as if `2026` were the source and `04-15]` the summary.
+  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s+[—–-]\s+(.+)$/gm;
   let match;
   while ((match = bulletPattern.exec(content)) !== null) {
     entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });
@@ -746,10 +749,18 @@ async function extractTimelineFromDB(
 
     const fullContent = page.compiled_truth + '\n' + page.timeline;
     const entries = parseTimelineEntries(fullContent);
+    const existingTimelineKeys = dryRun
+      ? new Set((await engine.getTimeline(slug)).map(e => {
+          const dateValue = e.date as unknown;
+          const d = dateValue instanceof Date ? dateValue.toISOString().slice(0, 10) : String(dateValue).slice(0, 10);
+          return `${slug}::${d}::${e.summary}`;
+        }))
+      : null;
 
     for (const entry of entries) {
       if (dryRunSeen) {
         const key = `${slug}::${entry.date}::${entry.summary}`;
+        if (existingTimelineKeys?.has(key)) continue;
         if (dryRunSeen.has(key)) continue;
         dryRunSeen.add(key);
         if (jsonMode) {

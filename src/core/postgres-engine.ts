@@ -969,8 +969,20 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM pages) as page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
+        -- A structured timeline row only makes a page stale when it represents
+        -- evidence that is not already present in that page's markdown. Bulk
+        -- gbrain extract timeline --source db creates graph rows after the
+        -- page was written; treating those extracted rows as newer evidence
+        -- permanently marks healthy pages stale. If the row summary already
+        -- exists in compiled_truth/timeline, it is just an index of page
+        -- content, not unsynthesized evidence.
         (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+         WHERE EXISTS (
+           SELECT 1 FROM timeline_entries te
+           WHERE te.page_id = p.id
+             AND p.updated_at < te.created_at
+             AND position(te.summary in (p.compiled_truth || E'\n' || coalesce(p.timeline, ''))) = 0
+         )
         ) as stale_pages,
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
