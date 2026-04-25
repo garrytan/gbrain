@@ -22,8 +22,8 @@ describe('MCP instructions', () => {
   });
 
   test('stays within character budget (under 600 chars)', () => {
-    // RFC §6.2 targets under 500 chars to force focus; 600 leaves a small
-    // margin before triggering a review. Bloat here dilutes the signal.
+    // The instructions design targets under 500 chars to force focus; 600
+    // leaves a small margin before triggering a review. Bloat here dilutes the signal.
     expect(MCP_INSTRUCTIONS.length).toBeLessThan(600);
   });
 });
@@ -60,8 +60,8 @@ describe('core tool descriptions include trigger context', () => {
   test('add_link description surfaces both people/deal and technical link types', () => {
     const addLink = operations.find(op => op.name === 'add_link');
     expect(addLink).toBeDefined();
-    // Knowledge-map RFC §7.3 introduces technical link types; they must be
-    // discoverable at the MCP decision point, not only in skills.
+    // Technical knowledge-map link types must be discoverable at the MCP
+    // decision point, not only in skills.
     expect(addLink!.description).toContain('implements');
     expect(addLink!.description).toContain('depends_on');
     // People/deal examples are still first-class.
