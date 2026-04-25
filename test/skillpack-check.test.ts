@@ -30,8 +30,11 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {
+    // cwd: tmp so Bun does not auto-load the project's .env into the
+    // subprocess and re-inject the env vars we just stripped.
     const stdout = execFileSync('bun', ['run', CLI, ...args], {
       env: env as Record<string, string>,
+      cwd: tmp,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });

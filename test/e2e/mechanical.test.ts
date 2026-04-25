@@ -786,9 +786,17 @@ describeE2E('E2E: Init Edge Cases', () => {
     const env = { ...process.env };
     delete env.DATABASE_URL;
     delete env.GBRAIN_DATABASE_URL;
+    // Run from /tmp so Bun does NOT auto-load the project's .env (which
+    // contains DATABASE_URL on dev machines and would re-populate the env
+    // we just deleted, defeating the test). cwd determines Bun's .env
+    // search root; an absolute path to src/cli.ts lets us still execute
+    // the right script. CI runners don't have .env so the bug doesn't
+    // surface there ... but every developer machine does. Without this
+    // cwd switch, this test passes on CI and fails locally.
+    const cliPath = join(import.meta.dir, '../..', 'src/cli.ts');
     const result = Bun.spawnSync({
-      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive'],
-      cwd: join(import.meta.dir, '../..'),
+      cmd: ['bun', 'run', cliPath, 'init', '--non-interactive'],
+      cwd: '/tmp',
       env,
       timeout: 10_000,
     });
@@ -1124,9 +1132,16 @@ describeE2E('E2E: RLS Verification', () => {
       expect(result.exitCode).toBe(0);
       expect(stderr + stdout).not.toMatch(/42P01|does not exist.*budget/i);
 
-      // Version must have advanced to 24.
+      // Version must have advanced past 24. Originally this asserted exactly
+      // '24' because that was the latest version when the test was written.
+      // After the dream-cycle remediation added v25/v26/v27, re-rolling to 23
+      // and re-running runs ALL pending migrations, so the version lands at
+      // the current LATEST_VERSION. The intent of the test is "v24 didn't
+      // crash with 42P01" — assert v24 successfully ran, not that v24 is the
+      // last migration that exists.
       const afterRows = await conn.unsafe(`SELECT value FROM config WHERE key = 'version'`);
-      expect((afterRows[0] as any).value).toBe('24');
+      const versionAfter = parseInt((afterRows[0] as any).value, 10);
+      expect(versionAfter).toBeGreaterThanOrEqual(24);
 
       // The tables stayed dropped (v12 didn't re-run because current=23 > 12
       // was already true before this test ran). That's intentional — we're
