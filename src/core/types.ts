@@ -462,6 +462,28 @@ export interface BroadSynthesisRouteRead {
   section_id?: string;
 }
 
+export interface BroadSynthesisEntrypoint {
+  source_kind: 'curated_note' | 'context_map';
+  page_slug?: string;
+  map_id?: string;
+  label: string;
+}
+
+export interface BroadSynthesisDerivedSuggestion {
+  map_id: string;
+  node_id: string;
+  label: string;
+  page_slug: string;
+}
+
+export interface BroadSynthesisConflict {
+  entity_key: string;
+  canonical_page_slug: string;
+  derived_map_id: string;
+  resolution: 'prefer_canonical';
+  summary: string;
+}
+
 export interface BroadSynthesisRoute {
   route_kind: 'broad_synthesis';
   map_id: string;
@@ -471,6 +493,10 @@ export interface BroadSynthesisRoute {
   focal_node_id: string | null;
   summary_lines: string[];
   matched_nodes: ContextMapQueryMatch[];
+  entrypoints: BroadSynthesisEntrypoint[];
+  canonical_reads: BroadSynthesisRouteRead[];
+  derived_suggestions: BroadSynthesisDerivedSuggestion[];
+  conflicts: BroadSynthesisConflict[];
   recommended_reads: BroadSynthesisRouteRead[];
 }
 

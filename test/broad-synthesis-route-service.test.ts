@@ -189,3 +189,222 @@ test('broad-synthesis route service keeps stale maps routable with explicit warn
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('broad-synthesis route service separates canonical reads from derived map suggestions', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-broad-synthesis-route-canonical-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'concepts/canonical-memory', [
+      '---',
+      'type: concept',
+      'title: Canonical Memory',
+      '---',
+      '# Compiled truth',
+      'Canonical Memory is the curated source of truth for broad synthesis.',
+      'It should outrank map-derived orientation when both mention Canonical Memory.',
+      '[Source: User, direct message, 2026-04-25 09:10 AM KST]',
+    ].join('\n'), { path: 'concepts/canonical-memory.md' });
+
+    await importFromContent(engine, 'systems/derived-memory-map', [
+      '---',
+      'type: system',
+      'title: Derived Memory Map',
+      '---',
+      '# Overview',
+      'A structural orientation page links to [[concepts/canonical-memory]].',
+      '[Source: User, direct message, 2026-04-25 09:11 AM KST]',
+    ].join('\n'), { path: 'systems/derived-memory-map.md' });
+
+    await buildStructuralContextMapEntry(engine);
+
+    const result = await getBroadSynthesisRoute(engine, {
+      query: 'Canonical Memory',
+    });
+
+    expect(result.route?.entrypoints[0]?.source_kind).toBe('curated_note');
+    expect(result.route?.canonical_reads.map((read) => read.page_slug)).toContain('concepts/canonical-memory');
+    expect(result.route?.derived_suggestions.length).toBeGreaterThan(0);
+    expect(result.route?.conflicts[0]?.canonical_page_slug).toBe('concepts/canonical-memory');
+    expect(result.route?.recommended_reads[0]?.page_slug).toBe('concepts/canonical-memory');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('broad-synthesis route service accepts slug-style queries for canonical reads', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-broad-synthesis-route-slug-query-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'concepts/canonical-memory', [
+      '---',
+      'type: concept',
+      'title: Canonical Memory',
+      '---',
+      '# Compiled truth',
+      'Canonical Memory is the curated source of truth for broad synthesis.',
+      '[Source: User, direct message, 2026-04-25 09:12 AM KST]',
+    ].join('\n'), { path: 'concepts/canonical-memory.md' });
+
+    await buildStructuralContextMapEntry(engine);
+
+    for (const query of ['canonical-memory', 'concepts/canonical-memory']) {
+      const result = await getBroadSynthesisRoute(engine, { query });
+
+      expect(result.route?.canonical_reads.map((read) => read.page_slug)).toContain('concepts/canonical-memory');
+      expect(result.route?.entrypoints[0]?.source_kind).toBe('curated_note');
+    }
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('broad-synthesis route service does not invent canonical reads outside the selected manifest scope', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-broad-synthesis-route-missing-manifest-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'concepts/canonical-memory', [
+      '---',
+      'type: concept',
+      'title: Canonical Memory',
+      '---',
+      '# Compiled truth',
+      'Canonical Memory is the curated source of truth for broad synthesis.',
+      '[Source: User, direct message, 2026-04-25 09:13 AM KST]',
+    ].join('\n'), { path: 'concepts/canonical-memory.md' });
+
+    await buildStructuralContextMapEntry(engine);
+    await engine.deleteNoteManifestEntry('workspace:default', 'concepts/canonical-memory');
+
+    const result = await getBroadSynthesisRoute(engine, {
+      query: 'Canonical Memory',
+    });
+
+    expect(result.route?.canonical_reads).toEqual([]);
+    expect(result.route?.entrypoints[0]?.source_kind).toBe('context_map');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('broad-synthesis route service avoids substring promotion for short acronym queries', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-broad-synthesis-route-short-query-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'concepts/daily-planning', [
+      '---',
+      'type: concept',
+      'title: Daily Planning',
+      '---',
+      '# Compiled truth',
+      'Daily Planning mentions AI as incidental background, but the entity is not AI.',
+      '[Source: User, direct message, 2026-04-25 09:14 AM KST]',
+    ].join('\n'), { path: 'concepts/daily-planning.md' });
+
+    await buildStructuralContextMapEntry(engine);
+
+    const result = await getBroadSynthesisRoute(engine, {
+      query: 'AI',
+    });
+
+    expect(result.route?.canonical_reads.map((read) => read.page_slug)).not.toContain('concepts/daily-planning');
+    expect(result.route?.entrypoints[0]?.source_kind).toBe('context_map');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('broad-synthesis route service matches short acronym canonical notes in broader token-bounded queries', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-broad-synthesis-route-acronym-query-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'concepts/ai', [
+      '---',
+      'type: concept',
+      'title: AI',
+      '---',
+      '# Compiled truth',
+      'The curated AI note is authoritative before derived context-map hints.',
+      '[Source: User, direct message, 2026-04-25 09:15 AM KST]',
+    ].join('\n'), { path: 'concepts/ai.md' });
+
+    await buildStructuralContextMapEntry(engine);
+
+    const result = await getBroadSynthesisRoute(engine, {
+      query: 'AI policy',
+    });
+
+    expect(result.route?.canonical_reads.map((read) => read.page_slug)).toContain('concepts/ai');
+    expect(result.route?.entrypoints[0]?.source_kind).toBe('curated_note');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('broad-synthesis route service bounds canonical candidate token expansion for long queries', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-broad-synthesis-route-long-query-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'concepts/alpha', [
+      '---',
+      'type: concept',
+      'title: Alpha',
+      '---',
+      '# Compiled truth',
+      'Alpha is a canonical note used to keep the map routable.',
+      '[Source: User, direct message, 2026-04-25 09:16 AM KST]',
+    ].join('\n'), { path: 'concepts/alpha.md' });
+
+    await buildStructuralContextMapEntry(engine);
+
+    const originalSearchKeyword = engine.searchKeyword.bind(engine);
+    const searchQueries: string[] = [];
+    engine.searchKeyword = async (query, options) => {
+      searchQueries.push(query);
+      return originalSearchKeyword(query, options);
+    };
+
+    await getBroadSynthesisRoute(engine, {
+      query: 'alpha beta gamma delta epsilon zeta eta theta iota kappa',
+    });
+
+    expect(searchQueries.length).toBeLessThanOrEqual(6);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

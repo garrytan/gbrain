@@ -29,7 +29,7 @@ for the full spec (14 scenarios + invariant catalog + rollout plan).
 | S6  | `s06-promotion-requires-provenance.test.ts` | I4, G1, L6 | ✅ green (includes engine-level I4 fix) |
 | S7  | `s07-supersession-cross-engine.test.ts` | I7, L5 | ✅ green on SQLite + PGLite, Postgres when `DATABASE_URL` is set |
 | S8  | `s08-rejection-preserves-provenance.test.ts` | G2, L5 | ✅ green |
-| S9  | `s09-curated-over-map.test.ts` | L2 | 🔲 2 `todo` (ranking step not implemented) |
+| S9  | `s09-curated-over-map.test.ts` | L2 | ✅ green |
 | S10 | `s10-precision-degradation.test.ts` | L3 | ✅ green |
 | S11 | `s11-code-claim-verification.test.ts` | L4 | 🔲 2 `todo` (subsystem not implemented) |
 | S12 | `s12-baseline-gated-acceptance.test.ts` | E1 | ✅ green (tests regression-fail case) |
@@ -56,10 +56,10 @@ Legend:
 
 ## Deferred follow-ups
 
-- **L2** canonical-first ranking in broad synthesis (spec §5)
 - **L4** code claim verification subsystem (spec §5)
 
 Sprint 1.1B adds S15/S16 audit scenarios so loop observability is checked from
 structured trace columns and `interaction_id` linked-write rows, not from
 best-effort timestamp correlation.
-Each is documented as a `test.todo` in the corresponding scenario file.
+Remaining deferred follow-ups are documented as `test.todo` in the corresponding
+scenario file.
