@@ -2990,6 +2990,9 @@ export class SQLiteEngine implements BrainEngine {
         case 24:
           this.ensureBrainLoopAuditIndexes();
           break;
+        case 25:
+          this.ensureMemoryCandidateStatusEventSchema();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -2997,6 +3000,54 @@ export class SQLiteEngine implements BrainEngine {
       await this.setConfig('version', String(version));
       });
     }
+  }
+
+  private ensureMemoryCandidateStatusEventSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS memory_candidate_status_events (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL,
+        scope_id TEXT NOT NULL,
+        from_status TEXT CHECK (
+          from_status IS NULL
+          OR from_status IN ('captured', 'candidate', 'staged_for_review', 'promoted', 'rejected', 'superseded')
+        ),
+        to_status TEXT NOT NULL CHECK (
+          to_status IN ('captured', 'candidate', 'staged_for_review', 'promoted', 'rejected', 'superseded')
+        ),
+        event_kind TEXT NOT NULL CHECK (
+          event_kind IN ('created', 'advanced', 'promoted', 'rejected', 'superseded')
+        ),
+        interaction_id TEXT,
+        reviewed_at TEXT,
+        review_reason TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_candidate_status_events_candidate_created
+        ON memory_candidate_status_events(candidate_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_candidate_status_events_interaction
+        ON memory_candidate_status_events(interaction_id);
+      CREATE INDEX IF NOT EXISTS idx_memory_candidate_status_events_scope_created
+        ON memory_candidate_status_events(scope_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_candidate_status_events_kind_created
+        ON memory_candidate_status_events(event_kind, created_at DESC, id DESC);
+      INSERT OR IGNORE INTO memory_candidate_status_events (
+        id, candidate_id, scope_id, from_status, to_status, event_kind,
+        interaction_id, reviewed_at, review_reason, created_at
+      )
+      SELECT
+        'candidate-status-created:' || id,
+        id,
+        scope_id,
+        NULL,
+        status,
+        'created',
+        NULL,
+        reviewed_at,
+        review_reason,
+        created_at
+      FROM memory_candidate_entries;
+    `);
   }
 
   private ensureBrainLoopAuditIndexes(): void {

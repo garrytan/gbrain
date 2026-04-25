@@ -11,6 +11,12 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 describe('memory-inbox schema', () => {
   const tempPaths: string[] = [];
   const SUPERSEDED_LINK_REQUIRED_PATTERN = /superseded candidate requires a supersession link record/;
+  const STATUS_EVENT_INDEX_NAMES = [
+    'idx_memory_candidate_status_events_candidate_created',
+    'idx_memory_candidate_status_events_interaction',
+    'idx_memory_candidate_status_events_scope_created',
+    'idx_memory_candidate_status_events_kind_created',
+  ];
   const legacyMemoryCandidateV15Sql = `
     CREATE TABLE config (
       key TEXT PRIMARY KEY,
@@ -100,8 +106,227 @@ describe('memory-inbox schema', () => {
         recurrence_score: 0.1,
         sensitivity: 'work',
         status: 'captured',
+        reviewed_at: new Date('2026-04-25T01:00:00.000Z'),
+        review_reason: `Backfill should preserve review metadata for ${id}.`,
       });
     }
+  };
+
+  const expectedStatusEventBackfillRows = (
+    prefix: string,
+    expectedToStatus: string | Record<string, string>,
+  ) => ['promotable', 'rejectable', 'replacement', 'supersedable'].map((suffix) => ({
+    id: `candidate-status-created:${prefix}-${suffix}`,
+    candidate_id: `${prefix}-${suffix}`,
+    from_status: null,
+    to_status: typeof expectedToStatus === 'string' ? expectedToStatus : expectedToStatus[suffix],
+    event_kind: 'created',
+    interaction_id: null,
+    reviewed_at_matches: true,
+    review_reason_matches: true,
+    created_at_matches: true,
+  }));
+
+  const expectPgliteStatusEventSchema = async (engine: PGLiteEngine) => {
+    const db = (engine as any).db;
+    const tables = await db.query(
+      `SELECT table_name
+       FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name = 'memory_candidate_status_events'`,
+    );
+    expect(tables.rows.map((row: { table_name: string }) => row.table_name)).toEqual([
+      'memory_candidate_status_events',
+    ]);
+
+    const indexes = await db.query(
+      `SELECT indexname
+       FROM pg_indexes
+       WHERE schemaname = 'public'
+         AND tablename = 'memory_candidate_status_events'`,
+    );
+    const indexNames = indexes.rows.map((row: { indexname: string }) => row.indexname);
+    for (const indexName of STATUS_EVENT_INDEX_NAMES) {
+      expect(indexNames).toContain(indexName);
+    }
+
+    const foreignKeys = await db.query(
+      `SELECT conname
+       FROM pg_constraint
+       WHERE conrelid = 'memory_candidate_status_events'::regclass
+         AND contype = 'f'`,
+    );
+    expect(foreignKeys.rows).toEqual([]);
+  };
+
+  const expectPostgresStatusEventSchema = async (engine: PostgresEngine) => {
+    const tables = await engine.sql`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = current_schema()
+        AND table_name = 'memory_candidate_status_events'
+    `;
+    expect(tables.map((row) => row.table_name)).toEqual([
+      'memory_candidate_status_events',
+    ]);
+
+    const indexes = await engine.sql`
+      SELECT indexname
+      FROM pg_indexes
+      WHERE schemaname = current_schema()
+        AND tablename = 'memory_candidate_status_events'
+    `;
+    const indexNames = indexes.map((row) => row.indexname);
+    for (const indexName of STATUS_EVENT_INDEX_NAMES) {
+      expect(indexNames).toContain(indexName);
+    }
+
+    const foreignKeys = await engine.sql`
+      SELECT conname
+      FROM pg_constraint
+      WHERE conrelid = 'memory_candidate_status_events'::regclass
+        AND contype = 'f'
+    `;
+    expect(foreignKeys.map((row) => row.conname)).toEqual([]);
+  };
+
+  const expectSqliteStatusEventSchema = (engine: SQLiteEngine) => {
+    const db = (engine as any).database;
+    const table = db
+      .query(
+        `SELECT name
+         FROM sqlite_master
+         WHERE type = 'table'
+           AND name = 'memory_candidate_status_events'`,
+      )
+      .get() as { name: string } | null;
+    expect(table?.name).toBe('memory_candidate_status_events');
+
+    const indexes = db
+      .query(
+        `SELECT name
+         FROM sqlite_master
+         WHERE type = 'index'
+           AND tbl_name = 'memory_candidate_status_events'`,
+      )
+      .all() as Array<{ name: string }>;
+    const indexNames = indexes.map((row) => row.name);
+    for (const indexName of STATUS_EVENT_INDEX_NAMES) {
+      expect(indexNames).toContain(indexName);
+    }
+
+    const foreignKeys = db
+      .query(`PRAGMA foreign_key_list(memory_candidate_status_events)`)
+      .all();
+    expect(foreignKeys).toEqual([]);
+  };
+
+  const expectPgliteStatusEventBackfill = async (
+    engine: PGLiteEngine,
+    prefix: string,
+    expectedToStatus: string | Record<string, string>,
+  ) => {
+    const { rows } = await (engine as any).db.query(
+      `SELECT
+         event.id,
+         event.candidate_id,
+         event.from_status,
+         event.to_status,
+         event.event_kind,
+         event.interaction_id,
+         event.reviewed_at IS NOT DISTINCT FROM candidate.reviewed_at AS reviewed_at_matches,
+         event.review_reason IS NOT DISTINCT FROM candidate.review_reason AS review_reason_matches,
+         event.created_at = candidate.created_at AS created_at_matches
+       FROM memory_candidate_status_events event
+       JOIN memory_candidate_entries candidate ON candidate.id = event.candidate_id
+       WHERE event.candidate_id LIKE $1
+       ORDER BY event.candidate_id ASC`,
+      [`${prefix}-%`],
+    );
+
+    expect(rows.map((row: any) => ({
+      id: row.id,
+      candidate_id: row.candidate_id,
+      from_status: row.from_status,
+      to_status: row.to_status,
+      event_kind: row.event_kind,
+      interaction_id: row.interaction_id,
+      reviewed_at_matches: row.reviewed_at_matches,
+      review_reason_matches: row.review_reason_matches,
+      created_at_matches: row.created_at_matches,
+    }))).toEqual(expectedStatusEventBackfillRows(prefix, expectedToStatus));
+  };
+
+  const expectPostgresStatusEventBackfill = async (
+    engine: PostgresEngine,
+    prefix: string,
+    expectedToStatus: string | Record<string, string>,
+  ) => {
+    const rows = await engine.sql.unsafe(
+      `SELECT
+         event.id,
+         event.candidate_id,
+         event.from_status,
+         event.to_status,
+         event.event_kind,
+         event.interaction_id,
+         event.reviewed_at IS NOT DISTINCT FROM candidate.reviewed_at AS reviewed_at_matches,
+         event.review_reason IS NOT DISTINCT FROM candidate.review_reason AS review_reason_matches,
+         event.created_at = candidate.created_at AS created_at_matches
+       FROM memory_candidate_status_events event
+       JOIN memory_candidate_entries candidate ON candidate.id = event.candidate_id
+       WHERE event.candidate_id LIKE $1
+       ORDER BY event.candidate_id ASC`,
+      [`${prefix}-%`],
+    );
+
+    expect(rows.map((row) => ({
+      id: row.id,
+      candidate_id: row.candidate_id,
+      from_status: row.from_status,
+      to_status: row.to_status,
+      event_kind: row.event_kind,
+      interaction_id: row.interaction_id,
+      reviewed_at_matches: row.reviewed_at_matches,
+      review_reason_matches: row.review_reason_matches,
+      created_at_matches: row.created_at_matches,
+    }))).toEqual(expectedStatusEventBackfillRows(prefix, expectedToStatus));
+  };
+
+  const expectSqliteStatusEventBackfill = (
+    engine: SQLiteEngine,
+    prefix: string,
+    expectedToStatus: string | Record<string, string>,
+  ) => {
+    const db = (engine as any).database;
+    const rows = db.query(`
+      SELECT
+        event.id,
+        event.candidate_id,
+        event.from_status,
+        event.to_status,
+        event.event_kind,
+        event.interaction_id,
+        event.reviewed_at IS candidate.reviewed_at AS reviewed_at_matches,
+        event.review_reason IS candidate.review_reason AS review_reason_matches,
+        event.created_at = candidate.created_at AS created_at_matches
+      FROM memory_candidate_status_events event
+      JOIN memory_candidate_entries candidate ON candidate.id = event.candidate_id
+      WHERE event.candidate_id LIKE ?
+      ORDER BY event.candidate_id ASC
+    `).all(`${prefix}-%`) as any[];
+
+    expect(rows.map((row) => ({
+      id: row.id,
+      candidate_id: row.candidate_id,
+      from_status: row.from_status,
+      to_status: row.to_status,
+      event_kind: row.event_kind,
+      interaction_id: row.interaction_id,
+      reviewed_at_matches: Boolean(row.reviewed_at_matches),
+      review_reason_matches: Boolean(row.review_reason_matches),
+      created_at_matches: Boolean(row.created_at_matches),
+    }))).toEqual(expectedStatusEventBackfillRows(prefix, expectedToStatus));
   };
 
   const assertPgliteFinalStatusContract = async (engine: PGLiteEngine, prefix: string) => {
@@ -272,7 +497,7 @@ describe('memory-inbox schema', () => {
         `SELECT name
          FROM sqlite_master
          WHERE type = 'table'
-           AND name IN ('memory_candidate_entries', 'memory_candidate_supersession_entries', 'memory_candidate_contradiction_entries')
+           AND name IN ('memory_candidate_entries', 'memory_candidate_supersession_entries', 'memory_candidate_contradiction_entries', 'memory_candidate_status_events')
          ORDER BY name ASC`,
       )
       .all() as Array<{ name: string }>;
@@ -280,8 +505,10 @@ describe('memory-inbox schema', () => {
     expect(rows.map((row) => row.name)).toEqual([
       'memory_candidate_contradiction_entries',
       'memory_candidate_entries',
+      'memory_candidate_status_events',
       'memory_candidate_supersession_entries',
     ]);
+    expectSqliteStatusEventSchema(engine);
 
     const schema = db
       .query(
@@ -437,6 +664,7 @@ describe('memory-inbox schema', () => {
       ]);
       expect(preserved.every((entry) => entry.source_refs.includes('sqlite-legacy-v15-catalog'))).toBe(true);
 
+      expectSqliteStatusEventBackfill(engine, 'sqlitelegacy', 'staged_for_review');
       await assertSqliteFinalStatusContract(engine, 'sqlitelegacy');
     } finally {
       await engine.disconnect();
@@ -507,6 +735,12 @@ describe('memory-inbox schema', () => {
         ['sqlite-rerun-supersedable', 'superseded'],
       ]);
       expect(preserved.every((entry) => entry.source_refs.includes('sqlite-migration-rerun-test'))).toBe(true);
+      expectSqliteStatusEventBackfill(engine, 'sqlite-rerun', {
+        promotable: 'promoted',
+        rejectable: 'rejected',
+        replacement: 'promoted',
+        supersedable: 'superseded',
+      });
     } finally {
       await engine.disconnect();
     }
@@ -524,15 +758,17 @@ describe('memory-inbox schema', () => {
       `SELECT table_name
        FROM information_schema.tables
        WHERE table_schema = 'public'
-         AND table_name IN ('memory_candidate_entries', 'memory_candidate_supersession_entries', 'memory_candidate_contradiction_entries')
+         AND table_name IN ('memory_candidate_entries', 'memory_candidate_supersession_entries', 'memory_candidate_contradiction_entries', 'memory_candidate_status_events')
        ORDER BY table_name ASC`,
     );
 
     expect(result.rows.map((row: { table_name: string }) => row.table_name)).toEqual([
       'memory_candidate_contradiction_entries',
       'memory_candidate_entries',
+      'memory_candidate_status_events',
       'memory_candidate_supersession_entries',
     ]);
+    await expectPgliteStatusEventSchema(engine);
 
     await expect((engine as any).db.query(`
       INSERT INTO memory_candidate_entries (
@@ -621,6 +857,27 @@ describe('memory-inbox schema', () => {
 
   const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl) {
+    test('postgres initSchema creates memory candidate status event schema', async () => {
+      const schema = `mbrain_memory_inbox_status_events_${Date.now()}`;
+      const quotedSchema = `"${schema.replace(/"/g, '""')}"`;
+      const admin = postgres(databaseUrl, { max: 1, idle_timeout: 1, connect_timeout: 10 });
+      const schemaUrl = new URL(databaseUrl);
+      schemaUrl.searchParams.set('options', `-c search_path=${schema}`);
+
+      const engine = new PostgresEngine();
+      try {
+        await admin.unsafe(`CREATE SCHEMA ${quotedSchema}`);
+        await engine.connect({ engine: 'postgres', database_url: schemaUrl.toString(), poolSize: 1 });
+        await engine.initSchema();
+
+        await expectPostgresStatusEventSchema(engine);
+      } finally {
+        await engine.disconnect().catch(() => undefined);
+        await admin.unsafe(`DROP SCHEMA IF EXISTS ${quotedSchema} CASCADE`).catch(() => undefined);
+        await admin.end({ timeout: 0 }).catch(() => undefined);
+      }
+    }, 20000);
+
     test('postgres upgrades an actual v15 memory candidate catalog', async () => {
       const schema = `mbrain_memory_inbox_v15_${Date.now()}`;
       const quotedSchema = `"${schema.replace(/"/g, '""')}"`;
@@ -651,6 +908,7 @@ describe('memory-inbox schema', () => {
         ]);
         expect(preserved.every((entry) => entry.source_refs.includes('postgres-legacy-v15-catalog'))).toBe(true);
 
+        await expectPostgresStatusEventBackfill(engine, 'pglegacy', 'captured');
         await assertPostgresFinalStatusContract(engine, 'pglegacy');
       } finally {
         await engine.disconnect().catch(() => undefined);
@@ -659,6 +917,7 @@ describe('memory-inbox schema', () => {
       }
     }, 20000);
   } else {
+    test.skip('postgres initSchema memory candidate status event schema skipped: DATABASE_URL is not configured', () => {});
     test.skip('postgres v15 memory candidate migration skipped: DATABASE_URL is not configured', () => {});
   }
 
@@ -690,6 +949,7 @@ describe('memory-inbox schema', () => {
       ]);
       expect(preserved.every((entry) => entry.source_refs.includes('legacy-v15-catalog'))).toBe(true);
 
+      await expectPgliteStatusEventBackfill(engine, 'legacy', 'captured');
       await assertPgliteFinalStatusContract(engine, 'legacy');
     } finally {
       await engine.disconnect();
@@ -744,6 +1004,7 @@ describe('memory-inbox schema', () => {
       ]);
       expect(preserved.every((entry) => entry.source_refs.includes('migration-rerun-test'))).toBe(true);
 
+      await expectPgliteStatusEventBackfill(engine, 'rerun', 'captured');
       await assertPgliteFinalStatusContract(engine, 'rerun');
     } finally {
       await engine.disconnect();

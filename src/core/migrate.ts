@@ -842,6 +842,57 @@ const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 25,
+    name: 'memory_candidate_status_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS memory_candidate_status_events (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL,
+        scope_id TEXT NOT NULL,
+        from_status TEXT CHECK (
+          from_status IS NULL
+          OR from_status IN ('captured', 'candidate', 'staged_for_review', 'promoted', 'rejected', 'superseded')
+        ),
+        to_status TEXT NOT NULL CHECK (
+          to_status IN ('captured', 'candidate', 'staged_for_review', 'promoted', 'rejected', 'superseded')
+        ),
+        event_kind TEXT NOT NULL CHECK (
+          event_kind IN ('created', 'advanced', 'promoted', 'rejected', 'superseded')
+        ),
+        interaction_id TEXT,
+        reviewed_at TIMESTAMPTZ,
+        review_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_candidate_status_events_candidate_created
+        ON memory_candidate_status_events(candidate_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_candidate_status_events_interaction
+        ON memory_candidate_status_events(interaction_id)
+        WHERE interaction_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_memory_candidate_status_events_scope_created
+        ON memory_candidate_status_events(scope_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_candidate_status_events_kind_created
+        ON memory_candidate_status_events(event_kind, created_at DESC, id DESC);
+      INSERT INTO memory_candidate_status_events (
+        id, candidate_id, scope_id, from_status, to_status, event_kind,
+        interaction_id, reviewed_at, review_reason, created_at
+      )
+      SELECT
+        'candidate-status-created:' || id,
+        id,
+        scope_id,
+        NULL,
+        status,
+        'created',
+        NULL,
+        reviewed_at,
+        review_reason,
+        created_at
+      FROM memory_candidate_entries
+      ON CONFLICT (id) DO NOTHING;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
