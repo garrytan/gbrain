@@ -144,4 +144,55 @@ describe('doctor command', () => {
     // requirement to write a real justification, not just the prefix.
     expect(rlsBlock).toMatch(/reason=/);
   });
+
+  // RLS policy coverage — drift guard for the BYPASSRLS gate.
+  // The schema enables RLS without writing any CREATE POLICY statements;
+  // it relies on the connecting role having BYPASSRLS. These structural
+  // assertions make sure the new check stays wired and raises loudly on
+  // role drift / policy regression.
+  test('rls_policies check exists and joins pg_policies against rowsecurity', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const block = source.slice(
+      source.indexOf("// 5b. RLS policy coverage"),
+      source.indexOf('// 6. Schema version'),
+    );
+    expect(block.length).toBeGreaterThan(0);
+    expect(block).toContain('rls_policies');
+    // Must consult both rowsecurity AND pg_policies in one round-trip.
+    expect(block).toMatch(/pg_tables[\s\S]{0,500}rowsecurity[\s\S]{0,500}pg_policies/);
+    // Must read rolbypassrls so the remediation can distinguish "operator
+    // intentional deny-by-default" from "role drift locked the app out".
+    expect(block).toContain('rolbypassrls');
+  });
+
+  test('rls_policies fails loudly when current role lacks BYPASSRLS and tables have no policy', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const block = source.slice(
+      source.indexOf("// 5b. RLS policy coverage"),
+      source.indexOf('// 6. Schema version'),
+    );
+    // Both branches present: ok (deny-by-default with bypass) and fail
+    // (drift — current role can't read).
+    expect(block).toMatch(/status:\s*'fail'/);
+    expect(block).toMatch(/status:\s*'ok'/);
+    // Remediation must offer either grant BYPASSRLS or write a policy.
+    expect(block).toMatch(/BYPASSRLS|CREATE POLICY/i);
+  });
+
+  test('rls_policies skips on PGLite (no PostgREST, not applicable)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The pglite branch returns before the postgres-only block; the
+    // rls_policies check sits inside the same `else` arm as the rls check.
+    // Verify both checks live under the same engine.kind === 'postgres' arm
+    // by ensuring the policy check sits between the existing RLS check and
+    // the schema-version check, NOT inside an early return for pglite.
+    const pgliteBranch = source.slice(
+      source.indexOf("if (engine.kind === 'pglite')"),
+      source.indexOf('// 5b. RLS policy coverage'),
+    );
+    expect(pgliteBranch).toContain("name: 'rls'");
+    // The pglite branch must NOT mention the new check name — confirms
+    // the check is in the postgres-only `else` arm.
+    expect(pgliteBranch).not.toContain('rls_policies');
+  });
 });
