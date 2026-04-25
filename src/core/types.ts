@@ -115,6 +115,7 @@ export interface SearchResult {
    * 'default' for pre-v0.17 rows that lacked the column.
    */
   source_id?: string;
+  source_url?: string;
 }
 
 export interface SearchOpts {

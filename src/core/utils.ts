@@ -146,6 +146,7 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
     chunk_index: row.chunk_index as number,
     score: Number(row.score),
     stale: Boolean(row.stale),
+    ...(row.source_url ? { source_url: row.source_url as string } : {}),
   };
   // v0.17.0: source_id comes from the p.source_id column in search
   // SELECTs. Keep the field optional so pre-v0.17 engines that didn't

@@ -19,8 +19,10 @@ export type DbUrlSource =
   | 'config-file-path' // PGLite: config file present, no URL but database_path set
   | null;
 
-// Lazy-evaluated to avoid calling homedir() at module scope (breaks in serverless/bundled environments)
-function getConfigDir() { return join(homedir(), '.gbrain'); }
+// Lazy-evaluated to avoid calling homedir() at module scope (breaks in serverless/bundled environments).
+// GBRAIN_CONFIG_DIR overrides the default ~/.gbrain location so multiple brains (work vs personal)
+// can coexist on one machine without a config collision.
+function getConfigDir() { return process.env.GBRAIN_CONFIG_DIR || join(homedir(), '.gbrain'); }
 function getConfigPath() { return join(getConfigDir(), 'config.json'); }
 
 export interface GBrainConfig {
@@ -88,9 +90,11 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
 
 export function configDir(): string {
   // Allow override for tests, Docker, and multi-tenant deployments.
-  // Matches the `GBRAIN_AUDIT_DIR` convention in src/core/minions/handlers/shell-audit.ts.
-  const override = process.env.GBRAIN_HOME;
-  if (override && override.trim()) return join(override, '.gbrain');
+  // GBRAIN_CONFIG_DIR sets the config directory directly.
+  // GBRAIN_HOME sets the parent directory; config dir is GBRAIN_HOME/.gbrain.
+  if (process.env.GBRAIN_CONFIG_DIR?.trim()) return process.env.GBRAIN_CONFIG_DIR.trim();
+  const home = process.env.GBRAIN_HOME;
+  if (home && home.trim()) return join(home, '.gbrain');
   return join(homedir(), '.gbrain');
 }
 

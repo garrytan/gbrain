@@ -256,6 +256,7 @@ export class PostgresEngine implements BrainEngine {
           SELECT
             p.slug, p.id as page_id, p.title, p.type, p.source_id,
             cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+            p.frontmatter->>'source_url' AS source_url,
             ts_rank(cc.search_vector, websearch_to_tsquery('english', ${query})) AS score
           FROM content_chunks cc
           JOIN pages p ON p.id = cc.page_id
@@ -273,7 +274,7 @@ export class PostgresEngine implements BrainEngine {
           FROM ranked_chunks
           ORDER BY slug, score DESC
         )
-        SELECT slug, page_id, title, type, source_id,
+        SELECT slug, page_id, title, type, source_id, source_url,
           chunk_id, chunk_index, chunk_text, chunk_source, score,
           false AS stale
         FROM best_per_page
@@ -357,6 +358,7 @@ export class PostgresEngine implements BrainEngine {
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+          p.frontmatter->>'source_url' AS source_url,
           1 - (cc.embedding <=> ${vecStr}::vector) AS score,
           false AS stale
         FROM content_chunks cc
