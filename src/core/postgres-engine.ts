@@ -5,7 +5,7 @@ import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
-  Chunk, ChunkInput,
+  Chunk, ChunkInput, StaleChunkRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -357,7 +357,13 @@ export class PostgresEngine implements BrainEngine {
       }
     }
 
-    // Single statement upsert: preserves existing embeddings via COALESCE when new value is NULL
+    // Single statement upsert: preserves existing embeddings via COALESCE when new value is NULL.
+    // CONSISTENCY: when chunk_text changes and no new embedding is supplied, BOTH embedding AND
+    // embedded_at must reset to NULL so `embed --stale` correctly picks up the row for re-embedding.
+    // Without this, embedded_at lies (says "embedded" while embedding=NULL), and any staleness
+    // predicate on embedded_at would silently skip the row. This is why the egress fix predicates
+    // on `embedding IS NULL` rather than `embedded_at IS NULL` — and it's why we now keep both
+    // columns honest at write time.
     await sql.unsafe(
       `INSERT INTO content_chunks ${cols} VALUES ${rows.join(', ')}
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
@@ -366,7 +372,10 @@ export class PostgresEngine implements BrainEngine {
          embedding = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding ELSE COALESCE(EXCLUDED.embedding, content_chunks.embedding) END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
-         embedded_at = COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)`,
+         embedded_at = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
+           ELSE COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
+         END`,
       params as Parameters<typeof sql.unsafe>[1],
     );
   }
@@ -380,6 +389,30 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY cc.chunk_index
     `;
     return rows.map((r) => rowToChunk(r as Record<string, unknown>));
+  }
+
+  async countStaleChunks(): Promise<number> {
+    const sql = this.sql;
+    const [row] = await sql`
+      SELECT count(*)::int AS count
+      FROM content_chunks
+      WHERE embedding IS NULL
+    `;
+    return Number((row as { count?: number } | undefined)?.count ?? 0);
+  }
+
+  async listStaleChunks(): Promise<StaleChunkRow[]> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+             cc.model, cc.token_count
+      FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      WHERE cc.embedding IS NULL
+      ORDER BY p.id, cc.chunk_index
+      LIMIT 100000
+    `;
+    return rows as unknown as StaleChunkRow[];
   }
 
   async deleteChunks(slug: string): Promise<void> {

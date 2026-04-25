@@ -2,6 +2,39 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.20.5] - 2026-04-25
+
+**Stop `embed --stale` from walking every page on a fully-embedded brain.**
+
+`gbrain embed --stale` (used by autopilot every cycle and recommended by `gbrain doctor`) walked the full pages table + every chunk's `vector(1536)` `embedding` column on every invocation, then client-side-filtered for chunks where the embedding was missing. On a 1.5K-page / 8K-chunk Supabase-backed brain at 100% embedding coverage, that meant ~76 MB pulled per call only to discard all of it. With autopilot firing every 5–10 minutes plus a 2-hour cron, a single user blew past Supabase's 5 GB free-tier bandwidth ceiling at 102 GB used (2058% over) twice in one week.
+
+Two new `BrainEngine` methods replace the page walk with a SQL-side filter: `countStaleChunks()` (single `SELECT count(*) WHERE embedding IS NULL`, ~50 bytes wire) for the pre-flight short-circuit, and `listStaleChunks()` (slug + chunk_index + chunk_text + metadata for stale rows only, no embedding column) for the work payload. On a 100%-embedded brain the path exits after the count returns 0 — no `listPages`, no `getChunks`, no further reads. On a partially-stale brain we fetch only the stale slugs and merge with their existing chunks through `upsertChunks` so non-stale chunks aren't deleted by the implicit `chunk_index != ALL($newIndices)` prune.
+
+The `--all` path is byte-identical to before — the user is explicitly asking to re-embed everything regardless of `embedded_at`, so no behavior change there. Functional contract preserved: every chunk where `embedding IS NULL` still gets embedded; nothing is skipped that wasn't skipped before.
+
+**Wire-cost impact:**
+- 0 stale chunks (autopilot common case): ~76 MB → ~50 bytes (~1,500,000× reduction)
+- 100 stale across 10 pages (post-rotation): ~76 MB → ~150 KB (~500× reduction)
+- 8K stale across 1.5K pages (cold start): ~76 MB → ~12 MB (~6× reduction)
+
+Also fixes a quiet consistency bug in `upsertChunks` (both Postgres + PGLite engines): when `chunk_text` changed and no new embedding was supplied, `embedding` was correctly cleared to NULL but `embedded_at` kept its old timestamp. That left rows with `embedding IS NULL` but `embedded_at IS NOT NULL` — an honest `embed --stale` predicate had to choose between catching them (predicate on `embedding IS NULL`) or trusting `embedded_at` (and silently skipping them). The egress fix above predicates on `embedding IS NULL`; the upsertChunks fix now also resets `embedded_at` to NULL when text changes without a new embedding, keeping both columns honest at write time.
+
+### Added
+
+- `BrainEngine.countStaleChunks(): Promise<number>` — pre-flight short-circuit for `embed --stale`. Implementations on PostgresEngine + PGLiteEngine.
+- `BrainEngine.listStaleChunks(): Promise<StaleChunkRow[]>` — returns slug + chunk_index + chunk_text + chunk_source + model + token_count for every chunk where `embedding IS NULL`. Excludes the (always-NULL on stale rows) embedding column. Bounded by `LIMIT 100000` to mirror existing `listPages` patterns.
+- New `StaleChunkRow` type in `src/core/types.ts`.
+- 4 regression tests in `test/embed.test.ts`: zero-stale short-circuit (proves listPages never called), N-stale-across-M-pages (proves non-stale chunks preserved through upsert), --stale dry-run (proves no embedBatch/upsertChunks calls), --all path byte-identical (proves backwards compat).
+
+### Fixed
+
+- `embed --stale` no longer pulls the full pages table + every chunk's embedding column on every call.
+- `upsertChunks` (Postgres + PGLite): when `chunk_text` changes and no new embedding is supplied, both `embedding` and `embedded_at` now reset to NULL together. Previously `embedded_at` kept its old timestamp, leaving `embedding IS NULL` rows that lied about their staleness.
+
+### Migration impact
+
+None. No schema changes, no migration, no config changes. `embedded_at` and `embedding` columns have been on `content_chunks` since the inception of the schema.
+
 ## [0.20.4] - 2026-04-24
 
 **Minions skill consolidation, now honest about what the CLI actually does.**
