@@ -1,20 +1,28 @@
-import { describe, test, expect, afterEach } from 'bun:test';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'fs';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, mkdtempSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { tmpdir } from 'os';
 import {
   readImportCheckpoint,
   resolveImportPlan,
 } from '../src/core/services/import-service.ts';
 
-const CHECKPOINT_PATH = join(homedir(), '.mbrain', 'import-checkpoint.json');
+let testDir = '';
+let checkpointPath = '';
 
 describe('import resume checkpoint', () => {
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'mbrain-import-resume-'));
+    checkpointPath = join(testDir, '.mbrain', 'import-checkpoint.json');
+  });
+
   afterEach(() => {
     // Clean up checkpoint after each test
-    if (existsSync(CHECKPOINT_PATH)) {
-      rmSync(CHECKPOINT_PATH);
+    if (testDir) {
+      rmSync(testDir, { recursive: true, force: true });
     }
+    testDir = '';
+    checkpointPath = '';
   });
 
   test('checkpoint file format is valid JSON', () => {
@@ -25,10 +33,10 @@ describe('import resume checkpoint', () => {
       timestamp: new Date().toISOString(),
     };
 
-    mkdirSync(join(homedir(), '.mbrain'), { recursive: true });
-    writeFileSync(CHECKPOINT_PATH, JSON.stringify(checkpoint));
+    mkdirSync(join(testDir, '.mbrain'), { recursive: true });
+    writeFileSync(checkpointPath, JSON.stringify(checkpoint));
 
-    const loaded = JSON.parse(readFileSync(CHECKPOINT_PATH, 'utf-8'));
+    const loaded = JSON.parse(readFileSync(checkpointPath, 'utf-8'));
     expect(loaded.dir).toBe('/data/brain');
     expect(loaded.totalFiles).toBe(13768);
     expect(loaded.processedIndex).toBe(5000);
@@ -43,10 +51,10 @@ describe('import resume checkpoint', () => {
       timestamp: new Date().toISOString(),
     };
 
-    mkdirSync(join(homedir(), '.mbrain'), { recursive: true });
-    writeFileSync(CHECKPOINT_PATH, JSON.stringify(checkpoint));
+    mkdirSync(join(testDir, '.mbrain'), { recursive: true });
+    writeFileSync(checkpointPath, JSON.stringify(checkpoint));
 
-    const cp = readImportCheckpoint(CHECKPOINT_PATH);
+    const cp = readImportCheckpoint(checkpointPath);
     const plan = resolveImportPlan({
       rootDir: '/data/brain',
       allFiles: Array.from({ length: 100 }, (_, index) => `/data/brain/${index}.md`),
@@ -70,14 +78,14 @@ describe('import resume checkpoint', () => {
       timestamp: new Date().toISOString(),
     };
 
-    mkdirSync(join(homedir(), '.mbrain'), { recursive: true });
-    writeFileSync(CHECKPOINT_PATH, JSON.stringify(checkpoint));
+    mkdirSync(join(testDir, '.mbrain'), { recursive: true });
+    writeFileSync(checkpointPath, JSON.stringify(checkpoint));
 
     const plan = resolveImportPlan({
       rootDir: '/data/brain',
       allFiles: Array.from({ length: 100 }, (_, index) => `/data/brain/${index}.md`),
       fresh: false,
-      checkpoint: readImportCheckpoint(CHECKPOINT_PATH),
+      checkpoint: readImportCheckpoint(checkpointPath),
     });
 
     expect(plan.resumeIndex).toBe(40);
@@ -93,14 +101,14 @@ describe('import resume checkpoint', () => {
       timestamp: new Date().toISOString(),
     };
 
-    mkdirSync(join(homedir(), '.mbrain'), { recursive: true });
-    writeFileSync(CHECKPOINT_PATH, JSON.stringify(checkpoint));
+    mkdirSync(join(testDir, '.mbrain'), { recursive: true });
+    writeFileSync(checkpointPath, JSON.stringify(checkpoint));
 
     const plan = resolveImportPlan({
       rootDir: '/data/brain',
       allFiles: Array.from({ length: 100 }, (_, index) => `/data/brain/${index}.md`),
       fresh: false,
-      checkpoint: readImportCheckpoint(CHECKPOINT_PATH),
+      checkpoint: readImportCheckpoint(checkpointPath),
     });
 
     expect(plan.resumeIndex).toBe(0);
@@ -115,14 +123,14 @@ describe('import resume checkpoint', () => {
       timestamp: new Date().toISOString(),
     };
 
-    mkdirSync(join(homedir(), '.mbrain'), { recursive: true });
-    writeFileSync(CHECKPOINT_PATH, JSON.stringify(checkpoint));
+    mkdirSync(join(testDir, '.mbrain'), { recursive: true });
+    writeFileSync(checkpointPath, JSON.stringify(checkpoint));
 
     const plan = resolveImportPlan({
       rootDir: '/data/brain',
       allFiles: Array.from({ length: 100 }, (_, index) => `/data/brain/${index}.md`),
       fresh: false,
-      checkpoint: readImportCheckpoint(CHECKPOINT_PATH),
+      checkpoint: readImportCheckpoint(checkpointPath),
     });
 
     expect(plan.resumeIndex).toBe(0);
@@ -130,14 +138,14 @@ describe('import resume checkpoint', () => {
   });
 
   test('invalid checkpoint JSON starts fresh', () => {
-    mkdirSync(join(homedir(), '.mbrain'), { recursive: true });
-    writeFileSync(CHECKPOINT_PATH, 'not json');
+    mkdirSync(join(testDir, '.mbrain'), { recursive: true });
+    writeFileSync(checkpointPath, 'not json');
 
-    expect(readImportCheckpoint(CHECKPOINT_PATH)).toBeNull();
+    expect(readImportCheckpoint(checkpointPath)).toBeNull();
   });
 
   test('missing checkpoint file starts fresh', () => {
-    expect(existsSync(CHECKPOINT_PATH)).toBe(false);
+    expect(existsSync(checkpointPath)).toBe(false);
     // No checkpoint = start from 0
   });
 });

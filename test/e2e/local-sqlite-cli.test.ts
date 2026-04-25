@@ -121,7 +121,7 @@ describe('local SQLite CLI end-to-end', () => {
         type: 'system',
         title: 'SQLite CLI',
         tags: ['system', 'sqlite'],
-        body: 'The SQLite CLI path writes through the same operation contract as MCP.',
+        body: 'The SQLite CLI path writes through the same operation contract as MCP. [Source: SQLite E2E, direct put_page fixture, 2026-04-26 09:00 AM KST]',
       }),
     });
     expect(putResult.status).toBe('created_or_updated');
@@ -185,7 +185,7 @@ describe('local SQLite CLI end-to-end', () => {
         type: 'system',
         title: 'SQLite CLI',
         tags: ['system', 'sqlite', 'verified'],
-        body: 'The SQLite CLI path keeps version history for local writes.',
+        body: 'The SQLite CLI path keeps version history for local writes. [Source: SQLite E2E, direct put_page fixture, 2026-04-26 09:00 AM KST]',
       }),
     });
     const history = harness.call<Array<{ id: number; compiled_truth: string }>>('get_versions', {

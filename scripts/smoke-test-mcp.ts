@@ -36,7 +36,7 @@ await test('get_stats returns counts', async () => {
 await test('put_page creates a page', async () => {
   await handleToolCall(eng, 'put_page', {
     slug: 'smoke/test-page',
-    content: '---\ntitle: Smoke Test Page\ntype: note\n---\n\nThis page was created by the MCP smoke test.',
+    content: '---\ntitle: Smoke Test Page\ntype: note\n---\n\nThis page was created by the MCP smoke test. [Source: MCP smoke test, direct put_page fixture, 2026-04-26 09:00 AM KST]',
   });
 });
 
@@ -48,7 +48,7 @@ await test('get_page retrieves the page', async () => {
 await test('dry_run prevents mutation', async () => {
   const result = await handleToolCall(eng, 'put_page', {
     slug: 'smoke/should-not-exist',
-    content: '---\ntitle: Should Not Exist\ntype: note\n---\n\ndry run test',
+    content: '---\ntitle: Should Not Exist\ntype: note\n---\n\ndry run test [Source: MCP smoke test, direct put_page fixture, 2026-04-26 09:00 AM KST]',
     dry_run: true,
   }) as any;
   if (!result.dry_run) throw new Error('dry_run flag not returned');

@@ -227,3 +227,67 @@ test('retrieval route operation persists a trace when requested', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('retrieval route operation persists a task-less trace when requested', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-route-trace-op-taskless-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const route = operations.find((operation) => operation.name === 'select_retrieval_route');
+
+  if (!route) {
+    throw new Error('select_retrieval_route operation is missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'systems/mbrain', [
+      '---',
+      'type: system',
+      'title: MBrain',
+      '---',
+      '# Overview',
+      'Coordinates durable retrieval traces.',
+      '[Source: User, direct message, 2026-04-26 09:10 AM KST]',
+    ].join('\n'), { path: 'systems/mbrain.md' });
+
+    const deferred = await route.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      intent: 'precision_lookup',
+      slug: 'systems/mbrain',
+      persist_trace: true,
+    });
+
+    expect((deferred as any).selected_intent).toBe('precision_lookup');
+    expect((deferred as any).route).toBeNull();
+    expect((deferred as any).trace?.task_id).toBeNull();
+    expect((deferred as any).trace?.scope).toBe('unknown');
+    expect((deferred as any).trace?.scope_gate_policy).toBe('defer');
+    expect((deferred as any).trace?.scope_gate_reason).toBe('insufficient_signal');
+    expect((deferred as any).trace?.outcome).toBe('precision_lookup route unavailable');
+
+    const selected = await route.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      intent: 'precision_lookup',
+      requested_scope: 'work',
+      slug: 'systems/mbrain',
+      persist_trace: true,
+    });
+
+    expect((selected as any).selected_intent).toBe('precision_lookup');
+    expect((selected as any).trace?.task_id).toBeNull();
+    expect((selected as any).trace?.source_refs).toContain('page:systems/mbrain');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
