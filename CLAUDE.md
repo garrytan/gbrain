@@ -36,7 +36,10 @@ strict behavior when unset.
 - `src/core/storage.ts` — Pluggable storage interface (S3, Supabase Storage, local)
 - `src/core/supabase-admin.ts` — Supabase admin API (project discovery, pgvector check)
 - `src/core/file-resolver.ts` — File resolution with fallback chain (local -> .redirect.yaml -> .redirect -> .supabase)
-- `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided)
+- `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided). v0.19.0 adds `code.ts` — tree-sitter-based semantic chunker for 29 languages with embedded-asset WASMs (`src/assets/wasm/`), `@dqbd/tiktoken` cl100k_base tokenizer, small-sibling merging. `CHUNKER_VERSION` constant folded into `importCodeFile`'s `content_hash` so chunker shape changes force clean re-chunks across releases.
+- `src/core/errors.ts` (v0.19.0) — `StructuredAgentError` + `buildError` + `serializeError`. Every new v0.19.0 agent-facing surface (code-def, code-refs, usage errors) uses this envelope; matches v0.17.0 `CycleReport.PhaseResult.error` shape.
+- `src/assets/wasm/` (v0.19.0) — 36 tree-sitter grammar WASMs + tree-sitter runtime. Committed to the repo so `bun --compile` embeds them deterministically via `import path from ... with { type: 'file' }`. The CI guard `scripts/check-wasm-embedded.sh` fails the build if the compiled binary ever silently falls through to recursive chunks.
+- `src/commands/code-def.ts` + `src/commands/code-refs.ts` (v0.19.0) — symbol definition + references lookup. Query `content_chunks.symbol_name` or chunk_text ILIKE with `page_kind='code'` filter. Auto-JSON when stdout is not a TTY (gh-CLI convention). Bypass the standard `searchKeyword` `DISTINCT ON (slug)` collapse so multiple call-sites from the same file surface.
 - `src/core/search/` — Hybrid search: vector + keyword + RRF + multi-query expansion + dedup
 - `src/core/search/intent.ts` — Query intent classifier (entity/temporal/event/general → auto-selects detail level)
 - `src/core/search/eval.ts` — Retrieval eval harness: P@k, R@k, MRR, nDCG@k metrics + runEval() orchestrator

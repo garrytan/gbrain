@@ -3,4 +3,10 @@
 # Default 5s is too short when many test files boot PGLite instances at once.
 # 60s is the empirical ceiling we observed before the first file's beforeAll
 # completed on a loaded machine.
+#
+# NOTE: this bunfig.toml `timeout` key is read by `bun test` but empirically
+# does NOT apply to beforeEach/afterEach hook timeouts under `bun run test`
+# chained behind `bun run typecheck`. The test script in package.json passes
+# `--timeout=60000` explicitly to cover both per-test and per-hook timeouts.
+# Leaving both in place as belt-and-suspenders.
 timeout = 60_000

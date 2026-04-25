@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.20.4",
+  "version": "0.21.0",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -32,7 +32,8 @@
     "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts",
     "build:schema": "bash scripts/build-schema.sh",
     "build:llms": "bun run scripts/build-llms.ts",
-    "test": "scripts/check-jsonb-pattern.sh && scripts/check-progress-to-stdout.sh && bun run typecheck && bun test",
+    "test": "scripts/check-jsonb-pattern.sh && scripts/check-progress-to-stdout.sh && scripts/check-wasm-embedded.sh && bun run typecheck && bun test --timeout=60000",
+    "check:wasm": "scripts/check-wasm-embedded.sh",
     "test:e2e": "bash scripts/run-e2e.sh",
     "typecheck": "tsc --noEmit",
     "check:jsonb": "scripts/check-jsonb-pattern.sh",
@@ -49,13 +50,16 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
     "@aws-sdk/client-s3": "^3.1028.0",
+    "@dqbd/tiktoken": "^1.0.22",
     "@electric-sql/pglite": "0.4.3",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "gray-matter": "^4.0.3",
     "marked": "^18.0.0",
     "openai": "^4.0.0",
     "pgvector": "^0.2.0",
-    "postgres": "^3.4.0"
+    "postgres": "^3.4.0",
+    "tree-sitter-wasms": "0.1.13",
+    "web-tree-sitter": "0.22.6"
   },
   "devDependencies": {
     "@types/bun": "latest",

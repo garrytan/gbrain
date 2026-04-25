@@ -169,8 +169,13 @@ describe('PGLiteEngine: Search', () => {
   });
 
   test('tsvector trigger populates search_vector on insert', async () => {
-    // Verify the PL/pgSQL trigger fires and search_vector is populated
-    const results = await engine.searchKeyword('enterprise automation');
+    // Verify the PL/pgSQL trigger fires and content_chunks.search_vector is
+    // populated from chunk_text. v0.20.0 Cathedral II Layer 3 moved FTS from
+    // pages.search_vector to content_chunks.search_vector — the chunk-grain
+    // vector is built from chunk_text (+ optional doc_comment + qualified
+    // symbol name). 'AI agents' is a phrase inside the chunk_text so it
+    // stresses the chunk-grain tsvector directly.
+    const results = await engine.searchKeyword('AI agents');
     expect(results.length).toBeGreaterThan(0);
   });
 

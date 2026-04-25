@@ -116,11 +116,21 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     page_id: row.page_id as number,
     chunk_index: row.chunk_index as number,
     chunk_text: row.chunk_text as string,
-    chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
+    chunk_source: row.chunk_source as 'compiled_truth' | 'timeline' | 'fenced_code',
     embedding: includeEmbedding ? parseEmbedding(row.embedding) : null,
     model: row.model as string,
     token_count: row.token_count as number | null,
     embedded_at: row.embedded_at ? new Date(row.embedded_at as string) : null,
+    // v0.19.0 code-chunk metadata (nullable for markdown chunks).
+    language: (row.language as string | null | undefined) ?? null,
+    symbol_name: (row.symbol_name as string | null | undefined) ?? null,
+    symbol_type: (row.symbol_type as string | null | undefined) ?? null,
+    start_line: (row.start_line as number | null | undefined) ?? null,
+    end_line: (row.end_line as number | null | undefined) ?? null,
+    // v0.20.0 Cathedral II Layer 1 additions (nullable for markdown chunks).
+    parent_symbol_path: (row.parent_symbol_path as string[] | null | undefined) ?? null,
+    doc_comment: (row.doc_comment as string | null | undefined) ?? null,
+    symbol_name_qualified: (row.symbol_name_qualified as string | null | undefined) ?? null,
   };
 }
 

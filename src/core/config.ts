@@ -87,6 +87,10 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
 }
 
 export function configDir(): string {
+  // Allow override for tests, Docker, and multi-tenant deployments.
+  // Matches the `GBRAIN_AUDIT_DIR` convention in src/core/minions/handlers/shell-audit.ts.
+  const override = process.env.GBRAIN_HOME;
+  if (override && override.trim()) return join(override, '.gbrain');
   return join(homedir(), '.gbrain');
 }
 
