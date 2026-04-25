@@ -1,22 +1,19 @@
 /**
  * E2E MCP Protocol Test — Tier 1
  *
- * Verifies the MCP server can start and that the tools/list
- * from operations.ts generates correct tool definitions.
- *
- * Note: The full stdio MCP protocol test (spawn server, send JSON-RPC)
- * is complex because the MCP SDK uses its own transport layer. This test
- * verifies the tool generation logic directly, which is what matters for
- * agent compatibility.
+ * Verifies the generated MCP tool definitions and the real stdio MCP server
+ * path used by agents. The stdio test spawns `mbrain serve`, calls tools/list,
+ * and exercises tools/call against an isolated local SQLite brain.
  */
 
 import { describe, test, expect } from 'bun:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { fileURLToPath } from 'url';
 import { operations } from '../../src/core/operations.ts';
 import { assertOk, createSqliteCliHarness, parseJsonSuffix } from './sqlite-cli-helpers.ts';
 
-const repoRoot = new URL('../..', import.meta.url).pathname;
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 function parseMcpText<T = any>(result: any): T {
   expect(result.isError).not.toBe(true);
@@ -79,22 +76,24 @@ describe('E2E: MCP Tool Generation', () => {
 
   test('stdio MCP server exposes and executes local SQLite memory lifecycle tools', async () => {
     const h = createSqliteCliHarness('mcp');
-    const init = h.run(['init', '--local', '--json']);
-    assertOk(init, ['init', '--local', '--json']);
-
-    const transport = new StdioClientTransport({
-      command: 'bun',
-      args: ['run', 'src/cli.ts', 'serve'],
-      cwd: repoRoot,
-      env: h.env,
-      stderr: 'pipe',
-    });
-    const client = new Client(
-      { name: 'mbrain-e2e', version: '0.0.0' },
-      { capabilities: {} },
-    );
+    let client: Client | null = null;
 
     try {
+      const init = h.run(['init', '--local', '--json']);
+      assertOk(init, ['init', '--local', '--json']);
+
+      const transport = new StdioClientTransport({
+        command: 'bun',
+        args: ['run', 'src/cli.ts', 'serve'],
+        cwd: repoRoot,
+        env: h.env,
+        stderr: 'pipe',
+      });
+      client = new Client(
+        { name: 'mbrain-e2e', version: '0.0.0' },
+        { capabilities: {} },
+      );
+
       await client.connect(transport);
 
       const tools = await client.listTools();
@@ -140,6 +139,11 @@ describe('E2E: MCP Tool Generation', () => {
         name: 'get_profile_memory_entry',
         arguments: { id: profileId },
       }))).toBeNull();
+      const profilesAfterDelete = parseMcpText<any[]>(await client.callTool({
+        name: 'list_profile_memory_entries',
+        arguments: { subject: 'mcp sqlite lifecycle' },
+      }));
+      expect(profilesAfterDelete.map((entry) => entry.id)).not.toContain(profileId);
 
       const episodeId = 'mcp-episode-delete-me';
       expect(parseMcpText<any>(await client.callTool({
@@ -162,6 +166,11 @@ describe('E2E: MCP Tool Generation', () => {
         name: 'get_personal_episode_entry',
         arguments: { id: episodeId },
       }))).toBeNull();
+      const episodesAfterDelete = parseMcpText<any[]>(await client.callTool({
+        name: 'list_personal_episode_entries',
+        arguments: { title: 'MCP SQLite episode lifecycle' },
+      }));
+      expect(episodesAfterDelete.map((entry) => entry.id)).not.toContain(episodeId);
 
       const candidateId = 'mcp-candidate-delete-me';
       expect(parseMcpText<any>(await client.callTool({
@@ -188,6 +197,11 @@ describe('E2E: MCP Tool Generation', () => {
         name: 'get_memory_candidate_entry',
         arguments: { id: candidateId },
       }))).toBeNull();
+      const candidatesAfterDelete = parseMcpText<any[]>(await client.callTool({
+        name: 'list_memory_candidate_entries',
+        arguments: { status: 'captured', limit: 50 },
+      }));
+      expect(candidatesAfterDelete.map((entry) => entry.id)).not.toContain(candidateId);
 
       const handoffCandidateId = 'mcp-candidate-handoff';
       parseMcpText(await client.callTool({
@@ -228,9 +242,17 @@ describe('E2E: MCP Tool Generation', () => {
         },
       }));
       expect(handoff.handoff.interaction_id).toBe('mcp-trace-handoff');
+      const persistedHandoffs = parseMcpText<any[]>(await client.callTool({
+        name: 'list_canonical_handoff_entries',
+        arguments: { candidate_id: handoffCandidateId },
+      }));
+      expect(persistedHandoffs.map((entry) => entry.interaction_id)).toContain('mcp-trace-handoff');
     } finally {
-      await client.close();
-      h.teardown();
+      try {
+        if (client) await client.close();
+      } finally {
+        h.teardown();
+      }
     }
   }, 60_000);
 });

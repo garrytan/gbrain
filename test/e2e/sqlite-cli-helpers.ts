@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 
 const decoder = new TextDecoder();
-const repoRoot = new URL('../..', import.meta.url).pathname;
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 export interface SqliteCliHarness {
   rootDir: string;
@@ -37,8 +38,8 @@ export function createSqliteCliHarness(label: string): SqliteCliHarness {
   mkdirSync(brainRepoDir, { recursive: true });
   const dbPath = join(configDir, 'brain.db');
 
-  const env = {
-    ...process.env,
+  const env: Record<string, string> = {
+    PATH: process.env.PATH ?? '',
     HOME: homeDir,
     MBRAIN_CONFIG_DIR: configDir,
     MBRAIN_DATABASE_PATH: dbPath,
