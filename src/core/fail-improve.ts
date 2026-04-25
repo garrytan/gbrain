@@ -48,6 +48,43 @@ export interface TestCase {
 const LOG_DIR = join(homedir(), '.gbrain', 'fail-improve');
 const MAX_ENTRIES = 1000;
 
+// Operation names are used verbatim as path segments under LOG_DIR. Every
+// caller in-tree passes a hard-coded identifier like "extract_mrr", but
+// FailImproveLoop is exported and the signature takes `string`, so nothing
+// at the type level prevents a future caller from forwarding a user-
+// supplied value. Reject anything that could escape LOG_DIR or change the
+// directory layout: path separators, `..`, null bytes, leading dots,
+// absolute paths.
+//
+// The charset uses Unicode categories so non-ASCII scripts — CJK,
+// Cyrillic, Arabic, Hebrew, Devanagari, Latin-extended like ñ — work out
+// of the box. This matters for callers that derive operation names from
+// entity pages, recipe titles, or user labels in languages other than
+// English.
+//
+//   \p{L} — letter (any script)
+//   \p{N} — number (any script)
+//   \p{M} — combining mark. Required for scripts where vocalization /
+//           diacritics are separate code points (Arabic fatha/shadda,
+//           Hebrew niqqud, Devanagari matras, Thai tone marks).
+//
+// Explicitly NOT allowed: \p{Z} whitespace, \p{P} punctuation (other than
+// '_' and '-'), \p{C} control + format characters (U+202E RTL override,
+// U+200C/D ZW[N]J, U+0000 NUL — these would enable spoofing or break the
+// filesystem). The /u flag is required for \p{…} to be recognised.
+const VALID_OPERATION = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}_-]{0,63}$/u;
+
+function assertSafeOperation(operation: string): void {
+  if (typeof operation !== 'string' || !VALID_OPERATION.test(operation)) {
+    throw new Error(
+      `FailImproveLoop: invalid operation name '${operation}'. ` +
+      `Must be 1-64 characters, starting with a Unicode letter or digit, ` +
+      `containing only letters, digits, '_' or '-'. No path separators, ` +
+      `no parent-dir segments, no leading dot, no whitespace.`
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // AbortSignal helpers
 // ---------------------------------------------------------------------------
@@ -220,6 +257,7 @@ export class FailImproveLoop {
 
   /** Log an improvement (when a new deterministic pattern is added). */
   logImprovement(operation: string, description: string): void {
+    assertSafeOperation(operation);
     const filePath = join(this.logDir, operation, 'improvements.json');
     this.ensureDir(filePath);
     let improvements: any[] = [];
@@ -235,10 +273,12 @@ export class FailImproveLoop {
   // -------------------------------------------------------------------------
 
   private getLogPath(operation: string): string {
+    assertSafeOperation(operation);
     return join(this.logDir, `${operation}.jsonl`);
   }
 
   private getCallCountPath(operation: string): string {
+    assertSafeOperation(operation);
     return join(this.logDir, `${operation}.counts.json`);
   }
 
@@ -266,6 +306,7 @@ export class FailImproveLoop {
   }
 
   private getImprovements(operation: string): Array<{ timestamp: string; description: string }> {
+    assertSafeOperation(operation);
     const filePath = join(this.logDir, operation, 'improvements.json');
     if (!existsSync(filePath)) return [];
     try { return JSON.parse(readFileSync(filePath, 'utf-8')); }
