@@ -128,6 +128,7 @@ export interface BrainEngine {
   recordTaskDecision(input: TaskDecisionInput): Promise<TaskDecision>;
   listTaskDecisions(taskId: string, opts?: { limit?: number }): Promise<TaskDecision[]>;
   putRetrievalTrace(input: RetrievalTraceInput): Promise<RetrievalTrace>;
+  getRetrievalTrace(id: string): Promise<RetrievalTrace | null>;
   listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]>;
   listRetrievalTracesByWindow(filters: RetrievalTraceWindowFilters): Promise<RetrievalTrace[]>;
 

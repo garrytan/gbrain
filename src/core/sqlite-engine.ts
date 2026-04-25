@@ -1333,6 +1333,16 @@ export class SQLiteEngine implements BrainEngine {
     return rowToRetrievalTrace(row);
   }
 
+  async getRetrievalTrace(id: string): Promise<RetrievalTrace | null> {
+    const row = this.database.query(`
+      SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+      FROM retrieval_traces
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToRetrievalTrace(row) : null;
+  }
+
   async listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]> {
     const rows = this.database.query(`
       SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,

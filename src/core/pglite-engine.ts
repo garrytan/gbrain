@@ -1025,6 +1025,18 @@ export class PGLiteEngine implements BrainEngine {
     return rowToRetrievalTrace(rows[0] as Record<string, unknown>);
   }
 
+  async getRetrievalTrace(id: string): Promise<RetrievalTrace | null> {
+    const { rows } = await this.db.query(
+      `SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,
+        write_outcome, selected_intent, scope_gate_policy, scope_gate_reason, outcome, created_at
+       FROM retrieval_traces
+       WHERE id = $1`,
+      [id],
+    );
+    const [row] = rows as Record<string, unknown>[];
+    return row ? rowToRetrievalTrace(row) : null;
+  }
+
   async listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]> {
     const { rows } = await this.db.query(
       `SELECT id, task_id, scope, route, source_refs, derived_consulted, verification,

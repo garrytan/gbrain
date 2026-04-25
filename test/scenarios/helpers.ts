@@ -53,6 +53,8 @@ export async function seedWorkTaskThread(
     title?: string;
     scope?: 'work' | 'personal' | 'mixed';
     status?: TaskStatus;
+    repoPath?: string | null;
+    branchName?: string | null;
     workingSet?: {
       active_paths?: string[];
       active_symbols?: string[];
@@ -69,8 +71,8 @@ export async function seedWorkTaskThread(
     title: overrides.title ?? `Scenario task ${taskId}`,
     goal: 'Validate scenario behavior end to end.',
     status: overrides.status ?? 'active',
-    repo_path: '/fixture/repo',
-    branch_name: 'scenario-branch',
+    repo_path: overrides.repoPath ?? '/fixture/repo',
+    branch_name: overrides.branchName ?? 'scenario-branch',
     current_summary: 'Seeded from the scenario-test helper for contract validation.',
   });
   await engine.upsertTaskWorkingSet({

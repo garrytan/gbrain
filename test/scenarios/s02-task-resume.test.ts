@@ -6,6 +6,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
 import { allocateSqliteBrain, seedWorkTaskThread } from './helpers.ts';
 import { selectRetrievalRoute } from '../../src/core/services/retrieval-route-selector-service.ts';
 
@@ -14,7 +16,15 @@ describe('S2 — task resume surfaces working-set state', () => {
     const handle = await allocateSqliteBrain('s02');
 
     try {
+      const repoPath = join(handle.rootDir, 'repo');
+      mkdirSync(join(repoPath, 'src/core/services'), { recursive: true });
+      writeFileSync(
+        join(repoPath, 'src/core/services/memory-inbox-service.ts'),
+        'export function advanceMemoryCandidateStatus() { return true; }\n',
+      );
       await seedWorkTaskThread(handle.engine, 'task-X', {
+        repoPath,
+        branchName: 'scenario-branch',
         workingSet: {
           active_paths: ['src/core/services/memory-inbox-service.ts'],
           active_symbols: ['advanceMemoryCandidateStatus'],
@@ -31,6 +41,15 @@ describe('S2 — task resume surfaces working-set state', () => {
         outcome: 'failed',
         applicability_context: {},
         evidence: ['Compile error in memory-inbox-service.ts'],
+      });
+      await handle.engine.putRetrievalTrace({
+        id: 'trace-code-claim-source',
+        task_id: 'task-X',
+        scope: 'work',
+        route: ['task_resume'],
+        source_refs: ['task-thread:task-X'],
+        verification: ['code_claim:src/core/services/memory-inbox-service.ts:advanceMemoryCandidateStatus'],
+        outcome: 'resume path assembled',
       });
       await handle.engine.recordTaskDecision({
         id: 'decision-1',

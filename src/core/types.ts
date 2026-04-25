@@ -1517,6 +1517,22 @@ export interface RetrievalTraceInput {
   outcome: string;
 }
 
+export interface CodeClaim {
+  path?: string;
+  symbol?: string;
+  branch_name?: string;
+  source_trace_id?: string;
+}
+
+export type CodeClaimVerificationStatus = 'current' | 'stale' | 'unverifiable';
+
+export interface CodeClaimVerificationResult {
+  claim: CodeClaim;
+  status: CodeClaimVerificationStatus;
+  reason: 'ok' | 'file_missing' | 'symbol_missing' | 'symbol_path_missing' | 'branch_mismatch' | 'branch_unknown' | 'repo_missing';
+  checked_at: string;
+}
+
 export interface RetrievalTraceWindowFilters {
   since: Date;
   until: Date;

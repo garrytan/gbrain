@@ -31,7 +31,7 @@ for the full spec (14 scenarios + invariant catalog + rollout plan).
 | S8  | `s08-rejection-preserves-provenance.test.ts` | G2, L5 | ✅ green |
 | S9  | `s09-curated-over-map.test.ts` | L2 | ✅ green |
 | S10 | `s10-precision-degradation.test.ts` | L3 | ✅ green |
-| S11 | `s11-code-claim-verification.test.ts` | L4 | 🔲 2 `todo` (subsystem not implemented) |
+| S11 | `s11-code-claim-verification.test.ts` | L4 | ✅ green |
 | S12 | `s12-baseline-gated-acceptance.test.ts` | E1 | ✅ green (tests regression-fail case) |
 | S13 | `s13-personal-export-boundary.test.ts` | I5, G2 | ✅ green |
 | S14 | `s14-retrieval-trace-fidelity.test.ts` | L6 | ✅ green |
@@ -44,7 +44,6 @@ for the full spec (14 scenarios + invariant catalog + rollout plan).
 
 Legend:
 - ✅ green = passes on current code
-- 🔲 `todo` = design gap; code must change before a real test can pass
 
 ## Code change delivered in this PR
 
@@ -54,12 +53,6 @@ Legend:
   Defense-in-depth behind the service-layer preflight check so direct engine
   callers cannot bypass I4.
 
-## Deferred follow-ups
-
-- **L4** code claim verification subsystem (spec §5)
-
 Sprint 1.1B adds S15/S16 audit scenarios so loop observability is checked from
 structured trace columns and `interaction_id` linked-write rows, not from
 best-effort timestamp correlation.
-Remaining deferred follow-ups are documented as `test.todo` in the corresponding
-scenario file.

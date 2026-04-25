@@ -51,13 +51,20 @@ import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, rebuildNoteManifestEntries } from './se
 import { findStructuralPath, getStructuralNeighbors, type StructuralNodeId } from './services/note-structural-graph-service.ts';
 import { rebuildNoteSectionEntries } from './services/note-section-service.ts';
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
+import {
+  extractCodeClaimsFromTrace,
+  parseCodeClaimVerificationEntry,
+  verifyCodeClaims,
+} from './services/code-claim-verification-service.ts';
 import * as db from './db.ts';
 import { getUnsupportedCapabilityReason } from './offline-profile.ts';
 import type {
+  CodeClaim,
   PersonalEpisodeSourceKind,
   ProfileMemoryType,
   RetrievalRequestPlannerInput,
   RetrievalRouteIntent,
+  RetrievalTrace,
   RetrievalTraceWriteOutcome,
   ScopeGatePolicy,
 } from './types.ts';
@@ -82,6 +89,7 @@ function structuralNodeId(value: string): StructuralNodeId {
 export type ErrorCode =
   | 'page_not_found'
   | 'task_not_found'
+  | 'trace_not_found'
   | 'memory_candidate_not_found'
   | 'invalid_params'
   | 'embedding_failed'
@@ -1031,6 +1039,7 @@ export function formatResult(
         `Failed attempts: ${(resume.failed_attempts || []).join(', ') || 'none'}`,
         `Decisions: ${(resume.active_decisions || []).join(', ') || 'none'}`,
         `Latest trace route: ${(resume.latest_trace_route || []).join(' -> ') || 'none'}`,
+        `Code claims: ${formatCodeClaimVerificationSummary(resume.code_claim_verification || [])}`,
         `State: ${resume.stale ? 'stale' : 'fresh'}`,
       ].join('\n') + '\n';
     }
@@ -1088,6 +1097,24 @@ function parseStringListParam(value: unknown, key: string): string[] | undefined
     .filter((item) => item.length > 0);
 }
 
+function formatCodeClaimVerificationSummary(results: Array<{
+  claim?: { path?: string; symbol?: string; source_trace_id?: string };
+  status?: string;
+  reason?: string;
+}>): string {
+  if (results.length === 0) return 'none';
+  return results
+    .map((result) => [
+      result.status ?? 'unknown',
+      result.claim?.path
+        ?? (result.claim?.symbol ? `symbol:${result.claim.symbol}` : 'unknown'),
+      result.claim?.path && result.claim?.symbol ? result.claim.symbol : undefined,
+      result.reason ?? 'unknown',
+      result.claim?.source_trace_id,
+    ].filter((part) => part !== undefined && part !== '').join(':'))
+    .join(', ');
+}
+
 function parseEnumParam<T extends string>(
   value: unknown,
   key: string,
@@ -1114,6 +1141,59 @@ function parseOptionalDateParam(value: unknown, key: string): Date | undefined {
     throw new OperationError('invalid_params', `${key} must be a valid ISO datetime string.`);
   }
   return parsed;
+}
+
+function parseCodeClaimsParam(value: unknown, key: string): CodeClaim[] | undefined {
+  if (value === undefined || value === null) return undefined;
+
+  let rawClaims: unknown = value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return [];
+    if (trimmed.startsWith('[')) {
+      try {
+        rawClaims = JSON.parse(trimmed);
+      } catch {
+        throw new OperationError('invalid_params', `${key} must be valid JSON when passed as an array string.`);
+      }
+    } else {
+      rawClaims = parseStringListParam(value, key)?.map((entry) =>
+        entry.startsWith('code_claim:') ? entry : `code_claim:${entry}`);
+    }
+  }
+
+  if (!Array.isArray(rawClaims)) {
+    throw new OperationError('invalid_params', `${key} must be an array of code claim objects or code_claim entries.`);
+  }
+
+  return rawClaims.map((claim, index) => parseCodeClaimParamItem(claim, `${key}[${index}]`));
+}
+
+function parseCodeClaimParamItem(value: unknown, key: string): CodeClaim {
+  if (typeof value === 'string') {
+    const parsed = parseCodeClaimVerificationEntry(value.startsWith('code_claim:') ? value : `code_claim:${value}`);
+    if (!parsed) {
+      throw new OperationError('invalid_params', `${key} must be a valid code_claim entry.`);
+    }
+    return parsed;
+  }
+
+  if (!value || typeof value !== 'object') {
+    throw new OperationError('invalid_params', `${key} must be a code claim object.`);
+  }
+  const claim = value as Record<string, unknown>;
+  const hasPath = typeof claim.path === 'string' && claim.path.trim().length > 0;
+  const hasSymbol = typeof claim.symbol === 'string' && claim.symbol.length > 0;
+  if (!hasPath && !hasSymbol) {
+    throw new OperationError('invalid_params', `${key} must include a non-empty path or symbol.`);
+  }
+
+  return {
+    ...(hasPath ? { path: String(claim.path) } : {}),
+    ...(hasSymbol ? { symbol: String(claim.symbol) } : {}),
+    ...(typeof claim.branch_name === 'string' && claim.branch_name.length > 0 ? { branch_name: claim.branch_name } : {}),
+    ...(typeof claim.source_trace_id === 'string' && claim.source_trace_id.length > 0 ? { source_trace_id: claim.source_trace_id } : {}),
+  };
 }
 
 async function requireTaskThread(engine: BrainEngine, taskId: string) {
@@ -2974,6 +3054,76 @@ const plan_retrieval_request: Operation = {
   cliHints: { name: 'plan-retrieval-request' },
 };
 
+const reverify_code_claims: Operation = {
+  name: 'reverify_code_claims',
+  description: 'Re-check code path, symbol, and branch claims against the current workspace.',
+  params: {
+    repo_path: { type: 'string', required: true, description: 'Repository root used to verify file and symbol claims' },
+    branch_name: { type: 'string', description: 'Current branch name for branch-sensitive claims' },
+    claims: { type: 'array', items: { type: 'object' }, description: 'Code claims to verify directly' },
+    trace_id: { type: 'string', description: 'Retrieval trace id containing code_claim verification entries' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    if (typeof p.repo_path !== 'string' || p.repo_path.trim().length === 0) {
+      throw new OperationError('invalid_params', 'reverify_code_claims requires repo_path as a non-empty string.');
+    }
+    const repoPath = p.repo_path;
+    const branchName = typeof p.branch_name === 'string' ? p.branch_name : undefined;
+    const traceId = typeof p.trace_id === 'string' ? p.trace_id : undefined;
+    const directClaims = parseCodeClaimsParam(p.claims, 'claims');
+    if (traceId && directClaims !== undefined) {
+      throw new OperationError('invalid_params', 'reverify_code_claims accepts either claims or trace_id, not both.');
+    }
+
+    let trace: RetrievalTrace | null = null;
+    if (traceId) {
+      trace = await ctx.engine.getRetrievalTrace(traceId);
+      if (!trace) {
+        throw new OperationError('trace_not_found', `Retrieval trace not found: ${traceId}`);
+      }
+    }
+
+    const claims = directClaims ?? (trace ? extractCodeClaimsFromTrace(trace) : undefined);
+    if (!claims || claims.length === 0) {
+      throw new OperationError('invalid_params', 'reverify_code_claims requires claims or a trace_id with code_claim verification entries.');
+    }
+
+    const results = verifyCodeClaims({
+      repo_path: repoPath,
+      branch_name: branchName,
+      claims,
+    });
+    const staleCount = results.filter((result) => result.status === 'stale').length;
+    const currentCount = results.filter((result) => result.status === 'current').length;
+    const unverifiableCount = results.filter((result) => result.status === 'unverifiable').length;
+    const nonCurrentCount = results.length - currentCount;
+    let writtenTrace: RetrievalTrace | null = null;
+
+    if (!ctx.dryRun && trace && nonCurrentCount > 0) {
+      writtenTrace = await ctx.engine.putRetrievalTrace({
+        id: crypto.randomUUID(),
+        task_id: trace.task_id,
+        scope: trace.scope,
+        route: ['code_claim_reverification'],
+        source_refs: [`retrieval_trace:${trace.id}`],
+        verification: results.map((result) =>
+          `code_claim_result:${result.claim.path ?? result.claim.symbol ?? 'unknown'}:${result.status}:${result.reason}`),
+        write_outcome: 'operational_write',
+        outcome: `code claim reverify stale=${staleCount} current=${currentCount} unverifiable=${unverifiableCount}`,
+      });
+    }
+
+    return {
+      trace_id: trace?.id ?? null,
+      results,
+      written_trace: writtenTrace,
+      dry_run: ctx.dryRun || undefined,
+    };
+  },
+  cliHints: { name: 'reverify-code-claims' },
+};
+
 const get_workspace_system_card: Operation = {
   name: 'get_workspace_system_card',
   description: 'Render a compact workspace system card from the current context-map report.',
@@ -3548,7 +3698,7 @@ export const operations: Operation[] = [
   // Structural graph
   get_note_structural_neighbors, find_note_structural_path,
   // Persisted context maps
-  build_context_map, get_context_map_entry, list_context_map_entries, get_context_map_report, get_context_map_explanation, query_context_map, find_context_map_path, get_broad_synthesis_route, get_precision_lookup_route, get_mixed_scope_bridge, get_mixed_scope_disclosure, get_personal_profile_lookup_route, get_personal_episode_lookup_route, select_personal_write_target, preview_personal_export, evaluate_scope_gate, select_retrieval_route, plan_retrieval_request, get_workspace_system_card, get_workspace_project_card, get_workspace_orientation_bundle, get_workspace_corpus_card,
+  build_context_map, get_context_map_entry, list_context_map_entries, get_context_map_report, get_context_map_explanation, query_context_map, find_context_map_path, get_broad_synthesis_route, get_precision_lookup_route, get_mixed_scope_bridge, get_mixed_scope_disclosure, get_personal_profile_lookup_route, get_personal_episode_lookup_route, select_personal_write_target, preview_personal_export, evaluate_scope_gate, select_retrieval_route, plan_retrieval_request, reverify_code_claims, get_workspace_system_card, get_workspace_project_card, get_workspace_orientation_bundle, get_workspace_corpus_card,
   // Context atlas registry
   build_context_atlas, get_context_atlas_entry, list_context_atlas_entries, select_context_atlas_entry, get_context_atlas_overview, get_context_atlas_report, get_atlas_orientation_card, get_atlas_orientation_bundle,
   // Operational memory

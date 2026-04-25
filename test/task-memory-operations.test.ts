@@ -518,6 +518,14 @@ test('formatResult renders a resume card', () => {
     failed_attempts: ['CLI-only task path'],
     active_decisions: ['keep working set canonical in DB'],
     latest_trace_route: ['task_thread', 'working_set', 'attempts', 'decisions'],
+    code_claim_verification: [
+      {
+        claim: { path: 'src/core/operations.ts', symbol: 'operations', source_trace_id: 'trace-1' },
+        status: 'stale',
+        reason: 'symbol_missing',
+        checked_at: '2026-04-25T00:00:00.000Z',
+      },
+    ],
     stale: true,
   });
 
@@ -525,6 +533,7 @@ test('formatResult renders a resume card', () => {
   expect(output).toContain('operations');
   expect(output).toContain('should resume emit trace ids');
   expect(output).toContain('CLI-only task path');
+  expect(output).toContain('Code claims: stale:src/core/operations.ts:operations:symbol_missing:trace-1');
   expect(output).toContain('stale');
 });
 
