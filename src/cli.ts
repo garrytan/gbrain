@@ -383,12 +383,12 @@ USAGE
 
 SETUP
   init [--local|--pglite|--supabase|--url <conn>]
-                                    Create brain (SQLite fork mode, PGLite, or Postgres)
+                                    Create brain (SQLite local, PGLite, or managed Postgres)
   setup-agent [--claude|--codex]     Register MCP, inject rules, install Claude stop hook
   migrate --to <supabase|pglite>     Transfer brain between engines
   upgrade                            Self-update
   check-update [--json]              Check for new versions
-  doctor [--json]                    Health check (pgvector, RLS, schema, embeddings)
+  doctor [--json]                    Health check (engine, schema, embeddings, local/managed capabilities)
   integrations [subcommand]          Manage integration recipes
 
 PAGES
@@ -398,7 +398,7 @@ PAGES
   list [--type T] [--tag T] [-n N]   List pages
 
 SEARCH
-  search <query>                     Keyword search (tsvector)
+  search <query>                     Keyword search (engine-native)
   query <question> [--no-expand]     Hybrid search (RRF + expansion)
 
 IMPORT/EXPORT

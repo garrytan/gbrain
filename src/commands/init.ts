@@ -70,11 +70,12 @@ export async function runInit(args: string[]) {
 function printInitHelp() {
   console.log(`Usage: mbrain init [options]
 
-Create a brain. Defaults to local PGLite; pass a flag to pick a different engine.
+Create a brain. For personal/offline use, prefer --local (SQLite).
+Bare mbrain init remains local PGLite for compatibility; pass a flag to pick an engine.
 
 OPTIONS
-  --local                   Local SQLite (fully offline; no server needed)
-  --pglite                  Local PGLite (embedded Postgres; default)
+  --local                   Recommended personal path: local SQLite (fully offline; no server needed)
+  --pglite                  Local PGLite (embedded Postgres; compatibility default)
   --supabase                Managed Supabase Postgres (interactive wizard)
   --url <conn>              Existing Postgres connection string (postgres:// or postgresql://)
   --non-interactive         Fail instead of prompting; use with --url or MBRAIN_DATABASE_URL

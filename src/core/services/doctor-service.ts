@@ -209,13 +209,13 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
     const engineName = input.config?.engine || 'current';
     checks.push({
       name: 'pgvector',
-      status: 'warn',
-      message: `Skipped: pgvector check is Postgres-only for ${engineName} mode`,
+      status: 'ok',
+      message: `Not applicable: pgvector check is managed Postgres-only for ${engineName} mode`,
     });
     checks.push({
       name: 'rls',
-      status: 'warn',
-      message: `Skipped: RLS check is Postgres-only for ${engineName} mode`,
+      status: 'ok',
+      message: `Not applicable: RLS check is managed Postgres-only for ${engineName} mode`,
     });
   }
 

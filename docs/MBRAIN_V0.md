@@ -502,7 +502,7 @@ The CLI connects directly to Supabase Postgres. Trigger.dev and Vercel are for a
 6. `mbrain init --supabase` works end-to-end
 7. `bun test` passes all tests
 8. `clawhub install mbrain` installs the skill and runs guided setup
-9. `bun add mbrain` + `import { PostgresEngine } from 'mbrain'` works in external project
+9. `bun add mbrain` + `import { createConnectedEngine } from 'mbrain'` works in external project
 10. Drift tests pass: CLI and MCP produce identical results
 11. `mbrain health` outputs accurate brain health metrics
 12. Migration skill successfully imports an Obsidian vault
@@ -517,7 +517,7 @@ See `docs/ENGINES.md` for the pluggable engine architecture and future backend p
 - **Intelligence compiler.** Treat every fact as a first-class claim with source span, entity links, validity window, confidence, and contradiction status. "What changed, why, and what evidence would flip it again?" From Codex review. Builds on compiled truth model.
 - **Active skills via Trigger.dev.** Application-specific briefings, meeting prep. Belongs in OpenClaw, not generic brain infra.
 - **Multi-user access.** Supabase RLS + per-user API keys. v0 is single-user.
-- **SQLite engine.** Community PRs welcome. See `docs/SQLITE_ENGINE.md`.
+- **Procedure Registry and Source Records.** First-class registry/provenance objects beyond today's source_refs/raw_data support.
 - **Docker Compose for self-hosted Postgres.** Community PRs welcome.
 - **Web UI.** Optional Vercel-hosted dashboard for browsing brain pages.
 
@@ -526,12 +526,12 @@ See `docs/ENGINES.md` for the pluggable engine architecture and future backend p
 All operations go through `BrainEngine`. The engine interface is the contract. Postgres-specific features (tsvector, pgvector HNSW, pg_trgm, recursive CTEs) are implementation details inside `PostgresEngine`. The interface exposes capabilities, not SQL.
 
 This means:
-- A SQLite engine can implement `searchKeyword` using FTS5 instead of tsvector
-- A SQLite engine can implement `searchVector` using sqlite-vss instead of pgvector
+- SQLiteEngine implements `searchKeyword` using FTS5 instead of tsvector
+- SQLiteEngine implements `searchVector` using stored vectors + local cosine scan instead of pgvector
 - A future DuckDB engine could implement analytics-heavy workloads
 - The CLI, MCP server, and library consumers never know which engine runs underneath
 
-See `docs/ENGINES.md` for the full interface spec and `docs/SQLITE_ENGINE.md` for the SQLite implementation plan.
+See `docs/ENGINES.md` for the full interface spec and `docs/local-offline.md` for the shipped SQLite/local operating guide.
 
 ## Review history
 

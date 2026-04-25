@@ -47,7 +47,7 @@ This RFC resolves that tension by making the engine, search, and model layers ge
 
 ## 3. Problem Statement
 
-Today, the project has a documented SQLite direction (`docs/ENGINES.md`, `docs/SQLITE_ENGINE.md`) but not a usable local/offline product.
+At the time this RFC was written, the project had a documented SQLite direction but not a usable local/offline product. The shipped state is now documented in `docs/local-offline.md` and `docs/ENGINES.md`.
 
 The missing pieces are not only storage. A true local/offline MBrain requires all of the following:
 
@@ -275,7 +275,7 @@ Required refactor:
 
 ### 9.2 SQLite as the local engine
 
-The SQLite engine will implement the existing `BrainEngine` contract using:
+The SQLite engine workstream targeted the existing `BrainEngine` contract using:
 
 - **Bun's built-in SQLite driver** (`bun:sqlite`) for the primary DB path
 - **FTS5** for keyword search
@@ -310,7 +310,7 @@ Backward-compatibility rule:
 
 ### 9.4 Schema policy
 
-The SQLite schema should mirror the conceptual shape already described in `docs/SQLITE_ENGINE.md`:
+The SQLite schema should mirror the shared engine contract described in `docs/ENGINES.md`:
 
 - `pages`
 - `pages_fts`
@@ -750,7 +750,7 @@ The final local/offline implementation must prove:
 The design is one final target state, but execution should be organized into these workstreams:
 
 1. **Engine/bootstrap refactor**
-2. **SQLite engine implementation**
+2. **SQLite engine implementation** (now shipped)
 3. **Local embedding provider + embedding queue/backfill**
 4. **Local vector search + hybrid ranking**
 5. **Offline profile + MCP client integration**
@@ -825,5 +825,5 @@ This is the correct architecture for users who want a sovereign personal knowled
 - `src/commands/sync.ts`
 - `src/commands/embed.ts`
 - `docs/ENGINES.md`
-- `docs/SQLITE_ENGINE.md`
+- `docs/local-offline.md`
 - `docs/MBRAIN_SKILLPACK.md`

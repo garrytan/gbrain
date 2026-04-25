@@ -477,9 +477,12 @@ mbrain serve
 mbrain init --local
 mbrain import /path/to/brain
 mbrain query "실제로 존재하는 문장"
+mbrain doctor --json
 mbrain stats
 mbrain health
 ```
+
+`doctor --json` 출력에서는 `local_offline` execution envelope이 보여야 합니다. 클라우드 파일/스토리지처럼 managed/Postgres 전용인 표면은 unsupported capability로 표시될 수 있습니다. SQLite 모드에서는 pgvector와 RLS 검사가 적용 대상이 아니므로, 이것 때문에 local profile이 unhealthy처럼 보이면 안 됩니다.
 
 그 다음 MCP 확인:
 

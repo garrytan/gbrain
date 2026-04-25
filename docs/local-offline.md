@@ -496,9 +496,12 @@ Run these in order:
 mbrain init --local
 mbrain import /path/to/brain
 mbrain query "phrase I know exists"
+mbrain doctor --json
 mbrain stats
 mbrain health
 ```
+
+`doctor --json` should show the `local_offline` execution envelope. Managed/Postgres-only surfaces such as cloud file storage may appear as unsupported capabilities; pgvector and RLS checks are not applicable in SQLite mode and should not make the local profile look unhealthy.
 
 Then verify MCP:
 

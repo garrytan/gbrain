@@ -42,7 +42,7 @@ I added Postgres + pgvector later because at 1,000 to 10,000 long markdown docs,
 
 Your markdown repo is the source of truth. MBrain makes it searchable. Your AI agent makes it live.
 
-## Why Postgres still matters
+## Why an Index Still Matters
 
 At 500 files, `grep` is fine. At 3,000 people pages, 5,800 Apple Notes, and 13 years of calendar data, `grep` falls apart. You need keyword search for exact names, vector search for semantic meaning, and something that fuses both. You need an index that updates incrementally when one file changes, not a full directory walk. You need your agent to find "everyone who was at the board dinner last March" in milliseconds, not 30 seconds of grepping.
 
@@ -71,15 +71,15 @@ An agent without this loop answers from stale context. An agent with it gets sma
 
 Never do anything twice. If you look someone up once, that lookup lives in the brain forever. If a pattern emerges across three meetings, the agent captures it. If you generate an original idea in conversation, it goes to `originals/` — your searchable intellectual archive.
 
-## Architecture (managed/Postgres example)
+## Architecture
 
 ```
 ┌──────────────────┐    ┌───────────────┐    ┌──────────────────┐
 │   Brain Repo     │    │    MBrain     │    │    AI Agent      │
 │   (git)          │    │  (retrieval)  │    │  (read/write)    │
 │                  │    │               │    │                  │
-│  markdown files  │───>│  Postgres +   │<──>│  skills define   │
-│  = source of     │    │  pgvector     │    │  HOW to use the  │
+│  markdown files  │───>│  SQLite or    │<──>│  skills define   │
+│  = source of     │    │  Postgres     │    │  HOW to use the  │
 │    truth         │    │               │    │  brain           │
 │                  │<───│  hybrid       │    │                  │
 │  human can       │    │  search       │    │  entity detect   │
@@ -141,14 +141,15 @@ MBrain doesn't ship with demo data. It finds YOUR markdown and makes it searchab
 === Discovery Complete ===
 ```
 
-**Act 2: Import (managed/Postgres example).** Your files move from the repo into Supabase.
+**Act 2: Import (local SQLite).** Your files move from the repo into `~/.mbrain/brain.db`.
 
 ```bash
+mbrain init --local
 mbrain import ~/git/brain/
-# Imported 342 files into Supabase (1,847 chunks). Embedding in background...
+# Imported 342 files into local SQLite (1,847 chunks). Embeddings deferred.
 
 mbrain stats
-# Pages: 342, Chunks: 1,847, Embedded: 0 (embedding...), Links: 0
+# Pages: 342, Chunks: 1,847, Embedded: 0, Links: 0
 ```
 
 **Act 3: Search.** The agent picks a query from your actual content.
@@ -158,7 +159,9 @@ mbrain stats
 mbrain query "what do we know about competitive dynamics?"
 # 3 results, scored by hybrid search (vector + keyword + RRF fusion)
 
-# 30 seconds later, embeddings finish:
+mbrain embed --stale
+
+# After local embeddings are backfilled:
 mbrain stats
 # Pages: 342, Chunks: 1,847, Embedded: 1,847, Links: 0
 
@@ -210,8 +213,8 @@ knowledge brain.
    curl -fsSL https://bun.com/install | bash
    Then run: bun add github:meghendra6/mbrain
 
-2. Run: mbrain init --supabase
-   (follow the wizard to connect my Supabase database)
+2. Run: mbrain init --local
+   (create my local SQLite brain at ~/.mbrain/brain.db)
 
 3. Scan ~/git/ and ~/Documents/ for markdown repos,
    pick the best one, and run: mbrain import <path>
@@ -242,7 +245,7 @@ knowledge brain.
    brain-first lookup.
 ```
 
-OpenClaw will install mbrain, walk through Supabase setup, discover your markdown files, import them, and prove search works with a query from your data.
+OpenClaw will install mbrain, create the local SQLite brain, discover your markdown files, import them, and prove search works with a query from your data.
 
 After setup, you talk to your brain through OpenClaw:
 
@@ -255,7 +258,8 @@ How many pages are in the brain now?
 
 MBrain keeps your brain current. After setup, `mbrain sync --watch` polls your git repo and imports only what changed. Binary files (images, PDFs, audio) can be moved to cloud storage with `mbrain files mirror` to slim down your git repo.
 
-> **Supabase settings:** MBrain connects directly to Postgres (not the REST API).
+> **Managed Postgres settings:** If you choose `mbrain init --supabase` instead of local SQLite,
+> MBrain connects directly to Postgres (not the REST API).
 > You need the **Shared Pooler connection string**, not the project URL or anon key.
 > Find it: go to your project, click **Get Connected** next to the project URL,
 > then **Direct Connection String** > **Session Pooler**, and copy the
@@ -364,10 +368,15 @@ bun add github:meghendra6/mbrain
 ```
 
 ```typescript
-import { PostgresEngine } from 'mbrain';
+import { createConnectedEngine } from 'mbrain';
 
-const engine = new PostgresEngine();
-await engine.connect({ database_url: process.env.DATABASE_URL });
+const engine = await createConnectedEngine({
+  engine: 'sqlite',
+  database_path: `${process.env.HOME}/.mbrain/brain.db`,
+  offline: true,
+  embedding_provider: 'local',
+  query_rewrite_provider: 'heuristic',
+});
 await engine.initSchema();
 
 // Search
@@ -540,14 +549,14 @@ The compiled truth is the answer. The timeline is the proof.
 ```
 Query: "when should you ignore conventional wisdom?"
          |
-    Multi-query expansion (Claude Haiku)
+    Multi-query expansion (heuristic, local LLM, or hosted LLM)
     "contrarian thinking startups", "going against the crowd"
          |
     +----+----+
     |         |
   Vector    Keyword
-  (HNSW     (tsvector +
-  cosine)    ts_rank)
+  (engine    (engine
+  native)     native)
     |         |
     +----+----+
          |
@@ -566,17 +575,17 @@ Query: "when should you ignore conventional wisdom?"
 
 Keyword search alone misses conceptual matches. "Ignore conventional wisdom" won't find an essay titled "The Bus Ticket Theory of Genius" even though it's exactly about that. Vector search alone misses exact phrases when the embedding is diluted by surrounding text. RRF fusion gets both right. Multi-query expansion catches phrasings you didn't think of.
 
-## Database schema
+## Database Schema
 
-10 tables in Postgres + pgvector:
+The core schema is shared across SQLite/local and managed Postgres engines:
 
 ```
 pages                    The core content table
   slug (UNIQUE)          e.g. "concepts/do-things-that-dont-scale"
   type                   person, company, deal, yc, civic, project, concept, source, media
   title, compiled_truth, timeline
-  frontmatter (JSONB)    Arbitrary metadata
-  search_vector          Trigger-based tsvector (title + compiled_truth + timeline + timeline_entries)
+  frontmatter            Arbitrary metadata (JSON text in SQLite, JSONB in Postgres)
+  search index           FTS5 in SQLite, tsvector in Postgres
   content_hash           SHA-256 for import idempotency
 
 content_chunks           Chunked content with embeddings
@@ -584,7 +593,6 @@ content_chunks           Chunked content with embeddings
   chunk_text             The chunk content
   chunk_source           'compiled_truth' or 'timeline'
   embedding (vector)     768-dim from nomic-embed-text
-  HNSW index             Cosine similarity search
 
 links                    Cross-references between pages
   from_page_id, to_page_id
@@ -599,18 +607,17 @@ page_versions            Snapshot history for compiled_truth
   compiled_truth, frontmatter, snapshot_at
 
 raw_data                 Sidecar JSON from external APIs
-  page_id, source, data (JSONB)
-
-files                    Binary attachments in Supabase Storage
-  page_slug (FK)         Links to pages (ON UPDATE CASCADE)
-  storage_path, content_hash, mime_type, metadata (JSONB)
+  page_id, source, data
 
 ingest_log               Audit trail of import/ingest operations
 
 config                   Brain-level settings (embedding model, chunk strategy, sync state)
 ```
 
-Indexes: B-tree on slug/type, GIN on frontmatter/search_vector, HNSW on embeddings, pg_trgm on title for fuzzy slug resolution.
+Engine-specific storage notes:
+
+- **SQLite/local:** JSON payloads are stored as text, keyword search uses FTS5, embeddings are stored in the DB and recalled with a local cosine scan, and binary files stay in your filesystem or git repo.
+- **Managed Postgres:** JSON payloads use JSONB, keyword search uses tsvector/GIN, semantic search uses pgvector/HNSW, fuzzy slug matching uses pg_trgm, and optional file metadata can point at managed object storage.
 
 ## Chunking
 
@@ -637,7 +644,7 @@ PAGES
   mbrain list [--type T] [--tag T] [-n N]   List pages with filters
 
 SEARCH
-  mbrain search <query>                     Keyword search (tsvector)
+  mbrain search <query>                     Keyword search (engine-native)
   mbrain query <question>                   Hybrid search (vector + keyword + RRF + expansion)
 
 IMPORT/EXPORT
@@ -670,7 +677,7 @@ TIMELINE
   mbrain timeline-add <slug> <date> <text>  Add timeline entry
 
 ADMIN
-  mbrain doctor [--json]                    Health checks (pgvector, RLS, schema, embeddings)
+  mbrain doctor [--json]                    Health checks (engine, schema, embeddings, local/managed capabilities)
   mbrain stats                              Brain statistics
   mbrain health                             Health dashboard (embed coverage, stale, orphans)
   mbrain history <slug>                     Page version history
@@ -701,7 +708,7 @@ Fat markdown files that tell AI agents HOW to use mbrain. No skill logic in the 
 | **enrich** | Enrich pages from external APIs. Raw data stored separately, distilled highlights go to compiled truth. |
 | **briefing** | Daily briefing: today's meetings with participant context, active deals with deadlines, time-sensitive threads, recent changes. |
 | **migrate** | Universal migration from Obsidian (wikilinks to mbrain links), Notion (stripped UUIDs), Logseq (block refs), plain markdown, CSV, JSON, Roam. |
-| **setup** | Set up MBrain from scratch: auto-provision Supabase via CLI, AGENTS.md injection, import, sync. Target TTHW < 2 min. |
+| **setup** | Set up MBrain from scratch: local SQLite init, optional managed Postgres, AGENTS.md injection, import, sync. Target TTHW < 2 min. |
 
 ## Engine Architecture
 
@@ -715,18 +722,16 @@ CLI / MCP Server
      +--------+--------+
      |                  |
 PostgresEngine     SQLiteEngine
-  (ships v0)       (designed, community PRs welcome)
-     |
-Supabase Pro ($25/mo)
-  Postgres + pgvector + pg_trgm
-  connection pooling via Supavisor
+  managed scale     local/offline
+  pgvector          FTS5 + stored vectors
+  pg_trgm           single-file brain.db
 ```
 
 Embedding, chunking, and search fusion are engine-agnostic. Only raw keyword search (`searchKeyword`) and raw vector search (`searchVector`) are engine-specific. RRF fusion, multi-query expansion, and 4-layer dedup run above the engine on `SearchResult[]` arrays.
 
-## Storage estimates
+## Managed Postgres storage estimates
 
-For a brain with ~7,500 pages:
+For a brain with ~7,500 pages on managed Postgres + pgvector:
 
 | Component | Size |
 |-----------|------|
@@ -746,20 +751,22 @@ Initial embedding footprint: ~67MB for 7,500 pages at 768 dimensions. Runtime co
 
 - **[MBRAIN_SKILLPACK.md](docs/MBRAIN_SKILLPACK.md)** -- **Start here for agents.** Reference architecture for production agents: brain-agent loop, entity detection, enrichment pipeline, meeting ingestion, cron schedule
 - [MBRAIN_RECOMMENDED_SCHEMA.md](docs/MBRAIN_RECOMMENDED_SCHEMA.md) -- The recommended brain schema: MECE directories, compiled truth + timeline, enrichment pipelines, resolver decision tree
-- [MBRAIN_V0.md](docs/MBRAIN_V0.md) -- Full product spec, all architecture decisions, every option considered
-- [ENGINES.md](docs/ENGINES.md) -- Pluggable engine interface, capability matrix, how to add backends
-- [SQLITE_ENGINE.md](docs/SQLITE_ENGINE.md) -- Complete SQLite engine plan with schema, FTS5, vector search options
+- [ENGINES.md](docs/ENGINES.md) -- Pluggable engine interface, shipped SQLite behavior, capability matrix, how to add backends
+- [local-offline.md](docs/local-offline.md) -- SQLite/local setup, MCP, embeddings, verification, and expected managed-only gaps
 - [MBRAIN_VERIFY.md](docs/MBRAIN_VERIFY.md) -- Installation verification runbook: schema, live sync, embeddings, brain-first lookup
+- [MBRAIN_V0.md](docs/MBRAIN_V0.md) -- Historical v0 spec; useful context, not the current SQLite-first operating guide
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Run `bun test` for unit tests. For E2E tests
-against real Postgres+pgvector: `docker compose -f docker-compose.test.yml up -d` then
+See [CONTRIBUTING.md](CONTRIBUTING.md). For local/default verification, run `bun test`
+and `bun run test:e2e:sqlite`.
+
+For optional managed Postgres E2E coverage: `docker compose -f docker-compose.test.yml up -d` then
 `DATABASE_URL=postgresql://postgres:postgres@localhost:5434/mbrain_test bun run test:e2e`.
 
 Welcome PRs for:
 
-- SQLite engine implementation
+- Source Record and Procedure Registry completeness work
 - New enrichment API integrations
 - Performance optimizations
 - Docker Compose for self-hosted Postgres
