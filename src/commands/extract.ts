@@ -295,6 +295,13 @@ export interface ExtractOpts {
   dryRun?: boolean;
   /** Emit JSON (progress to stderr, result to stdout) instead of human text. */
   jsonMode?: boolean;
+  /**
+   * Incremental mode: only extract from these specific slugs.
+   * When provided, skips the full directory walk and reads only the
+   * files corresponding to these slugs. Massive perf win on large brains.
+   * Pass undefined or omit for a full walk (CLI / first-run path).
+   */
+  slugs?: string[];
 }
 
 /**
@@ -315,6 +322,21 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
   const jsonMode = !!opts.jsonMode;
   const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
 
+  // Incremental path: if specific slugs provided, only extract from those files.
+  // This is the cycle path — sync tells us what changed, we only re-extract those.
+  if (opts.slugs !== undefined) {
+    if (opts.slugs.length === 0) {
+      // Nothing changed — skip entirely.
+      return result;
+    }
+    const r = await extractForSlugs(engine, opts.dir, opts.slugs, opts.mode, dryRun, jsonMode);
+    result.links_created = r.links_created;
+    result.timeline_entries_created = r.timeline_created;
+    result.pages_processed = r.pages;
+    return result;
+  }
+
+  // Full walk path: CLI `gbrain extract` or first-run.
   if (opts.mode === 'links' || opts.mode === 'all') {
     const r = await extractLinksFromDir(engine, opts.dir, dryRun, jsonMode);
     result.links_created = r.created;
@@ -409,6 +431,118 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
   } else if (!dryRun) {
     console.log(`\nDone: ${result.links_created} links, ${result.timeline_entries_created} timeline entries from ${result.pages_processed} pages`);
   }
+}
+
+/**
+ * Incremental extract: process only the specified slugs.
+ *
+ * Instead of walking 54K+ files, reads only the files that sync says changed.
+ * Still needs the full slug set for link resolution (resolveSlug needs to know
+ * all valid targets), but that's a single readdir, not 54K readFileSync calls.
+ *
+ * Combines links + timeline extraction in a single pass over each file —
+ * the full-walk path reads every file TWICE (once for links, once for timeline).
+ */
+async function extractForSlugs(
+  engine: BrainEngine,
+  brainDir: string,
+  slugs: string[],
+  mode: 'links' | 'timeline' | 'all',
+  dryRun: boolean,
+  jsonMode: boolean,
+): Promise<{ links_created: number; timeline_created: number; pages: number }> {
+  // Build the full slug set for link resolution (fast: just readdir, no file reads)
+  const allFiles = walkMarkdownFiles(brainDir);
+  const allSlugs = new Set(allFiles.map(f => f.relPath.replace('.md', '')));
+
+  const doLinks = mode === 'links' || mode === 'all';
+  const doTimeline = mode === 'timeline' || mode === 'all';
+
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('extract.incremental', slugs.length);
+
+  let linksCreated = 0;
+  let timelineCreated = 0;
+  let pagesProcessed = 0;
+
+  const linkBatch: LinkBatchInput[] = [];
+  const timelineBatch: TimelineBatchInput[] = [];
+
+  async function flushLinks() {
+    if (linkBatch.length === 0) return;
+    try {
+      linksCreated += await engine.addLinksBatch(linkBatch);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!jsonMode) console.error(`  link batch error (${linkBatch.length} rows lost): ${msg}`);
+    } finally {
+      linkBatch.length = 0;
+    }
+  }
+
+  async function flushTimeline() {
+    if (timelineBatch.length === 0) return;
+    try {
+      timelineCreated += await engine.addTimelineEntriesBatch(timelineBatch);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!jsonMode) console.error(`  timeline batch error (${timelineBatch.length} rows lost): ${msg}`);
+    } finally {
+      timelineBatch.length = 0;
+    }
+  }
+
+  for (const slug of slugs) {
+    const relPath = slug + '.md';
+    const fullPath = join(brainDir, relPath);
+
+    try {
+      if (!existsSync(fullPath)) continue; // deleted file — sync already handled removal
+      const content = readFileSync(fullPath, 'utf-8');
+
+      // Links
+      if (doLinks) {
+        const links = await extractLinksFromFile(content, relPath, allSlugs);
+        for (const link of links) {
+          if (dryRun) {
+            if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
+            linksCreated++;
+          } else {
+            linkBatch.push(link);
+            if (linkBatch.length >= BATCH_SIZE) await flushLinks();
+          }
+        }
+      }
+
+      // Timeline
+      if (doTimeline) {
+        const entries = extractTimelineFromContent(content, slug);
+        for (const entry of entries) {
+          if (dryRun) {
+            if (!jsonMode) console.log(`  ${entry.slug}: ${entry.date} — ${entry.summary}`);
+            timelineCreated++;
+          } else {
+            timelineBatch.push({ slug: entry.slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail });
+            if (timelineBatch.length >= BATCH_SIZE) await flushTimeline();
+          }
+        }
+      }
+
+      pagesProcessed++;
+    } catch { /* skip unreadable */ }
+    progress.tick(1);
+  }
+
+  await flushLinks();
+  await flushTimeline();
+  progress.finish();
+
+  if (!jsonMode) {
+    const label = dryRun ? '(dry run) would create' : 'created';
+    console.log(`Incremental extract: ${label} ${linksCreated} link(s), ${timelineCreated} timeline entries from ${pagesProcessed}/${slugs.length} page(s)`);
+  }
+
+  return { links_created: linksCreated, timeline_created: timelineCreated, pages: pagesProcessed };
 }
 
 async function extractLinksFromDir(

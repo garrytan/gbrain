@@ -416,12 +416,18 @@ async function runPhaseBacklinks(brainDir: string, dryRun: boolean): Promise<Pha
   }
 }
 
+/** Extended sync result that also carries the changed slug list for downstream phases. */
+interface SyncPhaseResult extends PhaseResult {
+  /** Slugs that sync added or modified. Used by extract for incremental processing. */
+  pagesAffected?: string[];
+}
+
 async function runPhaseSync(
   engine: BrainEngine,
   brainDir: string,
   dryRun: boolean,
   pull: boolean,
-): Promise<PhaseResult> {
+): Promise<SyncPhaseResult> {
   try {
     const { performSync } = await import('../commands/sync.ts');
     const result = await performSync(engine, {
@@ -448,6 +454,7 @@ async function runPhaseSync(
         syncStatus: result.status,
         dryRun,
       },
+      pagesAffected: result.pagesAffected,
     };
   } catch (e) {
     return {
@@ -465,6 +472,7 @@ async function runPhaseExtract(
   engine: BrainEngine,
   brainDir: string,
   dryRun: boolean,
+  changedSlugs?: string[],
 ): Promise<PhaseResult> {
   try {
     const { runExtractCore } = await import('../commands/extract.ts');
@@ -480,15 +488,29 @@ async function runPhaseExtract(
         details: { dryRun: true, reason: 'no_dry_run_support' },
       };
     }
-    const result = await runExtractCore(engine, { mode: 'all', dir: brainDir });
+    // Incremental path: if sync told us which slugs changed, only extract those.
+    // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
+    const result = await runExtractCore(engine, {
+      mode: 'all',
+      dir: brainDir,
+      slugs: changedSlugs,  // undefined = full walk (first run / manual)
+    });
     const linksCreated = result?.links_created ?? 0;
     const timelineCreated = result?.timeline_entries_created ?? 0;
+    const incremental = changedSlugs !== undefined;
     return {
       phase: 'extract',
       status: 'ok',
       duration_ms: 0,
-      summary: `${linksCreated} link(s), ${timelineCreated} timeline entries`,
-      details: { linksCreated, timelineCreated, pages_processed: result?.pages_processed ?? 0 },
+      summary: incremental
+        ? `${linksCreated} link(s), ${timelineCreated} timeline entries (incremental: ${changedSlugs.length} slugs)`
+        : `${linksCreated} link(s), ${timelineCreated} timeline entries`,
+      details: {
+        linksCreated, timelineCreated,
+        pages_processed: result?.pages_processed ?? 0,
+        incremental,
+        ...(incremental ? { slugs_targeted: changedSlugs.length } : {}),
+      },
     };
   } catch (e) {
     return {
@@ -663,6 +685,8 @@ export async function runCycle(
     }
 
     // ── Phase 3: sync ───────────────────────────────────────────
+    // Track which slugs sync touched so extract can run incrementally.
+    let syncPagesAffected: string[] | undefined;
     if (phases.includes('sync')) {
       if (!engine) {
         phaseResults.push({
@@ -676,6 +700,8 @@ export async function runCycle(
         progress.start('cycle.sync');
         const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, opts.brainDir, dryRun, pull));
         result.duration_ms = duration_ms;
+        // Capture changed slugs for incremental extract.
+        syncPagesAffected = (result as SyncPhaseResult).pagesAffected;
         phaseResults.push(result);
         progress.finish();
       }
@@ -693,8 +719,11 @@ export async function runCycle(
           details: { reason: 'no_database' },
         });
       } else {
+        // Pass changed slugs from sync for incremental extract.
+        // If sync didn't run (phases exclude it) or failed, syncPagesAffected
+        // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, opts.brainDir, dryRun));
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, opts.brainDir, dryRun, syncPagesAffected));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
