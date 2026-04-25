@@ -23,6 +23,48 @@ import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } f
 
 type PGLiteDB = PGlite;
 
+/**
+ * Search-path query timeout — matches the Postgres engine's
+ * `SET LOCAL statement_timeout = '8s'` wrapper on `searchKeyword` /
+ * `searchVector` (see `postgres-engine.ts`).
+ *
+ * PGLite runs Postgres in WASM in the same Node/Bun event loop. A SET LOCAL
+ * is a no-op across `.query()` boundaries on PGLite (each call auto-commits),
+ * so we approximate the same protection at the JS layer with Promise.race.
+ *
+ * Caveat: the WASM query keeps running to completion in the background even
+ * after we reject. This frees the awaiting caller (so the MCP session /
+ * autopilot daemon does not hang indefinitely on a pathological query) but
+ * does not actually cancel the underlying work. A true cancel requires
+ * PGLite to expose a cancel token upstream. Track:
+ *   https://github.com/electric-sql/pglite/issues (no cancel API as of 0.4.x)
+ */
+const SEARCH_QUERY_TIMEOUT_MS = 8000;
+
+async function queryWithTimeout<T>(
+  db: PGlite,
+  sql: string,
+  params: unknown[],
+  timeoutMs: number,
+  label: string,
+): Promise<{ rows: T[] }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`pglite ${label} query exceeded ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  try {
+    return (await Promise.race([
+      db.query(sql, params),
+      timeoutPromise,
+    ])) as { rows: T[] };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export class PGLiteEngine implements BrainEngine {
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
@@ -221,7 +263,12 @@ export class PGLiteEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
-    const { rows } = await this.db.query(
+    // Search timeout — parity with postgres-engine.ts searchKeyword.
+    // Prevents a pathological tsquery or large corpus from freezing the
+    // single-threaded PGLite WASM event loop, which would otherwise hang
+    // the MCP session and any in-process autopilot / jobs worker.
+    const { rows } = await queryWithTimeout<Record<string, unknown>>(
+      this.db,
       `SELECT
         p.slug, p.id as page_id, p.title, p.type, p.source_id,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
@@ -235,10 +282,12 @@ export class PGLiteEngine implements BrainEngine {
       ORDER BY score DESC
       LIMIT $2
       OFFSET $3`,
-      [query, limit, offset]
+      [query, limit, offset],
+      SEARCH_QUERY_TIMEOUT_MS,
+      'searchKeyword',
     );
 
-    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+    return rows.map(rowToSearchResult);
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
@@ -251,7 +300,10 @@ export class PGLiteEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
-    const { rows } = await this.db.query(
+    // Search timeout — parity with postgres-engine.ts searchVector. See
+    // searchKeyword above for rationale.
+    const { rows } = await queryWithTimeout<Record<string, unknown>>(
+      this.db,
       `SELECT
         p.slug, p.id as page_id, p.title, p.type, p.source_id,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
@@ -265,10 +317,12 @@ export class PGLiteEngine implements BrainEngine {
       ORDER BY cc.embedding <=> $1::vector
       LIMIT $2
       OFFSET $3`,
-      [vecStr, limit, offset]
+      [vecStr, limit, offset],
+      SEARCH_QUERY_TIMEOUT_MS,
+      'searchVector',
     );
 
-    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+    return rows.map(rowToSearchResult);
   }
 
   async getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>> {
