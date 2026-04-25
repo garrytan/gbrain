@@ -17,6 +17,13 @@ tools:
   - get_backlinks
   - sync_brain
 mutating: true
+writes_pages: true
+writes_to:
+  - people/
+  - companies/
+  - deals/
+  - concepts/
+  - meetings/
 ---
 
 # Brain Operations — The Ambient Context Layer

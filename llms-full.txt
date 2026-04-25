@@ -115,7 +115,10 @@ strict behavior when unset.
 - `src/core/storage.ts` — Pluggable storage interface (S3, Supabase Storage, local)
 - `src/core/supabase-admin.ts` — Supabase admin API (project discovery, pgvector check)
 - `src/core/file-resolver.ts` — File resolution with fallback chain (local -> .redirect.yaml -> .redirect -> .supabase)
-- `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided)
+- `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided). v0.19.0 adds `code.ts` — tree-sitter-based semantic chunker for 29 languages with embedded-asset WASMs (`src/assets/wasm/`), `@dqbd/tiktoken` cl100k_base tokenizer, small-sibling merging. `CHUNKER_VERSION` constant folded into `importCodeFile`'s `content_hash` so chunker shape changes force clean re-chunks across releases.
+- `src/core/errors.ts` (v0.19.0) — `StructuredAgentError` + `buildError` + `serializeError`. Every new v0.19.0 agent-facing surface (code-def, code-refs, usage errors) uses this envelope; matches v0.17.0 `CycleReport.PhaseResult.error` shape.
+- `src/assets/wasm/` (v0.19.0) — 36 tree-sitter grammar WASMs + tree-sitter runtime. Committed to the repo so `bun --compile` embeds them deterministically via `import path from ... with { type: 'file' }`. The CI guard `scripts/check-wasm-embedded.sh` fails the build if the compiled binary ever silently falls through to recursive chunks.
+- `src/commands/code-def.ts` + `src/commands/code-refs.ts` (v0.19.0) — symbol definition + references lookup. Query `content_chunks.symbol_name` or chunk_text ILIKE with `page_kind='code'` filter. Auto-JSON when stdout is not a TTY (gh-CLI convention). Bypass the standard `searchKeyword` `DISTINCT ON (slug)` collapse so multiple call-sites from the same file surface.
 - `src/core/search/` — Hybrid search: vector + keyword + RRF + multi-query expansion + dedup
 - `src/core/search/intent.ts` — Query intent classifier (entity/temporal/event/general → auto-selects detail level)
 - `src/core/search/eval.ts` — Retrieval eval harness: P@k, R@k, MRR, nDCG@k metrics + runEval() orchestrator
@@ -123,7 +126,14 @@ strict behavior when unset.
 - `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff
 - `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects. v0.14.1: `CROSS_CUTTING_PATTERNS.conventions` is an array (notability gate accepts both `conventions/quality.md` and `_brain-filing-rules.md`). New `extractDelegationTargets()` parses `> **Convention:**`, `> **Filing rule:**`, and inline backtick references. DRY suppression is proximity-based via `DRY_PROXIMITY_LINES = 40`.
 - `src/core/repo-root.ts` — Shared `findRepoRoot(startDir?)` (v0.16.4): walks up from `startDir` (default `process.cwd()`) looking for `skills/RESOLVER.md`. Zero-dependency module imported by both `doctor.ts` and `check-resolvable.ts`. Parameterized `startDir` makes tests hermetic.
-- `src/commands/check-resolvable.ts` — Standalone CLI wrapper (v0.16.4) over `checkResolvable()`. Exports `parseFlags`, `resolveSkillsDir`, `DEFERRED`, `runCheckResolvable`. Exit rule: **1 on any issue (warnings OR errors)**, stricter than doctor's `ok` flag — honors README:259. Stable JSON envelope `{ok, skillsDir, report, autoFix, deferred, error, message}` — same shape on success and error paths. `--fix` path runs `autoFixDryViolations` BEFORE `checkResolvable` (same ordering as doctor). `deferred[]` array surfaces pending Checks 5 (trigger routing eval) and 6 (brain filing) with issue URLs. `scripts/skillify-check.ts` subprocess-calls `gbrain check-resolvable --json` (cached per process) and fails loud on binary-missing — no silent false-pass.
+- `src/commands/check-resolvable.ts` — Standalone CLI wrapper (v0.16.4) over `checkResolvable()`. Exports `parseFlags`, `resolveSkillsDir`, `DEFERRED`, `runCheckResolvable`. Exit rule: **1 on any issue (warnings OR errors)**, stricter than doctor's `ok` flag — honors README:259. Stable JSON envelope `{ok, skillsDir, report, autoFix, deferred, error, message}` — same shape on success and error paths. `--fix` path runs `autoFixDryViolations` BEFORE `checkResolvable` (same ordering as doctor). `scripts/skillify-check.ts` subprocess-calls `gbrain check-resolvable --json` (cached per process) and fails loud on binary-missing — no silent false-pass. **v0.19:** AGENTS.md workspaces now resolve natively (see `src/core/resolver-filenames.ts`) — gbrain inspects the 107-skill OpenClaw deployment whether the routing file is `RESOLVER.md` or `AGENTS.md`. `DEFERRED[]` is empty — Checks 5 + 6 shipped as real code, not issue URLs.
+- `src/core/resolver-filenames.ts` (v0.19) — central list of accepted routing filenames (`RESOLVER.md`, `AGENTS.md`). Shared by `findRepoRoot`, `check-resolvable`, and skillpack install so every code path walks the same fallback chain.
+- `src/commands/skillify.ts` + `src/core/skillify/{generator,templates}.ts` (v0.19) — `gbrain skillify scaffold <name>` creates all stubs for a new skill in one command: SKILL.md, script, tests, routing-eval.jsonl, resolver entry, filing-rules pointer. `gbrain skillify check <script>` runs the 10-step checklist (LLM evals, routing evals, check-resolvable gate, filing audit) against a candidate skill before it lands.
+- `src/commands/skillify-check.ts` (v0.19) — `gbrain skillpack-check` agent-readable health report. Exit 0/1/2 for CI pipeline gating; JSON for debugging. Wraps `check-resolvable --json`, `doctor --json`, and migration ledger into one payload so agents can decide whether a human action is required.
+- `src/commands/skillpack.ts` + `src/core/skillpack/{bundle,installer}.ts` (v0.19) — `gbrain skillpack install` drops gbrain's curated 25-skill bundle into a host workspace, managed-block style. Never clobbers local edits; tracks a skill manifest so subsequent `install --update` diffs cleanly. Bundle builder (`skillpack/bundle.ts`) packages the set from `skills/` into a versioned payload.
+- `src/core/skill-manifest.ts` (v0.19) — parser for `skill-manifest.json` records. Used by skillpack installer to detect drift between the shipped bundle and the user's local edits, so updates merge instead of overwriting.
+- `src/commands/routing-eval.ts` + `src/core/routing-eval.ts` (v0.19) — `gbrain routing-eval` catches user phrasings that route to the wrong skill. Reads `skills/<name>/routing-eval.jsonl` fixtures (`{intent, expected_skill, ambiguous_with?}`). Structural layer runs in `check-resolvable` by default (zero API cost); `--llm` opts into a Haiku tie-break layer for CI. False positives surface before users hit them.
+- `src/core/filing-audit.ts` + `skills/_brain-filing-rules.json` (v0.19) — Check 6 of `check-resolvable`. Parses new `writes_pages:` / `writes_to:` frontmatter on skills and audits their filing claims against the filing-rules JSON. Warning-only in v0.19, upgrades to error in v0.20.
 - `src/core/dry-fix.ts` — `gbrain doctor --fix` engine. `autoFixDryViolations(fixes, {dryRun})` rewrites inlined rules to `> **Convention:** see [path](path).` callouts via three shape-aware expanders (bullet / blockquote / paragraph). Five guards: working-tree-dirty (`getWorkingTreeStatus()` returns 3-state `'clean' | 'dirty' | 'not_a_repo'`), no-git-backup, inside-code-fence, already-delegated (40-line proximity, consistent with detector), ambiguous-multi-match, block-is-callout. `execFileSync` array args (no shell — no injection surface). EOF newline preserved.
 - `src/core/backoff.ts` — Adaptive load-aware throttling: CPU/memory checks, exponential backoff, active hours multiplier
 - `src/core/fail-improve.ts` — Deterministic-first, LLM-fallback loop with JSONL failure logging and auto-test generation
@@ -134,12 +144,13 @@ strict behavior when unset.
 - `src/commands/graph-query.ts` — `gbrain graph-query <slug> [--type T] [--depth N] [--direction in|out|both]`: typed-edge relationship traversal (renders indented tree)
 - `src/core/link-extraction.ts` — shared library for the v0.12.0 graph layer. extractEntityRefs (canonical, replaces backlinks.ts duplicate) matches both `[Name](people/slug)` markdown links and Obsidian `[[people/slug|Name]]` wikilinks as of v0.12.3. extractPageLinks, inferLinkType heuristics (attended/works_at/invested_in/founded/advises/source/mentions), parseTimelineEntries, isAutoLinkEnabled config helper. `DIR_PATTERN` covers `people`, `companies`, `deals`, `topics`, `concepts`, `projects`, `entities`, `tech`, `finance`, `personal`, `openclaw`. Used by extract.ts, operations.ts auto-link post-hook, and backlinks.ts.
 - `src/core/minions/` — Minions job queue: BullMQ-inspired, Postgres-native (queue, worker, backoff, types, protected-names, quiet-hours, stagger, handlers/shell).
-- `src/core/minions/queue.ts` — MinionQueue class (submit, claim, complete, fail, stall detection, parent-child, depth/child-cap, per-job timeouts, cascade-kill, attachments, idempotency keys, child_done inbox, removeOnComplete/Fail). `add()` takes a 4th `trusted` arg (separate from `opts` to prevent spread leakage); protected names in `PROTECTED_JOB_NAMES` require `{allowProtectedSubmit: true}` and the check runs trim-normalized (whitespace-bypass safe). v0.14.1 #219: `add()` plumbs `max_stalled` through with a `[1, 100]` clamp; omitted values let the schema DEFAULT (5) kick in.
+- `src/core/minions/queue.ts` — MinionQueue class (submit, claim, complete, fail, stall detection, parent-child, depth/child-cap, per-job timeouts, cascade-kill, attachments, idempotency keys, child_done inbox, removeOnComplete/Fail). `add()` takes a 4th `trusted` arg (separate from `opts` to prevent spread leakage); protected names in `PROTECTED_JOB_NAMES` require `{allowProtectedSubmit: true}` and the check runs trim-normalized (whitespace-bypass safe). v0.14.1 #219: `add()` plumbs `max_stalled` through with a `[1, 100]` clamp; omitted values let the schema DEFAULT (5) kick in. v0.19.0: `handleWallClockTimeouts(lockDurationMs)` is Layer 3 kill shot for jobs where `FOR UPDATE SKIP LOCKED` stall detection and the timeout sweep both fail to evict (wedged worker holding a row lock via a pending transaction). v0.19.1: `maxWaiting` coalesce path now uses `pg_advisory_xact_lock` keyed on `(name, queue)` to serialize concurrent submits for the same key, and filters on `queue` in addition to `name` so cross-queue same-name jobs don't suppress each other.
 - `src/core/minions/worker.ts` — MinionWorker class (handler registry, lock renewal, graceful shutdown, timeout safety net). v0.14.0 abort-path fix: aborted jobs now call `failJob` with reason (`timeout`/`cancel`/`lock-lost`/`shutdown`) instead of returning silently. `shutdownAbort` (instance field) fires on process SIGTERM/SIGINT and propagates to `ctx.shutdownSignal` — shell handler listens to it; non-shell handlers don't.
 - `src/core/minions/types.ts` — `MinionJobInput` + `MinionJobStatus` + handler context types. `MinionJobInput.max_stalled` (new in v0.14.1) is optional; omitted values let the schema DEFAULT (5) kick in, provided values are clamped to `[1, 100]`.
 - `src/core/minions/protected-names.ts` — side-effect-free constant module exporting `PROTECTED_JOB_NAMES` + `isProtectedJobName()`. Kept pure so queue core can import without loading handler modules.
 - `src/core/minions/handlers/shell.ts` — `shell` job handler. Spawns `/bin/sh -c cmd` (absolute path, PATH-override-safe) or `argv[0] argv[1..]` (no shell). Env allowlist: `PATH, HOME, USER, LANG, TZ, NODE_ENV` + caller `env:` overrides. UTF-8-safe stdout/stderr tail via `string_decoder.StringDecoder`. Abort (either `ctx.signal` or `ctx.shutdownSignal`) fires SIGTERM → 5s grace → SIGKILL on child. Requires `GBRAIN_ALLOW_SHELL_JOBS=1` on worker (gated by `registerBuiltinHandlers`).
 - `src/core/minions/handlers/shell-audit.ts` — per-submission JSONL audit trail at `~/.gbrain/audit/shell-jobs-YYYY-Www.jsonl` (ISO-week rotation; override via `GBRAIN_AUDIT_DIR`). Best-effort: `mkdirSync(recursive)` + `appendFileSync`; failures logged to stderr, submission not blocked. Logs cmd (first 80 chars) or argv (JSON array). Never logs env values.
+- `src/core/minions/backpressure-audit.ts` (v0.19.1) — sibling of shell-audit.ts for `maxWaiting` coalesce events. JSONL at `~/.gbrain/audit/backpressure-YYYY-Www.jsonl`. Fires one line per coalesce with `(queue, name, waiting_count, max_waiting, returned_job_id, ts)`. Closes the silent-drop vector the v0.19.0 maxWaiting guard introduced.
 - `src/core/minions/handlers/subagent.ts` (v0.15) — LLM-loop handler. Two-phase tool persistence (pending → complete/failed), replay reconciliation for mid-dispatch crashes, dual-signal abort (`ctx.signal` + `ctx.shutdownSignal`), Anthropic prompt caching on system + tool defs. `makeSubagentHandler({engine, client?, ...})` factory; `MessagesClient` is an injectable interface the real SDK implements structurally. Throws `RateLeaseUnavailableError` (renewable) when rate-lease capacity is full.
 - `src/core/minions/handlers/subagent-aggregator.ts` (v0.15) — `subagent_aggregator` handler. Claims AFTER all children resolve (queue changes guarantee every terminal child posts a `child_done` inbox message with outcome). Reads inbox via `ctx.readInbox()`, builds deterministic mixed-outcome markdown summary. No LLM call in v0.15.
 - `src/core/minions/handlers/subagent-audit.ts` (v0.15) — JSONL audit + heartbeat writer at `~/.gbrain/audit/subagent-jobs-YYYY-Www.jsonl`. Events: `submission` (one line per submit) + `heartbeat` (per turn boundary: `llm_call_started | llm_call_completed | tool_called | tool_result | tool_failed`). Never logs prompts or tool inputs. `readSubagentAuditForJob(jobId, {sinceIso})` is the readback path for `gbrain agent logs`.
@@ -161,7 +172,7 @@ strict behavior when unset.
 - `src/commands/migrations/` — TS migration registry (compiled into the binary; no filesystem walk of `skills/migrations/*.md` needed at runtime). `index.ts` lists migrations in semver order. `v0_11_0.ts` = Minions adoption orchestrator (8 phases). `v0_12_0.ts` = Knowledge Graph auto-wire orchestrator (5 phases: schema → config check → backfill links → backfill timeline → verify). `phaseASchema` has a 600s timeout (bumped from 60s in v0.12.1 for duplicate-heavy brains). `v0_12_2.ts` = JSONB double-encode repair orchestrator (4 phases: schema → repair-jsonb → verify → record). `v0_14_0.ts` = shell-jobs + autopilot cooperative (2 phases: schema ALTER minion_jobs.max_stalled SET DEFAULT 3 — superseded by v0.14.3's schema-level DEFAULT 5 + UPDATE backfill; pending-host-work ping for skills/migrations/v0.14.0.md). All orchestrators are idempotent and resumable from `partial` status. As of v0.14.2 (Bug 3), the RUNNER owns all ledger writes — orchestrators return `OrchestratorResult` and `apply-migrations.ts` persists a canonical `{version, status, phases}` shape after return. Orchestrators no longer call `appendCompletedMigration` directly. `statusForVersion` prefers `complete` over `partial` (never regresses). 3 consecutive partials → wedged → `--force-retry <version>` writes a `'retry'` reset marker. v0.14.3 (fix wave) ships schema-only migrations v14 (`pages_updated_at_index`) + v15 (`minion_jobs_max_stalled_default_5` with UPDATE backfill) via the `MIGRATIONS` array in `src/core/migrate.ts` — no orchestrator phases needed.
 - `src/commands/repair-jsonb.ts` — `gbrain repair-jsonb [--dry-run] [--json]`: rewrites `jsonb_typeof='string'` rows in place across 5 affected columns (pages.frontmatter, raw_data.data, ingest_log.pages_updated, files.metadata, page_versions.frontmatter). Fixes v0.12.0 double-encode bug on Postgres; PGLite no-ops. Idempotent.
 - `src/commands/orphans.ts` — `gbrain orphans [--json] [--count] [--include-pseudo]`: surfaces pages with zero inbound wikilinks, grouped by domain. Auto-generated/raw/pseudo pages filtered by default. Also exposed as `find_orphans` MCP operation. Shipped in v0.12.3 (contributed by @knee5).
-- `src/commands/doctor.ts` — `gbrain doctor [--json] [--fast] [--fix] [--dry-run] [--index-audit]`: health checks. v0.12.3 added `jsonb_integrity` + `markdown_body_completeness` reliability checks. v0.14.1: `--fix` delegates inlined cross-cutting rules to `> **Convention:** see [path](path).` callouts (pipes DRY violations into `src/core/dry-fix.ts`); `--fix --dry-run` previews without writing. v0.14.2: `schema_version` check fails loudly when `version=0` (migrations never ran — the #218 `bun install -g` signature) and routes users to `gbrain apply-migrations --yes`; new opt-in `--index-audit` flag (Postgres-only) reports zero-scan indexes from `pg_stat_user_indexes` (informational only, no auto-drop). v0.15.2: every DB check is wrapped in a progress phase; `markdown_body_completeness` runs under a 1s heartbeat timer so 10+ min scans are observable on 50K-page brains. Fix hints point at `gbrain repair-jsonb`, `gbrain sync --force`, and `gbrain apply-migrations`.
+- `src/commands/doctor.ts` — `gbrain doctor [--json] [--fast] [--fix] [--dry-run] [--index-audit]`: health checks. v0.12.3 added `jsonb_integrity` + `markdown_body_completeness` reliability checks. v0.14.1: `--fix` delegates inlined cross-cutting rules to `> **Convention:** see [path](path).` callouts (pipes DRY violations into `src/core/dry-fix.ts`); `--fix --dry-run` previews without writing. v0.14.2: `schema_version` check fails loudly when `version=0` (migrations never ran — the #218 `bun install -g` signature) and routes users to `gbrain apply-migrations --yes`; new opt-in `--index-audit` flag (Postgres-only) reports zero-scan indexes from `pg_stat_user_indexes` (informational only, no auto-drop). v0.15.2: every DB check is wrapped in a progress phase; `markdown_body_completeness` runs under a 1s heartbeat timer so 10+ min scans are observable on 50K-page brains. v0.19.1 added `queue_health` (Postgres-only) with two subchecks: stalled-forever active jobs (started_at > 1h) and waiting-depth-per-name > threshold (default 10, override via `GBRAIN_QUEUE_WAITING_THRESHOLD`). Worker-heartbeat subcheck intentionally deferred to follow-up B7 because it needs a `minion_workers` table to produce ground-truth signal. Fix hints point at `gbrain repair-jsonb`, `gbrain sync --force`, `gbrain apply-migrations`, and `gbrain jobs get/cancel <id>`.
 - `src/core/migrate.ts` — schema-migration runner. Owns the `MIGRATIONS` array (source of truth for schema DDL). v0.14.2 extended the `Migration` interface with `sqlFor?: { postgres?, pglite? }` (engine-specific SQL overrides `sql`) and `transaction?: boolean` (set to false for `CREATE INDEX CONCURRENTLY`, which Postgres refuses inside a transaction; ignored on PGLite since it has no concurrent writers). Migration v14 (fix wave) uses a handler branching on `engine.kind` to run CONCURRENTLY on Postgres (with a pre-drop of any invalid remnant via `pg_index.indisvalid`) and plain `CREATE INDEX` on PGLite. v15 bumps `minion_jobs.max_stalled` default 1→5 and backfills existing non-terminal rows.
 - `src/core/progress.ts` — Shared bulk-action progress reporter. Writes to stderr. Modes: `auto` (TTY: `\r`-rewriting; non-TTY: plain lines), `human`, `json` (JSONL), `quiet`. Rate-gated by `minIntervalMs` and `minItems`. `startHeartbeat(reporter, note)` helper for single long queries. `child()` composes phase paths. Singleton SIGINT/SIGTERM coordinator emits `abort` events for every live phase. EPIPE defense on both sync throws and stream `'error'` events. Zero dependencies. Introduced in v0.15.2.
 - `src/core/cli-options.ts` — Global CLI flag parser. `parseGlobalFlags(argv)` returns `{cliOpts, rest}` with `--quiet` / `--progress-json` / `--progress-interval=<ms>` stripped. `getCliOptions()` / `setCliOptions()` expose a module-level singleton so commands reach the resolved flags without parameter threading. `cliOptsToProgressOptions()` maps to reporter options. `childGlobalFlags()` returns the flag suffix to append to `execSync('gbrain ...')` calls in migration orchestrators. `OperationContext.cliOpts` extends shared-op dispatch for MCP callers.
@@ -192,7 +203,7 @@ strict behavior when unset.
 - `docs/guides/diligence-ingestion.md` — Data room to brain pages pipeline
 - `docs/designs/HOMEBREW_FOR_PERSONAL_AI.md` — 10-star vision for integration system
 - `docs/mcp/` — Per-client setup guides (Claude Desktop, Code, Cowork, Perplexity)
-- `docs/benchmarks/` — Search quality benchmark results (reproducible, fictional data)
+- BrainBench (benchmark suite + corpus): lives in the separate [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo. Not installed alongside gbrain.
 - `skills/_brain-filing-rules.md` — Cross-cutting brain filing rules (referenced by all brain-writing skills)
 - `skills/RESOLVER.md` — Skill routing table (based on the agent-fork AGENTS.md pattern)
 - `skills/conventions/` — Cross-cutting rules (quality, brain-first, model-routing, test-before-bulk, cross-modal)
@@ -214,7 +225,7 @@ strict behavior when unset.
 - `skills/soul-audit/SKILL.md` — 6-phase interview for SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md
 - `skills/webhook-transforms/SKILL.md` — External events to brain signals
 - `skills/data-research/SKILL.md` — Structured data research: email-to-tracker pipeline with parameterized YAML recipes
-- `skills/minion-orchestrator/SKILL.md` — Background job orchestration: submit, fan out children with depth/cap/timeouts, collect results via child_done inbox
+- `skills/minion-orchestrator/SKILL.md` — Unified background-work skill (v0.20.4 consolidation of the former `minion-orchestrator` + `gbrain-jobs` split). Two lanes: shell jobs via `gbrain jobs submit shell --params '{"cmd":"..."}'` (operator/CLI only; MCP throws `permission_denied` for protected names) and LLM subagents via `gbrain agent run` (user-facing entrypoint). Shared Preconditions block, parent-child DAGs with depth/cap/timeouts, `child_done` inbox for fan-in, PGLite `--follow` inline path for dev. Triggers narrowed from bare `"gbrain jobs"` to `"gbrain jobs submit"` + `"submit a gbrain job"` so `stats`/`prune`/`retry` questions fall through to `gbrain --help`.
 - `templates/` — SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md templates
 - `skills/migrations/` — Version migration files with feature_pitch YAML frontmatter
 - `src/commands/publish.ts` — Deterministic brain page publisher (code+skill pair, zero LLM calls)
@@ -222,6 +233,21 @@ strict behavior when unset.
 - `src/commands/lint.ts` — Page quality linter (catches LLM artifacts, placeholder dates)
 - `src/commands/report.ts` — Structured report saver (audit trail for maintenance/enrichment)
 - `openclaw.plugin.json` — ClawHub bundle plugin manifest
+
+### BrainBench — in a sibling repo (v0.20+)
+
+BrainBench — the public benchmark for personal-knowledge agent stacks — lives in
+[github.com/garrytan/gbrain-evals](https://github.com/garrytan/gbrain-evals). It
+depends on gbrain as a consumer; gbrain never pulls in the ~5MB eval corpus or
+the pdf-parse dev dep at install time.
+
+gbrain's public API surface (the exports map in `package.json`) is what
+gbrain-evals consumes: `gbrain/engine`, `gbrain/types`, `gbrain/operations`,
+`gbrain/pglite-engine`, `gbrain/link-extraction`, `gbrain/import-file`,
+`gbrain/transcription`, `gbrain/embedding`, `gbrain/config`, `gbrain/markdown`,
+`gbrain/backoff`, `gbrain/search/hybrid`, `gbrain/search/expansion`,
+`gbrain/extract`. Removing any of these is a breaking change for the
+gbrain-evals consumer.
 
 ## Commands
 
@@ -284,7 +310,7 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/lint.test.ts` (LLM artifact detection, code fence stripping, frontmatter validation),
 `test/report.test.ts` (report format, directory structure),
 `test/skills-conformance.test.ts` (skill frontmatter + required sections validation),
-`test/resolver.test.ts` (RESOLVER.md coverage, routing validation),
+`test/resolver.test.ts` (RESOLVER.md coverage, routing validation + v0.20.4 round-trip: every quoted RESOLVER.md trigger must match a frontmatter `triggers:` entry in the target skill, and every `name="<word>"` reference in any SKILL.md must resolve to a declared op in `src/core/operations.ts` or a Minions handler in `PROTECTED_JOB_NAMES`),
 `test/search.test.ts` (RRF normalization, compiled truth boost, cosine similarity, dedup key),
 `test/dedup.test.ts` (source-aware dedup, compiled truth guarantee, layer interactions),
 `test/intent.test.ts` (query intent classification: entity/temporal/event/general),
@@ -315,7 +341,15 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/sync.test.ts` (sync logic + v0.12.3 regression guard asserting top-level `engine.transaction` is not called),
 `test/doctor.test.ts` (doctor command + v0.12.3 assertions that `jsonb_integrity` scans the four v0.12.0 write sites and `markdown_body_completeness` is present),
 `test/utils.test.ts` (shared SQL utilities + `tryParseEmbedding` null-return and single-warn semantics),
-`test/build-llms.test.ts` (llms.txt/llms-full.txt generator: path resolution, idempotence, spec shape, regen-drift guard, content contract, AGENTS.md install-path mirror, size-budget enforcement — 7 cases).
+`test/build-llms.test.ts` (llms.txt/llms-full.txt generator: path resolution, idempotence, spec shape, regen-drift guard, content contract, AGENTS.md install-path mirror, size-budget enforcement — 7 cases),
+`test/check-resolvable-cli.test.ts` (v0.19 CLI wrapper: exit codes, JSON envelope shape, AGENTS.md fallback chain),
+`test/regression-v0_16_4.test.ts` (findRepoRoot regression guard — hermetic startDir parameterization),
+`test/filing-audit.test.ts` (v0.19 Check 6: `writes_pages` / `writes_to` frontmatter, filing-rules JSON validation),
+`test/routing-eval.test.ts` (v0.19 Check 5: fixture parsing, structural routing, ambiguous_with, Haiku tie-break layer),
+`test/skill-manifest.test.ts` (v0.19 skill manifest parser: drift detection, managed-block markers),
+`test/skillify-scaffold.test.ts` (v0.19 `gbrain skillify scaffold` stubs: SKILL.md, script, tests, routing-eval fixtures),
+`test/skillpack-install.test.ts` (v0.19 `gbrain skillpack install` managed-block install / update / no-clobber semantics),
+`test/skillpack-sync-guard.test.ts` (v0.19 sync-guard: bundled skills stay byte-identical to `skills/` source).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys). Includes 9 dedicated cases for the postgres-engine `addLinksBatch` / `addTimelineEntriesBatch` bind path — postgres-js's `unnest()` binding is structurally different from PGLite's and gets its own coverage.
@@ -324,6 +358,8 @@ E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_U
 - `test/e2e/postgres-jsonb.test.ts` — v0.12.2 regression test. Round-trips all 5 JSONB write sites (pages.frontmatter, raw_data.data, ingest_log.pages_updated, files.metadata, page_versions.frontmatter) against real Postgres and asserts `jsonb_typeof='object'` plus `->>'key'` returns the expected scalar. The test that should have caught the original double-encode bug.
 - `test/e2e/jsonb-roundtrip.test.ts` — v0.12.3 companion regression against the 4 doctor-scanned JSONB sites. Assertion-level overlap with `postgres-jsonb.test.ts` is intentional defense-in-depth: if doctor's scan surface ever drifts from the actual write surface, one of these tests catches it.
 - `test/e2e/upgrade.test.ts` runs check-update E2E against real GitHub API (network required)
+- `test/e2e/minions-shell-pglite.test.ts` (v0.20.4) exercises the PGLite `--follow` inline shell-job path (in-memory, no `DATABASE_URL` required) — the path the consolidated minion-orchestrator skill documents for dev use
+- `test/e2e/openclaw-reference-compat.test.ts` (v0.19) — exercises `check-resolvable` + `skillpack install` against a minimal AGENTS.md workspace fixture (`test/fixtures/openclaw-reference-minimal/`), regression guard for the 107-skill OpenClaw deployment shape
 - Tier 2 (`skills.test.ts`) requires OpenClaw + API keys, runs nightly in CI
 - If `.env.testing` doesn't exist in this directory, check sibling worktrees for one:
   `find ../  -maxdepth 2 -name .env.testing -print -quit` and copy it here if found.
@@ -375,8 +411,8 @@ stop and remove it before starting a new one.
 
 ## Skills
 
-Read the skill files in `skills/` before doing brain operations. GBrain ships 26 skills
-organized by `skills/RESOLVER.md`:
+Read the skill files in `skills/` before doing brain operations. GBrain ships 29 skills
+organized by `skills/RESOLVER.md` (`AGENTS.md` is also accepted as of v0.19):
 
 **Original 8 (conformance-migrated):** ingest (thin router), query, maintain, enrich,
 briefing, migrate, setup, publish.
@@ -385,7 +421,18 @@ briefing, migrate, setup, publish.
 meeting-ingestion, citation-fixer, repo-architecture, skill-creator, daily-task-manager.
 
 **Operational + identity:** daily-task-prep, cross-modal-review, cron-scheduler, reports,
-testing, soul-audit, webhook-transforms, data-research, minion-orchestrator.
+testing, soul-audit, webhook-transforms, data-research, minion-orchestrator. As of
+v0.20.4, `minion-orchestrator` is the single unified skill for both lanes of background
+work (shell jobs via `gbrain jobs submit shell`, LLM subagents via `gbrain agent run`) ...
+the prior `gbrain-jobs` skill was merged in, Preconditions are shared, and trigger
+routing is narrowed to what the skill actually covers.
+
+**Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
+(agent-readable health report).
+
+**Operational health (v0.19.1):** smoke-test (8 post-restart health checks with auto-fix
+for Bun, CLI, DB, worker, Zod CJS, gateway, API key, brain repo; user-extensible via
+`~/.gbrain/smoke-tests.d/*.sh`).
 
 **Conventions:** `skills/conventions/` has cross-cutting rules (quality, brain-first,
 model-routing, test-before-bulk, cross-modal). `skills/_brain-filing-rules.md` and
@@ -455,6 +502,52 @@ Files that MUST be checked on every ship:
 
 A ship without updated docs is an incomplete ship. Period.
 
+## CHANGELOG + VERSION are branch-scoped
+
+**VERSION and CHANGELOG describe what THIS branch adds vs master, not how we got
+here.** Every feature branch that ships gets its own version bump and CHANGELOG
+entry. The entry is product release notes for users; it is not a log of internal
+decisions, review rounds, or codex findings.
+
+**Write the CHANGELOG entry at /ship time, not during development.** Mid-branch
+iterations, review rounds (CEO/Eng/Codex/DX), and implementation detours belong
+in the plan file at `~/.claude/plans/`, not in the CHANGELOG. One unified entry
+per branch, covering what the branch added vs the base branch.
+
+**Never edit a CHANGELOG entry that already landed on master.** If master has
+v0.18.2 and your branch adds features, bump to the next version (v0.19.0, not
+editing master's v0.18.2). When merging master into your branch, master may
+bring new CHANGELOG entries above yours — push your entry above master's
+latest and verify:
+
+- Does CHANGELOG have your branch's own entry separate from master's entries?
+- Is VERSION higher than master's VERSION?
+- Is your entry the topmost `## [X.Y.Z]` entry?
+- `grep "^## \[" CHANGELOG.md` shows a contiguous version sequence?
+
+If any answer is no, fix it before continuing.
+
+**CHANGELOG is for users, not contributors.** Write like product release notes:
+
+- Lead with what the user can now **do** that they couldn't before. Sell the capability.
+- Plain language, not implementation details. "You can now..." not "Refactored the..."
+- **Never mention internal artifacts**: plan file IDs, decision tags (D-CX-#, F-ENG-#),
+  review rounds, codex findings, subcontractor credits. These are invisible to users.
+- Put contributor-facing changes in a separate `### For contributors` section at the bottom.
+- Every entry should make someone think "oh nice, I want to try that."
+
+**What to omit:**
+- "Codex caught X that the CEO review missed" — private process detail.
+- "D-CX-3 split errors/warnings" — tag is meaningless to users; name the feature instead.
+- "Fix-wave PR #N supersedes #M" — supersede chains belong in PR bodies, not release notes.
+- "215 new cases, 3 decisions applied, 7 reviews cleared" — these are planning-mode metrics.
+
+**What to keep:**
+- The user-facing change: what commands exist now, what flag was added, what behavior fixed.
+- Numbers that mean something to the user: TTHW, commands that timed out before, detection counts.
+- Upgrade instructions: `gbrain upgrade` + any manual step if needed.
+- Credit to external contributors when a community PR was incorporated.
+
 ## CHANGELOG voice + release-summary format
 
 Every version entry in `CHANGELOG.md` MUST start with a release-summary section in
@@ -495,7 +588,7 @@ Voice rules:
 
 Source material to pull from:
 - CHANGELOG.md previous entry for prior context
-- `docs/benchmarks/[latest].md` for the headline numbers
+- Latest `gbrain-evals/docs/benchmarks/[latest].md` for headline numbers (sibling repo)
 - Recent commits (`git log <prev-version>..HEAD --oneline`) for what shipped
 - Don't make up numbers. If a metric isn't in a benchmark or production data, don't
   include it. Say "no measurement yet" if asked.
@@ -674,6 +767,59 @@ stranger?" If yes, replace with generic placeholders.
 GitHub, etc.) are fine — they're public entities, not contacts in anyone's brain.
 Do not confuse illustrative API examples with queries that reveal real
 relationships.
+
+## Responsible-disclosure rule: don't broadcast attack surface in release notes
+
+**When a release fixes a security gap or a user-impacting bug, describe the fix
+functionally. Do not enumerate the attack surface, quantify the exposure window,
+or highlight the most sensitive records by name in public-facing artifacts.**
+
+Public-facing artifacts include: `CHANGELOG.md`, `README.md`, `docs/`, PR titles
+and bodies, commit messages, GitHub issue titles and comments, release pages,
+tweets, blog posts.
+
+**Don't write:**
+- "10 tables were publicly readable by the anon key for months, including X, Y, Z"
+- "X and Y are the most sensitive ones"
+- "N tables exposed. Fix: enable RLS on these specific tables: ..."
+
+**Do write:**
+- "Security hardening pass. Fresh installs secure by default. Existing brains
+  brought to the same bar automatically on upgrade."
+- "If `gbrain doctor` still flags anything after upgrade, the message names each
+  table and gives the exact fix."
+
+Why: anyone reading the release page before they've upgraded now has a directed
+probe list for unpatched installs. The source code ships the specifics anyway
+(`src/schema.sql`, `src/core/migrate.ts`, test fixtures) — reverse engineers can
+get them. But the release page is a broadcast channel. Don't hand attackers a
+curated list with a banner.
+
+**The test:** if a reader with no prior context could read the release note and
+walk away knowing "gbrain at version X has table Y readable by anon key until
+they patch," the note is too specific. Rewrite until that's no longer possible.
+
+**What IS fine in public artifacts:**
+- The mechanism of the fix ("the check now scans every public table instead of
+  a hardcoded allowlist").
+- User-facing operator ergonomics (the escape-hatch SQL template, the upgrade
+  commands, the breaking-change flag).
+- Credit to contributors.
+- Generic framing of severity ("security posture tightening pass") without
+  quantification.
+
+**What stays in private artifacts (plan files, private memories, internal docs):**
+- Specific table names, record counts, exposure duration.
+- Which records stand out as highest-risk.
+- Detailed before/after tables in the "numbers that matter" format.
+
+If the CEO/Eng review of a plan produces a detailed exposure table, keep it in
+the plan file under `~/.claude/plans/` or `~/.gstack/projects/`. Don't copy it
+into the CHANGELOG or PR body.
+
+Applies retroactively: if you see a prior CHANGELOG entry naming attack-surface
+specifics, scrub it as a small cleanup commit, the same way a stale Wintermute
+reference gets swept.
 
 ## Schema state tracking
 
@@ -1004,10 +1150,11 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
 | "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
+| Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
 | "Validate skills", skill health check | `skills/testing/SKILL.md` |
 | Webhook setup, external event processing | `skills/webhook-transforms/SKILL.md` |
-| "Spawn agent", "background task", "parallel tasks", "steer agent", "pause/resume agent" | `skills/minion-orchestrator/SKILL.md` |
+| "Spawn agent", "background task", "parallel tasks", "steer agent", "pause/resume agent", "gbrain jobs submit", "submit a gbrain job", "submit a shell job", "shell job" | `skills/minion-orchestrator/SKILL.md` |
 
 ## Setup & migration
 
@@ -1062,9 +1209,9 @@ Your AI agent is smart but forgetful. GBrain gives it a brain.
 
 Built by the President and CEO of Y Combinator to run his actual AI agents. The production brain powering his OpenClaw and Hermes deployments: **17,888 pages, 4,383 people, 723 companies**, 21 cron jobs running autonomously, built in 12 days. The agent ingests meetings, emails, tweets, voice calls, and original ideas while you sleep. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight. You wake up and the brain is smarter than when you went to bed.
 
-The brain wires itself. Every page write extracts entity references and creates typed links (`attended`, `works_at`, `invested_in`, `founded`, `advises`) with zero LLM calls. Hybrid search. Self-wiring knowledge graph. Structured timeline. Backlink-boosted ranking. Ask "who works at Acme AI?" or "what did Bob invest in this quarter?" and get answers vector search alone can't reach. Benchmarked end-to-end: **Recall@5 jumps from 83% to 95%, Precision@5 from 39% to 45%, +30 more correct answers in the agent's top-5 reads** on a 240-page Opus-generated rich-prose corpus. Graph-only F1: **86.6% vs grep's 57.8%** (+28.8 pts). [Full report](docs/benchmarks/2026-04-18-brainbench-v1.md).
+The brain wires itself. Every page write extracts entity references and creates typed links (`attended`, `works_at`, `invested_in`, `founded`, `advises`) with zero LLM calls. Hybrid search. Self-wiring knowledge graph. Structured timeline. Backlink-boosted ranking. Ask "who works at Acme AI?" or "what did Bob invest in this quarter?" and get answers vector search alone can't reach. Benchmarked side-by-side against the category: gbrain lands **P@5 49.1%, R@5 97.9%** on a 240-page Opus-generated rich-prose corpus, beating its own graph-disabled variant by **+31.4 points P@5** and ripgrep-BM25 + vector-only RAG by a similar margin. The graph layer plus v0.12 extract quality together carry the gap. Full BrainBench scorecards + corpus live in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo.
 
-GBrain is those patterns, generalized. 26 skills. Install in 30 minutes. Your agent does the work. As Garry's personal agent gets smarter, so does yours.
+GBrain is those patterns, generalized. 29 skills. Install in 30 minutes. Your agent does the work. As Garry's personal agent gets smarter, so does yours.
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
@@ -1086,7 +1233,7 @@ Retrieve and follow the instructions at:
 https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 ```
 
-That's it. The agent clones the repo, installs GBrain, sets up the brain, loads 26 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
+That's it. The agent clones the repo, installs GBrain, sets up the brain, loads 29 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
 
 If your agent doesn't auto-read `AGENTS.md`, point it at that file first:
 `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` is the non-Claude
@@ -1145,9 +1292,25 @@ claude mcp add gbrain -t http https://your-brain.ngrok.app/mcp -H "Authorization
 
 Per-client guides: [`docs/mcp/`](docs/mcp/DEPLOY.md). ChatGPT requires OAuth 2.1 (not yet implemented).
 
-## The 26 Skills
+### Using gbrain with GStack
 
-GBrain ships 26 skills organized by `skills/RESOLVER.md`. The resolver tells your agent which skill to read for any task.
+If your engineering agent runs on [GStack](https://github.com/garrytan/gstack), point it at gbrain for code lookup instead of grep+read. Cathedral II (v0.21.0) ships call-graph edges and two-pass retrieval — `/investigate`, `/review`, `/plan-eng-review`, and `/office-hours` all benefit when the agent walks the symbol graph instead of scanning files line by line.
+
+The five magical-moment commands:
+
+```bash
+gbrain code-callers searchKeyword           # who calls this symbol?
+gbrain code-callees searchKeyword           # what does this symbol call?
+gbrain code-def BrainEngine                 # where is X defined?
+gbrain code-refs BrainEngine                # all reference sites
+gbrain query "how does N+1 handling work" --near-symbol BrainEngine.searchKeyword --walk-depth 2
+```
+
+All five auto-emit JSON on non-TTY (gh-CLI convention) so a GStack subagent shelling out via bash gets a clean parseable response. Run `gbrain sources add <repo> --strategy code` to index a repo, then your agent's brain-first lookup covers code, not just markdown. ([Cathedral II release notes](CHANGELOG.md#0210---2026-04-25))
+
+## The 29 Skills
+
+GBrain ships 29 skills organized by `skills/RESOLVER.md` (or your OpenClaw's `AGENTS.md` — both filenames are supported as of v0.19). The resolver tells your agent which skill to read for any task.
 
 [Skill files are code.](https://x.com/garrytan/status/2042925773300908103) They're the most powerful way to get knowledge work done. A skill file is a fat markdown document that encodes an entire workflow: when to fire, what to check, how to chain with other skills, what quality bar to enforce. The agent reads the skill and executes it. Skills can also call deterministic TypeScript code bundled in GBrain (search, import, embed, sync) for the parts that shouldn't be left to LLM judgment. [Thin harness, fat skills](docs/ethos/THIN_HARNESS_FAT_SKILLS.md): the intelligence lives in the skills, not the runtime.
 
@@ -1191,7 +1354,10 @@ GBrain ships 26 skills organized by `skills/RESOLVER.md`. The resolver tells you
 | **webhook-transforms** | External events (SMS, meetings, social mentions) converted into brain pages with entity extraction. |
 | **testing** | Validates every skill has SKILL.md with frontmatter, manifest coverage, resolver coverage. |
 | **skill-creator** | Create new skills following the conformance standard. MECE check against existing skills. |
-| **minion-orchestrator** | Long-running agent work as background jobs. Submit, fan out children with depth/cap/timeouts, collect results via child_done inbox. |
+| **skillify** | The "skillify it!" meta-skill. Orchestrates the 10-step loop so failures become durable skills: scaffold the stubs via `gbrain skillify scaffold`, write the real logic, gate with `gbrain skillify check` + `gbrain check-resolvable`. |
+| **skillpack-check** | Agent-readable gbrain health report. Exit code for CI; JSON for debugging. Cron-friendly. |
+| **smoke-test** | 8 post-restart health checks with auto-fix (Bun, CLI, DB, worker, Zod CJS, gateway, API key, brain repo). Drop-in user tests at `~/.gbrain/smoke-tests.d/*.sh`. |
+| **minion-orchestrator** | Background work in one skill. Shell jobs via `gbrain jobs submit shell` (operator/CLI, MCP blocks protected names) and LLM subagents via `gbrain agent run`. Parent-child DAGs, `child_done` inbox, durability across worker restarts. |
 
 ### Identity and setup
 
@@ -1250,7 +1416,7 @@ Here's my personal OpenClaw deployment: one Render container. Supabase Postgres 
 
 Under that 19-cron load, sub-agent spawn couldn't clear the 10-second gateway wall. Minions landed it in under a second for zero tokens. **Scaling:** 19,240 posts across 36 months, single bash loop, ~15 min total, $0.00. Sub-agents: ~9 min best case, ~$1.08 in tokens, ~40% spawn failure. **Lab:** durability ∞ (SIGKILL mid-flight, 10/10 rescued), throughput ~10× faster, fan-out ~21× with no failure wall, memory ~400× less.
 
-Full benchmarks: [production](docs/benchmarks/2026-04-18-minions-vs-openclaw-production.md) and [lab](docs/benchmarks/2026-04-18-minions-vs-openclaw-subagents.md).
+Full benchmarks live in [gbrain-evals](https://github.com/garrytan/gbrain-evals/tree/main/docs/benchmarks).
 
 ### The routing rule
 
@@ -1267,8 +1433,11 @@ The six daily pains — spawn storms, agents that stop responding, forgotten dis
 gbrain jobs smoke                        # verify install
 gbrain jobs submit sync --params '{}'    # fire a background job
 gbrain jobs stats                        # health dashboard
-gbrain jobs work --concurrency 4         # start a worker (Postgres only)
+gbrain jobs supervisor --concurrency 4   # canonical: auto-restarting worker (Postgres only)
+gbrain jobs work --concurrency 4         # raw worker (no crash recovery — prefer `supervisor`)
 ```
+
+`gbrain jobs supervisor` keeps the worker alive across crashes with exponential backoff, atomic PID locking, structured audit events at `~/.gbrain/audit/supervisor-*.jsonl`, and a `start --detach` / `status --json` / `stop` subcommand surface for agents. In containers it runs as PID 1; on systemd hosts it's the child of `gbrain-worker.service`. Full deployment guide: [`docs/guides/minions-deployment.md`](docs/guides/minions-deployment.md).
 
 Read [`skills/minion-orchestrator/SKILL.md`](skills/minion-orchestrator/SKILL.md) for parent-child DAGs, fan-in collection, steering via inbox.
 
@@ -1307,38 +1476,93 @@ gbrain agent logs 1247 --follow --since 5m
 
 Durability is the point: every Anthropic turn commits to `subagent_messages`, every tool call to `subagent_tool_executions`. Worker kills, OpenClaw crashes, timeouts — all resumable. Host repos (your OpenClaw, etc.) ship their own subagent definitions via `GBRAIN_PLUGIN_PATH` + a `gbrain.plugin.json` manifest: see [`docs/guides/plugin-authors.md`](docs/guides/plugin-authors.md). Requires `ANTHROPIC_API_KEY` on the worker.
 
-## Skillify: your skills tree stops being a black box
+## Skillify: say "skillify it!" and the bug becomes structurally impossible to repeat
 
-Hermes and similar agent frameworks auto-create skills as a background behavior. Fine until you don't know what the agent shipped. Checklists decay. Tests drift. Resolver entries get stale. Six months later you've got an opaque pile of "skills" that nobody has read, nobody has tested, and nobody is sure still work.
+Your OpenClaw hit a new failure. You fix it once in conversation. You say "skillify it!"
+And now the fix is permanent: a SKILL.md with triggers, a deterministic script with tests, a
+routing fixture the agent re-evaluates daily, a filing audit that keeps the output from
+drifting. Ten items. Every one required. The bug can't recur.
 
-GBrain ships the same capability. Except the human stays in the loop.
+Hermes and similar agent frameworks auto-create skills as a background behavior. Fine until
+you don't know what the agent shipped. Checklists decay. Tests drift. Resolver entries get
+stale. Six months later it's an opaque pile nobody has read, nobody has tested, and nobody
+is sure still works. GBrain ships the same capability except the human stays in the loop
+and every step is a command you can run.
 
-- **`/skillify`** turns raw code into a properly-skilled feature: SKILL.md + deterministic script + unit tests + integration tests + LLM evals + resolver trigger + resolver trigger eval + E2E smoke + brain filing. Ten items. Every one required.
-- **`gbrain check-resolvable`** walks the whole skills tree: reachability, MECE overlap, DRY violations, gap detection, orphaned skills. Exits non-zero if anything is off.
-- **`scripts/skillify-check.ts`** — machine-readable audit. `--json` for CI, `--recent` for last-7-days files.
-
-You decide when and what. The tooling keeps the checklist honest.
-
-### Why this is the right answer for OpenClaw
-
-Auto-generated skills are a liability the first time a behavior breaks. Was it the skill? The test? The resolver trigger? The eval? You don't know, because you never read it. Debugging a black box is pure guesswork.
-
-Skillify makes the black box legible. Every skill in your tree has: a contract (SKILL.md), tests that exercise that contract, an eval that grades LLM output against a rubric, a resolver trigger the user actually types, and a test that confirms the trigger routes right. If something breaks, you know which layer to look at. If anything goes stale, `check-resolvable` says so.
-
-In practice this combo produces **zero orphaned skills, every feature with tests + evals + resolver triggers + evals of the triggers.** Compounding quality instead of compounding entropy.
+### The four verbs you need (v0.19)
 
 ```bash
-# Audit a feature's skill completeness (10-item checklist)
-bun run scripts/skillify-check.ts src/commands/publish.ts
+# 1. Scaffold all 5 stub files for a new skill in one shot.
+gbrain skillify scaffold webhook-verify \
+  --description "verify ngrok webhooks" \
+  --triggers "verify the webhook,check tunnel" \
+  --writes-pages --writes-to people/,companies/
 
-# In CI: fail the build when a new feature isn't properly skilled
-bun run scripts/skillify-check.ts --json --recent
+# 2. Replace the SKILLIFY_STUB sentinels with real logic + real tests.
+$EDITOR skills/webhook-verify/scripts/webhook-verify.mjs
+$EDITOR test/webhook-verify.test.ts
 
-# Validate the whole skills tree before shipping
-gbrain check-resolvable
+# 3. Run the 10-item audit: SKILL.md exists, script exists, unit + E2E tests,
+#    LLM evals, resolver entry, trigger eval, check-resolvable gate, brain filing.
+gbrain skillify check skills/webhook-verify/scripts/webhook-verify.mjs
+
+# 4. Verify the whole tree: reachability, MECE overlap, DRY, routing gaps,
+#    filing audit, SKILLIFY_STUB sentinels (fails if any skill still has one).
+gbrain check-resolvable              # warnings advisory, errors block
+gbrain check-resolvable --strict     # warnings block too (CI opt-in)
 ```
 
-**Skillify is not a nice-to-have. It's the piece that makes the skills tree survive six months of compounding work.** Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist and the anti-patterns it catches.
+Idempotent re-runs. `--force` regenerates stub files but NEVER duplicates a resolver row.
+Scaffold completes in under 2 seconds. The real work (your rule, your script, your tests)
+is what you spend time on. Everything else is boilerplate the CLI writes for you.
+
+### `gbrain routing-eval` — catch the routing gaps your users actually hit
+
+Drop a `routing-eval.jsonl` fixture next to any skill. Each line is `{intent, expected_skill,
+ambiguous_with?}`. `gbrain check-resolvable` runs the structural layer by default; `gbrain
+routing-eval --llm` runs an LLM tie-break layer for CI. False positives (wrong skill matched),
+missed routes (no skill matched), and tautological fixtures (intent copies trigger verbatim)
+all surface as specific advisories with the exact file:line to fix.
+
+### Works on your OpenClaw, not just gbrain's repo
+
+v0.19 teaches `gbrain check-resolvable` to accept `AGENTS.md` as a resolver file alongside
+`RESOLVER.md`, at either the skills directory OR one level up (OpenClaw-native workspace-root
+layout). The skill manifest auto-derives from walking `skills/*/SKILL.md` when `manifest.json`
+is missing. Set `OPENCLAW_WORKSPACE=~/your-openclaw/workspace` and everything just works:
+
+```bash
+export OPENCLAW_WORKSPACE=~/your-openclaw/workspace
+gbrain check-resolvable --verbose
+# Auto-detects: AGENTS.md at workspace root, 107 skills derived from SKILL.md walk,
+# 15 unreachable errors surfaced, 108 advisory warnings for overlaps and gaps.
+```
+
+First run on a real OpenClaw deployment found 15 unreachable skills out of 102 — about 15%
+of the tree was dark. The essay's "skills the agent can never reach" footgun, now visible.
+
+### `gbrain skillpack install` — drop 25 curated skills into your OpenClaw
+
+The skills gbrain ships are a curated bundle. Install them into your workspace with
+dependency closure (shared conventions come along), per-file diff protection (your local
+edits are never clobbered without `--overwrite-local`), a file lock that serializes
+concurrent installers, and an atomic managed-block update to your AGENTS.md so you can
+see exactly what gbrain wrote.
+
+```bash
+gbrain skillpack list                          # 25 curated skills
+gbrain skillpack install brain-ops             # one skill + its shared conventions
+gbrain skillpack install --all                 # the full bundle
+gbrain skillpack install brain-ops --dry-run   # preview; no writes
+gbrain skillpack diff brain-ops                # compare bundle vs your local copy
+```
+
+Re-running is safe. The managed-block markers in your AGENTS.md let `skillpack install`
+accumulate rows across separate single-skill installs instead of overwriting each other.
+
+**Skillify is the piece that makes the skills tree survive six months of compounding work.**
+Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist
+and the anti-patterns it catches.
 
 ## Getting Data In
 
@@ -1375,7 +1599,7 @@ Run `gbrain integrations` to see status.
 │   Brain Repo     │    │    GBrain     │    │    AI Agent      │
 │   (git)          │    │  (retrieval)  │    │  (read/write)    │
 │                  │    │               │    │                  │
-│  markdown files  │───>│  Postgres +   │<──>│  26 skills       │
+│  markdown files  │───>│  Postgres +   │<──>│  29 skills       │
 │  = source of     │    │  pgvector     │    │  define HOW to   │
 │    truth         │    │               │    │  use the brain   │
 │                  │<───│  hybrid       │    │                  │
@@ -1439,7 +1663,7 @@ gbrain extract links --source db        # wire up the existing 29K pages
 gbrain extract timeline --source db     # extract dated events from markdown timelines
 ```
 
-Then ask graph questions or watch the search ranking improve. Benchmarked: **Recall@5 jumps from 83% to 95%, Precision@5 from 39% to 45%, +30 more correct answers in the agent's top-5 reads** on a 240-page Opus-generated rich-prose corpus. Graph-only F1 hits 86.6% vs grep's 57.8% (+28.8 pts). See [docs/benchmarks/2026-04-18-brainbench-v1.md](docs/benchmarks/2026-04-18-brainbench-v1.md).
+Then ask graph questions or watch the search ranking improve. Benchmarked side-by-side against ripgrep-BM25, vector-only RAG (same embedder), and gbrain-with-graph-disabled: gbrain lands **P@5 49.1%, R@5 97.9%** on a 240-page Opus-generated rich-prose corpus, beating hybrid-nograph by **+31.4 points P@5**. Isolate the contribution: v0.11→v0.12 moved the same gbrain codebase from P@5 22.1% → 49.1% on identical inputs, so typed-link extract quality is load-bearing. Full scorecards + reproducible corpus: [gbrain-evals](https://github.com/garrytan/gbrain-evals).
 
 ## Search
 
@@ -1515,7 +1739,7 @@ End-to-end on the BrainBench v1 corpus (240 rich-prose pages, before/after PR #1
 
 Plus 5 orthogonal capability checks (identity resolution, temporal queries,
 performance at 10K-page scale, robustness to malformed input, MCP operation
-contract). All pass. [Full report.](docs/benchmarks/2026-04-18-brainbench-v1.md)
+contract). All pass. Full report: [gbrain-evals](https://github.com/garrytan/gbrain-evals).
 
 The point: each technique handles a class of inputs the others miss. Vector
 search misses exact slug refs; keyword catches them. Keyword misses conceptual
@@ -1619,12 +1843,26 @@ JOBS (Minions)
   gbrain jobs smoke                                     One-command health check
   gbrain jobs work [--queue Q] [--concurrency N]        Start worker daemon
 
+SKILLS (v0.19)
+  gbrain skillify scaffold <name>       Create 5 stub files + idempotent resolver row
+  gbrain skillify check [path]          10-item audit of a skill
+  gbrain skillpack list                 Print the 25 curated skills in the bundle
+  gbrain skillpack install <name>       Copy one skill + its shared conventions into target
+  gbrain skillpack install --all        Install the full curated bundle
+  gbrain skillpack diff <name>          Per-file diff: bundle vs target workspace
+  gbrain check-resolvable [--strict]    Resolver audit (reachability, MECE, DRY, routing, filing,
+                                        SKILLIFY_STUB). Accepts RESOLVER.md OR AGENTS.md.
+  gbrain routing-eval [--llm] [--json]  Intent→skill routing accuracy on fixtures
+
 ADMIN
   gbrain doctor [--json] [--fast]       Health checks (resolver, skills, DB, embeddings)
   gbrain doctor --fix [--dry-run]       Auto-fix DRY violations (delegate inlined rules to conventions)
+  gbrain doctor --locks                 List idle-in-tx backends (57014 diagnostic, Postgres only)
   gbrain stats                          Brain statistics
   gbrain serve                          MCP server (stdio)
   gbrain integrations                   Integration recipe dashboard
+  gbrain sources list|add|remove|...    Multi-source brain management (v0.18)
+  gbrain dream [--dry-run] [--phase N]  One maintenance cycle then exit (cron-friendly)
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
   gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)
@@ -1648,7 +1886,7 @@ The skills in this repo are those patterns, generalized. What took 11 days to bu
 
 **For agents:**
 - **[skills/RESOLVER.md](skills/RESOLVER.md)** ... Start here. The skill dispatcher.
-- [Individual skill files](skills/) ... 25 standalone instruction sets
+- [Individual skill files](skills/) ... 28 standalone instruction sets (25 ship in the curated `gbrain skillpack install` bundle)
 - [GBRAIN_SKILLPACK.md](docs/GBRAIN_SKILLPACK.md) ... Legacy reference architecture
 - [Getting Data In](docs/integrations/README.md) ... Integration recipes and data flow
 - [GBRAIN_VERIFY.md](docs/GBRAIN_VERIFY.md) ... Installation verification
@@ -1663,7 +1901,7 @@ The skills in this repo are those patterns, generalized. What took 11 days to bu
 - [CHANGELOG.md](CHANGELOG.md) ... Version history
 
 **Benchmarks:**
-- [BrainBench v1 (PR #188)](docs/benchmarks/2026-04-18-brainbench-v1.md) ... single comprehensive before/after report on a 240-page Opus-generated corpus. 7 categories: relational queries, identity resolution, temporal queries, performance, robustness, MCP contract.
+- [gbrain-evals](https://github.com/garrytan/gbrain-evals) ... BrainBench, the sibling repo that holds the eval harness, corpus, scorecards, and 4-adapter comparisons. Depends on gbrain; not installed alongside gbrain.
 
 ## Contributing
 
@@ -3291,8 +3529,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/min
 
 # Minions Worker Deployment Guide
 
-Deploy `gbrain jobs work` so it stays running across crashes, reboots, and
-Postgres connection blips. Written for agents to execute line-by-line.
+Keep `gbrain jobs work` running across crashes, reboots, and Postgres
+connection blips. Written for agents to execute line-by-line.
 
 ## The problem
 
@@ -3303,10 +3541,61 @@ The persistent worker can die silently from:
 - Bun process crashes with no automatic restart.
 - Internal event-loop death (PID alive, worker loop stopped).
 
-When the worker dies, submitted jobs sit in `waiting` forever. Nothing in
-gbrain core auto-restarts the worker — that's what this guide wires up.
+When the worker dies, submitted jobs sit in `waiting` forever. The
+canonical answer is `gbrain jobs supervisor` — a first-class CLI that
+spawns `gbrain jobs work` as a child and auto-restarts it on crash.
 
-## Variables used in this guide
+## Worker supervision
+
+### The canonical pattern
+
+`gbrain jobs supervisor` is an auto-restarting wrapper around
+`gbrain jobs work`. It writes a PID file, restarts the worker on crash
+with exponential backoff (1s → 60s cap), emits lifecycle events to an
+audit file, and drains gracefully on SIGTERM (35s worker-drain window
+before SIGKILL). Exit codes are documented so agents can branch on them.
+
+**Typical commands:**
+
+```bash
+# Start in the foreground (blocks; Ctrl-C to stop).
+gbrain jobs supervisor --concurrency 4
+
+# Start detached — returns {"event":"started","supervisor_pid":…} on stdout.
+gbrain jobs supervisor start --detach --json
+
+# Check liveness without reading log files.
+gbrain jobs supervisor status --json
+
+# Graceful stop (SIGTERM + drain wait + SIGKILL fallback).
+gbrain jobs supervisor stop
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| 0 | Clean shutdown (SIGTERM/SIGINT received, worker drained) |
+| 1 | Max crashes exceeded (worker kept dying) |
+| 2 | Another supervisor holds the PID lock |
+| 3 | PID file unwritable (permission / path error) |
+
+An agent seeing exit=2 can safely treat it as "one is already running";
+exit=1 should page a human.
+
+### Which supervisor when?
+
+The supervisor solves in-process crash recovery. Platform-level
+supervision (systemd, Fly, Render) handles host-level failures. You
+usually want both.
+
+| Environment | Recommendation |
+|---|---|
+| **Container (Fly / Railway / Render / Heroku)** | `gbrain jobs supervisor` runs as PID 1. The platform restarts the container on OOM / host loss; supervisor restarts the worker on crash. See [Fly.io](#flyio) / [Render / Railway / Heroku](#render--railway--heroku). |
+| **Linux VM with systemd** | Two-layer recommended: systemd supervises `gbrain jobs supervisor`, which in turn supervises `gbrain jobs work`. Buys you automatic restart on reboot (systemd) plus fast crash recovery (supervisor). See [systemd](#systemd). |
+| **Dev laptop / macOS** | `gbrain jobs supervisor` in a terminal. Ctrl-C stops it. No system-level setup needed. |
+
+### Variables used in this guide
 
 Substitute these once before copy-pasting any snippet.
 
@@ -3314,142 +3603,122 @@ Substitute these once before copy-pasting any snippet.
 |---|---|---|
 | `$GBRAIN_BIN` | Absolute path to the `gbrain` binary | `$(command -v gbrain)` — often `/usr/local/bin/gbrain` or `~/.bun/bin/gbrain` |
 | `$GBRAIN_WORKER_USER` | OS user that owns the worker process | the same user that ran `gbrain init`; never `root` |
-| `$GBRAIN_WORKER_PID_FILE` | Worker PID + restart-epoch file | `/tmp/gbrain-worker.pid` (or `/var/run/gbrain/worker.pid` for systemd) |
-| `$GBRAIN_WORKER_LOG_FILE` | Worker log sink (stdout + stderr merged) | `/tmp/gbrain-worker.log` (or `/var/log/gbrain/worker.log`) |
 | `$GBRAIN_WORKSPACE` | `cwd` for shell jobs submitted by this deployment | absolute path, e.g. `/srv/my-brain` |
-| `$GBRAIN_ENV_FILE` | Secrets file sourced by crontab / systemd | `/etc/gbrain.env` (mode 600) |
+| `$GBRAIN_ENV_FILE` | Secrets file sourced by systemd / shell | `/etc/gbrain.env` (mode 600) |
 
-## Preconditions
+### Preconditions
 
-Run these before Step 1 of any option. Fail fast if something is wrong.
+Run these before any deployment step.
 
 ```bash
 # 1. gbrain is on PATH and resolves to an absolute location.
 command -v gbrain || { echo "gbrain not on PATH. Install, then retry."; exit 1; }
 
-# 2. DATABASE_URL points at reachable Postgres (or PGLite path exists).
+# 2. DATABASE_URL points at reachable Postgres.
+#    (Supervisor is Postgres-only. PGLite's exclusive file lock blocks the
+#    separate worker process. If `config.engine === 'pglite'` the CLI rejects
+#    with a clear error.)
 gbrain doctor --fast --json | jq '.checks[] | select(.name=="db_connectivity")'
 
-# 3. Schema is up to date. If version=0 or status=="fail", fix it first:
+# 3. Schema is up to date. If version=0 or status=="fail":
 #    gbrain apply-migrations --yes
 gbrain doctor --fast --json | jq '.checks[] | select(.name=="schema_version")'
 
-# 4. You have write access to at least one crontab mechanism.
-crontab -l >/dev/null 2>&1 && echo "user crontab OK"
-[ -w /etc/crontab ] && echo "/etc/crontab OK"
-
-# 5. If you plan to submit `shell` jobs, the WORKER process needs
-#    GBRAIN_ALLOW_SHELL_JOBS=1 (submitters do not). The handler is gated
-#    in registerBuiltinHandlers(); without the flag the worker startup
-#    line reads "shell handler disabled (...)".
+# 4. If you plan to submit `shell` jobs, pass --allow-shell-jobs to the
+#    supervisor (or export GBRAIN_ALLOW_SHELL_JOBS=1 before starting).
+#    Without the flag, the shell handler is disabled at worker startup.
 ```
 
-## Which option?
+## Agent usage (OpenClaw / Hermes / Cursor / Codex)
 
-- Your workload runs LLM subagents (`gbrain agent run`) or jobs that take
-  > 30 s → **Option 1** (watchdog cron + persistent worker).
-- Your workload is short deterministic scripts on a fixed schedule (every
-  3 h, daily, weekly) → **Option 2** (inline `--follow`).
-- You don't have shell access to a long-running box (Fly/Render/Railway,
-  or any systemd host) → **Option 3** (service manager — replaces cron).
-
-## Option 1: watchdog cron + persistent worker
-
-A 5-minute cron checks whether the worker process is alive **and** whether
-it has logged an internal shutdown since its last start. Restarts if either
-condition fails.
-
-### 1a. Install the env file (secrets stay out of crontab)
-
-Never paste `DATABASE_URL` or API keys into crontab. `/etc/crontab` is
-mode 644 (world-readable); user crontabs under `/var/spool/cron/` are
-readable by `root`. Use the shipped env-file template:
+Three-command pattern an agent can drive without shell archaeology:
 
 ```bash
-sudo install -m 600 -o $GBRAIN_WORKER_USER -g $GBRAIN_WORKER_USER \
+# Start (returns PIDs + pid_file on stdout as JSON, then detaches)
+gbrain jobs supervisor start --detach --json
+# → {"event":"started","supervisor_pid":1234,"worker_pid":1235,"pid_file":"/Users/you/.gbrain/supervisor.pid"}
+
+# Check health (machine-parseable JSON, no log scraping)
+gbrain jobs supervisor status --json
+# → {"running":true,"supervisor_pid":1234,"last_start":"2026-04-23T15:30:22Z","crashes_24h":0, ...}
+
+# Stop cleanly (SIGTERM + 35s drain + SIGKILL fallback)
+gbrain jobs supervisor stop
+```
+
+Every lifecycle event (spawn, crash, backoff, health warning, max-crashes,
+shutdown) is also written to `${GBRAIN_AUDIT_DIR:-~/.gbrain/audit}/supervisor-YYYY-Www.jsonl`
+for historical inspection. `gbrain doctor` reads that file and surfaces
+a `supervisor` check in its health report.
+
+## Deployment: systemd
+
+For long-running Linux VMs with shell access.
+
+```bash
+# Create the worker user if it doesn't exist.
+sudo useradd --system --home "$GBRAIN_WORKSPACE" --shell /usr/sbin/nologin gbrain \
+  2>/dev/null || true
+sudo mkdir -p "$GBRAIN_WORKSPACE" && sudo chown gbrain:gbrain "$GBRAIN_WORKSPACE"
+
+# Install the env file (secrets stay out of the unit file).
+sudo install -m 600 -o gbrain -g gbrain \
   docs/guides/minions-deployment-snippets/gbrain.env.example /etc/gbrain.env
 sudoedit /etc/gbrain.env
+# Fill in DATABASE_URL, optional GBRAIN_ALLOW_SHELL_JOBS=1.
+
+# Install the unit file, substituting /srv/gbrain → your workspace path.
+sudo install -m 644 docs/guides/minions-deployment-snippets/systemd.service \
+  /etc/systemd/system/gbrain-worker.service
+sudo sed -i "s|/srv/gbrain|$GBRAIN_WORKSPACE|g" \
+  /etc/systemd/system/gbrain-worker.service
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now gbrain-worker
+sudo systemctl status gbrain-worker
+journalctl -u gbrain-worker -n 50
 ```
 
-Fill in the connection string and `GBRAIN_ALLOW_SHELL_JOBS=1` (if
-applicable). See
-[`gbrain.env.example`](./minions-deployment-snippets/gbrain.env.example)
-for the full list.
+The shipped unit file invokes `gbrain jobs supervisor` (not `gbrain jobs work`
+directly) so you get two-layer supervision: systemd restarts the supervisor
+on host reboot, supervisor restarts the worker on in-process crash.
 
-### 1b. Install the watchdog script
+`Restart=always` + `RestartSec=10s` handle the supervisor-level recovery.
+The unit runs as unprivileged `gbrain` with `PrivateTmp`, `ProtectSystem=strict`,
+and `ReadWritePaths=$GBRAIN_WORKSPACE,$HOME/.gbrain` (for the PID file and
+audit log). `LimitNOFILE=65535` covers Bun + Postgres pool + concurrent
+LLM subagent calls without hitting the default 1024 cap.
 
-The [`minion-watchdog.sh`](./minions-deployment-snippets/minion-watchdog.sh)
-ships in-repo and writes a two-line PID file (PID on line 1, restart epoch
-on line 2). The restart-epoch marker is how the watchdog distinguishes
-stale shutdown lines in the log from current ones — without it, every tick
-after the first restart would match an old `worker shutting down` line and
-loop forever.
-
-Requires GNU coreutils (Linux default). On macOS/BSD install via
-`brew install coreutils` and alias `date` to `gdate` in the cron env if you
-want to test the watchdog locally; production Linux boxes work as-is.
+## Deployment: Fly.io
 
 ```bash
-sudo install -m 755 -o $GBRAIN_WORKER_USER -g $GBRAIN_WORKER_USER \
-  docs/guides/minions-deployment-snippets/minion-watchdog.sh \
-  /usr/local/bin/minion-watchdog.sh
+# Merge the [processes] block from fly.toml.partial into your fly.toml.
+cat docs/guides/minions-deployment-snippets/fly.toml.partial >> fly.toml
+# Review + edit as needed.
+
+# Set secrets (Fly handles restart on crash).
+fly secrets set DATABASE_URL='postgres://…' GBRAIN_ALLOW_SHELL_JOBS=1
 ```
 
-### 1c. Wire into cron
+The `[processes]` block runs `gbrain jobs supervisor` as PID 1. Fly
+restarts the container on host failure; the supervisor restarts the
+worker on in-process crash.
 
-Pick the form that matches the crontab you're editing.
+## Deployment: Render / Railway / Heroku
 
-**If you ran `crontab -e`** (user crontab — 5-field, no user column):
+Drop [`Procfile`](./minions-deployment-snippets/Procfile) at the repo
+root. The shipped Procfile calls `gbrain jobs supervisor`. Set
+`DATABASE_URL` + optional `GBRAIN_ALLOW_SHELL_JOBS=1` via the platform's
+env UI or CLI.
 
-```
-SHELL=/bin/bash
-PATH=/usr/local/bin:/usr/bin:/bin
-BASH_ENV=/etc/gbrain.env
-*/5 * * * * /usr/local/bin/minion-watchdog.sh
-```
+## Deployment: inline `--follow` (no persistent worker)
 
-**If you edited `/etc/crontab` directly** (system crontab — 6-field, with
-user column):
-
-```
-SHELL=/bin/bash
-PATH=/usr/local/bin:/usr/bin:/bin
-BASH_ENV=/etc/gbrain.env
-*/5 * * * * gbrain /usr/local/bin/minion-watchdog.sh
-```
-
-In both forms, `BASH_ENV=/etc/gbrain.env` tells non-interactive bash to
-source the env file before running the watchdog — that's how the
-connection string and `GBRAIN_ALLOW_SHELL_JOBS` reach the worker without
-landing in the world-readable crontab itself.
-
-### 1d. Log rotation
-
-The watchdog appends to the worker log across restarts. If you expect the
-file to grow unbounded, rotate it externally with `logrotate`:
-
-```
-# /etc/logrotate.d/gbrain-worker
-/tmp/gbrain-worker.log {
-  daily
-  rotate 7
-  missingok
-  notifempty
-  copytruncate
-}
-```
-
-`copytruncate` is important — the watchdog's restart-epoch check survives
-it (the epoch is compared against in-log timestamps, not file inode).
-
-## Option 2: inline `--follow` (no persistent worker)
-
-Each cron run brings its own temporary worker. `--follow` starts one on
-the queue and blocks until the just-submitted job reaches a terminal state
-(`completed` / `failed` / `dead` / `cancelled`). 2-3 s startup overhead
-per job; negligible vs job duration for scheduled work.
-
-Example: nightly brain enrichment as a shell job.
+For short deterministic scripts on a fixed schedule where you don't need
+a persistent worker between runs. Each cron run brings its own temporary
+worker. `--follow` starts one on the queue and blocks until the
+just-submitted job reaches a terminal state (`completed` / `failed` /
+`dead` / `cancelled`). 2-3 s startup overhead per job; negligible vs job
+duration for scheduled work.
 
 ```bash
 GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \
@@ -3461,85 +3730,56 @@ GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \
 
 Replace `gbrain embed --stale` with whichever gbrain subcommand you're
 scheduling (`sync`, `extract`, `orphans`, `doctor`, `check-backlinks`,
-`lint`, `autopilot`). If you're shelling out to a non-gbrain binary,
-keep its absolute path in the `cmd`.
-
-**Shared-queue gotcha.** If other jobs are already waiting on the same
-queue with higher priority or earlier `created_at`, the temporary worker
-processes those first before reaching yours. `--follow` still exits only
-when YOUR job finishes. For strict single-job semantics on shared queues,
+`lint`, `autopilot`). For strict single-job semantics on shared queues,
 use a dedicated queue name like `nightly-enrich` above.
 
-## Option 3: service manager (systemd / Fly / Render / Railway)
+## Upgrading from an older deployment
 
-Replaces the watchdog entirely. No cron, no PID file, no restart-loop.
-The service manager owns liveness.
+### From `minion-watchdog.sh` (pre-v0.20)
 
-### systemd (Linux hosts with shell access)
+Earlier versions of this guide shipped a 68-line bash watchdog
+(`minion-watchdog.sh`). It's been replaced by `gbrain jobs supervisor`
+which handles everything the script did, plus atomic PID locking,
+structured audit events, queue-scoped health checks, and graceful
+drain on SIGTERM.
+
+**Migration:**
 
 ```bash
-# Create the worker user if it doesn't exist.
-sudo useradd --system --home "$GBRAIN_WORKSPACE" --shell /usr/sbin/nologin gbrain \
-  2>/dev/null || true
-sudo mkdir -p "$GBRAIN_WORKSPACE" && sudo chown gbrain:gbrain "$GBRAIN_WORKSPACE"
+# 1. Stop and remove the old watchdog.
+sudo kill $(head -n1 /tmp/gbrain-worker.pid) 2>/dev/null
+sudo rm -f /usr/local/bin/minion-watchdog.sh /tmp/gbrain-worker.pid \
+           /tmp/gbrain-worker.log
+crontab -e   # delete the "*/5 * * * * /usr/local/bin/minion-watchdog.sh" line
 
-# Install the unit file, substituting /srv/gbrain → your workspace path.
-sudo install -m 644 docs/guides/minions-deployment-snippets/systemd.service \
-  /etc/systemd/system/gbrain-worker.service
-sudo sed -i "s|/srv/gbrain|$GBRAIN_WORKSPACE|g" \
-  /etc/systemd/system/gbrain-worker.service
+# 2. Start the supervisor (systemd users: reinstall the unit from
+#    docs/guides/minions-deployment-snippets/systemd.service, which
+#    now calls `gbrain jobs supervisor`).
+gbrain jobs supervisor start --detach --json
+# Or: sudo systemctl restart gbrain-worker
 
-# See 1a above for /etc/gbrain.env install.
-sudo systemctl daemon-reload
-sudo systemctl enable --now gbrain-worker
-sudo systemctl status gbrain-worker
-journalctl -u gbrain-worker -n 50
+# 3. Verify.
+gbrain jobs supervisor status --json
+gbrain doctor   # 'supervisor' check should report running=true
 ```
 
-`Restart=always` + `RestartSec=10s` give you crash-loop recovery. The unit
-runs as an unprivileged `gbrain` user with `PrivateTmp`, `ProtectSystem=strict`,
-and `ReadWritePaths=$GBRAIN_WORKSPACE`. `LimitNOFILE=65535` in the shipped
-unit covers Bun + Postgres pool + concurrent LLM subagent calls without
-hitting the default 1024 cap.
+### Schema / migration hygiene
 
-### Fly.io
+Regardless of which deployment path you're upgrading from:
 
-Merge the `[processes]` block from
-[`fly.toml.partial`](./minions-deployment-snippets/fly.toml.partial) into
-your existing `fly.toml`. Set secrets with `fly secrets set` —
-Fly auto-restarts the process on crash.
-
-### Render / Railway / Heroku
-
-Drop [`Procfile`](./minions-deployment-snippets/Procfile) at the repo root.
-Set the connection string and `GBRAIN_ALLOW_SHELL_JOBS=1` via the
-platform's env UI or CLI.
-
-## Upgrading an existing deployment
-
-If you deployed on v0.13.x or earlier, walk this checklist:
-
-1. **Stop the worker before upgrading.**
-   `kill $(head -n1 /tmp/gbrain-worker.pid)` and wait for the process to
-   exit. Skipping this risks an in-flight job landing partial schema.
+1. **Stop the worker before upgrading.** `gbrain jobs supervisor stop`
+   (or `sudo systemctl stop gbrain-worker`). Skipping this risks an
+   in-flight job landing partial schema.
 2. **Run `gbrain upgrade`**. Then `gbrain apply-migrations --yes` if
    `gbrain doctor` reports any migration as `partial` or `pending`.
-3. **If you run shell jobs:** from v0.14 onward, the worker requires
-   `GBRAIN_ALLOW_SHELL_JOBS=1` to register the `shell` handler. Add it to
-   `/etc/gbrain.env`. Submitters don't need the flag; only the worker does.
-4. **If you tuned your watchdog for `max_stalled=1`:** v0.14.3 migration
-   v15 raised the schema default to 5 and backfilled existing non-terminal
-   rows. A watchdog tuned around 1-strike dead-lettering will now
-   over-restart because it takes 5 misses to dead-letter. Switch to the
-   shipped watchdog (which keys on log markers, not job state).
-5. **If your v0.16.1 watchdog is still running:** it has a restart-loop
-   bug (old shutdown lines in the unrotated log re-match every 5 min
-   forever). Install the current `minion-watchdog.sh` from this guide's
-   snippets — it writes a restart epoch into the PID file and only
-   considers log lines newer than that epoch.
-6. **Verify.** `gbrain doctor` should report zero `pending` or `partial`
-   migrations. `gbrain jobs stats` should show no unexplained growth in
-   `dead` between pre- and post-upgrade.
+3. **If you run shell jobs:** from v0.14 onward, pass
+   `--allow-shell-jobs` to the supervisor (or keep
+   `GBRAIN_ALLOW_SHELL_JOBS=1` in `/etc/gbrain.env`). Submitters don't
+   need the flag; only the worker does.
+4. **Verify.** `gbrain doctor` should report zero `pending` or `partial`
+   migrations plus a healthy `supervisor` check. `gbrain jobs stats`
+   should show no unexplained growth in `dead` between pre- and
+   post-upgrade.
 
 ## Known issues
 
@@ -3552,9 +3792,10 @@ silently. The stall detector then dead-letters the job after
 
 **Current defaults that make this worse:**
 
-- `lockDuration: 30000` (30 s) — too short for long jobs during connection blips.
-- `max_stalled: 5` (schema column default on master — see `src/schema.sql`
-  and `src/core/pglite-schema.ts`). Five missed heartbeats before dead-letter.
+- `lockDuration: 30000` (30 s) — too short for long jobs during
+  connection blips.
+- `max_stalled: 5` (schema column default — see `src/schema.sql` and
+  `src/core/pglite-schema.ts`). Five missed heartbeats before dead-letter.
 - `stalledInterval: 30000` (30 s) — checks too aggressively.
 
 **Tune per-job today.** `gbrain jobs submit` accepts `--max-stalled N`,
@@ -3562,9 +3803,6 @@ silently. The stall detector then dead-letters the job after
 `--backoff-jitter 0..1`, and `--timeout-ms N` as first-class flags
 (since v0.13.1). These write onto the job row at submit time — which is
 what `handleStalled()` reads — so per-job tuning is the real knob today.
-Worker-level `--lock-duration` / `--stall-interval` are on the roadmap;
-until they land, rely on per-job `--max-stalled` plus the watchdog (or
-systemd) for worker health.
 
 ### DO NOT pass `maxStalledCount` to `MinionWorker`
 
@@ -3575,16 +3813,16 @@ Use `gbrain jobs submit --max-stalled N` per-job instead.
 ### Zombie shell children
 
 When the Bun worker crashes hard, child processes from shell jobs can
-become zombies. The watchdog's 10 s `SIGTERM → SIGKILL` window covers the
-shell handler's 5 s child-kill grace (`KILL_GRACE_MS`). For long-running
-shell jobs, bump the watchdog's `sleep 10` to `sleep 30` so the worker
-has time to flush in-flight jobs before the kill.
+become zombies. The supervisor's SIGTERM → 35s drain → SIGKILL window
+covers the shell handler's 5 s child-kill grace (`KILL_GRACE_MS`). For
+long-running shell jobs, prefer timeouts via `--timeout-ms` on submit
+over relying on hard kills.
 
 ## Smoke test
 
 ```bash
-# Worker alive?
-kill -0 $(head -n1 /tmp/gbrain-worker.pid) 2>/dev/null && echo ALIVE || echo DEAD
+# Supervisor alive?
+gbrain jobs supervisor status --json | jq .running
 
 # Aggregate queue health.
 gbrain jobs stats
@@ -3595,23 +3833,32 @@ gbrain jobs list --status active --limit 10
 # Dead-lettered jobs.
 gbrain jobs list --status dead --limit 10
 
-# Shell handler registered? (stderr banner merged into log via 2>&1.)
-grep "shell handler enabled" /tmp/gbrain-worker.log
+# Shell handler registered? (check supervisor audit log or worker stderr.)
+gbrain jobs supervisor status --json | jq '.worker_config.allow_shell_jobs'
 ```
 
 ## Uninstall
 
-- **Option 1 (watchdog cron):** `crontab -e`, delete the watchdog line.
-  `kill $(head -n1 /tmp/gbrain-worker.pid) && rm /tmp/gbrain-worker.pid`.
-  Optionally `sudo rm /etc/gbrain.env /usr/local/bin/minion-watchdog.sh`.
-- **Option 2 (inline `--follow`):** remove the cron entry. Nothing else to
-  clean up — temporary workers exit with their jobs.
-- **Option 3 (systemd):** `sudo systemctl disable --now gbrain-worker`,
-  then `sudo rm /etc/systemd/system/gbrain-worker.service /etc/gbrain.env`,
-  then `sudo systemctl daemon-reload`.
-- **Option 3 (Fly/Render/Railway):** delete the `worker` process from
-  `fly.toml` / `Procfile` and redeploy. Secrets set via `fly secrets`
-  persist until `fly secrets unset`.
+**`gbrain jobs supervisor`** (foreground or `--detach`):
+
+```bash
+gbrain jobs supervisor stop
+```
+
+**systemd:**
+
+```bash
+sudo systemctl disable --now gbrain-worker
+sudo rm /etc/systemd/system/gbrain-worker.service /etc/gbrain.env
+sudo systemctl daemon-reload
+```
+
+**Fly / Render / Railway:** delete the `worker` process from `fly.toml`
+/ `Procfile` and redeploy. Secrets set via `fly secrets` persist until
+`fly secrets unset`.
+
+**Inline `--follow`:** remove the cron entry. Nothing else to clean up
+— temporary workers exit with their jobs.
 
 ---
 

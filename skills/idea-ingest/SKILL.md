@@ -20,6 +20,11 @@ tools:
   - add_timeline_entry
   - file_upload
 mutating: true
+writes_pages: true
+writes_to:
+  - people/
+  - concepts/
+  - sources/
 ---
 
 # Idea Ingest Skill

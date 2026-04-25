@@ -55,12 +55,12 @@ describe('runDream — brainDir resolution', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  });
+  }, 60_000);
 
   afterEach(async () => {
     await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
-  });
+  }, 60_000);
 
   test('explicit --dir takes precedence over engine config', async () => {
     await engine.setConfig('sync.repo_path', '/configured/dir');
@@ -112,12 +112,12 @@ describe('runDream — --phase <name> restricts the cycle', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  });
+  }, 60_000);
 
   afterEach(async () => {
     await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
-  });
+  }, 60_000);
 
   test('--phase lint produces a report with exactly one phase = lint', async () => {
     const report = await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
@@ -160,12 +160,12 @@ describe('runDream — output format', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  });
+  }, 60_000);
 
   afterEach(async () => {
     await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
-  });
+  }, 60_000);
 
   test('--json emits parsable CycleReport JSON with schema_version', async () => {
     const lines: string[] = [];
@@ -198,12 +198,12 @@ describe('runDream — dry-run propagates through to runCycle', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  });
+  }, 60_000);
 
   afterEach(async () => {
     await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
-  });
+  }, 60_000);
 
   test('--dry-run produces a report where no DB-mutating work happened', async () => {
     // Before: empty pages table.
@@ -227,12 +227,12 @@ describe('runDream — exit-code semantics', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  });
+  }, 60_000);
 
   afterEach(async () => {
     await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
-  });
+  }, 60_000);
 
   test('clean/ok/partial statuses do not call process.exit', async () => {
     const spy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('UNEXPECTED_EXIT'); });

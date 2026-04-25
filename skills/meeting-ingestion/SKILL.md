@@ -18,6 +18,11 @@ tools:
   - add_link
   - add_timeline_entry
 mutating: true
+writes_pages: true
+writes_to:
+  - meetings/
+  - people/
+  - companies/
 ---
 
 # Meeting Ingestion Skill

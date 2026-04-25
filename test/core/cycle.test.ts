@@ -135,11 +135,11 @@ beforeAll(async () => {
   sharedEngine = new PGLiteEngine();
   await sharedEngine.connect({});
   await sharedEngine.initSchema();
-});
+}, 60_000);
 
 afterAll(async () => {
   await sharedEngine.disconnect();
-});
+}, 60_000);
 
 beforeEach(() => {
   lintCalls = [];

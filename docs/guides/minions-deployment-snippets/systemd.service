@@ -15,9 +15,13 @@ WorkingDirectory=/srv/gbrain
 # Env file is mode 600, owned by User=. Do not put secrets in this unit.
 EnvironmentFile=/etc/gbrain.env
 
-ExecStart=/usr/local/bin/gbrain jobs work --concurrency 2
+# Two-layer supervision: systemd restarts `gbrain jobs supervisor` on host
+# events (reboot, unit crash); the supervisor restarts `gbrain jobs work`
+# on in-process crashes with exponential backoff + structured audit.
+ExecStart=/usr/local/bin/gbrain jobs supervisor --concurrency 2
 
-# Replaces the cron watchdog. systemd restarts on any non-zero exit.
+# systemd restarts the supervisor on any non-zero exit. The supervisor
+# itself handles worker-level crash recovery.
 Restart=always
 RestartSec=10s
 
@@ -38,7 +42,9 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/srv/gbrain
+# ReadWritePaths must include the brain workspace AND ~/.gbrain (PID file +
+# audit log written by the supervisor).
+ReadWritePaths=/srv/gbrain /home/gbrain/.gbrain
 
 [Install]
 WantedBy=multi-user.target

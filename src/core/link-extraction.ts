@@ -128,6 +128,50 @@ function stripCodeBlocks(content: string): string {
 }
 
 /**
+ * A code-reference found in markdown prose. Created by extractCodeRefs and
+ * consumed by importFromFile's tail to build doc↔impl edges (v0.19.0 E1).
+ */
+export interface CodeRef {
+  /** Raw matched path (e.g. 'src/core/sync.ts'). */
+  path: string;
+  /** Optional line number from 'src/foo.ts:42'. */
+  line?: number;
+  /** Index in the source string. */
+  index: number;
+}
+
+// v0.19.0 E1 — markdown guides that cite 'src/core/sync.ts:42' create an
+// edge to the code page that imported that file. Regex is anchored against
+// the common gbrain repo layout directories so arbitrary prose like
+// "in foo/bar.js" doesn't generate false positives.
+//
+// The extension list is aligned with detectCodeLanguage in chunkers/code.ts.
+// Paths NOT matching these extensions are ignored because they wouldn't
+// have a code page to edge to anyway.
+const CODE_REF_REGEX = /\b((?:src|lib|app|test|tests|scripts|docs|packages|internal|cmd|examples)\/[\w\-./]+\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|go|rs|java|cs|cpp|cc|hpp|c|h|php|swift|kt|scala|lua|ex|exs|elm|ml|dart|zig|sol|sh|bash|css|html|vue|json|yaml|yml|toml))(?::(\d+))?\b/g;
+
+/**
+ * Extract code-path references (e.g. 'src/core/sync.ts:42') from markdown
+ * prose. Deduped by path.
+ */
+export function extractCodeRefs(content: string): CodeRef[] {
+  const seen = new Set<string>();
+  const refs: CodeRef[] = [];
+  let match: RegExpExecArray | null;
+  // Using a fresh regex object per call to avoid lastIndex state leaking
+  // across invocations.
+  const re = new RegExp(CODE_REF_REGEX.source, 'g');
+  while ((match = re.exec(content)) !== null) {
+    const path = match[1]!;
+    if (seen.has(path)) continue;
+    seen.add(path);
+    const line = match[2] ? parseInt(match[2], 10) : undefined;
+    refs.push({ path, line, index: match.index });
+  }
+  return refs;
+}
+
+/**
  * Extract `[Name](path-to-people-or-company)` references from arbitrary content.
  * Both filesystem-relative paths (with `../` and `.md`) and bare engine-style
  * slugs (`people/slug`) are matched. Returns one EntityRef per match (no dedup
@@ -353,7 +397,20 @@ function excerpt(s: string, idx: number, width: number): string {
 //     explicit "advisor"/"advise" rooting.
 
 // Employment context: position + at/of, or explicit work verbs.
-const WORKS_AT_RE = /\b(?:CEO of|CTO of|COO of|CFO of|CMO of|CRO of|VP at|VP of|VPs? Engineering|VPs? Product|works at|worked at|working at|employed by|employed at|joined as|joined the team|engineer at|engineer for|director at|director of|head of|leads engineering|leads product|currently at|previously at|previously worked at|spent .* (?:years|months) at|stint at|tenure at)\b/i;
+//
+// v0.10.5 additions (drive works_at 58% → >85% on rich prose):
+//   - Role-prefixed engineer patterns: "senior engineer at", "staff engineer at",
+//     "principal engineer at", "lead engineer at". Current "engineer at" only
+//     hits if the word "engineer" is immediately adjacent; prose often uses
+//     rank-qualified forms.
+//   - Generic role patterns: "backend engineer at", "frontend engineer at",
+//     "ML engineer at", "data engineer at", "full-stack engineer at".
+//   - Broader role verbs: "manages engineering at", "running product at",
+//     "leads the [team] at", "heads up engineering at".
+//   - Possessive time: "his time at", "her time at", "their time at", "my time at".
+//   - Role noun forms: "role at", "tenure as", "stint as", "position at".
+//   - Promoted/staff-engineer forms: "promoted to (staff|senior|principal) engineer at".
+const WORKS_AT_RE = /\b(?:CEO of|CTO of|COO of|CFO of|CMO of|CRO of|VP at|VP of|VPs? Engineering|VPs? Product|works at|worked at|working at|employed by|employed at|joined as|joined the team|engineer at|engineer for|director at|director of|head of|heads up .{0,20} at|leads engineering|leads product|leads the .{0,20} (?:team|org) at|manages engineering at|manages product at|running (?:engineering|product|design) at|currently at|previously at|previously worked at|spent .* (?:years|months) at|stint at|stint as|tenure at|tenure as|role at|position at|(?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security) engineer at|promoted to (?:senior|staff|principal|lead) .{0,20} at|(?:his|her|their|my) time at)\b/i;
 
 // Investment context. Order patterns from most-specific to least to keep
 // regex efficient. Includes funding-round verbs ("led the seed", "led X's
@@ -370,13 +427,39 @@ const FOUNDED_RE = /\b(?:founded|co-?founded|started the company|incorporated|fo
 // Advise context: must be rooted in "advisor"/"advise" (investors also sit on
 // boards). Keep "board advisor" / "advisory board" but drop generic "board
 // member" / "sits on the board" which over-matches.
-const ADVISES_RE = /\b(?:advises|advised|advisor (?:to|at|for|of)|advisory (?:board|role|position)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board)\b/i;
+//
+// v0.10.5 additions (drive advises 41% → >85% on rich prose):
+//   - Advisory capacity phrasings: "in an advisory capacity", "advisory engagement",
+//     "advisory partnership", "advisory contract", "advisory relationship".
+//   - "as an advisor" form: joined/serves/brought on "as an advisor" / "as a
+//     security advisor" / "as a technical advisor" / "as an industry advisor".
+//   - "consults for / consulting role": advisor-adjacent verbs that appear in
+//     narratives where the direct "advises" verb isn't used.
+//   - Advisor-qualified: "strategic advisor to|at", "technical advisor to|at",
+//     "security advisor to|at", "product advisor to|at", "industry advisor".
+const ADVISES_RE = /\b(?:advises|advised|advisor (?:to|at|for|of)|advisory (?:board|role|position|capacity|engagement|partnership|contract|relationship|work)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board|in an? advisory (?:capacity|role|position)|as an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|board advisor|senior advisor)|(?:strategic|technical|security|product|industry|senior|board) advisor (?:to|at|for|of)|consults for|consulting role (?:at|with))\b/i;
 
 // Page-role detection: if the source page describes a partner/investor at
 // page level, that's a strong prior for outbound company refs being
 // invested_in even when per-edge context lacks explicit investment verbs.
 const PARTNER_ROLE_RE = /\b(?:partner at|partner of|venture partner|VC partner|invested early|investor at|investor in|portfolio|venture capital|early-stage investor|seed investor|fund [A-Z]|invests across|backs companies)\b/i;
-const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:multiple|several|various))\b/i;
+
+// Advisor role prior: fires when the page-level description indicates the
+// person IS an advisor (not just mentions advising). Broadened in v0.10.5
+// from "full-time/professional/advises multiple" to catch any page that
+// self-identifies the subject as an advisor.
+const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:multiple|several|various)|is an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|senior advisor)|took on advisory roles|(?:her|his|their) advisory (?:work|role|engagement|portfolio)|serves as (?:an )?advisor)\b/i;
+
+// Employee role prior (new in v0.10.5): fires when the page-level description
+// indicates the person IS an employee (senior/staff/lead engineer, director,
+// head, etc.) at some company. Biases outbound company refs on that page
+// toward works_at when per-edge verbs are absent (e.g. possessive phrasings
+// "her work on Delta's pipeline..." where the verb "works" doesn't appear
+// near the slug).
+//
+// Scope: only fires for person-page → company-page links. Companies' own
+// pages mentioning their employees use the page-role layer differently.
+const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security|DevOps|platform)? ?engineer at|is an? (?:senior|staff|principal|lead)? ?(?:developer|designer|product manager|engineering manager|director|VP) (?:at|of)|holds? the (?:CTO|CEO|CFO|COO|CMO|CRO|VP) (?:role|position|seat|title) at|is the (?:CTO|CEO|CFO|COO|CMO|CRO) of|employee at|on the team at|works on .{0,30} at)\b/i;
 
 /**
  * Infer link_type from page context. Deterministic regex heuristics, no LLM.
@@ -408,9 +491,15 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning
   // other people (co-investors, friends) should also stay as mentions.
+  //
+  // Precedence within priors: investor > advisor > employee. Investors often
+  // also sit on boards ("board seat at portfolio company") which a naive
+  // employee/advisor match would mis-classify; keep investor first so those
+  // phrasings resolve correctly.
   if (pageType === 'person' && globalContext && targetSlug?.startsWith('companies/')) {
     if (PARTNER_ROLE_RE.test(globalContext)) return 'invested_in';
     if (ADVISOR_ROLE_RE.test(globalContext)) return 'advises';
+    if (EMPLOYEE_ROLE_RE.test(globalContext)) return 'works_at';
   }
   return 'mentions';
 }

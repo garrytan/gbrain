@@ -102,6 +102,64 @@ export class MinionQueue {
         if (existing.length > 0) return rowToMinionJob(existing[0]);
       }
 
+      // 1b. Submission-time backpressure for high-frequency named jobs.
+      // If waiting jobs for this (name, queue) already hit maxWaiting, return
+      // the most-recent waiting row instead of inserting another slot.
+      //
+      // Correctness: two concurrent submitters could both see waitingCount <
+      // maxWaiting and both insert, violating the cap. `pg_advisory_xact_lock`
+      // keyed on (name, queue) serializes concurrent count+insert decisions
+      // for the SAME key while leaving different keys fully parallel. The
+      // lock releases on txn commit/rollback automatically — no cleanup path
+      // to leak. Cost: one no-op SELECT on the hot path per coalesce-guarded
+      // submission; trivial compared to the protection.
+      //
+      // Queue scope: the filter includes `queue=$2` so a waiting
+      // 'autopilot-cycle' in queue 'default' does NOT suppress submissions
+      // to queue 'shell' with the same name. Pre-D2 code filtered on `name`
+      // alone — a real cross-queue bleed that sequential tests missed.
+      //
+      // Engine compatibility: PGLite (WASM Postgres 17) supports
+      // pg_advisory_xact_lock, so this works on both engines without branching.
+      if (opts?.maxWaiting !== undefined) {
+        const maxWaiting = Math.max(1, Math.floor(opts.maxWaiting));
+        const backpressureQueue = opts?.queue ?? 'default';
+        await tx.executeRaw(
+          `SELECT pg_advisory_xact_lock(hashtext('minion_maxwaiting:' || $1 || ':' || $2))`,
+          [jobName, backpressureQueue]
+        );
+        const waitingCountRows = await tx.executeRaw<{ count: string }>(
+          `SELECT count(*)::text AS count
+           FROM minion_jobs
+           WHERE name = $1 AND queue = $2 AND status = 'waiting'`,
+          [jobName, backpressureQueue]
+        );
+        const waitingCount = parseInt(waitingCountRows[0]?.count ?? '0', 10);
+        if (waitingCount >= maxWaiting) {
+          const existingWaiting = await tx.executeRaw<Record<string, unknown>>(
+            `SELECT * FROM minion_jobs
+             WHERE name = $1 AND queue = $2 AND status = 'waiting'
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1`,
+            [jobName, backpressureQueue]
+          );
+          if (existingWaiting.length > 0) {
+            const coalesced = rowToMinionJob(existingWaiting[0]);
+            try {
+              const { logBackpressureCoalesce } = await import('./backpressure-audit.ts');
+              logBackpressureCoalesce({
+                queue: backpressureQueue,
+                name: jobName,
+                waiting_count: waitingCount,
+                max_waiting: maxWaiting,
+                returned_job_id: coalesced.id,
+              });
+            } catch { /* audit failures never block submission */ }
+            return coalesced;
+          }
+        }
+      }
+
       // 2. Parent lock + depth/cap validation
       let depth = 0;
       if (opts?.parent_job_id) {
@@ -546,6 +604,77 @@ export class MinionQueue {
       }
 
       // Unblock any aggregator parents whose last open child we just killed.
+      for (const parentId of parentIds) {
+        await tx.executeRaw(
+          `UPDATE minion_jobs SET status = 'waiting', updated_at = now()
+           WHERE id = $1 AND status = 'waiting-children'
+             AND NOT EXISTS (
+               SELECT 1 FROM minion_jobs
+               WHERE parent_job_id = $1
+                 AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+             )`,
+          [parentId]
+        );
+      }
+
+      return rows.map(rowToMinionJob);
+    });
+  }
+
+  /**
+   * Dead-letter active jobs that exceed a wall-clock runtime threshold,
+   * regardless of lock state. This catches jobs stuck while still holding
+   * DB resources (e.g. blocked on file locks) where stall sweeps skip rows.
+   *
+   * Threshold (ms):
+   *   timeout_ms set   -> timeout_ms * 2
+   *   timeout_ms null  -> 2 * lockDurationMs * max_stalled
+   */
+  async handleWallClockTimeouts(lockDurationMs: number): Promise<MinionJob[]> {
+    return this.engine.transaction(async (tx) => {
+      const rows = await tx.executeRaw<Record<string, unknown>>(
+        `UPDATE minion_jobs SET
+          status = 'dead',
+          error_text = 'wall-clock timeout exceeded',
+          lock_token = NULL,
+          lock_until = NULL,
+          finished_at = now(),
+          updated_at = now()
+         WHERE status = 'active'
+           AND started_at IS NOT NULL
+           AND EXTRACT(EPOCH FROM (now() - started_at)) * 1000 >
+             CASE
+               WHEN timeout_ms IS NOT NULL THEN timeout_ms * 2
+               ELSE $1::double precision * 2 * GREATEST(max_stalled, 1)
+             END
+         RETURNING *`,
+        [lockDurationMs]
+      );
+
+      const parentIds = new Set<number>();
+      for (const r of rows) {
+        const parentJobId = r.parent_job_id as number | null;
+        if (parentJobId == null) continue;
+        parentIds.add(parentJobId);
+        const childDone: ChildDoneMessage = {
+          type: 'child_done',
+          child_id: r.id as number,
+          job_name: r.name as string,
+          result: null,
+          outcome: 'timeout',
+          error: 'wall-clock timeout exceeded',
+        };
+        await tx.executeRaw(
+          `INSERT INTO minion_inbox (job_id, sender, payload)
+           SELECT $1, 'minions', $2::jsonb
+           WHERE EXISTS (
+             SELECT 1 FROM minion_jobs
+             WHERE id = $1 AND status NOT IN ('completed','failed','dead','cancelled')
+           )`,
+          [parentJobId, childDone]
+        );
+      }
+
       for (const parentId of parentIds) {
         await tx.executeRaw(
           `UPDATE minion_jobs SET status = 'waiting', updated_at = now()

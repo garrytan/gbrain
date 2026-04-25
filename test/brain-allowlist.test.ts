@@ -27,11 +27,11 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({ database_url: '' });
   await engine.initSchema();
-});
+}, 60_000);
 
 afterAll(async () => {
   await engine.disconnect();
-});
+}, 60_000);
 
 beforeEach(async () => {
   await engine.executeRaw('DELETE FROM pages');

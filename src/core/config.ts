@@ -89,7 +89,13 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
 }
 
 export function configDir(): string {
-  return process.env.GBRAIN_CONFIG_DIR || join(homedir(), '.gbrain');
+  // Allow override for tests, Docker, and multi-tenant deployments.
+  // GBRAIN_CONFIG_DIR sets the config directory directly.
+  // GBRAIN_HOME sets the parent directory; config dir is GBRAIN_HOME/.gbrain.
+  if (process.env.GBRAIN_CONFIG_DIR?.trim()) return process.env.GBRAIN_CONFIG_DIR.trim();
+  const home = process.env.GBRAIN_HOME;
+  if (home && home.trim()) return join(home, '.gbrain');
+  return join(homedir(), '.gbrain');
 }
 
 export function configPath(): string {

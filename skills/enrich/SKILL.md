@@ -20,6 +20,10 @@ tools:
   - add_timeline_entry
   - get_backlinks
 mutating: true
+writes_pages: true
+writes_to:
+  - people/
+  - companies/
 ---
 
 # Enrich Skill

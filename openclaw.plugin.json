@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.4.1",
+  "version": "0.19.0",
   "description": "Personal knowledge brain with Postgres + pgvector hybrid search",
   "family": "bundle-plugin",
   "configSchema": {
@@ -24,13 +24,42 @@
     }
   },
   "skills": [
-    "skills/ingest",
-    "skills/query",
-    "skills/maintain",
-    "skills/enrich",
+    "skills/brain-ops",
     "skills/briefing",
+    "skills/citation-fixer",
+    "skills/cross-modal-review",
+    "skills/cron-scheduler",
+    "skills/daily-task-manager",
+    "skills/daily-task-prep",
+    "skills/data-research",
+    "skills/enrich",
+    "skills/idea-ingest",
+    "skills/ingest",
+    "skills/maintain",
+    "skills/media-ingest",
+    "skills/meeting-ingestion",
+    "skills/minion-orchestrator",
+    "skills/query",
+    "skills/reports",
+    "skills/repo-architecture",
+    "skills/signal-detector",
+    "skills/skill-creator",
+    "skills/skillify",
+    "skills/skillpack-check",
+    "skills/soul-audit",
+    "skills/testing",
+    "skills/webhook-transforms"
+  ],
+  "shared_deps": [
+    "skills/conventions",
+    "skills/_brain-filing-rules.md",
+    "skills/_brain-filing-rules.json",
+    "skills/_output-rules.md"
+  ],
+  "excluded_from_install": [
+    "skills/setup",
     "skills/migrate",
-    "skills/setup"
+    "skills/publish"
   ],
   "openclaw": {
     "compat": {

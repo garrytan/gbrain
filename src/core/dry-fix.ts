@@ -22,6 +22,7 @@ import {
   extractDelegationTargets,
   type CrossCuttingPattern,
 } from './check-resolvable.ts';
+import { loadOrDeriveManifest } from './skill-manifest.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -187,25 +188,11 @@ export function isWorkingTreeDirty(skillPath: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Manifest loading (duplicated from check-resolvable.ts to avoid exporting
-// that internal helper — kept in sync via tests)
+// Manifest loading delegated to src/core/skill-manifest.ts. Using the
+// shared loader means auto-fix works in AGENTS.md-only workspaces where
+// manifest.json is absent — the derive-from-walk path kicks in and
+// auto-fix has the same skill set check-resolvable sees. D-CX-12.
 // ---------------------------------------------------------------------------
-
-interface ManifestEntry {
-  name: string;
-  path: string;
-}
-
-function loadManifest(skillsDir: string): ManifestEntry[] {
-  const manifestPath = join(skillsDir, 'manifest.json');
-  if (!existsSync(manifestPath)) return [];
-  try {
-    const content = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    return content.skills || [];
-  } catch {
-    return [];
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Main function
@@ -223,7 +210,7 @@ export function autoFixDryViolations(
 ): AutoFixReport {
   const fixed: FixOutcome[] = [];
   const skipped: FixOutcome[] = [];
-  const manifest = loadManifest(skillsDir);
+  const { skills: manifest } = loadOrDeriveManifest(skillsDir);
 
   for (const skill of manifest) {
     const skillPath = join(skillsDir, skill.path);

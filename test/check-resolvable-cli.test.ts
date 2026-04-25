@@ -126,15 +126,16 @@ describe('check-resolvable — unit: parseFlags', () => {
 
 describe('check-resolvable — unit: resolveSkillsDir', () => {
   it('resolves absolute --skills-dir unchanged', () => {
-    const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, skillsDir: '/tmp/absolute-path' });
+    const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: '/tmp/absolute-path' });
     expect(r.dir).toBe('/tmp/absolute-path');
     expect(r.error).toBeNull();
   });
 
   it('resolves relative --skills-dir against cwd', () => {
-    const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, skillsDir: 'skills' });
+    const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: 'skills' });
     expect(r.dir).toMatch(/\/skills$/);
     expect(r.error).toBeNull();
+    expect(r.source).toBe('explicit');
   });
 
   it('REGRESSION-GATE: returns no_skills_dir error when no --skills-dir and findRepoRoot fails', () => {
@@ -144,7 +145,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     const original = process.cwd();
     try {
       process.chdir(empty);
-      const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, skillsDir: null });
+      const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
       expect(r.error).toBe('no_skills_dir');
       expect(r.dir).toBeNull();
       expect(typeof r.message).toBe('string');
@@ -156,19 +157,51 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
 
   it('finds skills via findRepoRoot when cwd is inside a repo (no --skills-dir)', () => {
     // Running from this test file — we're inside the real gbrain repo.
-    const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, skillsDir: null });
+    const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
     expect(r.error).toBeNull();
     expect(r.dir).toMatch(/\/skills$/);
+    expect(r.source).toBe('repo_root');
+  });
+
+  it('REGRESSION-GATE: --skills-dir override takes precedence over OpenClaw env auto-detection', () => {
+    const explicit = mkdtempSync(join(tmpdir(), 'explicit-skills-'));
+    mkdirSync(explicit, { recursive: true });
+    writeFileSync(join(explicit, 'RESOLVER.md'), '# RESOLVER\n');
+
+    const workspace = mkdtempSync(join(tmpdir(), 'openclaw-ws-'));
+    mkdirSync(join(workspace, 'skills'), { recursive: true });
+    writeFileSync(join(workspace, 'skills', 'RESOLVER.md'), '# RESOLVER\n');
+
+    const prev = process.env.OPENCLAW_WORKSPACE;
+    process.env.OPENCLAW_WORKSPACE = workspace;
+    try {
+      const r = resolveSkillsDir({
+        help: false,
+        json: false,
+        fix: false,
+        dryRun: false,
+        verbose: false,
+        strict: false,
+        skillsDir: explicit,
+      });
+      expect(r.error).toBeNull();
+      expect(r.dir).toBe(explicit);
+      expect(r.source).toBe('explicit');
+    } finally {
+      if (prev === undefined) delete process.env.OPENCLAW_WORKSPACE;
+      else process.env.OPENCLAW_WORKSPACE = prev;
+      rmSync(explicit, { recursive: true, force: true });
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 });
 
 describe('check-resolvable — unit: DEFERRED', () => {
-  it('exports two deferred check entries for Checks 5 and 6', () => {
-    expect(DEFERRED.length).toBe(2);
-    expect(DEFERRED[0].check).toBe(5);
-    expect(DEFERRED[0].name).toBe('trigger_routing_eval');
-    expect(DEFERRED[1].check).toBe(6);
-    expect(DEFERRED[1].name).toBe('brain_filing');
+  it('v0.17 ships Checks 5 and 6 — DEFERRED is empty', () => {
+    // Pre-v0.17: both Check 5 (routing eval) and Check 6 (brain filing)
+    // were deferred. v0.17 W2 shipped Check 5; v0.17 W3 shipped Check 6.
+    // The DEFERRED export stays (stable --json field) for future checks.
+    expect(DEFERRED.length).toBe(0);
   });
 });
 
@@ -191,6 +224,9 @@ describe('gbrain check-resolvable CLI — integration', () => {
     expect(r.stdout).toContain('gbrain check-resolvable');
     expect(r.stdout).toContain('--json');
     expect(r.stdout).toContain('--fix');
+    expect(r.stdout).toContain('--strict');
+    // Check 5 shipped in v0.17 (mentioned in the body); Check 6 is
+    // still deferred and must appear under "Deferred to separate issues".
     expect(r.stdout).toContain('Check 5');
     expect(r.stdout).toContain('Check 6');
   });
@@ -202,9 +238,10 @@ describe('gbrain check-resolvable CLI — integration', () => {
     const keys = Object.keys(r.json).sort();
     expect(keys).toEqual(['autoFix', 'deferred', 'error', 'message', 'ok', 'report', 'skillsDir']);
     expect(r.json.ok).toBe(true);
-    expect(r.json.deferred.length).toBe(2);
-    expect(r.json.deferred[0].check).toBe(5);
-    expect(r.json.deferred[1].check).toBe(6);
+    // v0.17 ships Checks 5 and 6; DEFERRED is empty. The key remains
+    // stable for future checks.
+    expect(Array.isArray(r.json.deferred)).toBe(true);
+    expect(r.json.deferred.length).toBe(0);
   });
 
   it('--json success: autoFix is null when --fix was not passed', () => {
@@ -220,20 +257,52 @@ describe('gbrain check-resolvable CLI — integration', () => {
     expect(r.stdout).toContain('resolver_health: OK');
   });
 
-  it('REGRESSION-GATE: exits 1 when fixture has a warning-level orphan_trigger only', () => {
+  it('D-CX-3: warnings-only fixture exits 0 in default mode', () => {
     // "alpha" is in resolver but not manifest → orphan_trigger (warning)
+    // Per D-CX-3 (codex review outside voice): warnings alone do not flip
+    // the exit code. This is the new contract; callers who want strict
+    // behavior pass --strict. Prior contract (exit 1 on any warning) broke
+    // CI for workspaces emitting warning-level advisories like filing-audit.
     const skillsDir = makeFixture(
       [{ name: 'alpha', triggers: ['alpha'], inManifest: false }],
       created,
     );
     const r = run(['--json', '--skills-dir', skillsDir]);
     expect(r.json).not.toBeNull();
-    const warnings = r.json.report.issues.filter((i: any) => i.severity === 'warning');
-    const errors = r.json.report.issues.filter((i: any) => i.severity === 'error');
-    expect(warnings.length).toBeGreaterThan(0);
-    expect(errors.length).toBe(0);
-    // Doctor's ok=true-on-warnings-only would exit 0. check-resolvable MUST exit 1.
+    expect(r.json.report.warnings.length).toBeGreaterThan(0);
+    expect(r.json.report.errors.length).toBe(0);
+    // warnings.length > 0 but errors.length === 0 → exit 0 (advisory)
+    expect(r.status).toBe(0);
+    expect(r.json.ok).toBe(true);
+  });
+
+  it('D-CX-3: --strict promotes warnings to exit 1', () => {
+    const skillsDir = makeFixture(
+      [{ name: 'alpha', triggers: ['alpha'], inManifest: false }],
+      created,
+    );
+    const r = run(['--json', '--strict', '--skills-dir', skillsDir]);
+    expect(r.json).not.toBeNull();
+    expect(r.json.report.warnings.length).toBeGreaterThan(0);
+    expect(r.json.report.errors.length).toBe(0);
+    // --strict flips ok to false and exit to 1 when warnings exist
+    expect(r.json.ok).toBe(false);
     expect(r.status).toBe(1);
+  });
+
+  it('D-CX-3: report has separate errors[] and warnings[] arrays alongside issues[]', () => {
+    const skillsDir = makeFixture(
+      [{ name: 'alpha', triggers: ['alpha'], inManifest: false }],
+      created,
+    );
+    const r = run(['--json', '--skills-dir', skillsDir]);
+    expect(r.json).not.toBeNull();
+    const rep = r.json.report;
+    expect(Array.isArray(rep.errors)).toBe(true);
+    expect(Array.isArray(rep.warnings)).toBe(true);
+    // Deprecated flat `issues` still present for one-release backcompat
+    expect(Array.isArray(rep.issues)).toBe(true);
+    expect(rep.issues.length).toBe(rep.errors.length + rep.warnings.length);
   });
 
   it('exits 1 when fixture has an error-level unreachable skill', () => {
@@ -261,9 +330,12 @@ describe('gbrain check-resolvable CLI — integration', () => {
   it('--verbose prints the deferred checks note in human mode', () => {
     const skillsDir = makeFixture([{ name: 'alpha', triggers: ['alpha'] }], created);
     const r = run(['--verbose', '--skills-dir', skillsDir]);
+    // v0.17 ships Checks 5 and 6 → DEFERRED is empty. Verbose still
+    // prints the "Deferred:" header for stable UX; downstream content
+    // is empty until a future release adds a new deferred check.
     expect(r.stdout).toContain('Deferred:');
-    expect(r.stdout).toContain('trigger_routing_eval');
-    expect(r.stdout).toContain('brain_filing');
+    expect(r.stdout).not.toContain('trigger_routing_eval');
+    expect(r.stdout).not.toContain('brain_filing');
   });
 
   it('clean fixture human output says all skills reachable', () => {
@@ -278,5 +350,12 @@ describe('gbrain check-resolvable CLI — integration', () => {
     expect(r.stdout).toContain('resolver_health: OK');
     expect(r.stdout).toContain('2 skills');
     expect(r.status).toBe(0);
+  });
+
+  it('logs the auto-detected skills directory path in human mode', () => {
+    const r = run([]);
+    expect(r.status === 0 || r.status === 1).toBe(true);
+    expect(r.stdout).toContain('Auto-detected skills directory');
+    expect(r.stdout).toContain('/skills');
   });
 });

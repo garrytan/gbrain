@@ -79,7 +79,7 @@ Even when Minions is the default (mode A), some work should run inline:
 
 Before submitting batch jobs:
 
-- Check `get_job_stats` queue_health.active
+- Check active queue depth via `list_jobs --status active` (MCP-callable) or `gbrain jobs stats` (CLI)
 - If active > 5, stagger new jobs with `delay` so you don't swarm
 - The resource governor auto-throttles but don't dump 20 jobs at once
 

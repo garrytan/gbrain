@@ -244,7 +244,7 @@ export const v0_12_0: Migration = {
       '"what did Bob invest in?" — answers vector search alone can\'t reach. Benchmarked ' +
       'end-to-end on a 240-page rich-prose corpus: Recall@5 83% → 95%, Precision@5 ' +
       '39% → 45%, +30 more correct answers in the agent\'s top-5. Graph-only F1: ' +
-      '86.6% vs grep\'s 57.8% (+28.8 pts). See docs/benchmarks/2026-04-18-brainbench-v1.md.',
+      '86.6% vs grep\'s 57.8% (+28.8 pts). See github.com/garrytan/gbrain-evals.',
   },
   orchestrator,
 };

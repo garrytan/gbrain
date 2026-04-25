@@ -15,6 +15,11 @@ tools:
   - add_link
   - add_timeline_entry
 mutating: true
+writes_pages: true
+writes_to:
+  - people/
+  - companies/
+  - concepts/
 ---
 
 # Signal Detector — Ambient Brain Capture

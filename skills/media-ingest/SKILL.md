@@ -22,6 +22,12 @@ tools:
   - add_timeline_entry
   - file_upload
 mutating: true
+writes_pages: true
+writes_to:
+  - concepts/
+  - people/
+  - companies/
+  - sources/
 ---
 
 # Media Ingest Skill

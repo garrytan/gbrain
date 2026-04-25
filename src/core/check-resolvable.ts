@@ -12,6 +12,15 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
+import { findResolverFile, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
+import { loadOrDeriveManifest } from './skill-manifest.ts';
+import {
+  indexResolverTriggers,
+  lintRoutingFixtures,
+  loadRoutingFixtures,
+  runRoutingEval,
+} from './routing-eval.ts';
+import { runFilingAudit } from './filing-audit.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,7 +34,23 @@ export interface ResolvableFix {
 }
 
 export interface ResolvableIssue {
-  type: 'unreachable' | 'mece_overlap' | 'mece_gap' | 'dry_violation' | 'missing_file' | 'orphan_trigger';
+  type:
+    | 'unreachable'
+    | 'mece_overlap'
+    | 'mece_gap'
+    | 'dry_violation'
+    | 'missing_file'
+    | 'orphan_trigger'
+    // Check 5 (W2): routing eval results surfaced as advisories.
+    | 'routing_miss'
+    | 'routing_ambiguous'
+    | 'routing_false_positive'
+    | 'routing_fixture_lint'
+    // Check 6 (W3): brain-filing audit findings.
+    | 'filing_missing_writes_to'
+    | 'filing_unknown_directory'
+    // D-CX-9: scaffolded skill still carries SKILLIFY_STUB sentinel.
+    | 'skillify_stub_unreplaced';
   severity: 'error' | 'warning';
   skill: string;
   message: string;
@@ -34,7 +59,27 @@ export interface ResolvableIssue {
 }
 
 export interface ResolvableReport {
+  /**
+   * True when there are no error-severity issues. Warnings do NOT flip `ok`.
+   * Callers that want strict-mode (warnings fail CI too) should gate on
+   * `errors.length === 0 && warnings.length === 0`.
+   */
   ok: boolean;
+  /**
+   * Error-severity issues only. Determines `ok` and default exit codes.
+   * A subset of `issues[]`.
+   */
+  errors: ResolvableIssue[];
+  /**
+   * Warning-severity issues. Informational by default; `--strict` promotes.
+   * A subset of `issues[]`.
+   */
+  warnings: ResolvableIssue[];
+  /**
+   * @deprecated Use `errors` and `warnings` separately. Kept for one-release
+   * backwards compatibility; will be removed in v0.18. Equivalent to
+   * `[...errors, ...warnings]`.
+   */
   issues: ResolvableIssue[];
   summary: {
     total_skills: number;
@@ -111,17 +156,10 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
   return entries;
 }
 
-/** Extract skill names from manifest.json */
-function loadManifest(skillsDir: string): Array<{ name: string; path: string }> {
-  const manifestPath = join(skillsDir, 'manifest.json');
-  if (!existsSync(manifestPath)) return [];
-  try {
-    const content = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    return content.skills || [];
-  } catch {
-    return [];
-  }
-}
+// Manifest loading is now delegated to src/core/skill-manifest.ts
+// (loadOrDeriveManifest). That module auto-derives from walking
+// `skillsDir/*/SKILL.md` when manifest.json is missing — the scenario
+// needed for AGENTS.md-only OpenClaw deployments. See D-CX-12 / F-ENG-1.
 
 /** Simple YAML frontmatter parser — extracts triggers array if present. */
 function extractTriggers(skillContent: string): string[] {
@@ -211,25 +249,34 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
   const issues: ResolvableIssue[] = [];
 
   // Load inputs
-  const resolverPath = join(skillsDir, 'RESOLVER.md');
-  if (!existsSync(resolverPath)) {
+  // Accept RESOLVER.md or AGENTS.md (W1). Also check one level up: the
+  // reference OpenClaw deployment layout places AGENTS.md at the
+  // workspace root, with skills/ below. We try skills dir first
+  // (gbrain-native), then its parent (OpenClaw-native).
+  const resolverPath =
+    findResolverFile(skillsDir) ?? findResolverFile(join(skillsDir, '..'));
+  if (!resolverPath) {
+    const suggested = join(skillsDir, 'RESOLVER.md');
+    const missingIssue: ResolvableIssue = {
+      type: 'missing_file',
+      severity: 'error',
+      skill: RESOLVER_FILENAMES_LABEL,
+      message: `${RESOLVER_FILENAMES_LABEL} not found in ${skillsDir} or its parent`,
+      action: `Create ${suggested} with skill routing tables`,
+      fix: { type: 'create_stub', file: suggested },
+    };
     return {
       ok: false,
-      issues: [{
-        type: 'missing_file',
-        severity: 'error',
-        skill: 'RESOLVER.md',
-        message: 'RESOLVER.md not found',
-        action: `Create ${resolverPath} with skill routing tables`,
-        fix: { type: 'create_stub', file: resolverPath },
-      }],
+      errors: [missingIssue],
+      warnings: [],
+      issues: [missingIssue],
       summary: { total_skills: 0, reachable: 0, unreachable: 0, overlaps: 0, gaps: 0 },
     };
   }
 
   const resolverContent = readFileSync(resolverPath, 'utf-8');
   const entries = parseResolverEntries(resolverContent);
-  const manifest = loadManifest(skillsDir);
+  const { skills: manifest } = loadOrDeriveManifest(skillsDir);
 
   // Build lookup sets
   const resolverSkillPaths = new Set(
@@ -406,8 +453,112 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
     }
   }
 
+  // Check 5 (W2, v0.17): structural routing eval. Surfaces as warnings
+  // only — routing issues are advisory. Agents running under --strict
+  // will fail on them; default runs see them as informational.
+  const loaded = loadRoutingFixtures(skillsDir);
+  if (loaded.fixtures.length > 0) {
+    const triggerIndex = indexResolverTriggers(resolverContent);
+    const lintIssues = lintRoutingFixtures(loaded.fixtures, triggerIndex);
+    for (const lint of lintIssues) {
+      issues.push({
+        type: 'routing_fixture_lint',
+        severity: 'warning',
+        skill: lint.fixture.expected_skill ?? 'unknown',
+        message: `Routing fixture lint (${lint.reason}): "${lint.fixture.intent}"`,
+        action: `Edit skills/<skill>/routing-eval.jsonl to fix: ${lint.detail}`,
+      });
+    }
+    const routingReport = runRoutingEval(resolverContent, loaded.fixtures);
+    for (const d of routingReport.details) {
+      if (d.outcome === 'pass') continue;
+      const kind =
+        d.outcome === 'missed'
+          ? 'routing_miss'
+          : d.outcome === 'ambiguous'
+            ? 'routing_ambiguous'
+            : 'routing_false_positive';
+      issues.push({
+        type: kind,
+        severity: 'warning',
+        skill: d.fixture.expected_skill ?? 'negative-case',
+        message: `Routing ${d.outcome} for intent "${d.fixture.intent}"`,
+        action: `Update routing-eval.jsonl fixture or broaden resolver triggers in RESOLVER.md (${d.note ?? 'no additional detail'})`,
+      });
+    }
+  }
+  for (const m of loaded.malformed) {
+    issues.push({
+      type: 'routing_fixture_lint',
+      severity: 'warning',
+      skill: 'routing-eval',
+      message: `Malformed routing fixture ${m.file}:${m.line}`,
+      action: `Fix the JSONL in routing-eval.jsonl at line ${m.line}: ${m.error}`,
+    });
+  }
+
+  // D-CX-9 SKILLIFY_STUB sentinel check: scan every SKILL.md + script
+  // file under skillsDir for the sentinel marker emitted by
+  // `gbrain skillify scaffold`. Presence means a scaffolded skill
+  // shipped without a real implementation — warning-severity in
+  // default mode, error-promoted under --strict via D-CX-3.
+  for (const skill of manifest) {
+    const skillDir = join(skillsDir, skill.path.replace(/\/SKILL\.md$/, ''));
+    const scriptDir = join(skillDir, 'scripts');
+    const candidates: string[] = [join(skillsDir, skill.path)];
+    if (existsSync(scriptDir)) {
+      try {
+        for (const f of readdirSync(scriptDir)) {
+          if (f.match(/\.(ts|mjs|js|py)$/)) candidates.push(join(scriptDir, f));
+        }
+      } catch {
+        // Skip unreadable script dir.
+      }
+    }
+    for (const candidate of candidates) {
+      try {
+        const content = readFileSync(candidate, 'utf-8');
+        if (content.includes('SKILLIFY_STUB: replace before running check-resolvable --strict')) {
+          issues.push({
+            type: 'skillify_stub_unreplaced',
+            severity: 'warning',
+            skill: skill.name,
+            message: `Skill '${skill.name}' still contains the SKILLIFY_STUB sentinel in ${relative(skillsDir, candidate)}`,
+            action: `Replace the SKILLIFY_STUB sentinel in ${candidate} with a real implementation or remove the file. D-CX-9 gate.`,
+          });
+          break; // one issue per skill
+        }
+      } catch {
+        // Skip unreadable file.
+      }
+    }
+  }
+
+  // Check 6 (W3, v0.17): brain-filing audit. Warning-only per
+  // D-CX-3 + D-CX-5 — does not break CI for workspaces that haven't
+  // adopted writes_pages:/writes_to: yet. Any errors in the rules
+  // doc itself surface as a single fatal-ish entry.
+  try {
+    const filingReport = runFilingAudit(skillsDir);
+    for (const issue of filingReport.issues) {
+      issues.push(issue);
+    }
+  } catch (err) {
+    issues.push({
+      type: 'filing_unknown_directory',
+      severity: 'warning',
+      skill: 'brain-filing-rules',
+      message: `_brain-filing-rules.json failed to load`,
+      action: `Fix skills/_brain-filing-rules.json: ${(err as Error).message}`,
+    });
+  }
+
+  const errors = issues.filter(i => i.severity === 'error');
+  const warnings = issues.filter(i => i.severity === 'warning');
   return {
-    ok: issues.filter(i => i.severity === 'error').length === 0,
+    ok: errors.length === 0,
+    errors,
+    warnings,
     issues,
     summary: {
       total_skills: manifest.length,

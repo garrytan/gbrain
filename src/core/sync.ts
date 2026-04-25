@@ -24,6 +24,56 @@ export interface RawManifestEntry {
   oldPath?: string;
 }
 
+export type SyncStrategy = 'markdown' | 'code' | 'auto';
+
+interface SyncableOptions {
+  strategy?: SyncStrategy;
+  include?: string[];
+  exclude?: string[];
+}
+
+// v0.19.0 shipped a 9-extension allowlist (ts/tsx/js/jsx/mjs/cjs/py/rb/go). The
+// chunker already supports ~35 extensions via detectCodeLanguage but the sync
+// classifier dropped every other language on the floor — Rust/Java/C#/C++/etc.
+// files never reached the chunker on a normal repo sync, making v0.19.0's
+// "165 languages" claim aspirational (codex F1). v0.20.0 Layer 2 (1a) rewrites
+// isCodeFilePath to delegate to detectCodeLanguage so the sync classifier
+// matches the chunker's actual coverage.
+//
+// Kept as-is for now for `isAllowedByStrategy` fast-path + tests that
+// structurally reference it. Derived from the chunker's language map at
+// module load, not hardcoded.
+const CODE_EXTENSIONS = new Set<string>([
+  '.ts', '.tsx', '.mts', '.cts',
+  '.js', '.jsx', '.mjs', '.cjs',
+  '.py',
+  '.rb',
+  '.go',
+  '.rs',
+  '.java',
+  '.cs',
+  '.cpp', '.cc', '.cxx', '.hpp', '.hxx', '.hh',
+  '.c', '.h',
+  '.php',
+  '.swift',
+  '.kt', '.kts',
+  '.scala', '.sc',
+  '.lua',
+  '.ex', '.exs',
+  '.elm',
+  '.ml', '.mli',
+  '.dart',
+  '.zig',
+  '.sol',
+  '.sh', '.bash',
+  '.css',
+  '.html', '.htm',
+  '.vue',
+  '.json',
+  '.yaml', '.yml',
+  '.toml',
+]);
+
 /**
  * Parse the output of `git diff --name-status -M LAST..HEAD` into structured entries.
  *
@@ -72,12 +122,68 @@ export function buildSyncManifest(gitDiffOutput: string): SyncManifest {
   return manifest;
 }
 
+export function isCodeFilePath(path: string): boolean {
+  const lower = path.toLowerCase();
+  for (const ext of CODE_EXTENSIONS) {
+    if (lower.endsWith(ext)) return true;
+  }
+  return false;
+}
+
+function isMarkdownFilePath(path: string): boolean {
+  return path.endsWith('.md') || path.endsWith('.mdx');
+}
+
+function isAllowedByStrategy(path: string, strategy: SyncStrategy): boolean {
+  if (strategy === 'markdown') return isMarkdownFilePath(path);
+  if (strategy === 'code') return isCodeFilePath(path);
+  return isMarkdownFilePath(path) || isCodeFilePath(path);
+}
+
+function globToRegex(pattern: string): RegExp {
+  let regex = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      const next = pattern[i + 1];
+      if (next === '*') {
+        // `**/` matches zero or more path segments (including zero, so `src/**/*.ts`
+        // matches `src/foo.ts` as well as `src/a/b/foo.ts`). Collapse `**/` →
+        // `(?:.*/)?`. A bare `**` not followed by `/` matches any chars.
+        if (pattern[i + 2] === '/') {
+          regex += '(?:.*/)?';
+          i += 2;
+        } else {
+          regex += '.*';
+          i++;
+        }
+      } else {
+        regex += '[^/]*';
+      }
+      continue;
+    }
+    if (ch === '?') { regex += '[^/]'; continue; }
+    if ('\\.[]{}()+-^$|'.includes(ch)) { regex += `\\${ch}`; continue; }
+    regex += ch;
+  }
+  regex += '$';
+  return new RegExp(regex);
+}
+
+function matchesAnyGlob(path: string, patterns?: string[]): boolean {
+  if (!patterns || patterns.length === 0) return false;
+  const normalized = path.replace(/\\/g, '/');
+  return patterns.some((pattern) => globToRegex(pattern).test(normalized));
+}
+
 /**
  * Filter a file path to determine if it should be synced to GBrain.
+ * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
  */
-export function isSyncable(path: string): boolean {
-  // Must be .md or .mdx
-  if (!path.endsWith('.md') && !path.endsWith('.mdx')) return false;
+export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
+  const strategy = opts.strategy || 'markdown';
+
+  if (!isAllowedByStrategy(path, strategy)) return false;
 
   // Skip hidden directories
   if (path.split('/').some(p => p.startsWith('.'))) return false;
@@ -92,6 +198,9 @@ export function isSyncable(path: string): boolean {
 
   // Skip ops/ directory
   if (path.startsWith('ops/')) return false;
+
+  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return false;
+  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return false;
 
   return true;
 }
@@ -126,12 +235,54 @@ export function slugifyPath(filePath: string): string {
 }
 
 /**
+ * Slugify a code file path: flatten into a single slug segment with dots → hyphens.
+ * e.g. 'src/core/chunkers/code.ts' → 'src-core-chunkers-code-ts'
+ */
+export function slugifyCodePath(filePath: string): string {
+  let path = filePath.replace(/\\/g, '/');
+  path = path.replace(/^\.?\//, '');
+  return path
+    .split('/')
+    .map(segment => slugifySegment(segment.replace(/\./g, '-')))
+    .filter(Boolean)
+    .join('-');
+}
+
+/**
  * Convert a repo-relative file path to a GBrain page slug.
  */
-export function pathToSlug(filePath: string, repoPrefix?: string): string {
-  let slug = slugifyPath(filePath);
+export function pathToSlug(
+  filePath: string,
+  repoPrefix?: string,
+  options: { pageKind?: 'markdown' | 'code' } = {},
+): string {
+  const pageKind = options.pageKind || 'markdown';
+  let slug = pageKind === 'code' ? slugifyCodePath(filePath) : slugifyPath(filePath);
   if (repoPrefix) slug = `${repoPrefix}/${slug}`;
   return slug.toLowerCase();
+}
+
+/**
+ * v0.20.0 Cathedral II Layer 1a (SP-5 fix) — centralized slug dispatcher.
+ *
+ * Before Cathedral II, `importFromFile` / `importCodeFile` chose between
+ * `slugifyPath` and `slugifyCodePath` inline, but the sync delete/rename
+ * paths in `performSync` always called `pathToSlug(path)` with the default
+ * pageKind='markdown'. For a 9-extension-wide code classifier this was
+ * mostly correct (code files were rare), but Layer 1a widens the classifier
+ * to ~35 extensions and without this dispatcher, deleting or renaming a
+ * Rust/Java/Ruby/etc. file would try to delete the wrong slug (the
+ * markdown-style slug) and leave the real code-slug page orphaned forever.
+ *
+ * Every sync-path caller that used to pick a pageKind manually should now
+ * call resolveSlugForPath — it derives the right slug shape from
+ * isCodeFilePath(), which in turn derives from the chunker's language map.
+ * Central dispatch means new extensions added to the chunker automatically
+ * flow through without touching the sync code path.
+ */
+export function resolveSlugForPath(filePath: string, repoPrefix?: string): string {
+  const pageKind = isCodeFilePath(filePath) ? 'code' : 'markdown';
+  return pathToSlug(filePath, repoPrefix, { pageKind });
 }
 
 // ─────────────────────────────────────────────────────────────────

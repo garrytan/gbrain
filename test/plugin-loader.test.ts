@@ -89,7 +89,7 @@ describe('path policy', () => {
 
 describe('loadSinglePlugin', () => {
   test('loads a minimal manifest + one subagent def', () => {
-    const dir = writePlugin('wintermute', {
+    const dir = writePlugin('openclaw-ref', {
       subagents: {
         'meeting-ingestion.md': `---\nname: meeting-ingestion\nmodel: sonnet\n---\n\nYou are a meeting ingester.\n`,
       },
@@ -97,7 +97,7 @@ describe('loadSinglePlugin', () => {
     const res = loadSinglePlugin(dir);
     expect('error' in res).toBe(false);
     if ('error' in res) return;
-    expect(res.manifest.name).toBe('wintermute');
+    expect(res.manifest.name).toBe('openclaw-ref');
     expect(res.subagents.length).toBe(1);
     expect(res.subagents[0]!.name).toBe('meeting-ingestion');
     expect(res.subagents[0]!.body.trim()).toBe('You are a meeting ingester.');

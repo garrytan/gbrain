@@ -13,6 +13,13 @@ tools:
   - add_timeline_entry
   - sync_brain
 mutating: true
+writes_pages: true
+writes_to:
+  - people/
+  - companies/
+  - concepts/
+  - meetings/
+  - sources/
 ---
 
 # Ingest Skill

@@ -278,6 +278,34 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     return;
   }
 
+  // Pre-flight: warn if schema migrations (migrate.ts) are behind.
+  // apply-migrations runs orchestrator migrations only; schema migrations
+  // run via connectEngine() / initSchema(). Users often expect this CLI
+  // to handle everything (Issue 1 from v0.18.0 field report).
+  try {
+    const { LATEST_VERSION } = await import('../core/migrate.ts');
+    const { loadConfig: lc, toEngineConfig } = await import('../core/config.ts');
+    const { createEngine } = await import('../core/engine-factory.ts');
+    const cfg = lc();
+    if (cfg) {
+      const eng = await createEngine(toEngineConfig(cfg));
+      await eng.connect(toEngineConfig(cfg));
+      const verStr = await eng.getConfig('version');
+      const schemaVer = parseInt(verStr || '1', 10);
+      await eng.disconnect();
+      if (schemaVer < LATEST_VERSION) {
+        console.warn(
+          `\n⚠️  Schema version ${schemaVer} is behind latest ${LATEST_VERSION}.\n` +
+          `   Schema migrations run automatically on next connectEngine() / initSchema().\n` +
+          `   To run them now: gbrain init --migrate-only\n`,
+        );
+      }
+    }
+  } catch {
+    // Non-fatal: if DB is unreachable, orchestrator migrations can still
+    // run their filesystem-only phases.
+  }
+
   const completed = loadCompletedMigrations();
   const idx = indexCompleted(completed);
   const plan = buildPlan(idx, installed, cli.specificMigration);

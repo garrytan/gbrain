@@ -9,6 +9,7 @@ import type {
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
+  CodeEdgeInput, CodeEdgeResult,
 } from './types.ts';
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -60,6 +61,31 @@ export interface TimelineBatchInput {
   source_id?: string;
 }
 
+/**
+ * A single dedicated database connection, isolated from the engine's pool.
+ *
+ * Used by migration paths that need session-level GUCs (e.g.
+ * `SET statement_timeout = '600000'` before a `CREATE INDEX CONCURRENTLY`)
+ * without leaking into the shared pool, and by write-quiesce designs
+ * that need a session-lifetime Postgres advisory lock that survives
+ * across transaction boundaries.
+ *
+ * On Postgres: backed by postgres-js `sql.reserve()`; the same backend
+ * process serves every `executeRaw` call within the callback. Released
+ * automatically when the callback returns or throws.
+ *
+ * On PGLite: a thin pass-through. PGLite has no pool, so every call is
+ * already on the single backing connection. The interface is still
+ * exposed so cross-engine callers don't need to branch.
+ *
+ * Not safe to call from inside `transaction()`. The transaction holds a
+ * different backend; reserving a second one can deadlock on a row the
+ * transaction itself is waiting to write.
+ */
+export interface ReservedConnection {
+  executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+}
+
 /** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */
 export const MAX_SEARCH_LIMIT = 100;
 
@@ -79,6 +105,12 @@ export interface BrainEngine {
   disconnect(): Promise<void>;
   initSchema(): Promise<void>;
   transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
+  /**
+   * Run `fn` with a dedicated connection (Postgres: reserved backend;
+   * PGLite: pass-through). See `ReservedConnection` for semantics and
+   * usage constraints. Release is automatic.
+   */
+  withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T>;
 
   // Pages CRUD
   getPage(slug: string): Promise<Page | null>;
@@ -238,4 +270,63 @@ export interface BrainEngine {
 
   // Raw SQL (for Minions job queue and other internal modules)
   executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+
+  // ============================================================
+  // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
+  // ============================================================
+  /**
+   * Bulk-insert code edges. Resolved edges (to_chunk_id set) land in
+   * code_edges_chunk; unresolved refs (to_chunk_id null, to_symbol_qualified
+   * set) land in code_edges_symbol. ON CONFLICT DO NOTHING handles idempotency.
+   * Returns count of rows actually inserted.
+   */
+  addCodeEdges(edges: CodeEdgeInput[]): Promise<number>;
+
+  /**
+   * Delete all code edges involving these chunk IDs, in BOTH directions, across
+   * both code_edges_chunk and code_edges_symbol. Called by importCodeFile on
+   * per-chunk invalidation (codex SP-2): when a chunk's text changed, stale
+   * inbound edges from other pages pointing at the old symbol must wipe before
+   * new edges write.
+   */
+  deleteCodeEdgesForChunks(chunkIds: number[]): Promise<void>;
+
+  /**
+   * "Who calls this symbol?" Returns UNION of code_edges_chunk +
+   * code_edges_symbol matching `to_symbol_qualified = qualifiedName`.
+   * Source scoping (codex SP-3): if opts.sourceId is set, filter by the
+   * anchor chunk's source; if opts.allSources, ignore scoping.
+   */
+  getCallersOf(
+    qualifiedName: string,
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+  ): Promise<CodeEdgeResult[]>;
+
+  /**
+   * "What does this symbol call?" Returns edges from chunks whose
+   * from_symbol_qualified = qualifiedName. Same source-scoping semantics
+   * as getCallersOf.
+   */
+  getCalleesOf(
+    qualifiedName: string,
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+  ): Promise<CodeEdgeResult[]>;
+
+  /**
+   * All edges touching a chunk in the given direction. Used by A2 two-pass
+   * retrieval to expand from anchor chunks. direction='in' returns edges
+   * pointing AT the chunk; 'out' returns edges FROM it; 'both' unions.
+   */
+  getEdgesByChunk(
+    chunkId: number,
+    opts?: { direction?: 'in' | 'out' | 'both'; edgeType?: string; limit?: number },
+  ): Promise<CodeEdgeResult[]>;
+
+  /**
+   * Chunk-grain keyword search. Ranks by content_chunks.search_vector
+   * without the dedup-to-page pass that searchKeyword applies. Consumed
+   * by A2 two-pass retrieval as its anchor source. Most callers should
+   * prefer searchKeyword (external contract: page-grain best-chunk-per-page).
+   */
+  searchKeywordChunks(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
 }

@@ -87,6 +87,26 @@ Content
     const parsed = parseMarkdown(md, 'concepts/do-things-that-dont-scale.md');
     expect(parsed.slug).toBe('concepts/do-things-that-dont-scale');
   });
+
+  // v0.20: BrainBench / native inbox-chat-calendar Page types. These 5 directory
+  // heuristics exercise PageType 'email | slack | calendar-event | note | meeting'
+  // which were added for amara-life-v1 ingest but are useful for any gbrain user
+  // ingesting an inbox dump, Slack export, iCal, meeting transcript, or daily notes.
+  test.each([
+    ['emails/em-0001.md', 'email'],
+    ['email/em-0001.md', 'email'],
+    ['slack/sl-0037.md', 'slack'],
+    ['cal/evt-0042.md', 'calendar-event'],
+    ['calendar/evt-0042.md', 'calendar-event'],
+    ['notes/2026-04-standup.md', 'note'],
+    ['note/2026-04-standup.md', 'note'],
+    ['meetings/mtg-0003.md', 'meeting'],
+    ['meeting/mtg-0003.md', 'meeting'],
+  ] as const)('infers type %s -> %s', (path, expectedType) => {
+    const md = `---\ntitle: Fixture\n---\nBody\n`;
+    const parsed = parseMarkdown(md, path);
+    expect(parsed.type).toBe(expectedType);
+  });
 });
 
 describe('splitBody', () => {

@@ -7,4 +7,7 @@
 #   DATABASE_URL=postgresql://...
 #   GBRAIN_ALLOW_SHELL_JOBS=1   # only if submitting shell jobs
 
-worker: gbrain jobs work --concurrency 2
+# Two-layer supervision: the platform restarts the container on host
+# events (OOM, deploy); `gbrain jobs supervisor` restarts the worker
+# on in-process crashes with exponential backoff.
+worker: gbrain jobs supervisor --concurrency 2

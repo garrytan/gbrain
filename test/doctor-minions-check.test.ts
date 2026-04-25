@@ -168,7 +168,8 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
 
   test('human output: prints MINIONS HALF-INSTALLED loud banner', () => {
     // Same fixture as the first test, but check the human-readable output
-    // includes the exact banner phrase Wintermute's cron script can grep for.
+    // includes the exact banner phrase an OpenClaw host's cron script
+    // can grep for.
     const migrationsDir = join(tmp, '.gbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(

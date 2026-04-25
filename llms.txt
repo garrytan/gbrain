@@ -41,7 +41,6 @@ Repo: https://github.com/garrytan/gbrain
 
 ## Optional
 
-- [docs/benchmarks/](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/benchmarks/): Retrieval quality benchmarks.
 - [docs/designs/](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/designs/): Forward-looking designs.
 - [docs/architecture/infra-layer.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/infra-layer.md): Shared infra patterns.
 

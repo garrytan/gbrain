@@ -128,6 +128,8 @@ export interface MinionJobInput {
   max_spawn_depth?: number;
   /** Global dedup key. Same key returns the existing job, no second row created. */
   idempotency_key?: string;
+  /** Submission backpressure: cap waiting jobs with this name before inserting a new row. */
+  maxWaiting?: number;
 
   // v12: scheduler polish
   /**

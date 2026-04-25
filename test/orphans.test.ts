@@ -216,11 +216,11 @@ describe('findOrphans (engine-injected)', () => {
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
-  });
+  }, 60_000);
 
   afterEach(async () => {
     await engine.disconnect();
-  });
+  }, 60_000);
 
   test('returns pages with no inbound links, excluding pseudo-pages', async () => {
     // Build a tiny brain: alice links to bob. alice is an orphan (nothing

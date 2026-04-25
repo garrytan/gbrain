@@ -472,64 +472,107 @@ export const MIGRATIONS: Migration[] = [
     sql: '',
     handler: async (engine) => {
       if (engine.kind === 'pglite') return;
-      await engine.runMigration(19, `
-        -- 1a. source_id with DEFAULT 'default' (idempotent)
-        ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id TEXT
-          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
-        CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
 
-        -- 1b. page_id (nullable; pre-v0.17 files pointed at page_slug
-        --     which was ON DELETE SET NULL, so we keep the same nullable
-        --     semantic — orphaned files are legal).
-        ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id INTEGER
-          REFERENCES pages(id) ON DELETE SET NULL;
-        CREATE INDEX IF NOT EXISTS idx_files_page_id ON files(page_id);
-      `);
+      // Atomic: FK drop + UNIQUE swap + files.page_id addition +
+      // backfill + ledger, all in one transaction. Closes the
+      // pre-v23 integrity window where files_page_slug_fkey was
+      // dropped in v21 but the replacement files.page_id didn't
+      // exist until v23 ran — process death in between left files
+      // unconstrained while file_upload kept writing (codex finding).
+      //
+      // Rollback scenarios:
+      //   - Die mid-transaction → Postgres rolls back, files_page_slug_fkey
+      //     still exists, config.version stays at 22. Retry restarts cleanly.
+      //   - Die after commit but before setConfig(version=23) → all DDL
+      //     committed, config.version still 22, retry re-runs everything
+      //     with IF NOT EXISTS / NOT EXISTS guards idempotently.
+      await engine.transaction(async (tx) => {
+        // 0a. Drop files_page_slug_fkey (deferred from v21 to keep
+        //     the FK intact across v21/v22 and remove it inside the
+        //     same txn that adds the replacement page_id path).
+        //     Guard against PGLite just in case (already returned above).
+        await tx.runMigration(23, `
+          DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'files') THEN
+              ALTER TABLE files DROP CONSTRAINT IF EXISTS files_page_slug_fkey;
+            END IF;
+          END $$;
+        `);
 
-      await engine.runMigration(19, `
-        -- 1c. Backfill page_id from existing page_slug. Scoped to
-        --     source_id='default' because pre-v0.17 pages ALL lived in
-        --     the default source. Without this scope, after new sources
-        --     get added mid-migration, the JOIN could hit the wrong
-        --     page (different source, same slug).
-        UPDATE files f
-           SET page_id = p.id
-          FROM pages p
-         WHERE f.page_slug = p.slug
-           AND p.source_id = 'default'
-           AND f.page_id IS NULL;
-      `);
+        // 0b. Swap pages.UNIQUE(slug) → UNIQUE(source_id, slug).
+        //     Deferred from v21 so PR #356 closes the integrity
+        //     window. PGLite already did this swap in its v21 path.
+        await tx.runMigration(23, `
+          ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
+          DO $$ BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
+            ) THEN
+              ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
+                UNIQUE (source_id, slug);
+            END IF;
+          END $$;
+        `);
 
-      await engine.runMigration(19, `
-        -- 2. file_migration_ledger — drives the storage object rewrite
-        --    in the v0_18_0 orchestrator's phase B. Seeded from current
-        --    files rows; re-seed is idempotent via NOT EXISTS guard.
-        CREATE TABLE IF NOT EXISTS file_migration_ledger (
-          file_id           INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-          storage_path_old  TEXT   NOT NULL,
-          storage_path_new  TEXT   NOT NULL,
-          status            TEXT   NOT NULL DEFAULT 'pending',
-          error             TEXT,
-          updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-          CONSTRAINT chk_ledger_status CHECK (status IN ('pending','copy_done','db_updated','complete','failed'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_file_migration_ledger_status
-          ON file_migration_ledger(status) WHERE status != 'complete';
+        // 1a. source_id with DEFAULT 'default' (idempotent)
+        await tx.runMigration(23, `
+          ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id TEXT
+            NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+          CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
 
-        -- Seed the ledger with every existing file. New path prefixes
-        -- source_id so multi-source can land assets under their own
-        -- bucket path without collision.
-        INSERT INTO file_migration_ledger (file_id, storage_path_old, storage_path_new, status)
-        SELECT
-          f.id,
-          f.storage_path,
-          COALESCE(f.source_id, 'default') || '/' || f.storage_path,
-          'pending'
-        FROM files f
-        WHERE NOT EXISTS (
-          SELECT 1 FROM file_migration_ledger l WHERE l.file_id = f.id
-        );
-      `);
+          -- 1b. page_id (nullable; pre-v0.17 files pointed at page_slug
+          --     which was ON DELETE SET NULL, so we keep the same nullable
+          --     semantic — orphaned files are legal).
+          ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id INTEGER
+            REFERENCES pages(id) ON DELETE SET NULL;
+          CREATE INDEX IF NOT EXISTS idx_files_page_id ON files(page_id);
+        `);
+
+        // 1c. Backfill page_id from existing page_slug. Scoped to
+        //     source_id='default' because pre-v0.17 pages ALL lived in
+        //     the default source. Without this scope, after new sources
+        //     get added mid-migration, the JOIN could hit the wrong
+        //     page (different source, same slug).
+        await tx.runMigration(23, `
+          UPDATE files f
+             SET page_id = p.id
+            FROM pages p
+           WHERE f.page_slug = p.slug
+             AND p.source_id = 'default'
+             AND f.page_id IS NULL;
+        `);
+
+        // 2. file_migration_ledger — drives the storage object rewrite
+        //    in the v0_18_0 orchestrator's phase B. Seeded from current
+        //    files rows; re-seed is idempotent via NOT EXISTS guard.
+        await tx.runMigration(23, `
+          CREATE TABLE IF NOT EXISTS file_migration_ledger (
+            file_id           INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+            storage_path_old  TEXT   NOT NULL,
+            storage_path_new  TEXT   NOT NULL,
+            status            TEXT   NOT NULL DEFAULT 'pending',
+            error             TEXT,
+            updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT chk_ledger_status CHECK (status IN ('pending','copy_done','db_updated','complete','failed'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_file_migration_ledger_status
+            ON file_migration_ledger(status) WHERE status != 'complete';
+
+          -- Seed the ledger with every existing file. New path prefixes
+          -- source_id so multi-source can land assets under their own
+          -- bucket path without collision.
+          INSERT INTO file_migration_ledger (file_id, storage_path_old, storage_path_new, status)
+          SELECT
+            f.id,
+            f.storage_path,
+            COALESCE(f.source_id, 'default') || '/' || f.storage_path,
+            'pending'
+          FROM files f
+          WHERE NOT EXISTS (
+            SELECT 1 FROM file_migration_ledger l WHERE l.file_id = f.id
+          );
+        `);
+      });
     },
   },
   {
@@ -560,39 +603,53 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 21,
     name: 'pages_source_id_composite_unique',
-    // v0.18.0 Step 2 (Lane B) — adds pages.source_id with DEFAULT 'default'
-    // and swaps the global UNIQUE(slug) for the composite UNIQUE(source_id,
-    // slug). Lands alongside the engine SQL rewrite that makes every
-    // ON CONFLICT (slug) → ON CONFLICT (source_id, slug) so the constraint
-    // swap is atomic with the code that writes under it.
+    // v0.18.0 Step 2 (Lane B) — adds pages.source_id. Engine-split after
+    // codex caught the pre-v23 integrity window:
     //
-    // DEFAULT 'default' is load-bearing: closes the Codex-flagged race
+    //   Original v21 dropped files_page_slug_fkey and swapped
+    //   UNIQUE(slug) → UNIQUE(source_id, slug) in one go. Between v21
+    //   committing and v23 (which adds the replacement files.page_id
+    //   path), a process-death left files WITHOUT any FK to pages
+    //   while file_upload / `gbrain files` kept accepting writes.
+    //
+    // On Postgres: additive-only here. The FK drop + UNIQUE swap move
+    // into v23's handler (wrapped in engine.transaction) so they commit
+    // atomically with the files.page_id addition + backfill. See v23.
+    //
+    // On PGLite: no concurrent writers, no pool, no partial-state risk.
+    // Do the full add + swap here so PGLite brains reach the composite
+    // unique immediately (PGLite has no files table, so no FK drop
+    // needed).
+    //
+    // DEFAULT 'default' on source_id is load-bearing: closes the race
     // where an INSERT between ADD COLUMN and SET NOT NULL could leave
-    // source_id NULL. Because the default already references a valid
-    // sources row (seeded in v16), new INSERTs immediately get a valid FK.
-    //
-    // Idempotent: IF NOT EXISTS on ADD COLUMN, DROP IF EXISTS on the old
-    // constraint, DO block guard on the new constraint creation.
-    sql: `
-      ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
-        NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+    // source_id NULL. The default already references a valid sources
+    // row (seeded in v16), so new INSERTs immediately get a valid FK.
+    sql: '',
+    sqlFor: {
+      postgres: `
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
+          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
 
-      CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+        CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+      `,
+      pglite: `
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
+          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
 
-      -- Swap global UNIQUE(slug) → composite UNIQUE(source_id, slug). The
-      -- original constraint is named pages_slug_key by Postgres convention
-      -- when the column was declared UNIQUE inline. Both drops are
-      -- idempotent.
-      ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
-      DO $$ BEGIN
-        IF NOT EXISTS (
-          SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
-        ) THEN
-          ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
-            UNIQUE (source_id, slug);
-        END IF;
-      END $$;
-    `,
+        CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+
+        ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
+        DO $$ BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
+          ) THEN
+            ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
+              UNIQUE (source_id, slug);
+          END IF;
+        END $$;
+      `,
+    },
   },
   {
     version: 20,
@@ -687,11 +744,440 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
     `,
   },
+  {
+    version: 24,
+    name: 'rls_backfill_missing_tables',
+    // v0.18.1 RLS hardening: 10 gbrain-managed public tables shipped
+    // without RLS enabled (access_tokens, mcp_request_log, minion_inbox,
+    // minion_attachments, subagent_messages, subagent_tool_executions,
+    // subagent_rate_leases, gbrain_cycle_locks, budget_ledger,
+    // budget_reservations). Supabase exposes the public schema via
+    // PostgREST, so tables without RLS are readable by anyone with the
+    // anon key.
+    //
+    // Numbered v24 to slot after v0.18.0's v20-v23 sources-migration
+    // wave. The 'sources' and 'file_migration_ledger' tables added in
+    // v0.18.0 already get RLS from schema.sql's base DO block; v24
+    // backfills the 10 older tables that never had it.
+    //
+    // Gated on BYPASSRLS matching the pattern in schema.sql: enabling RLS
+    // on a table in a session that does NOT hold BYPASSRLS would lock
+    // the session out of its own data. RAISE WARNING is visible to the
+    // migration runner's log stream.
+    sql: `
+      DO $$
+      DECLARE
+        has_bypass BOOLEAN;
+      BEGIN
+        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        IF NOT has_bypass THEN
+          -- Fail the migration loudly instead of WARNING + version-bump.
+          -- The runner unconditionally records schema_version on success,
+          -- so a silent WARNING here would permanently lock the backfill out
+          -- on future runs even after switching to a bypass role. Raising
+          -- aborts the transaction, leaves schema_version at the prior value,
+          -- and lets the next invocation retry after the role is fixed.
+          RAISE EXCEPTION 'v24 rls_backfill_missing_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+        END IF;
+
+        -- These 8 are guaranteed to exist: schema.sql creates them (idempotent
+        -- via IF NOT EXISTS) on every initSchema call, and initSchema runs
+        -- before this migration. Bare ALTER TABLE is safe.
+        ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE mcp_request_log ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE minion_inbox ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE minion_attachments ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE subagent_messages ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE subagent_tool_executions ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE subagent_rate_leases ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE gbrain_cycle_locks ENABLE ROW LEVEL SECURITY;
+
+        -- budget_ledger + budget_reservations are migration-only (v12). Not
+        -- in schema.sql, not re-created on every initSchema. In normal flow
+        -- v12 runs before v24 so they exist, but if an operator manually
+        -- dropped them (unusual — budget data is regenerable from resolver
+        -- logs) or was pinned to a pre-v12 gbrain version when the table
+        -- went away, the bare ALTER would fail with 42P01 and abort v24.
+        -- information_schema.tables lookup makes the statement self-healing.
+        IF EXISTS (SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'budget_ledger') THEN
+          ALTER TABLE budget_ledger ENABLE ROW LEVEL SECURITY;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'budget_reservations') THEN
+          ALTER TABLE budget_reservations ENABLE ROW LEVEL SECURITY;
+        END IF;
+
+        RAISE NOTICE 'v24: RLS backfill complete (role % has BYPASSRLS)', current_user;
+      END $$;
+    `,
+  },
+  {
+    version: 25,
+    name: 'pages_page_kind',
+    // v0.19.0 Layer 3 — pages.page_kind distinguishes markdown vs code pages
+    // at the DB level. Needed so orphans filter, link-extraction auto-link,
+    // and query --lang can branch on kind without sniffing `type` or chunk
+    // metadata. Existing rows backfill to 'markdown' (pre-v0.19.0 all pages
+    // were markdown).
+    //
+    // Postgres: ADD COLUMN with DEFAULT is O(1) for nullable columns (no
+    // rewrite). The CHECK constraint is added NOT VALID so the initial
+    // statement does not scan the table, then VALIDATE CONSTRAINT runs
+    // separately. Tables with millions of pages would otherwise hold a
+    // write lock during the full scan.
+    sqlFor: {
+      postgres: `
+        ALTER TABLE pages
+          ADD COLUMN IF NOT EXISTS page_kind TEXT NOT NULL DEFAULT 'markdown';
+
+        ALTER TABLE pages
+          DROP CONSTRAINT IF EXISTS pages_page_kind_check;
+        ALTER TABLE pages
+          ADD CONSTRAINT pages_page_kind_check
+          CHECK (page_kind IN ('markdown','code')) NOT VALID;
+        ALTER TABLE pages VALIDATE CONSTRAINT pages_page_kind_check;
+      `,
+      pglite: `
+        ALTER TABLE pages
+          ADD COLUMN IF NOT EXISTS page_kind TEXT NOT NULL DEFAULT 'markdown'
+          CHECK (page_kind IN ('markdown','code'));
+      `,
+    },
+    sql: `
+      ALTER TABLE pages
+        ADD COLUMN IF NOT EXISTS page_kind TEXT NOT NULL DEFAULT 'markdown'
+        CHECK (page_kind IN ('markdown','code'));
+    `,
+  },
+  {
+    version: 26,
+    name: 'content_chunks_code_metadata',
+    // v0.19.0 Layer 3 — content_chunks gains code-specific metadata columns
+    // so C6 (query --lang), C7 (code-def / code-refs), and the new
+    // searchCodeChunks engine method can filter + surface symbol context
+    // without parsing chunk_text.
+    //
+    // All new columns are nullable — existing markdown chunks carry NULL.
+    // importCodeFile populates them from the tree-sitter AST.
+    //
+    // Partial indexes (WHERE <col> IS NOT NULL) keep the index small: a
+    // brain with 20K markdown chunks + 20K code chunks indexes only the
+    // code chunks for symbol lookups. Measured ~200ms → ~15ms on code-refs.
+    sql: `
+      ALTER TABLE content_chunks
+        ADD COLUMN IF NOT EXISTS language TEXT,
+        ADD COLUMN IF NOT EXISTS symbol_name TEXT,
+        ADD COLUMN IF NOT EXISTS symbol_type TEXT,
+        ADD COLUMN IF NOT EXISTS start_line INTEGER,
+        ADD COLUMN IF NOT EXISTS end_line INTEGER;
+
+      CREATE INDEX IF NOT EXISTS idx_chunks_symbol_name
+        ON content_chunks(symbol_name) WHERE symbol_name IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_chunks_language
+        ON content_chunks(language) WHERE language IS NOT NULL;
+    `,
+  },
+  {
+    version: 27,
+    name: 'cathedral_ii_foundation',
+    // v0.20.0 Cathedral II Layer 1 — schema-only foundation.
+    //
+    // Lands BEFORE any consumer layer to eliminate forward references
+    // (codex SP-4). All Cathedral II DDL arrives here as one atomic
+    // transaction:
+    //
+    //   1. content_chunks gains 4 columns:
+    //      - parent_symbol_path TEXT[]   — scope chain for nested symbols (A3)
+    //      - doc_comment TEXT            — extracted JSDoc/docstring (A4)
+    //      - symbol_name_qualified TEXT  — 'Admin::UsersController#render' (A1)
+    //      - search_vector TSVECTOR      — chunk-grain FTS (Layer 1b)
+    //
+    //   2. sources.chunker_version TEXT — SP-1 gate. performSync forces
+    //      full walk on mismatch with CURRENT_CHUNKER_VERSION, bypassing
+    //      the up_to_date git-HEAD early-return that made the bare
+    //      CHUNKER_VERSION bump a silent no-op.
+    //
+    //   3. code_edges_chunk — resolved call-graph / type-ref edges.
+    //      FK CASCADE from content_chunks on both endpoints; deleting a
+    //      chunk wipes its edges. UNIQUE (from, to, edge_type) holds
+    //      idempotency. source_id TEXT matches sources.id actual type
+    //      (codex F4). Source scoping is enforced in resolution logic,
+    //      not in the key, because from_chunk_id → pages.source_id
+    //      already determines it.
+    //
+    //   4. code_edges_symbol — unresolved refs. Target symbol is known
+    //      by qualified name but the defining chunk hasn't been imported
+    //      yet. Rows UNION with code_edges_chunk on read (codex 1.3b);
+    //      no promotion step.
+    //
+    //   5. update_chunk_search_vector trigger — BEFORE INSERT/UPDATE
+    //      OF (chunk_text, doc_comment, symbol_name_qualified). Builds
+    //      search_vector with weight A on doc_comment + symbol_name_qualified,
+    //      B on chunk_text. Natural-language queries rank doc-comment hits
+    //      above body-text hits (A4 intent).
+    //
+    // Consumer layers (Layer 5 A1, Layer 6 A3, Layer 10 C CLI, Layer 12
+    // CHUNKER_VERSION bump, Layer 13 E2 reindex-code) all depend on this
+    // foundation. Absent it, every downstream layer would have forward
+    // refs.
+    sql: `
+      -- content_chunks: new Cathedral II columns
+      ALTER TABLE content_chunks
+        ADD COLUMN IF NOT EXISTS parent_symbol_path TEXT[],
+        ADD COLUMN IF NOT EXISTS doc_comment TEXT,
+        ADD COLUMN IF NOT EXISTS symbol_name_qualified TEXT,
+        ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
+
+      CREATE INDEX IF NOT EXISTS idx_chunks_search_vector
+        ON content_chunks USING GIN(search_vector);
+      CREATE INDEX IF NOT EXISTS idx_chunks_symbol_qualified
+        ON content_chunks(symbol_name_qualified) WHERE symbol_name_qualified IS NOT NULL;
+
+      -- sources: SP-1 chunker_version gate
+      ALTER TABLE sources
+        ADD COLUMN IF NOT EXISTS chunker_version TEXT;
+
+      -- code_edges_chunk: resolved edges
+      CREATE TABLE IF NOT EXISTS code_edges_chunk (
+        id                    SERIAL PRIMARY KEY,
+        from_chunk_id         INTEGER NOT NULL REFERENCES content_chunks(id) ON DELETE CASCADE,
+        to_chunk_id           INTEGER NOT NULL REFERENCES content_chunks(id) ON DELETE CASCADE,
+        from_symbol_qualified TEXT NOT NULL,
+        to_symbol_qualified   TEXT NOT NULL,
+        edge_type             TEXT NOT NULL,
+        edge_metadata         JSONB NOT NULL DEFAULT '{}',
+        source_id             TEXT REFERENCES sources(id) ON DELETE CASCADE,
+        created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT code_edges_chunk_unique UNIQUE (from_chunk_id, to_chunk_id, edge_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from
+        ON code_edges_chunk(from_chunk_id, edge_type);
+      CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to
+        ON code_edges_chunk(to_chunk_id, edge_type);
+      CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to_symbol
+        ON code_edges_chunk(to_symbol_qualified, edge_type);
+
+      -- code_edges_symbol: unresolved refs
+      CREATE TABLE IF NOT EXISTS code_edges_symbol (
+        id                    SERIAL PRIMARY KEY,
+        from_chunk_id         INTEGER NOT NULL REFERENCES content_chunks(id) ON DELETE CASCADE,
+        from_symbol_qualified TEXT NOT NULL,
+        to_symbol_qualified   TEXT NOT NULL,
+        edge_type             TEXT NOT NULL,
+        edge_metadata         JSONB NOT NULL DEFAULT '{}',
+        source_id             TEXT REFERENCES sources(id) ON DELETE CASCADE,
+        created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT code_edges_symbol_unique UNIQUE (from_chunk_id, to_symbol_qualified, edge_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from
+        ON code_edges_symbol(from_chunk_id, edge_type);
+      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
+        ON code_edges_symbol(to_symbol_qualified, edge_type);
+
+      -- Chunk-grain FTS trigger (Layer 1b consumer — column exists from this
+      -- migration, trigger installed now so newly-written chunks get vectors
+      -- from day one). NULL-safe: markdown chunks leave doc_comment and
+      -- symbol_name_qualified NULL; COALESCE('') keeps the vector build
+      -- from failing on missing weights.
+      CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER AS $fn$
+      BEGIN
+        NEW.search_vector :=
+          setweight(to_tsvector('english', COALESCE(NEW.doc_comment, '')), 'A') ||
+          setweight(to_tsvector('english', COALESCE(NEW.symbol_name_qualified, '')), 'A') ||
+          setweight(to_tsvector('english', COALESCE(NEW.chunk_text, '')), 'B');
+        RETURN NEW;
+      END;
+      $fn$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON content_chunks;
+      CREATE TRIGGER chunk_search_vector_trigger
+        BEFORE INSERT OR UPDATE OF chunk_text, doc_comment, symbol_name_qualified
+        ON content_chunks
+        FOR EACH ROW EXECUTE FUNCTION update_chunk_search_vector();
+    `,
+  },
+  {
+    version: 28,
+    name: 'cathedral_ii_chunk_fts_backfill',
+    // v0.20.0 Cathedral II Layer 3 (1b) — backfill content_chunks.search_vector
+    // for rows inserted before v27 ran. The v27 trigger only fires on
+    // INSERT/UPDATE, so every chunk that existed before upgrade has a NULL
+    // search_vector and would match zero rows in the new chunk-grain
+    // searchKeyword. Compute the vector in-place here so upgraded brains
+    // have full keyword coverage the moment v28 commits — no need to wait
+    // for every page to get touched by sync.
+    //
+    // Direct vector compute (not UPDATE chunk_text = chunk_text to trigger):
+    //   - UPDATE-to-same-value fires the trigger unconditionally on Postgres
+    //     even if no column value changes, so trigger-based backfill DOES
+    //     work, but writing the vector directly is cheaper (single pass
+    //     instead of trigger overhead per row).
+    //   - Idempotent via `WHERE search_vector IS NULL` — re-running v28
+    //     after a partial run picks up only the remaining NULL rows.
+    //
+    // On a 20K-chunk brain: ~2-3s total. No blocking concerns: chunks are
+    // append-only in steady state; the UPDATE takes a row lock per chunk
+    // briefly while computing the tsvector.
+    sql: `
+      UPDATE content_chunks
+      SET search_vector =
+        setweight(to_tsvector('english', COALESCE(doc_comment, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(symbol_name_qualified, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(chunk_text, '')), 'B')
+      WHERE search_vector IS NULL;
+    `,
+  },
+  {
+    version: 29,
+    name: 'cathedral_ii_code_edges_rls',
+    // v0.21.0 Cathedral II — RLS hardening for the two new tables added by
+    // v27 (code_edges_chunk, code_edges_symbol). The v24 RLS-backfill
+    // pattern: gated on BYPASSRLS (so we don't lock the migrating session
+    // out of its own data on a non-bypass role) + bare ALTER TABLE since
+    // both tables are guaranteed to exist after v27.
+    //
+    // Postgres-only via sqlFor: PGLite doesn't enforce RLS the same way
+    // and v24 already runs only against Postgres in practice. The E2E
+    // test "RLS is enabled on every public table" runs against Docker
+    // postgres exclusively and was failing because v27 created the new
+    // tables without RLS enabled.
+    sqlFor: {
+      postgres: `
+        DO $$
+        DECLARE
+          has_bypass BOOLEAN;
+        BEGIN
+          SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+          IF NOT has_bypass THEN
+            RAISE EXCEPTION 'v29 cathedral_ii_code_edges_rls: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+          END IF;
+
+          ALTER TABLE code_edges_chunk ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE code_edges_symbol ENABLE ROW LEVEL SECURITY;
+
+          RAISE NOTICE 'v29: code_edges RLS enabled (role % has BYPASSRLS)', current_user;
+        END $$;
+      `,
+      pglite: `-- PGLite: no-op. RLS check runs only against Postgres E2E.`,
+    },
+    sql: '',
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
-  ? MIGRATIONS[MIGRATIONS.length - 1].version
+  ? Math.max(...MIGRATIONS.map(m => m.version))
   : 1;
+
+/**
+ * Row returned by `getIdleBlockers`. The shape is the public contract
+ * for both `gbrain doctor --locks` output and the internal DDL pre-flight.
+ */
+export interface IdleBlocker {
+  pid: number;
+  state: string;
+  query_start: string;
+  query: string;
+}
+
+/**
+ * Find idle-in-transaction connections older than 5 minutes that might
+ * block DDL. Postgres-only. Returns `[]` on PGLite, query failure, or
+ * no blockers. The query-failure path is intentionally silent because
+ * some managed Postgres configs restrict `pg_stat_activity` — a partial
+ * view of the server is still useful for doctor/pre-flight.
+ *
+ * Single source of truth shared by:
+ *   - `checkForBlockingConnections` (DDL pre-flight warning)
+ *   - `gbrain doctor --locks` (CLI diagnostic)
+ *   - any future `--exclusive` drain-wait logic
+ */
+export async function getIdleBlockers(engine: BrainEngine): Promise<IdleBlocker[]> {
+  if (engine.kind !== 'postgres') return [];
+  try {
+    return await engine.executeRaw<IdleBlocker>(
+      `SELECT pid, state, query_start::text, substring(query, 1, 120) as query
+       FROM pg_stat_activity
+       WHERE state = 'idle in transaction'
+         AND query_start < NOW() - INTERVAL '5 minutes'
+         AND pid != pg_backend_pid()`
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Check for idle-in-transaction connections that might block DDL.
+ * Returns true if blockers were found (logged as warnings).
+ */
+async function checkForBlockingConnections(engine: BrainEngine): Promise<boolean> {
+  const rows = await getIdleBlockers(engine);
+  if (rows.length > 0) {
+    console.warn(`\n⚠️  Found ${rows.length} idle-in-transaction connection(s) older than 5 minutes:`);
+    for (const r of rows) {
+      console.warn(`  PID ${r.pid} — idle since ${r.query_start}`);
+      console.warn(`    Query: ${r.query}`);
+    }
+    console.warn(`  These may block ALTER TABLE DDL. To kill: SELECT pg_terminate_backend(<pid>);\n`);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Wrap migration SQL execution with Supabase-compatible timeout.
+ * Uses SET LOCAL statement_timeout inside a transaction to override
+ * server-enforced timeouts (required for Supabase Postgres).
+ */
+async function runMigrationSQL(
+  engine: BrainEngine,
+  m: Migration,
+  sql: string,
+): Promise<void> {
+  const useTransaction = m.transaction !== false;
+
+  if (useTransaction || engine.kind === 'pglite') {
+    // Wrap in transaction with extended timeout for Supabase compatibility.
+    // SET LOCAL scopes the timeout to this transaction only.
+    await engine.transaction(async (tx) => {
+      if (engine.kind === 'postgres') {
+        try {
+          await tx.runMigration(m.version, "SET LOCAL statement_timeout = '600000'");
+        } catch {
+          // Non-fatal: PGLite or older Postgres versions may not support this
+        }
+      }
+      await tx.runMigration(m.version, sql);
+    });
+  } else {
+    // Postgres + transaction:false → can't use SET LOCAL (needs a txn),
+    // can't use plain SET on the pooled connection (leaks to other
+    // queries). Instead: reserve a dedicated backend, set session-level
+    // statement_timeout on just that connection, run the DDL there.
+    //
+    // On Supabase (both PgBouncer 6543 and direct 5432) a server-level
+    // statement_timeout of ~2 min is enforced. Without this override a
+    // CREATE INDEX CONCURRENTLY on a large table (e.g. 500K pages) hits
+    // the timeout and aborts. SET on the reserved connection cleanly
+    // overrides because the GUC scope is connection-local (session-scope
+    // is fine when nobody else uses the connection).
+    //
+    // The reserved-connection primitive is new in PR #356. See
+    // BrainEngine.withReservedConnection.
+    await engine.withReservedConnection(async (conn) => {
+      try {
+        await conn.executeRaw("SET statement_timeout = '600000'");
+      } catch {
+        // Non-fatal: some managed Postgres may restrict this GUC.
+        // Falling through means the DDL runs with the server default.
+      }
+      await conn.executeRaw(sql);
+    });
+  }
+}
 
 export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {
   const currentStr = await engine.getConfig('version');
@@ -703,39 +1189,59 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   // be skipped on the next iteration.
   const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
 
-  let applied = 0;
-  for (const m of sorted) {
-    if (m.version > current) {
-      // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
-      const sql = m.sqlFor?.[engine.kind] ?? m.sql;
-
-      if (sql) {
-        const useTransaction = m.transaction !== false;
-        // Non-transactional path is Postgres-only: `CREATE INDEX CONCURRENTLY`
-        // refuses to run inside a transaction. PGLite has no concurrent
-        // writers, so even if a migration sets transaction:false we wrap it
-        // anyway (harmless; keeps behavior consistent).
-        if (useTransaction || engine.kind === 'pglite') {
-          await engine.transaction(async (tx) => {
-            await tx.runMigration(m.version, sql);
-          });
-        } else {
-          // Postgres + transaction:false → direct execution, no BEGIN/COMMIT.
-          await engine.runMigration(m.version, sql);
-        }
-      }
-
-      // Application-level handler (runs outside transaction for flexibility)
-      if (m.handler) {
-        await m.handler(engine);
-      }
-
-      // Update version after both SQL and handler succeed
-      await engine.setConfig('version', String(m.version));
-      console.log(`  Migration ${m.version} applied: ${m.name}`);
-      applied++;
-    }
+  const pending = sorted.filter(m => m.version > current);
+  if (pending.length === 0) {
+    return { applied: 0, current };
   }
 
-  return { applied, current: applied > 0 ? MIGRATIONS[MIGRATIONS.length - 1].version : current };
+  console.log(`  Schema version ${current} → ${LATEST_VERSION} (${pending.length} migration(s) pending)`);
+
+  // Pre-flight: warn about connections that might block DDL
+  await checkForBlockingConnections(engine);
+
+  let applied = 0;
+  for (const m of pending) {
+    console.log(`  [${m.version}] ${m.name}...`);
+
+    // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
+    const sql = m.sqlFor?.[engine.kind] ?? m.sql;
+
+    if (sql) {
+      try {
+        await runMigrationSQL(engine, m, sql);
+      } catch (err: unknown) {
+        // Actionable diagnostics for statement timeout (Postgres error 57014).
+        // Shape matches the 4-part error standard (what / why / fix / verify).
+        const code = (err as { code?: string })?.code;
+        if (code === '57014') {
+          console.error(`\n❌ Migration ${m.version} (${m.name}) hit statement_timeout (SQLSTATE 57014).`);
+          console.error('');
+          console.error('   Cause: another connection holds a lock on the target table, or the');
+          console.error('   server statement_timeout (~2 min on Supabase) is too short for this DDL.');
+          console.error('');
+          console.error('   Fix:');
+          console.error('     1. gbrain doctor --locks    # find idle-in-transaction blockers');
+          console.error('     2. Terminate blocker(s) shown by step 1 via pg_terminate_backend(<pid>)');
+          console.error('     3. gbrain apply-migrations --yes  # re-run from the version that failed');
+          console.error('');
+          console.error('   Verify:');
+          console.error('     gbrain doctor              # schema_version should match latest');
+          console.error('');
+        }
+        throw err;
+      }
+    }
+
+    // Application-level handler (runs outside transaction for flexibility)
+    if (m.handler) {
+      await m.handler(engine);
+    }
+
+    // Update version after both SQL and handler succeed
+    await engine.setConfig('version', String(m.version));
+    console.log(`  [${m.version}] ✓ ${m.name}`);
+    applied++;
+  }
+
+  return { applied, current: LATEST_VERSION };
 }

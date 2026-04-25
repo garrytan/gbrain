@@ -12,6 +12,12 @@ triggers:
   - "maintenance"
   - "orphan pages"
   - "stale pages"
+  - "extract links"
+  - "build link graph"
+  - "populate timeline"
+  - "populate links"
+  - "backfill graph"
+  - "extract timeline entries"
 tools:
   - get_health
   - get_page

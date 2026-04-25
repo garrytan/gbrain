@@ -105,3 +105,20 @@ function sleep(ms: number): Promise<void> {
 }
 
 export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
+
+/**
+ * v0.20.0 Cathedral II Layer 8 (D1): USD cost per 1k tokens for
+ * text-embedding-3-large. Used by `gbrain sync --all` cost preview and
+ * the reindex-code backfill command to surface expected spend before
+ * the agent/user accepts an expensive operation.
+ *
+ * Value: $0.00013 / 1k tokens as of 2026. Update when OpenAI changes
+ * pricing. Single source of truth — every cost-preview surface reads
+ * this constant, so a pricing change is a one-line edit.
+ */
+export const EMBEDDING_COST_PER_1K_TOKENS = 0.00013;
+
+/** Compute USD cost estimate for embedding `tokens` at current model rate. */
+export function estimateEmbeddingCostUsd(tokens: number): number {
+  return (tokens / 1000) * EMBEDDING_COST_PER_1K_TOKENS;
+}

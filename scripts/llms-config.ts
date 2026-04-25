@@ -178,12 +178,6 @@ export const SECTIONS: DocSection[] = [
     optional: true,
     entries: [
       {
-        title: "docs/benchmarks/",
-        description: "Retrieval quality benchmarks.",
-        path: "docs/benchmarks/",
-        includeInFull: false,
-      },
-      {
         title: "docs/designs/",
         description: "Forward-looking designs.",
         path: "docs/designs/",

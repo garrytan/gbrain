@@ -126,6 +126,14 @@ export class MinionWorker {
       } catch (e) {
         console.error('Timeout detection error:', e instanceof Error ? e.message : String(e));
       }
+      try {
+        const wallClockTimedOut = await this.queue.handleWallClockTimeouts(this.opts.lockDuration);
+        if (wallClockTimedOut.length > 0) {
+          console.log(`Wall-clock detector: dead-lettered ${wallClockTimedOut.length} jobs (wall-clock timeout exceeded)`);
+        }
+      } catch (e) {
+        console.error('Wall-clock timeout detection error:', e instanceof Error ? e.message : String(e));
+      }
     }, this.opts.stalledInterval);
 
     try {

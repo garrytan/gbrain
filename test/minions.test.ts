@@ -1653,3 +1653,246 @@ describe('MinionQueue: Attachments', () => {
     expect(list[0].filename).toBe('b.txt');
   });
 });
+
+// --- v0.19.1 — queue-resilience (wall-clock sweep, maxWaiting race, concurrency clamp) ---
+
+describe('MinionQueue: v0.19.1 handleWallClockTimeouts (Layer 3 kill shot)', () => {
+  test('evicts active job past 2× timeout_ms — sets dead + wall-clock error_text', async () => {
+    const job = await queue.add('noop', {}, { timeout_ms: 100 });
+    await engine.executeRaw(
+      `UPDATE minion_jobs
+         SET status='active',
+             lock_token='wc-test',
+             lock_until=now() - interval '1 second',
+             started_at=now() - interval '1 second',
+             timeout_at=now() - interval '0.9 second',
+             attempts_started = attempts_started + 1
+       WHERE id=$1`,
+      [job.id],
+    );
+    const killed = await queue.handleWallClockTimeouts(30_000);
+    expect(killed.length).toBe(1);
+    expect(killed[0].id).toBe(job.id);
+    const after = await queue.getJob(job.id);
+    expect(after?.status).toBe('dead');
+    expect(after?.error_text).toBe('wall-clock timeout exceeded');
+  });
+
+  test('timeout_ms NULL fallback uses 2 × lockDuration × max_stalled threshold', async () => {
+    const job = await queue.add('noop', {}, { max_stalled: 3 });
+    // Force timeout_ms / timeout_at NULL on-disk (columns might or might not be set by add).
+    await engine.executeRaw(
+      `UPDATE minion_jobs
+         SET status='active',
+             timeout_ms=NULL,
+             timeout_at=NULL,
+             lock_token='wc-null',
+             lock_until=now() - interval '1 second',
+             started_at=now() - interval '61 seconds',
+             attempts_started = attempts_started + 1
+       WHERE id=$1`,
+      [job.id],
+    );
+    // 2 × lockDurationMs × max_stalled = 2 × 10_000 × 3 = 60_000 ms. started_at is 61s ago.
+    const killed = await queue.handleWallClockTimeouts(10_000);
+    expect(killed.length).toBe(1);
+    expect(killed[0].id).toBe(job.id);
+    const after = await queue.getJob(job.id);
+    expect(after?.status).toBe('dead');
+  });
+
+  test('respects threshold — active job within window is NOT killed', async () => {
+    const job = await queue.add('noop', {}, { timeout_ms: 100_000 });
+    await engine.executeRaw(
+      `UPDATE minion_jobs
+         SET status='active',
+             lock_token='wc-inside',
+             lock_until=now() + interval '30 seconds',
+             started_at=now() - interval '10 seconds',
+             timeout_at=now() + interval '90 seconds',
+             attempts_started = attempts_started + 1
+       WHERE id=$1`,
+      [job.id],
+    );
+    const killed = await queue.handleWallClockTimeouts(30_000);
+    expect(killed.length).toBe(0);
+    const after = await queue.getJob(job.id);
+    expect(after?.status).toBe('active');
+  });
+});
+
+describe('MinionQueue: v0.19.1 maxWaiting — cap correctness + race (D2/H2)', () => {
+  test('coalesces 3rd submission when cap is 2 — returns existing most-recent waiting row', async () => {
+    const a = await queue.add('poll', {}, { maxWaiting: 2 });
+    const b = await queue.add('poll', {}, { maxWaiting: 2 });
+    const c = await queue.add('poll', {}, { maxWaiting: 2 });
+    expect(a.id).not.toBe(b.id);
+    expect(c.id).toBe(b.id); // coalesced to the most-recent waiting row
+    const rows = await engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text AS count FROM minion_jobs WHERE name='poll' AND status='waiting'`,
+    );
+    expect(parseInt(rows[0].count, 10)).toBe(2);
+  });
+
+  test('clamps maxWaiting: 0 → 1 (strictest cap)', async () => {
+    const a = await queue.add('squeeze', {}, { maxWaiting: 0 });
+    const b = await queue.add('squeeze', {}, { maxWaiting: 0 });
+    expect(b.id).toBe(a.id); // 0 clamped to 1, 2nd coalesces into 1st
+  });
+
+  test('floors maxWaiting: 1.7 → 1', async () => {
+    const a = await queue.add('floor', {}, { maxWaiting: 1.7 });
+    const b = await queue.add('floor', {}, { maxWaiting: 1.7 });
+    expect(b.id).toBe(a.id);
+  });
+
+  test('concurrent submitters respect the cap under Promise.all race (H2)', async () => {
+    // Serialized by pg_advisory_xact_lock keyed on (name, queue). Without it,
+    // two concurrent submits both see count<max and both insert — the TOCTOU
+    // bug codex caught in D2/H2.
+    const results = await Promise.all([
+      queue.add('race', {}, { maxWaiting: 2 }),
+      queue.add('race', {}, { maxWaiting: 2 }),
+      queue.add('race', {}, { maxWaiting: 2 }),
+    ]);
+    expect(results.length).toBe(3);
+    const rows = await engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text AS count FROM minion_jobs WHERE name='race' AND status='waiting'`,
+    );
+    expect(parseInt(rows[0].count, 10)).toBe(2); // cap held under concurrency
+  });
+
+  test('cross-queue isolation — same name in queue A does NOT suppress queue B (H2 secondary)', async () => {
+    const a = await queue.add('isolate', {}, { maxWaiting: 1, queue: 'default' });
+    // cap hit on queue=default with maxWaiting=1; 2nd would coalesce into `a`
+    const a2 = await queue.add('isolate', {}, { maxWaiting: 1, queue: 'default' });
+    expect(a2.id).toBe(a.id);
+    // Different queue — MUST insert a fresh row, NOT coalesce into queue=default
+    const b = await queue.add('isolate', {}, { maxWaiting: 1, queue: 'shell' });
+    expect(b.id).not.toBe(a.id);
+    expect(b.queue).toBe('shell');
+  });
+
+  test('unset maxWaiting — normal submit path, no coalesce, no cap', async () => {
+    const a = await queue.add('uncapped', {});
+    const b = await queue.add('uncapped', {});
+    const c = await queue.add('uncapped', {});
+    expect(new Set([a.id, b.id, c.id]).size).toBe(3);
+  });
+});
+
+describe('resolveWorkerConcurrency (v0.19.1 H3): clamp + validation', () => {
+  // jobs.ts handler — tested via direct import. Warning goes to stderr;
+  // tests verify return value only, not the warning line.
+  let resolveWorkerConcurrency: (args: string[], env?: NodeJS.ProcessEnv) => number;
+  let parseMaxWaitingFlag: (args: string[]) => number | undefined;
+  beforeAll(async () => {
+    const mod = await import('../src/commands/jobs.ts');
+    resolveWorkerConcurrency = mod.resolveWorkerConcurrency;
+    parseMaxWaitingFlag = mod.parseMaxWaitingFlag;
+  });
+
+  test('flag=4 env-unset → 4', () => {
+    expect(resolveWorkerConcurrency(['--concurrency', '4'], {} as NodeJS.ProcessEnv)).toBe(4);
+  });
+  test('flag-unset env=8 → 8', () => {
+    expect(resolveWorkerConcurrency([], { GBRAIN_WORKER_CONCURRENCY: '8' } as NodeJS.ProcessEnv)).toBe(8);
+  });
+  test('flag=2 env=8 → 2 (flag wins)', () => {
+    expect(resolveWorkerConcurrency(['--concurrency', '2'], { GBRAIN_WORKER_CONCURRENCY: '8' } as NodeJS.ProcessEnv)).toBe(2);
+  });
+  test('both unset → 1', () => {
+    expect(resolveWorkerConcurrency([], {} as NodeJS.ProcessEnv)).toBe(1);
+  });
+  test('garbage env "foo" → clamped to 1 (H3)', () => {
+    expect(resolveWorkerConcurrency([], { GBRAIN_WORKER_CONCURRENCY: 'foo' } as NodeJS.ProcessEnv)).toBe(1);
+  });
+  test('env=0 → clamped to 1 (H3 — prevents silent wedge)', () => {
+    expect(resolveWorkerConcurrency([], { GBRAIN_WORKER_CONCURRENCY: '0' } as NodeJS.ProcessEnv)).toBe(1);
+  });
+  test('env=-5 → clamped to 1 (H3)', () => {
+    expect(resolveWorkerConcurrency([], { GBRAIN_WORKER_CONCURRENCY: '-5' } as NodeJS.ProcessEnv)).toBe(1);
+  });
+});
+
+describe('parseMaxWaitingFlag (v0.19.1 H5): CLI flag wiring', () => {
+  let parseMaxWaitingFlag: (args: string[]) => number | undefined;
+  beforeAll(async () => {
+    parseMaxWaitingFlag = (await import('../src/commands/jobs.ts')).parseMaxWaitingFlag;
+  });
+
+  test('absent → undefined (no cap, default submit path)', () => {
+    expect(parseMaxWaitingFlag(['foo', '--params', '{}'])).toBeUndefined();
+  });
+  test('--max-waiting 2 → 2 (happy path)', () => {
+    expect(parseMaxWaitingFlag(['foo', '--max-waiting', '2'])).toBe(2);
+  });
+  test('--max-waiting 200 → clamped to 100', () => {
+    expect(parseMaxWaitingFlag(['foo', '--max-waiting', '200'])).toBe(100);
+  });
+  test('--max-waiting 0 → throws', () => {
+    expect(() => parseMaxWaitingFlag(['foo', '--max-waiting', '0'])).toThrow('positive integer');
+  });
+  test('--max-waiting abc → throws', () => {
+    expect(() => parseMaxWaitingFlag(['foo', '--max-waiting', 'abc'])).toThrow('positive integer');
+  });
+});
+
+describe('backpressure-audit (v0.19.1 Q1): JSONL on coalesce', () => {
+  test('logBackpressureCoalesce writes one JSONL line per coalesce', async () => {
+    const { logBackpressureCoalesce, resolveAuditDir, computeAuditFilename } =
+      await import('../src/core/minions/backpressure-audit.ts');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-audit-'));
+    const prev = process.env.GBRAIN_AUDIT_DIR;
+    process.env.GBRAIN_AUDIT_DIR = tmp;
+    try {
+      expect(resolveAuditDir()).toBe(tmp);
+      logBackpressureCoalesce({
+        queue: 'default',
+        name: 'poll',
+        waiting_count: 2,
+        max_waiting: 2,
+        returned_job_id: 42,
+      });
+      const file = path.join(tmp, computeAuditFilename());
+      const text = fs.readFileSync(file, 'utf8');
+      const line = JSON.parse(text.trim());
+      expect(line.decision).toBe('coalesced');
+      expect(line.name).toBe('poll');
+      expect(line.returned_job_id).toBe(42);
+      expect(typeof line.ts).toBe('string');
+    } finally {
+      if (prev === undefined) delete process.env.GBRAIN_AUDIT_DIR;
+      else process.env.GBRAIN_AUDIT_DIR = prev;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('MinionQueue: v0.19.1 wall-clock + handleTimeouts non-interference (T1)', () => {
+  test('wall-clock sweep does NOT evict a job that handleTimeouts would handle', async () => {
+    // Retry-able timeout: timeout_at < now() AND lock_until > now() — handleTimeouts
+    // is the correct killer here. wall-clock's 2× threshold has not fired yet.
+    const job = await queue.add('noop', {}, { timeout_ms: 100_000 });
+    await engine.executeRaw(
+      `UPDATE minion_jobs
+         SET status='active',
+             lock_token='t1',
+             lock_until=now() + interval '30 seconds',
+             started_at=now() - interval '2 seconds',
+             timeout_at=now() - interval '0.5 seconds',
+             attempts_started = attempts_started + 1
+       WHERE id=$1`,
+      [job.id],
+    );
+    // At this point: started_at is 2s ago, 2×timeout_ms = 200s. Wall-clock should NOT fire.
+    const killed = await queue.handleWallClockTimeouts(30_000);
+    expect(killed.length).toBe(0);
+    const after = await queue.getJob(job.id);
+    expect(after?.status).toBe('active');
+  });
+});

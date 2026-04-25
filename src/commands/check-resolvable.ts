@@ -1,10 +1,13 @@
 /**
  * gbrain check-resolvable — Standalone CLI gate for skill-tree integrity.
  *
- * Thin wrapper over `src/core/check-resolvable.ts`. Exit-code rule is stricter
- * than `gbrain doctor`'s resolver_health: this command exits 1 on ANY issue
- * (errors OR warnings) so CI can gate on a single command. Honors the README
- * contract: "Exits non-zero if anything is off."
+ * Thin wrapper over `src/core/check-resolvable.ts`. Exit contract (D-CX-3,
+ * post-codex-review):
+ *   default:  exit 0 unless there are error-severity issues
+ *   --strict: exit 0 unless there are errors OR warnings
+ * This lets advisory checks (filing audit, future routing gaps) emit
+ * warnings without breaking CI for workspaces that haven't migrated yet.
+ * CI pipelines that want the old behavior pass --strict.
  *
  * Currently covers 4 of 6 checks from the original design: reachability,
  * MECE overlap, MECE gap, DRY violations. Checks 5 (trigger routing eval)
@@ -20,7 +23,7 @@ import {
   type ResolvableIssue,
   type AutoFixReport,
 } from '../core/check-resolvable.ts';
-import { findRepoRoot } from '../core/repo-root.ts';
+import { autoDetectSkillsDir, AUTO_DETECT_HINT, type SkillsDirSource } from '../core/repo-root.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -42,46 +45,51 @@ export interface Envelope {
   message: string | null;
 }
 
+type SkillsDirResolutionSource = 'explicit' | SkillsDirSource | null;
+
 export interface Flags {
   help: boolean;
   json: boolean;
   fix: boolean;
   dryRun: boolean;
   verbose: boolean;
+  strict: boolean;
   skillsDir: string | null;
 }
 
-// TBD: fill these issue URLs after filing the GitHub issues pre-PR.
-// grep for 'TBD-check-5' / 'TBD-check-6' before shipping.
-export const DEFERRED: DeferredCheck[] = [
-  {
-    check: 5,
-    name: 'trigger_routing_eval',
-    issue: 'https://github.com/garrytan/gbrain/issues?q=TBD-check-5',
-  },
-  {
-    check: 6,
-    name: 'brain_filing',
-    issue: 'https://github.com/garrytan/gbrain/issues?q=TBD-check-6',
-  },
-];
+// Check 5 (trigger_routing_eval) landed in v0.17 (W2). Check 6
+// (brain_filing) landed in v0.17 (W3). Array is now empty; the
+// export stays as a stable public field of the --json envelope so
+// downstream consumers that check `.deferred[]` keep working.
+// Future deferred checks get appended here.
+export const DEFERRED: DeferredCheck[] = [];
 
 const HELP_TEXT = `gbrain check-resolvable [options]
 
 Validate the skill tree: reachability, MECE overlap, DRY violations, and
-gap detection. Exits non-zero if any issues are found (errors OR warnings).
+gap detection. Exits non-zero on errors. Warnings are advisory by default;
+pass --strict to fail CI on warnings too.
 
 Options:
   --json             Machine-readable JSON (stable envelope)
   --fix              Apply DRY auto-fixes before checking
   --dry-run          With --fix, preview only; no writes
   --verbose          Show passing checks and the deferred-check note
+  --strict           Treat warnings as errors (promotes warnings to exit 1)
   --skills-dir PATH  Override the auto-detected skills/ directory
   --help             Show this message
 
-Deferred to separate issues (see --json .deferred[]):
-  - Check 5: trigger routing eval
-  - Check 6: brain filing
+Exit codes:
+  0   clean (no errors; no warnings unless --strict)
+  1   errors present, OR (with --strict) warnings present
+
+Check 5 (trigger routing eval) lands in v0.17 via W2: any
+skills/<name>/routing-eval.jsonl fixtures are evaluated and routing
+gaps surface as warnings.
+
+Check 6 (brain filing) lands in v0.17 via W3: skills with
+writes_pages: true are audited against skills/_brain-filing-rules.json.
+No checks are deferred as of v0.17.
 `;
 
 // ---------------------------------------------------------------------------
@@ -95,6 +103,7 @@ export function parseFlags(argv: string[]): Flags {
     fix: false,
     dryRun: false,
     verbose: false,
+    strict: false,
     skillsDir: null,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -104,6 +113,7 @@ export function parseFlags(argv: string[]): Flags {
     else if (a === '--fix') flags.fix = true;
     else if (a === '--dry-run') flags.dryRun = true;
     else if (a === '--verbose') flags.verbose = true;
+    else if (a === '--strict') flags.strict = true;
     else if (a === '--skills-dir') {
       flags.skillsDir = argv[i + 1] ?? null;
       i++;
@@ -119,23 +129,48 @@ export function parseFlags(argv: string[]): Flags {
 // Skills-dir resolution
 // ---------------------------------------------------------------------------
 
-export function resolveSkillsDir(flags: Flags): { dir: string | null; error: Envelope['error']; message: string | null } {
+export function resolveSkillsDir(flags: Flags): {
+  dir: string | null;
+  error: Envelope['error'];
+  message: string | null;
+  source: SkillsDirResolutionSource;
+} {
   if (flags.skillsDir) {
     const dir = isAbsolute(flags.skillsDir)
       ? flags.skillsDir
       : resolvePath(process.cwd(), flags.skillsDir);
-    return { dir, error: null, message: null };
+    return { dir, error: null, message: null, source: 'explicit' };
   }
-  const repoRoot = findRepoRoot();
-  if (!repoRoot) {
+
+  const detected = autoDetectSkillsDir();
+  if (!detected.dir) {
     return {
       dir: null,
       error: 'no_skills_dir',
       message:
-        'Could not locate skills/RESOLVER.md from cwd. Pass --skills-dir <path> or run from inside a gbrain repo.',
+        'Could not auto-detect skills/ with a RESOLVER.md or AGENTS.md.\n' +
+        'Priority order:\n' +
+        AUTO_DETECT_HINT +
+        '\nFix: export OPENCLAW_WORKSPACE=<path> or pass --skills-dir <path>.',
+      source: null,
     };
   }
-  return { dir: resolvePath(repoRoot, 'skills'), error: null, message: null };
+
+  const sourceLabel = {
+    repo_root: 'repo root skills/',
+    openclaw_workspace_env: '$OPENCLAW_WORKSPACE/skills',
+    openclaw_workspace_env_root: '$OPENCLAW_WORKSPACE (AGENTS.md at workspace root)',
+    openclaw_workspace_home: '~/.openclaw/workspace/skills',
+    openclaw_workspace_home_root: '~/.openclaw/workspace (AGENTS.md at workspace root)',
+    cwd_skills: './skills',
+  }[detected.source!]!;
+
+  return {
+    dir: detected.dir,
+    error: null,
+    message: `Auto-detected skills directory from ${sourceLabel}: ${detected.dir}`,
+    source: detected.source,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -153,17 +188,24 @@ function renderHuman(env: Envelope, flags: Flags): void {
     printAutoFixHuman(env.autoFix, flags.dryRun);
   }
 
-  if (report.ok && report.issues.length === 0) {
+  if (report.errors.length === 0 && report.warnings.length === 0) {
     console.log(`resolver_health: OK — ${report.summary.total_skills} skills, all reachable`);
   } else {
-    const errors = report.issues.filter(i => i.severity === 'error');
-    const warnings = report.issues.filter(i => i.severity === 'warning');
-    const status = errors.length > 0 ? 'FAIL' : 'WARN';
+    const status =
+      report.errors.length > 0
+        ? 'FAIL'
+        : flags.strict
+          ? 'FAIL (strict: warnings promoted)'
+          : 'WARN';
+    const total = report.errors.length + report.warnings.length;
     console.log(
-      `resolver_health: ${status} — ${report.issues.length} issue(s): ${errors.length} error(s), ${warnings.length} warning(s)`,
+      `resolver_health: ${status} — ${total} issue(s): ${report.errors.length} error(s), ${report.warnings.length} warning(s)`,
     );
-    for (const iss of report.issues) {
+    for (const iss of [...report.errors, ...report.warnings]) {
       console.log(formatIssueLine(iss));
+    }
+    if (report.errors.length === 0 && report.warnings.length > 0 && !flags.strict) {
+      console.log('\n(warnings are advisory; run with --strict to fail CI on warnings.)');
     }
   }
 
@@ -211,7 +253,7 @@ export async function runCheckResolvable(args: string[]): Promise<void> {
     process.exit(0);
   }
 
-  const { dir, error, message } = resolveSkillsDir(flags);
+  const { dir, error, message, source } = resolveSkillsDir(flags);
 
   if (error === 'no_skills_dir') {
     const env: Envelope = {
@@ -232,6 +274,9 @@ export async function runCheckResolvable(args: string[]): Promise<void> {
   }
 
   const skillsDir = dir!;
+  if (!flags.json && source !== 'explicit' && message) {
+    console.log(message);
+  }
 
   let autoFix: AutoFixReport | null = null;
   if (flags.fix) {
@@ -240,8 +285,18 @@ export async function runCheckResolvable(args: string[]): Promise<void> {
 
   const report = checkResolvable(skillsDir);
 
+  // Exit semantics (D-CX-3):
+  //   default mode: fail iff any errors
+  //   --strict:     fail if any errors OR any warnings
+  // Warnings alone never flip the exit code in default mode. This lets
+  // advisory checks (filing audit, future routing gaps) emit without
+  // breaking CI for workspaces that haven't migrated yet.
+  const envOk = flags.strict
+    ? report.errors.length === 0 && report.warnings.length === 0
+    : report.errors.length === 0;
+
   const env: Envelope = {
-    ok: report.issues.length === 0,
+    ok: envOk,
     skillsDir,
     report,
     autoFix,

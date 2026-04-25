@@ -200,3 +200,74 @@ export async function dumpDBState(): Promise<string> {
  * Get the fixtures directory path.
  */
 export const FIXTURES_PATH = FIXTURES_DIR;
+
+/**
+ * Rewind schema state to `targetVersion` and re-apply migrations in
+ * version order up to (and including) `targetVersion`.
+ *
+ * Used by the v15→v23 chain E2E to simulate the field report's starting
+ * state (schema at v15, ~100 real rows, kick off full migration). Before
+ * this helper, no CLI flag or test hook existed to stop the migration
+ * chain at an intermediate version — `gbrain init --migrate-only` always
+ * ran to latest.
+ *
+ * Caveats:
+ *   - Postgres-only (the v15→v23 chain only matters for Postgres anyway;
+ *     PGLite's schema is monolithic).
+ *   - Destructive to existing DDL: dropping a migration that created
+ *     a table leaves tables behind. This helper re-runs migrations from
+ *     the CURRENT version (whatever config.version says) upward. It
+ *     does NOT rewind down. Pair with `setupDB()` to truncate first.
+ *   - After calling this, the schema is whatever `v1..targetVersion`
+ *     produced. Columns added by v(targetVersion+1)+ will be missing.
+ *
+ * Call order in a test:
+ *   const engine = await setupDB();         // latest schema, empty tables
+ *   await conn.unsafe('ALTER TABLE ...');   // optional: drop forward columns
+ *   await setConfigVersion(1);              // reset schema version
+ *   await runMigrationsUpTo(engine, 15);    // advance to v15
+ *   // ... seed fixture data at v15 shape ...
+ *   await runMigrationsFromCurrent(engine); // advance to latest
+ */
+export async function runMigrationsUpTo(
+  engine: PostgresEngine,
+  targetVersion: number,
+): Promise<void> {
+  const { MIGRATIONS } = await import('../../src/core/migrate.ts');
+  const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
+
+  const currentStr = await engine.getConfig('version');
+  const current = parseInt(currentStr || '1', 10);
+
+  const pending = sorted.filter(m => m.version > current && m.version <= targetVersion);
+
+  for (const m of pending) {
+    const sql = m.sqlFor?.[engine.kind] ?? m.sql;
+    if (sql) {
+      // Inline the transactional wrap from runMigrationSQL so we can
+      // stop cleanly at targetVersion without re-invoking the full
+      // runMigrations loop.
+      await engine.transaction(async (tx) => {
+        await tx.runMigration(m.version, sql);
+      });
+    }
+    if (m.handler) {
+      await m.handler(engine);
+    }
+    await engine.setConfig('version', String(m.version));
+  }
+}
+
+/**
+ * Reset `config.version` to the given value. Used to simulate a brain
+ * at an older schema state before applying partial migrations via
+ * `runMigrationsUpTo`. Does NOT undo DDL — just moves the version
+ * marker that the migration runner uses to decide what's pending.
+ */
+export async function setConfigVersion(version: number): Promise<void> {
+  const conn = db.getConnection();
+  await conn.unsafe(`
+    INSERT INTO config (key, value) VALUES ('version', $1)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+  `, [String(version)]);
+}

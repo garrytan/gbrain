@@ -12,6 +12,10 @@ triggers:
   - "what happened"
   - "search for"
   - "look up"
+  - "who knows who"
+  - "relationship between"
+  - "connections"
+  - "graph query"
 tools:
   - search
   - query
