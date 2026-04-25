@@ -84,6 +84,16 @@ export interface SearchOpts {
   type?: PageType;
   exclude_slugs?: string[];
   detail?: 'low' | 'medium' | 'high';
+  /**
+   * Restrict the search to rows whose `pages.source_id` is in this list.
+   * Empty / undefined means "no source filter" — engines will return rows
+   * from every source (the historical pre-v0.18 behavior). The operation
+   * layer is responsible for resolving the default scope (current source
+   * + every source with `config.federated = true`) before calling the
+   * engine, so an unscoped engine call should only happen from internal
+   * tooling that genuinely wants the full table.
+   */
+  source_ids?: string[];
 }
 
 // Links

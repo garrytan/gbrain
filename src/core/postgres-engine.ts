@@ -216,6 +216,7 @@ export class PostgresEngine implements BrainEngine {
     const offset = opts?.offset || 0;
     const type = opts?.type;
     const excludeSlugs = opts?.exclude_slugs;
+    const sourceIds = opts?.source_ids;
 
     if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
@@ -233,7 +234,10 @@ export class PostgresEngine implements BrainEngine {
     // `SET statement_timeout = 0` — disables the guard for them.
     const rows = await sql.begin(async sql => {
       await sql`SET LOCAL statement_timeout = '8s'`;
-      // CTE: rank pages by FTS score, then pick the best chunk per page in SQL
+      // CTE: rank pages by FTS score, then pick the best chunk per page
+      // in SQL. The source_id filter sits on the inner ranked_pages CTE
+      // so candidate ranking respects the scope BEFORE the JOIN, instead
+      // of ranking globally and trimming after.
       return await sql`
         WITH ranked_pages AS (
           SELECT p.id, p.slug, p.title, p.type,
@@ -242,6 +246,7 @@ export class PostgresEngine implements BrainEngine {
           WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
             ${type ? sql`AND p.type = ${type}` : sql``}
             ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
+            ${sourceIds?.length ? sql`AND p.source_id = ANY(${sourceIds})` : sql``}
           ORDER BY score DESC
           LIMIT ${limit}
           OFFSET ${offset}
@@ -270,6 +275,7 @@ export class PostgresEngine implements BrainEngine {
     const offset = opts?.offset || 0;
     const type = opts?.type;
     const excludeSlugs = opts?.exclude_slugs;
+    const sourceIds = opts?.source_ids;
     const detailLow = opts?.detail === 'low';
 
     if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
@@ -295,6 +301,7 @@ export class PostgresEngine implements BrainEngine {
           ${detailLow ? sql`AND cc.chunk_source = 'compiled_truth'` : sql``}
           ${type ? sql`AND p.type = ${type}` : sql``}
           ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
+          ${sourceIds?.length ? sql`AND p.source_id = ANY(${sourceIds})` : sql``}
         ORDER BY cc.embedding <=> ${vecStr}::vector
         LIMIT ${limit}
         OFFSET ${offset}
