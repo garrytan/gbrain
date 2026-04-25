@@ -13,6 +13,7 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
+import { resolveSearchScope } from './source-scope.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
 
@@ -561,11 +562,17 @@ const search: Operation = {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    source_ids: { type: 'array', description: 'Restrict search to these source ids. Default: current source + every source with config.federated=true.' },
   },
   handler: async (ctx, p) => {
+    const sourceIds = await resolveSearchScope(
+      ctx.engine,
+      (p.source_ids as string[] | undefined) ?? null,
+    );
     const results = await ctx.engine.searchKeyword(p.query as string, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
+      source_ids: sourceIds,
     });
     return dedupResults(results);
   },
@@ -581,16 +588,22 @@ const query: Operation = {
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
     detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
+    source_ids: { type: 'array', description: 'Restrict search to these source ids. Default: current source + every source with config.federated=true.' },
   },
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
     const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
+    const sourceIds = await resolveSearchScope(
+      ctx.engine,
+      (p.source_ids as string[] | undefined) ?? null,
+    );
     return hybridSearch(ctx.engine, p.query as string, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
       detail,
+      source_ids: sourceIds,
     });
   },
   cliHints: { name: 'query', positional: ['query'] },

@@ -68,7 +68,10 @@ export async function hybridSearch(
 
   // Auto-detect detail level from query intent when caller doesn't specify
   const detail = opts?.detail ?? autoDetectDetail(query);
-  const searchOpts: SearchOpts = { limit: innerLimit, detail };
+  // Source scope is forwarded verbatim — the operation handler that owns
+  // the request resolves the default scope (current source + federated)
+  // before calling hybridSearch, so here we just plumb the array through.
+  const searchOpts: SearchOpts = { limit: innerLimit, detail, source_ids: opts?.source_ids };
 
   if (DEBUG && detail) {
     console.error(`[search-debug] auto-detail=${detail} for query="${query}"`);

@@ -221,6 +221,14 @@ export class PGLiteEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
+    // Build the source_id filter inline. PGLite uses positional $N
+    // placeholders, so we splice the parameter index after the fixed
+    // ones (query, limit, offset) and pass the array as $4.
+    const sourceIds = opts?.source_ids;
+    const sourceFilter = sourceIds?.length ? `AND p.source_id = ANY($4::text[])` : '';
+    const params: unknown[] = [query, limit, offset];
+    if (sourceIds?.length) params.push(sourceIds);
+
     const { rows } = await this.db.query(
       `SELECT
         p.slug, p.id as page_id, p.title, p.type, p.source_id,
@@ -231,11 +239,11 @@ export class PGLiteEngine implements BrainEngine {
         ) THEN true ELSE false END AS stale
       FROM pages p
       JOIN content_chunks cc ON cc.page_id = p.id
-      WHERE p.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}
+      WHERE p.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter} ${sourceFilter}
       ORDER BY score DESC
       LIMIT $2
       OFFSET $3`,
-      [query, limit, offset]
+      params
     );
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
@@ -251,6 +259,11 @@ export class PGLiteEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
+    const sourceIds = opts?.source_ids;
+    const sourceFilter = sourceIds?.length ? `AND p.source_id = ANY($4::text[])` : '';
+    const params: unknown[] = [vecStr, limit, offset];
+    if (sourceIds?.length) params.push(sourceIds);
+
     const { rows } = await this.db.query(
       `SELECT
         p.slug, p.id as page_id, p.title, p.type, p.source_id,
@@ -261,11 +274,11 @@ export class PGLiteEngine implements BrainEngine {
         ) THEN true ELSE false END AS stale
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL ${detailFilter}
+      WHERE cc.embedding IS NOT NULL ${detailFilter} ${sourceFilter}
       ORDER BY cc.embedding <=> $1::vector
       LIMIT $2
       OFFSET $3`,
-      [vecStr, limit, offset]
+      params
     );
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
