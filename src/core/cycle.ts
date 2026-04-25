@@ -46,7 +46,7 @@ import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
-export type CyclePhase = 'lint' | 'backlinks' | 'sync' | 'extract' | 'embed' | 'orphans';
+export type CyclePhase = 'lint' | 'backlinks' | 'sync' | 'extract' | 'embed' | 'orphans' | 'promotion';
 
 export const ALL_PHASES: CyclePhase[] = [
   'lint',
@@ -55,12 +55,13 @@ export const ALL_PHASES: CyclePhase[] = [
   'extract',
   'embed',
   'orphans',
+  'promotion',
 ];
 
 /**
  * Phases that mutate state (filesystem or DB) and therefore should
- * coordinate via the cycle lock. Only orphans is truly read-only
- * and skips the lock.
+ * coordinate via the cycle lock. orphans is truly read-only and skips
+ * the lock; promotion mutates compiled_truth + timeline so it acquires.
  */
 const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'lint',
@@ -68,6 +69,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'sync',
   'extract',
   'embed',
+  'promotion',
 ]);
 
 export type PhaseStatus = 'ok' | 'warn' | 'fail' | 'skipped';
@@ -121,6 +123,7 @@ export interface CycleReport {
     pages_extracted: number;
     pages_embedded: number;
     orphans_found: number;
+    patterns_promoted: number;
   };
 }
 
@@ -567,6 +570,90 @@ async function runPhaseOrphans(engine: BrainEngine): Promise<PhaseResult> {
   }
 }
 
+/**
+ * Promotion phase — episodic-to-semantic promotion of recurring timeline
+ * patterns. Rate-limited via a stamp file at ~/.gbrain/dream-cycle.stamp
+ * so it runs at most once per DEFAULT_PROMOTION_MIN_HOURS (23h) even if
+ * the surrounding cycle fires more frequently.
+ *
+ * The actual algorithm lives in src/core/promotion.ts (runDreamCycle).
+ * This phase wrapper handles: rate-limit gate, stamp update, structured
+ * PhaseResult shape.
+ */
+async function runPhasePromotion(
+  engine: BrainEngine,
+  dryRun: boolean,
+  progress: ProgressReporter,
+): Promise<PhaseResult> {
+  try {
+    const { runDreamCycle, shouldRunDreamCycle } = await import('./promotion.ts');
+
+    const stampPath = join(homedir(), '.gbrain', 'dream-cycle.stamp');
+    let lastRun = 0;
+    if (existsSync(stampPath)) {
+      try {
+        lastRun = parseInt(readFileSync(stampPath, 'utf-8').trim(), 10) || 0;
+      } catch (e) {
+        console.warn('[promotion] could not read stamp file: %s', e instanceof Error ? e.message : String(e));
+      }
+    }
+
+    if (!shouldRunDreamCycle(lastRun, Date.now())) {
+      const hoursSince = lastRun > 0 ? Math.round((Date.now() - lastRun) / 3600000) : 0;
+      return {
+        phase: 'promotion',
+        status: 'skipped',
+        duration_ms: 0,
+        summary: `rate-limited (last run ${hoursSince}h ago)`,
+        details: { reason: 'rate_limited', last_run_hours_ago: hoursSince, promoted: 0 },
+      };
+    }
+
+    // Thread per-iteration progress through to runDreamCycle so a long
+    // page-walk on big brains doesn't go silent for minutes.
+    const onProgress = (phase: 'pages' | 'embed', done: number, total: number) => {
+      // Re-emit as tick events on the cycle's reporter. The reporter
+      // dedupes/throttles per its rate-limit settings, so frequent ticks
+      // are cheap.
+      progress.tick(done, `${phase} ${done}/${total}`);
+    };
+
+    const report = await runDreamCycle(engine, {}, dryRun, onProgress);
+
+    if (!dryRun) {
+      try {
+        mkdirSync(join(homedir(), '.gbrain'), { recursive: true });
+        writeFileSync(stampPath, String(Date.now()));
+      } catch (e) {
+        console.warn('[promotion] could not update stamp: %s', e instanceof Error ? e.message : String(e));
+      }
+    }
+
+    return {
+      phase: 'promotion',
+      status: 'ok',
+      duration_ms: 0,
+      summary: `${report.promoted.length} pattern(s) promoted, ${report.skipped.length} skipped`,
+      details: {
+        promoted: report.promoted.length,
+        skipped: report.skipped.length,
+        candidates: report.candidates.length,
+        evidence_window_days: report.evidenceWindowDays,
+        dryRun,
+      },
+    };
+  } catch (e) {
+    return {
+      phase: 'promotion',
+      status: 'fail',
+      duration_ms: 0,
+      summary: 'promotion phase failed',
+      details: {},
+      error: makeErrorFromException(e),
+    };
+  }
+}
+
 // ─── Main ──────────────────────────────────────────────────────────
 
 /**
@@ -741,6 +828,29 @@ export async function runCycle(
       }
       await safeYield(opts.yieldBetweenPhases);
     }
+
+    // ── Phase 7: promotion ──────────────────────────────────────
+    // Episodic-to-semantic promotion (recurring timeline patterns →
+    // compiled_truth). Rate-limited internally via ~/.gbrain/dream-cycle.stamp
+    // so it runs ~once per 23h regardless of how often the cycle fires.
+    if (phases.includes('promotion')) {
+      if (!engine) {
+        phaseResults.push({
+          phase: 'promotion',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.promotion');
+        const { result, duration_ms } = await timePhase(() => runPhasePromotion(engine, dryRun, progress));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
   } finally {
     if (lock) {
       try { await lock.release(); } catch { /* best-effort */ }
@@ -772,6 +882,7 @@ function emptyTotals(): CycleReport['totals'] {
     pages_extracted: 0,
     pages_embedded: 0,
     orphans_found: 0,
+    patterns_promoted: 0,
   };
 }
 
@@ -794,6 +905,8 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
         : Number(p.details.embedded ?? 0);
     } else if (p.phase === 'orphans' && p.details) {
       t.orphans_found = Number(p.details.total_orphans ?? 0);
+    } else if (p.phase === 'promotion' && p.details) {
+      t.patterns_promoted = Number(p.details.promoted ?? 0);
     }
   }
   return t;
