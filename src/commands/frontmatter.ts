@@ -61,6 +61,9 @@ export async function runFrontmatter(args: string[]): Promise<void> {
 
 async function connectEngineForAudit(): Promise<BrainEngine> {
   const config = loadConfig();
+  if (!config) {
+    throw new Error('No brain configured. Run: gbrain init');
+  }
   const engineConfig = toEngineConfig(config);
   const engine = await createEngine(engineConfig);
   await engine.connect(engineConfig);

@@ -56,6 +56,15 @@ async function phaseBAudit(opts: OrchestratorOpts): Promise<{ phase: Orchestrato
   if (opts.dryRun) return { phase: { name: 'audit', status: 'skipped', detail: 'dry-run' }, report: null };
   try {
     const config = loadConfig();
+    if (!config) {
+      // No brain configured (fresh dev install or test environment). The
+      // migration audit needs a real brain to walk; treat this as a clean
+      // skip rather than a failure so apply-migrations doesn't break.
+      return {
+        phase: { name: 'audit', status: 'skipped', detail: 'no_brain_configured' },
+        report: null,
+      };
+    }
     const engineConfig = toEngineConfig(config);
     const engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
