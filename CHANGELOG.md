@@ -2,6 +2,126 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.22.4] - 2026-04-26
+
+## **Frontmatter-guard ships. Broken brain pages can't hide.**
+## **Seven validation classes, source-aware audit, doctor subcheck, pre-commit hook, zero resolver warnings.**
+
+v0.22.4 fixes the seven `gbrain check-resolvable` warnings that lived on master and ships frontmatter-guard as a real feature: a TypeScript validator inside `parseMarkdown(..., {validate:true})`, a top-level `gbrain frontmatter` CLI (`validate` / `audit` / `install-hook`), a new `frontmatter_integrity` subcheck under `gbrain doctor`, and an audit-only migration that surveys every registered source and queues per-source TODOs without mutating brain content. PR #392's aspirational `lib/brain-writer.mjs` is finally written, in TypeScript, on top of the tools gbrain already ships.
+
+The migration is **audit-only**. It writes a JSON report to `~/.gbrain/migrations/v0.22.4-audit.json` and emits per-source entries to `pending-host-work.jsonl` with the exact fix command. It never silently rewrites your brain pages. The agent reads `skills/migrations/v0.22.4.md` after upgrade, surfaces the counts to you, and runs `gbrain frontmatter validate <source-path> --fix` only with explicit consent. `--fix` writes `.bak` backups for every modified file (the safety contract for non-git brain repos, which `getWorkingTreeStatus` rejects).
+
+`gbrain frontmatter` is source-aware throughout. `audit [--source <id>]` walks every registered source via `source-resolver.ts` (gbrain has been multi-source since v0.18.0; the single-`brainRoot` model would have shipped a half-broken feature). The CLI, doctor subcheck, and migration phase all call into one shared `scanBrainSources()` ... single source of truth for what counts as malformed.
+
+### The numbers that matter
+
+Counted against gbrain's own checked-in `skills/` tree:
+
+| Metric | Pre-v0.22.4 (master) | v0.22.4 | Δ |
+|---|---|---|---|
+| `gbrain check-resolvable` warnings | 7 | 0 | -7 |
+| Frontmatter validation classes | 3 (in `lint`) | 7 (in `parseMarkdown`) | +4 |
+| Auto-fixable error codes | 0 | 4 (NULL_BYTES, MISSING_CLOSE, NESTED_QUOTES, SLUG_MISMATCH) | +4 |
+| Doctor subchecks | 17 | 18 (+frontmatter_integrity) | +1 |
+| `gbrain frontmatter` subcommands | 0 | 3 (validate, audit, install-hook) | +3 |
+| Skills in `skills/` | 29 | 30 (+frontmatter-guard) | +1 |
+| Pre-commit hook helper | none | `gbrain frontmatter install-hook` | ✓ |
+| Source-aware audit | n/a | walks every registered source | ✓ |
+
+Frontmatter validation surface (the 7 codes shipped):
+
+| Code | What it catches | Auto-fix |
+|---|---|---|
+| `MISSING_OPEN` | File doesn't start with `---` | No (human review) |
+| `MISSING_CLOSE` | No closing `---` before first heading | Yes ... inserts `---` |
+| `YAML_PARSE` | YAML failed to parse | Sometimes |
+| `SLUG_MISMATCH` | Frontmatter `slug:` differs from path-derived slug | Yes ... removes field |
+| `NULL_BYTES` | Binary corruption (`\x00`) | Yes ... strips bytes |
+| `NESTED_QUOTES` | `title: "outer "inner" outer"` shape | Yes ... switches outer to single quotes |
+| `EMPTY_FRONTMATTER` | Open + close present, nothing meaningful between | No (human review) |
+
+### What this means for builders
+
+If you've been ignoring `gbrain check-resolvable` warnings because the messages were misleading (the action message said "Add disambiguation rule in RESOLVER.md OR narrow triggers" ... but only the second branch actually silenced the MECE warning, since the checker doesn't parse RESOLVER.md disambiguation rules), v0.22.4 closes the loop. Trigger overlap is fixed at the frontmatter layer. `enrich/SKILL.md` delegates citation rules to `conventions/quality.md` instead of inlining them. Routing-eval fixtures embed actual trigger keywords. `frontmatter-guard` is registered. `gbrain check-resolvable --json` returns `ok: true, issues: []`.
+
+If your agent writes brain pages, plumb its writes through `parseMarkdown(content, path, { validate: true, expectedSlug })` (the export is in `gbrain/markdown`) and check the returned `errors` array. The 7-error envelope is stable from v0.22.4 onward. Or call `gbrain frontmatter validate <path> --json` from your script and parse the envelope. For brain repos that ARE git repos, install the pre-commit hook with `gbrain frontmatter install-hook` and stop bad frontmatter at the commit boundary.
+
+If you maintain a downstream OpenClaw fork, see `docs/UPGRADING_DOWNSTREAM_AGENTS.md` for the v0.22.4 diff pattern. The short version: drop any references to the never-existed `lib/brain-writer.mjs` and replace with `gbrain frontmatter validate` calls.
+
+## To take advantage of v0.22.4
+
+`gbrain upgrade` runs `gbrain post-upgrade` which runs `gbrain apply-migrations`. If that chain was interrupted or if `gbrain doctor` reports `frontmatter_integrity` issues:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+   The `v0.22.4` orchestrator (v0_22_4.ts) runs schema (no-op) → audit → emit-todo. The audit phase writes a per-source JSON report to `~/.gbrain/migrations/v0.22.4-audit.json` and queues one entry per source with issues to `~/.gbrain/migrations/pending-host-work.jsonl`. **It never modifies brain content.**
+
+2. **Read the audit report:**
+   ```bash
+   cat ~/.gbrain/migrations/v0.22.4-audit.json | jq '.errors_by_code, .per_source[].source_id'
+   ```
+
+3. **Fix mechanical issues with explicit consent.** For each source with errors > 0, run:
+   ```bash
+   gbrain frontmatter validate <source-path> --fix
+   ```
+   This writes `.bak` backups for every modified file. SLUG_MISMATCH errors are surfaced for manual review (gbrain derives slug from path; a mismatch usually means the file was renamed deliberately or the slug field is stale).
+
+4. **Verify the outcome:**
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.name == "frontmatter_integrity")'
+   gbrain frontmatter audit --json | jq '.total'
+   gbrain check-resolvable --json | jq '.report.issues | map(select(.severity=="warning" or .severity=="error")) | length'
+   ```
+   All three should report 0 issues.
+
+5. **If any step fails or the numbers look wrong,** file an issue at https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/migrations/v0.22.4-audit.json`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+**Part A ... `gbrain check-resolvable` reaches 0 warnings.** Drop `"citation audit"` from `skills/maintain/SKILL.md` frontmatter; the trigger lives only on `citation-fixer` now. RESOLVER.md gains a citation-audit disambiguation row pointing both skills so agents still pick the right one. RESOLVER.md broadens query triggers (`"who is"`, `"background on"`, `"notes on"`) and `query/SKILL.md` mirrors them in its frontmatter. `skills/enrich/SKILL.md` replaces the inlined citation rules block with `> **Convention:** see \`skills/conventions/quality.md\`` (the format `extractDelegationTargets` recognizes). Routing-eval fixtures for `citation-fixer` rewritten to embed `"fix citations"` so substring matching passes.
+
+**Part B ... frontmatter-guard library + CLI + doctor + migration + skill + pre-commit hook.**
+
+- **`src/core/markdown.ts`** ... `parseMarkdown(content, filePath?, opts?)` gains an opt-in `opts.validate` flag. When true, returns `errors[]` with the seven canonical codes. Existing callers unaffected. Validation logic for all seven codes lives here as the single source of truth.
+- **`src/commands/lint.ts`** ... frontmatter-rule lint cases delegate to `parseMarkdown(..., {validate:true})`. New rule names: `frontmatter-missing-close`, `frontmatter-yaml-parse`, `frontmatter-null-bytes`, `frontmatter-nested-quotes`, `frontmatter-slug-mismatch`, `frontmatter-empty`. Suppresses MISSING_OPEN to avoid double-reporting with the legacy `no-frontmatter` rule.
+- **`src/core/brain-writer.ts`** (NEW) ... thin orchestrator (~280 lines). Exports `autoFixFrontmatter`, `writeBrainPage`, `scanBrainSources`. `writeBrainPage` is path-guarded (refuses writes outside `sourcePath`), always writes `<file>.bak` before any in-place mutation. `scanBrainSources` walks every registered source via direct SQL against `sources.local_path`, uses `isSyncable()` from sync.ts as the canonical brain-page filter, blocks symlinks (matches sync's no-symlink policy), and respects `AbortSignal`.
+- **`src/commands/frontmatter.ts`** (NEW) ... `gbrain frontmatter validate <path> [--json] [--fix] [--dry-run]` and `gbrain frontmatter audit [--source <id>] [--json]`. The `audit` subcommand is read-only; `--fix` only exists on `validate`. CLI handles `--help` without a DB connection.
+- **`src/commands/frontmatter-install-hook.ts`** (NEW) ... `gbrain frontmatter install-hook [--source <id>] [--force] [--uninstall]`. Writes `.githooks/pre-commit` per source (skips non-git sources with a one-line note), runs `git config core.hooksPath .githooks` if unset, refuses to clobber existing hooks without `--force` (writes `.bak`). The hook script gracefully degrades when `gbrain` is missing on PATH (prints a warning, exits 0 ... doesn't break commits).
+- **`src/commands/doctor.ts`** ... new `frontmatter_integrity` subcheck calls `scanBrainSources()` and reports per-source counts plus the fix hint. Wraps in a doctor progress phase with heartbeat.
+- **`src/commands/migrations/v0_22_4.ts`** (NEW) ... audit-only orchestrator with three phases (schema no-op, audit, emit-todo). Idempotent + resumable. Skips cleanly when no sources are registered. Per-source TODO entries reference the dotted-filename migration doc (`skills/migrations/v0.22.4.md`) per the existing `pending-host-work.jsonl` convention.
+- **`skills/frontmatter-guard/SKILL.md`** (NEW) ... agent-agnostic; routes to `gbrain frontmatter` CLI invocations, drops OpenClaw-specific paths from PR #392's spec. Registered in `skills/manifest.json` and `skills/RESOLVER.md` with substring-matchable triggers.
+- **`docs/integrations/pre-commit.md`** (NEW) ... recipe doc covering install / bypass / uninstall and downstream-fork notes.
+- **`docs/UPGRADING_DOWNSTREAM_AGENTS.md`** ... v0.22.4 section with the diff pattern for forks that had inline frontmatter validators.
+
+**Tests.** 9 new test files / 4 updated test files. Unit coverage on every new module:
+- `test/markdown-validation.test.ts` (NEW) ... all 7 codes exercised against hand-crafted fixtures.
+- `test/lint-frontmatter.test.ts` (NEW) ... lint emits findings for each fixable code; double-report suppression verified.
+- `test/brain-writer.test.ts` (NEW) ... `autoFixFrontmatter` idempotency, `writeBrainPage` path-guard + `.bak` backup, `scanBrainSources` per-source rollup, AbortSignal mid-scan, single-source filter, missing-source-path graceful skip, symlink no-loop.
+- `test/frontmatter-cli.test.ts` (NEW) ... subprocess `validate / --fix --dry-run / --fix / --json` + recursive directory scan with `isSyncable` filter parity.
+- `test/frontmatter-install-hook.test.ts` (NEW) ... hook install / overwrite-protection / `--force` / `--uninstall` / silent-refresh on already-installed.
+- `test/migrations-v0_22_4.test.ts` (NEW) ... orchestrator phase coverage including dotted-filename JSONL contract and idempotent re-emit.
+- `test/check-resolvable.test.ts` (UPDATE) ... regression guard asserting the actual checked-in `skills/` tree has 0 warnings + 0 errors.
+- `test/doctor.test.ts` (UPDATE) ... assertion that `frontmatter_integrity` subcheck calls `scanBrainSources` and the fix hint references the right CLI command.
+- `test/apply-migrations.test.ts` (UPDATE) ... `skippedFuture` arrays extended to include v0.22.4.
+- `test/migration-orchestrator-v0_21_0.test.ts` (UPDATE) ... relaxed "is the latest" assertion to "is registered with v0.22.4 after it."
+
+### For contributors
+
+`brain-writer.ts` is the canonical place to add new frontmatter validation rules. Add the code to `parseMarkdown`'s `collectValidationErrors`, surface the lint rule name in `lint.ts`'s `FRONTMATTER_RULE_NAMES`, decide if it's auto-fixable (add to `FRONTMATTER_FIXABLE`), and write the auto-fix logic in `brain-writer.ts:autoFixFrontmatter`. Tests in `test/markdown-validation.test.ts` + `test/brain-writer.test.ts`. The lint output uses the `frontmatter-<code>` naming convention; CI consumers can target specific rule names in their lint configs.
+
+`gbrain frontmatter` is wired through `src/cli.ts:handleCliOnly` so `--help` works without a DB connection. The `audit` subcommand instantiates an engine internally via `loadConfig() + createEngine()`. New subcommands of `frontmatter` should follow this pattern: parse flags first, only connect to the engine when the subcommand actually needs DB access.
+
+The v0.22.4 orchestrator is intentionally audit-only because brain content is too important to silently mutate during `apply-migrations`. Future migrations that need to rewrite brain pages should follow this two-step pattern: write the audit report + queue the fix command, let the agent run the fix with explicit user consent.
+
 ## [0.21.0] - 2026-04-25
 
 ## **Your brain walks the code graph now.**

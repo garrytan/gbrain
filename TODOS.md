@@ -1,5 +1,51 @@
 # TODOS
 
+## resolver / check-resolvable (v0.22.4 follow-ups)
+
+### D10 — Extend `check-resolvable` to parse RESOLVER.md disambiguation rules
+**Priority:** P2
+
+**What:** Extend `src/core/check-resolvable.ts:357-390` to parse a structured
+disambiguation block in `RESOLVER.md` (e.g. a `## Disambiguation rules`
+numbered list with parseable `<trigger>` → `<winning-skill>` shape) and treat
+resolved overlaps as non-issues. Then the action message at
+`src/core/check-resolvable.ts:388` ("Add disambiguation rule in RESOLVER.md OR
+narrow triggers") stops lying about the OR — currently only the second branch
+silences the warning.
+
+**Why:** The current MECE-overlap fix path forces authors to delete user-facing
+triggers from skill frontmatter. That's wrong for cases where two skills
+legitimately respond to the same phrase under different contexts (e.g.
+"citation audit" → focused fix vs broader brain health). A real
+disambiguation parser would let `RESOLVER.md` carry the resolution while
+keeping both skills' triggers intact for chaining.
+
+**Pros:**
+- The action message stops misleading users.
+- v0.22.4 D2 used the "narrow triggers" path because the disambiguation
+  parser doesn't exist yet; landing this would let v0.23+ keep dual triggers
+  for genuinely-overlapping skills.
+- Aligns RESOLVER.md's stated role (the dispatcher) with what the checker
+  actually reads.
+
+**Cons:**
+- Introduces a new `RESOLVER.md` syntactic contract that other tooling now
+  has to respect (parser, lint, downstream forks reading the same file).
+- Risk of false-positive resolution if the parser is loose.
+- ~80 lines of parser + tests; not blocking anything in v0.22.4.
+
+**Context:**
+- The "OR" in the action message is misleading today. Confirmed at
+  `src/core/check-resolvable.ts:388`.
+- The MECE detector loop is at `src/core/check-resolvable.ts:357-390`.
+- The disambiguation rules already exist as prose in
+  `skills/RESOLVER.md` (the citation-audit row added in v0.22.4 is the
+  pattern). They're agent-facing routing hints today, not parsed structure.
+
+**Effort:** S (human: ~4-6 hours / CC: ~30 min for parser + 12-16 test cases).
+
+**Depends on / blocked by:** Nothing.
+
 ## code-indexing (v0.21.0 Cathedral II follow-ups)
 
 ### B2 — Magika auto-detect for extension-less files (Layer 9 deferred)
