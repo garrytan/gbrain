@@ -4,8 +4,8 @@ All notable changes to GBrain will be documented in this file.
 
 ## [0.21.1] - 2026-04-25
 
-## **Old brains can upgrade again.**
-## **Two-year, ten-issue wedge cycle ends. Pre-v0.13/v0.18/v0.19 brains all upgrade clean.**
+**Old brains can upgrade again.**
+**Two-year, ten-issue wedge cycle ends. Pre-v0.13/v0.18/v0.19 brains all upgrade clean.**
 
 If you've been pinned to an older gbrain because `gbrain upgrade` wedges your brain
 with `column "source_id" does not exist` or `column "link_source" does not exist`,
