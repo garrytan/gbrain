@@ -28,7 +28,11 @@ export interface GBrainConfig {
   database_url?: string;
   database_path?: string;
   openai_api_key?: string;
+  /** Override default OpenAI model for embeddings. Defaults to `text-embedding-3-large`. */
+  openai_model?: string;
   anthropic_api_key?: string;
+  /** Override default Anthropic model for query expansion. Defaults to `claude-haiku-4-5-20251001`. */
+  anthropic_model?: string;
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
@@ -64,6 +68,8 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.GBRAIN_OPENAI_MODEL ? { openai_model: process.env.GBRAIN_OPENAI_MODEL } : {}),
+    ...(process.env.GBRAIN_ANTHROPIC_MODEL ? { anthropic_model: process.env.GBRAIN_ANTHROPIC_MODEL } : {}),
   };
   return merged as GBrainConfig;
 }
