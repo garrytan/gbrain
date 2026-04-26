@@ -74,6 +74,8 @@ Measured on this branch's diff against v0.21.0:
 - Config gains `eval: {capture?, scrub_pii?}` (file-plane only)
 - `listEvalCandidates` orders `created_at DESC, id DESC` (deterministic export windows)
 - `docs/eval-capture.md` — stable NDJSON schema reference for gbrain-evals
+- `gbrain doctor` `eval_capture` check now distinguishes pre-v30 missing-table (status: ok / skipped) from RLS-denied SELECT or transient DB error (status: warn) — the diagnostic that surfaces a misconfigured RLS role no longer goes silent
+- `hybridSearch.onMeta` callback wrapped in try/catch — a throwing user-supplied callback can't break the search hot path (defensive across the public `gbrain/search/hybrid` surface)
 - +82 unit tests across 8 new files; 0 regressions
 
 ## [0.21.0] - 2026-04-25

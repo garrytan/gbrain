@@ -678,9 +678,27 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
           `in ~/.gbrain/config.json to silence.`,
       });
     }
-  } catch {
-    // Pre-v30 brains or transient DB errors — non-fatal.
-    checks.push({ name: 'eval_capture', status: 'ok', message: 'Skipped (eval_capture_failures table unavailable)' });
+  } catch (err) {
+    // Distinguish "table doesn't exist yet" (pre-v30, ok skip) from real
+    // problems like RLS denying SELECT — the latter masks the very condition
+    // this check is supposed to surface (capture INSERTs almost certainly
+    // also fail).
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01') {
+      checks.push({ name: 'eval_capture', status: 'ok', message: 'Skipped (eval_capture_failures table unavailable — apply migrations or upgrade)' });
+    } else if (code === '42501') {
+      checks.push({
+        name: 'eval_capture',
+        status: 'warn',
+        message: 'RLS denies SELECT on eval_capture_failures. Capture INSERTs are almost certainly failing too. Run as a role with BYPASSRLS or grant SELECT on this table.',
+      });
+    } else {
+      checks.push({
+        name: 'eval_capture',
+        status: 'warn',
+        message: `Could not read eval_capture_failures: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
   }
 
   // 11b. Queue health (v0.19.1 queue-resilience wave).

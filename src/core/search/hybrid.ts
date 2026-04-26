@@ -93,6 +93,17 @@ export async function hybridSearch(
   // threads it into the eval_candidates row.
   let expansionApplied = false;
 
+  // A throwing user callback must never break the search hot path — onMeta
+  // is a public surface (gbrain/search/hybrid) so a third-party closure bug
+  // shouldn't take down query/search responses.
+  const emitMeta = (meta: HybridSearchMeta): void => {
+    try {
+      opts?.onMeta?.(meta);
+    } catch {
+      // swallow — capture telemetry is best-effort
+    }
+  };
+
   if (DEBUG && detail) {
     console.error(`[search-debug] auto-detail=${detail} for query="${query}"`);
   }
@@ -114,7 +125,7 @@ export async function hybridSearch(
         // Boost failure is non-fatal: keep unboosted ranking.
       }
     }
-    opts?.onMeta?.({ vector_enabled: false, detail_resolved: detailResolved, expansion_applied: false });
+    emitMeta({ vector_enabled: false, detail_resolved: detailResolved, expansion_applied: false });
     return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
@@ -148,7 +159,7 @@ export async function hybridSearch(
 
   if (vectorLists.length === 0) {
     // Embed/vector failed silently; record that vector did not run.
-    opts?.onMeta?.({ vector_enabled: false, detail_resolved: detailResolved, expansion_applied: expansionApplied });
+    emitMeta({ vector_enabled: false, detail_resolved: detailResolved, expansion_applied: expansionApplied });
     return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
@@ -230,7 +241,7 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
-  opts?.onMeta?.({ vector_enabled: true, detail_resolved: detailResolved, expansion_applied: expansionApplied });
+  emitMeta({ vector_enabled: true, detail_resolved: detailResolved, expansion_applied: expansionApplied });
   return deduped.slice(offset, offset + limit);
 }
 
