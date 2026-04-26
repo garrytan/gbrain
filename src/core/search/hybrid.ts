@@ -57,7 +57,7 @@ export interface HybridSearchOpts extends SearchOpts {
     maxPerPage?: number;
   };
   /**
-   * v0.22.0 — optional side-channel for what hybridSearch actually did
+   * v0.25.0 — optional side-channel for what hybridSearch actually did
    * (vector ran or fell back, expansion fired or didn't, post-auto-detect
    * detail). Surfaced via callback so the bare-return contract stays as
    * `Promise<SearchResult[]>` for existing Cathedral II callers. Op-layer
@@ -87,7 +87,7 @@ export async function hybridSearch(
     language: opts?.language,
     symbolKind: opts?.symbolKind,
   };
-  // Track what actually ran for the optional onMeta callback (v0.22.0).
+  // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
   // surfaced. Capture wrapper passes a closure to receive the meta and
   // threads it into the eval_candidates row.

@@ -354,7 +354,7 @@ export interface IngestLogInput {
   summary: string;
 }
 
-// Eval capture (v0.22.0)
+// Eval capture (v0.25.0)
 // Real MCP/CLI/subagent query+search calls are captured into eval_candidates
 // so gbrain-evals can replay them as BrainBench-Real. The companion
 // eval_capture_failures table records insert failures so gbrain doctor can

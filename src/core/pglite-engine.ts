@@ -1355,7 +1355,7 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(rowToCodeEdge);
   }
 
-  // Eval capture (v0.22.0). See BrainEngine interface docs.
+  // Eval capture (v0.25.0). See BrainEngine interface docs.
   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
     const { rows } = await this.db.query<{ id: number }>(
       `INSERT INTO eval_candidates (

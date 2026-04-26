@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.22.0] - 2026-04-25
+## [0.25.0] - 2026-04-26
 
 ## **Every real query your agents run now gets captured for replay.**
 ## **BrainBench-Real: the benchmark that tests YOUR workload, not a fictional one.**
@@ -17,7 +17,7 @@ Cathedral II (v0.21.0) callers are unaffected. `hybridSearch` still returns `Pro
 
 Measured on this branch's diff against v0.21.0:
 
-| Metric | v0.21.0 | v0.22.0 | Δ |
+| Metric | v0.21.0 | v0.25.0 | Δ |
 |---|---|---|---|
 | Real-query capture | none | every MCP/CLI/subagent `query` + `search` | **the whole feature** |
 | PII classes redacted at write | 0 | 6 (email, phone, SSN, CC+Luhn, JWT, bearer) | ... |
@@ -34,9 +34,9 @@ Measured on this branch's diff against v0.21.0:
 
 **Anyone calling `hybridSearch` directly:** no change required. The return type is still `Promise<SearchResult[]>`. If you want the new meta side-channel, pass `onMeta: (m) => { ... }` in opts — otherwise leave it undefined and pay no cost.
 
-**Downstream TypeScript consumers implementing their own BrainEngine:** five new methods need implementations ... `logEvalCandidate`, `listEvalCandidates`, `deleteEvalCandidatesBefore`, `logEvalCaptureFailure`, `listEvalCaptureFailures`. Return types are in `src/core/types.ts`. This is why v0.22.0 is a minor bump.
+**Downstream TypeScript consumers implementing their own BrainEngine:** five new methods need implementations ... `logEvalCandidate`, `listEvalCandidates`, `deleteEvalCandidatesBefore`, `logEvalCaptureFailure`, `listEvalCaptureFailures`. Return types are in `src/core/types.ts`. This is why v0.25.0 is a minor bump.
 
-## To take advantage of v0.22.0
+## To take advantage of v0.25.0
 
 `gbrain upgrade` runs `gbrain apply-migrations --yes` which applies v30 automatically. If it didn't:
 
@@ -69,7 +69,7 @@ Measured on this branch's diff against v0.21.0:
 - Cross-process audit via `eval_capture_failures` + `gbrain doctor` 24h breakdown
 - `gbrain eval export` (NDJSON, schema_version:1, EPIPE-safe) + `gbrain eval prune` (explicit retention)
 - `hybridSearch` adds `onMeta?: (m) => void` to opts (Cathedral II callers unaffected)
-- `BrainEngine` gains 5 methods (breaking-interface for custom engines, drives v0.22.0 minor bump)
+- `BrainEngine` gains 5 methods (breaking-interface for custom engines, drives v0.25.0 minor bump)
 - `test/public-exports.test.ts` + `scripts/check-exports-count.sh` lock the 17-subpath public surface
 - Config gains `eval: {capture?, scrub_pii?}` (file-plane only)
 - `listEvalCandidates` orders `created_at DESC, id DESC` (deterministic export windows)

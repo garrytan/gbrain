@@ -100,7 +100,7 @@ tiebreaker. Replay tools can consume rows in order and assume:
 ## Schema versioning promise
 
 - **v1 (shipped v0.21.0)** — this document. All fields listed above.
-- **Additive changes** increment gbrain minor version (v0.22.0, v0.23.0
+- **Additive changes** increment gbrain minor version (v0.25.0, v0.23.0
   …) and ship with new optional fields. Consumers keyed on known fields
   ignore unknown keys and keep working.
 - **Breaking changes** (rename, type change, removal) increment

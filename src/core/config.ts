@@ -37,7 +37,7 @@ export interface GBrainConfig {
    */
   storage?: unknown;
   /**
-   * v0.22.0 — session capture settings. Read via file-plane `loadConfig()`
+   * v0.25.0 — session capture settings. Read via file-plane `loadConfig()`
    * at process boot (NOT `gbrain config set` which writes the DB plane —
    * those are different stores). Edit `~/.gbrain/config.json` directly.
    * All fields default to ON — capture and scrubbing both opt-out.

@@ -43,14 +43,14 @@ strict behavior when unset.
 - `src/core/search/` — Hybrid search: vector + keyword + RRF + multi-query expansion + dedup
 - `src/core/search/intent.ts` — Query intent classifier (entity/temporal/event/general → auto-selects detail level)
 - `src/core/search/eval.ts` — Retrieval eval harness: P@k, R@k, MRR, nDCG@k metrics + runEval() orchestrator
-- `src/commands/eval.ts` — `gbrain eval` command: single-run table + A/B config comparison. v0.22.0 adds sub-subcommand dispatch on `args[0]` so `gbrain eval export` + `gbrain eval prune` route into session-capture handlers; bare `gbrain eval --qrels …` fall-through preserves the legacy IR-metrics flow.
-- `src/commands/eval-export.ts` (v0.22.0) — streams `eval_candidates` rows as NDJSON to stdout with `schema_version: 1` prefix on every line. EPIPE-safe, progress heartbeats on stderr, stable id-desc tiebreaker so `--since` windows never dupe/miss rows.
-- `src/commands/eval-prune.ts` (v0.22.0) — explicit retention cleanup. Requires `--older-than DUR`. `--dry-run` reports would-delete count.
-- `src/core/eval-capture.ts` (v0.22.0) — op-layer capture wrapper called from `src/core/operations.ts` `query` + `search` handlers. Catches MCP + CLI + subagent tool-bridge from one site. Fire-and-forget; failures route to `engine.logEvalCaptureFailure` so `gbrain doctor` sees drops cross-process.
-- `src/core/eval-capture-scrub.ts` (v0.22.0) — zero-deps PII scrubber: emails, phones, SSN, Luhn-verified credit cards, JWT-shaped tokens, bearer tokens.
-- `src/core/search/hybrid.ts` — Cathedral II `Promise<SearchResult[]>` return shape unchanged in v0.22.0. Adds `onMeta?: (m: HybridSearchMeta) => void` callback so op-layer capture can record what hybridSearch actually did. Existing callers leave it undefined.
-- `docs/eval-capture.md` (v0.22.0) — stable NDJSON schema reference for gbrain-evals consumers.
-- `test/public-exports.test.ts` (v0.22.0 / R2) — runtime contract test. Imports each of the 17 public subpaths via package name and pins a canary symbol per module. Paired with `scripts/check-exports-count.sh`.
+- `src/commands/eval.ts` — `gbrain eval` command: single-run table + A/B config comparison. v0.25.0 adds sub-subcommand dispatch on `args[0]` so `gbrain eval export` + `gbrain eval prune` route into session-capture handlers; bare `gbrain eval --qrels …` fall-through preserves the legacy IR-metrics flow.
+- `src/commands/eval-export.ts` (v0.25.0) — streams `eval_candidates` rows as NDJSON to stdout with `schema_version: 1` prefix on every line. EPIPE-safe, progress heartbeats on stderr, stable id-desc tiebreaker so `--since` windows never dupe/miss rows.
+- `src/commands/eval-prune.ts` (v0.25.0) — explicit retention cleanup. Requires `--older-than DUR`. `--dry-run` reports would-delete count.
+- `src/core/eval-capture.ts` (v0.25.0) — op-layer capture wrapper called from `src/core/operations.ts` `query` + `search` handlers. Catches MCP + CLI + subagent tool-bridge from one site. Fire-and-forget; failures route to `engine.logEvalCaptureFailure` so `gbrain doctor` sees drops cross-process.
+- `src/core/eval-capture-scrub.ts` (v0.25.0) — zero-deps PII scrubber: emails, phones, SSN, Luhn-verified credit cards, JWT-shaped tokens, bearer tokens.
+- `src/core/search/hybrid.ts` — Cathedral II `Promise<SearchResult[]>` return shape unchanged in v0.25.0. Adds `onMeta?: (m: HybridSearchMeta) => void` callback so op-layer capture can record what hybridSearch actually did. Existing callers leave it undefined.
+- `docs/eval-capture.md` (v0.25.0) — stable NDJSON schema reference for gbrain-evals consumers.
+- `test/public-exports.test.ts` (v0.25.0 / R2) — runtime contract test. Imports each of the 17 public subpaths via package name and pins a canary symbol per module. Paired with `scripts/check-exports-count.sh`.
 - `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff
 - `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects. v0.14.1: `CROSS_CUTTING_PATTERNS.conventions` is an array (notability gate accepts both `conventions/quality.md` and `_brain-filing-rules.md`). New `extractDelegationTargets()` parses `> **Convention:**`, `> **Filing rule:**`, and inline backtick references. DRY suppression is proximity-based via `DRY_PROXIMITY_LINES = 40`.
 - `src/core/repo-root.ts` — Shared `findRepoRoot(startDir?)` (v0.16.4): walks up from `startDir` (default `process.cwd()`) looking for `skills/RESOLVER.md`. Zero-dependency module imported by both `doctor.ts` and `check-resolvable.ts`. Parameterized `startDir` makes tests hermetic.
@@ -195,7 +195,7 @@ Key commands added for Minions (job queue):
 - `gbrain jobs smoke [--sigkill-rescue]` — health smoke test. `--sigkill-rescue` is the v0.13.1 regression guard for #219: simulates a killed worker and asserts the stalled job is requeued instead of dead-lettered on first stall.
 - `gbrain jobs work [--queue Q] [--concurrency N]` — start worker daemon (Postgres only)
 
-Key commands added in v0.22.0:
+Key commands added in v0.25.0:
 - `gbrain eval export [--since DUR] [--limit N] [--tool query|search]` — stream captured `eval_candidates` rows as NDJSON to stdout. Every line starts with `"schema_version": 1` per the stable contract in `docs/eval-capture.md`. EPIPE-safe, progress heartbeats on stderr, deterministic ordering. Primary consumer is the sibling `gbrain-evals` repo for BrainBench-Real replay.
 - `gbrain eval prune --older-than DUR [--dry-run]` — explicit retention cleanup for `eval_candidates`. Requires `--older-than` (never deletes without a window). Duration strings: 30d, 7d, 1h, 90m, 3600s.
 - `gbrain doctor` gains an `eval_capture` check: reads `eval_capture_failures` for the last 24h, groups by reason, warns when non-zero. Cross-process visibility (doctor runs in a separate process from MCP). Pre-v30 brains get `Skipped (table unavailable)` — non-fatal.

@@ -1363,7 +1363,7 @@ export class PostgresEngine implements BrainEngine {
     return [...chunkRows, ...symbolRows].map(r => pgRowToCodeEdge(r as Record<string, unknown>));
   }
 
-  // Eval capture (v0.22.0). See BrainEngine interface docs.
+  // Eval capture (v0.25.0). See BrainEngine interface docs.
   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
     const sql = this.sql;
     const rows = await sql`

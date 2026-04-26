@@ -611,7 +611,7 @@ CREATE TABLE IF NOT EXISTS gbrain_cycle_locks (
 CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
 
 -- ============================================================
--- Eval capture (v0.22.0 — BrainBench-Real substrate)
+-- Eval capture (v0.25.0 — BrainBench-Real substrate)
 -- ============================================================
 -- eval_candidates: captured query/search calls from the op-layer wrapper
 -- in src/core/operations.ts. PII is scrubbed before insert by

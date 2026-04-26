@@ -332,11 +332,11 @@ export interface BrainEngine {
    */
   searchKeywordChunks(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
 
-  // Eval capture (v0.22.0 — BrainBench-Real substrate).
+  // Eval capture (v0.25.0 — BrainBench-Real substrate).
   // Captured at the op-layer wrapper in src/core/operations.ts; reads via
   // `gbrain eval export` (NDJSON) for sibling gbrain-evals consumption.
   // Adding these to BrainEngine is a breaking-interface change for third-
-  // party engine implementers — this is why v0.22.0 is a minor bump.
+  // party engine implementers — this is why v0.25.0 is a minor bump.
   /** Insert a captured candidate. Returns the new row id. Best-effort: callers swallow failures and route them through `logEvalCaptureFailure`. */
   logEvalCandidate(input: EvalCandidateInput): Promise<number>;
   /** Read candidates by time window / limit / tool filter. Used by `gbrain eval export`. */

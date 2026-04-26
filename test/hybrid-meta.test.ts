@@ -1,7 +1,7 @@
 /**
- * hybridSearch meta-field accuracy (v0.22.0, callback-based API).
+ * hybridSearch meta-field accuracy (v0.25.0, callback-based API).
  *
- * v0.22.0 keeps hybridSearch's return as `Promise<SearchResult[]>` (so
+ * v0.25.0 keeps hybridSearch's return as `Promise<SearchResult[]>` (so
  * Cathedral II callers stay unchanged) and surfaces meta via an optional
  * `onMeta` callback in HybridSearchOpts. Asserts the callback fires with
  * accurate values:
@@ -45,7 +45,7 @@ async function runWithMeta(query: string, opts: Parameters<typeof hybridSearch>[
   return captured;
 }
 
-describe('hybridSearch return shape (v0.22.0 keeps SearchResult[])', () => {
+describe('hybridSearch return shape (v0.25.0 keeps SearchResult[])', () => {
   test('returns SearchResult[] (unchanged from Cathedral II contract)', async () => {
     delete process.env.OPENAI_API_KEY;
     const out = await hybridSearch(engine, 'alice');

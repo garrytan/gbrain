@@ -649,7 +649,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     mbcHb();
   }
 
-  // 11a. Eval-capture health (v0.22.0). Capture is a fire-and-forget
+  // 11a. Eval-capture health (v0.25.0). Capture is a fire-and-forget
   // side-effect that logs failures to a persistent table so this check
   // can see drops cross-process (the MCP server captures; `gbrain doctor`
   // runs in a separate process). Counts failures in the last 24h and

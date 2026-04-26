@@ -210,7 +210,7 @@ iteration's residuals.
 
 **Effort:** M (human: 1 day to root-cause + implement / CC: ~2-3 hours via /investigate).
 
-**Discovered:** v0.22.0 ship, 2026-04-25.
+**Discovered:** v0.25.0 ship, 2026-04-25.
 
 ### Fix `bun build --compile` WASM embedding for PGLite
 **What:** Submit PR to oven-sh/bun fixing WASM file embedding in `bun build --compile` (issue oven-sh/bun#15032).
@@ -251,12 +251,12 @@ iteration's residuals.
 
 **Depends on:** v0.10.0 GStackBrain skill layer (shipped).
 
-## P1 (new from v0.22.0 — eval-capture adversarial review)
+## P1 (new from v0.25.0 — eval-capture adversarial review)
 
-### v0.22.0 eval-capture follow-ups (6 surgical hardenings)
+### v0.25.0 eval-capture follow-ups (6 surgical hardenings)
 **Priority:** P1
 
-**What:** Six targeted hardenings on the v0.22.0 eval-capture surface, all surfaced by the /ship adversarial review and triaged out of the v0.22.0 PR to keep scope tight:
+**What:** Six targeted hardenings on the v0.25.0 eval-capture surface, all surfaced by the /ship adversarial review and triaged out of the v0.25.0 PR to keep scope tight:
 
 1. `gbrain eval prune --dry-run`: replace the `listEvalCandidates(limit:100k) + filter` count with a real `engine.countEvalCandidatesBefore(date)` method. Today the warning at `eval-prune.ts:107-109` honestly tells the user the count may be undercounted, but a brain with > 100k rows + old data could still confuse a careful operator. New `BrainEngine` method on both engines, ~30 LOC, lifts the floor count to a true count.
 2. PII scrubber CC false-positive rate: 16-digit Luhn-valid order IDs / invoice numbers get redacted as `[REDACTED]`. Either require a contextual prefix (`card`, `cc`, `credit`) within N chars, or document the tradeoff explicitly in `docs/eval-capture.md`. The two approaches differ in coverage so list them as alternatives.
@@ -265,11 +265,11 @@ iteration's residuals.
 5. Public-exports canaries: 6 of 17 subpaths (`gbrain` root, `/minions`, `/engine-factory`, `/transcription`, `/backoff`, `/extract`) have `canary: []` — the test only checks the import resolves, so a barrel module accidentally losing its named exports would still pass. Pin one stable canary symbol per subpath.
 6. `EXPECTED_COUNT` duplication: `scripts/check-exports-count.sh` and `test/public-exports.test.ts` both hardcode `17`. Drift risk. Make one read the other (or both compute from `package.json`).
 
-**Why:** All 6 are real (some informational, some footgun-class) but each is small and surgical. Bundling into one v0.22.1 follow-up PR keeps the v0.22.0 ship clean and lets the fixes land with their own dedicated tests + CHANGELOG entry.
+**Why:** All 6 are real (some informational, some footgun-class) but each is small and surgical. Bundling into one v0.22.1 follow-up PR keeps the v0.25.0 ship clean and lets the fixes land with their own dedicated tests + CHANGELOG entry.
 
 **Effort:** S total (human: ~half day / CC: ~1.5 hours).
 
-**Discovered:** v0.22.0 ship adversarial review, 2026-04-25.
+**Discovered:** v0.25.0 ship adversarial review, 2026-04-25.
 
 ## P1 (new from v0.7.0)
 

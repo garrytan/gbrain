@@ -574,7 +574,7 @@ const search: Operation = {
     const results = dedupResults(raw);
     const latency_ms = Date.now() - startedAt;
 
-    // Op-layer capture (v0.22.0). Fire-and-forget — no await on the
+    // Op-layer capture (v0.25.0). Fire-and-forget — no await on the
     // capture call so MCP response latency is unaffected. search has
     // no expand/detail/vector semantics so meta fields are fixed.
     if (isEvalCaptureEnabled(ctx.config)) {
@@ -623,7 +623,7 @@ const query: Operation = {
     const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
     const queryText = p.query as string;
 
-    // v0.22.0 — capture meta side-channel. hybridSearch's return contract
+    // v0.25.0 — capture meta side-channel. hybridSearch's return contract
     // stays SearchResult[] (Cathedral II callers depend on that); meta
     // arrives via callback so eval capture can record what actually ran.
     let capturedMeta: HybridSearchMeta | null = null;
@@ -641,7 +641,7 @@ const query: Operation = {
     });
     const latency_ms = Date.now() - startedAt;
 
-    // Op-layer capture (v0.22.0). Fire-and-forget. meta tells gbrain-evals
+    // Op-layer capture (v0.25.0). Fire-and-forget. meta tells gbrain-evals
     // what hybridSearch *actually* did so replay can distinguish "with API
     // key" from "keyword-only fallback" and "expansion fired" from
     // "expansion requested + silently fell back."

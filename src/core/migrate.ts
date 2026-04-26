@@ -1068,7 +1068,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 30,
     name: 'eval_capture_tables',
-    // v0.22.0 — BrainBench-Real session capture substrate.
+    // v0.25.0 — BrainBench-Real session capture substrate.
     // Two tables:
     //   eval_candidates: per-call capture from the op-layer wrapper around
     //     `query` and `search`. Captures MCP + CLI + subagent tool-bridge
