@@ -4,6 +4,7 @@ import { join, relative } from 'path';
 import { cpus, totalmem, homedir } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
+import { isSyncable } from '../core/sync.ts';
 import { loadConfig } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -35,20 +36,37 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   const workerCount = workersArg ? parseInt(workersArg, 10) : 1;
-  // Find dir: first non-flag arg that isn't a value for --workers
+  // Strategy controls which file types are walked. Default is 'markdown'
+  // (preserves prior behavior). 'code' walks code files only; 'auto' walks
+  // both. When invoked via `gbrain sync --strategy <s>` (incremental or
+  // first-sync), sync.ts forwards the same flag here so first-sync of a
+  // code source actually picks up code files instead of silently importing
+  // only markdown.
+  const strategyIdx = args.indexOf('--strategy');
+  const strategyArg = strategyIdx !== -1 ? args[strategyIdx + 1] : null;
+  const strategy: 'markdown' | 'code' | 'auto' =
+    strategyArg === 'code' || strategyArg === 'auto' || strategyArg === 'markdown'
+      ? strategyArg
+      : 'markdown';
+  // Find dir: first non-flag arg that isn't a value for --workers / --strategy
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
+  if (strategyIdx !== -1) flagValues.add(strategyIdx + 1);
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json] [--strategy markdown|code|auto]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
 
-  // Collect all .md files
-  const allFiles = collectMarkdownFiles(dir);
-  console.log(`Found ${allFiles.length} markdown files`);
+  // Collect files according to strategy. 'markdown' (default) preserves the
+  // historical behavior; 'code'/'auto' switches to the strategy-aware walker
+  // so importFile can route to importCodeFile via isCodeFilePath.
+  const allFiles = strategy === 'markdown'
+    ? collectMarkdownFiles(dir)
+    : collectSyncableFiles(dir, strategy);
+  console.log(`Found ${allFiles.length} file(s) (strategy=${strategy})`);
 
   // Resume from checkpoint if available
   const checkpointPath = join(homedir(), '.gbrain', 'import-checkpoint.json');
@@ -297,6 +315,51 @@ export function collectMarkdownFiles(dir: string): string[] {
         walk(full);
       } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
         files.push(full);
+      }
+    }
+  }
+
+  walk(dir);
+  return files.sort();
+}
+
+/**
+ * Walk all syncable files under `dir` honoring `strategy` ('code' or 'auto').
+ * Mirrors collectMarkdownFiles' symlink/hidden/node_modules safety rules but
+ * delegates the per-file inclusion check to `isSyncable`, so the markdown
+ * importer can consume code files via the same code path the incremental
+ * sync uses (same skipFiles, .raw/, ops/, glob filters, etc.).
+ *
+ * Use this instead of collectMarkdownFiles when strategy is 'code' or 'auto'.
+ */
+export function collectSyncableFiles(dir: string, strategy: 'code' | 'auto'): string[] {
+  const files: string[] = [];
+
+  function walk(d: string) {
+    for (const entry of readdirSync(d)) {
+      if (entry.startsWith('.')) continue;
+      if (entry === 'node_modules') continue;
+
+      const full = join(d, entry);
+      let stat;
+      try {
+        stat = lstatSync(full);
+      } catch {
+        console.warn(`[gbrain import] Skipping unreadable path: ${full}`);
+        continue;
+      }
+
+      // Same symlink-rejection rule as collectMarkdownFiles — see L002.
+      if (stat.isSymbolicLink()) {
+        console.warn(`[gbrain import] Skipping symlink: ${full}`);
+        continue;
+      }
+
+      if (stat.isDirectory()) {
+        walk(full);
+      } else {
+        const relPath = relative(dir, full);
+        if (isSyncable(relPath, { strategy })) files.push(full);
       }
     }
   }
