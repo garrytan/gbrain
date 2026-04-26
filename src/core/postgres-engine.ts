@@ -38,6 +38,14 @@ import type {
   MemorySessionAttachmentFilters,
   MemorySessionAttachmentInput,
   MemorySessionInput,
+  MemoryRedactionPlan,
+  MemoryRedactionPlanFilters,
+  MemoryRedactionPlanInput,
+  MemoryRedactionPlanItem,
+  MemoryRedactionPlanItemFilters,
+  MemoryRedactionPlanItemInput,
+  MemoryRedactionPlanItemStatusPatch,
+  MemoryRedactionPlanStatusPatch,
   MemoryCandidatePatchOperationStatePatch,
   MemoryCandidatePromotionPatch,
   MemoryCandidateStatusEvent,
@@ -91,6 +99,10 @@ import {
   importContentHash,
   normalizeMemoryMutationEventInput,
   normalizeMemoryRealmInput,
+  normalizeMemoryRedactionPlanInput,
+  normalizeMemoryRedactionPlanItemInput,
+  normalizeMemoryRedactionPlanItemStatusPatch,
+  normalizeMemoryRedactionPlanStatusPatch,
   normalizeMemorySessionAttachmentInput,
   normalizeMemorySessionInput,
   rowToPage,
@@ -100,6 +112,8 @@ import {
   rowToMemoryCandidateEntry,
   rowToMemoryCandidateContradictionEntry,
   rowToMemoryMutationEvent,
+  rowToMemoryRedactionPlan,
+  rowToMemoryRedactionPlanItem,
   rowToMemoryRealm,
   rowToMemorySession,
   rowToMemorySessionAttachment,
@@ -2104,6 +2118,204 @@ export class PostgresEngine implements BrainEngine {
       params,
     );
     return (rows as Record<string, unknown>[]).map(rowToMemorySessionAttachment);
+  }
+
+  async createMemoryRedactionPlan(input: MemoryRedactionPlanInput): Promise<MemoryRedactionPlan> {
+    const sql = this.sql;
+    const plan = normalizeMemoryRedactionPlanInput(input);
+    const rows = await sql.unsafe(
+      `INSERT INTO memory_redaction_plans (
+        id, scope_id, query, replacement_text, status, requested_by,
+        review_reason, created_at, reviewed_at, applied_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::timestamptz, now()), $9, $10)
+      RETURNING id, scope_id, query, replacement_text, status, requested_by,
+                review_reason, created_at, reviewed_at, applied_at`,
+      [
+        plan.id,
+        plan.scope_id,
+        plan.query,
+        plan.replacement_text,
+        plan.status,
+        plan.requested_by,
+        plan.review_reason,
+        toNullableIso(plan.created_at),
+        toNullableIso(plan.reviewed_at),
+        toNullableIso(plan.applied_at),
+      ],
+    );
+    return rowToMemoryRedactionPlan(rows[0] as Record<string, unknown>);
+  }
+
+  async getMemoryRedactionPlan(id: string): Promise<MemoryRedactionPlan | null> {
+    const rows = await this.sql`
+      SELECT id, scope_id, query, replacement_text, status, requested_by,
+             review_reason, created_at, reviewed_at, applied_at
+      FROM memory_redaction_plans
+      WHERE id = ${id}
+    `;
+    if (rows.length === 0) return null;
+    return rowToMemoryRedactionPlan(rows[0] as Record<string, unknown>);
+  }
+
+  async listMemoryRedactionPlans(filters?: MemoryRedactionPlanFilters): Promise<MemoryRedactionPlan[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    if (limit === 0) return [];
+    const params: PostgresParam[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.scope_id !== undefined) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.status !== undefined) {
+      params.push(filters.status);
+      clauses.push(`status = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT id, scope_id, query, replacement_text, status, requested_by,
+              review_reason, created_at, reviewed_at, applied_at
+       FROM memory_redaction_plans
+       ${whereClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToMemoryRedactionPlan);
+  }
+
+  async createMemoryRedactionPlanItem(input: MemoryRedactionPlanItemInput): Promise<MemoryRedactionPlanItem> {
+    const sql = this.sql;
+    const item = normalizeMemoryRedactionPlanItemInput(input);
+    const rows = await sql.unsafe(
+      `INSERT INTO memory_redaction_plan_items (
+        id, plan_id, target_object_type, target_object_id, field_path,
+        before_hash, after_hash, status, preview_text, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9,
+        COALESCE($10::timestamptz, now()),
+        COALESCE($11::timestamptz, COALESCE($10::timestamptz, now()))
+      )
+      RETURNING id, plan_id, target_object_type, target_object_id, field_path,
+                before_hash, after_hash, status, preview_text, created_at, updated_at`,
+      [
+        item.id,
+        item.plan_id,
+        item.target_object_type,
+        item.target_object_id,
+        item.field_path,
+        item.before_hash,
+        item.after_hash,
+        item.status,
+        item.preview_text,
+        toNullableIso(item.created_at),
+        toNullableIso(item.updated_at),
+      ],
+    );
+    return rowToMemoryRedactionPlanItem(rows[0] as Record<string, unknown>);
+  }
+
+  async listMemoryRedactionPlanItems(
+    filters?: MemoryRedactionPlanItemFilters,
+  ): Promise<MemoryRedactionPlanItem[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    if (limit === 0) return [];
+    const params: PostgresParam[] = [];
+    const clauses: string[] = [];
+
+    if (filters?.plan_id !== undefined) {
+      params.push(filters.plan_id);
+      clauses.push(`plan_id = $${params.length}`);
+    }
+    if (filters?.status !== undefined) {
+      params.push(filters.status);
+      clauses.push(`status = $${params.length}`);
+    }
+    if (filters?.target_object_type !== undefined) {
+      params.push(filters.target_object_type);
+      clauses.push(`target_object_type = $${params.length}`);
+    }
+    if (filters?.target_object_id !== undefined) {
+      params.push(filters.target_object_id);
+      clauses.push(`target_object_id = $${params.length}`);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT id, plan_id, target_object_type, target_object_id, field_path,
+              before_hash, after_hash, status, preview_text, created_at, updated_at
+       FROM memory_redaction_plan_items
+       ${whereClause}
+       ORDER BY created_at ASC, id ASC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToMemoryRedactionPlanItem);
+  }
+
+  async updateMemoryRedactionPlanStatus(
+    id: string,
+    patch: MemoryRedactionPlanStatusPatch,
+  ): Promise<MemoryRedactionPlan | null> {
+    const sql = this.sql;
+    const normalized = normalizeMemoryRedactionPlanStatusPatch(patch);
+    const current = await this.getMemoryRedactionPlan(id);
+    if (!current) return null;
+    const expectedStatus = normalized.expected_current_status ?? current.status;
+    const rows = await sql`
+      UPDATE memory_redaction_plans
+      SET status = ${normalized.status},
+          review_reason = ${hasOwn(normalized, 'review_reason') ? normalized.review_reason ?? null : current.review_reason},
+          reviewed_at = ${hasOwn(normalized, 'reviewed_at') ? toNullableIso(normalized.reviewed_at ?? null) : toNullableIso(current.reviewed_at)},
+          applied_at = ${hasOwn(normalized, 'applied_at') ? toNullableIso(normalized.applied_at ?? null) : toNullableIso(current.applied_at)}
+      WHERE id = ${id}
+        AND status = ${expectedStatus}
+      RETURNING id, scope_id, query, replacement_text, status, requested_by,
+                review_reason, created_at, reviewed_at, applied_at
+    `;
+    if (rows.length === 0) return null;
+    return rowToMemoryRedactionPlan(rows[0] as Record<string, unknown>);
+  }
+
+  async updateMemoryRedactionPlanItemStatus(
+    id: string,
+    patch: MemoryRedactionPlanItemStatusPatch,
+  ): Promise<MemoryRedactionPlanItem | null> {
+    const sql = this.sql;
+    const normalized = normalizeMemoryRedactionPlanItemStatusPatch(patch);
+    const currentRows = await sql`
+      SELECT id, plan_id, target_object_type, target_object_id, field_path,
+             before_hash, after_hash, status, preview_text, created_at, updated_at
+      FROM memory_redaction_plan_items
+      WHERE id = ${id}
+    `;
+    if (currentRows.length === 0) return null;
+    const currentItem = rowToMemoryRedactionPlanItem(currentRows[0] as Record<string, unknown>);
+    const expectedStatus = normalized.expected_current_status ?? currentItem.status;
+    const rows = await sql`
+      UPDATE memory_redaction_plan_items
+      SET status = ${normalized.status},
+          before_hash = ${hasOwn(normalized, 'before_hash') ? normalized.before_hash ?? null : currentItem.before_hash},
+          after_hash = ${hasOwn(normalized, 'after_hash') ? normalized.after_hash ?? null : currentItem.after_hash},
+          updated_at = ${hasOwn(normalized, 'updated_at') ? toNullableIso(normalized.updated_at ?? null) : new Date().toISOString()}
+      WHERE id = ${id}
+        AND status = ${expectedStatus}
+      RETURNING id, plan_id, target_object_type, target_object_id, field_path,
+                before_hash, after_hash, status, preview_text, created_at, updated_at
+    `;
+    if (rows.length === 0) return null;
+    return rowToMemoryRedactionPlanItem(rows[0] as Record<string, unknown>);
   }
 
   async updateMemoryCandidateEntryStatus(id: string, patch: MemoryCandidateStatusPatch): Promise<MemoryCandidateEntry | null> {

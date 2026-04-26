@@ -47,6 +47,14 @@ import type {
   MemorySessionAttachmentFilters,
   MemorySessionAttachmentInput,
   MemorySessionInput,
+  MemoryRedactionPlan,
+  MemoryRedactionPlanFilters,
+  MemoryRedactionPlanInput,
+  MemoryRedactionPlanItem,
+  MemoryRedactionPlanItemFilters,
+  MemoryRedactionPlanItemInput,
+  MemoryRedactionPlanItemStatusPatch,
+  MemoryRedactionPlanStatusPatch,
   MemoryCandidatePatchOperationStatePatch,
   MemoryCandidatePromotionPatch,
   MemoryCandidateStatusEvent,
@@ -97,11 +105,17 @@ import {
   importContentHash,
   normalizeMemoryMutationEventInput,
   normalizeMemoryRealmInput,
+  normalizeMemoryRedactionPlanInput,
+  normalizeMemoryRedactionPlanItemInput,
+  normalizeMemoryRedactionPlanItemStatusPatch,
+  normalizeMemoryRedactionPlanStatusPatch,
   normalizeMemorySessionAttachmentInput,
   normalizeMemorySessionInput,
   rowToCanonicalHandoffEntry,
   rowToMemoryCandidateContradictionEntry,
   rowToMemoryMutationEvent,
+  rowToMemoryRedactionPlan,
+  rowToMemoryRedactionPlanItem,
   rowToMemoryRealm,
   rowToMemorySession,
   rowToMemorySessionAttachment,
@@ -432,6 +446,39 @@ CREATE TABLE IF NOT EXISTS memory_session_attachments (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_session_attachments_realm
   ON memory_session_attachments(realm_id, attached_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_redaction_plans (
+  id TEXT PRIMARY KEY,
+  scope_id TEXT NOT NULL,
+  query TEXT NOT NULL,
+  replacement_text TEXT NOT NULL DEFAULT '[REDACTED]',
+  status TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'applied', 'rejected')),
+  requested_by TEXT,
+  review_reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  reviewed_at TEXT,
+  applied_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_memory_redaction_plans_scope_status
+  ON memory_redaction_plans(scope_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_redaction_plan_items (
+  id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL REFERENCES memory_redaction_plans(id) ON DELETE CASCADE,
+  target_object_type TEXT NOT NULL,
+  target_object_id TEXT NOT NULL,
+  field_path TEXT NOT NULL,
+  before_hash TEXT,
+  after_hash TEXT,
+  status TEXT NOT NULL CHECK (status IN ('planned', 'applied', 'unsupported')),
+  preview_text TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_memory_redaction_items_plan
+  ON memory_redaction_plan_items(plan_id, status);
+CREATE INDEX IF NOT EXISTS idx_memory_redaction_items_target
+  ON memory_redaction_plan_items(target_object_type, target_object_id);
 
 CREATE TABLE IF NOT EXISTS access_tokens (
   id TEXT PRIMARY KEY,
@@ -2369,6 +2416,213 @@ export class SQLiteEngine implements BrainEngine {
     return rows.map(rowToMemorySessionAttachment);
   }
 
+  async createMemoryRedactionPlan(input: MemoryRedactionPlanInput): Promise<MemoryRedactionPlan> {
+    const plan = normalizeMemoryRedactionPlanInput(input);
+    const createdAt = toNullableIso(plan.created_at) ?? nowIso();
+    this.database.run(`
+      INSERT INTO memory_redaction_plans (
+        id, scope_id, query, replacement_text, status, requested_by,
+        review_reason, created_at, reviewed_at, applied_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, sqliteBindings([
+      plan.id,
+      plan.scope_id,
+      plan.query,
+      plan.replacement_text,
+      plan.status,
+      plan.requested_by,
+      plan.review_reason,
+      createdAt,
+      toNullableIso(plan.reviewed_at),
+      toNullableIso(plan.applied_at),
+    ]));
+    const created = await this.getMemoryRedactionPlan(plan.id);
+    if (!created) throw new Error(`Memory redaction plan not found after create: ${plan.id}`);
+    return created;
+  }
+
+  async getMemoryRedactionPlan(id: string): Promise<MemoryRedactionPlan | null> {
+    const row = this.database.query(`
+      SELECT id, scope_id, query, replacement_text, status, requested_by,
+             review_reason, created_at, reviewed_at, applied_at
+      FROM memory_redaction_plans
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToMemoryRedactionPlan(row) : null;
+  }
+
+  async listMemoryRedactionPlans(filters?: MemoryRedactionPlanFilters): Promise<MemoryRedactionPlan[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    if (limit === 0) return [];
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filters?.scope_id !== undefined) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.status !== undefined) {
+      clauses.push('status = ?');
+      params.push(filters.status);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, scope_id, query, replacement_text, status, requested_by,
+             review_reason, created_at, reviewed_at, applied_at
+      FROM memory_redaction_plans
+      ${whereClause}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+      OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToMemoryRedactionPlan);
+  }
+
+  async createMemoryRedactionPlanItem(input: MemoryRedactionPlanItemInput): Promise<MemoryRedactionPlanItem> {
+    const item = normalizeMemoryRedactionPlanItemInput(input);
+    const createdAt = toNullableIso(item.created_at) ?? nowIso();
+    const updatedAt = toNullableIso(item.updated_at) ?? createdAt;
+    this.database.run(`
+      INSERT INTO memory_redaction_plan_items (
+        id, plan_id, target_object_type, target_object_id, field_path,
+        before_hash, after_hash, status, preview_text, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, sqliteBindings([
+      item.id,
+      item.plan_id,
+      item.target_object_type,
+      item.target_object_id,
+      item.field_path,
+      item.before_hash,
+      item.after_hash,
+      item.status,
+      item.preview_text,
+      createdAt,
+      updatedAt,
+    ]));
+    const row = this.database.query(`
+      SELECT id, plan_id, target_object_type, target_object_id, field_path,
+             before_hash, after_hash, status, preview_text, created_at, updated_at
+      FROM memory_redaction_plan_items
+      WHERE id = ?
+    `).get(item.id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Memory redaction plan item not found after create: ${item.id}`);
+    return rowToMemoryRedactionPlanItem(row);
+  }
+
+  async listMemoryRedactionPlanItems(
+    filters?: MemoryRedactionPlanItemFilters,
+  ): Promise<MemoryRedactionPlanItem[]> {
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    if (limit === 0) return [];
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filters?.plan_id !== undefined) {
+      clauses.push('plan_id = ?');
+      params.push(filters.plan_id);
+    }
+    if (filters?.status !== undefined) {
+      clauses.push('status = ?');
+      params.push(filters.status);
+    }
+    if (filters?.target_object_type !== undefined) {
+      clauses.push('target_object_type = ?');
+      params.push(filters.target_object_type);
+    }
+    if (filters?.target_object_id !== undefined) {
+      clauses.push('target_object_id = ?');
+      params.push(filters.target_object_id);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, plan_id, target_object_type, target_object_id, field_path,
+             before_hash, after_hash, status, preview_text, created_at, updated_at
+      FROM memory_redaction_plan_items
+      ${whereClause}
+      ORDER BY created_at ASC, id ASC
+      LIMIT ?
+      OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToMemoryRedactionPlanItem);
+  }
+
+  async updateMemoryRedactionPlanStatus(
+    id: string,
+    patch: MemoryRedactionPlanStatusPatch,
+  ): Promise<MemoryRedactionPlan | null> {
+    const normalized = normalizeMemoryRedactionPlanStatusPatch(patch);
+    const current = await this.getMemoryRedactionPlan(id);
+    if (!current) return null;
+    const expectedStatus = normalized.expected_current_status ?? current.status;
+    const result = this.database.run(`
+      UPDATE memory_redaction_plans
+      SET status = ?,
+          review_reason = ?,
+          reviewed_at = ?,
+          applied_at = ?
+      WHERE id = ?
+        AND status = ?
+    `, sqliteBindings([
+      normalized.status,
+      hasOwn(normalized, 'review_reason') ? normalized.review_reason ?? null : current.review_reason,
+      hasOwn(normalized, 'reviewed_at') ? toNullableIso(normalized.reviewed_at ?? null) : toNullableIso(current.reviewed_at),
+      hasOwn(normalized, 'applied_at') ? toNullableIso(normalized.applied_at ?? null) : toNullableIso(current.applied_at),
+      id,
+      expectedStatus,
+    ]));
+    if (result.changes === 0) return null;
+    return this.getMemoryRedactionPlan(id);
+  }
+
+  async updateMemoryRedactionPlanItemStatus(
+    id: string,
+    patch: MemoryRedactionPlanItemStatusPatch,
+  ): Promise<MemoryRedactionPlanItem | null> {
+    const normalized = normalizeMemoryRedactionPlanItemStatusPatch(patch);
+    const currentRows = this.database.query(`
+      SELECT id, plan_id, target_object_type, target_object_id, field_path,
+             before_hash, after_hash, status, preview_text, created_at, updated_at
+      FROM memory_redaction_plan_items
+      WHERE id = ?
+    `).all(id) as Record<string, unknown>[];
+    if (currentRows.length === 0) return null;
+    const current = rowToMemoryRedactionPlanItem(currentRows[0]);
+    const expectedStatus = normalized.expected_current_status ?? current.status;
+    const result = this.database.run(`
+      UPDATE memory_redaction_plan_items
+      SET status = ?,
+          before_hash = ?,
+          after_hash = ?,
+          updated_at = ?
+      WHERE id = ?
+        AND status = ?
+    `, sqliteBindings([
+      normalized.status,
+      hasOwn(normalized, 'before_hash') ? normalized.before_hash ?? null : current.before_hash,
+      hasOwn(normalized, 'after_hash') ? normalized.after_hash ?? null : current.after_hash,
+      hasOwn(normalized, 'updated_at') ? toNullableIso(normalized.updated_at ?? null) : nowIso(),
+      id,
+      expectedStatus,
+    ]));
+    if (result.changes === 0) return null;
+    const updatedRows = this.database.query(`
+      SELECT id, plan_id, target_object_type, target_object_id, field_path,
+             before_hash, after_hash, status, preview_text, created_at, updated_at
+      FROM memory_redaction_plan_items
+      WHERE id = ?
+    `).all(id) as Record<string, unknown>[];
+    return updatedRows[0] ? rowToMemoryRedactionPlanItem(updatedRows[0]) : null;
+  }
+
   async updateMemoryCandidateEntryStatus(id: string, patch: MemoryCandidateStatusPatch): Promise<MemoryCandidateEntry | null> {
     const current = await this.getMemoryCandidateEntry(id);
     if (!current) {
@@ -3798,6 +4052,9 @@ export class SQLiteEngine implements BrainEngine {
         case 33:
           this.ensureMemoryPatchCandidateColumns();
           break;
+        case 34:
+          this.ensureMemoryRedactionPlanSchema();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -4724,6 +4981,43 @@ export class SQLiteEngine implements BrainEngine {
       );
       CREATE INDEX IF NOT EXISTS idx_memory_session_attachments_realm
         ON memory_session_attachments(realm_id, attached_at DESC);
+    `);
+  }
+
+  private ensureMemoryRedactionPlanSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS memory_redaction_plans (
+        id TEXT PRIMARY KEY,
+        scope_id TEXT NOT NULL,
+        query TEXT NOT NULL,
+        replacement_text TEXT NOT NULL DEFAULT '[REDACTED]',
+        status TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'applied', 'rejected')),
+        requested_by TEXT,
+        review_reason TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        reviewed_at TEXT,
+        applied_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_redaction_plans_scope_status
+        ON memory_redaction_plans(scope_id, status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS memory_redaction_plan_items (
+        id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL REFERENCES memory_redaction_plans(id) ON DELETE CASCADE,
+        target_object_type TEXT NOT NULL,
+        target_object_id TEXT NOT NULL,
+        field_path TEXT NOT NULL,
+        before_hash TEXT,
+        after_hash TEXT,
+        status TEXT NOT NULL CHECK (status IN ('planned', 'applied', 'unsupported')),
+        preview_text TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_redaction_items_plan
+        ON memory_redaction_plan_items(plan_id, status);
+      CREATE INDEX IF NOT EXISTS idx_memory_redaction_items_target
+        ON memory_redaction_plan_items(target_object_type, target_object_id);
     `);
   }
 

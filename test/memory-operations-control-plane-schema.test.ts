@@ -49,6 +49,33 @@ const MEMORY_SESSION_COLUMNS = [
   'expires_at',
 ];
 
+const REDACTION_PLAN_COLUMNS = [
+  'id',
+  'scope_id',
+  'query',
+  'replacement_text',
+  'status',
+  'requested_by',
+  'review_reason',
+  'created_at',
+  'reviewed_at',
+  'applied_at',
+];
+
+const REDACTION_PLAN_ITEM_COLUMNS = [
+  'id',
+  'plan_id',
+  'target_object_type',
+  'target_object_id',
+  'field_path',
+  'before_hash',
+  'after_hash',
+  'status',
+  'preview_text',
+  'created_at',
+  'updated_at',
+];
+
 function validInsertSql(id: string): string {
   return `
     INSERT INTO memory_mutation_events (
@@ -375,6 +402,180 @@ describe('memory operations control-plane schema', () => {
       INSERT INTO memory_sessions (id, status)
       VALUES ('pglite-revoked-invalid', 'revoked')
     `)).rejects.toThrow();
+
+    await engine.disconnect();
+  }, 10_000);
+
+  test('sqlite initSchema creates redaction plan tables', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-redaction-plan-sqlite-'));
+    tempPaths.push(dir);
+
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+
+    const db = (engine as any).database;
+    const planTable = db
+      .query(
+        `SELECT name, sql
+         FROM sqlite_master
+         WHERE type = 'table'
+           AND name = 'memory_redaction_plans'`,
+      )
+      .get() as { name: string; sql: string } | null;
+    const itemTable = db
+      .query(
+        `SELECT name, sql
+         FROM sqlite_master
+         WHERE type = 'table'
+           AND name = 'memory_redaction_plan_items'`,
+      )
+      .get() as { name: string; sql: string } | null;
+
+    expect(planTable?.name).toBe('memory_redaction_plans');
+    expect(planTable?.sql).toContain("status TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'applied', 'rejected'))");
+    expect(itemTable?.name).toBe('memory_redaction_plan_items');
+    expect(itemTable?.sql).toContain("status TEXT NOT NULL CHECK (status IN ('planned', 'applied', 'unsupported'))");
+
+    const planColumns = db.query(`PRAGMA table_info(memory_redaction_plans)`).all() as Array<{ name: string }>;
+    const itemColumns = db.query(`PRAGMA table_info(memory_redaction_plan_items)`).all() as Array<{ name: string }>;
+    expect(planColumns.map((column) => column.name)).toEqual(REDACTION_PLAN_COLUMNS);
+    expect(itemColumns.map((column) => column.name)).toEqual(REDACTION_PLAN_ITEM_COLUMNS);
+
+    expect(() => db.query(`
+      INSERT INTO memory_redaction_plans (id, scope_id, query, status)
+      VALUES ('sqlite-redaction-valid', 'workspace:default', 'secret', 'draft')
+    `).run()).not.toThrow();
+    expect(() => db.query(`
+      INSERT INTO memory_redaction_plans (id, scope_id, query, status)
+      VALUES ('sqlite-redaction-invalid', 'workspace:default', 'secret', 'queued')
+    `).run()).toThrow();
+
+    await engine.disconnect();
+  });
+
+  test('pglite initSchema creates redaction plan tables', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-redaction-plan-pglite-'));
+    tempPaths.push(dir);
+
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: dir });
+    await engine.initSchema();
+
+    const db = (engine as any).db;
+    const columns = await db.query(
+      `SELECT table_name, column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name IN ('memory_redaction_plans', 'memory_redaction_plan_items')
+       ORDER BY table_name, ordinal_position`,
+    );
+    const planColumns = columns.rows
+      .filter((row: { table_name: string }) => row.table_name === 'memory_redaction_plans')
+      .map((row: { column_name: string }) => row.column_name);
+    const itemColumns = columns.rows
+      .filter((row: { table_name: string }) => row.table_name === 'memory_redaction_plan_items')
+      .map((row: { column_name: string }) => row.column_name);
+    expect(planColumns).toEqual(REDACTION_PLAN_COLUMNS);
+    expect(itemColumns).toEqual(REDACTION_PLAN_ITEM_COLUMNS);
+
+    const indexes = await db.query(
+      `SELECT indexname
+       FROM pg_indexes
+       WHERE schemaname = 'public'
+         AND tablename IN ('memory_redaction_plans', 'memory_redaction_plan_items')`,
+    );
+    expect(indexes.rows.map((row: { indexname: string }) => row.indexname)).toContain(
+      'idx_memory_redaction_plans_scope_status',
+    );
+    expect(indexes.rows.map((row: { indexname: string }) => row.indexname)).toContain(
+      'idx_memory_redaction_items_plan',
+    );
+    expect(indexes.rows.map((row: { indexname: string }) => row.indexname)).toContain(
+      'idx_memory_redaction_items_target',
+    );
+
+    await expect(db.query(`
+      INSERT INTO memory_redaction_plans (id, scope_id, query, status)
+      VALUES ('pglite-redaction-valid', 'workspace:default', 'secret', 'draft')
+    `)).resolves.toBeDefined();
+    await expect(db.query(`
+      INSERT INTO memory_redaction_plans (id, scope_id, query, status)
+      VALUES ('pglite-redaction-invalid', 'workspace:default', 'secret', 'queued')
+    `)).rejects.toThrow();
+
+    await engine.disconnect();
+  }, 10_000);
+
+  test('sqlite upgrades version 33 databases to redaction plan tables', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-redaction-plan-sqlite-v33-'));
+    tempPaths.push(dir);
+
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    const db = (engine as any).database;
+    db.exec(`
+      CREATE TABLE config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO config (key, value) VALUES ('version', '33');
+    `);
+
+    await engine.initSchema();
+
+    const version = db.query(`SELECT value FROM config WHERE key = 'version'`).get() as { value: string };
+    const planTable = db.query(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = 'memory_redaction_plans'
+    `).get() as { name: string } | null;
+    const itemTable = db.query(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = 'memory_redaction_plan_items'
+    `).get() as { name: string } | null;
+    expect(Number(version.value)).toBeGreaterThan(33);
+    expect(version.value).toBe(String(LATEST_VERSION));
+    expect(planTable?.name).toBe('memory_redaction_plans');
+    expect(itemTable?.name).toBe('memory_redaction_plan_items');
+
+    await engine.disconnect();
+  });
+
+  test('pglite upgrades version 33 databases to redaction plan tables', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-redaction-plan-pglite-v33-'));
+    tempPaths.push(dir);
+
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: dir });
+    const db = (engine as any).db;
+    await db.exec(`
+      CREATE TABLE config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO config (key, value) VALUES ('version', '33');
+    `);
+
+    await engine.initSchema();
+
+    const version = await db.query(`SELECT value FROM config WHERE key = 'version'`);
+    const tables = await db.query(
+      `SELECT table_name
+       FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name IN ('memory_redaction_plans', 'memory_redaction_plan_items')
+       ORDER BY table_name`,
+    );
+    expect(Number((version.rows[0] as { value: string }).value)).toBeGreaterThan(33);
+    expect(version.rows).toEqual([{ value: String(LATEST_VERSION) }]);
+    expect(tables.rows.map((row: { table_name: string }) => row.table_name)).toEqual([
+      'memory_redaction_plan_items',
+      'memory_redaction_plans',
+    ]);
 
     await engine.disconnect();
   }, 10_000);

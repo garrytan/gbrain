@@ -2,6 +2,12 @@ import { randomUUID } from 'crypto';
 import type { Operation } from './operations.ts';
 import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
 import {
+  approveMemoryRedactionPlan as approveMemoryRedactionPlanService,
+  applyMemoryRedactionPlan as applyMemoryRedactionPlanService,
+  createMemoryRedactionPlan as createMemoryRedactionPlanService,
+  rejectMemoryRedactionPlan as rejectMemoryRedactionPlanService,
+} from './services/memory-redaction-plan-service.ts';
+import {
   hashCanonicalJson,
   memorySessionAttachmentTargetId,
   memorySessionSnapshotPayload,
@@ -19,6 +25,10 @@ import type {
   MemorySessionAttachmentFilters,
   MemorySessionAttachmentInput,
   MemorySessionInput,
+  MemoryRedactionPlan,
+  MemoryRedactionPlanFilters,
+  MemoryRedactionPlanInput,
+  MemoryRedactionPlanStatus,
 } from './types.ts';
 import { applyMemoryRealmUpsertDefaults, applyMemorySessionCreateDefaults, parseValidIsoTimestamp } from './utils.ts';
 
@@ -32,6 +42,7 @@ type OperationErrorCtor = new (
 const MEMORY_REALM_SCOPES = ['work', 'personal', 'mixed'] as const satisfies readonly MemoryRealmScope[];
 const MEMORY_ACCESS_MODES = ['read_only', 'read_write'] as const satisfies readonly MemoryAccessMode[];
 const MEMORY_SESSION_STATUSES = ['active', 'expired', 'closed'] as const satisfies readonly MemorySessionStatus[];
+const MEMORY_REDACTION_PLAN_STATUSES = ['draft', 'approved', 'applied', 'rejected'] as const satisfies readonly MemoryRedactionPlanStatus[];
 const DEFAULT_REALM_UPSERT_SOURCE_REFS = ['Source: mbrain upsert_memory_realm operation'];
 const DEFAULT_SESSION_CREATE_SOURCE_REFS = ['Source: mbrain create_memory_session operation'];
 const DEFAULT_SESSION_CLOSE_SOURCE_REFS = ['Source: mbrain close_memory_session operation'];
@@ -369,6 +380,117 @@ function memorySessionAttachmentFilters(
   };
 }
 
+function redactionPlanCreateInput(
+  deps: { OperationError: OperationErrorCtor },
+  p: Record<string, unknown>,
+): Omit<MemoryRedactionPlanInput, 'id'> & {
+  id?: string;
+  requested_by?: string | null;
+  source_refs?: string[];
+} {
+  const input: Omit<MemoryRedactionPlanInput, 'id'> & {
+    id?: string;
+    requested_by?: string | null;
+    source_refs?: string[];
+  } = {
+    scope_id: requiredString(deps, 'scope_id', p.scope_id),
+    query: requiredString(deps, 'query', p.query),
+  };
+  const id = optionalString(deps, 'id', p.id);
+  if (id !== undefined) input.id = id;
+  const replacementText = optionalText(deps, 'replacement_text', p.replacement_text);
+  if (replacementText !== undefined) input.replacement_text = replacementText;
+  const requestedBy = optionalNullableString(deps, 'requested_by', p.requested_by);
+  if (requestedBy !== undefined || p.requested_by === null) input.requested_by = requestedBy ?? null;
+  const sourceRefs = optionalSourceRefs(deps, p.source_refs);
+  if (sourceRefs !== undefined) input.source_refs = sourceRefs;
+  return input;
+}
+
+function redactionPlanFilters(
+  deps: { OperationError: OperationErrorCtor },
+  p: Record<string, unknown>,
+): MemoryRedactionPlanFilters {
+  const scopeId = optionalString(deps, 'scope_id', p.scope_id);
+  return {
+    ...(scopeId !== undefined ? { scope_id: scopeId } : {}),
+    status: enumValue(deps, 'status', p.status, MEMORY_REDACTION_PLAN_STATUSES),
+    limit: integerParam(deps, 'limit', p.limit, { defaultValue: 100, min: 0, max: 500 }),
+    offset: integerParam(deps, 'offset', p.offset, { defaultValue: 0, min: 0 }),
+  };
+}
+
+function redactionPlanPreview(input: ReturnType<typeof redactionPlanCreateInput>): MemoryRedactionPlan {
+  return {
+    id: input.id ?? `redaction-plan:${randomUUID()}`,
+    scope_id: input.scope_id,
+    query: input.query,
+    replacement_text: input.replacement_text ?? '[REDACTED]',
+    status: 'draft',
+    requested_by: input.requested_by ?? null,
+    review_reason: null,
+    created_at: new Date(),
+    reviewed_at: null,
+    applied_at: null,
+  };
+}
+
+async function requireRedactionPlanForReviewPreview(
+  deps: { OperationError: OperationErrorCtor },
+  engine: {
+    getMemoryRedactionPlan(id: string): Promise<MemoryRedactionPlan | null>;
+  },
+  id: string,
+): Promise<MemoryRedactionPlan> {
+  const plan = await engine.getMemoryRedactionPlan(id);
+  if (!plan) {
+    throw invalidParams(deps, `memory redaction plan not found: ${id}`);
+  }
+  if (plan.status !== 'draft') {
+    throw invalidParams(deps, `memory redaction plan must be draft: ${id}`);
+  }
+  return plan;
+}
+
+async function requireRedactionPlanForApplyPreview(
+  deps: { OperationError: OperationErrorCtor },
+  engine: {
+    getMemoryRedactionPlan(id: string): Promise<MemoryRedactionPlan | null>;
+    listMemoryRedactionPlanItems(filters: { plan_id: string; limit: number }): Promise<Array<{
+      status: string;
+      target_object_type: string;
+      field_path: string;
+    }>>;
+  },
+  id: string,
+): Promise<MemoryRedactionPlan> {
+  const plan = await engine.getMemoryRedactionPlan(id);
+  if (!plan) {
+    throw invalidParams(deps, `memory redaction plan not found: ${id}`);
+  }
+  if (plan.status !== 'approved') {
+    throw invalidParams(deps, `memory redaction plan must be approved: ${id}`);
+  }
+  const items = await engine.listMemoryRedactionPlanItems({ plan_id: id, limit: 10_000 });
+  const unsupported = items.find((item) => item.status === 'unsupported');
+  if (unsupported) {
+    throw invalidParams(deps, `memory redaction plan contains unsupported item: ${id}`);
+  }
+  const unsupportedPlanned = items.find((item) => item.status === 'planned' && item.target_object_type !== 'page');
+  if (unsupportedPlanned) {
+    throw invalidParams(deps, `memory redaction plan item target is unsupported: ${unsupportedPlanned.target_object_type}`);
+  }
+  const unsupportedField = items.find(
+    (item) => item.status === 'planned'
+      && item.target_object_type === 'page'
+      && !['compiled_truth', 'timeline'].includes(item.field_path),
+  );
+  if (unsupportedField) {
+    throw invalidParams(deps, `memory redaction plan item field is unsupported: ${unsupportedField.field_path}`);
+  }
+  return plan;
+}
+
 export function createMemoryControlPlaneOperations(
   deps: { OperationError: OperationErrorCtor },
 ): Operation[] {
@@ -662,6 +784,160 @@ export function createMemoryControlPlaneOperations(
     cliHints: { name: 'memory-session-attachment-list', aliases: { n: 'limit' } },
   };
 
+  const create_memory_redaction_plan: Operation = {
+    name: 'create_memory_redaction_plan',
+    description: 'Create a draft redaction plan and planned page redaction items for matching page text.',
+    params: {
+      id: { type: 'string' },
+      scope_id: { type: 'string', required: true },
+      query: { type: 'string', required: true },
+      replacement_text: { type: 'string', default: '[REDACTED]' },
+      requested_by: { type: 'string', nullable: true },
+      source_refs: { type: 'array', items: { type: 'string' } },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const input = redactionPlanCreateInput(deps, p);
+      if (ctx.dryRun) {
+        return {
+          action: 'create_memory_redaction_plan',
+          dry_run: true,
+          plan: redactionPlanPreview(input),
+        };
+      }
+      return createMemoryRedactionPlanService(ctx.engine, input);
+    },
+    cliHints: { name: 'memory-redaction-plan-create' },
+  };
+
+  const get_memory_redaction_plan: Operation = {
+    name: 'get_memory_redaction_plan',
+    description: 'Get one memory redaction plan by id.',
+    params: {
+      id: { type: 'string', required: true },
+    },
+    mutating: false,
+    handler: async (ctx, p) => ctx.engine.getMemoryRedactionPlan(requiredString(deps, 'id', p.id)),
+    cliHints: { name: 'memory-redaction-plan-get', positional: ['id'] },
+  };
+
+  const list_memory_redaction_plans: Operation = {
+    name: 'list_memory_redaction_plans',
+    description: 'List memory redaction plans by scope or review/apply status.',
+    params: {
+      scope_id: { type: 'string' },
+      status: { type: 'string', enum: [...MEMORY_REDACTION_PLAN_STATUSES] },
+      limit: { type: 'number', default: 100 },
+      offset: { type: 'number', default: 0 },
+    },
+    mutating: false,
+    handler: async (ctx, p) => ctx.engine.listMemoryRedactionPlans(redactionPlanFilters(deps, p)),
+    cliHints: { name: 'memory-redaction-plan-list', aliases: { n: 'limit' } },
+  };
+
+  const approve_memory_redaction_plan: Operation = {
+    name: 'approve_memory_redaction_plan',
+    description: 'Approve a draft memory redaction plan for application.',
+    params: {
+      id: { type: 'string', required: true },
+      review_reason: { type: 'string', nullable: true },
+      source_refs: { type: 'array', items: { type: 'string' } },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const id = requiredString(deps, 'id', p.id);
+      const reviewReason = optionalNullableString(deps, 'review_reason', p.review_reason);
+      optionalSourceRefs(deps, p.source_refs);
+      if (ctx.dryRun) {
+        const plan = await requireRedactionPlanForReviewPreview(deps, ctx.engine, id);
+        return {
+          action: 'approve_memory_redaction_plan',
+          dry_run: true,
+          plan: {
+            ...plan,
+            status: 'approved',
+            review_reason: reviewReason ?? null,
+            reviewed_at: new Date(),
+          },
+        };
+      }
+      return approveMemoryRedactionPlanService(ctx.engine, {
+        id,
+        review_reason: reviewReason ?? null,
+      });
+    },
+    cliHints: { name: 'memory-redaction-plan-approve', positional: ['id'] },
+  };
+
+  const reject_memory_redaction_plan: Operation = {
+    name: 'reject_memory_redaction_plan',
+    description: 'Reject a draft memory redaction plan.',
+    params: {
+      id: { type: 'string', required: true },
+      review_reason: { type: 'string', nullable: true },
+      source_refs: { type: 'array', items: { type: 'string' } },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const id = requiredString(deps, 'id', p.id);
+      const reviewReason = optionalNullableString(deps, 'review_reason', p.review_reason);
+      optionalSourceRefs(deps, p.source_refs);
+      if (ctx.dryRun) {
+        const plan = await requireRedactionPlanForReviewPreview(deps, ctx.engine, id);
+        return {
+          action: 'reject_memory_redaction_plan',
+          dry_run: true,
+          plan: {
+            ...plan,
+            status: 'rejected',
+            review_reason: reviewReason ?? null,
+            reviewed_at: new Date(),
+          },
+        };
+      }
+      return rejectMemoryRedactionPlanService(ctx.engine, {
+        id,
+        review_reason: reviewReason ?? null,
+      });
+    },
+    cliHints: { name: 'memory-redaction-plan-reject', positional: ['id'] },
+  };
+
+  const apply_memory_redaction_plan: Operation = {
+    name: 'apply_memory_redaction_plan',
+    description: 'Apply an approved memory redaction plan to supported page text fields.',
+    params: {
+      id: { type: 'string', required: true },
+      actor: { type: 'string' },
+      source_refs: { type: 'array', items: { type: 'string' } },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const id = requiredString(deps, 'id', p.id);
+      const actor = optionalString(deps, 'actor', p.actor);
+      const sourceRefs = optionalSourceRefs(deps, p.source_refs);
+      if (ctx.dryRun) {
+        const plan = await requireRedactionPlanForApplyPreview(deps, ctx.engine, id);
+        return {
+          action: 'apply_memory_redaction_plan',
+          dry_run: true,
+          actor: actor ?? plan.requested_by ?? 'mbrain:redaction_plan_service',
+          plan: {
+            ...plan,
+            status: 'applied',
+            applied_at: new Date(),
+          },
+        };
+      }
+      return applyMemoryRedactionPlanService(ctx.engine, {
+        id,
+        actor,
+        source_refs: sourceRefs,
+      });
+    },
+    cliHints: { name: 'memory-redaction-plan-apply', positional: ['id'] },
+  };
+
   return [
     upsert_memory_realm,
     get_memory_realm,
@@ -672,5 +948,11 @@ export function createMemoryControlPlaneOperations(
     close_memory_session,
     attach_memory_realm_to_session,
     list_memory_session_attachments,
+    create_memory_redaction_plan,
+    get_memory_redaction_plan,
+    list_memory_redaction_plans,
+    approve_memory_redaction_plan,
+    reject_memory_redaction_plan,
+    apply_memory_redaction_plan,
   ];
 }

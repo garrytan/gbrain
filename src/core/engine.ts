@@ -29,6 +29,14 @@ import type {
   MemorySessionAttachmentFilters,
   MemorySessionAttachmentInput,
   MemorySessionInput,
+  MemoryRedactionPlan,
+  MemoryRedactionPlanFilters,
+  MemoryRedactionPlanInput,
+  MemoryRedactionPlanItem,
+  MemoryRedactionPlanItemFilters,
+  MemoryRedactionPlanItemInput,
+  MemoryRedactionPlanItemStatusPatch,
+  MemoryRedactionPlanStatusPatch,
   MemoryCandidatePatchOperationStatePatch,
   MemoryCandidatePromotionPatch,
   MemoryCandidateStatusEvent,
@@ -199,6 +207,15 @@ export interface BrainEngine {
   closeMemorySession(id: string): Promise<MemorySession | null>;
   attachMemoryRealmToSession(input: MemorySessionAttachmentInput): Promise<MemorySessionAttachment>;
   listMemorySessionAttachments(filters?: MemorySessionAttachmentFilters): Promise<MemorySessionAttachment[]>;
+
+  // Memory redaction plans
+  createMemoryRedactionPlan(input: MemoryRedactionPlanInput): Promise<MemoryRedactionPlan>;
+  getMemoryRedactionPlan(id: string): Promise<MemoryRedactionPlan | null>;
+  listMemoryRedactionPlans(filters?: MemoryRedactionPlanFilters): Promise<MemoryRedactionPlan[]>;
+  createMemoryRedactionPlanItem(input: MemoryRedactionPlanItemInput): Promise<MemoryRedactionPlanItem>;
+  listMemoryRedactionPlanItems(filters?: MemoryRedactionPlanItemFilters): Promise<MemoryRedactionPlanItem[]>;
+  updateMemoryRedactionPlanStatus(id: string, patch: MemoryRedactionPlanStatusPatch): Promise<MemoryRedactionPlan | null>;
+  updateMemoryRedactionPlanItemStatus(id: string, patch: MemoryRedactionPlanItemStatusPatch): Promise<MemoryRedactionPlanItem | null>;
 
   // Note manifest
   upsertNoteManifestEntry(input: NoteManifestEntryInput): Promise<NoteManifestEntry>;

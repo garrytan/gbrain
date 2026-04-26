@@ -19,6 +19,12 @@ import type {
   MemorySessionAttachment,
   MemorySessionAttachmentInput,
   MemorySessionInput,
+  MemoryRedactionPlan,
+  MemoryRedactionPlanInput,
+  MemoryRedactionPlanItem,
+  MemoryRedactionPlanItemInput,
+  MemoryRedactionPlanItemStatusPatch,
+  MemoryRedactionPlanStatusPatch,
   MemoryCandidateStatusEvent,
   MemoryCandidateSupersessionEntry,
   CanonicalHandoffEntry,
@@ -501,6 +507,37 @@ export function rowToMemorySessionAttachment(row: Record<string, unknown>): Memo
   };
 }
 
+export function rowToMemoryRedactionPlan(row: Record<string, unknown>): MemoryRedactionPlan {
+  return {
+    id: row.id as string,
+    scope_id: row.scope_id as string,
+    query: row.query as string,
+    replacement_text: row.replacement_text as string,
+    status: row.status as MemoryRedactionPlan['status'],
+    requested_by: (row.requested_by as string | null) ?? null,
+    review_reason: (row.review_reason as string | null) ?? null,
+    created_at: new Date(row.created_at as string),
+    reviewed_at: row.reviewed_at == null ? null : new Date(row.reviewed_at as string),
+    applied_at: row.applied_at == null ? null : new Date(row.applied_at as string),
+  };
+}
+
+export function rowToMemoryRedactionPlanItem(row: Record<string, unknown>): MemoryRedactionPlanItem {
+  return {
+    id: row.id as string,
+    plan_id: row.plan_id as string,
+    target_object_type: row.target_object_type as MemoryRedactionPlanItem['target_object_type'],
+    target_object_id: row.target_object_id as string,
+    field_path: row.field_path as string,
+    before_hash: (row.before_hash as string | null) ?? null,
+    after_hash: (row.after_hash as string | null) ?? null,
+    status: row.status as MemoryRedactionPlanItem['status'],
+    preview_text: (row.preview_text as string | null) ?? '',
+    created_at: new Date(row.created_at as string),
+    updated_at: new Date(row.updated_at as string),
+  };
+}
+
 export function normalizeMemorySessionAttachmentInput(
   input: MemorySessionAttachmentInput,
 ): Required<MemorySessionAttachmentInput> {
@@ -515,6 +552,126 @@ export function normalizeMemorySessionAttachmentInput(
     instructions: input.instructions === undefined
       ? ''
       : normalizeMemorySessionAttachmentInstructions(input.instructions),
+  };
+}
+
+const MEMORY_REDACTION_PLAN_STATUSES = ['draft', 'approved', 'applied', 'rejected'] as const;
+const MEMORY_REDACTION_TARGET_TYPES = [
+  'page',
+  'page_version',
+  'profile_memory',
+  'personal_episode',
+  'memory_candidate',
+  'retrieval_trace',
+] as const;
+const MEMORY_REDACTION_ITEM_STATUSES = ['planned', 'applied', 'unsupported'] as const;
+
+export function normalizeMemoryRedactionPlanInput(
+  input: MemoryRedactionPlanInput,
+): Required<MemoryRedactionPlanInput> {
+  const status = input.status ?? 'draft';
+  if (!MEMORY_REDACTION_PLAN_STATUSES.includes(status)) {
+    throw new Error('memory redaction plan status must be one of: draft, approved, applied, rejected');
+  }
+  return {
+    id: normalizeRequiredMemoryRedactionString('plan id', input.id),
+    scope_id: normalizeRequiredMemoryRedactionString('scope_id', input.scope_id),
+    query: normalizeRequiredMemoryRedactionString('query', input.query),
+    replacement_text: input.replacement_text === undefined
+      ? '[REDACTED]'
+      : normalizeMemoryRedactionText('replacement_text', input.replacement_text),
+    status,
+    requested_by: normalizeNullableMemoryRedactionString('requested_by', input.requested_by ?? null),
+    review_reason: normalizeNullableMemoryRedactionString('review_reason', input.review_reason ?? null),
+    created_at: normalizeNullableMemoryRedactionTimestamp('created_at', input.created_at ?? null),
+    reviewed_at: normalizeNullableMemoryRedactionTimestamp('reviewed_at', input.reviewed_at ?? null),
+    applied_at: normalizeNullableMemoryRedactionTimestamp('applied_at', input.applied_at ?? null),
+  };
+}
+
+export function normalizeMemoryRedactionPlanStatusPatch(
+  patch: MemoryRedactionPlanStatusPatch,
+): MemoryRedactionPlanStatusPatch {
+  if (!MEMORY_REDACTION_PLAN_STATUSES.includes(patch.status)) {
+    throw new Error('memory redaction plan status must be one of: draft, approved, applied, rejected');
+  }
+  if (
+    patch.expected_current_status !== undefined
+    && !MEMORY_REDACTION_PLAN_STATUSES.includes(patch.expected_current_status)
+  ) {
+    throw new Error('memory redaction plan expected_current_status must be one of: draft, approved, applied, rejected');
+  }
+  return {
+    status: patch.status,
+    ...(patch.expected_current_status !== undefined
+      ? { expected_current_status: patch.expected_current_status }
+      : {}),
+    ...(patch.review_reason !== undefined
+      ? { review_reason: normalizeNullableMemoryRedactionString('review_reason', patch.review_reason) }
+      : {}),
+    ...(patch.reviewed_at !== undefined
+      ? { reviewed_at: normalizeNullableMemoryRedactionTimestamp('reviewed_at', patch.reviewed_at) }
+      : {}),
+    ...(patch.applied_at !== undefined
+      ? { applied_at: normalizeNullableMemoryRedactionTimestamp('applied_at', patch.applied_at) }
+      : {}),
+  };
+}
+
+export function normalizeMemoryRedactionPlanItemInput(
+  input: MemoryRedactionPlanItemInput,
+): Required<MemoryRedactionPlanItemInput> {
+  const targetType = input.target_object_type;
+  const status = input.status ?? 'planned';
+  if (!MEMORY_REDACTION_TARGET_TYPES.includes(targetType)) {
+    throw new Error('memory redaction item target_object_type is unsupported');
+  }
+  if (!MEMORY_REDACTION_ITEM_STATUSES.includes(status)) {
+    throw new Error('memory redaction item status must be one of: planned, applied, unsupported');
+  }
+  return {
+    id: normalizeRequiredMemoryRedactionString('item id', input.id),
+    plan_id: normalizeRequiredMemoryRedactionString('plan_id', input.plan_id),
+    target_object_type: targetType,
+    target_object_id: normalizeRequiredMemoryRedactionString('target_object_id', input.target_object_id),
+    field_path: normalizeRequiredMemoryRedactionString('field_path', input.field_path),
+    before_hash: normalizeNullableMemoryRedactionString('before_hash', input.before_hash ?? null),
+    after_hash: normalizeNullableMemoryRedactionString('after_hash', input.after_hash ?? null),
+    status,
+    preview_text: input.preview_text === undefined
+      ? ''
+      : normalizeMemoryRedactionText('preview_text', input.preview_text),
+    created_at: normalizeNullableMemoryRedactionTimestamp('created_at', input.created_at ?? null),
+    updated_at: normalizeNullableMemoryRedactionTimestamp('updated_at', input.updated_at ?? null),
+  };
+}
+
+export function normalizeMemoryRedactionPlanItemStatusPatch(
+  patch: MemoryRedactionPlanItemStatusPatch,
+): MemoryRedactionPlanItemStatusPatch {
+  if (!MEMORY_REDACTION_ITEM_STATUSES.includes(patch.status)) {
+    throw new Error('memory redaction item status must be one of: planned, applied, unsupported');
+  }
+  if (
+    patch.expected_current_status !== undefined
+    && !MEMORY_REDACTION_ITEM_STATUSES.includes(patch.expected_current_status)
+  ) {
+    throw new Error('memory redaction item expected_current_status must be one of: planned, applied, unsupported');
+  }
+  return {
+    status: patch.status,
+    ...(patch.expected_current_status !== undefined
+      ? { expected_current_status: patch.expected_current_status }
+      : {}),
+    ...(patch.before_hash !== undefined
+      ? { before_hash: normalizeNullableMemoryRedactionString('before_hash', patch.before_hash) }
+      : {}),
+    ...(patch.after_hash !== undefined
+      ? { after_hash: normalizeNullableMemoryRedactionString('after_hash', patch.after_hash) }
+      : {}),
+    ...(patch.updated_at !== undefined
+      ? { updated_at: normalizeNullableMemoryRedactionTimestamp('updated_at', patch.updated_at) }
+      : {}),
   };
 }
 
@@ -581,6 +738,46 @@ function normalizeMemorySessionAttachmentInstructions(value: unknown): string {
     throw new Error('memory session attachment instructions must be a string');
   }
   return value;
+}
+
+function normalizeRequiredMemoryRedactionString(field: string, value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`memory redaction ${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function normalizeMemoryRedactionText(field: string, value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error(`memory redaction ${field} must be a string`);
+  }
+  return value;
+}
+
+function normalizeNullableMemoryRedactionString(field: string, value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return normalizeRequiredMemoryRedactionString(field, value);
+}
+
+function normalizeNullableMemoryRedactionTimestamp(
+  field: string,
+  value: Date | string | null,
+): Date | null {
+  if (value === null) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new Error(`memory redaction ${field} must be a valid timestamp`);
+    }
+    return value;
+  }
+  if (typeof value !== 'string') {
+    throw new Error(`memory redaction ${field} must be a valid timestamp`);
+  }
+  const parsed = parseValidIsoTimestamp(value);
+  if (!parsed) {
+    throw new Error(`memory redaction ${field} must be a valid timestamp`);
+  }
+  return parsed;
 }
 
 const ISO_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;

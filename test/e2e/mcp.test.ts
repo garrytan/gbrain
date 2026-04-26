@@ -55,6 +55,8 @@ describe('E2E: MCP Tool Generation', () => {
     expect(names).toContain('upsert_memory_realm');
     expect(names).toContain('get_memory_session');
     expect(names).toContain('list_memory_sessions');
+    expect(names).toContain('create_memory_redaction_plan');
+    expect(names).toContain('apply_memory_redaction_plan');
     const recordMutationEvent = tools.find((tool) => tool.name === 'record_memory_mutation_event');
     expect((recordMutationEvent?.inputSchema.properties as any).privileged.type).toBe('boolean');
     expect(recordMutationEvent?.inputSchema.required).toContain('privileged');
@@ -95,6 +97,11 @@ describe('E2E: MCP Tool Generation', () => {
     const listMemoryCandidates = tools.find((tool) => tool.name === 'list_memory_candidate_entries');
     expect((listMemoryCandidates?.inputSchema.properties as any).patch_operation_state.enum).toContain('approved_for_apply');
     expect((listMemoryCandidates?.inputSchema.properties as any).patch_target_kind.enum).toContain('page');
+    const createRedactionPlan = tools.find((tool) => tool.name === 'create_memory_redaction_plan');
+    expect(createRedactionPlan?.inputSchema.required).toContain('scope_id');
+    expect(createRedactionPlan?.inputSchema.required).toContain('query');
+    const applyRedactionPlan = tools.find((tool) => tool.name === 'apply_memory_redaction_plan');
+    expect((applyRedactionPlan?.inputSchema.properties as any).actor.type).toBe('string');
   });
 
   test('MCP server module can be imported', async () => {

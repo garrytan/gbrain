@@ -937,6 +937,104 @@ export interface MemorySessionAttachmentFilters {
   offset?: number;
 }
 
+export type MemoryRedactionPlanStatus = 'draft' | 'approved' | 'applied' | 'rejected';
+
+export type MemoryRedactionTargetObjectType =
+  | 'page'
+  | 'page_version'
+  | 'profile_memory'
+  | 'personal_episode'
+  | 'memory_candidate'
+  | 'retrieval_trace';
+
+export type MemoryRedactionPlanItemStatus = 'planned' | 'applied' | 'unsupported';
+
+export interface MemoryRedactionPlan {
+  id: string;
+  scope_id: string;
+  query: string;
+  replacement_text: string;
+  status: MemoryRedactionPlanStatus;
+  requested_by: string | null;
+  review_reason: string | null;
+  created_at: Date;
+  reviewed_at: Date | null;
+  applied_at: Date | null;
+}
+
+export interface MemoryRedactionPlanInput {
+  id: string;
+  scope_id: string;
+  query: string;
+  replacement_text?: string;
+  status?: MemoryRedactionPlanStatus;
+  requested_by?: string | null;
+  review_reason?: string | null;
+  created_at?: Date | string | null;
+  reviewed_at?: Date | string | null;
+  applied_at?: Date | string | null;
+}
+
+export interface MemoryRedactionPlanFilters {
+  scope_id?: string;
+  status?: MemoryRedactionPlanStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MemoryRedactionPlanStatusPatch {
+  status: MemoryRedactionPlanStatus;
+  expected_current_status?: MemoryRedactionPlanStatus;
+  review_reason?: string | null;
+  reviewed_at?: Date | string | null;
+  applied_at?: Date | string | null;
+}
+
+export interface MemoryRedactionPlanItem {
+  id: string;
+  plan_id: string;
+  target_object_type: MemoryRedactionTargetObjectType;
+  target_object_id: string;
+  field_path: string;
+  before_hash: string | null;
+  after_hash: string | null;
+  status: MemoryRedactionPlanItemStatus;
+  preview_text: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface MemoryRedactionPlanItemInput {
+  id: string;
+  plan_id: string;
+  target_object_type: MemoryRedactionTargetObjectType;
+  target_object_id: string;
+  field_path: string;
+  before_hash?: string | null;
+  after_hash?: string | null;
+  status?: MemoryRedactionPlanItemStatus;
+  preview_text?: string;
+  created_at?: Date | string | null;
+  updated_at?: Date | string | null;
+}
+
+export interface MemoryRedactionPlanItemFilters {
+  plan_id?: string;
+  status?: MemoryRedactionPlanItemStatus;
+  target_object_type?: MemoryRedactionTargetObjectType;
+  target_object_id?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MemoryRedactionPlanItemStatusPatch {
+  status: MemoryRedactionPlanItemStatus;
+  expected_current_status?: MemoryRedactionPlanItemStatus;
+  before_hash?: string | null;
+  after_hash?: string | null;
+  updated_at?: Date | string | null;
+}
+
 export type MemoryCandidateType =
   | 'fact'
   | 'relationship'

@@ -374,6 +374,47 @@ CREATE INDEX IF NOT EXISTS idx_memory_session_attachments_realm
   ON memory_session_attachments(realm_id, attached_at DESC);
 
 -- ============================================================
+-- memory_redaction_plans: governed redaction lifecycle
+-- ============================================================
+CREATE TABLE IF NOT EXISTS memory_redaction_plans (
+  id TEXT PRIMARY KEY,
+  scope_id TEXT NOT NULL,
+  query TEXT NOT NULL,
+  replacement_text TEXT NOT NULL DEFAULT '[REDACTED]',
+  status TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'applied', 'rejected')),
+  requested_by TEXT,
+  review_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reviewed_at TIMESTAMPTZ,
+  applied_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_redaction_plans_scope_status
+  ON memory_redaction_plans(scope_id, status, created_at DESC);
+
+-- ============================================================
+-- memory_redaction_plan_items: concrete redaction targets
+-- ============================================================
+CREATE TABLE IF NOT EXISTS memory_redaction_plan_items (
+  id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL REFERENCES memory_redaction_plans(id) ON DELETE CASCADE,
+  target_object_type TEXT NOT NULL,
+  target_object_id TEXT NOT NULL,
+  field_path TEXT NOT NULL,
+  before_hash TEXT,
+  after_hash TEXT,
+  status TEXT NOT NULL CHECK (status IN ('planned', 'applied', 'unsupported')),
+  preview_text TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_redaction_items_plan
+  ON memory_redaction_plan_items(plan_id, status);
+CREATE INDEX IF NOT EXISTS idx_memory_redaction_items_target
+  ON memory_redaction_plan_items(target_object_type, target_object_id);
+
+-- ============================================================
 -- config: brain-level settings
 -- ============================================================
 CREATE TABLE IF NOT EXISTS config (
