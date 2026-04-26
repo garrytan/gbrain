@@ -76,9 +76,36 @@ export class PostgresEngine implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
+      // Existing-brain bootstrap order: SCHEMA_SQL targets the latest schema
+      // and contains CREATE INDEX statements that reference columns added by
+      // intermediate migrations (e.g. idx_pages_source_id on pages.source_id,
+      // added in v21). Running SCHEMA_SQL first against an older brain fails
+      // on those indexes with `column "source_id" does not exist`. To make
+      // multi-version upgrades succeed, run migrations FIRST when an existing
+      // brain is detected — best-effort, since later migrations (e.g. the
+      // RLS-backfill) reference tables created by SCHEMA_SQL itself. The
+      // unconditional second runMigrations() pass below mops those up after
+      // SCHEMA_SQL has run.
+      let existingVersion: number | null = null;
+      try {
+        const result = await conn`SELECT value FROM config WHERE key='version'` as Array<{ value: string }>;
+        if (result.length > 0) {
+          existingVersion = parseInt(result[0].value, 10);
+        }
+      } catch {
+        // config table doesn't exist → fresh install, fall through to SCHEMA_SQL first
+      }
+
+      if (existingVersion !== null && existingVersion > 0) {
+        try {
+          await runMigrations(this);
+        } catch (e) {
+          console.log(`  (pre-schema migrations partial: ${e instanceof Error ? e.message : e})`);
+        }
+      }
+
       await conn.unsafe(SCHEMA_SQL);
 
-      // Run any pending migrations automatically
       const { applied } = await runMigrations(this);
       if (applied > 0) {
         console.log(`  ${applied} migration(s) applied`);

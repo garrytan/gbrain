@@ -2,6 +2,45 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.21.1] - 2026-04-25
+
+## **Existing brains can upgrade across multiple schema versions in one shot.**
+## **`gbrain init --migrate-only` no longer wedges on `column "source_id" does not exist`.**
+
+If you've been pinned to an older gbrain and tried to upgrade, you may have hit this: the embedded schema (`SCHEMA_SQL`) targets the latest version and contains `CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id)`. That column doesn't exist on a v4-era brain. Migration v21 (`pages_source_id_composite_unique`) is what adds it. But `initSchema()` ran SCHEMA_SQL FIRST, then migrations, so the index creation aborted before v21 ever ran. Your `gbrain doctor` showed `MINIONS HALF-INSTALLED (partial migration: 0.11.0)` and re-running `gbrain apply-migrations --yes` looped on the same error.
+
+The fix: when `config.version > 0`, `initSchema()` now runs migrations BEFORE SCHEMA_SQL on a best-effort basis, so column-dependent indexes succeed. Then SCHEMA_SQL runs as the latest-state enforcer, then a second migrations pass mops up any migrations that depend on tables created by SCHEMA_SQL itself (the v24 RLS-backfill needs `subagent_messages`, etc.). Fresh installs are unchanged: SCHEMA_SQL first, migrations second, no `config.version` row to detect.
+
+### What this means
+
+Existing brains stuck on v4 - v20 can now run `gbrain apply-migrations --yes` and reach v24 (or v29 on v0.21.0+) in one invocation. No manual SQL, no rollback to a hand-curated checkpoint, no abandoning the brain and starting over.
+
+## To take advantage of v0.21.1
+
+If `gbrain doctor` shows `MINIONS HALF-INSTALLED` or `schema_version: Version 4` (or any pre-v21 version):
+
+1. **Upgrade gbrain to v0.21.1+** (`gbrain upgrade` or `bun install -g gbrain` per the README).
+2. **Run the orchestrator:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+3. **Verify:**
+   ```bash
+   gbrain doctor
+   ```
+   Look for `schema_version: Version <latest>` and no `minions_migration` warning.
+4. **If anything still fails,** file an issue: https://github.com/garrytan/gbrain/issues with `gbrain doctor` output and any errors.
+
+### Itemized changes
+
+#### Fixed
+
+- `PostgresEngine.initSchema()` now detects existing brains via `config.version` and runs migrations before `SCHEMA_SQL` so column-dependent index creation succeeds. Fixes `column "source_id" does not exist` failures during multi-version upgrades from pre-v21 schemas.
+
+#### Tests
+
+- New `test/e2e/initschema-bootstrap.test.ts` rolls a real Postgres back to a v4-era schema (drops `pages.source_id`, `files.source_id`, `files.page_id`, the `sources` table, the `file_migration_ledger` table, restores the pre-v21 `pages_slug_key`), then asserts that `initSchema()` recovers to `LATEST_VERSION` and that `pages.source_id` and `sources('default')` exist post-recovery. Also asserts idempotency on re-run.
+
 ## [0.21.0] - 2026-04-25
 
 ## **Your brain walks the code graph now.**
