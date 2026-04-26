@@ -437,6 +437,93 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     } catch {
       checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS status' });
     }
+
+    // 5b. RLS policy coverage — drift guard for the BYPASSRLS gate.
+    //
+    // The schema enables RLS on every public table inside a `DO $$` block
+    // gated on the runtime role having BYPASSRLS, then ships ZERO
+    // CREATE POLICY statements (src/schema.sql:530-567). The intent is
+    // deny-by-default: any non-bypass role sees zero rows, postgres role
+    // sees everything via the bypass.
+    //
+    // That holds today, but it depends entirely on the connecting role
+    // keeping its BYPASSRLS attribute. If an operator runs
+    // `ALTER ROLE postgres NOBYPASSRLS;` on a managed Supabase project,
+    // a future Supabase setup change reassigns the gbrain owner role, or
+    // a migration adds a new app role for a web frontend, every
+    // RLS-enabled table without a policy goes invisible to that role —
+    // legit reads return empty, writes return zero rows affected, and
+    // doctor would otherwise report `rls: ok` because the tables ARE
+    // enabled.
+    //
+    // This check makes the assumption testable at runtime: it cross-
+    // references RLS-enabled tables against pg_policies + the current
+    // role's rolbypassrls and surfaces the failure mode loudly.
+    progress.heartbeat('rls_policies');
+    try {
+      const sql = db.getConnection();
+      const stateRows = (await sql`
+        SELECT
+          (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS has_bypass,
+          ARRAY(
+            SELECT t.tablename
+              FROM pg_tables t
+             WHERE t.schemaname = 'public'
+               AND t.rowsecurity
+               AND NOT EXISTS (
+                 SELECT 1 FROM pg_policies p
+                  WHERE p.schemaname = 'public' AND p.tablename = t.tablename
+               )
+             ORDER BY t.tablename
+          ) AS policyless_tables
+      `) as Array<{ has_bypass: boolean | null; policyless_tables: string[] }>;
+      const state = stateRows[0];
+      const hasBypass = state?.has_bypass === true;
+      const policyless = state?.policyless_tables ?? [];
+
+      if (policyless.length === 0) {
+        checks.push({
+          name: 'rls_policies',
+          status: 'ok',
+          message: hasBypass
+            ? 'Every RLS-enabled table has a policy or is reachable via BYPASSRLS.'
+            : 'Every RLS-enabled table has at least one policy.',
+        });
+      } else if (hasBypass) {
+        // Healthy state: bypass role is the gate, every other role is
+        // denied by absence of policies. Surface as ok with a hint so
+        // an operator who is about to flip BYPASSRLS off knows what
+        // breaks.
+        checks.push({
+          name: 'rls_policies',
+          status: 'ok',
+          message:
+            `Deny-by-default for ${policyless.length} RLS-enabled table(s) (current role "${'$user' /* placeholder for log */}" has BYPASSRLS so reads still work). ` +
+            `If you ever drop BYPASSRLS or add a non-bypass role for app traffic, those tables go invisible until you write CREATE POLICY for that role. ` +
+            `Tables: ${policyless.join(', ')}.`,
+        });
+      } else {
+        // Drift: tables are RLS-enabled, no policies, AND the current
+        // role can't bypass. This means data is invisible to the
+        // current connection. That's almost certainly the operator's
+        // bug, not gbrain's intent.
+        const remediation = policyless
+          .map(n => `CREATE POLICY "gbrain_bypass_${n.replace(/[^a-z0-9_]/gi, '_')}" ON "public"."${n.replace(/"/g, '""')}" USING (true);`)
+          .join(' ');
+        checks.push({
+          name: 'rls_policies',
+          status: 'fail',
+          message:
+            `${policyless.length} RLS-enabled table(s) have no policy AND the current role does not have BYPASSRLS. ` +
+            `Reads against these tables return zero rows. ` +
+            `Tables: ${policyless.join(', ')}. ` +
+            `Either grant BYPASSRLS to the connecting role, or write at least one CREATE POLICY per table. ` +
+            `Open-by-default escape hatch (use only if you understand the exposure): ${remediation}`,
+        });
+      }
+    } catch {
+      checks.push({ name: 'rls_policies', status: 'warn', message: 'Could not check RLS policy coverage' });
+    }
   }
 
   // 6. Schema version — also surfaces the #218 "postinstall silently failed"
