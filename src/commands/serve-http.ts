@@ -12,6 +12,7 @@
 
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash } from 'crypto';
@@ -32,10 +33,18 @@ interface ServeHttpOptions {
   port: number;
   tokenTtl: number;
   enableDcr: boolean;
+  /**
+   * Public URL the server is reachable at (e.g., https://brain.example.com).
+   * Used as the OAuth issuer in discovery metadata. Defaults to
+   * http://localhost:{port} when unset. Required for production deployments
+   * behind reverse proxies, ngrok tunnels, or any non-loopback URL — the
+   * issuer claim in tokens MUST match the discovery URL clients hit.
+   */
+  publicUrl?: string;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr } = options;
+  const { port, tokenTtl, enableDcr, publicUrl } = options;
   const config = loadConfig() || { engine: 'pglite' as const };
 
   // Get raw SQL connection for OAuth provider
@@ -73,6 +82,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Express 5 app
   const app = express();
+
+  // ---------------------------------------------------------------------------
+  // Cookie parsing — required for /admin auth (express 5 has no built-in)
+  // ---------------------------------------------------------------------------
+  app.use(cookieParser());
 
   // ---------------------------------------------------------------------------
   // CORS
@@ -118,7 +132,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // MCP SDK Auth Router (OAuth endpoints)
   // ---------------------------------------------------------------------------
-  const issuerUrl = new URL(`http://localhost:${port}`);
+  // The issuer URL goes into discovery metadata + token iss claims. It MUST
+  // match the URL clients actually hit, or strict OAuth clients reject tokens
+  // (RFC 8414 §3.3). Honor --public-url for production deployments behind
+  // reverse proxies / tunnels; default to localhost for dev.
+  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
 
   const authRouterOptions: any = {
     provider: oauthProvider,
@@ -445,6 +463,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ╠══════════════════════════════════════════════════════╣
 ║  Port:      ${String(port).padEnd(40)}║
 ║  Engine:    ${(config.engine || 'pglite').padEnd(40)}║
+║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
 ║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║
 ║  DCR:       ${(enableDcr ? 'enabled' : 'disabled').padEnd(40)}║
 ║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║

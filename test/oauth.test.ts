@@ -307,6 +307,37 @@ describe('authorization code flow', () => {
     const client = (await provider.clientsStore.getClient(firstClient.client_id as string))!;
     await expect(provider.exchangeAuthorizationCode(client, expiredCode)).rejects.toThrow();
   });
+
+  // CSO finding #2 regression. The pre-fix SELECT-then-DELETE pattern let two
+  // concurrent token requests with the same code both pass the SELECT, both
+  // running DELETE (no-op on second) and both calling issueTokens. The fix is
+  // DELETE...RETURNING in one statement; this test fires N=10 concurrent
+  // exchanges and asserts exactly one succeeds.
+  test('concurrent exchange requests: only one succeeds (TOCTOU race)', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'toctou-code-test', ['authorization_code'], 'read',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read'],
+    }, mockRes);
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+
+    const N = 10;
+    const results = await Promise.allSettled(
+      Array.from({ length: N }, () => provider.exchangeAuthorizationCode(client, code)),
+    );
+    const successes = results.filter(r => r.status === 'fulfilled');
+    const failures = results.filter(r => r.status === 'rejected');
+    expect(successes.length).toBe(1);
+    expect(failures.length).toBe(N - 1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -341,6 +372,34 @@ describe('refresh token', () => {
 
     // Old refresh token should no longer work
     await expect(provider.exchangeRefreshToken(client, tokens.refresh_token!)).rejects.toThrow();
+  });
+
+  // CSO finding #3 regression. Same TOCTOU pattern as auth code; the fix is
+  // DELETE...RETURNING. Detection of stolen refresh tokens (RFC 6749 §10.4)
+  // depends on second-use failure, so two concurrent succeed = no detection.
+  test('concurrent refresh requests: only one succeeds (TOCTOU race)', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'toctou-refresh-test', ['authorization_code'], 'read',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read'],
+    }, mockRes);
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+
+    const N = 10;
+    const results = await Promise.allSettled(
+      Array.from({ length: N }, () => provider.exchangeRefreshToken(client, tokens.refresh_token!)),
+    );
+    const successes = results.filter(r => r.status === 'fulfilled');
+    expect(successes.length).toBe(1);
   });
 });
 
@@ -400,5 +459,78 @@ describe('operation scope annotations', () => {
     const { operationsByName } = require('../src/core/operations.ts');
     expect(operationsByName.file_list.localOnly).toBe(true);
     expect(operationsByName.file_url.localOnly).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CSO finding #5 — pgArray escape + DCR redirect_uri validation
+// ---------------------------------------------------------------------------
+
+describe('redirect_uri validation (DCR)', () => {
+  test('http://localhost is allowed (loopback exception)', async () => {
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'localhost-ok',
+      redirect_uris: ['http://localhost:3000/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'client_secret_post',
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+  });
+
+  test('https:// is allowed', async () => {
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'https-ok',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'client_secret_post',
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+  });
+
+  test('plaintext http:// (non-loopback) is rejected', async () => {
+    await expect(
+      provider.clientsStore.registerClient!({
+        client_name: 'http-rejected',
+        redirect_uris: ['http://example.com/callback'],
+        grant_types: ['authorization_code'],
+        scope: 'read',
+        token_endpoint_auth_method: 'client_secret_post',
+      }),
+    ).rejects.toThrow(/https/);
+  });
+
+  test('non-URL string is rejected', async () => {
+    await expect(
+      provider.clientsStore.registerClient!({
+        client_name: 'garbage',
+        redirect_uris: ['not-a-url'],
+        grant_types: ['authorization_code'],
+        scope: 'read',
+        token_endpoint_auth_method: 'client_secret_post',
+      }),
+    ).rejects.toThrow();
+  });
+
+  // pgArray escape regression: an element containing a comma must be stored
+  // as ONE element, not parsed by Postgres as TWO. Without the fix, the
+  // comma would smuggle a second redirect_uri into the registered list.
+  test('redirect_uri with embedded comma stored as single element', async () => {
+    // Use a localhost URI with comma in the path so it passes HTTPS validation.
+    const trickyUri = 'http://localhost:3000/cb,evil';
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'comma-test',
+      redirect_uris: [trickyUri],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'client_secret_post',
+    });
+
+    // Read back from the DB and confirm exactly one element.
+    const stored = await provider.clientsStore.getClient(result.client_id);
+    expect(stored).toBeDefined();
+    expect(stored!.redirect_uris).toHaveLength(1);
+    expect(stored!.redirect_uris[0]).toBe(trickyUri);
   });
 });

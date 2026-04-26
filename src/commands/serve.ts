@@ -13,8 +13,11 @@ export async function runServe(engine: BrainEngine, args: string[] = []) {
 
     const enableDcr = args.includes('--enable-dcr');
 
+    const publicUrlIdx = args.indexOf('--public-url');
+    const publicUrl = publicUrlIdx >= 0 ? args[publicUrlIdx + 1] : undefined;
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl });
   } else {
     console.error('Starting GBrain MCP server (stdio)...');
     await startMcpServer(engine);

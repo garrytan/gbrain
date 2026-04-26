@@ -31,10 +31,50 @@ import { hashToken, generateToken } from './utils.ts';
 /** Raw SQL query function — works with both PGLite and postgres tagged templates */
 type SqlQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
 
-/** Convert a JS array to PostgreSQL array literal for PGLite compat */
+/**
+ * Convert a JS array to a PostgreSQL array literal for PGLite compat.
+ *
+ * PGLite's `db.query(sql, params)` rejects JS arrays bound directly to TEXT[]
+ * columns ("insufficient data left in message"), so we hand-build the array
+ * literal `{...}` and let Postgres parse it on insert.
+ *
+ * SECURITY: every element is wrapped in double quotes with `"` and `\`
+ * escaped. Without this, an element containing a comma (e.g., a malicious
+ * `redirect_uri` containing `,`) would be parsed by Postgres as MULTIPLE
+ * array elements, smuggling values past validation. See CSO finding #5.
+ */
 function pgArray(arr: string[]): string {
   if (!arr || arr.length === 0) return '{}';
-  return `{${arr.join(',')}}`;
+  const escaped = arr.map(s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+  return `{${escaped.join(',')}}`;
+}
+
+/**
+ * Validate a redirect_uri per RFC 6749 §3.1.2.1.
+ *
+ * Production redirect_uris MUST be HTTPS. The only allowed plaintext
+ * exceptions are loopback (127.0.0.1, ::1, localhost) which are unreachable
+ * from the network. Throws a descriptive error on rejection.
+ *
+ * Used by the DCR (Dynamic Client Registration) path; the CLI registration
+ * path trusts the operator and bypasses this gate.
+ */
+function validateRedirectUri(uri: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    throw new Error(`Invalid redirect_uri: not a parseable URL: ${uri}`);
+  }
+  const isLoopback = parsed.hostname === 'localhost'
+    || parsed.hostname === '127.0.0.1'
+    || parsed.hostname === '[::1]'
+    || parsed.hostname === '::1';
+  if (parsed.protocol === 'https:') return;
+  if (parsed.protocol === 'http:' && isLoopback) return;
+  throw new Error(
+    `redirect_uri must use https:// (or http://localhost for loopback): ${uri}`,
+  );
 }
 
 interface GBrainOAuthProviderOptions {
@@ -77,6 +117,14 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
   async registerClient(
     client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
   ): Promise<OAuthClientInformationFull> {
+    // Enforce HTTPS for all redirect_uris on the DCR path (RFC 6749 §3.1.2.1).
+    // Without this, an attacker could register a non-loopback http:// URI and
+    // exfiltrate auth codes over plaintext. CLI registrations bypass this gate
+    // (operators are trusted; they can register http:// for testing).
+    for (const uri of client.redirect_uris || []) {
+      validateRedirectUri(String(uri));
+    }
+
     const clientId = generateToken('gbrain_cl_');
     const clientSecret = generateToken('gbrain_cs_');
     const secretHash = hashToken(clientSecret);
@@ -176,18 +224,21 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const codeHash = hashToken(authorizationCode);
     const now = Math.floor(Date.now() / 1000);
 
-    // Fetch and delete the code (single-use)
+    // Atomic single-use: DELETE...RETURNING in one statement closes the
+    // TOCTOU window. RFC 6749 §10.5 requires auth codes be single-use; the
+    // earlier SELECT-then-DELETE pattern let two concurrent token requests
+    // both pass the SELECT before either ran the DELETE, issuing two valid
+    // token pairs from one code. With RETURNING, the second request gets
+    // zero rows back and fails cleanly. See CSO finding #2.
     const rows = await this.sql`
-      SELECT client_id, scopes, resource FROM oauth_codes
+      DELETE FROM oauth_codes
       WHERE code_hash = ${codeHash} AND expires_at > ${now}
+      RETURNING client_id, scopes, resource
     `;
     if (rows.length === 0) throw new Error('Authorization code not found or expired');
 
     const codeRow = rows[0];
     if (codeRow.client_id !== client.client_id) throw new Error('Client mismatch');
-
-    // Delete the used code
-    await this.sql`DELETE FROM oauth_codes WHERE code_hash = ${codeHash}`;
 
     // Issue tokens
     const scopes = (codeRow.scopes as string[]) || [];
@@ -207,18 +258,20 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const tokenHash = hashToken(refreshToken);
     const now = Math.floor(Date.now() / 1000);
 
+    // Atomic rotation: DELETE...RETURNING closes the TOCTOU window. RFC 6749
+    // §10.4 detection of stolen refresh tokens depends on second-use failure;
+    // the earlier SELECT-then-DELETE pattern let attacker + victim both
+    // succeed, defeating that signal. See CSO finding #3.
     const rows = await this.sql`
-      SELECT client_id, scopes, expires_at FROM oauth_tokens
+      DELETE FROM oauth_tokens
       WHERE token_hash = ${tokenHash} AND token_type = 'refresh'
+      RETURNING client_id, scopes, expires_at
     `;
     if (rows.length === 0) throw new Error('Refresh token not found');
 
     const row = rows[0];
     if (row.client_id !== client.client_id) throw new Error('Client mismatch');
     if ((row.expires_at as number) < now) throw new Error('Refresh token expired');
-
-    // Rotate: delete old refresh token
-    await this.sql`DELETE FROM oauth_tokens WHERE token_hash = ${tokenHash}`;
 
     const tokenScopes = scopes || (row.scopes as string[]) || [];
     return this.issueTokens(client.client_id, tokenScopes, resource, true);

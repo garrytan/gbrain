@@ -100,7 +100,7 @@ for host repos that wrap the server.
 - **OAuth 2.1 via the MCP SDK** — client credentials (machine-to-machine: Perplexity, Claude), authorization code + PKCE (browser-based: ChatGPT), refresh token rotation, revocation, protected resource metadata. Optional Dynamic Client Registration behind `--enable-dcr`.
 - **Scoped operations** — 30 operations tagged `read | write | admin`. `sync_brain` and `file_upload` are `localOnly`, rejected over HTTP.
 - **React admin dashboard** — 7 screens baked into the binary (~65KB gzip). Live SSE activity feed, agents table, credential reveal, filterable request log, per-client config export.
-- **Legacy bearer tokens still work** — pre-v0.22 `gbrain auth create` tokens continue to authenticate as `read+write+admin`.
+- **Legacy bearer tokens still work** — pre-v0.26 `gbrain auth create` tokens continue to authenticate as `read+write+admin`.
 
 Per-client guides: [`docs/mcp/`](docs/mcp/DEPLOY.md).
 

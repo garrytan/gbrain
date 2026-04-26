@@ -1,7 +1,7 @@
 # Deploy GBrain Remote MCP Server
 
 Access your brain from any device, any AI client. GBrain ships two transports:
-`gbrain serve` (stdio) for local agents, and `gbrain serve --http` (v0.22.0) for
+`gbrain serve` (stdio) for local agents, and `gbrain serve --http` (v0.26.0) for
 remote clients over OAuth 2.1.
 
 ## Three Paths
@@ -15,7 +15,7 @@ gbrain serve
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
 No server, no tunnel, no token needed.
 
-### Remote over OAuth 2.1 (recommended, v0.22.0+)
+### Remote over OAuth 2.1 (recommended, v0.26.0+)
 
 ```bash
 gbrain serve --http --port 3131
@@ -35,7 +35,7 @@ Supported clients:
 
 See the [OAuth 2.1 setup](#oauth-21-setup-v100) section below.
 
-### Remote with legacy bearer tokens (pre-v0.22 deployments)
+### Remote with legacy bearer tokens (pre-v0.26 deployments)
 
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
@@ -52,7 +52,7 @@ This requires:
 Pre-v1.0 tokens are grandfathered as `read+write+admin` scopes when you upgrade
 to the HTTP server, so no migration is required.
 
-## OAuth 2.1 Setup (v0.22.0+)
+## OAuth 2.1 Setup (v0.26.0+)
 
 ### 1. Start the HTTP server
 
@@ -135,7 +135,7 @@ filesystem surface area.
 
 ## Legacy Bearer Token Setup
 
-Keep using pre-v0.22 bearer tokens if you aren't ready to migrate. They
+Keep using pre-v0.26 bearer tokens if you aren't ready to migrate. They
 grandfather to `read+write+admin` scopes on the HTTP server.
 
 ### 1. Set up the tunnel
@@ -224,7 +224,7 @@ Remote servers must be added via Settings > Integrations, NOT
 | put_page | 100-500ms | Write + trigger search_vector update |
 | get_stats | < 100ms | Aggregate query |
 
-**Note:** `gbrain serve --http` shipped in v0.22.0 with OAuth 2.1 + admin
+**Note:** `gbrain serve --http` shipped in v0.26.0 with OAuth 2.1 + admin
 dashboard baked into the binary. The custom HTTP wrapper pattern (see
 [voice recipe](../../recipes/twilio-voice-brain.md)) is still supported for
 teams that need bespoke middleware, but for most remote deployments the

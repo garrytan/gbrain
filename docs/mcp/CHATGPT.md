@@ -1,6 +1,6 @@
 # Connect GBrain to ChatGPT
 
-**Status (v0.22.0):** Unblocked. GBrain's `gbrain serve --http` ships OAuth 2.1
+**Status (v0.26.0):** Unblocked. GBrain's `gbrain serve --http` ships OAuth 2.1
 with PKCE, which is the ChatGPT MCP connector's hard requirement. Before v1.0,
 this was a P0 TODO — the only major AI client that could not connect.
 
