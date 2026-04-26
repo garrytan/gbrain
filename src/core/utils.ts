@@ -8,6 +8,8 @@ import type {
   ContextMapEntry,
   ContextAtlasEntry,
   MemoryCandidateEntry,
+  MemoryCandidateEntryInput,
+  MemoryPatchBody,
   MemoryCandidateContradictionEntry,
   MemoryMutationEvent,
   MemoryMutationEventInput,
@@ -262,9 +264,36 @@ export function rowToMemoryCandidateEntry(row: Record<string, unknown>): MemoryC
     target_object_id: (row.target_object_id as string | null) ?? null,
     reviewed_at: row.reviewed_at ? new Date(row.reviewed_at as string) : null,
     review_reason: (row.review_reason as string | null) ?? null,
+    patch_target_kind: (row.patch_target_kind as MemoryCandidateEntry['patch_target_kind'] | null) ?? null,
+    patch_target_id: (row.patch_target_id as string | null) ?? null,
+    patch_base_target_snapshot_hash: (row.patch_base_target_snapshot_hash as string | null) ?? null,
+    patch_body: parseNullableJsonValue(row.patch_body) as MemoryPatchBody | null,
+    patch_format: (row.patch_format as MemoryCandidateEntry['patch_format'] | null) ?? null,
+    patch_operation_state: (row.patch_operation_state as MemoryCandidateEntry['patch_operation_state'] | null) ?? null,
+    patch_risk_class: (row.patch_risk_class as MemoryCandidateEntry['patch_risk_class'] | null) ?? null,
+    patch_expected_resulting_target_snapshot_hash: (row.patch_expected_resulting_target_snapshot_hash as string | null) ?? null,
+    patch_provenance_summary: (row.patch_provenance_summary as string | null) ?? null,
+    patch_actor: (row.patch_actor as string | null) ?? null,
+    patch_originating_session_id: (row.patch_originating_session_id as string | null) ?? null,
+    patch_ledger_event_ids: parseJsonStringArray(row.patch_ledger_event_ids),
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
   };
+}
+
+export function hasMemoryCandidatePatchInput(input: MemoryCandidateEntryInput): boolean {
+  return input.patch_target_kind != null
+    || input.patch_target_id != null
+    || input.patch_base_target_snapshot_hash != null
+    || input.patch_body != null
+    || input.patch_format != null
+    || input.patch_operation_state != null
+    || input.patch_risk_class != null
+    || input.patch_expected_resulting_target_snapshot_hash != null
+    || input.patch_provenance_summary != null
+    || input.patch_actor != null
+    || input.patch_originating_session_id != null
+    || (input.patch_ledger_event_ids?.length ?? 0) > 0;
 }
 
 export function rowToMemoryCandidateStatusEvent(
@@ -756,6 +785,12 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
 function parseNullableJsonObject(value: unknown): Record<string, unknown> | null {
   if (value == null) return null;
   return parseJsonObject(value);
+}
+
+function parseNullableJsonValue(value: unknown): unknown | null {
+  if (value == null) return null;
+  if (typeof value === 'string') return JSON.parse(value) as unknown;
+  return value;
 }
 
 function parseJsonStringArray(value: unknown): string[] {

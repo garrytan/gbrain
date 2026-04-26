@@ -1,12 +1,13 @@
 import type { Operation, ParamDef } from '../core/operations.ts';
 
 export function paramToMcpSchema(param: ParamDef): Record<string, unknown> {
-  const baseType = param.type === 'array' ? 'array' : param.type;
+  const types = Array.isArray(param.type) ? param.type : [param.type];
+  const schemaTypes = param.nullable ? [...types, 'null'] : types;
   return {
-    type: param.nullable ? [baseType, 'null'] : baseType,
+    type: schemaTypes.length === 1 ? schemaTypes[0] : schemaTypes,
     ...(param.description ? { description: param.description } : {}),
     ...(param.enum ? { enum: param.enum } : {}),
-    ...(param.items ? { items: { type: param.items.type } } : {}),
+    ...(param.items ? { items: paramToMcpSchema(param.items) } : {}),
   };
 }
 

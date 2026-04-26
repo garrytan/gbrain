@@ -353,7 +353,7 @@ function personalEpisodePayload(entry: PersonalEpisodeEntry): Record<string, unk
 }
 
 function memoryCandidatePayload(entry: MemoryCandidateEntry): Record<string, unknown> {
-  return {
+  const payload: Record<string, unknown> = {
     id: entry.id,
     scope_id: entry.scope_id,
     candidate_type: entry.candidate_type,
@@ -371,6 +371,41 @@ function memoryCandidatePayload(entry: MemoryCandidateEntry): Record<string, unk
     reviewed_at: entry.reviewed_at,
     review_reason: entry.review_reason,
   };
+
+  if (!memoryCandidateHasPatchFields(entry)) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    patch_target_kind: entry.patch_target_kind,
+    patch_target_id: entry.patch_target_id,
+    patch_base_target_snapshot_hash: entry.patch_base_target_snapshot_hash,
+    patch_body: entry.patch_body,
+    patch_format: entry.patch_format,
+    patch_operation_state: entry.patch_operation_state,
+    patch_risk_class: entry.patch_risk_class,
+    patch_expected_resulting_target_snapshot_hash: entry.patch_expected_resulting_target_snapshot_hash,
+    patch_provenance_summary: entry.patch_provenance_summary,
+    patch_actor: entry.patch_actor,
+    patch_originating_session_id: entry.patch_originating_session_id,
+    patch_ledger_event_ids: entry.patch_ledger_event_ids,
+  };
+}
+
+function memoryCandidateHasPatchFields(entry: MemoryCandidateEntry): boolean {
+  return entry.patch_target_kind != null
+    || entry.patch_target_id != null
+    || entry.patch_base_target_snapshot_hash != null
+    || entry.patch_body != null
+    || entry.patch_format != null
+    || entry.patch_operation_state != null
+    || entry.patch_risk_class != null
+    || entry.patch_expected_resulting_target_snapshot_hash != null
+    || entry.patch_provenance_summary != null
+    || entry.patch_actor != null
+    || entry.patch_originating_session_id != null
+    || (entry.patch_ledger_event_ids?.length ?? 0) > 0;
 }
 
 function taskThreadPayload(thread: TaskThread): Record<string, unknown> {

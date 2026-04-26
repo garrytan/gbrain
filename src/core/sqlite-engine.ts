@@ -91,6 +91,7 @@ import { buildFrontmatterSearchText, expandTechnicalAliases } from './markdown.t
 import {
   contentHash,
   applyMemoryRealmUpsertDefaults,
+  hasMemoryCandidatePatchInput,
   hasOwn,
   importContentHash,
   normalizeMemoryMutationEventInput,
@@ -1669,13 +1670,61 @@ export class SQLiteEngine implements BrainEngine {
   async createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry> {
     const initialStatus = assertMemoryCandidateCreateStatus(input.status);
     const timestamp = nowIso();
+    if (this.sqliteTableExists('memory_candidate_entries') && !this.sqliteMemoryCandidatePatchColumnsExist()) {
+      if (hasMemoryCandidatePatchInput(input)) {
+        throw new Error('Reviewable patch candidate fields require memory_patch_candidate_fields schema migration.');
+      }
+      this.database.run(`
+        INSERT INTO memory_candidate_entries (
+          id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+          extraction_kind, confidence_score, importance_score, recurrence_score,
+          sensitivity, status, target_object_type, target_object_id, reviewed_at,
+          review_reason, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        input.id,
+        input.scope_id,
+        input.candidate_type,
+        input.proposed_content,
+        JSON.stringify(input.source_refs ?? []),
+        input.generated_by,
+        input.extraction_kind,
+        input.confidence_score,
+        input.importance_score,
+        input.recurrence_score,
+        input.sensitivity,
+        initialStatus,
+        input.target_object_type ?? null,
+        input.target_object_id ?? null,
+        toNullableIso(input.reviewed_at),
+        input.review_reason ?? null,
+        timestamp,
+        timestamp,
+      ]);
+
+      const row = this.database.query(`
+        SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+               extraction_kind, confidence_score, importance_score, recurrence_score,
+               sensitivity, status, target_object_type, target_object_id, reviewed_at,
+               review_reason, created_at, updated_at
+        FROM memory_candidate_entries
+        WHERE id = ?
+      `).get(input.id) as Record<string, unknown> | null;
+      if (!row) throw new Error(`Memory candidate entry not found after create: ${input.id}`);
+      return rowToMemoryCandidateEntry(row);
+    }
+
     this.database.run(`
       INSERT INTO memory_candidate_entries (
         id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
         extraction_kind, confidence_score, importance_score, recurrence_score,
         sensitivity, status, target_object_type, target_object_id, reviewed_at,
-        review_reason, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+        patch_body, patch_format, patch_operation_state, patch_risk_class,
+        patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+        patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       input.id,
       input.scope_id,
@@ -1693,6 +1742,18 @@ export class SQLiteEngine implements BrainEngine {
       input.target_object_id ?? null,
       toNullableIso(input.reviewed_at),
       input.review_reason ?? null,
+      input.patch_target_kind ?? null,
+      input.patch_target_id ?? null,
+      input.patch_base_target_snapshot_hash ?? null,
+      input.patch_body == null ? null : JSON.stringify(input.patch_body),
+      input.patch_format ?? null,
+      input.patch_operation_state ?? null,
+      input.patch_risk_class ?? null,
+      input.patch_expected_resulting_target_snapshot_hash ?? null,
+      input.patch_provenance_summary ?? null,
+      input.patch_actor ?? null,
+      input.patch_originating_session_id ?? null,
+      JSON.stringify(input.patch_ledger_event_ids ?? []),
       timestamp,
       timestamp,
     ]);
@@ -1701,7 +1762,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
     `).get(input.id) as Record<string, unknown> | null;
@@ -1714,7 +1779,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
@@ -1747,6 +1816,18 @@ export class SQLiteEngine implements BrainEngine {
       clauses.push('target_object_id = ?');
       params.push(filters.target_object_id);
     }
+    if (filters?.patch_operation_state !== undefined) {
+      clauses.push('patch_operation_state = ?');
+      params.push(filters.patch_operation_state);
+    }
+    if (filters?.patch_target_kind !== undefined) {
+      clauses.push('patch_target_kind = ?');
+      params.push(filters.patch_target_kind);
+    }
+    if (filters?.patch_target_id !== undefined) {
+      clauses.push('patch_target_id = ?');
+      params.push(filters.patch_target_id);
+    }
     if (filters?.created_since !== undefined) {
       clauses.push('created_at >= ?');
       params.push(filters.created_since.toISOString());
@@ -1771,7 +1852,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       ${whereClause}
       ORDER BY updated_at DESC, id ASC
@@ -2317,7 +2402,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
@@ -2358,7 +2447,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
@@ -3630,6 +3723,9 @@ export class SQLiteEngine implements BrainEngine {
         case 32:
           this.repairMemorySessionExpiryContract();
           break;
+        case 33:
+          this.ensureMemoryPatchCandidateColumns();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -4867,6 +4963,12 @@ export class SQLiteEngine implements BrainEngine {
     return Boolean(row);
   }
 
+  private sqliteMemoryCandidatePatchColumnsExist(): boolean {
+    const columns = this.database.query(`PRAGMA table_info(memory_candidate_entries)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    return names.has('patch_target_kind') && names.has('patch_ledger_event_ids');
+  }
+
   private ensureMemoryCandidateIndexes(): void {
     this.database.exec(`
       CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_status
@@ -4876,6 +4978,48 @@ export class SQLiteEngine implements BrainEngine {
       CREATE INDEX IF NOT EXISTS idx_memory_candidates_target
         ON memory_candidate_entries(target_object_type, target_object_id);
     `);
+    const columns = this.database.query(`PRAGMA table_info(memory_candidate_entries)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (names.has('patch_operation_state') && names.has('patch_target_kind') && names.has('patch_target_id')) {
+      this.database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_state
+          ON memory_candidate_entries(patch_operation_state, updated_at DESC)
+          WHERE patch_operation_state IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_target
+          ON memory_candidate_entries(patch_target_kind, patch_target_id)
+          WHERE patch_target_kind IS NOT NULL;
+      `);
+    }
+  }
+
+  private ensureMemoryPatchCandidateColumns(): void {
+    if (!this.sqliteTableExists('memory_candidate_entries')) {
+      return;
+    }
+
+    const columns = this.database.query(`PRAGMA table_info(memory_candidate_entries)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    const additions = [
+      ['patch_target_kind', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_target_kind TEXT CHECK (patch_target_kind IS NULL OR patch_target_kind IN ('page', 'source_record', 'task_thread', 'working_set', 'task_event', 'task_episode', 'attempt', 'decision', 'procedure', 'memory_candidate', 'memory_patch_candidate', 'profile_memory', 'personal_episode', 'memory_realm', 'memory_session', 'memory_session_attachment', 'context_map', 'context_atlas', 'file_artifact', 'export_artifact', 'ledger_event'))`],
+      ['patch_target_id', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_target_id TEXT`],
+      ['patch_base_target_snapshot_hash', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_base_target_snapshot_hash TEXT`],
+      ['patch_body', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_body TEXT CHECK (patch_body IS NULL OR (json_valid(patch_body) AND json_type(patch_body) IN ('object', 'array')))`],
+      ['patch_format', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_format TEXT CHECK (patch_format IS NULL OR patch_format IN ('merge_patch', 'json_patch', 'unified_diff', 'whole_record', 'operation'))`],
+      ['patch_operation_state', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_operation_state TEXT CHECK (patch_operation_state IS NULL OR patch_operation_state IN ('proposed', 'dry_run_validated', 'approved_for_apply', 'apply_in_progress', 'applied', 'conflicted', 'failed'))`],
+      ['patch_risk_class', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_risk_class TEXT CHECK (patch_risk_class IS NULL OR patch_risk_class IN ('low', 'medium', 'high', 'critical', 'unknown'))`],
+      ['patch_expected_resulting_target_snapshot_hash', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_expected_resulting_target_snapshot_hash TEXT`],
+      ['patch_provenance_summary', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_provenance_summary TEXT`],
+      ['patch_actor', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_actor TEXT`],
+      ['patch_originating_session_id', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_originating_session_id TEXT`],
+      ['patch_ledger_event_ids', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_ledger_event_ids TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(patch_ledger_event_ids) AND json_type(patch_ledger_event_ids) = 'array')`],
+    ] as const;
+
+    for (const [column, sql] of additions) {
+      if (!names.has(column)) {
+        this.database.exec(`${sql};`);
+      }
+    }
+    this.ensureMemoryCandidateIndexes();
   }
 
   private ensureMemoryCandidateSupersessionSchema(): void {
@@ -5535,6 +5679,18 @@ function rowToMemoryCandidateEntry(row: Record<string, unknown>): MemoryCandidat
     target_object_id: row.target_object_id == null ? null : String(row.target_object_id),
     reviewed_at: row.reviewed_at == null ? null : new Date(String(row.reviewed_at)),
     review_reason: row.review_reason == null ? null : String(row.review_reason),
+    patch_target_kind: row.patch_target_kind == null ? null : row.patch_target_kind as MemoryCandidateEntry['patch_target_kind'],
+    patch_target_id: row.patch_target_id == null ? null : String(row.patch_target_id),
+    patch_base_target_snapshot_hash: row.patch_base_target_snapshot_hash == null ? null : String(row.patch_base_target_snapshot_hash),
+    patch_body: row.patch_body == null ? null : parseJsonValue(row.patch_body) as MemoryCandidateEntry['patch_body'],
+    patch_format: row.patch_format == null ? null : row.patch_format as MemoryCandidateEntry['patch_format'],
+    patch_operation_state: row.patch_operation_state == null ? null : row.patch_operation_state as MemoryCandidateEntry['patch_operation_state'],
+    patch_risk_class: row.patch_risk_class == null ? null : row.patch_risk_class as MemoryCandidateEntry['patch_risk_class'],
+    patch_expected_resulting_target_snapshot_hash: row.patch_expected_resulting_target_snapshot_hash == null ? null : String(row.patch_expected_resulting_target_snapshot_hash),
+    patch_provenance_summary: row.patch_provenance_summary == null ? null : String(row.patch_provenance_summary),
+    patch_actor: row.patch_actor == null ? null : String(row.patch_actor),
+    patch_originating_session_id: row.patch_originating_session_id == null ? null : String(row.patch_originating_session_id),
+    patch_ledger_event_ids: parseJsonArray(row.patch_ledger_event_ids),
     created_at: new Date(String(row.created_at)),
     updated_at: new Date(String(row.updated_at)),
   };
@@ -5724,6 +5880,13 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
     return JSON.parse(value) as Record<string, unknown>;
   }
   return {};
+}
+
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value === 'string' && value.length > 0) {
+    return JSON.parse(value) as unknown;
+  }
+  return value;
 }
 
 function parseJsonArray(value: unknown): string[] {

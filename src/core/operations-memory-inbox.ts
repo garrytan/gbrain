@@ -17,6 +17,12 @@ import { resolveMemoryCandidateContradiction } from './services/memory-inbox-con
 import { promoteMemoryCandidateEntry } from './services/memory-inbox-promotion-service.ts';
 import { supersedeMemoryCandidateEntry } from './services/memory-inbox-supersession-service.ts';
 import { runDreamCycleMaintenance } from './services/dream-cycle-maintenance-service.ts';
+import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
+import {
+  resolveTargetSnapshotHash,
+  UnsupportedTargetSnapshotKindError,
+} from './services/target-snapshot-hash-service.ts';
+import type { MemoryMutationTargetKind, MemoryPatchOperationState } from './types.ts';
 
 type OperationErrorCtor = new (
   code: 'memory_candidate_not_found' | 'invalid_params',
@@ -37,7 +43,69 @@ const MEMORY_CANDIDATE_SENSITIVITY_VALUES = ['public', 'work', 'personal', 'secr
 const MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES = ['curated_note', 'procedure', 'profile_memory', 'personal_episode', 'other'] as const;
 const CANONICAL_HANDOFF_TARGET_OBJECT_TYPE_VALUES = ['curated_note', 'procedure', 'profile_memory', 'personal_episode'] as const;
 const MEMORY_CANDIDATE_CONTRADICTION_OUTCOME_VALUES = ['rejected', 'unresolved', 'superseded'] as const;
+const MEMORY_MUTATION_TARGET_KIND_VALUES = [
+  'page',
+  'source_record',
+  'task_thread',
+  'working_set',
+  'task_event',
+  'task_episode',
+  'attempt',
+  'decision',
+  'procedure',
+  'memory_candidate',
+  'memory_patch_candidate',
+  'profile_memory',
+  'personal_episode',
+  'memory_realm',
+  'memory_session',
+  'memory_session_attachment',
+  'context_map',
+  'context_atlas',
+  'file_artifact',
+  'export_artifact',
+  'ledger_event',
+] as const satisfies readonly MemoryMutationTargetKind[];
+const MEMORY_PATCH_TARGET_KIND_VALUES = [
+  'page',
+  'task_thread',
+  'working_set',
+  'memory_candidate',
+  'profile_memory',
+  'personal_episode',
+  'memory_realm',
+  'memory_session',
+  'memory_session_attachment',
+  'context_map',
+  'context_atlas',
+] as const satisfies readonly MemoryMutationTargetKind[];
+const MEMORY_PATCH_FORMAT_VALUES = ['merge_patch', 'json_patch', 'unified_diff', 'whole_record', 'operation'] as const;
+const MEMORY_PATCH_OPERATION_STATE_VALUES = [
+  'proposed',
+  'dry_run_validated',
+  'approved_for_apply',
+  'apply_in_progress',
+  'applied',
+  'conflicted',
+  'failed',
+] as const;
+const MEMORY_PATCH_RISK_CLASS_VALUES = ['low', 'medium', 'high', 'critical', 'unknown'] as const;
+const MEMORY_PATCH_FIELD_NAMES = [
+  'patch_target_kind',
+  'patch_target_id',
+  'patch_base_target_snapshot_hash',
+  'patch_body',
+  'patch_format',
+  'patch_operation_state',
+  'patch_risk_class',
+  'patch_expected_resulting_target_snapshot_hash',
+  'patch_provenance_summary',
+  'patch_actor',
+  'patch_originating_session_id',
+  'patch_ledger_event_ids',
+] as const;
 const ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 
 export const DEFAULT_MEMORY_INBOX_SCOPE_ID = 'workspace:default';
 export const MAX_MEMORY_CANDIDATE_LIMIT = 100;
@@ -174,6 +242,152 @@ function normalizeOptionalNonEmptyString(
     throw invalidParams(deps, `${field} must be a non-empty string`);
   }
   return value.trim();
+}
+
+function normalizeOptionalSnapshotHash(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): string | null {
+  const normalized = normalizeOptionalNonEmptyString(deps, field, value);
+  if (normalized == null) return null;
+  if (!SHA256_HEX_PATTERN.test(normalized)) {
+    throw invalidParams(deps, `${field} must be a lowercase sha256 hex string`);
+  }
+  return normalized;
+}
+
+function normalizeOptionalPatchBody(
+  deps: { OperationError: OperationErrorCtor },
+  format: (typeof MEMORY_PATCH_FORMAT_VALUES)[number] | null,
+  value: unknown,
+): Record<string, unknown> | unknown[] | null {
+  if (value == null) return null;
+  if (format === 'json_patch') {
+    if (!Array.isArray(value)) {
+      throw invalidParams(deps, 'patch_body must be an array for json_patch format');
+    }
+    JSON.stringify(value);
+    return value;
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidParams(deps, 'patch_body must be an object');
+  }
+  JSON.stringify(value);
+  return value as Record<string, unknown>;
+}
+
+function normalizeStringArray(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): string[] {
+  if (value == null) return [];
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string' && entry.trim().length > 0)) {
+    throw invalidParams(deps, `${field} must be an array of non-empty strings`);
+  }
+  return value.map((entry) => entry.trim());
+}
+
+function normalizePatchCandidateFields(
+  deps: { OperationError: OperationErrorCtor },
+  p: Record<string, unknown>,
+  options: { requirePatchBody?: boolean; operationStates?: readonly MemoryPatchOperationState[] } = {},
+) {
+  const patchFormat = optionalEnumValue(deps, 'patch_format', p.patch_format, MEMORY_PATCH_FORMAT_VALUES) ?? null;
+  const patchBody = normalizeOptionalPatchBody(deps, patchFormat, p.patch_body);
+  if (options.requirePatchBody && patchBody == null) {
+    throw invalidParams(deps, patchFormat === 'json_patch' ? 'patch_body must be an array' : 'patch_body must be an object');
+  }
+  return {
+    patch_target_kind: optionalEnumValue(deps, 'patch_target_kind', p.patch_target_kind, MEMORY_MUTATION_TARGET_KIND_VALUES) ?? null,
+    patch_target_id: normalizeOptionalNonEmptyString(deps, 'patch_target_id', p.patch_target_id),
+    patch_base_target_snapshot_hash: normalizeOptionalSnapshotHash(deps, 'patch_base_target_snapshot_hash', p.patch_base_target_snapshot_hash),
+    patch_body: patchBody,
+    patch_format: patchFormat,
+    patch_operation_state: optionalEnumValue(
+      deps,
+      'patch_operation_state',
+      p.patch_operation_state,
+      options.operationStates ?? MEMORY_PATCH_OPERATION_STATE_VALUES,
+    ) ?? null,
+    patch_risk_class: optionalEnumValue(deps, 'patch_risk_class', p.patch_risk_class, MEMORY_PATCH_RISK_CLASS_VALUES) ?? null,
+    patch_expected_resulting_target_snapshot_hash: normalizeOptionalSnapshotHash(
+      deps,
+      'patch_expected_resulting_target_snapshot_hash',
+      p.patch_expected_resulting_target_snapshot_hash,
+    ),
+    patch_provenance_summary: normalizeOptionalNonEmptyString(deps, 'patch_provenance_summary', p.patch_provenance_summary),
+    patch_actor: normalizeOptionalNonEmptyString(deps, 'patch_actor', p.patch_actor),
+    patch_originating_session_id: normalizeOptionalNonEmptyString(deps, 'patch_originating_session_id', p.patch_originating_session_id),
+    patch_ledger_event_ids: normalizeStringArray(deps, 'patch_ledger_event_ids', p.patch_ledger_event_ids),
+  };
+}
+
+function assertNoPatchCandidateFields(
+  deps: { OperationError: OperationErrorCtor },
+  p: Record<string, unknown>,
+): void {
+  const field = MEMORY_PATCH_FIELD_NAMES.find((name) => Object.prototype.hasOwnProperty.call(p, name));
+  if (field) {
+    throw invalidParams(deps, `${field} is only accepted by create_memory_patch_candidate`);
+  }
+}
+
+function assertNoPatchCandidateLifecycleOverrides(
+  deps: { OperationError: OperationErrorCtor },
+  p: Record<string, unknown>,
+): void {
+  for (const field of ['status', 'patch_operation_state', 'patch_ledger_event_ids'] as const) {
+    if (Object.prototype.hasOwnProperty.call(p, field)) {
+      throw invalidParams(deps, `${field} is managed by create_memory_patch_candidate`);
+    }
+  }
+}
+
+async function resolveCurrentPatchTargetSnapshotHash(
+  deps: { OperationError: OperationErrorCtor },
+  engine: BrainEngine,
+  targetKind: MemoryMutationTargetKind,
+  targetId: string,
+): Promise<string | null> {
+  try {
+    const current = await resolveTargetSnapshotHash(engine, {
+      target_kind: targetKind,
+      target_id: targetId,
+    });
+    return current?.target_snapshot_hash ?? null;
+  } catch (error) {
+    if (error instanceof UnsupportedTargetSnapshotKindError) {
+      throw invalidParams(deps, error.message);
+    }
+    throw error;
+  }
+}
+
+function isScopeAllowedForRealm(scope: 'work' | 'personal' | 'mixed', scopeId: string): boolean {
+  if (scope === 'mixed') return true;
+  const personal = scopeId === 'personal' || scopeId.startsWith('personal:');
+  const mixed = scopeId === 'mixed' || scopeId.startsWith('mixed:');
+  if (scope === 'personal') return personal;
+  return !personal && !mixed;
+}
+
+function targetObjectTypeForPatchTarget(
+  targetKind: MemoryMutationTargetKind,
+): (typeof MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES)[number] {
+  switch (targetKind) {
+    case 'page':
+      return 'curated_note';
+    case 'profile_memory':
+      return 'profile_memory';
+    case 'personal_episode':
+      return 'personal_episode';
+    case 'procedure':
+      return 'procedure';
+    default:
+      return 'other';
+  }
 }
 
 function normalizeOptionalIsoTimestamp(
@@ -394,6 +608,7 @@ export function createMemoryInboxOperations(
     },
     mutating: true,
     handler: async (ctx, p) => {
+      assertNoPatchCandidateFields(deps, p);
       const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
       const scopeId = String(p.scope_id ?? deps.defaultScopeId);
       const status = optionalEnumValue(deps, 'status', p.status, MEMORY_CANDIDATE_EARLY_STATUS_VALUES) ?? 'captured';
@@ -430,6 +645,167 @@ export function createMemoryInboxOperations(
       });
     },
     cliHints: { name: 'create-memory-candidate' },
+  };
+
+  const create_memory_patch_candidate: Operation = {
+    name: 'create_memory_patch_candidate',
+    description: 'Stage a reviewable patch candidate in the Memory Inbox without applying the patch to canonical memory.',
+    params: {
+      id: { type: 'string', description: 'Optional memory candidate id (generated when omitted)' },
+      session_id: { type: 'string', required: true, description: 'Active originating memory session id' },
+      realm_id: { type: 'string', required: true, description: 'Active memory realm id attached read-write to the session' },
+      actor: { type: 'string', required: true, description: 'Actor proposing the patch candidate' },
+      scope_id: { type: 'string', description: `Memory candidate scope id (default: ${deps.defaultScopeId})` },
+      target_kind: { type: 'string', required: true, description: 'Canonical memory target kind for the proposed patch', enum: [...MEMORY_PATCH_TARGET_KIND_VALUES] },
+      target_id: { type: 'string', required: true, description: 'Canonical memory target id for the proposed patch' },
+      base_target_snapshot_hash: { type: 'string', required: true, nullable: true, description: 'Target snapshot hash observed before staging the patch; null only when the target is intentionally absent' },
+      patch_body: { type: ['object', 'array'], required: true, description: 'Structured patch body to review later; json_patch accepts an RFC 6902 operation array.' },
+      patch_format: { type: 'string', required: true, description: 'Patch body format', enum: [...MEMORY_PATCH_FORMAT_VALUES] },
+      risk_class: { type: 'string', description: 'Patch review risk class', enum: [...MEMORY_PATCH_RISK_CLASS_VALUES] },
+      expected_resulting_target_snapshot_hash: { type: 'string', nullable: true, description: 'Optional expected target snapshot hash after applying the patch' },
+      provenance_summary: { type: 'string', description: 'Optional human-readable provenance summary for reviewers' },
+      candidate_type: { type: 'string', description: 'Candidate type (default note_update)', enum: [...MEMORY_CANDIDATE_TYPE_VALUES] },
+      proposed_content: { type: 'string', description: 'Review queue summary for this patch candidate' },
+      source_refs: { type: 'array', required: true, items: { type: 'string' }, description: 'Required provenance strings' },
+      generated_by: { type: 'string', description: 'Candidate generation source', enum: [...MEMORY_CANDIDATE_GENERATED_BY_VALUES] },
+      extraction_kind: { type: 'string', description: 'Candidate extraction kind', enum: [...MEMORY_CANDIDATE_EXTRACTION_KIND_VALUES] },
+      confidence_score: { type: 'number', description: 'Confidence score (default 0.5)' },
+      importance_score: { type: 'number', description: 'Importance score (default 0.5)' },
+      recurrence_score: { type: 'number', description: 'Recurrence score (default 0)' },
+      sensitivity: { type: 'string', description: 'Candidate sensitivity', enum: [...MEMORY_CANDIDATE_SENSITIVITY_VALUES] },
+      interaction_id: { type: 'string', description: 'Optional retrieval trace id for lifecycle event attribution' },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      assertNoPatchCandidateLifecycleOverrides(deps, p);
+      const id = typeof p.id === 'string' && p.id.trim().length > 0 ? p.id.trim() : crypto.randomUUID();
+      const sessionId = normalizeOptionalNonEmptyString(deps, 'session_id', p.session_id);
+      const realmId = normalizeOptionalNonEmptyString(deps, 'realm_id', p.realm_id);
+      const actor = normalizeOptionalNonEmptyString(deps, 'actor', p.actor);
+      if (!sessionId || !realmId || !actor) {
+        throw invalidParams(deps, 'session_id, realm_id, and actor are required');
+      }
+      const scopeId = String(p.scope_id ?? deps.defaultScopeId);
+      const targetKind = requireEnumValue(deps, 'target_kind', p.target_kind, MEMORY_PATCH_TARGET_KIND_VALUES);
+      const targetId = normalizeOptionalNonEmptyString(deps, 'target_id', p.target_id);
+      if (!targetId) {
+        throw invalidParams(deps, 'target_id must be a non-empty string');
+      }
+      if (!Object.prototype.hasOwnProperty.call(p, 'base_target_snapshot_hash')) {
+        throw invalidParams(deps, 'base_target_snapshot_hash is required; use null only for intentionally missing targets');
+      }
+      const sourceRefs = normalizeSourceRefs(deps, p);
+      if (sourceRefs.length === 0) {
+        throw invalidParams(deps, 'source_refs must contain at least one provenance reference');
+      }
+      const patchFields = normalizePatchCandidateFields(deps, {
+        patch_target_kind: targetKind,
+        patch_target_id: targetId,
+        patch_base_target_snapshot_hash: p.base_target_snapshot_hash,
+        patch_body: p.patch_body,
+        patch_format: p.patch_format,
+        patch_operation_state: 'proposed',
+        patch_risk_class: p.risk_class ?? 'unknown',
+        patch_expected_resulting_target_snapshot_hash: p.expected_resulting_target_snapshot_hash,
+        patch_provenance_summary: p.provenance_summary,
+        patch_actor: actor,
+        patch_originating_session_id: sessionId,
+      }, {
+        requirePatchBody: true,
+        operationStates: ['proposed'],
+      });
+      if (!patchFields.patch_format) {
+        throw invalidParams(deps, 'patch_format must be one of: ' + MEMORY_PATCH_FORMAT_VALUES.join(', '));
+      }
+
+      const session = await ctx.engine.getMemorySession(sessionId);
+      if (!session || session.status !== 'active') {
+        throw invalidParams(deps, `memory session is not active: ${sessionId}`);
+      }
+      const realm = await ctx.engine.getMemoryRealm(realmId);
+      if (!realm || realm.archived_at) {
+        throw invalidParams(deps, `memory realm is not active: ${realmId}`);
+      }
+      const attachment = (await ctx.engine.listMemorySessionAttachments({
+        session_id: sessionId,
+        realm_id: realmId,
+        limit: 1,
+      }))[0] ?? null;
+      if (!attachment || attachment.access !== 'read_write') {
+        throw invalidParams(deps, `memory realm is not attached read-write to session: ${realmId}`);
+      }
+      if (!isScopeAllowedForRealm(realm.scope, scopeId)) {
+        throw invalidParams(deps, `scope_id ${scopeId} is outside realm scope ${realm.scope}`);
+      }
+
+      const currentTargetSnapshotHash = await resolveCurrentPatchTargetSnapshotHash(deps, ctx.engine, targetKind, targetId);
+      if (patchFields.patch_base_target_snapshot_hash !== currentTargetSnapshotHash) {
+        throw invalidParams(deps, 'base_target_snapshot_hash does not match the current target snapshot hash');
+      }
+
+      const interactionId = normalizeOptionalNonEmptyString(deps, 'interaction_id', p.interaction_id);
+      const candidateInput = {
+        id,
+        scope_id: scopeId,
+        candidate_type: optionalEnumValue(deps, 'candidate_type', p.candidate_type, MEMORY_CANDIDATE_TYPE_VALUES) ?? 'note_update',
+        proposed_content: typeof p.proposed_content === 'string' && p.proposed_content.trim().length > 0
+          ? p.proposed_content
+          : `Reviewable ${targetKind} patch for ${targetId}.`,
+        source_refs: sourceRefs,
+        generated_by: optionalEnumValue(deps, 'generated_by', p.generated_by, MEMORY_CANDIDATE_GENERATED_BY_VALUES) ?? 'agent',
+        extraction_kind: optionalEnumValue(deps, 'extraction_kind', p.extraction_kind, MEMORY_CANDIDATE_EXTRACTION_KIND_VALUES) ?? 'manual',
+        confidence_score: typeof p.confidence_score === 'number' ? p.confidence_score : 0.5,
+        importance_score: typeof p.importance_score === 'number' ? p.importance_score : 0.5,
+        recurrence_score: typeof p.recurrence_score === 'number' ? p.recurrence_score : 0,
+        sensitivity: optionalEnumValue(deps, 'sensitivity', p.sensitivity, MEMORY_CANDIDATE_SENSITIVITY_VALUES) ?? 'work',
+        status: 'staged_for_review' as const,
+        target_object_type: targetObjectTypeForPatchTarget(targetKind),
+        target_object_id: targetId,
+        reviewed_at: null,
+        review_reason: patchFields.patch_provenance_summary ?? null,
+        ...patchFields,
+      };
+
+      if (ctx.dryRun) {
+        return {
+          dry_run: true,
+          action: 'create_memory_patch_candidate',
+          candidate: candidateInput,
+          ledger_recorded: false,
+        };
+      }
+
+      return ctx.engine.transaction(async (txBase) => {
+        const tx = txBase as BrainEngine;
+        const event = await recordMemoryMutationEvent(tx, {
+          session_id: sessionId,
+          realm_id: realmId,
+          actor,
+          operation: 'create_memory_patch_candidate',
+          target_kind: 'memory_candidate',
+          target_id: id,
+          scope_id: scopeId,
+          source_refs: sourceRefs,
+          result: 'staged_for_review',
+          metadata: {
+            patch_target_kind: targetKind,
+            patch_target_id: targetId,
+            patch_base_target_snapshot_hash: patchFields.patch_base_target_snapshot_hash,
+            patch_current_target_snapshot_hash: currentTargetSnapshotHash,
+            patch_expected_resulting_target_snapshot_hash: patchFields.patch_expected_resulting_target_snapshot_hash,
+            patch_format: patchFields.patch_format,
+            patch_operation_state: patchFields.patch_operation_state,
+            patch_risk_class: patchFields.patch_risk_class,
+          },
+        });
+        return createMemoryCandidateEntryWithStatusEvent(tx, {
+          ...candidateInput,
+          patch_ledger_event_ids: [event.id],
+          interaction_id: interactionId,
+        });
+      });
+    },
+    cliHints: { name: 'create-memory-patch-candidate' },
   };
 
   const rank_memory_candidate_entries: Operation = {
@@ -982,6 +1358,7 @@ export function createMemoryInboxOperations(
     list_memory_candidate_status_events,
     delete_memory_candidate_entry,
     create_memory_candidate_entry,
+    create_memory_patch_candidate,
     rank_memory_candidate_entries,
     capture_map_derived_candidates,
     list_memory_candidate_review_backlog,

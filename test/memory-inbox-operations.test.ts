@@ -28,6 +28,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
     'list_memory_candidate_status_events',
     'delete_memory_candidate_entry',
     'create_memory_candidate_entry',
+    'create_memory_patch_candidate',
     'rank_memory_candidate_entries',
     'capture_map_derived_candidates',
     'list_memory_candidate_review_backlog',
@@ -46,6 +47,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
 
 test('memory inbox operations are registered with CLI hints', () => {
   const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
+  const createPatch = operations.find((operation) => operation.name === 'create_memory_patch_candidate');
   const get = operations.find((operation) => operation.name === 'get_memory_candidate_entry');
   const list = operations.find((operation) => operation.name === 'list_memory_candidate_entries');
   const listStatusEvents = operations.find((operation) => operation.name === 'list_memory_candidate_status_events');
@@ -65,6 +67,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   const dreamCycle = operations.find((operation) => operation.name === 'run_dream_cycle_maintenance');
 
   expect(create?.cliHints?.name).toBe('create-memory-candidate');
+  expect(createPatch?.cliHints?.name).toBe('create-memory-patch-candidate');
   expect(get?.cliHints?.name).toBe('get-memory-candidate');
   expect(list?.cliHints?.name).toBe('list-memory-candidates');
   expect(listStatusEvents?.cliHints?.name).toBe('list-memory-candidate-status-events');
@@ -83,6 +86,26 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(contradiction?.cliHints?.name).toBe('resolve-memory-candidate-contradiction');
   expect(dreamCycle?.cliHints?.name).toBe('run-dream-cycle-maintenance');
   expect(create?.params.status?.enum).toEqual(['captured', 'candidate', 'staged_for_review']);
+  expect(create?.params.patch_operation_state).toBeUndefined();
+  expect(create?.params.patch_ledger_event_ids).toBeUndefined();
+  expect(createPatch?.params.status).toBeUndefined();
+  expect(createPatch?.params.patch_operation_state).toBeUndefined();
+  expect(createPatch?.params.patch_body?.type).toEqual(['object', 'array']);
+  expect(createPatch?.params.target_kind?.enum).toEqual([
+    'page',
+    'task_thread',
+    'working_set',
+    'memory_candidate',
+    'profile_memory',
+    'personal_episode',
+    'memory_realm',
+    'memory_session',
+    'memory_session_attachment',
+    'context_map',
+    'context_atlas',
+  ]);
+  expect(operations.some((operation) => operation.name === 'review_memory_patch_candidate')).toBe(false);
+  expect(operations.some((operation) => operation.name === 'apply_memory_patch_candidate')).toBe(false);
   expect(list?.params.status?.enum).toEqual(['captured', 'candidate', 'staged_for_review', 'rejected', 'promoted', 'superseded']);
   expect(listStatusEvents?.params.interaction_id?.type).toBe('string');
   expect(deleteCandidate?.params.id?.type).toBe('string');
@@ -94,6 +117,183 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(contradiction?.params.interaction_id?.type).toBe('string');
   expect(recordCanonicalHandoff?.params.interaction_id?.type).toBe('string');
   expect(advance?.params.next_status?.description).toContain('depends on the current stored status');
+});
+
+test('create_memory_patch_candidate stages a normal inbox candidate and records a mutation ledger event', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-patch-candidate-op-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const createPatch = operations.find((operation) => operation.name === 'create_memory_patch_candidate');
+  const get = operations.find((operation) => operation.name === 'get_memory_candidate_entry');
+
+  if (!createPatch || !get) {
+    throw new Error('memory patch candidate operations are missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await engine.upsertMemoryRealm({
+      id: 'realm:patch-review',
+      name: 'Patch review realm',
+      scope: 'work',
+      default_access: 'read_write',
+    });
+    await engine.createMemorySession({
+      id: 'session:patch-review',
+      actor_ref: 'agent:patch-reviewer',
+    });
+    await engine.attachMemoryRealmToSession({
+      session_id: 'session:patch-review',
+      realm_id: 'realm:patch-review',
+      access: 'read_write',
+    });
+    const page = await engine.putPage('concepts/patch-target', {
+      type: 'concept',
+      title: 'Patch Target',
+      compiled_truth: 'Original compiled truth. [Source: User, direct message, 2026-04-26 11:00 AM KST]',
+      timeline: '',
+    });
+    const pageHash = page.content_hash as string;
+
+    const ctx = {
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    };
+
+    const created = await createPatch.handler(ctx, {
+      id: 'patch-candidate-op',
+      session_id: 'session:patch-review',
+      realm_id: 'realm:patch-review',
+      actor: 'agent:patch-reviewer',
+      scope_id: 'workspace:default',
+      target_kind: 'page',
+      target_id: 'concepts/patch-target',
+      base_target_snapshot_hash: pageHash,
+      patch_body: {
+        compiled_truth: 'Updated compiled truth. [Source: User, direct message, 2026-04-26 11:00 AM KST]',
+      },
+      patch_format: 'merge_patch',
+      risk_class: 'medium',
+      expected_resulting_target_snapshot_hash: '1'.repeat(64),
+      proposed_content: 'Reviewable patch for concepts/patch-target.',
+      source_refs: ['User, direct message, 2026-04-26 11:00 AM KST'],
+      provenance_summary: 'User explicitly requested this canonical note change.',
+    }) as any;
+
+    expect(created.status).toBe('staged_for_review');
+    expect(created.patch_operation_state).toBe('proposed');
+    expect(created.patch_target_kind).toBe('page');
+    expect(created.patch_target_id).toBe('concepts/patch-target');
+    expect(created.patch_base_target_snapshot_hash).toBe(pageHash);
+    expect(created.patch_ledger_event_ids).toHaveLength(1);
+
+    const fetched = await get.handler(ctx, { id: 'patch-candidate-op' }) as any;
+    expect(fetched.patch_ledger_event_ids).toEqual(created.patch_ledger_event_ids);
+    const statusEvents = await engine.listMemoryCandidateStatusEvents({
+      candidate_id: 'patch-candidate-op',
+    });
+    expect(statusEvents.map((event) => event.event_kind)).toEqual(['created']);
+
+    const ledgerEvents = await engine.listMemoryMutationEvents({
+      operation: 'create_memory_patch_candidate',
+      target_kind: 'memory_candidate',
+      target_id: 'patch-candidate-op',
+      result: 'staged_for_review',
+    });
+    expect(ledgerEvents.map((event) => event.id)).toEqual(created.patch_ledger_event_ids);
+    expect(ledgerEvents[0]?.metadata.patch_target_kind).toBe('page');
+    expect(ledgerEvents[0]?.metadata.patch_current_target_snapshot_hash).toBe(pageHash);
+    expect(ledgerEvents[0]?.metadata.patch_expected_resulting_target_snapshot_hash).toBe('1'.repeat(64));
+    expect(ledgerEvents[0]?.expected_target_snapshot_hash).toBeNull();
+    expect(ledgerEvents[0]?.current_target_snapshot_hash).toBeNull();
+    expect((await engine.getPage('concepts/patch-target'))?.compiled_truth).toBe(page.compiled_truth);
+
+    const jsonPatchCreated = await createPatch.handler(ctx, {
+      id: 'patch-candidate-json-patch',
+      session_id: 'session:patch-review',
+      realm_id: 'realm:patch-review',
+      actor: 'agent:patch-reviewer',
+      scope_id: 'workspace:default',
+      target_kind: 'page',
+      target_id: 'concepts/patch-target',
+      base_target_snapshot_hash: pageHash,
+      patch_body: [
+        {
+          op: 'replace',
+          path: '/compiled_truth',
+          value: 'Updated through JSON Patch. [Source: User, direct message, 2026-04-26 11:00 AM KST]',
+        },
+      ],
+      patch_format: 'json_patch',
+      source_refs: ['User, direct message, 2026-04-26 11:00 AM KST'],
+    }) as any;
+    expect(Array.isArray(jsonPatchCreated.patch_body)).toBe(true);
+
+    await expect(createPatch.handler(ctx, {
+      session_id: 'session:patch-review',
+      realm_id: 'realm:patch-review',
+      actor: 'agent:patch-reviewer',
+      scope_id: 'workspace:default',
+      target_kind: 'page',
+      target_id: 'concepts/patch-target',
+      base_target_snapshot_hash: '0'.repeat(64),
+      patch_body: { compiled_truth: 'Stale patch.' },
+      patch_format: 'merge_patch',
+      source_refs: ['User, direct message, 2026-04-26 11:00 AM KST'],
+    })).rejects.toThrow(/base_target_snapshot_hash/);
+
+    await expect(createPatch.handler(ctx, {
+      session_id: 'session:patch-review',
+      realm_id: 'realm:patch-review',
+      actor: 'agent:patch-reviewer',
+      target_kind: 'page',
+      target_id: 'concepts/patch-target',
+      base_target_snapshot_hash: pageHash,
+      patch_body: { compiled_truth: 'Lifecycle override patch.' },
+      patch_format: 'merge_patch',
+      status: 'candidate',
+      source_refs: ['User, direct message, 2026-04-26 11:00 AM KST'],
+    })).rejects.toThrow(/status is managed/);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('create_memory_candidate_entry rejects patch-only fields through the generic candidate path', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-candidate-patch-bypass-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const create = operations.find((operation) => operation.name === 'create_memory_candidate_entry');
+
+  if (!create) {
+    throw new Error('memory candidate create operation is missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    const ctx = {
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    };
+
+    await expect(create.handler(ctx, {
+      candidate_type: 'fact',
+      proposed_content: 'Generic create must not accept patch lifecycle fields.',
+      source_ref: 'User, direct message, 2026-04-26 11:00 AM KST',
+      patch_operation_state: 'applied',
+      patch_ledger_event_ids: ['fake-ledger-event'],
+    })).rejects.toThrow(/create_memory_patch_candidate/);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('memory inbox operations create and list candidate status events by interaction id', async () => {

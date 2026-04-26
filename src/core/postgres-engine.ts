@@ -85,6 +85,7 @@ import {
   validateSlug,
   contentHash,
   applyMemoryRealmUpsertDefaults,
+  hasMemoryCandidatePatchInput,
   hasOwn,
   importContentHash,
   normalizeMemoryMutationEventInput,
@@ -1382,12 +1383,51 @@ export class PostgresEngine implements BrainEngine {
   async createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry> {
     const sql = this.sql;
     const initialStatus = assertMemoryCandidateCreateStatus(input.status);
+    if (!(await this.memoryCandidatePatchColumnsExist())) {
+      if (hasMemoryCandidatePatchInput(input)) {
+        throw new Error('Reviewable patch candidate fields require memory_patch_candidate_fields schema migration.');
+      }
+      const rows = await sql`
+        INSERT INTO memory_candidate_entries (
+          id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+          extraction_kind, confidence_score, importance_score, recurrence_score,
+          sensitivity, status, target_object_type, target_object_id, reviewed_at,
+          review_reason
+        ) VALUES (
+          ${input.id},
+          ${input.scope_id},
+          ${input.candidate_type},
+          ${input.proposed_content},
+          ${sql.json(jsonParam(input.source_refs ?? []))},
+          ${input.generated_by},
+          ${input.extraction_kind},
+          ${input.confidence_score},
+          ${input.importance_score},
+          ${input.recurrence_score},
+          ${input.sensitivity},
+          ${initialStatus},
+          ${input.target_object_type ?? null},
+          ${input.target_object_id ?? null},
+          ${input.reviewed_at instanceof Date ? input.reviewed_at.toISOString() : input.reviewed_at ?? null},
+          ${input.review_reason ?? null}
+        )
+        RETURNING id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+                  extraction_kind, confidence_score, importance_score, recurrence_score,
+                  sensitivity, status, target_object_type, target_object_id, reviewed_at,
+                  review_reason, created_at, updated_at
+      `;
+      return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
+    }
+
     const rows = await sql`
       INSERT INTO memory_candidate_entries (
         id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
         extraction_kind, confidence_score, importance_score, recurrence_score,
         sensitivity, status, target_object_type, target_object_id, reviewed_at,
-        review_reason
+        review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+        patch_body, patch_format, patch_operation_state, patch_risk_class,
+        patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+        patch_actor, patch_originating_session_id, patch_ledger_event_ids
       ) VALUES (
         ${input.id},
         ${input.scope_id},
@@ -1404,14 +1444,41 @@ export class PostgresEngine implements BrainEngine {
         ${input.target_object_type ?? null},
         ${input.target_object_id ?? null},
         ${input.reviewed_at instanceof Date ? input.reviewed_at.toISOString() : input.reviewed_at ?? null},
-        ${input.review_reason ?? null}
+        ${input.review_reason ?? null},
+        ${input.patch_target_kind ?? null},
+        ${input.patch_target_id ?? null},
+        ${input.patch_base_target_snapshot_hash ?? null},
+        ${input.patch_body == null ? null : sql.json(jsonParam(input.patch_body))},
+        ${input.patch_format ?? null},
+        ${input.patch_operation_state ?? null},
+        ${input.patch_risk_class ?? null},
+        ${input.patch_expected_resulting_target_snapshot_hash ?? null},
+        ${input.patch_provenance_summary ?? null},
+        ${input.patch_actor ?? null},
+        ${input.patch_originating_session_id ?? null},
+        ${sql.json(jsonParam(input.patch_ledger_event_ids ?? []))}
       )
       RETURNING id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
                 extraction_kind, confidence_score, importance_score, recurrence_score,
                 sensitivity, status, target_object_type, target_object_id, reviewed_at,
-                review_reason, created_at, updated_at
+                review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+                patch_body, patch_format, patch_operation_state, patch_risk_class,
+                patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+                patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+                created_at, updated_at
     `;
     return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
+  }
+
+  private async memoryCandidatePatchColumnsExist(): Promise<boolean> {
+    const rows = await this.sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'memory_candidate_entries'
+        AND column_name IN ('patch_target_kind', 'patch_ledger_event_ids')
+    `;
+    return rows.length === 2;
   }
 
   async getMemoryCandidateEntry(id: string): Promise<MemoryCandidateEntry | null> {
@@ -1420,7 +1487,11 @@ export class PostgresEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ${id}
     `;
@@ -1455,6 +1526,18 @@ export class PostgresEngine implements BrainEngine {
       params.push(filters.target_object_id);
       clauses.push(`target_object_id = $${params.length}`);
     }
+    if (filters?.patch_operation_state !== undefined) {
+      params.push(filters.patch_operation_state);
+      clauses.push(`patch_operation_state = $${params.length}`);
+    }
+    if (filters?.patch_target_kind !== undefined) {
+      params.push(filters.patch_target_kind);
+      clauses.push(`patch_target_kind = $${params.length}`);
+    }
+    if (filters?.patch_target_id !== undefined) {
+      params.push(filters.patch_target_id);
+      clauses.push(`patch_target_id = $${params.length}`);
+    }
     if (filters?.created_since !== undefined) {
       params.push(filters.created_since.toISOString());
       clauses.push(`created_at >= $${params.length}`);
@@ -1479,7 +1562,11 @@ export class PostgresEngine implements BrainEngine {
       `SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
               extraction_kind, confidence_score, importance_score, recurrence_score,
               sensitivity, status, target_object_type, target_object_id, reviewed_at,
-              review_reason, created_at, updated_at
+              review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+              patch_body, patch_format, patch_operation_state, patch_risk_class,
+              patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+              patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+              created_at, updated_at
        FROM memory_candidate_entries
        ${whereClause}
        ORDER BY updated_at DESC, id ASC
@@ -1993,7 +2080,11 @@ export class PostgresEngine implements BrainEngine {
       RETURNING id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
                 extraction_kind, confidence_score, importance_score, recurrence_score,
                 sensitivity, status, target_object_type, target_object_id, reviewed_at,
-                review_reason, created_at, updated_at
+                review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+                patch_body, patch_format, patch_operation_state, patch_risk_class,
+                patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+                patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+                created_at, updated_at
     `;
     if (rows.length === 0) return null;
     return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
@@ -2020,7 +2111,11 @@ export class PostgresEngine implements BrainEngine {
       RETURNING id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
                 extraction_kind, confidence_score, importance_score, recurrence_score,
                 sensitivity, status, target_object_type, target_object_id, reviewed_at,
-                review_reason, created_at, updated_at
+                review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+                patch_body, patch_format, patch_operation_state, patch_risk_class,
+                patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+                patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+                created_at, updated_at
     `;
     if (rows.length === 0) {
       return null;

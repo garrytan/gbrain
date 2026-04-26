@@ -33,7 +33,10 @@ describe('operations contract parity', () => {
   test('every required param has a type', () => {
     for (const op of operations) {
       for (const [key, def] of Object.entries(op.params)) {
-        expect(['string', 'number', 'boolean', 'object', 'array']).toContain(def.type);
+        const types = Array.isArray(def.type) ? def.type : [def.type];
+        for (const type of types) {
+          expect(['string', 'number', 'boolean', 'object', 'array']).toContain(type);
+        }
       }
     }
   });

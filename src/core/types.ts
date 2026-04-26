@@ -974,6 +974,31 @@ export type MemoryCandidateStatus =
   | 'promoted'
   | 'superseded';
 
+export type MemoryPatchFormat =
+  | 'merge_patch'
+  | 'json_patch'
+  | 'unified_diff'
+  | 'whole_record'
+  | 'operation';
+
+export type MemoryPatchBody = Record<string, unknown> | unknown[];
+
+export type MemoryPatchOperationState =
+  | 'proposed'
+  | 'dry_run_validated'
+  | 'approved_for_apply'
+  | 'apply_in_progress'
+  | 'applied'
+  | 'conflicted'
+  | 'failed';
+
+export type MemoryPatchRiskClass =
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'critical'
+  | 'unknown';
+
 export type MemoryCandidateCreateStatus =
   | 'captured'
   | 'candidate'
@@ -1021,6 +1046,18 @@ export interface MemoryCandidateEntry {
   target_object_id: string | null;
   reviewed_at: Date | null;
   review_reason: string | null;
+  patch_target_kind?: MemoryMutationTargetKind | null;
+  patch_target_id?: string | null;
+  patch_base_target_snapshot_hash?: string | null;
+  patch_body?: MemoryPatchBody | null;
+  patch_format?: MemoryPatchFormat | null;
+  patch_operation_state?: MemoryPatchOperationState | null;
+  patch_risk_class?: MemoryPatchRiskClass | null;
+  patch_expected_resulting_target_snapshot_hash?: string | null;
+  patch_provenance_summary?: string | null;
+  patch_actor?: string | null;
+  patch_originating_session_id?: string | null;
+  patch_ledger_event_ids?: string[];
   created_at: Date;
   updated_at: Date;
 }
@@ -1042,6 +1079,18 @@ export interface MemoryCandidateEntryInput {
   target_object_id?: string | null;
   reviewed_at?: Date | string | null;
   review_reason?: string | null;
+  patch_target_kind?: MemoryMutationTargetKind | null;
+  patch_target_id?: string | null;
+  patch_base_target_snapshot_hash?: string | null;
+  patch_body?: MemoryPatchBody | null;
+  patch_format?: MemoryPatchFormat | null;
+  patch_operation_state?: MemoryPatchOperationState | null;
+  patch_risk_class?: MemoryPatchRiskClass | null;
+  patch_expected_resulting_target_snapshot_hash?: string | null;
+  patch_provenance_summary?: string | null;
+  patch_actor?: string | null;
+  patch_originating_session_id?: string | null;
+  patch_ledger_event_ids?: string[];
 }
 
 export interface MemoryCandidateScoredEntry {
@@ -1057,6 +1106,9 @@ export interface MemoryCandidateFilters {
   candidate_type?: MemoryCandidateType;
   target_object_type?: MemoryCandidateTargetObjectType;
   target_object_id?: string;
+  patch_operation_state?: MemoryPatchOperationState;
+  patch_target_kind?: MemoryMutationTargetKind;
+  patch_target_id?: string;
   created_since?: Date;
   created_until?: Date;
   reviewed_since?: Date;

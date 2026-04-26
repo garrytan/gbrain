@@ -126,14 +126,21 @@ export class OperationError extends Error {
   }
 }
 
+export type ParamType = 'string' | 'number' | 'boolean' | 'object' | 'array';
+
 export interface ParamDef {
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  type: ParamType | ParamType[];
   required?: boolean;
   nullable?: boolean;
   description?: string;
   default?: unknown;
   enum?: string[];
   items?: ParamDef;
+}
+
+function paramHasType(paramDef: ParamDef | undefined, type: ParamType): boolean {
+  if (!paramDef) return false;
+  return Array.isArray(paramDef.type) ? paramDef.type.includes(type) : paramDef.type === type;
 }
 
 export interface Logger {
@@ -266,7 +273,7 @@ export function parseOpArgs(
         if (inlineValue === undefined && i + 1 < args.length && !args[i + 1].startsWith('-')) i++;
         continue;
       }
-      if (paramDef.type === 'boolean') {
+      if (paramHasType(paramDef, 'boolean')) {
         params[key] = inlineValue === undefined ? true : inlineValue !== 'false';
         continue;
       }
@@ -278,7 +285,7 @@ export function parseOpArgs(
         }
         value = args[++i];
       }
-      params[key] = paramDef.type === 'number' ? coerceNumber(key, value) : value;
+      params[key] = paramHasType(paramDef, 'number') ? coerceNumber(key, value) : value;
       continue;
     }
 
@@ -291,7 +298,7 @@ export function parseOpArgs(
         continue;
       }
       const paramDef = op.params[key];
-      if (paramDef?.type === 'boolean') {
+      if (paramHasType(paramDef, 'boolean')) {
         params[key] = inlineValue === undefined ? true : inlineValue !== 'false';
         continue;
       }
@@ -303,14 +310,14 @@ export function parseOpArgs(
         }
         value = args[++i];
       }
-      params[key] = paramDef?.type === 'number' ? coerceNumber(key, value) : value;
+      params[key] = paramHasType(paramDef, 'number') ? coerceNumber(key, value) : value;
       continue;
     }
 
     if (posIdx < positional.length) {
       const key = positional[posIdx++];
       const paramDef = op.params[key];
-      params[key] = paramDef?.type === 'number' ? coerceNumber(key, arg) : arg;
+      params[key] = paramHasType(paramDef, 'number') ? coerceNumber(key, arg) : arg;
     }
   }
 

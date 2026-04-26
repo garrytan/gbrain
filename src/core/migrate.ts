@@ -1392,6 +1392,115 @@ const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 33,
+    name: 'memory_patch_candidate_fields',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('memory_candidate_entries') IS NOT NULL THEN
+          ALTER TABLE memory_candidate_entries
+            ADD COLUMN IF NOT EXISTS patch_target_kind TEXT,
+            ADD COLUMN IF NOT EXISTS patch_target_id TEXT,
+            ADD COLUMN IF NOT EXISTS patch_base_target_snapshot_hash TEXT,
+            ADD COLUMN IF NOT EXISTS patch_body JSONB,
+            ADD COLUMN IF NOT EXISTS patch_format TEXT,
+            ADD COLUMN IF NOT EXISTS patch_operation_state TEXT,
+            ADD COLUMN IF NOT EXISTS patch_risk_class TEXT,
+            ADD COLUMN IF NOT EXISTS patch_expected_resulting_target_snapshot_hash TEXT,
+            ADD COLUMN IF NOT EXISTS patch_provenance_summary TEXT,
+            ADD COLUMN IF NOT EXISTS patch_actor TEXT,
+            ADD COLUMN IF NOT EXISTS patch_originating_session_id TEXT,
+            ADD COLUMN IF NOT EXISTS patch_ledger_event_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_target_kind;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_target_kind
+            CHECK (
+              patch_target_kind IS NULL
+              OR patch_target_kind IN (
+                'page',
+                'source_record',
+                'task_thread',
+                'working_set',
+                'task_event',
+                'task_episode',
+                'attempt',
+                'decision',
+                'procedure',
+                'memory_candidate',
+                'memory_patch_candidate',
+                'profile_memory',
+                'personal_episode',
+                'memory_realm',
+                'memory_session',
+                'memory_session_attachment',
+                'context_map',
+                'context_atlas',
+                'file_artifact',
+                'export_artifact',
+                'ledger_event'
+              )
+            );
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_body_object;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_body_object
+            CHECK (patch_body IS NULL OR jsonb_typeof(patch_body) IN ('object', 'array'));
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_format;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_format
+            CHECK (
+              patch_format IS NULL
+              OR patch_format IN ('merge_patch', 'json_patch', 'unified_diff', 'whole_record', 'operation')
+            );
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_operation_state;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_operation_state
+            CHECK (
+              patch_operation_state IS NULL
+              OR patch_operation_state IN (
+                'proposed',
+                'dry_run_validated',
+                'approved_for_apply',
+                'apply_in_progress',
+                'applied',
+                'conflicted',
+                'failed'
+              )
+            );
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_risk_class;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_risk_class
+            CHECK (
+              patch_risk_class IS NULL
+              OR patch_risk_class IN ('low', 'medium', 'high', 'critical', 'unknown')
+            );
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_ledger_ids_array;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_ledger_ids_array
+            CHECK (jsonb_typeof(patch_ledger_event_ids) = 'array');
+
+          CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_state
+            ON memory_candidate_entries(patch_operation_state, updated_at DESC)
+            WHERE patch_operation_state IS NOT NULL;
+          CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_target
+            ON memory_candidate_entries(patch_target_kind, patch_target_id)
+            WHERE patch_target_kind IS NOT NULL;
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

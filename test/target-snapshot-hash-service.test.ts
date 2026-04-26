@@ -300,6 +300,130 @@ describe('target snapshot hash resolution', () => {
     }
   });
 
+  test('memory candidate target hashes include reviewable patch candidate fields', async () => {
+    const harness = await createSqliteHarness();
+    try {
+      await harness.engine.createMemoryCandidateEntry({
+        id: 'candidate:patch-hash',
+        scope_id: 'workspace:default',
+        candidate_type: 'note_update',
+        proposed_content: 'Patch hash should include the patch metadata.',
+        source_refs: ['Source: target snapshot hash service test'],
+        generated_by: 'agent',
+        extraction_kind: 'manual',
+        confidence_score: 0.87,
+        importance_score: 0.76,
+        recurrence_score: 0.14,
+        sensitivity: 'work',
+        status: 'staged_for_review',
+        target_object_type: 'curated_note',
+        target_object_id: 'concepts/patch-target',
+        reviewed_at: new Date('2026-04-26T02:00:00.000Z'),
+        review_reason: 'Patch hash coverage.',
+        patch_target_kind: 'page',
+        patch_target_id: 'concepts/patch-target',
+        patch_base_target_snapshot_hash: 'c'.repeat(64),
+        patch_body: {
+          compiled_truth: 'Patch body changes the target hash.',
+        },
+        patch_format: 'merge_patch',
+        patch_operation_state: 'proposed',
+        patch_risk_class: 'medium',
+        patch_expected_resulting_target_snapshot_hash: 'd'.repeat(64),
+        patch_provenance_summary: 'Patch hash test provenance.',
+        patch_actor: 'agent:patch-hash',
+        patch_originating_session_id: 'session:patch-hash',
+        patch_ledger_event_ids: ['ledger:patch-hash'],
+      } as any);
+
+      const result = await resolveTargetSnapshotHash(harness.engine, {
+        target_kind: 'memory_candidate',
+        target_id: 'candidate:patch-hash',
+      });
+
+      expect(result?.target_snapshot_hash).toBe(hashCanonicalJson({
+        id: 'candidate:patch-hash',
+        scope_id: 'workspace:default',
+        candidate_type: 'note_update',
+        proposed_content: 'Patch hash should include the patch metadata.',
+        source_refs: ['Source: target snapshot hash service test'],
+        generated_by: 'agent',
+        extraction_kind: 'manual',
+        confidence_score: 0.87,
+        importance_score: 0.76,
+        recurrence_score: 0.14,
+        sensitivity: 'work',
+        status: 'staged_for_review',
+        target_object_type: 'curated_note',
+        target_object_id: 'concepts/patch-target',
+        reviewed_at: new Date('2026-04-26T02:00:00.000Z'),
+        review_reason: 'Patch hash coverage.',
+        patch_target_kind: 'page',
+        patch_target_id: 'concepts/patch-target',
+        patch_base_target_snapshot_hash: 'c'.repeat(64),
+        patch_body: {
+          compiled_truth: 'Patch body changes the target hash.',
+        },
+        patch_format: 'merge_patch',
+        patch_operation_state: 'proposed',
+        patch_risk_class: 'medium',
+        patch_expected_resulting_target_snapshot_hash: 'd'.repeat(64),
+        patch_provenance_summary: 'Patch hash test provenance.',
+        patch_actor: 'agent:patch-hash',
+        patch_originating_session_id: 'session:patch-hash',
+        patch_ledger_event_ids: ['ledger:patch-hash'],
+      }));
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test('memory candidate target hashes omit empty patch fields for non-patch candidates', async () => {
+    const harness = await createSqliteHarness();
+    try {
+      await harness.engine.createMemoryCandidateEntry({
+        id: 'candidate:plain-hash',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Plain candidate hash should stay on the legacy payload.',
+        source_refs: ['Source: target snapshot hash service test'],
+        generated_by: 'manual',
+        extraction_kind: 'manual',
+        confidence_score: 0.5,
+        importance_score: 0.25,
+        recurrence_score: 0,
+        sensitivity: 'work',
+        status: 'captured',
+      });
+
+      const result = await resolveTargetSnapshotHash(harness.engine, {
+        target_kind: 'memory_candidate',
+        target_id: 'candidate:plain-hash',
+      });
+
+      expect(result?.target_snapshot_hash).toBe(hashCanonicalJson({
+        id: 'candidate:plain-hash',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Plain candidate hash should stay on the legacy payload.',
+        source_refs: ['Source: target snapshot hash service test'],
+        generated_by: 'manual',
+        extraction_kind: 'manual',
+        confidence_score: 0.5,
+        importance_score: 0.25,
+        recurrence_score: 0,
+        sensitivity: 'work',
+        status: 'captured',
+        target_object_type: null,
+        target_object_id: null,
+        reviewed_at: null,
+        review_reason: null,
+      }));
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test('unsupported target kinds throw clearly instead of hashing the wrong thing', async () => {
     const harness = await createSqliteHarness();
     try {
