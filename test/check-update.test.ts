@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { parseSemver, isMinorOrMajorBump, extractChangelogBetween } from '../src/commands/check-update.ts';
+import { parseSemver, isMinorOrMajorBump, extractChangelogBetween, classifyHttpStatus } from '../src/commands/check-update.ts';
 
 describe('parseSemver', () => {
   test('parses standard version', () => {
@@ -118,6 +118,33 @@ describe('extractChangelogBetween', () => {
     const result = extractChangelogBetween(crossMajor, '1.2.0', '2.0.0');
     expect(result).toContain('Major 2');
     expect(result).not.toContain('Minor 5');
+  });
+});
+
+describe('classifyHttpStatus', () => {
+  test('404 → no_releases (permanent, NOT transient)', () => {
+    expect(classifyHttpStatus(404)).toEqual({ error: 'no_releases', transient: false });
+  });
+
+  test('429 → rate_limited (transient)', () => {
+    expect(classifyHttpStatus(429)).toEqual({ error: 'rate_limited', transient: true });
+  });
+
+  test('5xx → http_error (transient)', () => {
+    expect(classifyHttpStatus(500)).toEqual({ error: 'http_error', transient: true });
+    expect(classifyHttpStatus(502)).toEqual({ error: 'http_error', transient: true });
+    expect(classifyHttpStatus(503)).toEqual({ error: 'http_error', transient: true });
+  });
+
+  test('403 → http_error (transient — likely auth/abuse-detection, retry next cycle)', () => {
+    expect(classifyHttpStatus(403)).toEqual({ error: 'http_error', transient: true });
+  });
+
+  test('only no_releases is non-transient (the alert-worthy signal)', () => {
+    for (const status of [400, 401, 403, 408, 429, 500, 502, 503, 504]) {
+      expect(classifyHttpStatus(status).transient).toBe(true);
+    }
+    expect(classifyHttpStatus(404).transient).toBe(false);
   });
 });
 

@@ -24,6 +24,11 @@ schema. The user gets new capabilities automatically.
 check_for_update():
   result = run("gbrain check-update --json")
 
+  // Transient errors (network, rate-limit, 5xx) are not actionable.
+  // The next cron cycle retries automatically — stay silent.
+  if result.error and result.error_transient:
+    exit_silently()
+
   if not result.update_available:
     exit_silently()  // do NOT message the user
 
@@ -35,6 +40,21 @@ check_for_update():
   )
   send_to_user(message, respect_quiet_hours=true)
 ```
+
+### Error semantics
+
+`gbrain check-update --json` may include an `error` field. Callers MUST check
+`error_transient` before alerting:
+
+| `error` value         | `error_transient` | Caller should... |
+|-----------------------|-------------------|------------------|
+| `no_releases`         | `false`           | Surface once if it persists for days — repo has no releases yet |
+| `network_unavailable` | `true`            | Stay silent. Next cycle will retry |
+| `rate_limited`        | `true`            | Stay silent. Next cycle will retry |
+| `http_error`          | `true`            | Stay silent. Next cycle will retry |
+
+Treating every `error` as a warning produces noise on every transient network
+hiccup. Only `no_releases` is permanent.
 
 ### The Upgrade Message
 
