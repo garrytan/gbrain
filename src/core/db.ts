@@ -107,9 +107,9 @@ export function resolvePoolSize(explicit?: number): number {
  * PgBouncer strips between transactions).
  *
  * Supersedes the v0.21.0 `setSessionDefaults(sql)` helper, which used
- * `SET idle_in_transaction_session_timeout` after pool creation. That
- * approach is unreliable in PgBouncer transaction mode (the SET is
- * stripped between transactions); startup parameters are durable.
+ * a post-pool `SET` command. That approach is unreliable in PgBouncer
+ * transaction mode (transaction-mode poolers strip session-state SETs
+ * between transactions); startup parameters are durable.
  */
 const DEFAULT_STATEMENT_TIMEOUT = '5min';
 const DEFAULT_IDLE_TX_TIMEOUT = '5min';
