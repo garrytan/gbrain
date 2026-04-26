@@ -761,8 +761,20 @@ export class PostgresEngine implements BrainEngine {
 
   async getChunks(slug: string): Promise<Chunk[]> {
     const sql = this.sql;
+    // Enumerate non-embedding columns explicitly. `rowToChunk(r)` (default
+    // `includeEmbedding=false`) discards `cc.embedding` in JS, so selecting
+    // `cc.*` ships ~6 KB per chunk (1536 floats × 4 bytes) of pgvector data
+    // across the network on every call only to throw it away. On managed
+    // Postgres deployments where the MCP server hits `getChunks` for every
+    // page read by an agent, this becomes the single largest egress line
+    // item — observed multi-GB/day on active brains. `getChunksWithEmbeddings`
+    // below still uses `cc.*` because it actually consumes the column.
     const rows = await sql`
-      SELECT cc.* FROM content_chunks cc
+      SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+             cc.model, cc.token_count, cc.embedded_at,
+             cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
+             cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified
+      FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE p.slug = ${slug}
       ORDER BY cc.chunk_index

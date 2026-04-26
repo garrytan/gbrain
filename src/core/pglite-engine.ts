@@ -634,8 +634,18 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async getChunks(slug: string): Promise<Chunk[]> {
+    // Mirror the postgres-engine SELECT shape: enumerate non-embedding
+    // columns. `rowToChunk(r)` discards `cc.embedding`, and even though
+    // PGLite is in-process (no network egress concern), shipping the 6 KB
+    // pgvector column through the postgres.js wire-format wrapper per row
+    // is wasted JS heap allocation. Keeping the SELECT shape identical
+    // across engines also keeps engine-parity tests honest.
     const { rows } = await this.db.query(
-      `SELECT cc.* FROM content_chunks cc
+      `SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+              cc.model, cc.token_count, cc.embedded_at,
+              cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
+              cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified
+       FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
        WHERE p.slug = $1
        ORDER BY cc.chunk_index`,
