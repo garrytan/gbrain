@@ -9,6 +9,13 @@ let maxConcurrentEmbedCalls = 0;
 let totalEmbedCalls = 0;
 
 mock.module('../src/core/embedding.ts', () => ({
+  EMBEDDING_MODEL: 'text-embedding-3-large',
+  EMBEDDING_DIMENSIONS: 1536,
+  EMBEDDING_COST_PER_1K_TOKENS: 0.00013,
+  getEmbeddingProvider: () => 'openai',
+  getEmbeddingModel: () => 'text-embedding-3-large',
+  getEmbeddingDimensions: () => 1536,
+  estimateEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
   embedBatch: async (texts: string[]) => {
     activeEmbedCalls++;
     totalEmbedCalls++;
