@@ -277,12 +277,30 @@ export class MinionWorker {
     // The .finally clearTimeout below ensures process exit isn't delayed by a
     // dangling timer on normal completion.
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
     if (job.timeout_ms != null) {
       timeoutTimer = setTimeout(() => {
         if (!abort.signal.aborted) {
           console.warn(`Job ${job.id} (${job.name}) hit per-job timeout (${job.timeout_ms}ms), aborting`);
           abort.abort(new Error('timeout'));
         }
+        // Safety net: if the handler doesn't resolve within 30s after abort,
+        // force-evict from inFlight so the worker can pick up new jobs.
+        // Without this, a handler that ignores AbortSignal wedges the worker
+        // forever (the 98-waiting-0-active incident on 2026-04-24).
+        graceTimer = setTimeout(() => {
+          if (this.inFlight.has(job.id)) {
+            console.warn(
+              `Job ${job.id} (${job.name}) did not exit within 30s of abort. ` +
+              `Force-evicting from inFlight to unblock worker. ` +
+              `The handler is still running but the worker will claim new jobs.`
+            );
+            clearInterval(lockTimer);
+            this.inFlight.delete(job.id);
+            // Best-effort: mark as dead in DB so it doesn't get reclaimed
+            this.queue.failJob(job.id, lockToken, 'handler ignored abort signal (force-evicted)', 'dead').catch(() => {});
+          }
+        }, 30_000);
       }, job.timeout_ms);
     }
 
@@ -290,6 +308,7 @@ export class MinionWorker {
       .finally(() => {
         clearInterval(lockTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (graceTimer) clearTimeout(graceTimer);
         this.inFlight.delete(job.id);
       });
 
