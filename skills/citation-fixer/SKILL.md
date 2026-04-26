@@ -6,6 +6,8 @@ description: |
   an inline [Source: ...] citation matching the standard format.
 triggers:
   - "fix citations"
+  - "fix broken citations"
+  - "broken citations"
   - "citation audit"
   - "check citations"
 tools:

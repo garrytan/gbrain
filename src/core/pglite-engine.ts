@@ -1098,7 +1098,7 @@ export class PGLiteEngine implements BrainEngine {
            SELECT 1 FROM timeline_entries te
            WHERE te.page_id = p.id
              AND p.updated_at < te.created_at
-             AND instr(p.compiled_truth || char(10) || coalesce(p.timeline, ''), te.summary) = 0
+             AND position(te.summary in concat(coalesce(p.compiled_truth, ''), chr(10), coalesce(p.timeline, ''))) = 0
          )
         ) as stale_pages,
         -- Bug 11 — orphan = islanded (no inbound AND no outbound).

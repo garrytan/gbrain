@@ -87,6 +87,16 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   end_line      INTEGER
 );
 
+-- Existing installs may have created content_chunks before v0.19 columns
+-- existed. CREATE TABLE IF NOT EXISTS does not backfill columns, so keep
+-- bootstrap idempotent before creating indexes that reference them.
+ALTER TABLE content_chunks
+  ADD COLUMN IF NOT EXISTS language TEXT,
+  ADD COLUMN IF NOT EXISTS symbol_name TEXT,
+  ADD COLUMN IF NOT EXISTS symbol_type TEXT,
+  ADD COLUMN IF NOT EXISTS start_line INTEGER,
+  ADD COLUMN IF NOT EXISTS end_line INTEGER;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);

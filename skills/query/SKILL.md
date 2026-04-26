@@ -12,6 +12,8 @@ triggers:
   - "what happened"
   - "search for"
   - "look up"
+  - "background on"
+  - "do we already have notes"
   - "who knows who"
   - "relationship between"
   - "connections"

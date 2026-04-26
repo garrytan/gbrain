@@ -1115,11 +1115,11 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 
 | Trigger | Skill |
 |---------|-------|
-| "What do we know about", "tell me about", "search for" | `skills/query/SKILL.md` |
+| "What do we know about", "tell me about", "search for", "who is", "background on", "do we already have notes" | `skills/query/SKILL.md` |
 | "Who knows who", "relationship between", "connections", "graph query" | `skills/query/SKILL.md` (use graph-query) |
 | Creating/enriching a person or company page | `skills/enrich/SKILL.md` |
 | Where does a new file go? Filing rules | `skills/repo-architecture/SKILL.md` |
-| Fix broken citations in brain pages | `skills/citation-fixer/SKILL.md` |
+| "fix broken citations", "broken citations", "citation audit", "check citations" | `skills/citation-fixer/SKILL.md` |
 | "Research", "track", "extract from email", "investor updates", "donations" | `skills/data-research/SKILL.md` |
 | Share a brain page as a link | `skills/publish/SKILL.md` |
 
