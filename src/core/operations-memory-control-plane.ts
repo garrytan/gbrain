@@ -28,6 +28,7 @@ import type {
   MemoryRedactionPlan,
   MemoryRedactionPlanFilters,
   MemoryRedactionPlanInput,
+  MemoryRedactionPlanItem,
   MemoryRedactionPlanStatus,
 } from './types.ts';
 import { applyMemoryRealmUpsertDefaults, applyMemorySessionCreateDefaults, parseValidIsoTimestamp } from './utils.ts';
@@ -48,6 +49,7 @@ const DEFAULT_SESSION_CREATE_SOURCE_REFS = ['Source: mbrain create_memory_sessio
 const DEFAULT_SESSION_CLOSE_SOURCE_REFS = ['Source: mbrain close_memory_session operation'];
 const DEFAULT_SESSION_ATTACH_SOURCE_REFS = ['Source: mbrain attach_memory_realm_to_session operation'];
 const DEFAULT_REALM_UPSERT_ACTOR = 'mbrain:memory_control_plane';
+const REDACTION_PLAN_PREVIEW_ITEM_PAGE_SIZE = 500;
 
 function invalidParams(
   deps: { OperationError: OperationErrorCtor },
@@ -456,11 +458,11 @@ async function requireRedactionPlanForApplyPreview(
   deps: { OperationError: OperationErrorCtor },
   engine: {
     getMemoryRedactionPlan(id: string): Promise<MemoryRedactionPlan | null>;
-    listMemoryRedactionPlanItems(filters: { plan_id: string; limit: number }): Promise<Array<{
-      status: string;
-      target_object_type: string;
-      field_path: string;
-    }>>;
+    listMemoryRedactionPlanItems(filters: {
+      plan_id: string;
+      limit: number;
+      offset?: number;
+    }): Promise<Array<Pick<MemoryRedactionPlanItem, 'status' | 'target_object_type' | 'field_path'>>>;
   },
   id: string,
 ): Promise<MemoryRedactionPlan> {
@@ -471,7 +473,7 @@ async function requireRedactionPlanForApplyPreview(
   if (plan.status !== 'approved') {
     throw invalidParams(deps, `memory redaction plan must be approved: ${id}`);
   }
-  const items = await engine.listMemoryRedactionPlanItems({ plan_id: id, limit: 10_000 });
+  const items = await listAllMemoryRedactionPlanItemsForApplyPreview(engine, id);
   const unsupported = items.find((item) => item.status === 'unsupported');
   if (unsupported) {
     throw invalidParams(deps, `memory redaction plan contains unsupported item: ${id}`);
@@ -489,6 +491,29 @@ async function requireRedactionPlanForApplyPreview(
     throw invalidParams(deps, `memory redaction plan item field is unsupported: ${unsupportedField.field_path}`);
   }
   return plan;
+}
+
+async function listAllMemoryRedactionPlanItemsForApplyPreview(
+  engine: {
+    listMemoryRedactionPlanItems(filters: {
+      plan_id: string;
+      limit: number;
+      offset?: number;
+    }): Promise<Array<Pick<MemoryRedactionPlanItem, 'status' | 'target_object_type' | 'field_path'>>>;
+  },
+  planId: string,
+): Promise<Array<Pick<MemoryRedactionPlanItem, 'status' | 'target_object_type' | 'field_path'>>> {
+  const items: Array<Pick<MemoryRedactionPlanItem, 'status' | 'target_object_type' | 'field_path'>> = [];
+  for (let offset = 0; ;) {
+    const batch = await engine.listMemoryRedactionPlanItems({
+      plan_id: planId,
+      limit: REDACTION_PLAN_PREVIEW_ITEM_PAGE_SIZE,
+      offset,
+    });
+    if (batch.length === 0) return items;
+    items.push(...batch);
+    offset += batch.length;
+  }
 }
 
 export function createMemoryControlPlaneOperations(

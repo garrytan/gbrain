@@ -245,6 +245,56 @@ describe('memory redaction plan operations', () => {
     }
   });
 
+  test('dry-run apply pages through every plan item before previewing success', async () => {
+    const harness = await createSqliteHarness('dry-run-apply-item-pagination');
+    const originalListItems = harness.engine.listMemoryRedactionPlanItems.bind(harness.engine);
+    try {
+      await harness.engine.createMemoryRedactionPlan({
+        id: 'redaction-plan:dry-run-pagination',
+        scope_id: 'workspace:default',
+        query: 'dry-run-paged-secret',
+        status: 'approved',
+      });
+      await harness.engine.createMemoryRedactionPlanItem({
+        id: 'redaction-item:dry-run-pagination-page',
+        plan_id: 'redaction-plan:dry-run-pagination',
+        target_object_type: 'page',
+        target_object_id: 'concepts/dry-run-pagination',
+        field_path: 'compiled_truth',
+        status: 'planned',
+        preview_text: 'dry-run-paged-secret',
+        created_at: new Date('2026-04-26T01:00:00.000Z'),
+        updated_at: new Date('2026-04-26T01:00:00.000Z'),
+      });
+      await harness.engine.createMemoryRedactionPlanItem({
+        id: 'redaction-item:dry-run-pagination-unsupported',
+        plan_id: 'redaction-plan:dry-run-pagination',
+        target_object_type: 'profile_memory',
+        target_object_id: 'profile:dry-run-pagination',
+        field_path: 'content',
+        status: 'unsupported',
+        preview_text: 'dry-run-paged-secret',
+        created_at: new Date('2026-04-26T01:00:01.000Z'),
+        updated_at: new Date('2026-04-26T01:00:01.000Z'),
+      });
+
+      harness.engine.listMemoryRedactionPlanItems = async (filters) => originalListItems({
+        ...filters,
+        limit: 1,
+        offset: filters?.offset ?? 0,
+      });
+
+      const apply = getOperation('apply_memory_redaction_plan');
+      await expect(apply.handler(harness.ctx(true), {
+        id: 'redaction-plan:dry-run-pagination',
+      })).rejects.toThrow(/unsupported/i);
+      expect((await harness.engine.getMemoryRedactionPlan('redaction-plan:dry-run-pagination'))?.status).toBe('approved');
+    } finally {
+      harness.engine.listMemoryRedactionPlanItems = originalListItems;
+      await harness.cleanup();
+    }
+  });
+
   test('pglite engine supports redaction plan create and list through operations', async () => {
     const harness = await createPgliteHarness('pglite-create-list');
     try {
