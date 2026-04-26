@@ -234,7 +234,25 @@ async function embedAll(
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
 
   async function embedOnePage(page: typeof pages[number]) {
-    const chunks = await engine.getChunks(page.slug);
+    let chunks = await engine.getChunks(page.slug);
+
+    // Rebuild chunks from page content if DB has none (e.g. after TRUNCATE)
+    if (chunks.length === 0 && page.compiled_truth?.trim()) {
+      const inputs: ChunkInput[] = [];
+      for (const c of chunkText(page.compiled_truth)) {
+        inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
+      }
+      if (page.timeline?.trim()) {
+        for (const c of chunkText(page.timeline)) {
+          inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
+        }
+      }
+      if (inputs.length > 0) {
+        await engine.upsertChunks(page.slug, inputs);
+        chunks = await engine.getChunks(page.slug);
+      }
+    }
+
     const toEmbed = staleOnly
       ? chunks.filter(c => !c.embedded_at)
       : chunks;

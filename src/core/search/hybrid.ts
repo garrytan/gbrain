@@ -85,8 +85,9 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
-  // Skip vector search entirely if no OpenAI key is configured
-  if (!process.env.OPENAI_API_KEY) {
+  // Skip vector search if explicitly using keyword-only mode
+  // (Ollama and other providers work without OPENAI_API_KEY)
+  if (process.env.EMBEDDING_PROVIDER === 'keyword') {
     // Apply backlink boost in keyword-only path too. One getBacklinkCounts query
     // per search request; not N+1.
     if (keywordResults.length > 0) {

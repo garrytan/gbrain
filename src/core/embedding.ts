@@ -1,30 +1,18 @@
 /**
  * Embedding Service
- * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
- *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * Uses raw fetch to avoid OpenAI SDK v4.104.0 truncating embeddings to 256 dims.
+ * Supports local bge-m3 (via embed-server.py) and any OpenAI-compatible API.
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
- * 8000 character input truncation.
  */
 
-import OpenAI from 'openai';
-
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
-const MAX_CHARS = 8000;
+const MODEL = process.env.EMBEDDING_MODEL || 'bge-m3';
+const DIMENSIONS = parseInt(process.env.EMBEDDING_DIMENSIONS || '1024', 10);
+const BASE_URL = process.env.EMBEDDING_BASE_URL || 'http://localhost:9999/v1';
+const MAX_CHARS = parseInt(process.env.EMBEDDING_MAX_CHARS || '8000', 10);
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
-
-let client: OpenAI | null = null;
-
-function getClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI();
-  }
-  return client;
-}
 
 export async function embed(text: string): Promise<Float32Array> {
   const truncated = text.slice(0, MAX_CHARS);
@@ -62,36 +50,32 @@ export async function embedBatch(
 async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await getClient().embeddings.create({
-        model: MODEL,
-        input: texts,
-        dimensions: DIMENSIONS,
+      const url = `${BASE_URL}/embeddings`;
+      const body = JSON.stringify({ model: MODEL, input: texts });
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
       });
 
-      // Sort by index to maintain order
-      const sorted = response.data.sort((a, b) => a.index - b.index);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Embedding API ${res.status}: ${text}`);
+      }
+
+      const json = await res.json() as {
+        data: Array<{ index: number; embedding: number[] }>;
+      };
+
+      const sorted = json.data.sort((a, b) => a.index - b.index);
       return sorted.map(d => new Float32Array(d.embedding));
     } catch (e: unknown) {
       if (attempt === MAX_RETRIES - 1) throw e;
-
-      // Check for rate limit with Retry-After header
-      let delay = exponentialDelay(attempt);
-
-      if (e instanceof OpenAI.APIError && e.status === 429) {
-        const retryAfter = e.headers?.['retry-after'];
-        if (retryAfter) {
-          const parsed = parseInt(retryAfter, 10);
-          if (!isNaN(parsed)) {
-            delay = parsed * 1000;
-          }
-        }
-      }
-
-      await sleep(delay);
+      await sleep(exponentialDelay(attempt));
     }
   }
 
-  // Should not reach here
   throw new Error('Embedding failed after all retries');
 }
 
