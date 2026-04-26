@@ -18,6 +18,8 @@ import type {
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
+  EvalCandidate, EvalCandidateInput,
+  EvalCaptureFailure, EvalCaptureFailureReason,
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
 
@@ -1353,6 +1355,82 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(rowToCodeEdge);
   }
 
+  // Eval capture (v0.22.0). See BrainEngine interface docs.
+  async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
+    const { rows } = await this.db.query<{ id: number }>(
+      `INSERT INTO eval_candidates (
+         tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
+         expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
+         latency_ms, remote, job_id, subagent_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING id`,
+      [
+        input.tool_name,
+        input.query,
+        input.retrieved_slugs,
+        input.retrieved_chunk_ids,
+        input.source_ids,
+        input.expand_enabled,
+        input.detail,
+        input.detail_resolved,
+        input.vector_enabled,
+        input.expansion_applied,
+        input.latency_ms,
+        input.remote,
+        input.job_id,
+        input.subagent_id,
+      ]
+    );
+    return rows[0]!.id;
+  }
+
+  async listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }): Promise<EvalCandidate[]> {
+    const raw = filter?.limit;
+    const limit = (raw === undefined || raw === null || !Number.isFinite(raw) || raw <= 0)
+      ? 1000
+      : Math.min(Math.floor(raw), 100000);
+    const since = filter?.since ?? new Date(0);
+    const tool = filter?.tool ?? null;
+    // id DESC tiebreaker — see postgres-engine for rationale.
+    const { rows } = tool
+      ? await this.db.query(
+          `SELECT * FROM eval_candidates
+           WHERE created_at >= $1 AND tool_name = $2
+           ORDER BY created_at DESC, id DESC LIMIT $3`,
+          [since, tool, limit]
+        )
+      : await this.db.query(
+          `SELECT * FROM eval_candidates
+           WHERE created_at >= $1
+           ORDER BY created_at DESC, id DESC LIMIT $2`,
+          [since, limit]
+        );
+    return rows as unknown as EvalCandidate[];
+  }
+
+  async deleteEvalCandidatesBefore(date: Date): Promise<number> {
+    const { rows } = await this.db.query(
+      `DELETE FROM eval_candidates WHERE created_at < $1 RETURNING id`,
+      [date]
+    );
+    return rows.length;
+  }
+
+  async logEvalCaptureFailure(reason: EvalCaptureFailureReason): Promise<void> {
+    await this.db.query(
+      `INSERT INTO eval_capture_failures (reason) VALUES ($1)`,
+      [reason]
+    );
+  }
+
+  async listEvalCaptureFailures(filter?: { since?: Date }): Promise<EvalCaptureFailure[]> {
+    const since = filter?.since ?? new Date(0);
+    const { rows } = await this.db.query(
+      `SELECT * FROM eval_capture_failures WHERE ts >= $1 ORDER BY ts DESC`,
+      [since]
+    );
+    return rows as unknown as EvalCaptureFailure[];
+  }
 }
 
 function rowToCodeEdge(row: Record<string, unknown>): import('./types.ts').CodeEdgeResult {
