@@ -2,14 +2,14 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.22.5] - 2026-04-26
+## [0.21.6] - 2026-04-26
 
 **Old brains can upgrade again.**
 **Two-year, ten-issue wedge cycle ends. Pre-v0.13/v0.18/v0.19 brains all upgrade clean.**
 
 If you've been pinned to an older gbrain because `gbrain upgrade` wedges your brain
 with `column "source_id" does not exist` or `column "link_source" does not exist`,
-v0.22.5 unblocks you. The fix lives in `initSchema()` itself, where it should
+v0.21.6 unblocks you. The fix lives in `initSchema()` itself, where it should
 have lived all along.
 
 The bug class is structural: gbrain ships an "embedded latest schema" SQL blob
@@ -37,7 +37,7 @@ since PGLite has no RLS engine and is single-tenant by definition.
 
 ### The numbers that matter
 
-| Metric | v0.22.0 | v0.22.5 | Δ |
+| Metric | v0.22.0 | v0.21.6 | Δ |
 |---|---|---|---|
 | Pre-v0.13 brain upgrades cleanly | wedges on `link_source` | passes | ✓ |
 | Pre-v0.18 brain upgrades cleanly | wedges on `source_id` | passes | ✓ |
@@ -49,7 +49,7 @@ since PGLite has no RLS engine and is single-tenant by definition.
 ### What this means for you
 
 If you've been on v0.13.x, v0.14.x, v0.17.x, v0.18.x, v0.19.x, v0.20.x, or v0.22.0 and
-your `gbrain upgrade` failed, run it again. It should walk to v0.22.5 cleanly.
+your `gbrain upgrade` failed, run it again. It should walk to v0.21.6 cleanly.
 If you wedged on the v24 RLS migration on a PGLite brain, the same thing.
 
 If you're on a fresh install or already on v0.22.0, this patch is invisible.
@@ -72,7 +72,7 @@ The bootstrap probe runs once per connect, sees nothing to do, and returns.
 - New `test/e2e/postgres-bootstrap.test.ts` exercises `PostgresEngine.initSchema()` directly (not the standalone `db.initSchema` from `src/core/db.ts`, which only runs SCHEMA_SQL and would have produced false-positive coverage). Codex caught this E2E shape gap during plan review.
 - Wave PRs incorporated with attribution: @vinsew (#398), @jdcastro2 (#399), @schnubb-web (#402). The narrow-bootstrap shape supersedes #402's broader "run all migrations early" approach, which would have crashed on v24 trying to alter tables that the schema blob hadn't created yet (codex finding during plan review).
 
-## To take advantage of v0.22.5
+## To take advantage of v0.21.6
 
 `gbrain upgrade` should do this automatically. If you're currently wedged on a
 prior version's upgrade attempt:
