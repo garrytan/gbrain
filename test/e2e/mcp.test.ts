@@ -11,6 +11,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'url';
 import { operations } from '../../src/core/operations.ts';
+import { operationToMcpTool } from '../../src/mcp/tool-schema.ts';
 import { assertOk, createSqliteCliHarness, parseJsonSuffix } from './sqlite-cli-helpers.ts';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -25,27 +26,7 @@ function parseMcpText<T = any>(result: any): T {
 describe('E2E: MCP Tool Generation', () => {
   test('operations generate valid MCP tool definitions', () => {
     // This replicates exactly what server.ts does in the tools/list handler
-    const tools = operations.map(op => ({
-      name: op.name,
-      description: op.description,
-      inputSchema: {
-        type: 'object' as const,
-        properties: Object.fromEntries(
-          Object.entries(op.params).map(([k, v]) => {
-            const baseType = v.type === 'array' ? 'array' : v.type;
-            return [k, {
-              type: v.nullable ? [baseType, 'null'] : baseType,
-              ...(v.description ? { description: v.description } : {}),
-              ...(v.enum ? { enum: v.enum } : {}),
-              ...(v.items ? { items: { type: v.items.type } } : {}),
-            }];
-          }),
-        ),
-        required: Object.entries(op.params)
-          .filter(([, v]) => v.required)
-          .map(([k]) => k),
-      },
-    }));
+    const tools = operations.map(operationToMcpTool);
 
     expect(tools.length).toBe(operations.length);
     expect(tools.length).toBeGreaterThanOrEqual(30);
@@ -70,6 +51,7 @@ describe('E2E: MCP Tool Generation', () => {
     expect(names).toContain('file_upload');
     expect(names).toContain('list_memory_mutation_events');
     expect(names).toContain('record_memory_mutation_event');
+    expect(names).toContain('dry_run_memory_mutation');
     expect(names).toContain('upsert_memory_realm');
     expect(names).toContain('get_memory_session');
     expect(names).toContain('list_memory_sessions');
@@ -81,6 +63,25 @@ describe('E2E: MCP Tool Generation', () => {
     expect(recordMutationEvent?.inputSchema.required).toContain('source_refs');
     expect((recordMutationEvent?.inputSchema.properties as any).source_ref).toBeUndefined();
     expect((recordMutationEvent?.inputSchema.properties as any).mutation_dry_run.type).toBe('boolean');
+    const dryRunMutation = tools.find((tool) => tool.name === 'dry_run_memory_mutation');
+    expect(dryRunMutation?.inputSchema.required).toEqual([
+      'session_id',
+      'realm_id',
+      'target_kind',
+      'target_id',
+      'operation',
+      'source_refs',
+    ]);
+    expect((dryRunMutation?.inputSchema.properties as any).dry_run.type).toBe('boolean');
+    expect((dryRunMutation?.inputSchema.properties as any).scope_id.type).toEqual(['string', 'null']);
+    expect((dryRunMutation?.inputSchema.properties as any).operation.enum).toContain('put_page');
+    expect((dryRunMutation?.inputSchema.properties as any).operation.enum).not.toContain('create_memory_session');
+    expect((dryRunMutation?.inputSchema.properties as any).operation.enum).not.toContain('upsert_memory_realm');
+    expect((dryRunMutation?.inputSchema.properties as any).operation.enum).not.toContain('record_memory_mutation_event');
+    expect((dryRunMutation?.inputSchema.properties as any).operation.enum).not.toContain('repair_memory_ledger');
+    expect((dryRunMutation?.inputSchema.properties as any).operation.enum).not.toContain('physical_delete_memory_record');
+    expect((dryRunMutation?.inputSchema.properties as any).target_kind.enum).toContain('profile_memory');
+    expect((dryRunMutation?.inputSchema.properties as any).target_kind.enum).not.toContain('source_record');
     const upsertMemoryRealm = tools.find((tool) => tool.name === 'upsert_memory_realm');
     expect((upsertMemoryRealm?.inputSchema.properties as any).archived_at.type).toEqual(['string', 'null']);
   });

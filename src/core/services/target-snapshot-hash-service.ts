@@ -228,6 +228,20 @@ async function memorySessionAttachmentTargetSnapshotHash(
   engine: BrainEngine,
   targetId: string,
 ): Promise<TargetSnapshotHashResult | null> {
+  const attachment = await resolveMemorySessionAttachmentTarget(engine, targetId);
+  if (!attachment) return null;
+  return targetSnapshotResult(
+    'memory_session_attachment',
+    targetId,
+    hashCanonicalJson(memorySessionAttachmentPayload(attachment)),
+    'canonical_json',
+  );
+}
+
+export async function resolveMemorySessionAttachmentTarget(
+  engine: BrainEngine,
+  targetId: string,
+): Promise<MemorySessionAttachment | null> {
   const matches: MemorySessionAttachment[] = [];
   const parsedTarget = parseMemorySessionAttachmentTargetIdCandidates(targetId);
   for (const parsed of parsedTarget.candidates) {
@@ -244,14 +258,7 @@ async function memorySessionAttachmentTargetSnapshotHash(
   if (matches.length > 1) {
     throw new Error(`ambiguous memory_session_attachment target_id: ${targetId}`);
   }
-  const attachment = matches[0];
-  if (!attachment) return null;
-  return targetSnapshotResult(
-    'memory_session_attachment',
-    targetId,
-    hashCanonicalJson(memorySessionAttachmentPayload(attachment)),
-    'canonical_json',
-  );
+  return matches[0] ?? null;
 }
 
 function canonicalTargetSnapshotHash<T>(
@@ -470,7 +477,7 @@ function dedupeMemorySessionAttachmentTargetCandidates(
   });
 }
 
-function parseEncodedMemorySessionAttachmentTargetId(targetId: string): {
+export function parseEncodedMemorySessionAttachmentTargetId(targetId: string): {
   session_id: string;
   realm_id: string;
 } {

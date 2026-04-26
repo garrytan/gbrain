@@ -14,7 +14,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import postgres from 'postgres';
 import { createHash } from 'crypto';
-import { operations, OperationError, PostgresEngine, VERSION, MCP_INSTRUCTIONS } from './mbrain-core.js';
+import { operations, operationToMcpTool, OperationError, PostgresEngine, VERSION, MCP_INSTRUCTIONS } from './mbrain-core.js';
 import type { OperationContext } from './mbrain-core.js';
 
 // Operations excluded from remote (may exceed 60s Edge Function timeout)
@@ -142,24 +142,7 @@ function createMcpServer(eng: PostgresEngine): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: remoteOps.map((op: any) => ({
-      name: op.name,
-      description: op.description,
-      inputSchema: {
-        type: 'object' as const,
-        properties: Object.fromEntries(
-          Object.entries(op.params).map(([k, v]: [string, any]) => [k, {
-            type: v.type === 'array' ? 'array' : v.type,
-            ...(v.description ? { description: v.description } : {}),
-            ...(v.enum ? { enum: v.enum } : {}),
-            ...(v.items ? { items: { type: v.items.type } } : {}),
-          }]),
-        ),
-        required: Object.entries(op.params)
-          .filter(([, v]: [string, any]) => v.required)
-          .map(([k]: [string, any]) => k),
-      },
-    })),
+    tools: remoteOps.map(operationToMcpTool),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {

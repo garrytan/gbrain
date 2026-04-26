@@ -1,6 +1,12 @@
 import { randomUUID } from 'crypto';
 import type { Operation } from './operations.ts';
 import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
+import {
+  parseEncodedMemorySessionAttachmentTargetId,
+  resolveMemorySessionAttachmentTarget,
+  resolveTargetSnapshotHash,
+  UnsupportedTargetSnapshotKindError,
+} from './services/target-snapshot-hash-service.ts';
 import type {
   MemoryMutationEventFilters,
   MemoryMutationEventInput,
@@ -8,6 +14,8 @@ import type {
   MemoryMutationRedactionVisibility,
   MemoryMutationResult,
   MemoryMutationTargetKind,
+  MemoryRealm,
+  MemorySession,
 } from './types.ts';
 
 type OperationErrorCtor = new (
@@ -93,6 +101,51 @@ const MEMORY_MUTATION_OPERATION_NAMES = [
   'repair_memory_ledger',
   'physical_delete_memory_record',
 ] as const satisfies readonly MemoryMutationOperationName[];
+
+const DRY_RUN_MEMORY_MUTATION_TARGET_KINDS = [
+  'page',
+  'task_thread',
+  'working_set',
+  'memory_candidate',
+  'profile_memory',
+  'personal_episode',
+  'memory_realm',
+  'memory_session',
+  'memory_session_attachment',
+  'context_map',
+  'context_atlas',
+] as const satisfies readonly MemoryMutationTargetKind[];
+
+interface DryRunMemoryMutationOperationPolicy {
+  targetKinds: readonly MemoryMutationTargetKind[];
+  allowMissingTarget?: boolean;
+  missingTargetScope?: 'workspace_default' | 'personal' | 'attachment_realm';
+  mustBeMissingTarget?: boolean;
+  requiresReadWriteAttachment?: boolean;
+}
+
+const DRY_RUN_MEMORY_MUTATION_OPERATION_POLICIES = {
+  close_memory_session: { targetKinds: ['memory_session'] },
+  put_page: { targetKinds: ['page'], allowMissingTarget: true, missingTargetScope: 'workspace_default' },
+  delete_page: { targetKinds: ['page'] },
+  upsert_profile_memory_entry: { targetKinds: ['profile_memory'], allowMissingTarget: true, missingTargetScope: 'personal' },
+  write_profile_memory_entry: { targetKinds: ['profile_memory'], allowMissingTarget: true, missingTargetScope: 'personal' },
+  delete_profile_memory_entry: { targetKinds: ['profile_memory'] },
+  record_personal_episode: { targetKinds: ['personal_episode'], allowMissingTarget: true, missingTargetScope: 'personal', mustBeMissingTarget: true },
+  write_personal_episode_entry: { targetKinds: ['personal_episode'], allowMissingTarget: true, missingTargetScope: 'personal', mustBeMissingTarget: true },
+  delete_personal_episode_entry: { targetKinds: ['personal_episode'] },
+  attach_memory_realm_to_session: { targetKinds: ['memory_session_attachment'], allowMissingTarget: true, missingTargetScope: 'attachment_realm', requiresReadWriteAttachment: false },
+  create_memory_candidate_entry: { targetKinds: ['memory_candidate'], allowMissingTarget: true, missingTargetScope: 'workspace_default', mustBeMissingTarget: true },
+  advance_memory_candidate_status: { targetKinds: ['memory_candidate'] },
+  reject_memory_candidate_entry: { targetKinds: ['memory_candidate'] },
+  delete_memory_candidate_entry: { targetKinds: ['memory_candidate'] },
+  promote_memory_candidate_entry: { targetKinds: ['memory_candidate'] },
+  supersede_memory_candidate_entry: { targetKinds: ['memory_candidate'] },
+} as const satisfies Partial<Record<MemoryMutationOperationName, DryRunMemoryMutationOperationPolicy>>;
+
+const DRY_RUN_MEMORY_MUTATION_ALLOWED_OPERATIONS = Object.keys(
+  DRY_RUN_MEMORY_MUTATION_OPERATION_POLICIES,
+) as MemoryMutationOperationName[];
 
 const ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
@@ -339,6 +392,277 @@ function recordInput(
   };
 }
 
+interface DryRunMemoryMutationInput {
+  session_id: string;
+  realm_id: string;
+  target_kind: MemoryMutationTargetKind;
+  target_id: string;
+  operation: MemoryMutationOperationName;
+  source_refs: string[];
+  actor?: string;
+  scope_id?: string | null;
+  expected_target_snapshot_hash?: string | null;
+  metadata: Record<string, unknown>;
+  dry_run?: boolean;
+}
+
+interface DryRunMemoryMutationPolicyChecks {
+  source_refs: boolean;
+  operation_allowed: boolean;
+  session_active: boolean;
+  realm_active: boolean;
+  attachment_read_write: boolean;
+  scope_allowed: boolean;
+  target_resolved: boolean;
+  target_snapshot_hash_matched: boolean;
+}
+
+interface DryRunTargetScope {
+  scopeId?: string;
+  exact: boolean;
+  required?: boolean;
+  targetMatchesInput?: boolean;
+}
+
+function dryRunMemoryMutationInput(
+  deps: { OperationError: OperationErrorCtor },
+  p: Record<string, unknown>,
+): DryRunMemoryMutationInput {
+  return {
+    session_id: requiredString(deps, 'session_id', p.session_id),
+    realm_id: requiredString(deps, 'realm_id', p.realm_id),
+    target_kind: enumValue(deps, 'target_kind', p.target_kind, DRY_RUN_MEMORY_MUTATION_TARGET_KINDS, true)!,
+    target_id: requiredString(deps, 'target_id', p.target_id),
+    operation: enumValue(deps, 'operation', p.operation, MEMORY_MUTATION_OPERATION_NAMES, true)!,
+    source_refs: requiredSourceRefs(deps, p),
+    actor: optionalString(deps, 'actor', p.actor),
+    scope_id: optionalNullableString(deps, 'scope_id', p.scope_id),
+    expected_target_snapshot_hash: optionalSnapshotHash(deps, 'expected_target_snapshot_hash', p.expected_target_snapshot_hash),
+    metadata: optionalObject(deps, 'metadata', p.metadata) ?? {},
+    dry_run: optionalBoolean(deps, 'dry_run', p.dry_run),
+  };
+}
+
+function initialDryRunPolicyChecks(): DryRunMemoryMutationPolicyChecks {
+  return {
+    source_refs: true,
+    operation_allowed: false,
+    session_active: false,
+    realm_active: false,
+    attachment_read_write: false,
+    scope_allowed: false,
+    target_resolved: false,
+    target_snapshot_hash_matched: false,
+  };
+}
+
+function isScopeAllowedForRealm(
+  realm: MemoryRealm,
+  scopeId: string | null | undefined,
+): boolean {
+  if (!scopeId) return true;
+  if (realm.scope === 'mixed') return true;
+  const isPersonalScope = scopeId === 'personal' || scopeId.startsWith('personal:');
+  const isMixedScope = scopeId === 'mixed' || scopeId.startsWith('mixed:');
+  if (realm.scope === 'personal') return isPersonalScope;
+  return !isPersonalScope && !isMixedScope;
+}
+
+function isDryRunOperationTargetKindAllowed(
+  policy: DryRunMemoryMutationOperationPolicy,
+  targetKind: MemoryMutationTargetKind,
+): boolean {
+  return (policy.targetKinds as readonly string[]).includes(targetKind);
+}
+
+function dryRunOperationPolicy(
+  operation: MemoryMutationOperationName,
+): DryRunMemoryMutationOperationPolicy | undefined {
+  return (DRY_RUN_MEMORY_MUTATION_OPERATION_POLICIES as Partial<
+    Record<MemoryMutationOperationName, DryRunMemoryMutationOperationPolicy>
+  >)[operation];
+}
+
+function effectiveDryRunScopeId(
+  input: DryRunMemoryMutationInput,
+  policy: DryRunMemoryMutationOperationPolicy,
+): string | null {
+  if (input.scope_id != null) return input.scope_id;
+  if (policy.missingTargetScope === 'workspace_default') {
+    return 'workspace:default';
+  }
+  if (policy.missingTargetScope === 'personal') {
+    return 'personal:default';
+  }
+  return null;
+}
+
+function isTargetScopeCompatibleWithRealm(
+  realm: MemoryRealm,
+  requestedScopeId: string | null | undefined,
+  targetScope: DryRunTargetScope,
+): boolean {
+  if (targetScope.targetMatchesInput === false) return false;
+  if (!targetScope.scopeId) {
+    if (targetScope.required) return false;
+    return Boolean(requestedScopeId);
+  }
+  if (!isScopeAllowedForRealm(realm, targetScope.scopeId)) {
+    return false;
+  }
+  if (!requestedScopeId) {
+    return true;
+  }
+  if (targetScope.exact) {
+    return requestedScopeId === targetScope.scopeId;
+  }
+  if (targetScope.scopeId === 'mixed') {
+    return true;
+  }
+  return isScopeAllowedForRealm(
+    { ...realm, scope: targetScope.scopeId as MemoryRealm['scope'] },
+    requestedScopeId,
+  );
+}
+
+async function resolveDryRunTargetSnapshotHash(
+  deps: { OperationError: OperationErrorCtor },
+  engine: Parameters<typeof resolveTargetSnapshotHash>[0],
+  input: DryRunMemoryMutationInput,
+): Promise<string | null> {
+  try {
+    const result = await resolveTargetSnapshotHash(engine, {
+      target_kind: input.target_kind,
+      target_id: input.target_id,
+    });
+    return result?.target_snapshot_hash ?? null;
+  } catch (error) {
+    if (error instanceof UnsupportedTargetSnapshotKindError) {
+      throw invalidParams(deps, error.message);
+    }
+    throw error;
+  }
+}
+
+async function resolveDryRunTargetScope(
+  engine: Parameters<typeof resolveTargetSnapshotHash>[0],
+  input: DryRunMemoryMutationInput,
+  effectiveScopeId: string | null,
+): Promise<DryRunTargetScope> {
+  switch (input.target_kind) {
+    case 'page':
+      return {
+        scopeId: effectiveScopeId ?? 'workspace:default',
+        exact: false,
+        required: true,
+      };
+    case 'profile_memory':
+      return {
+        scopeId: (await engine.getProfileMemoryEntry(input.target_id))?.scope_id,
+        exact: true,
+      };
+    case 'personal_episode':
+      return {
+        scopeId: (await engine.getPersonalEpisodeEntry(input.target_id))?.scope_id,
+        exact: true,
+      };
+    case 'memory_candidate':
+      return {
+        scopeId: (await engine.getMemoryCandidateEntry(input.target_id))?.scope_id,
+        exact: true,
+      };
+    case 'task_thread':
+      return {
+        scopeId: (await engine.getTaskThread(input.target_id))?.scope,
+        exact: false,
+      };
+    case 'working_set': {
+      const workingSet = await engine.getTaskWorkingSet(input.target_id);
+      if (!workingSet) return { exact: false };
+      return {
+        scopeId: (await engine.getTaskThread(workingSet.task_id))?.scope,
+        exact: false,
+      };
+    }
+    case 'context_map':
+      return {
+        scopeId: (await engine.getContextMapEntry(input.target_id))?.scope_id,
+        exact: true,
+      };
+    case 'context_atlas':
+      return {
+        scopeId: (await engine.getContextAtlasEntry(input.target_id))?.scope_id,
+        exact: true,
+      };
+    case 'memory_realm':
+      return {
+        scopeId: (await engine.getMemoryRealm(input.target_id))?.scope,
+        exact: false,
+      };
+    case 'memory_session': {
+      const targetSession = await engine.getMemorySession(input.target_id);
+      if (!targetSession?.task_id) return { exact: false };
+      return {
+        scopeId: (await engine.getTaskThread(targetSession.task_id))?.scope,
+        exact: false,
+      };
+    }
+    case 'memory_session_attachment': {
+      const targetAttachment = await resolveMemorySessionAttachmentTarget(engine, input.target_id);
+      if (!targetAttachment) return { exact: false };
+      return {
+        scopeId: (await engine.getMemoryRealm(targetAttachment.realm_id))?.scope,
+        exact: false,
+        targetMatchesInput: targetAttachment.session_id === input.session_id
+          && targetAttachment.realm_id === input.realm_id,
+      };
+    }
+    default:
+      return { exact: false };
+  }
+}
+
+async function resolveDryRunMissingTargetScope(
+  engine: Parameters<typeof resolveTargetSnapshotHash>[0],
+  input: DryRunMemoryMutationInput,
+  policy: DryRunMemoryMutationOperationPolicy,
+  effectiveScopeId: string | null,
+): Promise<DryRunTargetScope> {
+  switch (policy.missingTargetScope) {
+    case 'workspace_default':
+      return {
+        scopeId: effectiveScopeId ?? 'workspace:default',
+        exact: false,
+        required: true,
+      };
+    case 'personal':
+      return {
+        scopeId: 'personal',
+        exact: false,
+        required: true,
+      };
+    case 'attachment_realm': {
+      try {
+        const attachmentTarget = parseEncodedMemorySessionAttachmentTargetId(input.target_id);
+        return {
+          scopeId: (await engine.getMemoryRealm(attachmentTarget.realm_id))?.scope,
+          exact: false,
+          required: true,
+          targetMatchesInput: attachmentTarget.session_id === input.session_id
+            && attachmentTarget.realm_id === input.realm_id,
+        };
+      } catch {
+        return {
+          exact: false,
+          required: true,
+        };
+      }
+    }
+    default:
+      return { exact: false };
+  }
+}
+
 export function createMemoryMutationLedgerOperations(
   deps: {
     OperationError: OperationErrorCtor;
@@ -411,5 +735,156 @@ export function createMemoryMutationLedgerOperations(
     cliHints: { name: 'memory-mutation-event-record' },
   };
 
-  return [list_memory_mutation_events, record_memory_mutation_event];
+  const dry_run_memory_mutation: Operation = {
+    name: 'dry_run_memory_mutation',
+    description: 'Validate whether a durable memory mutation would be allowed, including session/realm policy and target snapshot hash checks, and record the validation result in the mutation ledger.',
+    params: {
+      session_id: { type: 'string', required: true },
+      realm_id: { type: 'string', required: true },
+      target_kind: { type: 'string', required: true, enum: [...DRY_RUN_MEMORY_MUTATION_TARGET_KINDS] },
+      target_id: { type: 'string', required: true },
+      operation: { type: 'string', required: true, enum: [...DRY_RUN_MEMORY_MUTATION_ALLOWED_OPERATIONS] },
+      source_refs: { type: 'array', required: true, items: { type: 'string' }, description: 'Required provenance references.' },
+      actor: { type: 'string' },
+      scope_id: { type: 'string', nullable: true },
+      expected_target_snapshot_hash: { type: 'string' },
+      metadata: { type: 'object' },
+      dry_run: { type: 'boolean', description: 'Preview validation without writing a ledger event.' },
+    },
+    mutating: true,
+    handler: async (ctx, p) => {
+      const input = dryRunMemoryMutationInput(deps, p);
+      const preview = ctx.dryRun || input.dry_run === true;
+      const checks = initialDryRunPolicyChecks();
+      let session: MemorySession | null = null;
+      let currentTargetSnapshotHash: string | null = null;
+      let effectiveScopeId = input.scope_id ?? null;
+
+      const finish = async (
+        result: Extract<MemoryMutationResult, 'dry_run' | 'denied' | 'conflict'>,
+        conflictInfo?: Record<string, unknown>,
+      ) => {
+        const allowed = result === 'dry_run';
+        const actor = input.actor ?? session?.actor_ref ?? 'mbrain:dry_run_memory_mutation';
+        let eventId: string | undefined;
+
+        if (!preview) {
+          const event = await recordMemoryMutationEvent(ctx.engine, {
+            session_id: input.session_id,
+            realm_id: input.realm_id,
+            actor,
+            operation: 'dry_run_memory_mutation',
+            target_kind: input.target_kind,
+            target_id: input.target_id,
+            scope_id: effectiveScopeId,
+            source_refs: input.source_refs,
+            expected_target_snapshot_hash: input.expected_target_snapshot_hash ?? null,
+            current_target_snapshot_hash: currentTargetSnapshotHash,
+            result,
+            ...(conflictInfo ? { conflict_info: conflictInfo } : {}),
+            metadata: {
+              ...input.metadata,
+              requested_operation: input.operation,
+              policy_checks: checks,
+            },
+          });
+          eventId = event.id;
+        }
+
+        return {
+          action: 'dry_run_memory_mutation',
+          allowed,
+          result,
+          ledger_recorded: !preview,
+          target_kind: input.target_kind,
+          target_id: input.target_id,
+          expected_target_snapshot_hash: input.expected_target_snapshot_hash ?? null,
+          current_target_snapshot_hash: currentTargetSnapshotHash,
+          policy_checks: { ...checks },
+          ...(conflictInfo ? { conflict_info: conflictInfo } : {}),
+          ...(eventId ? { event_id: eventId } : {}),
+        };
+      };
+
+      const operationPolicy = dryRunOperationPolicy(input.operation);
+      if (
+        !operationPolicy
+        || !isDryRunOperationTargetKindAllowed(operationPolicy, input.target_kind)
+      ) {
+        return finish('denied');
+      }
+      checks.operation_allowed = true;
+      effectiveScopeId = effectiveDryRunScopeId(input, operationPolicy);
+
+      session = await ctx.engine.getMemorySession(input.session_id);
+      if (!session || session.status !== 'active') {
+        return finish('denied');
+      }
+      checks.session_active = true;
+
+      const realm = await ctx.engine.getMemoryRealm(input.realm_id);
+      if (!realm || realm.archived_at) {
+        return finish('denied');
+      }
+      checks.realm_active = true;
+      if (effectiveScopeId == null && operationPolicy.missingTargetScope === 'attachment_realm') {
+        effectiveScopeId = realm.scope;
+      }
+
+      if (operationPolicy.requiresReadWriteAttachment === false) {
+        checks.attachment_read_write = true;
+      } else {
+        const attachment = (await ctx.engine.listMemorySessionAttachments({
+          session_id: input.session_id,
+          realm_id: input.realm_id,
+          limit: 1,
+        }))[0] ?? null;
+        if (!attachment || attachment.access !== 'read_write') {
+          return finish('denied');
+        }
+        checks.attachment_read_write = true;
+      }
+
+      const requestedScopeAllowed = isScopeAllowedForRealm(realm, effectiveScopeId);
+      if (!requestedScopeAllowed) {
+        checks.scope_allowed = false;
+        return finish('denied');
+      }
+
+      currentTargetSnapshotHash = await resolveDryRunTargetSnapshotHash(deps, ctx.engine, input);
+      checks.target_resolved = Boolean(currentTargetSnapshotHash);
+      if (currentTargetSnapshotHash && operationPolicy.mustBeMissingTarget) {
+        return finish('denied');
+      }
+      if (!currentTargetSnapshotHash && !operationPolicy.allowMissingTarget) {
+        return finish('denied');
+      }
+      const targetScope = currentTargetSnapshotHash
+        ? await resolveDryRunTargetScope(ctx.engine, input, effectiveScopeId)
+        : await resolveDryRunMissingTargetScope(ctx.engine, input, operationPolicy, effectiveScopeId);
+      checks.scope_allowed = isTargetScopeCompatibleWithRealm(realm, effectiveScopeId, targetScope);
+      if (!checks.scope_allowed) {
+        return finish('denied');
+      }
+
+      if (
+        input.expected_target_snapshot_hash
+        && input.expected_target_snapshot_hash !== currentTargetSnapshotHash
+      ) {
+        const conflictInfo = {
+          reason: 'target_snapshot_hash_mismatch',
+          legacy_reason: 'content_hash_mismatch',
+          expected_target_snapshot_hash: input.expected_target_snapshot_hash,
+          current_target_snapshot_hash: currentTargetSnapshotHash,
+        };
+        return finish('conflict', conflictInfo);
+      }
+
+      checks.target_snapshot_hash_matched = true;
+      return finish('dry_run');
+    },
+    cliHints: { name: 'memory-mutation-dry-run' },
+  };
+
+  return [list_memory_mutation_events, record_memory_mutation_event, dry_run_memory_mutation];
 }
