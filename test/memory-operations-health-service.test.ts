@@ -33,14 +33,15 @@ describe('memory operations health service', () => {
 
     expect(report).toMatchObject({
       scope_id: 'workspace:ops',
+      sampled_row_limit: 25,
       mutation_event_count: 2,
       open_redaction_plan_count: 1,
       pending_candidate_patch_count: 4,
     });
     expect(report.summary_lines).toEqual([
-      'workspace:ops has 2 memory mutation events in the sampled window.',
-      'workspace:ops has 1 draft redaction plan.',
-      'workspace:ops has 4 pending memory patch candidates.',
+      'workspace:ops sampled up to 25 rows and found 2 memory mutation events.',
+      'workspace:ops sampled up to 25 draft redaction plans and found 1 draft redaction plan.',
+      'workspace:ops sampled up to 25 rows per pending patch state and found 4 pending memory patch candidates.',
     ]);
     expect(calls).toEqual([
       { method: 'listMemoryMutationEvents', filters: { scope_id: 'workspace:ops', limit: 25, offset: 0 } },
@@ -61,6 +62,7 @@ describe('memory operations health service', () => {
     const report = await getMemoryOperationsHealth(engine);
 
     expect(report.scope_id).toBe('workspace:default');
+    expect(report.sampled_row_limit).toBe(100);
     expect(report.pending_candidate_patch_count).toBe(3);
     expect((engine as any).listMemoryCandidatePatches).toBeUndefined();
   });

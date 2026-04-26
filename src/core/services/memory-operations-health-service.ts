@@ -17,6 +17,7 @@ export interface MemoryOperationsHealthInput {
 
 export interface MemoryOperationsHealthReport {
   scope_id: string;
+  sampled_row_limit: number;
   mutation_event_count: number;
   open_redaction_plan_count: number;
   pending_candidate_patch_count: number;
@@ -46,15 +47,16 @@ export async function getMemoryOperationsHealth(
 
   const report: MemoryOperationsHealthReport = {
     scope_id: scopeId,
+    sampled_row_limit: limit,
     mutation_event_count: mutationEvents.length,
     open_redaction_plan_count: openRedactionPlans.length,
     pending_candidate_patch_count: pendingPatchCounts.reduce((total, count) => total + count, 0),
     summary_lines: [],
   };
   report.summary_lines = [
-    `${scopeId} has ${formatCount(report.mutation_event_count, 'memory mutation event')} in the sampled window.`,
-    `${scopeId} has ${formatCount(report.open_redaction_plan_count, 'draft redaction plan')}.`,
-    `${scopeId} has ${formatCount(report.pending_candidate_patch_count, 'pending memory patch candidate')}.`,
+    `${scopeId} sampled up to ${formatCount(limit, 'row')} and found ${formatCount(report.mutation_event_count, 'memory mutation event')}.`,
+    `${scopeId} sampled up to ${formatCount(limit, 'draft redaction plan')} and found ${formatCount(report.open_redaction_plan_count, 'draft redaction plan')}.`,
+    `${scopeId} sampled up to ${formatCount(limit, 'row')} per pending patch state and found ${formatCount(report.pending_candidate_patch_count, 'pending memory patch candidate')}.`,
   ];
   return report;
 }

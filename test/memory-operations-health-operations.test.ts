@@ -119,11 +119,12 @@ describe('memory operations health operation', () => {
 
       expect(report).toMatchObject({
         scope_id: 'workspace:ops',
+        sampled_row_limit: 100,
         mutation_event_count: 1,
         open_redaction_plan_count: 1,
         pending_candidate_patch_count: 1,
       });
-      expect(report.summary_lines).toContain('workspace:ops has 1 pending memory patch candidate.');
+      expect(report.summary_lines).toContain('workspace:ops sampled up to 100 rows per pending patch state and found 1 pending memory patch candidate.');
     } finally {
       await harness.cleanup();
     }
