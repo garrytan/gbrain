@@ -25,6 +25,7 @@ import { createBrainLoopAuditOperations } from './operations-brain-loop-audit.ts
 import { createMemoryInboxOperations, DEFAULT_MEMORY_INBOX_SCOPE_ID } from './operations-memory-inbox.ts';
 import { createMemoryControlPlaneOperations } from './operations-memory-control-plane.ts';
 import { createMemoryMutationLedgerOperations } from './operations-memory-mutation-ledger.ts';
+import { assertMemoryWriteAllowed } from './services/memory-access-policy-service.ts';
 import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
 import { getStructuralContextAtlasOverview } from './services/context-atlas-overview-service.ts';
 import { getStructuralContextAtlasReport } from './services/context-atlas-report-service.ts';
@@ -1477,6 +1478,7 @@ const put_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
     expected_content_hash: { type: 'string', description: 'Optional optimistic write precondition. Existing page content_hash must match before writing.' },
+    memory_session_id: { type: 'string', description: 'Optional memory session id used for write authorization. Requires realm_id.' },
     session_id: { type: 'string', description: 'Optional audit session id. Defaults to put_page:direct.' },
     realm_id: { type: 'string', description: 'Optional audit realm id. Defaults to work.' },
     actor: { type: 'string', description: 'Optional audit actor. Defaults to mbrain:put_page.' },
@@ -1490,6 +1492,11 @@ const put_page: Operation = {
     const content = putPageContent(p.content);
     assertWritableSlugQuality(slug);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
+    const memorySessionId = optionalPutPageString('memory_session_id', p.memory_session_id) ?? null;
+    await assertMemoryWriteAllowed(ctx.engine, {
+      memory_session_id: memorySessionId,
+      realm_id: memorySessionId ? (optionalPutPageString('realm_id', p.realm_id) ?? null) : null,
+    });
     assertPutPageSourceAttribution(slug, content);
     const audit = putPageAuditContext(p);
     const expectedContentHash = putPageExpectedContentHash(p.expected_content_hash);
