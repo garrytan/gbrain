@@ -104,9 +104,9 @@ strict behavior when unset.
 - `src/core/operations.ts` — Contract-first operation definitions (the foundation). Also exports upload validators: `validateUploadPath`, `validatePageSlug`, `validateFilename`. `OperationContext.remote` flags untrusted callers.
 - `src/core/engine.ts` — Pluggable engine interface (BrainEngine). `clampSearchLimit(limit, default, cap)` takes an explicit cap so per-operation caps can be tighter than `MAX_SEARCH_LIMIT`. Exports `LinkBatchInput` / `TimelineBatchInput` for the v0.12.1 bulk-insert API (`addLinksBatch` / `addTimelineEntriesBatch`). As of v0.13.1, `BrainEngine` has a `readonly kind: 'postgres' | 'pglite'` discriminator so migrations (`src/core/migrate.ts`) and other consumers can branch on engine without `instanceof` + dynamic imports.
 - `src/core/engine-factory.ts` — Engine factory with dynamic imports (`'pglite'` | `'postgres'`)
-- `src/core/pglite-engine.ts` — PGLite (embedded Postgres 17.5 via WASM) implementation, all 40 BrainEngine methods. `addLinksBatch` / `addTimelineEntriesBatch` use multi-row `unnest()` with manual `$N` placeholders. As of v0.13.1, `connect()` wraps `PGlite.create()` in a try/catch that emits an actionable error naming the macOS 26.3 WASM bug (#223) and pointing at `gbrain doctor`; the lock is released on failure so the next process can retry cleanly.
+- `src/core/pglite-engine.ts` — PGLite (embedded Postgres 17.5 via WASM) implementation, all 40 BrainEngine methods. `addLinksBatch` / `addTimelineEntriesBatch` use multi-row `unnest()` with manual `$N` placeholders. As of v0.13.1, `connect()` wraps `PGlite.create()` in a try/catch that emits an actionable error naming the macOS 26.3 WASM bug (#223) and pointing at `gbrain doctor`; the lock is released on failure so the next process can retry cleanly. v0.22.0: `searchKeyword` and `searchKeywordChunks` multiply `ts_rank` by the source-factor CASE expression at the chunk-grain level; `searchVector` becomes a two-stage CTE — inner CTE keeps `ORDER BY cc.embedding <=> vec` so HNSW stays usable, outer SELECT re-ranks by `raw_score * source_factor`. Inner LIMIT scales with offset to preserve pagination contract.
 - `src/core/pglite-schema.ts` — PGLite-specific DDL (pgvector, pg_trgm, triggers)
-- `src/core/postgres-engine.ts` — Postgres + pgvector implementation (Supabase / self-hosted). `addLinksBatch` / `addTimelineEntriesBatch` use `INSERT ... SELECT FROM unnest($1::text[], ...) JOIN pages ON CONFLICT DO NOTHING RETURNING 1` — 4-5 array params regardless of batch size, sidesteps the 65535-parameter cap. As of v0.12.3, `searchKeyword` / `searchVector` scope `statement_timeout` via `sql.begin` + `SET LOCAL` so the GUC dies with the transaction instead of leaking across the pooled postgres.js connection (contributed by @garagon). `getEmbeddingsByChunkIds` uses `tryParseEmbedding` so one corrupt row skips+warns instead of killing the query.
+- `src/core/postgres-engine.ts` — Postgres + pgvector implementation (Supabase / self-hosted). `addLinksBatch` / `addTimelineEntriesBatch` use `INSERT ... SELECT FROM unnest($1::text[], ...) JOIN pages ON CONFLICT DO NOTHING RETURNING 1` — 4-5 array params regardless of batch size, sidesteps the 65535-parameter cap. As of v0.12.3, `searchKeyword` / `searchVector` scope `statement_timeout` via `sql.begin` + `SET LOCAL` so the GUC dies with the transaction instead of leaking across the pooled postgres.js connection (contributed by @garagon). `getEmbeddingsByChunkIds` uses `tryParseEmbedding` so one corrupt row skips+warns instead of killing the query. v0.22.0: `searchKeyword`, `searchKeywordChunks`, and `searchVector` apply source-aware ranking by inlining the source-factor CASE and `NOT (col LIKE …)` hard-exclude clause from `src/core/search/sql-ranking.ts`. `searchVector` switches to a two-stage CTE (HNSW-safe inner ORDER BY, source-boost re-rank in the outer SELECT) and carries `p.source_id` through inner→outer for v0.18 multi-source callers.
 - `src/core/utils.ts` — Shared SQL utilities extracted from postgres-engine.ts. Exports `parseEmbedding(value)` (throws on unknown input, used by migration + ingest paths where data integrity matters) and as of v0.12.3 `tryParseEmbedding(value)` (returns `null` + warns once per process, used by search/rescore paths where availability matters more than strictness).
 - `src/core/db.ts` — Connection management, schema initialization
 - `src/commands/migrate-engine.ts` — Bidirectional engine migration (`gbrain migrate --to supabase/pglite`)
@@ -115,10 +115,15 @@ strict behavior when unset.
 - `src/core/storage.ts` — Pluggable storage interface (S3, Supabase Storage, local)
 - `src/core/supabase-admin.ts` — Supabase admin API (project discovery, pgvector check)
 - `src/core/file-resolver.ts` — File resolution with fallback chain (local -> .redirect.yaml -> .redirect -> .supabase)
-- `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided)
-- `src/core/search/` — Hybrid search: vector + keyword + RRF + multi-query expansion + dedup
+- `src/core/chunkers/` — 3-tier chunking (recursive, semantic, LLM-guided). v0.19.0 adds `code.ts` — tree-sitter-based semantic chunker for 29 languages with embedded-asset WASMs (`src/assets/wasm/`), `@dqbd/tiktoken` cl100k_base tokenizer, small-sibling merging. `CHUNKER_VERSION` constant folded into `importCodeFile`'s `content_hash` so chunker shape changes force clean re-chunks across releases.
+- `src/core/errors.ts` (v0.19.0) — `StructuredAgentError` + `buildError` + `serializeError`. Every new v0.19.0 agent-facing surface (code-def, code-refs, usage errors) uses this envelope; matches v0.17.0 `CycleReport.PhaseResult.error` shape.
+- `src/assets/wasm/` (v0.19.0) — 36 tree-sitter grammar WASMs + tree-sitter runtime. Committed to the repo so `bun --compile` embeds them deterministically via `import path from ... with { type: 'file' }`. The CI guard `scripts/check-wasm-embedded.sh` fails the build if the compiled binary ever silently falls through to recursive chunks.
+- `src/commands/code-def.ts` + `src/commands/code-refs.ts` (v0.19.0) — symbol definition + references lookup. Query `content_chunks.symbol_name` or chunk_text ILIKE with `page_kind='code'` filter. Auto-JSON when stdout is not a TTY (gh-CLI convention). Bypass the standard `searchKeyword` `DISTINCT ON (slug)` collapse so multiple call-sites from the same file surface.
+- `src/core/search/` — Hybrid search: vector + keyword + RRF + multi-query expansion + dedup. As of v0.22.0, `searchKeyword` / `searchKeywordChunks` / `searchVector` apply source-aware ranking at the SQL layer (curated content like `originals/`, `concepts/`, `writing/` outranks bulk content like `wintermute/chat/`, `daily/`, `media/x/`). `searchVector` uses a two-stage CTE so source-boost re-ranking doesn't kill the HNSW index. Hard-exclude prefixes (`test/`, `archive/`, `attachments/`, `.raw/` by default) filter at retrieval, not post-rank. Both gates honor `detail !== 'high'` so temporal queries surface chat pages normally.
 - `src/core/search/intent.ts` — Query intent classifier (entity/temporal/event/general → auto-selects detail level)
 - `src/core/search/eval.ts` — Retrieval eval harness: P@k, R@k, MRR, nDCG@k metrics + runEval() orchestrator
+- `src/core/search/source-boost.ts` (v0.22.0) — Source-type boost map keyed by slug prefix. `DEFAULT_SOURCE_BOOSTS` (originals/ 1.5, concepts/ 1.3, writing/ 1.4, people/companies/deals/ 1.2, daily/ 0.8, media/x/ 0.7, wintermute/chat/ 0.5) and `DEFAULT_HARD_EXCLUDES` (test/, archive/, attachments/, .raw/). `parseSourceBoostEnv` / `parseHardExcludesEnv` parse comma-separated `prefix:factor` pairs from `GBRAIN_SOURCE_BOOST` / `GBRAIN_SEARCH_EXCLUDE` env vars. `resolveBoostMap` and `resolveHardExcludes` merge defaults + env + caller `SearchOpts.exclude_slug_prefixes`/`include_slug_prefixes`.
+- `src/core/search/sql-ranking.ts` (v0.22.0) — Pure SQL string builders. `buildSourceFactorCase(slugColumn, boostMap, detail)` emits a CASE expression with longest-prefix-match wins (returns literal `'1.0'` when `detail === 'high'` for temporal-bypass parity with COMPILED_TRUTH_BOOST). `buildHardExcludeClause(slugColumn, prefixes)` emits `NOT (col LIKE 'p1%' OR col LIKE 'p2%')` — OR-chain wrapped in NOT, NOT `NOT LIKE ALL/ANY` (those quantifiers don't express set-exclusion). LIKE meta-character escape covers all three of `%`, `_`, AND `\` (backslash matters because it's Postgres LIKE's default escape char). Single-quote doubling on SQL string literals so injection-style inputs are inert text.
 - `src/commands/eval.ts` — `gbrain eval` command: single-run table + A/B config comparison
 - `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff
 - `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects. v0.14.1: `CROSS_CUTTING_PATTERNS.conventions` is an array (notability gate accepts both `conventions/quality.md` and `_brain-filing-rules.md`). New `extractDelegationTargets()` parses `> **Convention:**`, `> **Filing rule:**`, and inline backtick references. DRY suppression is proximity-based via `DRY_PROXIMITY_LINES = 40`.
@@ -309,6 +314,7 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/skills-conformance.test.ts` (skill frontmatter + required sections validation),
 `test/resolver.test.ts` (RESOLVER.md coverage, routing validation + v0.20.4 round-trip: every quoted RESOLVER.md trigger must match a frontmatter `triggers:` entry in the target skill, and every `name="<word>"` reference in any SKILL.md must resolve to a declared op in `src/core/operations.ts` or a Minions handler in `PROTECTED_JOB_NAMES`),
 `test/search.test.ts` (RRF normalization, compiled truth boost, cosine similarity, dedup key),
+`test/sql-ranking.test.ts` (v0.22.0 source-boost helpers: 39 cases covering longest-prefix-match in SQL CASE, detail=high temporal-bypass, three-meta-char LIKE escape (%, _, \\), single-quote SQL-literal doubling, env override parsing for GBRAIN_SOURCE_BOOST + GBRAIN_SEARCH_EXCLUDE, resolveBoostMap / resolveHardExcludes merge semantics),
 `test/dedup.test.ts` (source-aware dedup, compiled truth guarantee, layer interactions),
 `test/intent.test.ts` (query intent classification: entity/temporal/event/general),
 `test/eval.test.ts` (retrieval metrics: precisionAtK, recallAtK, mrr, ndcgAtK, parseQrels),
@@ -357,6 +363,9 @@ E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_U
 - `test/e2e/upgrade.test.ts` runs check-update E2E against real GitHub API (network required)
 - `test/e2e/minions-shell-pglite.test.ts` (v0.20.4) exercises the PGLite `--follow` inline shell-job path (in-memory, no `DATABASE_URL` required) — the path the consolidated minion-orchestrator skill documents for dev use
 - `test/e2e/openclaw-reference-compat.test.ts` (v0.19) — exercises `check-resolvable` + `skillpack install` against a minimal AGENTS.md workspace fixture (`test/fixtures/openclaw-reference-minimal/`), regression guard for the 107-skill OpenClaw deployment shape
+- `test/e2e/search-swamp.test.ts` (v0.22.0) — reproduces the headline source-swamp case. Seeds a curated `originals/talks/article-outline-fat-code` page against two `wintermute/chat/` pages stuffed with the same multi-word phrase. Asserts the article wins keyword AND vector ranking, that `detail=high` lets the chat swamp re-surface (temporal-query workflow preserved), and that `source_id` passes through the two-stage CTE intact. PGLite in-memory.
+- `test/e2e/search-exclude.test.ts` (v0.22.0) — verifies `test/` + `archive/` pages are hidden by default, that `include_slug_prefixes` opts back in, and that caller-supplied `exclude_slug_prefixes` adds to defaults. Both keyword and vector search paths covered.
+- `test/e2e/engine-parity.test.ts` (v0.22.0) — Postgres ↔ PGLite top-result and result-set parity for `searchKeyword` + `searchVector`. Codex flagged that Postgres ranks pages then picks best chunk while PGLite returns chunks directly — without parity coverage the source-boost fix could pass on PGLite and fail on Postgres. Skips gracefully when `DATABASE_URL` is unset.
 - Tier 2 (`skills.test.ts`) requires OpenClaw + API keys, runs nightly in CI
 - If `.env.testing` doesn't exist in this directory, check sibling worktrees for one:
   `find ../  -maxdepth 2 -name .env.testing -print -quit` and copy it here if found.
@@ -1289,6 +1298,22 @@ claude mcp add gbrain -t http https://your-brain.ngrok.app/mcp -H "Authorization
 
 Per-client guides: [`docs/mcp/`](docs/mcp/DEPLOY.md). ChatGPT requires OAuth 2.1 (not yet implemented).
 
+### Using gbrain with GStack
+
+If your engineering agent runs on [GStack](https://github.com/garrytan/gstack), point it at gbrain for code lookup instead of grep+read. Cathedral II (v0.21.0) ships call-graph edges and two-pass retrieval — `/investigate`, `/review`, `/plan-eng-review`, and `/office-hours` all benefit when the agent walks the symbol graph instead of scanning files line by line.
+
+The five magical-moment commands:
+
+```bash
+gbrain code-callers searchKeyword           # who calls this symbol?
+gbrain code-callees searchKeyword           # what does this symbol call?
+gbrain code-def BrainEngine                 # where is X defined?
+gbrain code-refs BrainEngine                # all reference sites
+gbrain query "how does N+1 handling work" --near-symbol BrainEngine.searchKeyword --walk-depth 2
+```
+
+All five auto-emit JSON on non-TTY (gh-CLI convention) so a GStack subagent shelling out via bash gets a clean parseable response. Run `gbrain sources add <repo> --strategy code` to index a repo, then your agent's brain-first lookup covers code, not just markdown. ([Cathedral II release notes](CHANGELOG.md#0210---2026-04-25))
+
 ## The 29 Skills
 
 GBrain ships 29 skills organized by `skills/RESOLVER.md` (or your OpenClaw's `AGENTS.md` — both filenames are supported as of v0.19). The resolver tells your agent which skill to read for any task.
@@ -1691,6 +1716,8 @@ Question
   │    ├─ Multi-query expansion (Haiku rephrases the question 3 ways)
   │    ├─ Vector search (HNSW cosine over OpenAI embeddings)
   │    ├─ Keyword search (Postgres tsvector + websearch_to_tsquery)
+  │    ├─ Source-aware ranking (curated dirs outrank chat/daily swamp at SQL layer)
+  │    ├─ Hard-exclude (test/ archive/ attachments/ .raw/ filtered before retrieval)
   │    ├─ Reciprocal Rank Fusion (score = sum 1/(60+rank) across both)
   │    ├─ Cosine re-scoring (re-rank chunks against actual query embedding)
   │    ├─ Compiled-truth boost (assessments outrank timeline noise)

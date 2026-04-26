@@ -1,5 +1,70 @@
 # TODOS
 
+## code-indexing (v0.21.0 Cathedral II follow-ups)
+
+### B2 — Magika auto-detect for extension-less files (Layer 9 deferred)
+**Priority:** P2
+
+**What:** Embed Google's Magika ML classifier (~1MB ONNX) as a bundled asset. Wire into `detectCodeLanguage` as the fallback for files with no recognized extension (Dockerfile, Makefile, `.envrc`, shell scripts with shebangs but no `.sh`). The chunker already has `setLanguageFallback(fn)` as a module-level hook.
+
+**Why:** v0.20.0 widens the file classifier from 9 to 35 extensions (Layer 2), covering most real-world cases. Extension-less files still slip through to recursive chunks. Magika would close the last common case.
+
+**Pros:** Completes the file-classification story. Unblocks chunker on real-world configs + build scripts.
+
+**Cons:** ~1MB asset bundled with `bun --compile`. Integration risk: Magika's ONNX runtime needs WASM compat with bun. The plan explicitly allowed deferring B2 because bundling surprises late in implementation are costly.
+
+**Context:**
+- `src/core/chunkers/code.ts` exports `setLanguageFallback(fn: LanguageFallback | null)` — call at process start with a Magika-powered classifier.
+- `detectCodeLanguage(filePath, content?)` already accepts optional content for fallback paths.
+- The NPM `magika` package is the first thing to try; needs bun-compile compatibility verification.
+
+**Effort:** M (human: ~2-3 days / CC: ~2 hours for the integration + CI guard).
+
+**Depends on / blocked by:** Nothing. Hook is in place as of v0.20.0.
+
+### A4 — full doc_comment extraction at chunk time
+**Priority:** P2
+
+**What:** When the chunker emits a method/class/function, look at the comment node(s) immediately preceding the declaration and persist them as `content_chunks.doc_comment`. The FTS trigger from Layer 1b already weights `doc_comment` 'A' above `chunk_text` 'B' — the ranking is ready, the column is populated NULL today.
+
+**Why:** "how does X handle N+1" should rank the docstring that explains N+1 above the function body or any prose paragraph. Layer 1b paved the ranking half; extraction is the remaining half.
+
+**Pros:** Material MRR lift on natural-language queries. Zero schema work (column + trigger already in place).
+
+**Cons:** Per-language convention detection — JSDoc blocks, Python docstrings (first string expression in a function body), C-style doc comments, etc. Not hard but each language has edge cases.
+
+**Context:**
+- `src/core/chunkers/code.ts` emits chunks in `chunkCodeTextFull`. Walk each declaration's preceding sibling(s) for comment nodes.
+- ChunkInput already has `doc_comment?: string`. Populate at chunk time and it flows through `upsertChunks` (Layer 6 wired those columns).
+- Per-language config: leading-comment type names per language (`comment`, `line_comment`, `block_comment`, `documentation_comment`).
+- Test hook: `test/cathedral-ii-brainbench.test.ts` has a `doc_comment_matching` placeholder — flesh it out end-to-end.
+
+**Effort:** M (human: ~2 days / CC: ~90 min for the 8 Layer-5 langs).
+
+**Depends on / blocked by:** Nothing. Layer 1b + Layer 6 both in place.
+
+### C6 — gbrain code-signature "(A, B) => C"
+**Priority:** P3 (stretch)
+
+**What:** Type-signature retrieval via tree-sitter type captures per language. "Find every function whose signature returns a Promise<User>" or "(string, number) => boolean".
+
+**Why:** Each language's type system is its own mini-cathedral. Ship per-language rather than as one item.
+
+**Effort:** L per language (typescript-first).
+
+**Depends on / blocked by:** Nothing — additive on the Layer 5 edge schema.
+
+### Cross-file edge resolution (Layer 5 precision upgrade)
+**Priority:** P3
+
+**What:** Today every call edge lands unresolved in `code_edges_symbol` with to_symbol_qualified = bare callee name. Second-pass resolution: after all code files import, walk every `code_edges_symbol` row and try to resolve `to_symbol_qualified` via `symbol_name_qualified` join; if found within the same source, write a resolved row to `code_edges_chunk`.
+
+**Why:** `getCallersOf("searchKeyword")` currently returns the Layer 6 ambiguity — every `searchKeyword` call site in any class. Receiver-type analysis lifts this.
+
+**Effort:** L. Needs receiver-type inference; can ship per-language.
+
+**Depends on / blocked by:** Nothing — UNION-on-read path keeps unresolved edges surfaced even without this.
+
 ## Completed
 
 ### ~~Checks 5 + 6 for check-resolvable~~

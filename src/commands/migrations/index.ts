@@ -20,6 +20,7 @@ import { v0_14_0 } from './v0_14_0.ts';
 import { v0_16_0 } from './v0_16_0.ts';
 import { v0_18_0 } from './v0_18_0.ts';
 import { v0_18_1 } from './v0_18_1.ts';
+import { v0_21_0 } from './v0_21_0.ts';
 
 export const migrations: Migration[] = [
   v0_11_0,
@@ -31,6 +32,7 @@ export const migrations: Migration[] = [
   v0_16_0,
   v0_18_0,
   v0_18_1,
+  v0_21_0,
 ];
 
 /** Look up a migration by exact version string. */

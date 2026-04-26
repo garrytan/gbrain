@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS pages (
                 REFERENCES sources(id) ON DELETE CASCADE,
   slug          TEXT    NOT NULL,
   type          TEXT    NOT NULL,
+  -- v0.19.0: markdown vs code distinction at the DB level.
+  page_kind     TEXT    NOT NULL DEFAULT 'markdown'
+                CHECK (page_kind IN ('markdown','code')),
   title         TEXT    NOT NULL,
   compiled_truth TEXT   NOT NULL DEFAULT '',
   timeline      TEXT    NOT NULL DEFAULT '',
@@ -75,12 +78,21 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.19.0: code chunk metadata (markdown chunks leave NULL).
+  language      TEXT,
+  symbol_name   TEXT,
+  symbol_type   TEXT,
+  start_line    INTEGER,
+  end_line      INTEGER
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+-- v0.19.0: partial indexes for code chunk lookups.
+CREATE INDEX IF NOT EXISTS idx_chunks_symbol_name ON content_chunks(symbol_name) WHERE symbol_name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE language IS NOT NULL;
 
 -- ============================================================
 -- links: cross-references between pages

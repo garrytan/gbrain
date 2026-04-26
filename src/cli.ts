@@ -19,7 +19,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -501,12 +501,63 @@ async function handleCliOnly(command: string, args: string[]) {
         await runGraphQuery(engine, args);
         break;
       }
+      case 'reconcile-links': {
+        // v0.20.0 Cathedral II Layer 8 D3: batch-recompute doc↔impl edges
+        // for any markdown page that cites code files. Idempotent; safe to
+        // re-run. Closes the v0.19.0 Layer 6 order-dependency bug where
+        // guides imported before their code never got their edges written.
+        const { runReconcileLinksCli } = await import('./commands/reconcile-links.ts');
+        await runReconcileLinksCli(engine, args);
+        break;
+      }
       case 'orphans': {
         const { runOrphans } = await import('./commands/orphans.ts');
         await runOrphans(engine, args);
         break;
       }
       case 'sources': {
+        const { runSources } = await import('./commands/sources.ts');
+        await runSources(engine, args);
+        break;
+      }
+      case 'code-def': {
+        const { runCodeDef } = await import('./commands/code-def.ts');
+        await runCodeDef(engine, args);
+        break;
+      }
+      case 'code-refs': {
+        const { runCodeRefs } = await import('./commands/code-refs.ts');
+        await runCodeRefs(engine, args);
+        break;
+      }
+      case 'reindex-code': {
+        // v0.20.0 Cathedral II Layer 13 (E2): explicit code-page reindex
+        // for users upgrading from v0.19.0. Cost-preview gated; TTY prompt
+        // or ConfirmationRequired envelope for non-TTY/JSON callers.
+        const { runReindexCodeCli } = await import('./commands/reindex-code.ts');
+        await runReindexCodeCli(engine, args);
+        break;
+      }
+      case 'code-callers': {
+        // v0.20.0 Cathedral II Layer 10 (C4): "who calls <symbol>?"
+        const { runCodeCallers } = await import('./commands/code-callers.ts');
+        await runCodeCallers(engine, args);
+        break;
+      }
+      case 'code-callees': {
+        // v0.20.0 Cathedral II Layer 10 (C5): "what does <symbol> call?"
+        const { runCodeCallees } = await import('./commands/code-callees.ts');
+        await runCodeCallees(engine, args);
+        break;
+      }
+      case 'repos': {
+        // v0.19.0: `gbrain repos ...` is an alias into the v0.18.0 sources
+        // subsystem. The repos abstraction (Wintermute's baseline) was
+        // redundant with sources and carried per-user config state that
+        // couldn't participate in federation / RLS / multi-tenancy. We
+        // keep the alias so scripts like `gbrain repos add .` keep
+        // working, with a nudge toward the canonical command.
+        console.error('[gbrain] Note: "repos" is an alias for "sources" as of v0.19.0. Prefer `gbrain sources <subcommand>`.');
         const { runSources } = await import('./commands/sources.ts');
         await runSources(engine, args);
         break;
@@ -624,6 +675,25 @@ TOOLS
                                      See also: autopilot --install (continuous daemon).
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
   report --type <name> --content ... Save timestamped report to brain/reports/
+
+SOURCES (multi-repo / multi-brain)
+  sources list                       Show registered sources
+  sources add <id> --path <p>        Register a source (id = short name, e.g. 'wiki')
+  sources remove <id>                Remove a source + its pages
+  sync --all                         Sync all sources with a local_path
+  sync --source <id>                 Sync one specific source
+  repos ...                          DEPRECATED alias for 'sources' (v0.19.0)
+
+CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
+  code-def <symbol> [--lang l]       Find the definition of a symbol across code pages
+  code-refs <symbol> [--lang l]      Find all references to a symbol (JSON-first)
+  code-callers <symbol>              Who calls this symbol? (v0.20.0 A1)
+  code-callees <symbol>              What does this symbol call? (v0.20.0 A1)
+  query <q> --lang <l>               Filter hybrid search to one language (v0.20.0)
+  query <q> --symbol-kind <k>        Filter to symbol type (function|class|method|...) (v0.20.0)
+  reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
+  reindex-code [--source id] [--yes] Explicit code-page reindex (v0.20.0)
+  sync --strategy code               Sync code files into the brain
 
 JOBS (Minions)
   jobs submit <name> [--params JSON]  Submit background job [--follow] [--dry-run]

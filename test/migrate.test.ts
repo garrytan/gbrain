@@ -471,7 +471,7 @@ describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate 
     await engine.disconnect();
   });
 
-  test('1000 duplicate links dedup completes in <5s and leaves table deduped', async () => {
+  test('1000 duplicate links dedup completes in <90s and leaves table deduped', async () => {
     // Set up: drop BOTH the old (v8) and new (v11) unique constraints so
     // duplicates can be inserted, then reset version so v8 + v11 re-run.
     // v11 replaces the v8 constraint name; we drop whichever is present.
@@ -498,12 +498,21 @@ describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate 
     // Reset version to 7 so v8 + v9 + v10 + v11 re-run
     await engine.setConfig('version', '7');
 
-    // Run migrations and assert wall-clock + correctness
+    // Run migrations and assert wall-clock + correctness.
+    //
+    // Budget note: 90s, not 5s. The 5s budget guarded the original O(n²) v8
+    // regression in isolation when the chain only had ~8 migrations to run.
+    // Cathedral II (v0.21.0) added v27 + v28 (TSVECTOR column + GIN index +
+    // plpgsql trigger compile + 2 new tables w/ FK CASCADE), pushing the
+    // full v7→v28 chain to ~30-40s on PGLite WASM. The O(n²) regression
+    // would still take MINUTES on 1K duplicate rows (the original incident
+    // was multi-minute), so 90s preserves the gate intent while
+    // accommodating the longer schema chain.
     const start = Date.now();
     await runMigrations(engine);
     const elapsedMs = Date.now() - start;
 
-    expect(elapsedMs).toBeLessThan(5000);
+    expect(elapsedMs).toBeLessThan(90_000);
 
     const afterCount = (await db.query(`SELECT COUNT(*)::int AS c FROM links`)).rows[0].c;
     expect(afterCount).toBe(1); // deduped to one row
@@ -539,7 +548,7 @@ describe('migrate: v9 (timeline_dedup_index) regression — must be fast on 1K d
     await engine.disconnect();
   });
 
-  test('1000 duplicate timeline entries dedup completes in <5s and leaves table deduped', async () => {
+  test('1000 duplicate timeline entries dedup completes in <90s and leaves table deduped', async () => {
     const db = (engine as any).db;
     await db.exec(`DROP INDEX IF EXISTS idx_timeline_dedup`);
 
@@ -558,11 +567,14 @@ describe('migrate: v9 (timeline_dedup_index) regression — must be fast on 1K d
 
     await engine.setConfig('version', '7');
 
+    // Same 90s budget as the v8 link-dedup test for the same reason — see
+    // its "Budget note" comment. The 5s budget was for v9 in isolation;
+    // post-Cathedral II the chain runs through v28's TSVECTOR + GIN setup.
     const start = Date.now();
     await runMigrations(engine);
     const elapsedMs = Date.now() - start;
 
-    expect(elapsedMs).toBeLessThan(5000);
+    expect(elapsedMs).toBeLessThan(90_000);
 
     const afterCount = (await db.query(`SELECT COUNT(*)::int AS c FROM timeline_entries`)).rows[0].c;
     expect(afterCount).toBe(1);

@@ -43,13 +43,27 @@ async function waitTerminal(queue: MinionQueue, id: number, timeoutMs = 15000): 
 }
 
 describeE2E('E2E: Minions shell handler', () => {
+  let originalAllowShellJobs: string | undefined;
+
   beforeAll(async () => {
+    // The shell handler refuses to run unless GBRAIN_ALLOW_SHELL_JOBS=1 is
+    // set on the worker process (defense-in-depth: the env var is the
+    // operator-trust gate, separate from the trusted-add allowProtectedSubmit
+    // flag). The PGLite sibling test sets this in its beforeAll for the same
+    // reason; without it shell jobs land in `dead`.
+    originalAllowShellJobs = process.env.GBRAIN_ALLOW_SHELL_JOBS;
+    process.env.GBRAIN_ALLOW_SHELL_JOBS = '1';
     await setupDB();
     await runMigrations(getEngine());
   });
 
   afterAll(async () => {
     await teardownDB();
+    if (originalAllowShellJobs === undefined) {
+      delete process.env.GBRAIN_ALLOW_SHELL_JOBS;
+    } else {
+      process.env.GBRAIN_ALLOW_SHELL_JOBS = originalAllowShellJobs;
+    }
   });
 
   beforeEach(async () => {
