@@ -3,7 +3,11 @@ import type { MemoryAccessMode } from '../types.ts';
 
 export class MemoryAccessPolicyError extends Error {
   constructor(
-    public readonly code: 'memory_session_not_found' | 'memory_realm_not_attached' | 'memory_realm_read_only',
+    public readonly code:
+      | 'memory_session_not_found'
+      | 'memory_session_not_active'
+      | 'memory_realm_not_attached'
+      | 'memory_realm_read_only',
     message: string,
   ) {
     super(message);
@@ -31,6 +35,12 @@ export async function assertMemoryWriteAllowed(
     throw new MemoryAccessPolicyError(
       'memory_session_not_found',
       `Memory session ${input.memory_session_id} was not found.`,
+    );
+  }
+  if (session.status !== 'active') {
+    throw new MemoryAccessPolicyError(
+      'memory_session_not_active',
+      `Memory session ${input.memory_session_id} is not active.`,
     );
   }
 

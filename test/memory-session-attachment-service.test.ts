@@ -147,6 +147,104 @@ describe('memory session access policy', () => {
     }
   });
 
+  test('put_page rejects writes authorized by a closed session with a read-write attachment', async () => {
+    const handle = await allocateSqliteBrain('session-access-policy-closed');
+    const upsertRealm = operation('upsert_memory_realm');
+    const createSession = operation('create_memory_session');
+    const attach = operation('attach_memory_realm_to_session');
+    const closeSession = operation('close_memory_session');
+    const put = operation('put_page');
+
+    try {
+      await upsertRealm.handler(ctx(handle), {
+        id: 'project:closed-session',
+        name: 'Closed Session Project',
+        scope: 'work',
+        default_access: 'read_only',
+      });
+      await createSession.handler(ctx(handle), {
+        id: 'session-closed-policy',
+      });
+      await attach.handler(ctx(handle), {
+        session_id: 'session-closed-policy',
+        realm_id: 'project:closed-session',
+        access: 'read_write',
+      });
+      await closeSession.handler(ctx(handle), {
+        id: 'session-closed-policy',
+      });
+
+      let error: unknown;
+      try {
+        await put.handler(ctx(handle), {
+          slug: 'concepts/closed-session-policy-test',
+          content: citedContent,
+          memory_session_id: 'session-closed-policy',
+          realm_id: 'project:closed-session',
+        });
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect(error).toBeInstanceOf(OperationError);
+      expect((error as OperationError).code).toBe('invalid_params');
+      expect((error as Error).message).toMatch(/not active/i);
+      expect(await handle.engine.getPage('concepts/closed-session-policy-test')).toBeNull();
+    } finally {
+      await handle.teardown();
+    }
+  });
+
+  test('put_page rejects writes authorized by an expired session with a read-write attachment', async () => {
+    const handle = await allocateSqliteBrain('session-access-policy-expired');
+    const upsertRealm = operation('upsert_memory_realm');
+    const createSession = operation('create_memory_session');
+    const attach = operation('attach_memory_realm_to_session');
+    const put = operation('put_page');
+
+    try {
+      await upsertRealm.handler(ctx(handle), {
+        id: 'project:expired-session',
+        name: 'Expired Session Project',
+        scope: 'work',
+        default_access: 'read_only',
+      });
+      await createSession.handler(ctx(handle), {
+        id: 'session-expired-policy',
+        expires_at: '2999-01-01T00:00:00.000Z',
+      });
+      await attach.handler(ctx(handle), {
+        session_id: 'session-expired-policy',
+        realm_id: 'project:expired-session',
+        access: 'read_write',
+      });
+      (handle.engine as any).database.run(`
+        UPDATE memory_sessions
+        SET expires_at = '2000-01-01T00:00:00.000Z'
+        WHERE id = 'session-expired-policy'
+      `);
+
+      let error: unknown;
+      try {
+        await put.handler(ctx(handle), {
+          slug: 'concepts/expired-session-policy-test',
+          content: citedContent,
+          memory_session_id: 'session-expired-policy',
+          realm_id: 'project:expired-session',
+        });
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect(error).toBeInstanceOf(OperationError);
+      expect((error as OperationError).code).toBe('invalid_params');
+      expect((error as Error).message).toMatch(/not active/i);
+      expect(await handle.engine.getPage('concepts/expired-session-policy-test')).toBeNull();
+    } finally {
+      await handle.teardown();
+    }
+  });
+
   test('put_page denies authorization before content hash precondition handling', async () => {
     const handle = await allocateSqliteBrain('session-access-policy-before-precondition');
     const upsertRealm = operation('upsert_memory_realm');
