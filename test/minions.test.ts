@@ -2020,8 +2020,12 @@ describe('checkAborted (v0.20.5 cycle signal)', () => {
   // Import the function indirectly by testing the behavior pattern
   test('undefined signal does not throw', () => {
     // checkAborted is not exported, so we test through CycleOpts behavior.
-    // This test validates the pattern directly.
-    const signal = undefined;
+    // This test validates the pattern directly. The `as` cast keeps the
+    // union type intact — a bare `const signal = undefined` (or even
+    // `const signal: AbortSignal | undefined = undefined`) would narrow
+    // back to literal `undefined` via TS control-flow analysis and then
+    // reject the optional-chain access on it.
+    const signal = undefined as AbortSignal | undefined;
     expect(() => {
       if (signal?.aborted) throw new Error('aborted');
     }).not.toThrow();
