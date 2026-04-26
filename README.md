@@ -131,7 +131,7 @@ GBrain ships 29 skills organized by `skills/RESOLVER.md` (or your OpenClaw's `AG
 |-------|-------------|
 | **enrich** | Tiered enrichment (Tier 1/2/3). Creates and updates person/company pages with compiled truth and timelines. |
 | **query** | 3-layer search with synthesis and citations. Says "the brain doesn't have info on X" instead of hallucinating. |
-| **maintain** | Periodic health: stale pages, orphans, dead links, citation audit, back-link enforcement, tag consistency. |
+| **maintain** | Periodic health: stale pages, orphans, dead links, citation audit, back-link enforcement, tag consistency. v0.27 adds the dream cycle's synthesize + patterns phases ... overnight conversation transcripts become reflections, originals, and 25-year patterns. |
 | **citation-fixer** | Scans pages for missing or malformed citations. Fixes format to match the standard. |
 | **repo-architecture** | Where new brain files go. Decision protocol: primary subject determines directory, not format. |
 | **publish** | Share brain pages as password-protected HTML. Zero LLM calls. |
@@ -659,7 +659,11 @@ ADMIN
   gbrain serve                          MCP server (stdio)
   gbrain integrations                   Integration recipe dashboard
   gbrain sources list|add|remove|...    Multi-source brain management (v0.18)
-  gbrain dream [--dry-run] [--phase N]  One maintenance cycle then exit (cron-friendly)
+  gbrain dream [--dry-run] [--phase N]  8-phase maintenance cycle (lint→backlinks→sync→synthesize
+                                        →extract→patterns→embed→orphans). v0.27 added synthesize +
+                                        patterns: transcripts → reflections + cross-session themes.
+  gbrain dream --input <file>           Ad-hoc transcript synthesis (implies --phase synthesize)
+  gbrain dream --date YYYY-MM-DD        Synthesize a single day; --from/--to for backfill ranges
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
   gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)
