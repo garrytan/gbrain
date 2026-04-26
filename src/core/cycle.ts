@@ -449,6 +449,7 @@ async function runPhaseSync(
   brainDir: string,
   dryRun: boolean,
   pull: boolean,
+  willRunExtractPhase: boolean,
 ): Promise<SyncPhaseResult> {
   try {
     const { performSync } = await import('../commands/sync.ts');
@@ -456,7 +457,10 @@ async function runPhaseSync(
       repoPath: brainDir,
       dryRun,
       noPull: !pull,
-      noEmbed: true, // embed is a separate phase
+      noEmbed: true,                       // embed is a separate phase
+      noExtract: willRunExtractPhase,      // dedupe ONLY when cycle's extract phase will also run.
+                                           // If extract isn't scheduled (e.g. `gbrain dream --phase sync`),
+                                           // sync's inline extract still runs to preserve prior behavior.
     });
     const syncedCount = result.added + result.modified;
     return {
@@ -723,7 +727,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.sync');
-        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, opts.brainDir, dryRun, pull));
+        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, opts.brainDir, dryRun, pull, phases.includes('extract')));
         result.duration_ms = duration_ms;
         // Capture changed slugs for incremental extract.
         syncPagesAffected = (result as SyncPhaseResult).pagesAffected;

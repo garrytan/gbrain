@@ -19,30 +19,15 @@ import { GBrainError } from './types.ts';
 import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
 
-/** Error codes/messages that indicate a dead or poisoned connection. */
-const CONNECTION_ERROR_PATTERNS = [
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EPIPE',
-  'connection terminated',
-  'Client has encountered a connection error',
-  'password authentication failed',
-  'Connection terminated unexpectedly',
-  'no pg_hba.conf entry',
-  'server closed the connection unexpectedly',
-  'SSL connection has been closed unexpectedly',
-  'connection is insecure',
-  'too many connections',
-  'remaining connection slots are reserved',
-];
-
-function isConnectionError(err: unknown): boolean {
-  if (!err) return false;
-  const msg = err instanceof Error ? err.message : String(err);
-  const code = (err as NodeJS.ErrnoException)?.code;
-  if (code && CONNECTION_ERROR_PATTERNS.includes(code)) return true;
-  return CONNECTION_ERROR_PATTERNS.some(p => msg.includes(p));
-}
+// CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
+// executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
+// retry as unsound (regex idempotence-boundary doesn't hold for writable
+// CTEs or side-effecting SELECTs). Recovery now happens at the supervisor
+// level (3-strikes-then-reconnect). The unit tests in
+// test/connection-resilience.test.ts retain a self-contained copy of the
+// helper so the regression-against-future-reintroduction guard still works.
+// See TODOS.md item: "err.code-based connection-error matching" for the
+// follow-up that will reintroduce a typed retry mechanism.
 
 export class PostgresEngine implements BrainEngine {
   readonly kind = 'postgres' as const;
@@ -1295,17 +1280,15 @@ export class PostgresEngine implements BrainEngine {
 
   async executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
     const conn = this.sql;
-    try {
-      return await (conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]) as unknown as Promise<T[]>);
-    } catch (err) {
-      // If it's a connection error and we have saved config, try once with a fresh pool
-      if (isConnectionError(err) && this._savedConfig && !this._reconnecting) {
-        await this.reconnect();
-        const freshConn = this.sql;
-        return freshConn.unsafe(sql, params as Parameters<typeof freshConn.unsafe>[1]) as unknown as T[];
-      }
-      throw err;
-    }
+    return conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]) as unknown as T[];
+    // Pre-#406 behavior: throw on any error including connection death.
+    // Per-call auto-retry is not safe here because executeRaw is also used
+    // for non-transactional mutations (DELETE/UPDATE/INSERT in sources.ts,
+    // ALTER TABLE in migrations) where retrying after a connection-mid-statement
+    // death can phantom-write a row that already committed on the server.
+    // Recovery instead happens at the supervisor level: the watchdog detects
+    // 3 consecutive health-check failures and calls engine.reconnect() to
+    // swap in a fresh pool. See db.ts setSessionDefaults / supervisor.ts.
   }
 
   // ============================================================
