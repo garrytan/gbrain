@@ -242,6 +242,10 @@ The system keeps the audit trail behind that flow:
 - supersession links when newer memory replaces older memory
 - handoff records when a promoted candidate is ready for durable memory
 - validity checks for stale or superseded claims
+- mutation ledger events for governed writes
+- memory realms and sessions for scoped write authority
+- redaction plans for reviewable removal of sensitive page text
+- memory operations health reports for operator visibility
 
 This is the difference between "the agent wrote something down" and "the system
 knows why this claim is allowed to matter."
@@ -500,6 +504,8 @@ The SQLite E2E suite covers:
 - memory candidates
 - promotion, rejection, supersession, handoff, historical validity
 - candidate status events and brain-loop audit
+- memory realms, sessions, mutation ledger events, dry-run mutation checks,
+  patch apply, redaction plans, and memory operations health
 - forgetting/deletion behavior
 
 Network and managed Postgres tests are gated by environment such as

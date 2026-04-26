@@ -1295,6 +1295,67 @@ Expected:
 - `fail` exits non-zero
 - `test:phase8` runs the longitudinal, dream-cycle, acceptance-pack, and memory-inbox operation inventory tests
 
+## Phase 9 memory operations control plane
+
+Run:
+
+```bash
+bun test test/memory-operations-control-plane-schema.test.ts \
+  test/memory-mutation-ledger-engine.test.ts \
+  test/memory-mutation-ledger-service.test.ts \
+  test/memory-mutation-ledger-operations.test.ts \
+  test/page-write-precondition.test.ts \
+  test/memory-realm-engine.test.ts \
+  test/memory-session-attachment-service.test.ts \
+  test/memory-session-attachment-operations.test.ts \
+  test/target-snapshot-hash-service.test.ts \
+  test/dry-run-memory-mutation-operations.test.ts \
+  test/memory-inbox-operations.test.ts \
+  test/memory-redaction-plan-service.test.ts \
+  test/memory-redaction-plan-operations.test.ts \
+  test/memory-operations-health-service.test.ts \
+  test/memory-operations-health-operations.test.ts
+```
+
+Expected:
+
+- memory mutation ledger schema and operations record applied, denied, conflict,
+  failed, dry-run, staged-for-review, and redacted outcomes
+- `put_page` content-hash preconditions reject stale writes before mutation and
+  record conflict evidence
+- memory realms and sessions enforce active read-write authorization, expiry,
+  closure, archived realm, and scope-fit behavior
+- dry-run memory mutation validates the same supported operation contracts
+  without mutating targets
+- patch candidates carry target snapshot hashes and apply only after review
+- redaction plans fail closed on unsupported persisted matches, page through
+  dry-run and apply previews, refresh derived page storage, clear stale page
+  embeddings, and tombstone raw query/replacement values after apply
+- memory operations health reports mutation counts, draft redaction plans, and
+  bounded pending patch counts without overstating sampled rows
+
+## Phase 9 acceptance-pack
+
+Run:
+
+```bash
+bun test test/phase9-acceptance-pack.test.ts
+bun run bench:phase9-acceptance --json
+bun run test:phase9
+```
+
+Expected:
+
+- acceptance-pack test passes
+- benchmark summarizes `mutation_ledger`, `session_access`, `redaction_plan`,
+  and `memory_operations_health`
+- `acceptance.readiness_status` reports `pass` only when every published Phase 9
+  slice passes
+- `acceptance.phase9_status` matches the aggregated phase outcome
+- `test:phase9` runs the published Phase 9 suites, including target snapshot
+  hash coverage, redaction plan privacy coverage, memory operations health, MCP
+  acceptance coverage, and the acceptance-pack test
+
 ## Final redesign acceptance
 
 Run these gates from a clean branch based on latest `origin/master`:

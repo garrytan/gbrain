@@ -13,6 +13,7 @@ This contract owns:
 - markdown knowledge retrieval evaluation
 - context map utility evaluation
 - governance precision evaluation
+- memory operations control-plane evaluation
 - local and offline performance evaluation
 - phase acceptance criteria
 - regression triggers and rollback thresholds
@@ -46,6 +47,7 @@ The redesign uses a small set of baseline families so later measurements stay co
 | Markdown retrieval baseline | How quickly and accurately the system finds canonical notes, procedures, headings, and source-linked Markdown artifacts. | Markdown corpus and retrieval traces. | The redesign keeps Markdown as a first-class canonical interface. |
 | Context-map baseline | How much raw search the system needs before a derived map becomes useful. | Map queries, map reports, and follow-up source reads. | Derived orientation is only valuable if it reduces search burden without replacing canonical sources. |
 | Governance baseline | How often review, promotion, rejection, and supersession decisions are correct on the first pass. | Inbox state transitions and review outcomes. | Candidate handling must get cleaner, not noisier, as derived signals increase. |
+| Memory operations baseline | Whether governed mutations carry authorization, target snapshot evidence, dry-run behavior, and redaction safety without leaking sensitive data through audit surfaces. | Memory mutation events, memory realms, sessions, patch candidates, redaction plans, and health reports. | Durable memory writes need an operator-grade control plane once candidates can affect canonical state. |
 | Provenance and trace baseline | Whether Source Records stay intact and Retrieval Traces stay complete enough to explain read and write behavior later. | Source Records and Retrieval Traces. | Evaluation fails if outcomes improve while provenance or explainability fragments. |
 | Local-performance baseline | How the system behaves in local or offline execution, including latency and throughput under the supported contract. | Local execution traces and benchmark runs. | Local-first remains a hard architectural constraint. |
 | Scope-isolation baseline | Whether work, personal, and mixed requests stay inside the correct boundaries. | Retrieval traces and scope-gate records. | Scope leakage is a correctness failure, not a ranking issue. |
@@ -172,6 +174,41 @@ Acceptance rules:
 
 Governance is successful when the system learns from uncertain signals without making canonical memory noisier.
 
+## Memory Operations Control-Plane Evaluation
+
+This evaluation measures whether durable memory mutation is authorized,
+auditable, conflict-aware, and safe for high-risk operations.
+
+Required measures:
+
+- mutation ledger coverage for mutating memory operations
+- denied, conflict, failed, dry-run, staged-for-review, and redacted result fidelity
+- memory realm and session authorization correctness
+- target snapshot conflict detection before canonical writes
+- patch candidate review and apply correctness
+- redaction plan fail-closed behavior for unsupported or stale targets
+- applied-redaction privacy, meaning raw redacted query and replacement text do
+  not remain in MCP-readable applied plan or ledger surfaces
+- bounded memory operations health reporting
+
+Acceptance rules:
+
+1. A privileged memory write must be tied to an active session and compatible
+   read-write realm attachment when the operation requires scoped authority.
+2. Dry-run and apply paths must preserve the same validation semantics without
+   mutating targets during dry-run.
+3. Target snapshot mismatch must record a conflict or fail explicitly instead of
+   overwriting stale memory.
+4. Redaction must fail closed on unsupported persisted matches and must refresh
+   derived page storage after supported page redactions.
+5. Applied redaction plan and ledger surfaces must not expose the raw redacted
+   query or replacement text.
+6. Health reports must disclose bounded or sampled counts without presenting
+   them as complete counts.
+
+The control plane is successful when memory writes are no longer just possible,
+but reviewable, attributable, scoped, conflict-aware, and safe to inspect later.
+
 ## Local and Offline Performance Evaluation
 
 This evaluation measures whether the redesign preserves the local-first contract while adding more structure around it.
@@ -231,6 +268,7 @@ Each phase must satisfy the baseline family it is expected to improve, plus the 
 | Phase 6 | Higher-noise derived analysis remains constrained by governance, clears the relevant primary improvement threshold, and does not exceed the local/offline or guardrail regression thresholds. |
 | Phase 7 | Later canonical knowledge consolidation preserves provenance, historical-validity safeguards, and current-evidence discipline with `100%` provenance completeness and no safety-threshold violations. |
 | Phase 8 | The full redesign is measurable as a system, profile and scope isolation remain at the safety threshold of `0` known leakage incidents, and the baseline families remain comparable over time with no missing acceptance workloads. |
+| Phase 9 | Memory operations control-plane behavior preserves scoped write authority, target snapshot conflict checks, mutation ledger coverage, redaction fail-closed semantics, post-apply secret tombstoning, MCP exposure, and health reporting with no safety-threshold violations. |
 
 General acceptance rule:
 
@@ -247,6 +285,9 @@ The following conditions must trigger investigation and, if necessary, rollback 
 - exact Markdown notes or procedures become harder to retrieve than their derived summaries
 - map output starts being trusted without canonical follow-through
 - promotion occurs without provenance, scope fit, or contradiction checks
+- governed memory mutation occurs without required session or realm authority
+- target snapshot conflicts are overwritten instead of recorded as conflicts or failures
+- applied redaction leaves raw redacted query or replacement text in MCP-readable plan or ledger surfaces
 - Source Records become incomplete, unresolvable, or fragmented across promoted memory
 - Retrieval Traces stop recording scope, route, verification, or durable write outcomes needed for audit
 - work memory and personal memory begin to mix without explicit scope permission
@@ -270,6 +311,7 @@ The redesign is complete only when the measurement contract says it is complete.
 - reliable Markdown retrieval
 - useful but bounded context-map orientation
 - precise governance
+- governed memory mutation
 - preserved local/offline performance
 - preserved scope isolation
 - measurable, comparable results across phases
@@ -297,13 +339,20 @@ implemented and measurable:
 - Code-sensitive resume facts are reverified before being presented as current
   task state. Historical operational records are preserved even when a claim is
   stale or unverifiable.
+- Phase 9 adds the memory operations control plane: mutation ledger events,
+  memory realms and sessions, dry-run mutation checks, governed patch apply,
+  redaction plan lifecycle, memory operations health reporting, and MCP
+  acceptance coverage.
+- Applied redaction plans tombstone the raw query and replacement text on
+  applied plan surfaces, and ledger metadata avoids retaining those raw values.
 
 The following remain outside this completion boundary unless promoted into a
 new spec:
 
 - trace retention, pruning, or TTL policy
 - a dashboard or scheduled cron runner for loop observability
-- a full `memory_candidate_status_events` event log
 - an active-only task-compliance metric
 - richer AST-aware code-claim verification beyond the current path, symbol, and
   branch-sensitive checks
+- retention, pruning, or archival policy for memory mutation ledger events and
+  applied redaction plans

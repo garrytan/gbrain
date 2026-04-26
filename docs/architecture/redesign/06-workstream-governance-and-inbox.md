@@ -15,6 +15,7 @@ It owns:
 - explicit promote, reject, and supersede rules
 - scope and sensitivity checks applied at review and promotion time
 - contradiction handling between candidates and existing canonical state
+- governed mutation control-plane records that prove who was allowed to write, what target snapshot was expected, and what result was recorded
 
 It does not own:
 
@@ -23,6 +24,37 @@ It does not own:
 - how Profile Memory and Personal Episodes are stored or retrieved after a candidate has been accepted for that domain
 
 The governance layer is therefore not a graph subsystem and not a storage replacement for target domains. It is the safety boundary between "this may be worth remembering" and "this is now canonical memory."
+
+## Memory Operations Control Plane
+
+The Memory Inbox governs uncertain claims. The memory operations control plane
+governs durable write authority after a write has become concrete enough to
+touch canonical or governance state.
+
+It adds four operator-facing guarantees:
+
+| Control | Purpose |
+|---|---|
+| Memory mutation ledger | Records applied, denied, conflict, failed, dry-run, staged-for-review, and redacted outcomes with target snapshot evidence. |
+| Memory realms and sessions | Scope write authority to work, personal, or mixed domains and require read-write attachment before privileged memory writes. |
+| Patch candidate apply flow | Keeps proposed patches reviewable, validates target snapshots, and records conflicts instead of overwriting stale targets. |
+| Redaction plans and health reports | Let operators review, apply, audit, and monitor high-risk memory operations without silently mutating state. |
+
+Control-plane rules:
+
+1. Mutating memory operations must record ledger evidence unless they are an
+   explicit dry-run path.
+2. Write authority is session- and realm-scoped; a read-only attachment must not
+   authorize canonical mutation.
+3. Patch application must compare expected and current target snapshots before
+   writing.
+4. Redaction applies only after approval and must fail closed when a matching
+   target is unsupported, stale, or adjacent to persisted data that cannot be
+   safely rewritten.
+5. Applied redaction plans must not keep the raw redacted query or replacement
+   text in MCP-readable plan or ledger surfaces.
+6. Health reporting should expose bounded operator status without pretending
+   sampled counts are full-table totals.
 
 ## Candidate Sources
 
@@ -216,6 +248,11 @@ Required test areas:
 - duplicate handling tests so recurrence improves triage instead of multiplying identical review work
 - code-sensitive verification gate tests preventing stale code claims from being promoted without re-checking
 - target-domain handoff tests confirming governance outcomes can link into curated notes, procedures, profile memory, or other durable canonical records without redefining those domains
+- memory mutation ledger tests for applied, denied, conflict, dry-run, and redacted outcomes
+- memory realm and session tests for read-only denial, read-write authorization, expiry, closure, archived realms, and scope mismatch
+- patch apply tests for target snapshot conflicts, expected resulting hashes, and ledger rollback on failure
+- redaction plan tests for unsupported target fail-closed behavior, paginated dry-run previews, derived storage refresh, and post-apply secret tombstoning
+- memory operations health tests for mutation counts, draft redaction plans, and bounded pending patch counts
 
 Required evaluation questions:
 
@@ -224,5 +261,10 @@ Required evaluation questions:
 - Is review backlog staying bounded, or is candidate volume overwhelming governance?
 - Are scope and sensitivity violations being blocked before promotion?
 - Are contradictions becoming more legible and auditable over time?
+- Are durable memory writes explainable through ledger events with target snapshot evidence?
+- Are high-risk operations such as patch apply and redaction reviewable, bounded, and reversible enough for operators to trust?
 
-The subsystem is successful only if it lets the system learn from derived signals while keeping durable memory cleaner, safer, and more explainable than a direct-write pipeline would.
+The subsystem is successful only if it lets the system learn from derived signals
+while keeping durable memory cleaner, safer, and more explainable than a
+direct-write pipeline would. The Phase 9 control plane extends that success
+condition from candidate governance into governed mutation itself.

@@ -57,6 +57,7 @@ Within this envelope, SQLite is not a "lite" preview tier, Postgres is not the o
 | Phase 6 | Higher-noise derived analysis | Introduces richer derived signals only after governance controls exist. |
 | Phase 7 | Later canonical knowledge consolidation | Adds slower-moving canonical knowledge structures only after operational memory, structural orientation, and governance are already in place. |
 | Phase 8 | Evaluation harness and dream cycle | Turns the redesign into a measurable system after the major write and retrieval paths exist. |
+| Phase 9 | Memory operations control plane | Adds governed write authority, mutation auditing, redaction lifecycle, and operator health checks after the evaluation harness can verify the full loop. |
 
 ## Deliverables by Phase
 
@@ -71,6 +72,7 @@ Within this envelope, SQLite is not a "lite" preview tier, Postgres is not the o
 | Phase 6 | Richer derived analysis under governance, constrained exposure of higher-noise signals, and measured validation that the supported backend and local execution paths remain viable under the new workload. |
 | Phase 7 | Later canonical knowledge consolidation, historical-validity safeguards, and controls that prevent inferred or outdated knowledge from outrunning current evidence. |
 | Phase 8 | System-level evaluation, longitudinal comparison against the earlier baselines, regression detection for retrieval and scope isolation, and review loops for long-running maintenance. |
+| Phase 9 | Memory mutation ledger, memory realms and sessions, governed patch application, dry-run mutation checks, redaction plan lifecycle, memory operations health reporting, and MCP acceptance coverage for the completed control plane. |
 
 Deliverables should remain scoped to what the current repository can absorb phase by phase. If a deliverable requires a deeper subsystem contract, that contract belongs in the later workstream document for that subsystem rather than here.
 
@@ -80,13 +82,13 @@ The roadmap is justified by the inefficiency analysis only if each phase reduces
 
 | Existing Inefficiency Workstream | Relevant Phases | Migration Implication |
 |---|---|---|
-| Engine implementation duplication across SQLite, Postgres, and PGLite | Phase 0 through Phase 8 | Every phase should prefer shared services and capability flags over backend-specific product logic. New memory capabilities should enter through stable contracts rather than fan out into three divergent implementations. |
-| Split between contract-first operations and CLI-only flows | Phase 0 through Phase 5 | New roadmap capabilities should land behind reusable operations or service layers first, with thin CLI and MCP adapters. The redesign should reduce accidental command-surface divergence instead of adding more of it. |
-| Mixed Postgres connection ownership | Phase 0, Phase 1, Phase 5, Phase 7 | Phases that add canonical write paths or governance state must not deepen reliance on mixed singleton and instance access. They should move the system toward clearer ownership and transaction boundaries. |
+| Engine implementation duplication across SQLite, Postgres, and PGLite | Phase 0 through Phase 9 | Every phase should prefer shared services and capability flags over backend-specific product logic. New memory capabilities should enter through stable contracts rather than fan out into three divergent implementations. |
+| Split between contract-first operations and CLI-only flows | Phase 0 through Phase 9 | New roadmap capabilities should land behind reusable operations or service layers first, with thin CLI and MCP adapters. The redesign should reduce accidental command-surface divergence instead of adding more of it. |
+| Mixed Postgres connection ownership | Phase 0, Phase 1, Phase 5, Phase 7, Phase 9 | Phases that add canonical write paths or governance state must not deepen reliance on mixed singleton and instance access. They should move the system toward clearer ownership and transaction boundaries. |
 | Full-scan local vector search in SQLite | Phase 2, Phase 3, Phase 6, Phase 8 | Structural maps and atlas features should improve orientation without assuming expensive semantic retrieval. Semantic map work must remain performance-aware for local backends and be measured explicitly before broad exposure. |
 | Local import throughput limits caused by engine capability gaps | Phase 0, Phase 2, Phase 3, Phase 8 | Manifest extraction, map builds, and future dream-cycle workloads must be designed so the local path does not become a second-class throughput story. Capability modeling should remain explicit. |
 | Code-to-doc drift after the local-first transition | Phase 0 and every later phase | Each phase must keep docs aligned with actual contract and runtime behavior. The redesign documents are part of the migration surface, not separate from it. |
-| Missing benchmark baselines | Phase 0 through Phase 8 | The roadmap should establish baselines in Phase 0 and require phase-shaping measurement whenever a phase changes local search, import throughput, resume quality, extraction cost, or background analysis. Retrieval and workflow wins are not accepted without measured evidence. |
+| Missing benchmark baselines | Phase 0 through Phase 9 | The roadmap should establish baselines in Phase 0 and require phase-shaping measurement whenever a phase changes local search, import throughput, resume quality, extraction cost, background analysis, or governed write behavior. Retrieval and workflow wins are not accepted without measured evidence. |
 
 This mapping is why the roadmap stays improvement-first. The phases are not just architecture milestones; they are a sequence for attacking today’s structural duplication, contract drift, local bottlenecks, and missing evidence discipline.
 
@@ -130,6 +132,7 @@ Minimum acceptance emphasis by phase:
 - Phases 2 and 3 must prove that structural orientation helps retrieval without introducing contract drift or local performance regression, and they must report the extraction and navigation costs that shaped the phase.
 - Phases 5 through 7 must prove that governance, higher-noise derived analysis, and later canonical knowledge changes cannot bypass provenance, scope, or contradiction checks.
 - Phase 8 must prove that the redesign can be evaluated as a system rather than by anecdote and that later measurements are comparable to the early baselines.
+- Phase 9 must prove that governed write authority, mutation auditing, patch application, redaction, and operations health remain explicit, reviewable, rollback-safe, and semantically aligned across the supported execution surface.
 
 ## Risk Register
 
@@ -161,4 +164,6 @@ Phase 6 comes before Phase 7 because higher-noise derived analysis is still disc
 
 Phase 7 is intentionally late because later canonical knowledge changes are valuable only after the system already knows how to preserve provenance, contain contradictions, and distinguish current evidence from historical memory.
 
-Phase 8 closes the roadmap because evaluation and dream-cycle maintenance should validate the full loop rather than guess at isolated wins. Benchmarking, leakage checks, retrieval evaluation, and repeated-work tests are the evidence layer that tells the team whether the migration actually improved the existing product.
+Phase 8 validates the full loop because evaluation and dream-cycle maintenance should measure system behavior rather than guess at isolated wins. Benchmarking, leakage checks, retrieval evaluation, and repeated-work tests are the evidence layer that tells the team whether the migration actually improved the existing product.
+
+Phase 9 closes the roadmap by adding the memory operations control plane after that evidence layer exists. Mutation ledgers, memory realms and sessions, dry-run mutation checks, governed patch application, redaction plans, and health reporting are intentionally late because they grant durable write authority and need the earlier governance, scope, provenance, and acceptance machinery to fail closed.
