@@ -142,6 +142,7 @@ export class MinionSupervisor {
   private sigtermListener: (() => void) | null = null;
   private sigintListener: (() => void) | null = null;
   private lockAcquired = false;
+  private consecutiveHealthFailures = 0;
 
   constructor(engine: BrainEngine, opts: Partial<SupervisorOpts> & { cliPath: string }) {
     this.engine = engine;
@@ -476,10 +477,26 @@ export class MinionSupervisor {
         }
 
         const exitReason = signal ? `signal ${signal}` : `code ${code ?? 'null'}`;
+
+        // Classify the likely cause for easier debugging
+        let likelyCause: string;
+        if (signal === 'SIGKILL') {
+          likelyCause = 'oom_or_external_kill';
+        } else if (signal === 'SIGTERM') {
+          likelyCause = 'graceful_shutdown';
+        } else if (code === 1) {
+          likelyCause = 'runtime_error';
+        } else if (code === 0) {
+          likelyCause = 'clean_exit';
+        } else {
+          likelyCause = 'unknown';
+        }
+
         this.emit('worker_exited', {
           code: code ?? null,
           signal: signal ?? null,
           reason: exitReason,
+          likely_cause: likelyCause,
           crash_count: this.crashCount,
           max_crashes: this.opts.maxCrashes,
           run_duration_ms: runDuration,
@@ -523,6 +540,9 @@ export class MinionSupervisor {
         [this.opts.queue],
       );
 
+      // Reset consecutive failure counter on successful health check
+      this.consecutiveHealthFailures = 0;
+
       const row = rows[0] ?? { stalled: '0', waiting: '0', last_completed: null };
       const stalledCount = parseInt(row.stalled ?? '0', 10);
       const waitingCount = parseInt(row.waiting ?? '0', 10);
@@ -561,11 +581,41 @@ export class MinionSupervisor {
         });
       }
     } catch (e) {
-      // Health check failures are non-fatal.
-      this.emit('health_error', {
-        error: e instanceof Error ? e.message : String(e),
-        queue: this.opts.queue,
-      });
+      this.consecutiveHealthFailures++;
+      const errMsg = e instanceof Error ? e.message : String(e);
+
+      if (this.consecutiveHealthFailures >= 3) {
+        // DB connection is likely dead. Emit a degraded warning.
+        this.emit('health_warn', {
+          reason: 'db_connection_degraded',
+          consecutive_failures: this.consecutiveHealthFailures,
+          error: errMsg,
+          queue: this.opts.queue,
+        });
+        // Attempt to reconnect the engine if it supports it
+        try {
+          if ('reconnect' in this.engine && typeof (this.engine as Record<string, unknown>).reconnect === 'function') {
+            await (this.engine as unknown as { reconnect(): Promise<void> }).reconnect();
+            this.consecutiveHealthFailures = 0;
+            this.emit('health_warn', {
+              reason: 'db_reconnected',
+              queue: this.opts.queue,
+            });
+          }
+        } catch (reconnErr) {
+          this.emit('health_error', {
+            error: `reconnect failed: ${reconnErr instanceof Error ? reconnErr.message : String(reconnErr)}`,
+            reconnect_failed: true,
+            queue: this.opts.queue,
+          });
+        }
+      } else {
+        // Non-fatal single failure
+        this.emit('health_error', {
+          error: errMsg,
+          queue: this.opts.queue,
+        });
+      }
     } finally {
       this.healthInFlight = false;
     }

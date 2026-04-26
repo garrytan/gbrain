@@ -19,9 +19,38 @@ import { GBrainError } from './types.ts';
 import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
 
+/** Error codes/messages that indicate a dead or poisoned connection. */
+const CONNECTION_ERROR_PATTERNS = [
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'connection terminated',
+  'Client has encountered a connection error',
+  'password authentication failed',
+  'Connection terminated unexpectedly',
+  'no pg_hba.conf entry',
+  'server closed the connection unexpectedly',
+  'SSL connection has been closed unexpectedly',
+  'connection is insecure',
+  'too many connections',
+  'remaining connection slots are reserved',
+];
+
+function isConnectionError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = (err as NodeJS.ErrnoException)?.code;
+  if (code && CONNECTION_ERROR_PATTERNS.includes(code)) return true;
+  return CONNECTION_ERROR_PATTERNS.some(p => msg.includes(p));
+}
+
 export class PostgresEngine implements BrainEngine {
   readonly kind = 'postgres' as const;
   private _sql: ReturnType<typeof postgres> | null = null;
+  /** Saved config for reconnection. */
+  private _savedConfig: (EngineConfig & { poolSize?: number }) | null = null;
+  /** Whether a reconnect is in progress (prevents concurrent reconnects). */
+  private _reconnecting = false;
 
   // Instance connection (for workers) or fall back to module global (backward compat)
   get sql(): ReturnType<typeof postgres> {
@@ -31,6 +60,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig & { poolSize?: number }): Promise<void> {
+    this._savedConfig = config;
     if (config.poolSize) {
       // Instance-level connection for worker isolation. resolvePoolSize lets
       // GBRAIN_POOL_SIZE cap below the caller's requested size when set — the
@@ -1205,9 +1235,36 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => rowToChunk(r as Record<string, unknown>, true));
   }
 
+  /**
+   * Reconnect the engine by tearing down the current pool and creating a fresh one.
+   * No-ops if no saved config (module-singleton mode) or if already reconnecting.
+   */
+  async reconnect(): Promise<void> {
+    if (!this._savedConfig || this._reconnecting) return;
+    this._reconnecting = true;
+    try {
+      // Tear down old pool (best-effort — it may already be dead)
+      try { await this.disconnect(); } catch { /* swallow */ }
+      // Create fresh pool
+      await this.connect(this._savedConfig);
+    } finally {
+      this._reconnecting = false;
+    }
+  }
+
   async executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
     const conn = this.sql;
-    return conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]) as unknown as T[];
+    try {
+      return await (conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]) as unknown as Promise<T[]>);
+    } catch (err) {
+      // If it's a connection error and we have saved config, try once with a fresh pool
+      if (isConnectionError(err) && this._savedConfig && !this._reconnecting) {
+        await this.reconnect();
+        const freshConn = this.sql;
+        return freshConn.unsafe(sql, params as Parameters<typeof freshConn.unsafe>[1]) as unknown as T[];
+      }
+      throw err;
+    }
   }
 
   // ============================================================
