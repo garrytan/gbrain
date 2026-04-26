@@ -3,8 +3,8 @@
  * Each operation defines its schema, handler, and optional CLI hints.
  */
 
-import { lstatSync, realpathSync } from 'fs';
-import { resolve, relative, sep } from 'path';
+import { lstatSync, realpathSync, existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';
+import { resolve, relative, sep, dirname, join, isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
@@ -13,7 +13,8 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
-import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractPageLinks, extractFrontmatterLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef, type LinkCandidate } from './link-extraction.ts';
+import { serializeMarkdown } from './markdown.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -278,39 +279,47 @@ const put_page: Operation = {
     const noEmbed = !process.env.OPENAI_API_KEY;
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
-    // Auto-link post-hook: runs AFTER importFromContent (which is its own
-    // transaction). Runs even on status='skipped' so reconciliation catches drift
-    // between the page text and the links table. Failures are non-blocking.
+    // Auto-link + auto-timeline post-hook: runs AFTER importFromContent (which
+    // is its own transaction). Runs even on status='skipped' so reconciliation
+    // catches drift between page text and the links table. Failures are
+    // non-blocking.
     //
-    // SECURITY: skipped for remote (MCP) callers. Auto-link's bare-slug regex
-    // matches `people/X` etc. anywhere in page text, including code fences,
-    // quoted strings, and prompt-injected content. An untrusted page can plant
-    // arbitrary outbound links by including `see meetings/board-q1` in its body.
-    // Combined with the backlink boost in hybridSearch, attacker-placed targets
-    // would surface higher in search. Local CLI users (ctx.remote=false) opt
-    // into this behavior; MCP/remote writes do not.
+    // SECURITY: write path differs by caller mode (Block 7-1, 2026-04-26).
+    //
+    // - Local (ctx.remote=false): full extraction. Bare-slug regex matches
+    //   `people/X` etc. anywhere in page text, INCLUDING code fences, quoted
+    //   strings, and prompt-injected content. Local CLI users own their
+    //   filesystem and opt into this behavior.
+    //
+    // - Remote (ctx.remote=true): SAFE extraction. We only mine YAML
+    //   frontmatter fields (attendees, see_also, related, sources, etc.) which
+    //   are explicit, structured declarations from the writer — equivalent to
+    //   a curated page declaring `attendees: [raymond-zhu]`. The bare-slug
+    //   body regex is skipped: an attacker-controlled page can no longer plant
+    //   outbound edges via "see meetings/board-q1" in body text.
+    //
+    //   Timeline extraction runs for remote writes too: timeline entries
+    //   attach to the page being written (not arbitrary other pages), so the
+    //   prompt-injection vector that bare-slug regex enables doesn't apply.
     let autoLinks:
-      | { created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }
+      | { created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[]; mode?: 'frontmatter_only' }
       | { error: string }
-      | { skipped: 'remote' }
       | undefined;
-    let autoTimeline: { created: number } | { error: string } | { skipped: 'remote' } | undefined;
-    if (ctx.remote === true) {
-      autoLinks = { skipped: 'remote' };
-      autoTimeline = { skipped: 'remote' };
-    } else if (result.parsedPage) {
+    let autoTimeline: { created: number } | { error: string } | undefined;
+    if (result.parsedPage) {
+      const mode: 'full' | 'frontmatter_only' = ctx.remote === true ? 'frontmatter_only' : 'full';
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
         if (enabled) {
-          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage);
+          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage, mode);
         }
       } catch (e) {
         autoLinks = { error: e instanceof Error ? e.message : String(e) };
       }
-      // Timeline extraction mirrors auto-link: runs post-write, best-effort,
-      // never blocks the write. ON CONFLICT DO NOTHING in
-      // addTimelineEntriesBatch keeps it idempotent across re-writes, so a
-      // page that's edited and re-written won't duplicate its own timeline.
+      // Timeline extraction: runs post-write, best-effort, never blocks the
+      // write. ON CONFLICT DO NOTHING in addTimelineEntriesBatch keeps it
+      // idempotent across re-writes, so a page that's edited and re-written
+      // won't duplicate its own timeline.
       try {
         const enabled = await isAutoTimelineEnabled(ctx.engine);
         if (enabled) {
@@ -331,6 +340,21 @@ const put_page: Operation = {
         }
       } catch (e) {
         autoTimeline = { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+
+    // DB → markdown reconciliation for remote writes (Block 7-2, 2026-04-26).
+    // MCP writes land in Supabase; without write-back, the markdown source-
+    // of-truth in $GBRAIN_BRAIN_ROOT/<slug>.md stays stale and a repo-only DR
+    // would lose the page. Opt-in via env var; refuses to clobber files that
+    // contain a `<!-- sync:end -->` marker (calendar/email pipeline output).
+    // Best-effort, non-blocking.
+    let brainExport: { exported: true; path: string } | { skipped: string } | { error: string } | undefined;
+    if (ctx.remote === true && result.parsedPage) {
+      try {
+        brainExport = exportToBrainRepo(slug, result.parsedPage);
+      } catch (e) {
+        brainExport = { error: e instanceof Error ? e.message : String(e) };
       }
     }
 
@@ -362,6 +386,7 @@ const put_page: Operation = {
       ...(autoLinks ? { auto_links: autoLinks } : {}),
       ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
       ...(writerLint ? { writer_lint: writerLint } : {}),
+      ...(brainExport ? { brain_export: brainExport } : {}),
     };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
@@ -381,13 +406,27 @@ async function runAutoLink(
   engine: BrainEngine,
   slug: string,
   parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },
-): Promise<{ created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }> {
-  const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
+  mode: 'full' | 'frontmatter_only' = 'full',
+): Promise<{ created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[]; mode?: 'frontmatter_only' }> {
   // Live-mode resolver: per-put throwaway cache, pg_trgm + optional search.
   const resolver = makeResolver(engine, { mode: 'live' });
-  const { candidates, unresolved } = await extractPageLinks(
-    slug, fullContent, parsed.frontmatter, parsed.type, resolver,
-  );
+  let candidates: LinkCandidate[];
+  let unresolved: UnresolvedFrontmatterRef[];
+  if (mode === 'frontmatter_only') {
+    // Block 7-1: remote (MCP) writes skip the bare-slug body regex which is
+    // a prompt-injection vector, but still extract explicit YAML edges
+    // (attendees, see_also, related, sources, partner, investors, etc.).
+    const fmResult = await extractFrontmatterLinks(slug, parsed.type, parsed.frontmatter, resolver);
+    candidates = fmResult.candidates;
+    unresolved = fmResult.unresolved;
+  } else {
+    const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
+    const result = await extractPageLinks(
+      slug, fullContent, parsed.frontmatter, parsed.type, resolver,
+    );
+    candidates = result.candidates;
+    unresolved = result.unresolved;
+  }
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
   // violation churn in addLink). One getAllSlugs call upfront, O(1) lookup.
@@ -510,7 +549,94 @@ async function runAutoLink(
     return { created, removed, errors };
   });
 
-  return { ...result, unresolved };
+  return { ...result, unresolved, ...(mode === 'frontmatter_only' ? { mode } : {}) };
+}
+
+/**
+ * DB → markdown reconciliation for remote MCP writes (Block 7-2).
+ *
+ * Without this, MCP put_page lands in Supabase only and the markdown source-
+ * of-truth in `~/brain` stays stale. Repo-only DR (clone + import) loses the
+ * page.
+ *
+ * Behavior:
+ *   - Opt-in via `GBRAIN_BRAIN_ROOT` env var (set in `~/.gbrain/.env`).
+ *     Unset → no-op, returns { skipped: 'no_brain_root' }.
+ *   - Refuses to clobber files containing `<!-- sync:end -->` — that marker
+ *     identifies pages owned by the calendar/email pipelines, which preserve
+ *     manual notes BELOW the marker. Returns { skipped: 'sync_managed' }.
+ *   - Refuses to clobber under raw-import prefixes (daily/email/, daily/
+ *     calendar/, sources/contacts/, sources/meetings/) which are owned by
+ *     external pipelines. Returns { skipped: 'raw_import_path' }.
+ *   - Skips when serialized content is byte-identical to existing file
+ *     (avoids spurious git diffs). Returns { skipped: 'unchanged' }.
+ *   - Atomic write: temp file in same dir, then rename. Avoids torn writes
+ *     racing the auto-push agent.
+ *
+ * Errors are caught by the caller; never blocks the put_page response.
+ */
+export function exportToBrainRepo(
+  slug: string,
+  parsed: { type: PageType; title: string; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown>; tags: string[] },
+): { exported: true; path: string } | { skipped: string } {
+  const root = process.env.GBRAIN_BRAIN_ROOT;
+  if (!root) return { skipped: 'no_brain_root' };
+  if (!isAbsolute(root)) return { skipped: 'brain_root_not_absolute' };
+
+  // Block writes to slugs owned by external pipelines (raw imports). The MCP
+  // server should not be re-rendering email/calendar/contact dumps.
+  const RAW_IMPORT_PREFIXES = [
+    'daily/email/',
+    'daily/calendar/',
+    'sources/contacts/',
+    'sources/meetings/',
+  ];
+  if (RAW_IMPORT_PREFIXES.some(p => slug.startsWith(p))) {
+    return { skipped: 'raw_import_path' };
+  }
+
+  // Path-traversal guard: the rendered path must remain inside the brain root.
+  const targetPath = resolve(root, `${slug}.md`);
+  const rootResolved = resolve(root);
+  if (!targetPath.startsWith(rootResolved + sep) && targetPath !== rootResolved) {
+    return { skipped: 'path_traversal_blocked' };
+  }
+
+  // Refuse to overwrite sync-managed pages (calendar invite renderer leaves a
+  // <!-- sync:end --> marker so manual notes survive).
+  if (existsSync(targetPath)) {
+    try {
+      const existing = readFileSync(targetPath, 'utf-8');
+      if (existing.includes('<!-- sync:end -->')) {
+        return { skipped: 'sync_managed' };
+      }
+      // Render once, compare; if identical, no-op (avoids touching mtime).
+      const rendered = serializeMarkdown(
+        parsed.frontmatter, parsed.compiled_truth, parsed.timeline,
+        { type: parsed.type, title: parsed.title, tags: parsed.tags },
+      );
+      if (existing === rendered) return { skipped: 'unchanged' };
+      writeAtomic(targetPath, rendered);
+      return { exported: true, path: targetPath };
+    } catch (e) {
+      throw new Error(`brain export failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // New file: create parent dirs as needed, then atomic write.
+  const rendered = serializeMarkdown(
+    parsed.frontmatter, parsed.compiled_truth, parsed.timeline,
+    { type: parsed.type, title: parsed.title, tags: parsed.tags },
+  );
+  mkdirSync(dirname(targetPath), { recursive: true });
+  writeAtomic(targetPath, rendered);
+  return { exported: true, path: targetPath };
+}
+
+function writeAtomic(targetPath: string, content: string): void {
+  const tmpPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`;
+  writeFileSync(tmpPath, content, 'utf-8');
+  renameSync(tmpPath, targetPath);
 }
 
 const delete_page: Operation = {
