@@ -123,7 +123,7 @@ describe('E2E: MCP Tool Generation', () => {
         command: 'bun',
         args: ['run', 'src/cli.ts', 'serve'],
         cwd: repoRoot,
-        env: h.env,
+        env: { ...h.env, MBRAIN_ENABLE_PRIVILEGED_LEDGER_RECORD: '1' },
         stderr: 'pipe',
       });
       client = new Client(
@@ -146,6 +146,16 @@ describe('E2E: MCP Tool Generation', () => {
         'get_memory_candidate_entry',
         'delete_memory_candidate_entry',
         'record_canonical_handoff',
+        'record_memory_mutation_event',
+        'list_memory_mutation_events',
+        'upsert_memory_realm',
+        'get_memory_realm',
+        'create_memory_session',
+        'attach_memory_realm_to_session',
+        'list_memory_session_attachments',
+        'create_memory_patch_candidate',
+        'create_memory_redaction_plan',
+        'get_memory_operations_health',
       ]) {
         expect(byName.has(name)).toBe(true);
       }
@@ -284,6 +294,31 @@ describe('E2E: MCP Tool Generation', () => {
         arguments: { candidate_id: handoffCandidateId },
       }));
       expect(persistedHandoffs.map((entry) => entry.interaction_id)).toContain('mcp-trace-handoff');
+
+      const mutation = parseMcpText<any>(await client.callTool({
+        name: 'record_memory_mutation_event',
+        arguments: {
+          privileged: true,
+          privileged_reason: 'MCP E2E validates privileged ledger exposure.',
+          id: 'mcp-ledger-event',
+          session_id: 'mcp-session-ledger',
+          realm_id: 'mcp-realm-ledger',
+          actor: 'mcp-e2e',
+          operation: 'repair_memory_ledger',
+          target_kind: 'ledger_event',
+          target_id: 'mcp-ledger-target',
+          scope_id: 'workspace:default',
+          source_refs: ['MCP E2E, privileged ledger call, 2026-04-26 22:00 KST'],
+          result: 'applied',
+        },
+      }));
+      expect(mutation.id).toBe('mcp-ledger-event');
+
+      const mutations = parseMcpText<any[]>(await client.callTool({
+        name: 'list_memory_mutation_events',
+        arguments: { session_id: 'mcp-session-ledger', limit: 10 },
+      }));
+      expect(mutations.map((entry) => entry.id)).toContain('mcp-ledger-event');
     } finally {
       try {
         if (client) await client.close();
