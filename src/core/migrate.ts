@@ -899,6 +899,608 @@ const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 26,
+    name: 'memory_mutation_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS memory_mutation_events (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        realm_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        operation TEXT NOT NULL CONSTRAINT chk_memory_mutation_events_operation CHECK (
+          operation IN (
+            'create_memory_session',
+            'close_memory_session',
+            'expire_memory_session',
+            'revoke_memory_session',
+            'dry_run_memory_mutation',
+            'list_memory_mutation_events',
+            'record_memory_mutation_event',
+            'create_memory_patch_candidate',
+            'dry_run_memory_patch_candidate',
+            'review_memory_patch_candidate',
+            'apply_memory_patch_candidate',
+            'create_redaction_plan',
+            'dry_run_redaction_plan',
+            'execute_redaction_plan',
+            'put_page',
+            'delete_page',
+            'upsert_profile_memory_entry',
+            'write_profile_memory_entry',
+            'delete_profile_memory_entry',
+            'record_personal_episode',
+            'write_personal_episode_entry',
+            'delete_personal_episode_entry',
+            'upsert_memory_realm',
+            'create_memory_candidate_entry',
+            'advance_memory_candidate_status',
+            'reject_memory_candidate_entry',
+            'delete_memory_candidate_entry',
+            'promote_memory_candidate_entry',
+            'supersede_memory_candidate_entry',
+            'export_memory_artifact',
+            'sync_memory_artifact',
+            'repair_memory_ledger',
+            'physical_delete_memory_record'
+          )
+        ),
+        target_kind TEXT NOT NULL CONSTRAINT chk_memory_mutation_events_target_kind CHECK (
+          target_kind IN (
+            'page',
+            'source_record',
+            'task_thread',
+            'working_set',
+            'task_event',
+            'task_episode',
+            'attempt',
+            'decision',
+            'procedure',
+            'memory_candidate',
+            'memory_patch_candidate',
+            'profile_memory',
+            'personal_episode',
+            'memory_realm',
+            'context_map',
+            'context_atlas',
+            'file_artifact',
+            'export_artifact',
+            'ledger_event'
+          )
+        ),
+        target_id TEXT,
+        scope_id TEXT,
+        source_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+        expected_target_snapshot_hash TEXT,
+        current_target_snapshot_hash TEXT,
+        result TEXT NOT NULL CHECK (
+          result IN (
+            'dry_run',
+            'staged_for_review',
+            'applied',
+            'conflict',
+            'denied',
+            'failed',
+            'redacted'
+          )
+        ),
+        conflict_info JSONB,
+        dry_run BOOLEAN NOT NULL DEFAULT false,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        redaction_visibility TEXT NOT NULL DEFAULT 'visible' CHECK (
+          redaction_visibility IN ('visible', 'partially_redacted', 'tombstoned')
+        ),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        decided_at TIMESTAMPTZ,
+        applied_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_session_created
+        ON memory_mutation_events(session_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_realm_created
+        ON memory_mutation_events(realm_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_actor_created
+        ON memory_mutation_events(actor, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_operation_created
+        ON memory_mutation_events(operation, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_target
+        ON memory_mutation_events(target_kind, target_id);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_result_created
+        ON memory_mutation_events(result, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_scope_created
+        ON memory_mutation_events(scope_id, created_at DESC, id DESC)
+        WHERE scope_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 27,
+    name: 'memory_mutation_events_operation_contract_repair',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('memory_mutation_events') IS NOT NULL THEN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'memory_mutation_events'::regclass
+              AND conname = 'chk_memory_mutation_events_operation'
+          ) THEN
+            ALTER TABLE memory_mutation_events
+              ADD CONSTRAINT chk_memory_mutation_events_operation
+              CHECK (
+                operation IN (
+                  'create_memory_session',
+                  'close_memory_session',
+                  'expire_memory_session',
+                  'revoke_memory_session',
+                  'dry_run_memory_mutation',
+                  'list_memory_mutation_events',
+                  'record_memory_mutation_event',
+                  'create_memory_patch_candidate',
+                  'dry_run_memory_patch_candidate',
+                  'review_memory_patch_candidate',
+                  'apply_memory_patch_candidate',
+                  'create_redaction_plan',
+                  'dry_run_redaction_plan',
+                  'execute_redaction_plan',
+                  'put_page',
+                  'delete_page',
+                  'upsert_profile_memory_entry',
+                  'write_profile_memory_entry',
+                  'delete_profile_memory_entry',
+                  'record_personal_episode',
+                  'write_personal_episode_entry',
+                  'delete_personal_episode_entry',
+                  'upsert_memory_realm',
+                  'create_memory_candidate_entry',
+                  'advance_memory_candidate_status',
+                  'reject_memory_candidate_entry',
+                  'delete_memory_candidate_entry',
+                  'promote_memory_candidate_entry',
+                  'supersede_memory_candidate_entry',
+                  'export_memory_artifact',
+                  'sync_memory_artifact',
+                  'repair_memory_ledger',
+                  'physical_delete_memory_record'
+                )
+              );
+          END IF;
+        END IF;
+      END $$;
+      DROP INDEX IF EXISTS idx_memory_mutation_events_scope_created;
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_scope_created
+        ON memory_mutation_events(scope_id, created_at DESC, id DESC)
+        WHERE scope_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 28,
+    name: 'memory_mutation_events_required_target_provenance_contract',
+    sql: `
+      CREATE OR REPLACE FUNCTION mbrain_trim_memory_text(input text)
+      RETURNS text
+      LANGUAGE sql
+      IMMUTABLE
+      AS $mbrain$
+        SELECT btrim(
+          input,
+          chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || chr(32) ||
+          chr(160) || chr(5760) ||
+          chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) ||
+          chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201) ||
+          chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287) ||
+          chr(12288) || chr(65279)
+        )
+      $mbrain$;
+
+      CREATE OR REPLACE FUNCTION mbrain_jsonb_non_empty_string_array(input jsonb)
+      RETURNS boolean
+      LANGUAGE sql
+      IMMUTABLE
+      AS $mbrain$
+        SELECT CASE
+          WHEN jsonb_typeof(input) IS DISTINCT FROM 'array' THEN false
+          WHEN jsonb_array_length(input) = 0 THEN false
+          ELSE COALESCE((
+            SELECT bool_and(
+              jsonb_typeof(entry.value) = 'string'
+              AND mbrain_trim_memory_text(entry.value #>> '{}') <> ''
+            )
+            FROM jsonb_array_elements(input) AS entry(value)
+          ), false)
+        END
+      $mbrain$;
+
+      UPDATE memory_mutation_events
+      SET target_id = CASE
+        WHEN target_id IS NULL OR mbrain_trim_memory_text(target_id) = '' THEN 'unknown:' || id
+        ELSE mbrain_trim_memory_text(target_id)
+      END
+      WHERE target_id IS NULL
+         OR mbrain_trim_memory_text(target_id) = ''
+         OR target_id <> mbrain_trim_memory_text(target_id);
+
+      UPDATE memory_mutation_events
+      SET source_refs = '["Source: mbrain migration 28 required provenance backfill"]'::jsonb
+      WHERE NOT mbrain_jsonb_non_empty_string_array(source_refs);
+
+      UPDATE memory_mutation_events
+      SET dry_run = (result = 'dry_run');
+
+      DO $$
+      BEGIN
+        IF to_regclass('memory_mutation_events') IS NOT NULL THEN
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_target_id_present;
+            ALTER TABLE memory_mutation_events
+              ADD CONSTRAINT chk_memory_mutation_events_target_id_present
+            CHECK (target_id IS NOT NULL AND mbrain_trim_memory_text(target_id) <> '');
+
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_source_refs_non_empty;
+          ALTER TABLE memory_mutation_events
+            ADD CONSTRAINT chk_memory_mutation_events_source_refs_non_empty
+            CHECK (mbrain_jsonb_non_empty_string_array(source_refs));
+
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_dry_run_result_consistency;
+          ALTER TABLE memory_mutation_events
+            ADD CONSTRAINT chk_memory_mutation_events_dry_run_result_consistency
+            CHECK (
+              (result = 'dry_run' AND dry_run = true)
+              OR (result <> 'dry_run' AND dry_run = false)
+            );
+        END IF;
+      END $$;
+    `,
+  },
+  {
+    version: 29,
+    name: 'memory_realms',
+    sql: `
+      CREATE TABLE IF NOT EXISTS memory_realms (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL CHECK (scope IN ('work', 'personal', 'mixed')),
+        default_access TEXT NOT NULL CHECK (default_access IN ('read_only', 'read_write')),
+        retention_policy TEXT NOT NULL DEFAULT 'retain',
+        export_policy TEXT NOT NULL DEFAULT 'private',
+        agent_instructions TEXT NOT NULL DEFAULT '',
+        archived_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_realms_scope
+        ON memory_realms(scope, updated_at DESC);
+    `,
+  },
+  {
+    version: 30,
+    name: 'memory_mutation_events_realm_upsert_contract',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('memory_mutation_events') IS NOT NULL THEN
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_operation;
+          ALTER TABLE memory_mutation_events
+            ADD CONSTRAINT chk_memory_mutation_events_operation
+            CHECK (
+              operation IN (
+                'create_memory_session',
+                'close_memory_session',
+                'expire_memory_session',
+                'revoke_memory_session',
+                'dry_run_memory_mutation',
+                'list_memory_mutation_events',
+                'record_memory_mutation_event',
+                'create_memory_patch_candidate',
+                'dry_run_memory_patch_candidate',
+                'review_memory_patch_candidate',
+                'apply_memory_patch_candidate',
+                'create_redaction_plan',
+                'dry_run_redaction_plan',
+                'execute_redaction_plan',
+                'put_page',
+                'delete_page',
+                'upsert_profile_memory_entry',
+                'write_profile_memory_entry',
+                'delete_profile_memory_entry',
+                'record_personal_episode',
+                'write_personal_episode_entry',
+                'delete_personal_episode_entry',
+                'upsert_memory_realm',
+                'create_memory_candidate_entry',
+                'advance_memory_candidate_status',
+                'reject_memory_candidate_entry',
+                'delete_memory_candidate_entry',
+                'promote_memory_candidate_entry',
+                'supersede_memory_candidate_entry',
+                'export_memory_artifact',
+                'sync_memory_artifact',
+                'repair_memory_ledger',
+                'physical_delete_memory_record'
+              )
+            );
+
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_target_kind;
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS memory_mutation_events_target_kind_check;
+          ALTER TABLE memory_mutation_events
+            ADD CONSTRAINT chk_memory_mutation_events_target_kind
+            CHECK (
+              target_kind IN (
+                'page',
+                'source_record',
+                'task_thread',
+                'working_set',
+                'task_event',
+                'task_episode',
+                'attempt',
+                'decision',
+                'procedure',
+                'memory_candidate',
+                'memory_patch_candidate',
+                'profile_memory',
+                'personal_episode',
+                'memory_realm',
+                'context_map',
+                'context_atlas',
+                'file_artifact',
+                'export_artifact',
+                'ledger_event'
+              )
+            );
+        END IF;
+      END $$;
+    `,
+  },
+  {
+    version: 31,
+    name: 'memory_sessions_and_realm_attachments',
+    sql: `
+      CREATE TABLE IF NOT EXISTS memory_sessions (
+        id TEXT PRIMARY KEY,
+        task_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+        actor_ref TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        closed_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_sessions_status_created
+        ON memory_sessions(status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS memory_session_attachments (
+        session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
+        realm_id TEXT NOT NULL REFERENCES memory_realms(id) ON DELETE CASCADE,
+        access TEXT NOT NULL CHECK (access IN ('read_only', 'read_write')),
+        instructions TEXT NOT NULL DEFAULT '',
+        attached_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (session_id, realm_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_session_attachments_realm
+        ON memory_session_attachments(realm_id, attached_at DESC);
+
+      DO $$
+      BEGIN
+        IF to_regclass('memory_mutation_events') IS NOT NULL THEN
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_operation;
+          ALTER TABLE memory_mutation_events
+            ADD CONSTRAINT chk_memory_mutation_events_operation
+            CHECK (
+              operation IN (
+                'create_memory_session',
+                'close_memory_session',
+                'expire_memory_session',
+                'revoke_memory_session',
+                'dry_run_memory_mutation',
+                'list_memory_mutation_events',
+                'record_memory_mutation_event',
+                'create_memory_patch_candidate',
+                'dry_run_memory_patch_candidate',
+                'review_memory_patch_candidate',
+                'apply_memory_patch_candidate',
+                'create_redaction_plan',
+                'dry_run_redaction_plan',
+                'execute_redaction_plan',
+                'put_page',
+                'delete_page',
+                'upsert_profile_memory_entry',
+                'write_profile_memory_entry',
+                'delete_profile_memory_entry',
+                'record_personal_episode',
+                'write_personal_episode_entry',
+                'delete_personal_episode_entry',
+                'upsert_memory_realm',
+                'attach_memory_realm_to_session',
+                'create_memory_candidate_entry',
+                'advance_memory_candidate_status',
+                'reject_memory_candidate_entry',
+                'delete_memory_candidate_entry',
+                'promote_memory_candidate_entry',
+                'supersede_memory_candidate_entry',
+                'export_memory_artifact',
+                'sync_memory_artifact',
+                'repair_memory_ledger',
+                'physical_delete_memory_record'
+              )
+            );
+
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS chk_memory_mutation_events_target_kind;
+          ALTER TABLE memory_mutation_events
+            DROP CONSTRAINT IF EXISTS memory_mutation_events_target_kind_check;
+          ALTER TABLE memory_mutation_events
+            ADD CONSTRAINT chk_memory_mutation_events_target_kind
+            CHECK (
+              target_kind IN (
+                'page',
+                'source_record',
+                'task_thread',
+                'working_set',
+                'task_event',
+                'task_episode',
+                'attempt',
+                'decision',
+                'procedure',
+                'memory_candidate',
+                'memory_patch_candidate',
+                'profile_memory',
+                'personal_episode',
+                'memory_realm',
+                'memory_session',
+                'memory_session_attachment',
+                'context_map',
+                'context_atlas',
+                'file_artifact',
+                'export_artifact',
+                'ledger_event'
+              )
+            );
+        END IF;
+      END $$;
+    `,
+  },
+  {
+    version: 32,
+    name: 'memory_session_expiry_contract',
+    sql: `
+      DO $$
+      DECLARE
+        status_constraint_name TEXT;
+      BEGIN
+        IF to_regclass('memory_sessions') IS NOT NULL THEN
+          ALTER TABLE memory_sessions
+            ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+          FOR status_constraint_name IN
+            SELECT conname
+            FROM pg_constraint
+            WHERE conrelid = 'memory_sessions'::regclass
+              AND contype = 'c'
+              AND pg_get_constraintdef(oid) LIKE '%status%'
+          LOOP
+            EXECUTE format('ALTER TABLE memory_sessions DROP CONSTRAINT IF EXISTS %I', status_constraint_name);
+          END LOOP;
+
+          ALTER TABLE memory_sessions
+            ADD CONSTRAINT chk_memory_sessions_status
+            CHECK (status IN ('active', 'expired', 'closed'));
+        END IF;
+      END $$;
+    `,
+  },
+  {
+    version: 33,
+    name: 'memory_patch_candidate_fields',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('memory_candidate_entries') IS NOT NULL THEN
+          ALTER TABLE memory_candidate_entries
+            ADD COLUMN IF NOT EXISTS patch_target_kind TEXT,
+            ADD COLUMN IF NOT EXISTS patch_target_id TEXT,
+            ADD COLUMN IF NOT EXISTS patch_base_target_snapshot_hash TEXT,
+            ADD COLUMN IF NOT EXISTS patch_body JSONB,
+            ADD COLUMN IF NOT EXISTS patch_format TEXT,
+            ADD COLUMN IF NOT EXISTS patch_operation_state TEXT,
+            ADD COLUMN IF NOT EXISTS patch_risk_class TEXT,
+            ADD COLUMN IF NOT EXISTS patch_expected_resulting_target_snapshot_hash TEXT,
+            ADD COLUMN IF NOT EXISTS patch_provenance_summary TEXT,
+            ADD COLUMN IF NOT EXISTS patch_actor TEXT,
+            ADD COLUMN IF NOT EXISTS patch_originating_session_id TEXT,
+            ADD COLUMN IF NOT EXISTS patch_ledger_event_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_target_kind;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_target_kind
+            CHECK (
+              patch_target_kind IS NULL
+              OR patch_target_kind IN (
+                'page',
+                'source_record',
+                'task_thread',
+                'working_set',
+                'task_event',
+                'task_episode',
+                'attempt',
+                'decision',
+                'procedure',
+                'memory_candidate',
+                'memory_patch_candidate',
+                'profile_memory',
+                'personal_episode',
+                'memory_realm',
+                'memory_session',
+                'memory_session_attachment',
+                'context_map',
+                'context_atlas',
+                'file_artifact',
+                'export_artifact',
+                'ledger_event'
+              )
+            );
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_body_object;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_body_object
+            CHECK (patch_body IS NULL OR jsonb_typeof(patch_body) IN ('object', 'array'));
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_format;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_format
+            CHECK (
+              patch_format IS NULL
+              OR patch_format IN ('merge_patch', 'json_patch', 'unified_diff', 'whole_record', 'operation')
+            );
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_operation_state;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_operation_state
+            CHECK (
+              patch_operation_state IS NULL
+              OR patch_operation_state IN (
+                'proposed',
+                'dry_run_validated',
+                'approved_for_apply',
+                'apply_in_progress',
+                'applied',
+                'conflicted',
+                'failed'
+              )
+            );
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_risk_class;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_risk_class
+            CHECK (
+              patch_risk_class IS NULL
+              OR patch_risk_class IN ('low', 'medium', 'high', 'critical', 'unknown')
+            );
+
+          ALTER TABLE memory_candidate_entries
+            DROP CONSTRAINT IF EXISTS chk_memory_candidate_entries_patch_ledger_ids_array;
+          ALTER TABLE memory_candidate_entries
+            ADD CONSTRAINT chk_memory_candidate_entries_patch_ledger_ids_array
+            CHECK (jsonb_typeof(patch_ledger_event_ids) = 'array');
+
+          CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_state
+            ON memory_candidate_entries(patch_operation_state, updated_at DESC)
+            WHERE patch_operation_state IS NOT NULL;
+          CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_target
+            ON memory_candidate_entries(patch_target_kind, patch_target_id)
+            WHERE patch_target_kind IS NOT NULL;
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

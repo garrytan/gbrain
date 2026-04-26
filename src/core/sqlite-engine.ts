@@ -35,6 +35,18 @@ import type {
   MemoryCandidateContradictionEntryInput,
   MemoryCandidateEntryInput,
   MemoryCandidateFilters,
+  MemoryMutationEvent,
+  MemoryMutationEventFilters,
+  MemoryMutationEventInput,
+  MemoryRealm,
+  MemoryRealmFilters,
+  MemoryRealmInput,
+  MemorySession,
+  MemorySessionFilters,
+  MemorySessionAttachment,
+  MemorySessionAttachmentFilters,
+  MemorySessionAttachmentInput,
+  MemorySessionInput,
   MemoryCandidatePromotionPatch,
   MemoryCandidateStatusEvent,
   MemoryCandidateStatusEventFilters,
@@ -78,9 +90,20 @@ import { MBrainError } from './types.ts';
 import { buildFrontmatterSearchText, expandTechnicalAliases } from './markdown.ts';
 import {
   contentHash,
+  applyMemoryRealmUpsertDefaults,
+  hasMemoryCandidatePatchInput,
+  hasOwn,
   importContentHash,
+  normalizeMemoryMutationEventInput,
+  normalizeMemoryRealmInput,
+  normalizeMemorySessionAttachmentInput,
+  normalizeMemorySessionInput,
   rowToCanonicalHandoffEntry,
   rowToMemoryCandidateContradictionEntry,
+  rowToMemoryMutationEvent,
+  rowToMemoryRealm,
+  rowToMemorySession,
+  rowToMemorySessionAttachment,
   rowToMemoryCandidateStatusEvent,
   rowToMemoryCandidateSupersessionEntry,
 } from './utils.ts';
@@ -370,6 +393,45 @@ CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_generated
 CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_kind
   ON context_atlas_entries(scope_id, kind);
 
+CREATE TABLE IF NOT EXISTS memory_realms (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL CHECK (scope IN ('work', 'personal', 'mixed')),
+  default_access TEXT NOT NULL CHECK (default_access IN ('read_only', 'read_write')),
+  retention_policy TEXT NOT NULL DEFAULT 'retain',
+  export_policy TEXT NOT NULL DEFAULT 'private',
+  agent_instructions TEXT NOT NULL DEFAULT '',
+  archived_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_memory_realms_scope
+  ON memory_realms(scope, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_sessions (
+  id TEXT PRIMARY KEY,
+  task_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('active', 'expired', 'closed')),
+  actor_ref TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  closed_at TEXT,
+  expires_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_memory_sessions_status_created
+  ON memory_sessions(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_session_attachments (
+  session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
+  realm_id TEXT NOT NULL REFERENCES memory_realms(id) ON DELETE CASCADE,
+  access TEXT NOT NULL CHECK (access IN ('read_only', 'read_write')),
+  instructions TEXT NOT NULL DEFAULT '',
+  attached_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (session_id, realm_id)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_session_attachments_realm
+  ON memory_session_attachments(realm_id, attached_at DESC);
+
 CREATE TABLE IF NOT EXISTS access_tokens (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -552,6 +614,10 @@ export class SQLiteEngine implements BrainEngine {
       WHERE slug = ?
     `).get(validateSlug(slug)) as Record<string, unknown> | null;
     return row ? rowToPage(row) : null;
+  }
+
+  async getPageForUpdate(slug: string): Promise<Page | null> {
+    return this.getPage(slug);
   }
 
   async putPage(slug: string, page: PageInput): Promise<Page> {
@@ -1604,13 +1670,61 @@ export class SQLiteEngine implements BrainEngine {
   async createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry> {
     const initialStatus = assertMemoryCandidateCreateStatus(input.status);
     const timestamp = nowIso();
+    if (this.sqliteTableExists('memory_candidate_entries') && !this.sqliteMemoryCandidatePatchColumnsExist()) {
+      if (hasMemoryCandidatePatchInput(input)) {
+        throw new Error('Reviewable patch candidate fields require memory_patch_candidate_fields schema migration.');
+      }
+      this.database.run(`
+        INSERT INTO memory_candidate_entries (
+          id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+          extraction_kind, confidence_score, importance_score, recurrence_score,
+          sensitivity, status, target_object_type, target_object_id, reviewed_at,
+          review_reason, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        input.id,
+        input.scope_id,
+        input.candidate_type,
+        input.proposed_content,
+        JSON.stringify(input.source_refs ?? []),
+        input.generated_by,
+        input.extraction_kind,
+        input.confidence_score,
+        input.importance_score,
+        input.recurrence_score,
+        input.sensitivity,
+        initialStatus,
+        input.target_object_type ?? null,
+        input.target_object_id ?? null,
+        toNullableIso(input.reviewed_at),
+        input.review_reason ?? null,
+        timestamp,
+        timestamp,
+      ]);
+
+      const row = this.database.query(`
+        SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
+               extraction_kind, confidence_score, importance_score, recurrence_score,
+               sensitivity, status, target_object_type, target_object_id, reviewed_at,
+               review_reason, created_at, updated_at
+        FROM memory_candidate_entries
+        WHERE id = ?
+      `).get(input.id) as Record<string, unknown> | null;
+      if (!row) throw new Error(`Memory candidate entry not found after create: ${input.id}`);
+      return rowToMemoryCandidateEntry(row);
+    }
+
     this.database.run(`
       INSERT INTO memory_candidate_entries (
         id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
         extraction_kind, confidence_score, importance_score, recurrence_score,
         sensitivity, status, target_object_type, target_object_id, reviewed_at,
-        review_reason, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+        patch_body, patch_format, patch_operation_state, patch_risk_class,
+        patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+        patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       input.id,
       input.scope_id,
@@ -1628,6 +1742,18 @@ export class SQLiteEngine implements BrainEngine {
       input.target_object_id ?? null,
       toNullableIso(input.reviewed_at),
       input.review_reason ?? null,
+      input.patch_target_kind ?? null,
+      input.patch_target_id ?? null,
+      input.patch_base_target_snapshot_hash ?? null,
+      input.patch_body == null ? null : JSON.stringify(input.patch_body),
+      input.patch_format ?? null,
+      input.patch_operation_state ?? null,
+      input.patch_risk_class ?? null,
+      input.patch_expected_resulting_target_snapshot_hash ?? null,
+      input.patch_provenance_summary ?? null,
+      input.patch_actor ?? null,
+      input.patch_originating_session_id ?? null,
+      JSON.stringify(input.patch_ledger_event_ids ?? []),
       timestamp,
       timestamp,
     ]);
@@ -1636,7 +1762,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
     `).get(input.id) as Record<string, unknown> | null;
@@ -1649,7 +1779,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
@@ -1682,6 +1816,18 @@ export class SQLiteEngine implements BrainEngine {
       clauses.push('target_object_id = ?');
       params.push(filters.target_object_id);
     }
+    if (filters?.patch_operation_state !== undefined) {
+      clauses.push('patch_operation_state = ?');
+      params.push(filters.patch_operation_state);
+    }
+    if (filters?.patch_target_kind !== undefined) {
+      clauses.push('patch_target_kind = ?');
+      params.push(filters.patch_target_kind);
+    }
+    if (filters?.patch_target_id !== undefined) {
+      clauses.push('patch_target_id = ?');
+      params.push(filters.patch_target_id);
+    }
     if (filters?.created_since !== undefined) {
       clauses.push('created_at >= ?');
       params.push(filters.created_since.toISOString());
@@ -1706,7 +1852,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       ${whereClause}
       ORDER BY updated_at DESC, id ASC
@@ -1821,6 +1971,403 @@ export class SQLiteEngine implements BrainEngine {
     return sortByCreatedAtDescIdDesc(entries);
   }
 
+  async createMemoryMutationEvent(input: MemoryMutationEventInput): Promise<MemoryMutationEvent> {
+    const event = normalizeMemoryMutationEventInput(input);
+    const createdAt = toNullableIso(event.created_at) ?? nowIso();
+    this.database.run(`
+      INSERT INTO memory_mutation_events (
+        id, session_id, realm_id, actor, operation, target_kind, target_id, scope_id,
+        source_refs, expected_target_snapshot_hash, current_target_snapshot_hash, result,
+        conflict_info, dry_run, metadata, redaction_visibility, created_at, decided_at, applied_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, sqliteBindings([
+      event.id,
+      event.session_id,
+      event.realm_id,
+      event.actor,
+      event.operation,
+      event.target_kind,
+      event.target_id,
+      event.scope_id ?? null,
+      JSON.stringify(event.source_refs),
+      event.expected_target_snapshot_hash ?? null,
+      event.current_target_snapshot_hash ?? null,
+      event.result,
+      event.conflict_info == null ? null : JSON.stringify(event.conflict_info),
+      event.dry_run ?? false,
+      JSON.stringify(event.metadata ?? {}),
+      event.redaction_visibility ?? 'visible',
+      createdAt,
+      toNullableIso(event.decided_at),
+      toNullableIso(event.applied_at),
+    ]));
+
+    const row = this.database.query(`
+      SELECT id, session_id, realm_id, actor, operation, target_kind, target_id, scope_id,
+             source_refs, expected_target_snapshot_hash, current_target_snapshot_hash, result,
+             conflict_info, dry_run, metadata, redaction_visibility, created_at, decided_at, applied_at
+      FROM memory_mutation_events
+      WHERE id = ?
+    `).get(event.id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Memory mutation event not found after create: ${event.id}`);
+    return rowToMemoryMutationEvent(row);
+  }
+
+  async listMemoryMutationEvents(filters?: MemoryMutationEventFilters): Promise<MemoryMutationEvent[]> {
+    const { limit, offset } = normalizeMemoryMutationPagination(filters);
+    if (limit === 0) return [];
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filters?.session_id !== undefined) {
+      clauses.push('session_id = ?');
+      params.push(filters.session_id);
+    }
+    if (filters?.realm_id !== undefined) {
+      clauses.push('realm_id = ?');
+      params.push(filters.realm_id);
+    }
+    if (filters?.actor !== undefined) {
+      clauses.push('actor = ?');
+      params.push(filters.actor);
+    }
+    if (filters?.operation !== undefined) {
+      clauses.push('operation = ?');
+      params.push(filters.operation);
+    }
+    if (filters?.target_kind !== undefined) {
+      clauses.push('target_kind = ?');
+      params.push(filters.target_kind);
+    }
+    if (filters?.target_id !== undefined) {
+      clauses.push('target_id = ?');
+      params.push(filters.target_id);
+    }
+    if (filters?.scope_id !== undefined) {
+      clauses.push('scope_id = ?');
+      params.push(filters.scope_id);
+    }
+    if (filters?.result !== undefined) {
+      clauses.push('result = ?');
+      params.push(filters.result);
+    }
+    if (filters?.created_since !== undefined) {
+      clauses.push('created_at >= ?');
+      params.push(filters.created_since.toISOString());
+    }
+    if (filters?.created_until !== undefined) {
+      clauses.push('created_at < ?');
+      params.push(filters.created_until.toISOString());
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, session_id, realm_id, actor, operation, target_kind, target_id, scope_id,
+             source_refs, expected_target_snapshot_hash, current_target_snapshot_hash, result,
+             conflict_info, dry_run, metadata, redaction_visibility, created_at, decided_at, applied_at
+      FROM memory_mutation_events
+      ${whereClause}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+      OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToMemoryMutationEvent);
+  }
+
+  async upsertMemoryRealm(input: MemoryRealmInput): Promise<MemoryRealm> {
+    const normalized = normalizeMemoryRealmInput(input);
+    const realm = applyMemoryRealmUpsertDefaults(normalized, null);
+    const descriptionSupplied = hasOwn(normalized, 'description');
+    const defaultAccessSupplied = hasOwn(normalized, 'default_access');
+    const retentionPolicySupplied = hasOwn(normalized, 'retention_policy');
+    const exportPolicySupplied = hasOwn(normalized, 'export_policy');
+    const agentInstructionsSupplied = hasOwn(normalized, 'agent_instructions');
+    const archivedAtSupplied = hasOwn(normalized, 'archived_at');
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO memory_realms (
+        id, name, description, scope, default_access, retention_policy,
+        export_policy, agent_instructions, archived_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        description = CASE WHEN ? THEN excluded.description ELSE memory_realms.description END,
+        scope = excluded.scope,
+        default_access = CASE WHEN ? THEN excluded.default_access ELSE memory_realms.default_access END,
+        retention_policy = CASE WHEN ? THEN excluded.retention_policy ELSE memory_realms.retention_policy END,
+        export_policy = CASE WHEN ? THEN excluded.export_policy ELSE memory_realms.export_policy END,
+        agent_instructions = CASE WHEN ? THEN excluded.agent_instructions ELSE memory_realms.agent_instructions END,
+        archived_at = CASE WHEN ? THEN excluded.archived_at ELSE memory_realms.archived_at END,
+        updated_at = excluded.updated_at
+    `, sqliteBindings([
+      realm.id,
+      realm.name,
+      realm.description,
+      realm.scope,
+      realm.default_access,
+      realm.retention_policy,
+      realm.export_policy,
+      realm.agent_instructions,
+      toNullableIso(realm.archived_at),
+      timestamp,
+      timestamp,
+      descriptionSupplied,
+      defaultAccessSupplied,
+      retentionPolicySupplied,
+      exportPolicySupplied,
+      agentInstructionsSupplied,
+      archivedAtSupplied,
+    ]));
+
+    const row = this.database.query(`
+      SELECT id, name, description, scope, default_access, retention_policy,
+             export_policy, agent_instructions, archived_at, created_at, updated_at
+      FROM memory_realms
+      WHERE id = ?
+    `).get(realm.id) as Record<string, unknown> | null;
+    if (!row) throw new Error(`Memory realm not found after upsert: ${realm.id}`);
+    return rowToMemoryRealm(row);
+  }
+
+  async getMemoryRealm(id: string): Promise<MemoryRealm | null> {
+    const row = this.database.query(`
+      SELECT id, name, description, scope, default_access, retention_policy,
+             export_policy, agent_instructions, archived_at, created_at, updated_at
+      FROM memory_realms
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToMemoryRealm(row) : null;
+  }
+
+  async listMemoryRealms(filters?: MemoryRealmFilters): Promise<MemoryRealm[]> {
+    const { limit, offset } = normalizeMemoryRealmPagination(filters);
+    if (limit === 0) return [];
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filters?.scope !== undefined) {
+      clauses.push('scope = ?');
+      params.push(filters.scope);
+    }
+    if (filters?.include_archived !== true) {
+      clauses.push('archived_at IS NULL');
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT id, name, description, scope, default_access, retention_policy,
+             export_policy, agent_instructions, archived_at, created_at, updated_at
+      FROM memory_realms
+      ${whereClause}
+      ORDER BY updated_at DESC, id DESC
+      LIMIT ?
+      OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToMemoryRealm);
+  }
+
+  async createMemorySession(input: MemorySessionInput): Promise<MemorySession> {
+    const normalized = normalizeMemorySessionInput(input);
+    const timestamp = nowIso();
+    this.database.run(`
+      INSERT INTO memory_sessions (
+        id, task_id, status, actor_ref, created_at, closed_at, expires_at
+      ) VALUES (?, ?, 'active', ?, ?, NULL, ?)
+    `, sqliteBindings([
+      normalized.id,
+      normalized.task_id ?? null,
+      normalized.actor_ref ?? null,
+      timestamp,
+      toNullableIso(normalized.expires_at),
+    ]));
+
+    const session = await this.getMemorySession(normalized.id);
+    if (!session) throw new Error(`Memory session not found after create: ${normalized.id}`);
+    return session;
+  }
+
+  async getMemorySession(id: string): Promise<MemorySession | null> {
+    const row = this.database.query(`
+      SELECT id,
+             task_id,
+             CASE
+               WHEN status = 'active'
+                 AND expires_at IS NOT NULL
+                 AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               THEN 'expired'
+               ELSE status
+             END AS status,
+             actor_ref,
+             created_at,
+             closed_at,
+             expires_at
+      FROM memory_sessions
+      WHERE id = ?
+    `).get(id) as Record<string, unknown> | null;
+    return row ? rowToMemorySession(row) : null;
+  }
+
+  async listMemorySessions(filters?: MemorySessionFilters): Promise<MemorySession[]> {
+    const { limit, offset } = normalizeMemorySessionPagination(filters);
+    if (limit === 0) return [];
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+    const effectiveStatusSql = `
+      CASE
+        WHEN s.status = 'active'
+          AND s.expires_at IS NOT NULL
+          AND s.expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        THEN 'expired'
+        ELSE s.status
+      END
+    `;
+
+    if (filters?.status !== undefined) {
+      clauses.push(`${effectiveStatusSql} = ?`);
+      params.push(filters.status);
+    }
+    if (filters?.task_id !== undefined) {
+      clauses.push('s.task_id = ?');
+      params.push(filters.task_id);
+    }
+    if (filters?.actor_ref !== undefined) {
+      clauses.push('s.actor_ref = ?');
+      params.push(filters.actor_ref);
+    }
+    if (filters?.realm_id !== undefined) {
+      clauses.push(`
+        EXISTS (
+          SELECT 1
+          FROM memory_session_attachments msa
+          WHERE msa.session_id = s.id
+            AND msa.realm_id = ?
+        )
+      `);
+      params.push(filters.realm_id);
+    }
+    if (filters?.created_since !== undefined) {
+      clauses.push('s.created_at >= ?');
+      params.push(toNullableIso(filters.created_since)!);
+    }
+    if (filters?.created_until !== undefined) {
+      clauses.push('s.created_at < ?');
+      params.push(toNullableIso(filters.created_until)!);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT s.id, s.task_id, ${effectiveStatusSql} AS status, s.actor_ref, s.created_at, s.closed_at, s.expires_at
+      FROM memory_sessions s
+      ${whereClause}
+      ORDER BY s.created_at DESC, s.id DESC
+      LIMIT ?
+      OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToMemorySession);
+  }
+
+  async closeMemorySession(id: string): Promise<MemorySession | null> {
+    const timestamp = nowIso();
+    const result = this.database.run(`
+      UPDATE memory_sessions
+      SET status = 'closed',
+          closed_at = COALESCE(closed_at, ?)
+      WHERE id = ?
+        AND status = 'active'
+        AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    `, sqliteBindings([timestamp, id]));
+    if (result.changes === 0) return null;
+    return this.getMemorySession(id);
+  }
+
+  async attachMemoryRealmToSession(input: MemorySessionAttachmentInput): Promise<MemorySessionAttachment> {
+    const attachment = normalizeMemorySessionAttachmentInput(input);
+    const timestamp = nowIso();
+    const result = this.database.run(`
+      INSERT INTO memory_session_attachments (
+        session_id, realm_id, access, instructions, attached_at
+      )
+      SELECT ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1
+        FROM memory_sessions
+        WHERE id = ?
+          AND status = 'active'
+          AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      )
+      ON CONFLICT(session_id, realm_id) DO UPDATE SET
+        access = excluded.access,
+        instructions = excluded.instructions,
+        attached_at = excluded.attached_at
+    `, sqliteBindings([
+      attachment.session_id,
+      attachment.realm_id,
+      attachment.access,
+      attachment.instructions,
+      timestamp,
+      attachment.session_id,
+    ]));
+    if (result.changes === 0) {
+      const session = await this.getMemorySession(attachment.session_id);
+      if (!session) throw new Error(`Memory session not found: ${attachment.session_id}`);
+      if (session.status === 'expired') {
+        throw new Error(`Memory session is expired: ${attachment.session_id}`);
+      }
+      if (session.status !== 'active') {
+        throw new Error(`Memory session is closed: ${attachment.session_id}`);
+      }
+      throw new Error(`Memory session attachment was not applied: ${attachment.session_id}:${attachment.realm_id}`);
+    }
+
+    const rows = await this.listMemorySessionAttachments({
+      session_id: attachment.session_id,
+      realm_id: attachment.realm_id,
+      limit: 1,
+    });
+    const row = rows[0];
+    if (!row) {
+      throw new Error(`Memory session attachment not found after attach: ${attachment.session_id}:${attachment.realm_id}`);
+    }
+    return row;
+  }
+
+  async listMemorySessionAttachments(
+    filters?: MemorySessionAttachmentFilters,
+  ): Promise<MemorySessionAttachment[]> {
+    const { limit, offset } = normalizeMemorySessionAttachmentPagination(filters);
+    if (limit === 0) return [];
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filters?.session_id !== undefined) {
+      clauses.push('session_id = ?');
+      params.push(filters.session_id);
+    }
+    if (filters?.realm_id !== undefined) {
+      clauses.push('realm_id = ?');
+      params.push(filters.realm_id);
+    }
+
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.database.query(`
+      SELECT session_id, realm_id, access, instructions, attached_at
+      FROM memory_session_attachments
+      ${whereClause}
+      ORDER BY attached_at DESC, session_id DESC, realm_id DESC
+      LIMIT ?
+      OFFSET ?
+    `).all(...sqliteBindings(params)) as Record<string, unknown>[];
+    return rows.map(rowToMemorySessionAttachment);
+  }
+
   async updateMemoryCandidateEntryStatus(id: string, patch: MemoryCandidateStatusPatch): Promise<MemoryCandidateEntry | null> {
     const current = await this.getMemoryCandidateEntry(id);
     if (!current) {
@@ -1855,7 +2402,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
@@ -1896,7 +2447,11 @@ export class SQLiteEngine implements BrainEngine {
       SELECT id, scope_id, candidate_type, proposed_content, source_refs, generated_by,
              extraction_kind, confidence_score, importance_score, recurrence_score,
              sensitivity, status, target_object_type, target_object_id, reviewed_at,
-             review_reason, created_at, updated_at
+             review_reason, patch_target_kind, patch_target_id, patch_base_target_snapshot_hash,
+             patch_body, patch_format, patch_operation_state, patch_risk_class,
+             patch_expected_resulting_target_snapshot_hash, patch_provenance_summary,
+             patch_actor, patch_originating_session_id, patch_ledger_event_ids,
+             created_at, updated_at
       FROM memory_candidate_entries
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
@@ -3146,6 +3701,31 @@ export class SQLiteEngine implements BrainEngine {
         case 25:
           this.ensureMemoryCandidateStatusEventSchema();
           break;
+        case 26:
+          this.ensureMemoryMutationEventSchema();
+          break;
+        case 27:
+          this.repairMemoryMutationEventOperationContract();
+          break;
+        case 28:
+          this.repairMemoryMutationEventRequiredTargetProvenanceContract();
+          break;
+        case 29:
+          this.ensureMemoryRealmSchema();
+          break;
+        case 30:
+          this.repairMemoryMutationEventRealmUpsertContract();
+          break;
+        case 31:
+          this.ensureMemorySessionSchema();
+          this.repairMemoryMutationEventSessionAttachmentContract();
+          break;
+        case 32:
+          this.repairMemorySessionExpiryContract();
+          break;
+        case 33:
+          this.ensureMemoryPatchCandidateColumns();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -3153,6 +3733,993 @@ export class SQLiteEngine implements BrainEngine {
       await this.setConfig('version', String(version));
       });
     }
+  }
+
+  private repairMemoryMutationEventOperationContract(): void {
+    if (!this.sqliteTableExists('memory_mutation_events')) {
+      this.ensureMemoryMutationEventSchema();
+      return;
+    }
+
+    this.database.exec(`
+      DROP TABLE IF EXISTS memory_mutation_events_v27;
+      CREATE TABLE memory_mutation_events_v27 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        realm_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK (
+          operation IN (
+            'create_memory_session',
+            'close_memory_session',
+            'expire_memory_session',
+            'revoke_memory_session',
+            'dry_run_memory_mutation',
+            'list_memory_mutation_events',
+            'record_memory_mutation_event',
+            'create_memory_patch_candidate',
+            'dry_run_memory_patch_candidate',
+            'review_memory_patch_candidate',
+            'apply_memory_patch_candidate',
+            'create_redaction_plan',
+            'dry_run_redaction_plan',
+            'execute_redaction_plan',
+            'put_page',
+            'delete_page',
+            'upsert_profile_memory_entry',
+            'write_profile_memory_entry',
+            'delete_profile_memory_entry',
+            'record_personal_episode',
+            'write_personal_episode_entry',
+            'delete_personal_episode_entry',
+            'upsert_memory_realm',
+            'create_memory_candidate_entry',
+            'advance_memory_candidate_status',
+            'reject_memory_candidate_entry',
+            'delete_memory_candidate_entry',
+            'promote_memory_candidate_entry',
+            'supersede_memory_candidate_entry',
+            'export_memory_artifact',
+            'sync_memory_artifact',
+            'repair_memory_ledger',
+            'physical_delete_memory_record'
+          )
+        ),
+        target_kind TEXT NOT NULL CHECK (
+          target_kind IN (
+            'page',
+            'source_record',
+            'task_thread',
+            'working_set',
+            'task_event',
+            'task_episode',
+            'attempt',
+            'decision',
+            'procedure',
+            'memory_candidate',
+            'memory_patch_candidate',
+            'profile_memory',
+            'personal_episode',
+            'memory_realm',
+            'context_map',
+            'context_atlas',
+            'file_artifact',
+            'export_artifact',
+            'ledger_event'
+          )
+        ),
+        target_id TEXT,
+        scope_id TEXT,
+        source_refs TEXT NOT NULL DEFAULT '[]',
+        expected_target_snapshot_hash TEXT,
+        current_target_snapshot_hash TEXT,
+        result TEXT NOT NULL CHECK (
+          result IN (
+            'dry_run',
+            'staged_for_review',
+            'applied',
+            'conflict',
+            'denied',
+            'failed',
+            'redacted'
+          )
+        ),
+        conflict_info TEXT,
+        dry_run INTEGER NOT NULL DEFAULT 0 CHECK (dry_run IN (0, 1)),
+        metadata TEXT NOT NULL DEFAULT '{}',
+        redaction_visibility TEXT NOT NULL DEFAULT 'visible' CHECK (
+          redaction_visibility IN ('visible', 'partially_redacted', 'tombstoned')
+        ),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        decided_at TEXT,
+        applied_at TEXT
+      );
+      INSERT INTO memory_mutation_events_v27 (
+        id,
+        session_id,
+        realm_id,
+        actor,
+        operation,
+        target_kind,
+        target_id,
+        scope_id,
+        source_refs,
+        expected_target_snapshot_hash,
+        current_target_snapshot_hash,
+        result,
+        conflict_info,
+        dry_run,
+        metadata,
+        redaction_visibility,
+        created_at,
+        decided_at,
+        applied_at
+      )
+      SELECT
+        id,
+        session_id,
+        realm_id,
+        actor,
+        operation,
+        target_kind,
+        target_id,
+        scope_id,
+        source_refs,
+        expected_target_snapshot_hash,
+        current_target_snapshot_hash,
+        result,
+        conflict_info,
+        dry_run,
+        metadata,
+        redaction_visibility,
+        created_at,
+        decided_at,
+        applied_at
+      FROM memory_mutation_events;
+      DROP TABLE memory_mutation_events;
+      ALTER TABLE memory_mutation_events_v27 RENAME TO memory_mutation_events;
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_session_created
+        ON memory_mutation_events(session_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_realm_created
+        ON memory_mutation_events(realm_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_actor_created
+        ON memory_mutation_events(actor, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_operation_created
+        ON memory_mutation_events(operation, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_target
+        ON memory_mutation_events(target_kind, target_id);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_result_created
+        ON memory_mutation_events(result, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_scope_created
+        ON memory_mutation_events(scope_id, created_at DESC, id DESC)
+        WHERE scope_id IS NOT NULL;
+    `);
+    this.ensureMemoryMutationEventSourceRefEntryTriggers();
+  }
+
+  private repairMemoryMutationEventRequiredTargetProvenanceContract(): void {
+    if (!this.sqliteTableExists('memory_mutation_events')) {
+      this.ensureMemoryMutationEventSchema();
+      return;
+    }
+
+    this.database.exec(`
+      DROP TABLE IF EXISTS memory_mutation_events_v28;
+      CREATE TABLE memory_mutation_events_v28 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        realm_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK (
+          operation IN (
+            'create_memory_session',
+            'close_memory_session',
+            'expire_memory_session',
+            'revoke_memory_session',
+            'dry_run_memory_mutation',
+            'list_memory_mutation_events',
+            'record_memory_mutation_event',
+            'create_memory_patch_candidate',
+            'dry_run_memory_patch_candidate',
+            'review_memory_patch_candidate',
+            'apply_memory_patch_candidate',
+            'create_redaction_plan',
+            'dry_run_redaction_plan',
+            'execute_redaction_plan',
+            'put_page',
+            'delete_page',
+            'upsert_profile_memory_entry',
+            'write_profile_memory_entry',
+            'delete_profile_memory_entry',
+            'record_personal_episode',
+            'write_personal_episode_entry',
+            'delete_personal_episode_entry',
+            'upsert_memory_realm',
+            'create_memory_candidate_entry',
+            'advance_memory_candidate_status',
+            'reject_memory_candidate_entry',
+            'delete_memory_candidate_entry',
+            'promote_memory_candidate_entry',
+            'supersede_memory_candidate_entry',
+            'export_memory_artifact',
+            'sync_memory_artifact',
+            'repair_memory_ledger',
+            'physical_delete_memory_record'
+          )
+        ),
+        target_kind TEXT NOT NULL CHECK (
+          target_kind IN (
+            'page',
+            'source_record',
+            'task_thread',
+            'working_set',
+            'task_event',
+            'task_episode',
+            'attempt',
+            'decision',
+            'procedure',
+            'memory_candidate',
+            'memory_patch_candidate',
+            'profile_memory',
+            'personal_episode',
+            'memory_realm',
+            'context_map',
+            'context_atlas',
+            'file_artifact',
+            'export_artifact',
+            'ledger_event'
+          )
+        ),
+        target_id TEXT NOT NULL CHECK (
+          length(trim(target_id, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0
+        ),
+        scope_id TEXT,
+        source_refs TEXT NOT NULL CHECK (
+          json_valid(source_refs)
+          AND json_type(source_refs) = 'array'
+          AND json_array_length(source_refs) > 0
+        ),
+        expected_target_snapshot_hash TEXT,
+        current_target_snapshot_hash TEXT,
+        result TEXT NOT NULL CHECK (
+          result IN (
+            'dry_run',
+            'staged_for_review',
+            'applied',
+            'conflict',
+            'denied',
+            'failed',
+            'redacted'
+          )
+        ),
+        conflict_info TEXT,
+        dry_run INTEGER NOT NULL DEFAULT 0 CHECK (
+          dry_run IN (0, 1)
+          AND (
+            (result = 'dry_run' AND dry_run = 1)
+            OR (result <> 'dry_run' AND dry_run = 0)
+          )
+        ),
+        metadata TEXT NOT NULL DEFAULT '{}',
+        redaction_visibility TEXT NOT NULL DEFAULT 'visible' CHECK (
+          redaction_visibility IN ('visible', 'partially_redacted', 'tombstoned')
+        ),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        decided_at TEXT,
+        applied_at TEXT
+      );
+      INSERT INTO memory_mutation_events_v28 (
+        id,
+        session_id,
+        realm_id,
+        actor,
+        operation,
+        target_kind,
+        target_id,
+        scope_id,
+        source_refs,
+        expected_target_snapshot_hash,
+        current_target_snapshot_hash,
+        result,
+        conflict_info,
+        dry_run,
+        metadata,
+        redaction_visibility,
+        created_at,
+        decided_at,
+        applied_at
+      )
+      SELECT
+        id,
+        session_id,
+        realm_id,
+        actor,
+        operation,
+        target_kind,
+        CASE
+          WHEN target_id IS NULL OR length(trim(target_id, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) = 0 THEN 'unknown:' || id
+          ELSE trim(target_id, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))
+        END,
+        scope_id,
+        CASE
+          WHEN json_valid(source_refs)
+            AND json_type(source_refs) = 'array'
+            AND json_array_length(source_refs) > 0
+            AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(source_refs)
+              WHERE json_each.type <> 'text'
+                 OR length(trim(CAST(json_each.value AS TEXT), char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) = 0
+            )
+          THEN source_refs
+          ELSE '["Source: mbrain migration 28 required provenance backfill"]'
+        END,
+        expected_target_snapshot_hash,
+        current_target_snapshot_hash,
+        result,
+        conflict_info,
+        CASE WHEN result = 'dry_run' THEN 1 ELSE 0 END,
+        metadata,
+        redaction_visibility,
+        created_at,
+        decided_at,
+        applied_at
+      FROM memory_mutation_events;
+      DROP TABLE memory_mutation_events;
+      ALTER TABLE memory_mutation_events_v28 RENAME TO memory_mutation_events;
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_session_created
+        ON memory_mutation_events(session_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_realm_created
+        ON memory_mutation_events(realm_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_actor_created
+        ON memory_mutation_events(actor, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_operation_created
+        ON memory_mutation_events(operation, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_target
+        ON memory_mutation_events(target_kind, target_id);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_result_created
+        ON memory_mutation_events(result, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_scope_created
+        ON memory_mutation_events(scope_id, created_at DESC, id DESC)
+        WHERE scope_id IS NOT NULL;
+    `);
+    this.ensureMemoryMutationEventSourceRefEntryTriggers();
+  }
+
+  private repairMemoryMutationEventRealmUpsertContract(): void {
+    if (!this.sqliteTableExists('memory_mutation_events')) {
+      this.ensureMemoryMutationEventSchema();
+      return;
+    }
+
+    this.database.exec(`
+      DROP TABLE IF EXISTS memory_mutation_events_v30;
+      CREATE TABLE memory_mutation_events_v30 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        realm_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK (
+          operation IN (
+            'create_memory_session',
+            'close_memory_session',
+            'expire_memory_session',
+            'revoke_memory_session',
+            'dry_run_memory_mutation',
+            'list_memory_mutation_events',
+            'record_memory_mutation_event',
+            'create_memory_patch_candidate',
+            'dry_run_memory_patch_candidate',
+            'review_memory_patch_candidate',
+            'apply_memory_patch_candidate',
+            'create_redaction_plan',
+            'dry_run_redaction_plan',
+            'execute_redaction_plan',
+            'put_page',
+            'delete_page',
+            'upsert_profile_memory_entry',
+            'write_profile_memory_entry',
+            'delete_profile_memory_entry',
+            'record_personal_episode',
+            'write_personal_episode_entry',
+            'delete_personal_episode_entry',
+            'upsert_memory_realm',
+            'create_memory_candidate_entry',
+            'advance_memory_candidate_status',
+            'reject_memory_candidate_entry',
+            'delete_memory_candidate_entry',
+            'promote_memory_candidate_entry',
+            'supersede_memory_candidate_entry',
+            'export_memory_artifact',
+            'sync_memory_artifact',
+            'repair_memory_ledger',
+            'physical_delete_memory_record'
+          )
+        ),
+        target_kind TEXT NOT NULL CHECK (
+          target_kind IN (
+            'page',
+            'source_record',
+            'task_thread',
+            'working_set',
+            'task_event',
+            'task_episode',
+            'attempt',
+            'decision',
+            'procedure',
+            'memory_candidate',
+            'memory_patch_candidate',
+            'profile_memory',
+            'personal_episode',
+            'memory_realm',
+            'context_map',
+            'context_atlas',
+            'file_artifact',
+            'export_artifact',
+            'ledger_event'
+          )
+        ),
+        target_id TEXT NOT NULL CHECK (
+          length(trim(target_id, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0
+        ),
+        scope_id TEXT,
+        source_refs TEXT NOT NULL CHECK (
+          json_valid(source_refs)
+          AND json_type(source_refs) = 'array'
+          AND json_array_length(source_refs) > 0
+        ),
+        expected_target_snapshot_hash TEXT,
+        current_target_snapshot_hash TEXT,
+        result TEXT NOT NULL CHECK (
+          result IN (
+            'dry_run',
+            'staged_for_review',
+            'applied',
+            'conflict',
+            'denied',
+            'failed',
+            'redacted'
+          )
+        ),
+        conflict_info TEXT,
+        dry_run INTEGER NOT NULL DEFAULT 0 CHECK (
+          dry_run IN (0, 1)
+          AND (
+            (result = 'dry_run' AND dry_run = 1)
+            OR (result <> 'dry_run' AND dry_run = 0)
+          )
+        ),
+        metadata TEXT NOT NULL DEFAULT '{}',
+        redaction_visibility TEXT NOT NULL DEFAULT 'visible' CHECK (
+          redaction_visibility IN ('visible', 'partially_redacted', 'tombstoned')
+        ),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        decided_at TEXT,
+        applied_at TEXT
+      );
+      INSERT INTO memory_mutation_events_v30 (
+        id,
+        session_id,
+        realm_id,
+        actor,
+        operation,
+        target_kind,
+        target_id,
+        scope_id,
+        source_refs,
+        expected_target_snapshot_hash,
+        current_target_snapshot_hash,
+        result,
+        conflict_info,
+        dry_run,
+        metadata,
+        redaction_visibility,
+        created_at,
+        decided_at,
+        applied_at
+      )
+      SELECT
+        id,
+        session_id,
+        realm_id,
+        actor,
+        operation,
+        target_kind,
+        CASE
+          WHEN target_id IS NULL OR length(trim(target_id, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) = 0 THEN 'unknown:' || id
+          ELSE trim(target_id, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))
+        END,
+        scope_id,
+        CASE
+          WHEN json_valid(source_refs)
+            AND json_type(source_refs) = 'array'
+            AND json_array_length(source_refs) > 0
+            AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(source_refs)
+              WHERE json_each.type <> 'text'
+                 OR length(trim(CAST(json_each.value AS TEXT), char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) = 0
+            )
+          THEN source_refs
+          ELSE '["Source: mbrain migration 30 realm upsert contract backfill"]'
+        END,
+        expected_target_snapshot_hash,
+        current_target_snapshot_hash,
+        result,
+        conflict_info,
+        CASE WHEN result = 'dry_run' THEN 1 ELSE 0 END,
+        metadata,
+        redaction_visibility,
+        created_at,
+        decided_at,
+        applied_at
+      FROM memory_mutation_events;
+      DROP TABLE memory_mutation_events;
+      ALTER TABLE memory_mutation_events_v30 RENAME TO memory_mutation_events;
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_session_created
+        ON memory_mutation_events(session_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_realm_created
+        ON memory_mutation_events(realm_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_actor_created
+        ON memory_mutation_events(actor, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_operation_created
+        ON memory_mutation_events(operation, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_target
+        ON memory_mutation_events(target_kind, target_id);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_result_created
+        ON memory_mutation_events(result, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_scope_created
+        ON memory_mutation_events(scope_id, created_at DESC, id DESC)
+        WHERE scope_id IS NOT NULL;
+    `);
+    this.ensureMemoryMutationEventSourceRefEntryTriggers();
+  }
+
+  private repairMemoryMutationEventSessionAttachmentContract(): void {
+    if (!this.sqliteTableExists('memory_mutation_events')) {
+      this.ensureMemoryMutationEventSchema();
+      return;
+    }
+
+    this.database.exec(`
+      DROP TABLE IF EXISTS memory_mutation_events_v31;
+      CREATE TABLE memory_mutation_events_v31 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        realm_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK (
+          operation IN (
+            'create_memory_session',
+            'close_memory_session',
+            'expire_memory_session',
+            'revoke_memory_session',
+            'dry_run_memory_mutation',
+            'list_memory_mutation_events',
+            'record_memory_mutation_event',
+            'create_memory_patch_candidate',
+            'dry_run_memory_patch_candidate',
+            'review_memory_patch_candidate',
+            'apply_memory_patch_candidate',
+            'create_redaction_plan',
+            'dry_run_redaction_plan',
+            'execute_redaction_plan',
+            'put_page',
+            'delete_page',
+            'upsert_profile_memory_entry',
+            'write_profile_memory_entry',
+            'delete_profile_memory_entry',
+            'record_personal_episode',
+            'write_personal_episode_entry',
+            'delete_personal_episode_entry',
+            'upsert_memory_realm',
+            'attach_memory_realm_to_session',
+            'create_memory_candidate_entry',
+            'advance_memory_candidate_status',
+            'reject_memory_candidate_entry',
+            'delete_memory_candidate_entry',
+            'promote_memory_candidate_entry',
+            'supersede_memory_candidate_entry',
+            'export_memory_artifact',
+            'sync_memory_artifact',
+            'repair_memory_ledger',
+            'physical_delete_memory_record'
+          )
+        ),
+        target_kind TEXT NOT NULL CHECK (
+          target_kind IN (
+            'page',
+            'source_record',
+            'task_thread',
+            'working_set',
+            'task_event',
+            'task_episode',
+            'attempt',
+            'decision',
+            'procedure',
+            'memory_candidate',
+            'memory_patch_candidate',
+            'profile_memory',
+            'personal_episode',
+            'memory_realm',
+            'memory_session',
+            'memory_session_attachment',
+            'context_map',
+            'context_atlas',
+            'file_artifact',
+            'export_artifact',
+            'ledger_event'
+          )
+        ),
+        target_id TEXT NOT NULL CHECK (
+          length(trim(target_id, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0
+        ),
+        scope_id TEXT,
+        source_refs TEXT NOT NULL CHECK (
+          json_valid(source_refs)
+          AND json_type(source_refs) = 'array'
+          AND json_array_length(source_refs) > 0
+        ),
+        expected_target_snapshot_hash TEXT,
+        current_target_snapshot_hash TEXT,
+        result TEXT NOT NULL CHECK (
+          result IN (
+            'dry_run',
+            'staged_for_review',
+            'applied',
+            'conflict',
+            'denied',
+            'failed',
+            'redacted'
+          )
+        ),
+        conflict_info TEXT,
+        dry_run INTEGER NOT NULL DEFAULT 0 CHECK (
+          dry_run IN (0, 1)
+          AND (
+            (result = 'dry_run' AND dry_run = 1)
+            OR (result <> 'dry_run' AND dry_run = 0)
+          )
+        ),
+        metadata TEXT NOT NULL DEFAULT '{}',
+        redaction_visibility TEXT NOT NULL DEFAULT 'visible' CHECK (
+          redaction_visibility IN ('visible', 'partially_redacted', 'tombstoned')
+        ),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        decided_at TEXT,
+        applied_at TEXT
+      );
+      INSERT INTO memory_mutation_events_v31 (
+        id,
+        session_id,
+        realm_id,
+        actor,
+        operation,
+        target_kind,
+        target_id,
+        scope_id,
+        source_refs,
+        expected_target_snapshot_hash,
+        current_target_snapshot_hash,
+        result,
+        conflict_info,
+        dry_run,
+        metadata,
+        redaction_visibility,
+        created_at,
+        decided_at,
+        applied_at
+      )
+      SELECT
+        id,
+        session_id,
+        realm_id,
+        actor,
+        operation,
+        target_kind,
+        target_id,
+        scope_id,
+        source_refs,
+        expected_target_snapshot_hash,
+        current_target_snapshot_hash,
+        result,
+        conflict_info,
+        dry_run,
+        metadata,
+        redaction_visibility,
+        created_at,
+        decided_at,
+        applied_at
+      FROM memory_mutation_events;
+      DROP TABLE memory_mutation_events;
+      ALTER TABLE memory_mutation_events_v31 RENAME TO memory_mutation_events;
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_session_created
+        ON memory_mutation_events(session_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_realm_created
+        ON memory_mutation_events(realm_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_actor_created
+        ON memory_mutation_events(actor, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_operation_created
+        ON memory_mutation_events(operation, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_target
+        ON memory_mutation_events(target_kind, target_id);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_result_created
+        ON memory_mutation_events(result, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_scope_created
+        ON memory_mutation_events(scope_id, created_at DESC, id DESC)
+        WHERE scope_id IS NOT NULL;
+    `);
+    this.ensureMemoryMutationEventSourceRefEntryTriggers();
+  }
+
+  private ensureMemoryMutationEventSourceRefEntryTriggers(): void {
+    this.database.exec(`
+      DROP TRIGGER IF EXISTS trg_memory_mutation_events_source_refs_insert;
+      DROP TRIGGER IF EXISTS trg_memory_mutation_events_source_refs_update;
+      CREATE TRIGGER trg_memory_mutation_events_source_refs_insert
+      BEFORE INSERT ON memory_mutation_events
+      WHEN EXISTS (
+        SELECT 1
+        FROM json_each(NEW.source_refs)
+        WHERE json_each.type <> 'text'
+           OR length(trim(CAST(json_each.value AS TEXT), char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) = 0
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'memory mutation source_refs entries must be non-empty strings');
+      END;
+      CREATE TRIGGER trg_memory_mutation_events_source_refs_update
+      BEFORE UPDATE OF source_refs ON memory_mutation_events
+      WHEN EXISTS (
+        SELECT 1
+        FROM json_each(NEW.source_refs)
+        WHERE json_each.type <> 'text'
+           OR length(trim(CAST(json_each.value AS TEXT), char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) = 0
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'memory mutation source_refs entries must be non-empty strings');
+      END;
+    `);
+  }
+
+  private ensureMemoryMutationEventSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS memory_mutation_events (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        realm_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK (
+          operation IN (
+            'create_memory_session',
+            'close_memory_session',
+            'expire_memory_session',
+            'revoke_memory_session',
+            'dry_run_memory_mutation',
+            'list_memory_mutation_events',
+            'record_memory_mutation_event',
+            'create_memory_patch_candidate',
+            'dry_run_memory_patch_candidate',
+            'review_memory_patch_candidate',
+            'apply_memory_patch_candidate',
+            'create_redaction_plan',
+            'dry_run_redaction_plan',
+            'execute_redaction_plan',
+            'put_page',
+            'delete_page',
+            'upsert_profile_memory_entry',
+            'write_profile_memory_entry',
+            'delete_profile_memory_entry',
+            'record_personal_episode',
+            'write_personal_episode_entry',
+            'delete_personal_episode_entry',
+            'upsert_memory_realm',
+            'attach_memory_realm_to_session',
+            'create_memory_candidate_entry',
+            'advance_memory_candidate_status',
+            'reject_memory_candidate_entry',
+            'delete_memory_candidate_entry',
+            'promote_memory_candidate_entry',
+            'supersede_memory_candidate_entry',
+            'export_memory_artifact',
+            'sync_memory_artifact',
+            'repair_memory_ledger',
+            'physical_delete_memory_record'
+          )
+        ),
+        target_kind TEXT NOT NULL CHECK (
+          target_kind IN (
+            'page',
+            'source_record',
+            'task_thread',
+            'working_set',
+            'task_event',
+            'task_episode',
+            'attempt',
+            'decision',
+            'procedure',
+            'memory_candidate',
+            'memory_patch_candidate',
+            'profile_memory',
+            'personal_episode',
+            'memory_realm',
+            'memory_session',
+            'memory_session_attachment',
+            'context_map',
+            'context_atlas',
+            'file_artifact',
+            'export_artifact',
+            'ledger_event'
+          )
+        ),
+        target_id TEXT NOT NULL CHECK (
+          length(trim(target_id, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0
+        ),
+        scope_id TEXT,
+        source_refs TEXT NOT NULL CHECK (
+          json_valid(source_refs)
+          AND json_type(source_refs) = 'array'
+          AND json_array_length(source_refs) > 0
+        ),
+        expected_target_snapshot_hash TEXT,
+        current_target_snapshot_hash TEXT,
+        result TEXT NOT NULL CHECK (
+          result IN (
+            'dry_run',
+            'staged_for_review',
+            'applied',
+            'conflict',
+            'denied',
+            'failed',
+            'redacted'
+          )
+        ),
+        conflict_info TEXT,
+        dry_run INTEGER NOT NULL DEFAULT 0 CHECK (
+          dry_run IN (0, 1)
+          AND (
+            (result = 'dry_run' AND dry_run = 1)
+            OR (result <> 'dry_run' AND dry_run = 0)
+          )
+        ),
+        metadata TEXT NOT NULL DEFAULT '{}',
+        redaction_visibility TEXT NOT NULL DEFAULT 'visible' CHECK (
+          redaction_visibility IN ('visible', 'partially_redacted', 'tombstoned')
+        ),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        decided_at TEXT,
+        applied_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_session_created
+        ON memory_mutation_events(session_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_realm_created
+        ON memory_mutation_events(realm_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_actor_created
+        ON memory_mutation_events(actor, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_operation_created
+        ON memory_mutation_events(operation, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_target
+        ON memory_mutation_events(target_kind, target_id);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_result_created
+        ON memory_mutation_events(result, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_mutation_events_scope_created
+        ON memory_mutation_events(scope_id, created_at DESC, id DESC)
+        WHERE scope_id IS NOT NULL;
+    `);
+    this.ensureMemoryMutationEventSourceRefEntryTriggers();
+  }
+
+  private ensureMemoryRealmSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS memory_realms (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL CHECK (scope IN ('work', 'personal', 'mixed')),
+        default_access TEXT NOT NULL CHECK (default_access IN ('read_only', 'read_write')),
+        retention_policy TEXT NOT NULL DEFAULT 'retain',
+        export_policy TEXT NOT NULL DEFAULT 'private',
+        agent_instructions TEXT NOT NULL DEFAULT '',
+        archived_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_realms_scope
+        ON memory_realms(scope, updated_at DESC);
+    `);
+  }
+
+  private ensureMemorySessionSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS memory_sessions (
+        id TEXT PRIMARY KEY,
+        task_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('active', 'expired', 'closed')),
+        actor_ref TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        closed_at TEXT,
+        expires_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_sessions_status_created
+        ON memory_sessions(status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS memory_session_attachments (
+        session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
+        realm_id TEXT NOT NULL REFERENCES memory_realms(id) ON DELETE CASCADE,
+        access TEXT NOT NULL CHECK (access IN ('read_only', 'read_write')),
+        instructions TEXT NOT NULL DEFAULT '',
+        attached_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (session_id, realm_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_session_attachments_realm
+        ON memory_session_attachments(realm_id, attached_at DESC);
+    `);
+  }
+
+  private repairMemorySessionExpiryContract(): void {
+    if (!this.sqliteTableExists('memory_sessions')) {
+      this.ensureMemorySessionSchema();
+      return;
+    }
+
+    const columns = this.database.query(`PRAGMA table_info(memory_sessions)`).all() as Array<{ name: string }>;
+    const hasExpiresAt = columns.some((column) => column.name === 'expires_at');
+    const attachmentTableExists = this.sqliteTableExists('memory_session_attachments');
+    const expiresAtSelect = hasExpiresAt ? 'expires_at' : 'NULL AS expires_at';
+
+    this.database.exec(`
+      DROP TABLE IF EXISTS memory_session_attachments_v32_old;
+      DROP TABLE IF EXISTS memory_sessions_v32_old;
+    `);
+
+    if (attachmentTableExists) {
+      this.database.exec(`ALTER TABLE memory_session_attachments RENAME TO memory_session_attachments_v32_old;`);
+    }
+    this.database.exec(`ALTER TABLE memory_sessions RENAME TO memory_sessions_v32_old;`);
+
+    this.database.exec(`
+      CREATE TABLE memory_sessions (
+        id TEXT PRIMARY KEY,
+        task_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('active', 'expired', 'closed')),
+        actor_ref TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        closed_at TEXT,
+        expires_at TEXT
+      );
+      INSERT INTO memory_sessions (
+        id, task_id, status, actor_ref, created_at, closed_at, expires_at
+      )
+      SELECT id, task_id, status, actor_ref, created_at, closed_at, ${expiresAtSelect}
+      FROM memory_sessions_v32_old;
+      CREATE INDEX IF NOT EXISTS idx_memory_sessions_status_created
+        ON memory_sessions(status, created_at DESC);
+
+      CREATE TABLE memory_session_attachments (
+        session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
+        realm_id TEXT NOT NULL REFERENCES memory_realms(id) ON DELETE CASCADE,
+        access TEXT NOT NULL CHECK (access IN ('read_only', 'read_write')),
+        instructions TEXT NOT NULL DEFAULT '',
+        attached_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (session_id, realm_id)
+      );
+    `);
+
+    if (attachmentTableExists) {
+      this.database.exec(`
+        INSERT INTO memory_session_attachments (
+          session_id, realm_id, access, instructions, attached_at
+        )
+        SELECT session_id, realm_id, access, instructions, attached_at
+        FROM memory_session_attachments_v32_old;
+        DROP TABLE memory_session_attachments_v32_old;
+      `);
+    }
+
+    this.database.exec(`
+      DROP TABLE memory_sessions_v32_old;
+      CREATE INDEX IF NOT EXISTS idx_memory_session_attachments_realm
+        ON memory_session_attachments(realm_id, attached_at DESC);
+    `);
   }
 
   private ensureMemoryCandidateStatusEventSchema(): void {
@@ -3396,6 +4963,12 @@ export class SQLiteEngine implements BrainEngine {
     return Boolean(row);
   }
 
+  private sqliteMemoryCandidatePatchColumnsExist(): boolean {
+    const columns = this.database.query(`PRAGMA table_info(memory_candidate_entries)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    return names.has('patch_target_kind') && names.has('patch_ledger_event_ids');
+  }
+
   private ensureMemoryCandidateIndexes(): void {
     this.database.exec(`
       CREATE INDEX IF NOT EXISTS idx_memory_candidates_scope_status
@@ -3405,6 +4978,48 @@ export class SQLiteEngine implements BrainEngine {
       CREATE INDEX IF NOT EXISTS idx_memory_candidates_target
         ON memory_candidate_entries(target_object_type, target_object_id);
     `);
+    const columns = this.database.query(`PRAGMA table_info(memory_candidate_entries)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (names.has('patch_operation_state') && names.has('patch_target_kind') && names.has('patch_target_id')) {
+      this.database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_state
+          ON memory_candidate_entries(patch_operation_state, updated_at DESC)
+          WHERE patch_operation_state IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_memory_candidates_patch_target
+          ON memory_candidate_entries(patch_target_kind, patch_target_id)
+          WHERE patch_target_kind IS NOT NULL;
+      `);
+    }
+  }
+
+  private ensureMemoryPatchCandidateColumns(): void {
+    if (!this.sqliteTableExists('memory_candidate_entries')) {
+      return;
+    }
+
+    const columns = this.database.query(`PRAGMA table_info(memory_candidate_entries)`).all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    const additions = [
+      ['patch_target_kind', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_target_kind TEXT CHECK (patch_target_kind IS NULL OR patch_target_kind IN ('page', 'source_record', 'task_thread', 'working_set', 'task_event', 'task_episode', 'attempt', 'decision', 'procedure', 'memory_candidate', 'memory_patch_candidate', 'profile_memory', 'personal_episode', 'memory_realm', 'memory_session', 'memory_session_attachment', 'context_map', 'context_atlas', 'file_artifact', 'export_artifact', 'ledger_event'))`],
+      ['patch_target_id', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_target_id TEXT`],
+      ['patch_base_target_snapshot_hash', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_base_target_snapshot_hash TEXT`],
+      ['patch_body', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_body TEXT CHECK (patch_body IS NULL OR (json_valid(patch_body) AND json_type(patch_body) IN ('object', 'array')))`],
+      ['patch_format', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_format TEXT CHECK (patch_format IS NULL OR patch_format IN ('merge_patch', 'json_patch', 'unified_diff', 'whole_record', 'operation'))`],
+      ['patch_operation_state', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_operation_state TEXT CHECK (patch_operation_state IS NULL OR patch_operation_state IN ('proposed', 'dry_run_validated', 'approved_for_apply', 'apply_in_progress', 'applied', 'conflicted', 'failed'))`],
+      ['patch_risk_class', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_risk_class TEXT CHECK (patch_risk_class IS NULL OR patch_risk_class IN ('low', 'medium', 'high', 'critical', 'unknown'))`],
+      ['patch_expected_resulting_target_snapshot_hash', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_expected_resulting_target_snapshot_hash TEXT`],
+      ['patch_provenance_summary', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_provenance_summary TEXT`],
+      ['patch_actor', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_actor TEXT`],
+      ['patch_originating_session_id', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_originating_session_id TEXT`],
+      ['patch_ledger_event_ids', `ALTER TABLE memory_candidate_entries ADD COLUMN patch_ledger_event_ids TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(patch_ledger_event_ids) AND json_type(patch_ledger_event_ids) = 'array')`],
+    ] as const;
+
+    for (const [column, sql] of additions) {
+      if (!names.has(column)) {
+        this.database.exec(`${sql};`);
+      }
+    }
+    this.ensureMemoryCandidateIndexes();
   }
 
   private ensureMemoryCandidateSupersessionSchema(): void {
@@ -4064,6 +5679,18 @@ function rowToMemoryCandidateEntry(row: Record<string, unknown>): MemoryCandidat
     target_object_id: row.target_object_id == null ? null : String(row.target_object_id),
     reviewed_at: row.reviewed_at == null ? null : new Date(String(row.reviewed_at)),
     review_reason: row.review_reason == null ? null : String(row.review_reason),
+    patch_target_kind: row.patch_target_kind == null ? null : row.patch_target_kind as MemoryCandidateEntry['patch_target_kind'],
+    patch_target_id: row.patch_target_id == null ? null : String(row.patch_target_id),
+    patch_base_target_snapshot_hash: row.patch_base_target_snapshot_hash == null ? null : String(row.patch_base_target_snapshot_hash),
+    patch_body: row.patch_body == null ? null : parseJsonValue(row.patch_body) as MemoryCandidateEntry['patch_body'],
+    patch_format: row.patch_format == null ? null : row.patch_format as MemoryCandidateEntry['patch_format'],
+    patch_operation_state: row.patch_operation_state == null ? null : row.patch_operation_state as MemoryCandidateEntry['patch_operation_state'],
+    patch_risk_class: row.patch_risk_class == null ? null : row.patch_risk_class as MemoryCandidateEntry['patch_risk_class'],
+    patch_expected_resulting_target_snapshot_hash: row.patch_expected_resulting_target_snapshot_hash == null ? null : String(row.patch_expected_resulting_target_snapshot_hash),
+    patch_provenance_summary: row.patch_provenance_summary == null ? null : String(row.patch_provenance_summary),
+    patch_actor: row.patch_actor == null ? null : String(row.patch_actor),
+    patch_originating_session_id: row.patch_originating_session_id == null ? null : String(row.patch_originating_session_id),
+    patch_ledger_event_ids: parseJsonArray(row.patch_ledger_event_ids),
     created_at: new Date(String(row.created_at)),
     updated_at: new Date(String(row.updated_at)),
   };
@@ -4191,12 +5818,75 @@ function extractSearchTerms(query: string): string[] {
   return Array.from(new Set(parts));
 }
 
+function normalizeMemoryMutationPagination(
+  filters?: MemoryMutationEventFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory mutation event limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory mutation event offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
+function normalizeMemoryRealmPagination(
+  filters?: MemoryRealmFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory realm limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory realm offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
+function normalizeMemorySessionPagination(
+  filters?: MemorySessionFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory session limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory session offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
+function normalizeMemorySessionAttachmentPagination(
+  filters?: MemorySessionAttachmentFilters,
+): { limit: number; offset: number } {
+  const limit = filters?.limit ?? 100;
+  const offset = filters?.offset ?? 0;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error('Memory session attachment limit must be a non-negative integer');
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error('Memory session attachment offset must be a non-negative integer');
+  }
+  return { limit, offset };
+}
+
 function parseJsonObject(value: unknown): Record<string, unknown> {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
   if (typeof value === 'string' && value.length > 0) {
     return JSON.parse(value) as Record<string, unknown>;
   }
   return {};
+}
+
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value === 'string' && value.length > 0) {
+    return JSON.parse(value) as unknown;
+  }
+  return value;
 }
 
 function parseJsonArray(value: unknown): string[] {

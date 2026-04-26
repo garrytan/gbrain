@@ -7,6 +7,7 @@ import type { OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
 import { VERSION } from '../version.ts';
+import { operationToMcpTool } from './tool-schema.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -19,24 +20,7 @@ export async function startMcpServer(engine: BrainEngine) {
 
   // Generate tool definitions from operations
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: operations.map(op => ({
-      name: op.name,
-      description: op.description,
-      inputSchema: {
-        type: 'object' as const,
-        properties: Object.fromEntries(
-          Object.entries(op.params).map(([k, v]) => [k, {
-            type: v.type === 'array' ? 'array' : v.type,
-            ...(v.description ? { description: v.description } : {}),
-            ...(v.enum ? { enum: v.enum } : {}),
-            ...(v.items ? { items: { type: v.items.type } } : {}),
-          }]),
-        ),
-        required: Object.entries(op.params)
-          .filter(([, v]) => v.required)
-          .map(([k]) => k),
-      },
-    })),
+    tools: operations.map(operationToMcpTool),
   }));
 
   // Dispatch tool calls to operation handlers

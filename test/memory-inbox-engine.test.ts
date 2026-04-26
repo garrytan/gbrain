@@ -100,6 +100,71 @@ async function expectMemoryCandidate(engine: BrainEngine, id: string, scopeId: s
   expect(entries.map((candidate) => candidate.id)).toContain(id);
 }
 
+async function seedPatchCandidate(engine: BrainEngine, id: string, scopeId: string) {
+  return engine.createMemoryCandidateEntry({
+    id,
+    scope_id: scopeId,
+    candidate_type: 'note_update',
+    proposed_content: 'Patch candidate proposes a reviewable canonical note update.',
+    source_refs: ['User, direct message, 2026-04-26 11:00 AM KST'],
+    generated_by: 'manual',
+    extraction_kind: 'manual',
+    confidence_score: 0.91,
+    importance_score: 0.74,
+    recurrence_score: 0.12,
+    sensitivity: 'work',
+    status: 'staged_for_review',
+    target_object_type: 'curated_note',
+    target_object_id: 'concepts/patch-target',
+    reviewed_at: null,
+    review_reason: 'Patch candidate staged for review.',
+    patch_target_kind: 'page',
+    patch_target_id: 'concepts/patch-target',
+    patch_base_target_snapshot_hash: 'a'.repeat(64),
+    patch_body: {
+      compiled_truth: 'Updated compiled truth from a reviewable patch.',
+    },
+    patch_format: 'merge_patch',
+    patch_operation_state: 'proposed',
+    patch_risk_class: 'medium',
+    patch_expected_resulting_target_snapshot_hash: 'b'.repeat(64),
+    patch_provenance_summary: 'User explicitly requested the canonical note update.',
+    patch_actor: 'agent:memory-reviewer',
+    patch_originating_session_id: 'session:patch-review',
+    patch_ledger_event_ids: ['ledger:patch-candidate-created'],
+  } as any);
+}
+
+async function expectPatchCandidate(engine: BrainEngine, id: string, scopeId: string) {
+  const entry = await engine.getMemoryCandidateEntry(id) as any;
+  expect(entry).not.toBeNull();
+  expect(entry.scope_id).toBe(scopeId);
+  expect(entry.status).toBe('staged_for_review');
+  expect(entry.patch_target_kind).toBe('page');
+  expect(entry.patch_target_id).toBe('concepts/patch-target');
+  expect(entry.patch_base_target_snapshot_hash).toBe('a'.repeat(64));
+  expect(entry.patch_body).toEqual({
+    compiled_truth: 'Updated compiled truth from a reviewable patch.',
+  });
+  expect(entry.patch_format).toBe('merge_patch');
+  expect(entry.patch_operation_state).toBe('proposed');
+  expect(entry.patch_risk_class).toBe('medium');
+  expect(entry.patch_expected_resulting_target_snapshot_hash).toBe('b'.repeat(64));
+  expect(entry.patch_provenance_summary).toBe('User explicitly requested the canonical note update.');
+  expect(entry.patch_actor).toBe('agent:memory-reviewer');
+  expect(entry.patch_originating_session_id).toBe('session:patch-review');
+  expect(entry.patch_ledger_event_ids).toEqual(['ledger:patch-candidate-created']);
+
+  const filtered = await engine.listMemoryCandidateEntries({
+    scope_id: scopeId,
+    patch_operation_state: 'proposed',
+    patch_target_kind: 'page',
+    patch_target_id: 'concepts/patch-target',
+    limit: 10,
+  } as any);
+  expect(filtered.map((candidate) => candidate.id)).toEqual([id]);
+}
+
 let statusEventCounter = 0;
 
 function nextStatusEventPrefix(label: string): string {
@@ -496,6 +561,36 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
 
       await reopened.deleteMemoryCandidateEntry(id);
       expect(await reopened.getMemoryCandidateEntry(id)).toBeNull();
+    } finally {
+      await reopened?.disconnect();
+      await harness.cleanup();
+    }
+  }, timeoutMs);
+
+  test(`${createHarness.name} persists reviewable patch candidate fields without changing candidate status lifecycle`, async () => {
+    const harness = await createHarness();
+    const scopeId = 'workspace:default';
+    const id = `memory-patch-candidate:${scopeId}:${harness.label}`;
+    let reopened: BrainEngine | null = null;
+
+    try {
+      await seedPatchCandidate(harness.engine, id, scopeId);
+      await expectPatchCandidate(harness.engine, id, scopeId);
+
+      await harness.engine.disconnect();
+      reopened = await harness.reopen();
+      await expectPatchCandidate(reopened, id, scopeId);
+
+      const rejected = await reopened.updateMemoryCandidateEntryStatus(id, {
+        status: 'rejected',
+        reviewed_at: new Date('2026-04-26T02:10:00.000Z'),
+        review_reason: 'Reviewer rejected the patch without changing canonical memory.',
+      });
+      expect(rejected?.status).toBe('rejected');
+      expect((rejected as any)?.patch_operation_state).toBe('proposed');
+      await expect(reopened.updateMemoryCandidateEntryStatus(id, {
+        status: 'promoted' as any,
+      })).rejects.toThrow(/Cannot update memory candidate from rejected to promoted/);
     } finally {
       await reopened?.disconnect();
       await harness.cleanup();
