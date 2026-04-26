@@ -78,12 +78,52 @@ export class PostgresEngine implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      // Fresh-install vs upgrade detection. On a fresh install, the `config`
+      // table doesn't exist yet → schema.sql creates it as part of bootstrap.
+      // On an upgrade, `config` exists and `config.version` reflects what
+      // migrations have already run. `to_regclass` returns NULL for missing
+      // relations rather than raising, which keeps the probe cheap.
+      const probe = await conn`SELECT to_regclass('public.config') AS rel`;
+      const isExistingBrain = probe[0]?.rel !== null;
 
-      // Run any pending migrations automatically
-      const { applied } = await runMigrations(this);
-      if (applied > 0) {
-        console.log(`  ${applied} migration(s) applied`);
+      if (isExistingBrain) {
+        // Upgrade path: run pending MIGRATIONS first. SCHEMA_SQL is the
+        // *target* snapshot of v(LATEST), and on a pre-LATEST brain it
+        // forward-references columns added by pending migrations.
+        // Concrete examples that bit users in the wild:
+        //
+        //   v0.18.x — schema.sql added
+        //     CREATE INDEX idx_pages_source_id ON pages(source_id);
+        //   while pages.source_id was first added by migration v21.
+        //   Pre-v21 brains aborted initSchema with "column 'source_id'
+        //   does not exist" before MIGRATIONS got a chance to add it.
+        //
+        //   v0.21.x — schema.sql added
+        //     CREATE INDEX idx_chunks_symbol_name
+        //       ON content_chunks(symbol_name) WHERE symbol_name IS NOT NULL;
+        //   while content_chunks.symbol_name was first added by migration
+        //   v26. Pre-v26 brains aborted with "column 'symbol_name' does
+        //   not exist".
+        //
+        // Running MIGRATIONS first brings the schema up to LATEST shape
+        // (every column the snapshot references now exists), then SCHEMA_SQL
+        // becomes an idempotent CREATE * IF NOT EXISTS confirmation pass.
+        const { applied } = await runMigrations(this);
+        if (applied > 0) {
+          console.log(`  ${applied} migration(s) applied`);
+        }
+        await conn.unsafe(SCHEMA_SQL);
+      } else {
+        // Fresh-install path: SCHEMA_SQL creates everything at v(LATEST)
+        // shape (tables, columns, indexes, triggers, RLS policies). Then
+        // runMigrations records `config.version = LATEST` and fires any
+        // handler-only side effects. The SQL portion of each migration
+        // no-ops via ADD COLUMN/CREATE INDEX IF NOT EXISTS.
+        await conn.unsafe(SCHEMA_SQL);
+        const { applied } = await runMigrations(this);
+        if (applied > 0) {
+          console.log(`  ${applied} migration(s) applied`);
+        }
       }
     } finally {
       await conn`SELECT pg_advisory_unlock(42)`;

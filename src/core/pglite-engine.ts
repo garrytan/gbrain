@@ -86,11 +86,32 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+    // Fresh-install vs upgrade detection. See PostgresEngine.initSchema for
+    // the full rationale; the short version is that PGLITE_SCHEMA_SQL is the
+    // v(LATEST) target snapshot and on a pre-LATEST brain it forward-
+    // references columns added by pending migrations. Running migrations
+    // first brings the schema to LATEST shape; the snapshot then runs as an
+    // idempotent confirmation pass.
+    const probe = await this.db.query<{ rel: string | null }>(
+      `SELECT to_regclass('public.config') AS rel`
+    );
+    const isExistingBrain = probe.rows[0]?.rel !== null;
 
-    const { applied } = await runMigrations(this);
-    if (applied > 0) {
-      console.log(`  ${applied} migration(s) applied`);
+    if (isExistingBrain) {
+      const { applied } = await runMigrations(this);
+      if (applied > 0) {
+        console.log(`  ${applied} migration(s) applied`);
+      }
+      await this.db.exec(PGLITE_SCHEMA_SQL);
+    } else {
+      // Fresh install: PGLITE_SCHEMA_SQL creates everything at v(LATEST)
+      // shape, then runMigrations records version + runs any handler-only
+      // side effects (SQL parts no-op via IF NOT EXISTS).
+      await this.db.exec(PGLITE_SCHEMA_SQL);
+      const { applied } = await runMigrations(this);
+      if (applied > 0) {
+        console.log(`  ${applied} migration(s) applied`);
+      }
     }
   }
 
