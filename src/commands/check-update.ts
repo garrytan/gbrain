@@ -1,6 +1,12 @@
 import { VERSION } from '../version.ts';
 import { detectInstallMethod } from './upgrade.ts';
 
+type CheckUpdateError =
+  | 'no_releases'         // GitHub returned 404 — repo has no releases yet (permanent until publish)
+  | 'network_unavailable' // fetch threw (DNS, timeout, offline) — transient
+  | 'rate_limited'        // HTTP 429 — transient, backs off naturally on next cron
+  | 'http_error';         // HTTP 5xx / other non-2xx — transient
+
 interface CheckUpdateResult {
   current_version: string;
   current_source: 'package-json';
@@ -10,7 +16,24 @@ interface CheckUpdateResult {
   release_url: string;
   changelog_diff: string;
   published_at: string;
-  error?: string;
+  error?: CheckUpdateError;
+  /**
+   * True when `error` is a transient failure that will likely succeed on the
+   * next run (network, rate-limit, 5xx). Callers (cron jobs, agents) MUST NOT
+   * surface a warning when this is true — let the next cycle retry silently.
+   * Only `no_releases` is non-transient.
+   */
+  error_transient?: boolean;
+}
+
+type FetchReleaseResult =
+  | { ok: true; tag: string; published_at: string; url: string }
+  | { ok: false; error: CheckUpdateError; transient: boolean };
+
+export function classifyHttpStatus(status: number): { error: CheckUpdateError; transient: boolean } {
+  if (status === 404) return { error: 'no_releases', transient: false };
+  if (status === 429) return { error: 'rate_limited', transient: true };
+  return { error: 'http_error', transient: true };
 }
 
 export function parseSemver(v: string): [number, number, number] | null {
@@ -40,22 +63,26 @@ function upgradeCommandForMethod(method: string): string {
   }
 }
 
-async function fetchLatestRelease(): Promise<{ tag: string; published_at: string; url: string } | null> {
+async function fetchLatestRelease(): Promise<FetchReleaseResult> {
+  let res: Response;
   try {
-    const res = await fetch('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
+    res = await fetch('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
       headers: { 'User-Agent': `gbrain/${VERSION}` },
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return null;
-    const data = await res.json() as any;
-    return {
-      tag: data.tag_name || '',
-      published_at: data.published_at || '',
-      url: data.html_url || '',
-    };
   } catch {
-    return null;
+    return { ok: false, error: 'network_unavailable', transient: true };
   }
+  if (!res.ok) {
+    return { ok: false, ...classifyHttpStatus(res.status) };
+  }
+  const data = await res.json() as any;
+  return {
+    ok: true,
+    tag: data.tag_name || '',
+    published_at: data.published_at || '',
+    url: data.html_url || '',
+  };
 }
 
 async function fetchChangelog(currentVersion: string, latestVersion: string): Promise<string> {
@@ -129,7 +156,7 @@ export async function runCheckUpdate(args: string[]) {
 
   const release = await fetchLatestRelease();
 
-  if (!release) {
+  if (!release.ok) {
     if (json) {
       console.log(JSON.stringify({
         current_version: VERSION,
@@ -140,10 +167,18 @@ export async function runCheckUpdate(args: string[]) {
         release_url: '',
         changelog_diff: '',
         published_at: '',
-        error: 'no_releases',
+        error: release.error,
+        error_transient: release.transient,
       }, null, 2));
     } else {
-      console.log(`GBrain ${VERSION} — could not check for updates (no releases found or network unavailable).`);
+      const reason = release.error === 'no_releases'
+        ? 'no releases published yet'
+        : release.error === 'rate_limited'
+          ? 'GitHub API rate limit, will retry next cycle'
+          : release.error === 'network_unavailable'
+            ? 'network unavailable, will retry next cycle'
+            : 'GitHub API unreachable, will retry next cycle';
+      console.log(`GBrain ${VERSION} — could not check for updates (${reason}).`);
     }
     return;
   }
