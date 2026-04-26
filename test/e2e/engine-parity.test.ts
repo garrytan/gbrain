@@ -15,7 +15,8 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import type { ChunkInput, BrainEngine } from '../../src/core/types.ts';
+import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 
 const SKIP_PG = !hasDatabase();
@@ -128,8 +129,8 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       const pgResults = await pgEngine.searchKeyword(q, { limit: 5 });
       const pgliteResults = await pgliteEngine.searchKeyword(q, { limit: 5 });
 
-      const pgSlugs = pgResults.map(r => r.slug);
-      const pgliteSlugs = pgliteResults.map(r => r.slug);
+      const pgSlugs = pgResults.map((r: SearchResult) => r.slug);
+      const pgliteSlugs = pgliteResults.map((r: SearchResult) => r.slug);
 
       // Top result MUST match (the swamp-resistance guarantee).
       expect(pgSlugs[0]).toBe(pgliteSlugs[0]);
@@ -181,8 +182,8 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
 
     const pgDefault = await pgEngine.searchKeyword('parity test fixture');
     const pgliteDefault = await pgliteEngine.searchKeyword('parity test fixture');
-    expect(pgDefault.map(r => r.slug)).not.toContain('test/parity-fixture');
-    expect(pgliteDefault.map(r => r.slug)).not.toContain('test/parity-fixture');
+    expect(pgDefault.map((r: SearchResult) => r.slug)).not.toContain('test/parity-fixture');
+    expect(pgliteDefault.map((r: SearchResult) => r.slug)).not.toContain('test/parity-fixture');
 
     const pgOptIn = await pgEngine.searchKeyword('parity test fixture', {
       include_slug_prefixes: ['test/'],
@@ -190,8 +191,8 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     const pgliteOptIn = await pgliteEngine.searchKeyword('parity test fixture', {
       include_slug_prefixes: ['test/'],
     });
-    expect(pgOptIn.map(r => r.slug)).toContain('test/parity-fixture');
-    expect(pgliteOptIn.map(r => r.slug)).toContain('test/parity-fixture');
+    expect(pgOptIn.map((r: SearchResult) => r.slug)).toContain('test/parity-fixture');
+    expect(pgliteOptIn.map((r: SearchResult) => r.slug)).toContain('test/parity-fixture');
   });
 
   test('detail=high produces a different ranking than default on at least one engine', async () => {
@@ -214,13 +215,13 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     const pgliteHigh = await pgliteEngine.searchKeyword('fat code thin harness', { detail: 'high', limit: 5 });
 
     // Chat pages must be present in detail=high results on both engines.
-    expect(pgHigh.some(r => r.slug.startsWith('wintermute/chat/'))).toBe(true);
-    expect(pgliteHigh.some(r => r.slug.startsWith('wintermute/chat/'))).toBe(true);
+    expect(pgHigh.some((r: SearchResult) => r.slug.startsWith('wintermute/chat/'))).toBe(true);
+    expect(pgliteHigh.some((r: SearchResult) => r.slug.startsWith('wintermute/chat/'))).toBe(true);
 
     // The boost must be doing something — at least one engine's ordering
     // should change between default and detail=high.
-    const pgChanged = pgDefault.map(r => r.slug).join(',') !== pgHigh.map(r => r.slug).join(',');
-    const pgliteChanged = pgliteDefault.map(r => r.slug).join(',') !== pgliteHigh.map(r => r.slug).join(',');
+    const pgChanged = pgDefault.map((r: SearchResult) => r.slug).join(',') !== pgHigh.map((r: SearchResult) => r.slug).join(',');
+    const pgliteChanged = pgliteDefault.map((r: SearchResult) => r.slug).join(',') !== pgliteHigh.map((r: SearchResult) => r.slug).join(',');
     expect(pgChanged || pgliteChanged).toBe(true);
   });
 });
