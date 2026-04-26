@@ -1,5 +1,17 @@
 # TODOS
 
+## P3 — Dev experience: test suite parallelism on fast multi-core machines
+
+**Context:** `bun test` on M-series Macs spawns ~1 worker per core. `test/dream.test.ts` (5 describe blocks, 11 tests) and `test/orphans.test.ts` create a fresh PGLite engine in `beforeEach` that runs ~20 schema migrations per test. Under parallel load, WASM-instance contention causes ~18 `beforeEach` timeouts at 5–9s.
+
+**Evidence:** CI (ubuntu-latest, fewer cores) is green on every PR. Running the suspect files in isolation (`bun test test/dream.test.ts test/orphans.test.ts`) is also green. Reproduces only on fast multi-core local machines running the full 136-file parallel suite.
+
+**Fix:** move engine creation from `beforeEach` to `beforeAll` per describe block; add a data-reset helper (delete-all-rows-in-relevant-tables) between tests. ~80 LOC change across two test files.
+
+**Priority:** P3 because production CI is unaffected. Hits local dev iteration speed on fast Macs.
+
+**Found:** 2026-04-24 during v0.19.0 production-readiness review.
+
 ## Completed
 
 ### ~~Checks 5 + 6 for check-resolvable~~

@@ -1,5 +1,5 @@
 /**
- * filing-audit.ts — Check 6 of the skillify checklist (W3, v0.17).
+ * filing-audit.ts — Check 6 of the skillify checklist (W3).
  *
  * For every skill that writes brain pages (`writes_pages: true`),
  * verify that:
@@ -8,18 +8,18 @@
  *      `skills/_brain-filing-rules.json`. `sources/` is explicitly
  *      allowed (bulk data capture is a legitimate filing target).
  *
- * Important distinction (D-CX-7): `writes_pages: true` is distinct
- * from the pre-existing `mutating: true` field. `mutating:true` means
- * "has side effects" (any side effect — cron, config, report write).
+ * Important distinction: `writes_pages: true` is distinct from the
+ * pre-existing `mutating: true` field. `mutating:true` means "has
+ * side effects" (any side effect — cron, config, report write).
  * `writes_pages:true` means "writes brain pages to a semantic
  * directory." Cron/config/report-writer skills set `mutating:true`
  * but NOT `writes_pages:true`, and so are correctly exempted from
  * filing-audit noise.
  *
- * v0.17 scope: declaration-level audit only (cheap, deterministic).
- * v0.18 plan: `filing-audit --pages` walks brain pages and infers
- * primary subject via LLM to catch real misfilings vs declarations
- * (D-CX-13).
+ * Current scope: declaration-level audit only (cheap, deterministic).
+ * A future release may add `filing-audit --pages` to walk brain pages
+ * and infer primary subject via LLM (catches real misfilings vs
+ * declarations); that is tracked as follow-up work, not in this scope.
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';

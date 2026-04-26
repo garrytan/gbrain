@@ -57,11 +57,11 @@ export interface Flags {
   skillsDir: string | null;
 }
 
-// Check 5 (trigger_routing_eval) landed in v0.17 (W2). Check 6
-// (brain_filing) landed in v0.17 (W3). Array is now empty; the
-// export stays as a stable public field of the --json envelope so
-// downstream consumers that check `.deferred[]` keep working.
-// Future deferred checks get appended here.
+// Check 5 (trigger_routing_eval) and Check 6 (brain_filing) both
+// shipped as real implementations in v0.19 (W2 + W3). Array is now
+// empty; the export stays as a stable public field of the --json
+// envelope so downstream consumers that check `.deferred[]` keep
+// working. Future deferred checks get appended here.
 export const DEFERRED: DeferredCheck[] = [];
 
 const HELP_TEXT = `gbrain check-resolvable [options]
@@ -83,13 +83,13 @@ Exit codes:
   0   clean (no errors; no warnings unless --strict)
   1   errors present, OR (with --strict) warnings present
 
-Check 5 (trigger routing eval) lands in v0.17 via W2: any
+Check 5 (trigger routing eval) runs via W2: any
 skills/<name>/routing-eval.jsonl fixtures are evaluated and routing
 gaps surface as warnings.
 
-Check 6 (brain filing) lands in v0.17 via W3: skills with
-writes_pages: true are audited against skills/_brain-filing-rules.json.
-No checks are deferred as of v0.17.
+Check 6 (brain filing) runs via W3: skills with writes_pages: true
+are audited against skills/_brain-filing-rules.json. No checks are
+currently deferred.
 `;
 
 // ---------------------------------------------------------------------------

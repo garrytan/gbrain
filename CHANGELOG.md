@@ -75,7 +75,7 @@ No schema migration. Existing brains work unchanged.
 - **`gbrain skillpack list`** — prints the curated bundle (25 skills) shipped with gbrain.
 - **`gbrain skillpack install <name>` / `--all`** — copies bundled skills into the target workspace. Automatically pulls shared convention files so nothing references a missing dep. Per-file diff protection, `--overwrite-local` escape hatch, `.gbrain-skillpack.lock` against concurrent installers, atomic managed-block update to AGENTS.md / RESOLVER.md.
 - **`gbrain skillpack diff <name>`** — per-file diff preview before install.
-- **`gbrain routing-eval`** — dedicated CI verb that runs routing fixtures (`skills/<name>/routing-eval.jsonl`) and surfaces intent-to-skill mismatches, ambiguous routing, and false positives. Default structural layer runs alongside `check-resolvable`; `--llm` opts into an LLM tie-break layer.
+- **`gbrain routing-eval`** — dedicated CI verb that runs routing fixtures (`skills/<name>/routing-eval.jsonl`) and surfaces intent-to-skill mismatches, ambiguous routing, and false positives. Ships the structural layer (same logic `check-resolvable` runs). The `--llm` flag is accepted as a placeholder for a future LLM tie-break layer; in this release it emits a stderr notice and runs structural only.
 - **`gbrain check-resolvable --strict`** — opt-in CI mode that promotes warnings to failures.
 - **`skills/_brain-filing-rules.json`** — machine-readable canonical filing rules (JSON sidecar to the prose `_brain-filing-rules.md`).
 - **`writes_pages: true` + `writes_to: [...]`** — new skill frontmatter fields consumed by the filing audit. Distinct from `mutating:` so cron schedulers and report writers aren't dragged into filing checks.

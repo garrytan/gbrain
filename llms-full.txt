@@ -1455,9 +1455,11 @@ is what you spend time on. Everything else is boilerplate the CLI writes for you
 
 Drop a `routing-eval.jsonl` fixture next to any skill. Each line is `{intent, expected_skill,
 ambiguous_with?}`. `gbrain check-resolvable` runs the structural layer by default; `gbrain
-routing-eval --llm` runs an LLM tie-break layer for CI. False positives (wrong skill matched),
-missed routes (no skill matched), and tautological fixtures (intent copies trigger verbatim)
-all surface as specific advisories with the exact file:line to fix.
+routing-eval` runs the same structural layer as a dedicated CI verb. The `--llm` flag is
+accepted as a placeholder for a future LLM tie-break layer; in this release it emits a stderr
+notice and runs structural only. False positives (wrong skill matched), missed routes (no
+skill matched), and tautological fixtures (intent copies trigger verbatim) all surface as
+specific advisories with the exact file:line to fix.
 
 ### Works on your OpenClaw, not just gbrain's repo
 
