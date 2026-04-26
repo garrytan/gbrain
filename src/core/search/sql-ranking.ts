@@ -55,7 +55,11 @@ export function buildSourceFactorCase(
   boostMap: Record<string, number>,
   detail: 'low' | 'medium' | 'high' | undefined,
 ): string {
-  if (detail === 'high') return '1.0';
+  // Loose-string guard: agents passing `"HIGH"` or `"high "` over MCP/JSON
+  // should still hit the temporal-bypass path. TypeScript narrows `detail`
+  // for typed callers; this guard catches the untyped boundary.
+  const normalized = typeof detail === 'string' ? detail.trim().toLowerCase() : detail;
+  if (normalized === 'high') return '1.0';
 
   const entries = Object.entries(boostMap)
     .filter(([prefix, factor]) => prefix.length > 0 && Number.isFinite(factor) && factor >= 0)

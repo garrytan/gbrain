@@ -361,7 +361,13 @@ export class PGLiteEngine implements BrainEngine {
     // narrow candidate pool. innerLimit scales with offset to preserve the
     // pagination contract. See postgres-engine.ts searchVector for rationale.
     const boostMap = resolveBoostMap();
-    const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail);
+    // Outer SELECT references the aliased CTE column. Aliasing the CTE as `hc`
+    // disambiguates the correlated subquery (`te.page_id = hc.page_id`) from
+    // the inner column. Without the alias, an unqualified `page_id` in the
+    // subquery's WHERE would lexically resolve back to `te.page_id` itself
+    // and degrade to `te.page_id = te.page_id` (always true), making every
+    // result stale=true. Codex caught this in adversarial review.
+    const sourceFactorCaseOnSlug = buildSourceFactorCase('hc.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
     const innerLimit = offset + Math.max(limit * 5, 100);
@@ -390,13 +396,13 @@ export class PGLiteEngine implements BrainEngine {
          LIMIT $2
        )
        SELECT
-         slug, page_id, title, type, source_id,
-         chunk_id, chunk_index, chunk_text, chunk_source,
-         raw_score * ${sourceFactorCaseOnSlug} AS score,
-         CASE WHEN updated_at < (
-           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = page_id
+         hc.slug, hc.page_id, hc.title, hc.type, hc.source_id,
+         hc.chunk_id, hc.chunk_index, hc.chunk_text, hc.chunk_source,
+         hc.raw_score * ${sourceFactorCaseOnSlug} AS score,
+         CASE WHEN hc.updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = hc.page_id
          ) THEN true ELSE false END AS stale
-       FROM hnsw_candidates
+       FROM hnsw_candidates hc
        ORDER BY score DESC
        LIMIT $3
        OFFSET $4`,

@@ -71,6 +71,16 @@ describe('buildSourceFactorCase', () => {
     expect(result).toBe('1.0');
   });
 
+  test('temporal bypass tolerates uppercase / whitespace from MCP boundary', () => {
+    // Agents passing JSON over MCP can send "HIGH" or "high " (trailing
+    // space). The bypass must catch these — otherwise loose-string callers
+    // silently get boosted ranking instead of temporal bypass.
+    const map = { 'originals/': 1.5 };
+    expect(buildSourceFactorCase('p.slug', map, 'HIGH' as 'high')).toBe('1.0');
+    expect(buildSourceFactorCase('p.slug', map, 'high ' as 'high')).toBe('1.0');
+    expect(buildSourceFactorCase('p.slug', map, '  High  ' as 'high')).toBe('1.0');
+  });
+
   test('returns plain 1.0 when boost map is empty', () => {
     expect(buildSourceFactorCase('p.slug', {}, 'medium')).toBe('1.0');
   });
