@@ -13,6 +13,8 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
+import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
+import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
 
@@ -563,11 +565,38 @@ const search: Operation = {
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
   },
   handler: async (ctx, p) => {
-    const results = await ctx.engine.searchKeyword(p.query as string, {
+    const startedAt = Date.now();
+    const queryText = p.query as string;
+    const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
     });
-    return dedupResults(results);
+    const results = dedupResults(raw);
+    const latency_ms = Date.now() - startedAt;
+
+    // Op-layer capture (v0.22.0). Fire-and-forget — no await on the
+    // capture call so MCP response latency is unaffected. search has
+    // no expand/detail/vector semantics so meta fields are fixed.
+    if (isEvalCaptureEnabled(ctx.config)) {
+      void captureEvalCandidate(
+        ctx.engine,
+        {
+          tool_name: 'search',
+          query: queryText,
+          results,
+          meta: { vector_enabled: false, detail_resolved: null, expansion_applied: false },
+          latency_ms,
+          remote: ctx.remote ?? false,
+          expand_enabled: null,
+          detail: null,
+          job_id: ctx.jobId ?? null,
+          subagent_id: ctx.subagentId ?? null,
+        },
+        { scrub_pii: isEvalScrubEnabled(ctx.config) },
+      );
+    }
+
+    return results;
   },
   cliHints: { name: 'search', positional: ['query'] },
 };
@@ -589,9 +618,16 @@ const query: Operation = {
     walk_depth: { type: 'number', description: 'Structural walk depth 1-2. Default 0 (off). Expands anchors through code_edges with 1/(1+hop) decay.' },
   },
   handler: async (ctx, p) => {
+    const startedAt = Date.now();
     const expand = p.expand !== false;
     const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
-    return hybridSearch(ctx.engine, p.query as string, {
+    const queryText = p.query as string;
+
+    // v0.22.0 — capture meta side-channel. hybridSearch's return contract
+    // stays SearchResult[] (Cathedral II callers depend on that); meta
+    // arrives via callback so eval capture can record what actually ran.
+    let capturedMeta: HybridSearchMeta | null = null;
+    const results = await hybridSearch(ctx.engine, queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
       expansion: expand,
@@ -601,7 +637,37 @@ const query: Operation = {
       symbolKind: (p.symbol_kind as string) || undefined,
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
+      onMeta: (m) => { capturedMeta = m; },
     });
+    const latency_ms = Date.now() - startedAt;
+
+    // Op-layer capture (v0.22.0). Fire-and-forget. meta tells gbrain-evals
+    // what hybridSearch *actually* did so replay can distinguish "with API
+    // key" from "keyword-only fallback" and "expansion fired" from
+    // "expansion requested + silently fell back."
+    if (isEvalCaptureEnabled(ctx.config)) {
+      const meta: HybridSearchMeta = capturedMeta ?? {
+        vector_enabled: false, detail_resolved: detail ?? null, expansion_applied: false,
+      };
+      void captureEvalCandidate(
+        ctx.engine,
+        {
+          tool_name: 'query',
+          query: queryText,
+          results,
+          meta,
+          latency_ms,
+          remote: ctx.remote ?? false,
+          expand_enabled: expand,
+          detail: detail ?? null,
+          job_id: ctx.jobId ?? null,
+          subagent_id: ctx.subagentId ?? null,
+        },
+        { scrub_pii: isEvalScrubEnabled(ctx.config) },
+      );
+    }
+
+    return results;
   },
   cliHints: { name: 'query', positional: ['query'] },
 };
