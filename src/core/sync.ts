@@ -85,6 +85,9 @@ export function isSyncable(path: string): boolean {
   // Skip .raw/ sidecar directories
   if (path.includes('.raw/')) return false;
 
+  // Skip dependency directories
+  if (path.split('/').includes('node_modules')) return false;
+
   // Skip meta files that aren't pages
   const skipFiles = ['schema.md', 'index.md', 'log.md', 'README.md'];
   const basename = path.split('/').pop() || '';

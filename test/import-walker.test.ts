@@ -38,6 +38,8 @@ describe('collectMarkdownFiles', () => {
     writeFileSync(join(root, 'people', 'alice.raw', 'source.md'), '# raw source\n');
     mkdirSync(join(root, 'ops'), { recursive: true });
     writeFileSync(join(root, 'ops', 'deploy.md'), '# deploy log\n');
+    mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', 'pkg', 'notes.md'), '# package notes\n');
 
     const files = collectMarkdownFiles(root);
 
@@ -47,6 +49,7 @@ describe('collectMarkdownFiles', () => {
     expect(files).not.toContain(join(root, 'people', 'README.md'));
     expect(files).not.toContain(join(root, 'people', 'alice.raw', 'source.md'));
     expect(files).not.toContain(join(root, 'ops', 'deploy.md'));
+    expect(files).not.toContain(join(root, 'node_modules', 'pkg', 'notes.md'));
   });
 
   test('skips a symlink file pointing outside the import root', () => {

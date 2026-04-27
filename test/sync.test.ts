@@ -92,6 +92,11 @@ describe('isSyncable', () => {
     expect(isSyncable('ops/deploy-log.md')).toBe(false);
     expect(isSyncable('ops/config.md')).toBe(false);
   });
+
+  test('rejects node_modules directory', () => {
+    expect(isSyncable('node_modules/pkg/README.md')).toBe(false);
+    expect(isSyncable('packages/app/node_modules/pkg/notes.md')).toBe(false);
+  });
 });
 
 describe('pathToSlug', () => {
