@@ -98,16 +98,26 @@ export function isSyncable(path: string): boolean {
 
 /**
  * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
+ * Supports Unicode letters (including Chinese/CJK) via \p{L} and \p{N}.
+ * Falls back to page-{sha256[:8]} when the cleaned result is shorter than 2 chars.
  */
 export function slugifySegment(segment: string): string {
-  return segment
-    .normalize('NFD')                     // Decompose accented chars
-    .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
+  const cleaned = segment
+    .normalize('NFD')                              // Decompose accented chars
+    .replace(/[\u0300-\u036f]/g, '')               // Strip accent marks
     .toLowerCase()
-    .replace(/[^a-z0-9.\s_-]/g, '')      // Keep alphanumeric, dots, spaces, underscores, hyphens
-    .replace(/[\s]+/g, '-')              // Spaces → hyphens
-    .replace(/-+/g, '-')                 // Collapse multiple hyphens
-    .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
+    .replace(/[\u0000-\u001f\u007f<>:"\\|?*]/gu, '') // Strip control chars + FS-forbidden chars
+    .replace(/[^\p{L}\p{N}.\s_-]/gu, '')           // Keep Unicode letters (incl. CJK), digits, dots, spaces, _ -
+    .replace(/[\s]+/g, '-')                        // Spaces → hyphens
+    .replace(/-+/g, '-')                           // Collapse multiple hyphens
+    .replace(/^-|-$/g, '');                        // Strip leading/trailing hyphens
+
+  // Hash fallback: only when the original input had content but cleaning removed everything.
+  // Empty-string input returns '' so filter(Boolean) in slugifyPath can still eliminate it.
+  if (segment.length > 0 && cleaned.length === 0) {
+    return 'page-' + _createHash('sha256').update(segment).digest('hex').slice(0, 8);
+  }
+  return cleaned;
 }
 
 /**

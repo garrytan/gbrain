@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { buildSyncManifest, isSyncable, pathToSlug } from '../src/core/sync.ts';
+import { buildSyncManifest, isSyncable, pathToSlug, slugifySegment } from '../src/core/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
@@ -146,6 +146,60 @@ describe('pathToSlug', () => {
 
   test('strips special characters', () => {
     expect(pathToSlug('notes/meeting (march 2024).md')).toBe('notes/meeting-march-2024');
+  });
+});
+
+describe('slugifySegment — Chinese/Unicode support', () => {
+  test('preserves Chinese characters', () => {
+    expect(slugifySegment('張三')).toBe('張三');
+  });
+
+  test('preserves mixed Chinese and ASCII', () => {
+    expect(slugifySegment('2024-Q1-報告')).toBe('2024-q1-報告');
+  });
+
+  test('pure ASCII path still works', () => {
+    expect(slugifySegment('TikTok_Notes')).toBe('tiktok_notes');
+  });
+
+  test('pure symbol input falls back to page-{hash}', () => {
+    const result = slugifySegment('!!!');
+    expect(result).toMatch(/^page-[0-9a-f]{8}$/);
+  });
+
+  test('single char falls back to page-{hash}', () => {
+    const result = slugifySegment('!');
+    expect(result).toMatch(/^page-[0-9a-f]{8}$/);
+  });
+
+  test('empty string returns empty string (let filter(Boolean) handle it)', () => {
+    expect(slugifySegment('')).toBe('');
+  });
+
+  test('hash fallback is deterministic', () => {
+    expect(slugifySegment('!!!')).toBe(slugifySegment('!!!'));
+  });
+
+  test('different empty-result inputs produce different hashes', () => {
+    expect(slugifySegment('!!!')).not.toBe(slugifySegment('???'));
+  });
+});
+
+describe('pathToSlug — Chinese paths', () => {
+  test('pure Chinese path', () => {
+    expect(pathToSlug('人脈管理/張三.md')).toBe('人脈管理/張三');
+  });
+
+  test('mixed Chinese and date path', () => {
+    expect(pathToSlug('工作/2024-Q1-報告.md')).toBe('工作/2024-q1-報告');
+  });
+
+  test('pure ASCII path unchanged', () => {
+    expect(pathToSlug('TikTok_Notes/strategy.md')).toBe('tiktok_notes/strategy');
+  });
+
+  test('Chinese folder with English filename', () => {
+    expect(pathToSlug('工作/meeting-notes.md')).toBe('工作/meeting-notes');
   });
 });
 
