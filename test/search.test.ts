@@ -150,6 +150,27 @@ describe('cosineSimilarity', () => {
     b[5] = 1.0;
     expect(cosineSimilarity(a, b)).toBe(0);
   });
+
+  test('dimension mismatch returns finite similarity over shared prefix', () => {
+    const a = new Float32Array([1, 2, 3]);
+    const b = new Float32Array([1, 2]);
+    expect(cosineSimilarity(a, b)).toBeCloseTo(1.0, 5);
+    expect(cosineSimilarity(b, a)).toBeCloseTo(1.0, 5);
+  });
+
+  test('non-finite denominator from huge vectors returns 0', () => {
+    const huge = new Float32Array([1e39, 1e39, 1e39]);
+    const v = new Float32Array([1, 1, 1]);
+    expect(cosineSimilarity(huge, v)).toBe(0);
+    expect(cosineSimilarity(v, huge)).toBe(0);
+  });
+
+  test('NaN element in input returns 0 (not NaN)', () => {
+    const withNaN = new Float32Array([1, NaN, 3]);
+    const v = new Float32Array([1, 2, 3]);
+    expect(cosineSimilarity(withNaN, v)).toBe(0);
+    expect(cosineSimilarity(v, withNaN)).toBe(0);
+  });
 });
 
 describe('CJK word count in expansion', () => {
