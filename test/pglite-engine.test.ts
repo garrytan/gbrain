@@ -983,6 +983,14 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     expect(h.link_coverage).toBeCloseTo(1 / 3, 2);
   });
 
+  test('link_coverage ignores non-entity page types in denominator', async () => {
+    await engine.putPage('concepts/market-map', { ...testPage, type: 'concept', title: 'Market Map' });
+    await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
+    const h = await engine.getHealth();
+    // Still 1/3: concept pages are not part of entity coverage.
+    expect(h.link_coverage).toBeCloseTo(1 / 3, 2);
+  });
+
   test('timeline_coverage = % with >= 1 timeline entry', async () => {
     await engine.addTimelineEntry('people/alice', { date: '2026-01-15', summary: 'Joined' });
     const h = await engine.getHealth();

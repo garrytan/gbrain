@@ -1,9 +1,14 @@
 import { describe, test, expect } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { dirname, join } from 'path';
+import { tmpdir } from 'os';
 import {
   extractEntityRefs,
   extractPageTitle,
   hasBacklink,
   buildBacklinkEntry,
+  findBacklinkGaps,
+  fixBacklinkGaps,
 } from '../src/commands/backlinks.ts';
 
 describe('extractEntityRefs', () => {
@@ -76,5 +81,109 @@ describe('buildBacklinkEntry', () => {
   test('builds properly formatted entry', () => {
     const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md', '2026-04-11');
     expect(entry).toBe('- **2026-04-11** | Referenced in [Q1 Review](../../meetings/q1-review.md)');
+  });
+});
+
+describe('backlink gap scan + fix', () => {
+  function makeBrainDir(): string {
+    return mkdtempSync(join(tmpdir(), 'gbrain-backlinks-'));
+  }
+
+  function writeBrainFile(root: string, relPath: string, content: string): void {
+    const full = join(root, relPath);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+
+  test('findBacklinkGaps reports missing backlink for people/company refs', () => {
+    const dir = makeBrainDir();
+    try {
+      writeBrainFile(
+        dir,
+        'meetings/q1-review.md',
+        '# Q1 Review\n\nMet [Jane Doe](../people/jane-doe.md).\n',
+      );
+      writeBrainFile(
+        dir,
+        'people/jane-doe.md',
+        '# Jane Doe\n\n## Timeline\n\n- **2026-01-01** | Existing note\n',
+      );
+
+      const gaps = findBacklinkGaps(dir);
+      expect(gaps).toHaveLength(1);
+      expect(gaps[0]).toMatchObject({
+        sourcePage: 'meetings/q1-review.md',
+        targetPage: 'people/jane-doe.md',
+        entityName: 'Jane Doe',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('findBacklinkGaps skips pages that already reference the source filename', () => {
+    const dir = makeBrainDir();
+    try {
+      writeBrainFile(
+        dir,
+        'meetings/q1-review.md',
+        '# Q1 Review\n\nMet [Jane Doe](../people/jane-doe.md).\n',
+      );
+      writeBrainFile(
+        dir,
+        'people/jane-doe.md',
+        '# Jane Doe\n\n## Timeline\n\n- **2026-01-01** | Referenced in [Q1 Review](../../meetings/q1-review.md)\n',
+      );
+
+      const gaps = findBacklinkGaps(dir);
+      expect(gaps).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fixBacklinkGaps dry-run reports count but does not write file', () => {
+    const dir = makeBrainDir();
+    try {
+      writeBrainFile(
+        dir,
+        'meetings/q1-review.md',
+        '# Q1 Review\n\nMet [Jane Doe](../people/jane-doe.md).\n',
+      );
+      writeBrainFile(dir, 'people/jane-doe.md', '# Jane Doe\n\nNo timeline yet.\n');
+
+      const gaps = findBacklinkGaps(dir);
+      const before = readFileSync(join(dir, 'people/jane-doe.md'), 'utf-8');
+      const fixed = fixBacklinkGaps(dir, gaps, true);
+      const after = readFileSync(join(dir, 'people/jane-doe.md'), 'utf-8');
+
+      expect(fixed).toBe(1);
+      expect(after).toBe(before);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fixBacklinkGaps inserts Timeline section when missing', () => {
+    const dir = makeBrainDir();
+    try {
+      writeBrainFile(
+        dir,
+        'meetings/q1-review.md',
+        '# Q1 Review\n\nMet [Jane Doe](../people/jane-doe.md).\n',
+      );
+      writeBrainFile(dir, 'people/jane-doe.md', '# Jane Doe\n\nNo timeline yet.\n');
+
+      const gaps = findBacklinkGaps(dir);
+      const fixed = fixBacklinkGaps(dir, gaps, false);
+      const content = readFileSync(join(dir, 'people/jane-doe.md'), 'utf-8');
+
+      expect(fixed).toBe(1);
+      expect(content).toContain('## Timeline');
+      expect(content).toContain('Referenced in [Q1 Review]');
+      expect(content).toContain('../meetings/q1-review.md');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -22,6 +22,7 @@ import type {
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
+import { HEALTH_ENTITY_PAGE_TYPES } from './entity-taxonomy.ts';
 
 type PGLiteDB = PGlite;
 
@@ -1103,13 +1104,14 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async getHealth(): Promise<BrainHealth> {
+    const entityTypes = [...HEALTH_ENTITY_PAGE_TYPES];
     // Combined metrics from master (brain_score components: dead_links, link_count,
     // pages_with_timeline) and v0.10.3 graph layer (link_coverage, timeline_coverage,
     // most_connected). Both coexist: master's brain_score is the composite
     // dashboard, v0.10.3 metrics give entity-page-level granularity.
     const { rows: [h] } = await this.db.query(`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug FROM pages WHERE type = ANY($1::text[])
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
@@ -1136,17 +1138,17 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
-    `);
+    `, [entityTypes]);
 
     // Top 5 most connected entities by total link count (in + out).
     const { rows: connected } = await this.db.query(`
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type = ANY($1::text[])
       ORDER BY link_count DESC
       LIMIT 5
-    `);
+    `, [entityTypes]);
 
     const r = h as Record<string, unknown>;
     const pageCount = Number(r.page_count);

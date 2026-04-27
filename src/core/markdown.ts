@@ -1,6 +1,7 @@
 import matter from 'gray-matter';
 import type { PageType } from './types.ts';
 import { slugifyPath } from './sync.ts';
+import { inferPageTypeFromPath } from './entity-taxonomy.ts';
 
 export type ParseValidationCode =
   | 'MISSING_OPEN'
@@ -342,36 +343,7 @@ export function serializeMarkdown(
 }
 
 function inferType(filePath?: string): PageType {
-  if (!filePath) return 'concept';
-
-  // Normalize: add leading / for consistent matching.
-  // Wiki subtypes and /writing/ check FIRST — they're stronger signals than
-  // ancestor directories. e.g. `projects/blog/writing/essay.md` is a piece of
-  // writing, not a project page; `tech/wiki/analysis/foo.md` is analysis,
-  // not a hit on the broader `tech/` ancestor.
-  const lower = ('/' + filePath).toLowerCase();
-  if (lower.includes('/writing/')) return 'writing';
-  if (lower.includes('/wiki/analysis/')) return 'analysis';
-  if (lower.includes('/wiki/guides/') || lower.includes('/wiki/guide/')) return 'guide';
-  if (lower.includes('/wiki/hardware/')) return 'hardware';
-  if (lower.includes('/wiki/architecture/')) return 'architecture';
-  if (lower.includes('/wiki/concepts/') || lower.includes('/wiki/concept/')) return 'concept';
-  if (lower.includes('/people/') || lower.includes('/person/')) return 'person';
-  if (lower.includes('/companies/') || lower.includes('/company/')) return 'company';
-  if (lower.includes('/deals/') || lower.includes('/deal/')) return 'deal';
-  if (lower.includes('/yc/')) return 'yc';
-  if (lower.includes('/civic/')) return 'civic';
-  if (lower.includes('/projects/') || lower.includes('/project/')) return 'project';
-  if (lower.includes('/sources/') || lower.includes('/source/')) return 'source';
-  if (lower.includes('/media/')) return 'media';
-  // BrainBench v1 amara-life-v1 corpus directories. One-slash slug convention
-  // means source paths look like `emails/em-0001.md`, `slack/sl-0037.md`, etc.
-  if (lower.includes('/emails/') || lower.includes('/email/')) return 'email';
-  if (lower.includes('/slack/')) return 'slack';
-  if (lower.includes('/cal/') || lower.includes('/calendar/')) return 'calendar-event';
-  if (lower.includes('/notes/') || lower.includes('/note/')) return 'note';
-  if (lower.includes('/meetings/') || lower.includes('/meeting/')) return 'meeting';
-  return 'concept';
+  return inferPageTypeFromPath(filePath);
 }
 
 function inferTitle(filePath?: string): string {

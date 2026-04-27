@@ -14,6 +14,12 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+import {
+  buildEntityDirRegexFragment,
+  FRONTMATTER_RELATIONSHIP_MAP,
+  type FrontmatterLinkFieldMapping,
+  type RelationshipType,
+} from './entity-taxonomy.ts';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -44,7 +50,7 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
  *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
  *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_PATTERN = buildEntityDirRegexFragment();
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
@@ -259,7 +265,7 @@ export interface LinkCandidate {
   /** Target page slug (no .md, no ../). */
   targetSlug: string;
   /** Inferred relationship type. */
-  linkType: string;
+  linkType: RelationshipType;
   /** Surrounding text (up to ~80 chars) used for inference + storage. */
   context: string;
   /**
@@ -477,7 +483,7 @@ const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|fro
  * lists portfolio companies without repeating the investment verb each time
  * ("Her current board seats reflect her portfolio: [Co A], [Co B], [Co C]").
  */
-export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string): string {
+export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string): RelationshipType {
   if (pageType === 'media') {
     return 'mentions';
   }
@@ -527,25 +533,7 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
 // MULTI-DIR HINTS: investors can be companies, funds, or people. The
 // resolver tries each hint in order and takes the first match.
 
-export interface FrontmatterFieldMapping {
-  /** Field name(s). Multiple entries are aliases (e.g. company + companies). */
-  fields: string[];
-  /**
-   * Only applies when page.type matches. Omitted = any page type. String
-   * (not PageType) because some page types like 'meeting' exist in the
-   * pages table without being in the TypeScript PageType enum.
-   */
-  pageType?: string;
-  /** Edge link_type. */
-  type: string;
-  /** 'outgoing' = page→target. 'incoming' = target→page (subject of verb = from). */
-  direction: 'outgoing' | 'incoming';
-  /**
-   * Target directory hints for slug resolution. Single string or ordered
-   * array; resolver tries each. E.g. investors → ['companies', 'funds', 'people'].
-   */
-  dirHint: string | string[];
-}
+export type FrontmatterFieldMapping = FrontmatterLinkFieldMapping;
 
 /**
  * Canonical field → (type, direction, dir-hint) map. Consulted by
@@ -555,27 +543,7 @@ export interface FrontmatterFieldMapping {
  * different pageType filters coexist cleanly (vs an object-literal which
  * would last-write-wins on key collision).
  */
-export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
-  // Person pages → companies
-  { fields: ['company', 'companies'], pageType: 'person', type: 'works_at', direction: 'outgoing', dirHint: 'companies' },
-  { fields: ['founded'], pageType: 'person', type: 'founded', direction: 'outgoing', dirHint: 'companies' },
-  // Company pages (incoming relationships — subject of the verb lives elsewhere)
-  { fields: ['key_people'], pageType: 'company', type: 'works_at', direction: 'incoming', dirHint: 'people' },
-  { fields: ['partner'], pageType: 'company', type: 'yc_partner', direction: 'incoming', dirHint: 'people' },
-  { fields: ['investors'], pageType: 'company', type: 'invested_in', direction: 'incoming',
-    dirHint: ['companies', 'funds', 'people'] },
-  // Deal pages (all incoming — deals are the object)
-  { fields: ['investors'], pageType: 'deal', type: 'invested_in', direction: 'incoming',
-    dirHint: ['companies', 'funds', 'people'] },
-  { fields: ['lead'], pageType: 'deal', type: 'led_round', direction: 'incoming',
-    dirHint: ['companies', 'funds', 'people'] },
-  // Meeting pages
-  { fields: ['attendees'], pageType: 'meeting', type: 'attended', direction: 'incoming', dirHint: 'people' },
-  // Any page type
-  { fields: ['sources'], type: 'discussed_in', direction: 'incoming', dirHint: ['source', 'media'] },
-  { fields: ['source'], type: 'source', direction: 'outgoing', dirHint: '' /* already slug-shaped */ },
-  { fields: ['related', 'see_also'], type: 'related_to', direction: 'outgoing', dirHint: '' },
-];
+export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [...FRONTMATTER_RELATIONSHIP_MAP];
 
 // ─── Slug resolver ──────────────────────────────────────────────
 

@@ -20,6 +20,7 @@ import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
+import { HEALTH_ENTITY_PAGE_TYPES } from './entity-taxonomy.ts';
 
 // CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
 // executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
@@ -1234,6 +1235,7 @@ export class PostgresEngine implements BrainEngine {
 
   async getHealth(): Promise<BrainHealth> {
     const sql = this.sql;
+    const entityTypes = [...HEALTH_ENTITY_PAGE_TYPES];
     // Bug 11 doc-drift fix — orphan_pages means "islanded" (no inbound AND
     // no outbound links), aligning both engines with the user-facing
     // definition. The type comment previously said "no inbound" but the
@@ -1242,7 +1244,7 @@ export class PostgresEngine implements BrainEngine {
     // is working as intended, not an orphan.
     const [h] = await sql`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug FROM pages WHERE type IN ${sql(entityTypes)}
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
@@ -1273,7 +1275,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type IN ${sql(entityTypes)}
       ORDER BY link_count DESC
       LIMIT 5
     `;

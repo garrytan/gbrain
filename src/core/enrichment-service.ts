@@ -15,6 +15,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
+import { enrichmentSlugPrefixForEntityType } from './entity-taxonomy.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,7 +53,7 @@ export function slugifyEntity(name: string, type: 'person' | 'company'): string 
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
-  const prefix = type === 'person' ? 'people' : 'companies';
+  const prefix = enrichmentSlugPrefixForEntityType(type);
   return `${prefix}/${slug}`;
 }
 

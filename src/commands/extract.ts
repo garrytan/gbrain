@@ -26,6 +26,7 @@ import {
   extractFrontmatterLinks,
   type UnresolvedFrontmatterRef,
 } from '../core/link-extraction.ts';
+import { inferFsLinkTypeByTopDirs } from '../core/entity-taxonomy.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
@@ -161,16 +162,7 @@ export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<st
  * migration normalizes any legacy rows on existing brains.
  */
 function inferTypeByDir(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
-  const from = fromDir.split('/')[0];
-  const to = toDir.split('/')[0];
-  if (from === 'people' && to === 'companies') {
-    if (Array.isArray(frontmatter?.founded)) return 'founded';
-    return 'works_at';
-  }
-  if (from === 'people' && to === 'deals') return 'involved_in';
-  if (from === 'deals' && to === 'companies') return 'deal_for';
-  if (from === 'meetings' && to === 'people') return 'attended';
-  return 'mentions';
+  return inferFsLinkTypeByTopDirs(fromDir, toDir, frontmatter);
 }
 
 /** Parse frontmatter using the project's gray-matter-based parser */
