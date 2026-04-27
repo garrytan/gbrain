@@ -22,7 +22,8 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import type { SearchResult } from '../types.ts';
+import type { SearchResult, SearchOpts } from '../types.ts';
+import { buildSourceVisibilityClause } from './source-visibility.ts';
 
 const MAX_WALK_DEPTH = 2;
 const NEIGHBOR_CAP_PER_HOP = 50;
@@ -32,7 +33,7 @@ export interface TwoPassOpts {
   walkDepth?: number;
   /** When set, find chunks whose symbol_name_qualified matches; add to anchor set. */
   nearSymbol?: string;
-  /** Filter expansion to one source. When unset, crosses sources. */
+  /** Filter expansion by search visibility: concrete source, __all__, or default federated set. */
   sourceId?: string;
 }
 
@@ -77,9 +78,15 @@ export async function expandAnchors(
   // additional anchors. Best-effort — if none found, fall through.
   if (opts.nearSymbol) {
     try {
+      const params: unknown[] = [opts.nearSymbol];
+      const sourceVisibilityClause = buildSourceVisibilityClause(opts as SearchOpts, params, 'p');
       const rows = await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50`,
-        [opts.nearSymbol],
+        `SELECT cc.id
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE cc.symbol_name_qualified = $1 ${sourceVisibilityClause}
+          LIMIT 50`,
+        params,
       );
       const baseScore = anchors.length > 0 ? anchors[0]!.score : 1.0;
       for (const r of rows) {
@@ -128,9 +135,15 @@ export async function expandAnchors(
       // symbol_name_qualified matches. One batch query per frontier node.
       if (unresolvedTargets.length > 0) {
         try {
+          const params: unknown[] = [unresolvedTargets];
+          const sourceVisibilityClause = buildSourceVisibilityClause(opts as SearchOpts, params, 'p');
           const resolved = await engine.executeRaw<{ id: number }>(
-            `SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
-            [unresolvedTargets],
+            `SELECT cc.id
+               FROM content_chunks cc
+               JOIN pages p ON p.id = cc.page_id
+              WHERE cc.symbol_name_qualified = ANY($1::text[]) ${sourceVisibilityClause}
+              LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
+            params,
           );
           for (const r of resolved) directChunkIds.push(r.id);
         } catch {
@@ -161,8 +174,11 @@ export async function expandAnchors(
 export async function hydrateChunks(
   engine: BrainEngine,
   chunkIds: number[],
+  opts: Pick<SearchOpts, 'sourceId'> = {},
 ): Promise<SearchResult[]> {
   if (chunkIds.length === 0) return [];
+  const params: unknown[] = [chunkIds];
+  const sourceVisibilityClause = buildSourceVisibilityClause(opts as SearchOpts, params, 'p');
   const rows = await engine.executeRaw<{
     slug: string; page_id: number; title: string; type: string; source_id: string;
     chunk_id: number; chunk_index: number; chunk_text: string; chunk_source: string;
@@ -171,8 +187,8 @@ export async function hydrateChunks(
             cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
-       WHERE cc.id = ANY($1::int[])`,
-    [chunkIds],
+       WHERE cc.id = ANY($1::int[]) ${sourceVisibilityClause}`,
+    params,
   );
   return rows.map((r) => ({
     slug: r.slug,

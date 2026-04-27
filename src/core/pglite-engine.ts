@@ -22,6 +22,7 @@ import type {
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
+import { buildSourceVisibilityClause } from './search/source-visibility.ts';
 
 type PGLiteDB = PGlite;
 
@@ -258,6 +259,7 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
     }
+    const sourceVisibilityClause = buildSourceVisibilityClause(opts, params, 'p');
 
     const { rows } = await this.db.query(
       `WITH ranked AS (
@@ -270,7 +272,7 @@ export class PGLiteEngine implements BrainEngine {
            ) THEN true ELSE false END AS stale
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
-         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause}
+         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${sourceVisibilityClause} ${hardExcludeClause}
          ORDER BY score DESC
          LIMIT $2
        ),
@@ -326,6 +328,7 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
     }
+    const sourceVisibilityClause = buildSourceVisibilityClause(opts, params, 'p');
 
     const { rows } = await this.db.query(
       `SELECT
@@ -337,7 +340,7 @@ export class PGLiteEngine implements BrainEngine {
          ) THEN true ELSE false END AS stale
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
-       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause}
+       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${sourceVisibilityClause} ${hardExcludeClause}
        ORDER BY score DESC
        LIMIT $2 OFFSET $3`,
       params
@@ -382,6 +385,7 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
     }
+    const sourceVisibilityClause = buildSourceVisibilityClause(opts, params, 'p');
 
     const { rows } = await this.db.query(
       `WITH hnsw_candidates AS (
@@ -391,7 +395,7 @@ export class PGLiteEngine implements BrainEngine {
            1 - (cc.embedding <=> $1::vector) AS raw_score
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
-         WHERE cc.embedding IS NOT NULL ${detailFilter}${extraFilter} ${hardExcludeClause}
+         WHERE cc.embedding IS NOT NULL ${detailFilter}${extraFilter} ${sourceVisibilityClause} ${hardExcludeClause}
          ORDER BY cc.embedding <=> $1::vector
          LIMIT $2
        )

@@ -561,11 +561,15 @@ const search: Operation = {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    source: { type: 'string', description: 'Filter to a specific source id. Defaults to federated sources only.' },
+    all_sources: { type: 'boolean', description: 'Include isolated/non-federated sources too.' },
   },
   handler: async (ctx, p) => {
+    const sourceId = p.all_sources === true ? '__all__' : ((p.source as string) || undefined);
     const results = await ctx.engine.searchKeyword(p.query as string, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
+      sourceId,
     });
     return dedupResults(results);
   },
@@ -587,10 +591,13 @@ const query: Operation = {
     // v0.20.0 Cathedral II Layer 7 (A2) / Layer 10 C3: two-pass structural expansion.
     near_symbol: { type: 'string', description: 'Anchor retrieval at this qualified symbol name (e.g., BrainEngine.searchKeyword). Enables A2 two-pass.' },
     walk_depth: { type: 'number', description: 'Structural walk depth 1-2. Default 0 (off). Expands anchors through code_edges with 1/(1+hop) decay.' },
+    source: { type: 'string', description: 'Filter to a specific source id. Defaults to federated sources only.' },
+    all_sources: { type: 'boolean', description: 'Include isolated/non-federated sources too.' },
   },
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
     const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
+    const sourceId = p.all_sources === true ? '__all__' : ((p.source as string) || undefined);
     return hybridSearch(ctx.engine, p.query as string, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
@@ -601,6 +608,7 @@ const query: Operation = {
       symbolKind: (p.symbol_kind as string) || undefined,
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
+      sourceId,
     });
   },
   cliHints: { name: 'query', positional: ['query'] },

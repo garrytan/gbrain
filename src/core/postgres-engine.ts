@@ -20,6 +20,7 @@ import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
+import { buildSourceVisibilityClause } from './search/source-visibility.ts';
 
 // CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
 // executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
@@ -294,6 +295,7 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    const sourceVisibilityClause = buildSourceVisibilityClause(opts, params, 'p');
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -315,6 +317,7 @@ export class PostgresEngine implements BrainEngine {
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${languageClause}
           ${symbolKindClause}
+          ${sourceVisibilityClause}
           ${hardExcludeClause}
         ORDER BY score DESC
         LIMIT ${innerLimitParam}
@@ -395,6 +398,7 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    const sourceVisibilityClause = buildSourceVisibilityClause(opts, params, 'p');
     params.push(limit);
     const limitParam = `$${params.length}`;
     params.push(offset);
@@ -414,6 +418,7 @@ export class PostgresEngine implements BrainEngine {
         ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
         ${languageClause}
         ${symbolKindClause}
+        ${sourceVisibilityClause}
         ${hardExcludeClause}
       ORDER BY score DESC
       LIMIT ${limitParam}
@@ -478,6 +483,7 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    const sourceVisibilityClause = buildSourceVisibilityClause(opts, params, 'p');
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -499,6 +505,7 @@ export class PostgresEngine implements BrainEngine {
           ${excludeSlugsClause}
           ${languageClause}
           ${symbolKindClause}
+          ${sourceVisibilityClause}
           ${hardExcludeClause}
         ORDER BY cc.embedding <=> $1::vector
         LIMIT ${innerLimitParam}
