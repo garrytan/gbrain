@@ -9,6 +9,7 @@ import {
   RELATIONSHIP,
   FRONTMATTER_RELATIONSHIP_MAP,
   PAGE_TYPE_INFERENCE_RULES,
+  DIR_PATTERN,
   buildEntityDirRegexFragment,
   isEntityReferenceDir,
   isBacklinkEntityDir,
@@ -86,8 +87,9 @@ describe('entity-taxonomy (contract)', () => {
     ]);
   });
 
-  test('buildEntityDirRegexFragment generates the same pattern used by link extraction', () => {
-    expect(buildEntityDirRegexFragment()).toBe(
+  test('DIR_PATTERN is the canonical alternation exported for link extraction', () => {
+    expect(DIR_PATTERN).toBe(buildEntityDirRegexFragment());
+    expect(DIR_PATTERN).toBe(
       '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)',
     );
   });

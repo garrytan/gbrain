@@ -122,6 +122,14 @@ export function buildEntityDirRegexFragment(dirs: readonly string[] = ENTITY_REF
   return `(?:${dirs.join('|')})`;
 }
 
+/**
+ * Canonical directory alternation fragment for markdown link + wikilink extractors.
+ *
+ * Single source of truth lives in {@link ENTITY_REFERENCE_DIRS} / {@link buildEntityDirRegexFragment}.
+ * Ordering is part of the contract for alternation semantics; change the array, not this string literal.
+ */
+export const DIR_PATTERN = buildEntityDirRegexFragment();
+
 const ENTITY_DIR_SET = new Set<string>(ENTITY_REFERENCE_DIRS as readonly string[]);
 const BACKLINK_DIR_SET = new Set<string>(BACKLINK_ENTITY_DIRS as readonly string[]);
 const HEALTH_TYPE_SET = new Set<string>(HEALTH_ENTITY_PAGE_TYPES as readonly string[]);

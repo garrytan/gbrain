@@ -15,7 +15,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
 import {
-  buildEntityDirRegexFragment,
+  DIR_PATTERN,
   FRONTMATTER_RELATIONSHIP_MAP,
   type FrontmatterLinkFieldMapping,
   type RelationshipType,
@@ -44,13 +44,9 @@ export interface EntityRef {
 export type LinkResolutionType = 'qualified' | 'unqualified';
 
 /**
- * Directory prefix whitelist. These are the top-level slug dirs the extractor
- * recognizes as entity references. Upstream canonical + our extensions:
- *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
- *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
- *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
+ * Entity directory alternation for extractors comes from `entity-taxonomy.ts`
+ * (`ENTITY_REFERENCE_DIRS` → `DIR_PATTERN`). Do not hand-maintain a parallel list here.
  */
-const DIR_PATTERN = buildEntityDirRegexFragment();
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
