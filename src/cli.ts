@@ -19,7 +19,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'dream', 'check-resolvable']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'http-serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'dream', 'check-resolvable']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -411,6 +411,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runServe(engine);
         return; // serve doesn't disconnect
       }
+      case 'http-serve': {
+        const { runHttpServe } = await import('./commands/http-serve.ts');
+        await runHttpServe(engine, args);
+        return; // http-serve doesn't disconnect
+      }
       case 'call': {
         const { runCall } = await import('./commands/call.ts');
         await runCall(engine, args);
@@ -605,6 +610,7 @@ ADMIN
   autopilot [--repo] [--interval N]  Self-maintaining brain daemon
   config [show|get|set] <key> [val]  Brain config
   serve                              MCP server (stdio)
+  http-serve [--port=4242] [--host=0.0.0.0]  HTTP search API for LLMs
   call <tool> '<json>'               Raw tool invocation
   version                            Version info
   --tools-json                       Tool discovery (JSON)
