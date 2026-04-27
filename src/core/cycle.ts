@@ -206,6 +206,54 @@ interface LockHandle {
 }
 
 /**
+ * Probe whether a process is alive on the local machine.
+ *
+ * `process.kill(pid, 0)` is the canonical Unix liveness check: signal 0 is a
+ * no-op send, so the call only validates the target. Three outcomes:
+ *   - returns true  → ESRCH on no-such-process; safe to take over.
+ *   - returns false → process responded; live holder.
+ *   - EPERM         → process exists but we lack permission; treat as alive
+ *                     (the lock holder is real even if we can't signal it).
+ */
+export function isPidAliveLocal(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: unknown) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code === 'ESRCH') return false;
+    if (err.code === 'EPERM') return true;
+    throw err;
+  }
+}
+
+/**
+ * Decide whether the current process should take over an existing lock.
+ *
+ * Pure function — exported so callers (Postgres + PGLite branches) and tests
+ * share the same logic. The TTL-expired branch is handled at the SQL layer
+ * via UPSERT; this helper only fires when the row is still inside its TTL
+ * but the holder might be a zombie (SIGKILL / OOM / power-off).
+ *
+ *   - holder is on a different host: cannot probe; trust the TTL.
+ *   - holder is on the same host and dead (ESRCH): acquire.
+ *   - holder is on the same host and alive (or EPERM): skip.
+ *
+ * Bug 477 follow-up: prior implementation only checked TTL, so a stale
+ * lock could block 30 minutes of cycles after a SIGKILL.
+ */
+export function decideLockAcquisition(opts: {
+  holderPid: number;
+  holderHost: string;
+  currentHost: string;
+  isPidAlive?: (pid: number) => boolean;
+}): 'acquire' | 'skip' {
+  if (opts.holderHost !== opts.currentHost) return 'skip';
+  const probe = opts.isPidAlive ?? isPidAliveLocal;
+  return probe(opts.holderPid) ? 'skip' : 'acquire';
+}
+
+/**
  * Acquire the Postgres-backed cycle lock.
  * Returns a LockHandle on success, or null if another live holder has it.
  *
@@ -225,7 +273,8 @@ async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | nu
 
   if (engine.kind === 'postgres' && maybePG.sql) {
     const sql = maybePG.sql as any;
-    const rows: Array<{ id: string }> = await sql`
+    // Step 1: standard UPSERT — succeeds for fresh row OR TTL-expired holder.
+    let rows: Array<{ id: string }> = await sql`
       INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
       VALUES (${CYCLE_LOCK_ID}, ${pid}, ${host}, NOW(), NOW() + INTERVAL '30 minutes')
       ON CONFLICT (id) DO UPDATE
@@ -236,7 +285,36 @@ async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | nu
         WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
       RETURNING id
     `;
-    if (rows.length === 0) return null; // live holder
+    if (rows.length === 0) {
+      // Step 2: TTL not expired. Probe the holder PID — if it's a zombie on
+      // this host, force-take the lock instead of waiting 30 minutes.
+      const current: Array<{ holder_pid: number; holder_host: string }> = await sql`
+        SELECT holder_pid, holder_host
+        FROM gbrain_cycle_locks
+        WHERE id = ${CYCLE_LOCK_ID}
+      `;
+      if (current.length === 0) return null; // raced; safe to skip
+      const decision = decideLockAcquisition({
+        holderPid: current[0].holder_pid,
+        holderHost: current[0].holder_host,
+        currentHost: host,
+      });
+      if (decision === 'skip') return null; // live holder
+      // Step 3: force-update only the row we observed; if another acquirer
+      // beat us between SELECT and UPDATE the WHERE clause won't match.
+      rows = await sql`
+        UPDATE gbrain_cycle_locks
+          SET holder_pid = ${pid},
+              holder_host = ${host},
+              acquired_at = NOW(),
+              ttl_expires_at = NOW() + INTERVAL '30 minutes'
+          WHERE id = ${CYCLE_LOCK_ID}
+            AND holder_pid = ${current[0].holder_pid}
+            AND holder_host = ${current[0].holder_host}
+          RETURNING id
+      `;
+      if (rows.length === 0) return null; // someone else took it
+    }
     return {
       refresh: async () => {
         await sql`
@@ -259,7 +337,7 @@ async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | nu
     // file lock. Callers always hold the file lock first, so this UPSERT
     // is race-free against other processes.
     const db = maybePGLite.db;
-    const { rows } = await db.query(
+    let result = await db.query(
       `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
        VALUES ($1, $2, $3, NOW(), NOW() + INTERVAL '30 minutes')
        ON CONFLICT (id) DO UPDATE
@@ -271,7 +349,34 @@ async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | nu
        RETURNING id`,
       [CYCLE_LOCK_ID, pid, host],
     );
-    if (rows.length === 0) return null;
+    if (result.rows.length === 0) {
+      // PGLite holder is also single-host; same PID-probe path as Postgres.
+      const probe = await db.query(
+        `SELECT holder_pid, holder_host FROM gbrain_cycle_locks WHERE id = $1`,
+        [CYCLE_LOCK_ID],
+      );
+      if (probe.rows.length === 0) return null;
+      const cur = probe.rows[0] as { holder_pid: number; holder_host: string };
+      const decision = decideLockAcquisition({
+        holderPid: cur.holder_pid,
+        holderHost: cur.holder_host,
+        currentHost: host,
+      });
+      if (decision === 'skip') return null;
+      result = await db.query(
+        `UPDATE gbrain_cycle_locks
+            SET holder_pid = $2,
+                holder_host = $3,
+                acquired_at = NOW(),
+                ttl_expires_at = NOW() + INTERVAL '30 minutes'
+          WHERE id = $1
+            AND holder_pid = $4
+            AND holder_host = $5
+          RETURNING id`,
+        [CYCLE_LOCK_ID, pid, host, cur.holder_pid, cur.holder_host],
+      );
+      if (result.rows.length === 0) return null;
+    }
     return {
       refresh: async () => {
         await db.query(
