@@ -244,13 +244,20 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // declare the instance stale after 10 minutes (Codex C).
     try { utimesSync(lockPath, new Date(), new Date()); } catch { /* best-effort */ }
 
-    // DB health check (reconnect if needed)
+    // DB health check (reconnect if needed). Uses the engine's saved-config
+    // reconnect path (v0.22.1 #406) which preserves _savedConfig. The previous
+    // shape — `(engine as any).connect?.()` — called connect() with no args,
+    // which wiped _savedConfig and threw on `config.poolSize`. Falls through
+    // cleanly on engines that don't implement reconnect() (e.g. PGLite).
     try {
       await engine.getConfig('version');
     } catch {
       try {
-        await engine.disconnect();
-        await (engine as any).connect?.();
+        if (typeof (engine as any).reconnect === 'function') {
+          await (engine as any).reconnect();
+        } else {
+          await engine.disconnect();
+        }
       } catch (e) { logError('reconnect', e); }
     }
 
