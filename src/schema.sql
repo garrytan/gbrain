@@ -409,7 +409,13 @@ ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
 
 -- Function to rebuild search_vector for a page
-CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger AS $$
+-- SET search_path prevents Supabase linter WARN about mutable search_path.
+-- Fully qualified references (public.timeline_entries) are also safe but
+-- SET search_path is the minimal change that satisfies the security check.
+CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_catalog
+AS $$
 DECLARE
   timeline_text TEXT;
 BEGIN
@@ -428,7 +434,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 DROP TRIGGER IF EXISTS trg_pages_search_vector ON pages;
 CREATE TRIGGER trg_pages_search_vector
