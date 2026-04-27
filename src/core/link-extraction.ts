@@ -18,7 +18,7 @@ import {
   DIR_PATTERN,
   FRONTMATTER_RELATIONSHIP_MAP,
   type FrontmatterLinkFieldMapping,
-  type RelationshipType,
+  type InferredLinkType,
 } from './entity-taxonomy.ts';
 
 // ─── Entity references ──────────────────────────────────────────
@@ -45,7 +45,8 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
 
 /**
  * Entity directory alternation for extractors comes from `entity-taxonomy.ts`
- * (`ENTITY_REFERENCE_DIRS` → `DIR_PATTERN`). Do not hand-maintain a parallel list here.
+ * (`ENTITY_REFERENCE_DIRS` → `buildEntityDirRegexFragment` → `DIR_PATTERN`, longest-token-first).
+ * Do not hand-maintain a parallel list here.
  */
 
 /**
@@ -261,7 +262,7 @@ export interface LinkCandidate {
   /** Target page slug (no .md, no ../). */
   targetSlug: string;
   /** Inferred relationship type. */
-  linkType: RelationshipType;
+  linkType: InferredLinkType;
   /** Surrounding text (up to ~80 chars) used for inference + storage. */
   context: string;
   /**
@@ -479,7 +480,7 @@ const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|fro
  * lists portfolio companies without repeating the investment verb each time
  * ("Her current board seats reflect her portfolio: [Co A], [Co B], [Co C]").
  */
-export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string): RelationshipType {
+export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string): InferredLinkType {
   if (pageType === 'media') {
     return 'mentions';
   }

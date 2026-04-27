@@ -344,11 +344,19 @@ export interface BrainHealth {
    * DELETEs can produce dangling references.
    */
   dead_links: number;
-  /** Fraction of entity pages (person/company) with >= 1 inbound link. */
+  /**
+   * Fraction of entity pages (`pages.type` in {@link import('./entity-taxonomy.ts').HEALTH_ENTITY_PAGE_TYPES})
+   * with >= 1 inbound link. Denominator scope matches {@link import('./entity-taxonomy.ts').HealthEntityPageType}.
+   */
   link_coverage: number;
-  /** Fraction of entity pages (person/company) with >= 1 structured timeline entry. */
+  /**
+   * Fraction of those same entity pages with >= 1 structured timeline entry (same denominator as
+   * `link_coverage`).
+   */
   timeline_coverage: number;
-  /** Top 5 entities by total link count (in + out). */
+  /**
+   * Top 5 entity pages (`pages.type` as above) by total link count (in + out).
+   */
   most_connected: Array<{ slug: string; link_count: number }>;
   /**
    * Per-component contribution to brain_score. Sum equals brain_score by

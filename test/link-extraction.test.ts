@@ -12,30 +12,16 @@ import {
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { ENTITY_REFERENCE_DIRS, RELATIONSHIP } from '../src/core/entity-taxonomy.ts';
 
 // ─── extractEntityRefs ─────────────────────────────────────────
 
 describe('extractEntityRefs', () => {
-  test.each([
-    'people',
-    'companies',
-    'meetings',
-    'concepts',
-    'deal',
-    'civic',
-    'project',
-    'projects',
-    'source',
-    'media',
-    'yc',
-    'tech',
-    'finance',
-    'personal',
-    'openclaw',
-    'entities',
-  ])('extracts refs for whitelisted dir %s', (dir) => {
-    const refs = extractEntityRefs(`[Sample](${dir}/example)`);
-    expect(refs).toEqual([{ name: 'Sample', slug: `${dir}/example`, dir }]);
+  test('extracts refs for every ENTITY_REFERENCE_DIRS entry', () => {
+    for (const dir of ENTITY_REFERENCE_DIRS) {
+      const refs = extractEntityRefs(`[Sample](${dir}/example)`);
+      expect(refs).toEqual([{ name: 'Sample', slug: `${dir}/example`, dir }]);
+    }
   });
 
   test('extracts filesystem-relative refs ([Name](../people/slug.md))', () => {
@@ -89,12 +75,6 @@ describe('extractEntityRefs', () => {
     expect(refs).toEqual([]);
   });
 
-  test('extracts meeting refs', () => {
-    const refs = extractEntityRefs('See [Standup](meetings/2026-01-15-standup).');
-    expect(refs.length).toBe(1);
-    expect(refs[0].dir).toBe('meetings');
-  });
-
   test('ignores markdown links inside fenced code blocks', () => {
     const refs = extractEntityRefs([
       '```md',
@@ -143,7 +123,7 @@ describe('extractPageLinks', () => {
     expect(candidates.length).toBeGreaterThan(0);
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
     expect(aliceLink).toBeDefined();
-    expect(aliceLink!.linkType).toBe('works_at');
+    expect(aliceLink!.linkType).toBe(RELATIONSHIP.WORKS_AT);
   });
 
   test('dedups multiple mentions of same entity (within-page dedup)', async () => {
@@ -157,7 +137,7 @@ describe('extractPageLinks', () => {
     const { candidates } = await extractPageLinks(
       'docs/x', 'Some content.', { source: 'meetings/2026-01-15' }, 'person', allowAllResolver,
     );
-    const sourceLink = candidates.find(c => c.linkType === 'source');
+    const sourceLink = candidates.find(c => c.linkType === RELATIONSHIP.SOURCE);
     expect(sourceLink).toBeDefined();
     expect(sourceLink!.targetSlug).toBe('meetings/2026-01-15');
   });
@@ -183,7 +163,7 @@ describe('extractPageLinks', () => {
       {}, 'meeting' as never, nullResolver,
     );
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
-    expect(aliceLink!.linkType).toBe('attended');
+    expect(aliceLink!.linkType).toBe(RELATIONSHIP.ATTENDED);
   });
 });
 
@@ -571,7 +551,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(candidates[0]).toMatchObject({
       fromSlug: 'people/pedro',
       targetSlug: 'companies/stripe',
-      linkType: 'works_at',
+      linkType: RELATIONSHIP.WORKS_AT,
       linkSource: 'frontmatter',
       originSlug: 'people/pedro',
       originField: 'company',
@@ -585,7 +565,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(candidates).toHaveLength(2);
     for (const c of candidates) {
       expect(c.fromSlug).toBe('people/pedro');
-      expect(c.linkType).toBe('works_at');
+      expect(c.linkType).toBe(RELATIONSHIP.WORKS_AT);
       expect(c.targetSlug).toMatch(/^companies\/(stripe|brex)$/);
     }
   });
@@ -598,7 +578,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(candidates[0]).toMatchObject({
       fromSlug: 'people/pedro',
       targetSlug: 'companies/stripe',
-      linkType: 'founded',
+      linkType: RELATIONSHIP.FOUNDED,
     });
   });
 
@@ -611,7 +591,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
       // Incoming: from = resolved person, to = the page being written.
       expect(c.targetSlug).toBe('companies/stripe');
       expect(c.fromSlug).toMatch(/^people\/(pedro|garry)$/);
-      expect(c.linkType).toBe('works_at');
+      expect(c.linkType).toBe(RELATIONSHIP.WORKS_AT);
       expect(c.originSlug).toBe('companies/stripe');
       expect(c.originField).toBe('key_people');
     }
@@ -624,7 +604,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(candidates).toHaveLength(2);
     for (const c of candidates) {
       expect(c.targetSlug).toBe('meetings/2026-04-03');
-      expect(c.linkType).toBe('attended');
+      expect(c.linkType).toBe(RELATIONSHIP.ATTENDED);
       expect(c.fromSlug).toMatch(/^people\/(pedro|garry)$/);
     }
   });
@@ -637,7 +617,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(candidates).toHaveLength(2);
     for (const c of candidates) {
       expect(c.targetSlug).toBe('deal/riveter-seed');
-      expect(c.linkType).toBe('invested_in');
+      expect(c.linkType).toBe(RELATIONSHIP.INVESTED_IN);
       expect(c.fromSlug).toMatch(/^companies\/(sequoia|benchmark)$/);
     }
   });
@@ -650,7 +630,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     for (const c of candidates) {
       expect(c.targetSlug).toBe('companies/stripe');
       expect(c.fromSlug).toMatch(/^companies\/(sequoia|benchmark)$/);
-      expect(c.linkType).toBe('invested_in');
+      expect(c.linkType).toBe(RELATIONSHIP.INVESTED_IN);
     }
   });
 
@@ -662,7 +642,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(candidates[0]).toMatchObject({
       fromSlug: 'people/pedro',
       targetSlug: 'companies/stripe',
-      linkType: 'yc_partner',
+      linkType: RELATIONSHIP.YC_PARTNER,
     });
   });
 
@@ -674,7 +654,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(candidates[0]).toMatchObject({
       fromSlug: 'companies/lead-fund',
       targetSlug: 'deal/riveter-seed',
-      linkType: 'led_round',
+      linkType: RELATIONSHIP.LED_ROUND,
     });
   });
 
@@ -682,7 +662,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     const { candidates } = await extractFrontmatterLinks(
       'people/pedro', 'person' as never, { source: 'meetings/2026-04-03' }, resolver,
     );
-    const src = candidates.find(c => c.linkType === 'source');
+    const src = candidates.find(c => c.linkType === RELATIONSHIP.SOURCE);
     expect(src).toBeDefined();
     expect(src!.fromSlug).toBe('people/pedro');
     expect(src!.targetSlug).toBe('meetings/2026-04-03');
@@ -693,7 +673,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
       'concepts/ai', 'concept' as never, { sources: ['Market Report', 'Podcast Episode'] }, resolver,
     );
     expect(candidates).toHaveLength(2);
-    expect(candidates.map(c => c.linkType)).toEqual(['discussed_in', 'discussed_in']);
+    expect(candidates.map(c => c.linkType)).toEqual([RELATIONSHIP.DISCUSSED_IN, RELATIONSHIP.DISCUSSED_IN]);
     expect(candidates.map(c => c.fromSlug).sort()).toEqual(['media/podcast-episode', 'source/market-report']);
     expect(candidates.every(c => c.targetSlug === 'concepts/ai')).toBe(true);
   });
@@ -706,14 +686,14 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     expect(first.candidates[0]).toMatchObject({
       fromSlug: 'concepts/ai',
       targetSlug: 'concepts/ml',
-      linkType: 'related_to',
+      linkType: RELATIONSHIP.RELATED_TO,
     });
 
     const second = await extractFrontmatterLinks(
       'concepts/ai', 'concept' as never, { see_also: ['concepts/ml'] }, resolver,
     );
     expect(second.candidates).toHaveLength(1);
-    expect(second.candidates[0]?.linkType).toBe('related_to');
+    expect(second.candidates[0]?.linkType).toBe(RELATIONSHIP.RELATED_TO);
   });
 
   test('unresolvable name goes to unresolved list, not candidates', async () => {
@@ -892,14 +872,14 @@ describe('FRONTMATTER_LINK_MAP integrity', () => {
     expect(m).toBeDefined();
     expect(m!.direction).toBe('incoming');
     expect(m!.pageType).toBe('company');
-    expect(m!.type).toBe('works_at');
+    expect(m!.type).toBe(RELATIONSHIP.WORKS_AT);
   });
 
   test('attendees maps to INCOMING attended on meeting page', () => {
     const m = FRONTMATTER_LINK_MAP.find(m => m.fields.includes('attendees'));
     expect(m!.direction).toBe('incoming');
     expect(m!.pageType).toBe('meeting');
-    expect(m!.type).toBe('attended');
+    expect(m!.type).toBe(RELATIONSHIP.ATTENDED);
   });
 
   test('investors uses multi-dir hint (companies/funds/people)', () => {

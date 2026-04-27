@@ -4,6 +4,12 @@
  * Shared library callable from any ingest pathway. Handles the brain CRUD
  * for entity enrichment: check brain, create/update page, backlink, timeline.
  *
+ * **Which entity kinds:** {@link EnrichmentRequest.entityType} is only `person` | `company`
+ * ({@link EnrichmentRequestType}), matching {@link import('./entity-taxonomy.ts').ENTITY_TYPES}
+ * rows where {@link import('./entity-taxonomy.ts').EntityCustomBehavior.enrichment} is true.
+ * Other PageTypes stay human- or workflow-owned; see that flag’s doc for why most taxonomy rows
+ * keep `enrichment: false`.
+ *
  * External API enrichment (people data APIs, professional networks) remains
  * agent-orchestrated per the enrich skill file. This library handles the
  * brain-side operations.
@@ -15,7 +21,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
-import { enrichmentSlugPrefixForEntityType } from './entity-taxonomy.ts';
+import { enrichmentSlugPrefixForEntityType, type EnrichmentRequestType } from './entity-taxonomy.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,7 +29,7 @@ import { enrichmentSlugPrefixForEntityType } from './entity-taxonomy.ts';
 
 export interface EnrichmentRequest {
   entityName: string;
-  entityType: 'person' | 'company';
+  entityType: EnrichmentRequestType;
   context: string;
   sourceSlug: string;
   tier?: 1 | 2 | 3;
@@ -46,7 +52,7 @@ export interface EnrichmentResult {
 // ---------------------------------------------------------------------------
 
 /** Convert an entity name to a URL-safe slug. */
-export function slugifyEntity(name: string, type: 'person' | 'company'): string {
+export function slugifyEntity(name: string, type: EnrichmentRequestType): string {
   const slug = name
     .toLowerCase()
     .replace(/['']/g, '')
@@ -58,7 +64,7 @@ export function slugifyEntity(name: string, type: 'person' | 'company'): string 
 }
 
 /** Get the brain page path for an entity. */
-export function entityPagePath(name: string, type: 'person' | 'company'): string {
+export function entityPagePath(name: string, type: EnrichmentRequestType): string {
   return slugifyEntity(name, type);
 }
 

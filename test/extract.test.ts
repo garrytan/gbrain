@@ -5,6 +5,7 @@ import {
   extractTimelineFromContent,
   walkMarkdownFiles,
 } from '../src/commands/extract.ts';
+import { RELATIONSHIP } from '../src/core/entity-taxonomy.ts';
 
 describe('extractMarkdownLinks', () => {
   it('extracts relative markdown links', () => {
@@ -55,7 +56,7 @@ describe('extractLinksFromFile', () => {
     // Resolver needs companies/brex to exist in allSlugs to emit the edge.
     const allSlugs = new Set(['people/test', 'companies/brex']);
     const links = await extractLinksFromFile(content, 'people/test.md', allSlugs, { includeFrontmatter: true });
-    const companyLinks = links.filter(l => l.link_type === 'works_at');
+    const companyLinks = links.filter(l => l.link_type === RELATIONSHIP.WORKS_AT);
     expect(companyLinks.length).toBeGreaterThanOrEqual(1);
     expect(companyLinks[0].from_slug).toBe('people/test');
     expect(companyLinks[0].to_slug).toBe('companies/brex');
@@ -67,7 +68,7 @@ describe('extractLinksFromFile', () => {
     const content = '---\ninvestors: [yc, threshold]\ntype: deal\n---\nContent.';
     const allSlugs = new Set(['deals/seed', 'companies/yc', 'companies/threshold']);
     const links = await extractLinksFromFile(content, 'deals/seed.md', allSlugs, { includeFrontmatter: true });
-    const investorLinks = links.filter(l => l.link_type === 'invested_in');
+    const investorLinks = links.filter(l => l.link_type === RELATIONSHIP.INVESTED_IN);
     expect(investorLinks).toHaveLength(2);
     // Incoming: from = resolved investor, to = deal page.
     for (const l of investorLinks) {
@@ -89,28 +90,28 @@ describe('extractLinksFromFile', () => {
     const content = 'See [Brex](../companies/brex.md).';
     const allSlugs = new Set(['people/pedro', 'companies/brex']);
     const links = await extractLinksFromFile(content, 'people/pedro.md', allSlugs);
-    expect(links[0].link_type).toBe('works_at');
+    expect(links[0].link_type).toBe(RELATIONSHIP.WORKS_AT);
   });
 
   it('infers deal_for type for deals -> companies', async () => {
     const content = 'See [Brex](../companies/brex.md).';
     const allSlugs = new Set(['deals/seed', 'companies/brex']);
     const links = await extractLinksFromFile(content, 'deals/seed.md', allSlugs);
-    expect(links[0].link_type).toBe('deal_for');
+    expect(links[0].link_type).toBe(RELATIONSHIP.DEAL_FOR);
   });
 
   it('infers involved_in type for people -> deals', async () => {
     const content = 'See [Seed](../deals/seed.md).';
     const allSlugs = new Set(['people/alice', 'deals/seed']);
     const links = await extractLinksFromFile(content, 'people/alice.md', allSlugs);
-    expect(links[0].link_type).toBe('involved_in');
+    expect(links[0].link_type).toBe(RELATIONSHIP.INVOLVED_IN);
   });
 
   it('infers attended type for meetings -> people', async () => {
     const content = 'Met [Alice](../people/alice.md).';
     const allSlugs = new Set(['meetings/board-sync', 'people/alice']);
     const links = await extractLinksFromFile(content, 'meetings/board-sync.md', allSlugs);
-    expect(links[0].link_type).toBe('attended');
+    expect(links[0].link_type).toBe(RELATIONSHIP.ATTENDED);
   });
 
   it('people -> companies infers founded when frontmatter.founded is an array', async () => {
@@ -124,7 +125,7 @@ describe('extractLinksFromFile', () => {
     ].join('\n');
     const allSlugs = new Set(['people/alice', 'companies/brex']);
     const links = await extractLinksFromFile(content, 'people/alice.md', allSlugs);
-    expect(links[0].link_type).toBe('founded');
+    expect(links[0].link_type).toBe(RELATIONSHIP.FOUNDED);
   });
 });
 

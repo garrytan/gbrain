@@ -26,7 +26,12 @@ import {
   extractFrontmatterLinks,
   type UnresolvedFrontmatterRef,
 } from '../core/link-extraction.ts';
-import { inferFsLinkTypeByTopDirs } from '../core/entity-taxonomy.ts';
+import {
+  asStoredLinkType,
+  inferFsLinkTypeByTopDirs,
+  inferPageTypeFromPath,
+  type InferredLinkType,
+} from '../core/entity-taxonomy.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
@@ -161,7 +166,7 @@ export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<st
  * 'mentions', 'attendee' → 'attended'). Diverged historically; the v0_13_0
  * migration normalizes any legacy rows on existing brains.
  */
-function inferTypeByDir(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): string {
+function inferTypeByDir(fromDir: string, toDir: string, frontmatter?: Record<string, unknown>): InferredLinkType {
   return inferFsLinkTypeByTopDirs(fromDir, toDir, frontmatter);
 }
 
@@ -198,7 +203,7 @@ export async function extractLinksFromFile(
     if (resolved !== null) {
       links.push({
         from_slug: slug, to_slug: resolved,
-        link_type: inferTypeByDir(fileDir, dirname(resolved), fm),
+        link_type: asStoredLinkType(inferTypeByDir(fileDir, dirname(resolved), fm)),
         context: `markdown link: [${name}]`,
       });
     }
@@ -225,19 +230,14 @@ export async function extractLinksFromFile(
       },
     };
     // Guess the page type from its directory for field-map filtering.
-    const topDir = slug.split('/')[0];
-    const pageType = topDir === 'people' ? 'person'
-      : topDir === 'companies' ? 'company'
-      : topDir === 'deals' || topDir === 'deal' ? 'deal'
-      : topDir === 'meetings' ? 'meeting'
-      : 'concept';
+    const pageType = inferPageTypeFromPath(relPath);
     const fm = parseFrontmatterFromContent(content, relPath);
     const fmLinks = await extractFrontmatterLinks(slug, pageType as never, fm, fsResolver);
     for (const c of fmLinks.candidates) {
       links.push({
         from_slug: c.fromSlug ?? slug,
         to_slug: c.targetSlug,
-        link_type: c.linkType,
+        link_type: asStoredLinkType(c.linkType),
         context: c.context,
       });
     }
@@ -789,7 +789,7 @@ async function extractLinksFromDB(
         batch.push({
           from_slug: fromSlug,
           to_slug: c.targetSlug,
-          link_type: c.linkType,
+          link_type: asStoredLinkType(c.linkType),
           context: c.context,
           link_source: c.linkSource,
           origin_slug: c.originSlug,

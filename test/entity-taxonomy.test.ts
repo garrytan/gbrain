@@ -1,13 +1,16 @@
 import { describe, test, expect } from 'bun:test';
 
-import type { PageType } from '../src/core/types.ts';
+import type { PageType, Link, GraphPath } from '../src/core/types.ts';
+import type { LinkBatchInput } from '../src/core/engine.ts';
 
 import {
+  ENTITY_TYPES,
   ENTITY_REFERENCE_DIRS,
   BACKLINK_ENTITY_DIRS,
   HEALTH_ENTITY_PAGE_TYPES,
   RELATIONSHIP,
   FRONTMATTER_RELATIONSHIP_MAP,
+  FS_LINK_TYPE_RULES,
   PAGE_TYPE_INFERENCE_RULES,
   DIR_PATTERN,
   buildEntityDirRegexFragment,
@@ -16,9 +19,159 @@ import {
   isHealthEntityPageType,
   inferPageTypeFromPath,
   inferFsLinkTypeByTopDirs,
+  asStoredLinkType,
+  type InferredLinkType,
 } from '../src/core/entity-taxonomy.ts';
 
 describe('entity-taxonomy (contract)', () => {
+  test('ENTITY_TYPES is a readable fillable form for entity behavior decisions', () => {
+    expect(ENTITY_TYPES.map(e => ({
+      key: e.key,
+      singular: e.singular,
+      plural: e.plural,
+      dirs: e.referenceDirs,
+      pageType: 'pageType' in e ? e.pageType : undefined,
+      customBehavior: e.customBehavior,
+      enrichment: 'enrichment' in e ? e.enrichment : undefined,
+    }))).toEqual([
+      {
+        key: 'person',
+        singular: 'person',
+        plural: 'people',
+        dirs: ['people'],
+        pageType: 'person',
+        customBehavior: { backlinks: true, healthMetrics: true, enrichment: true },
+        enrichment: { requestType: 'person' },
+      },
+      {
+        key: 'company',
+        singular: 'company',
+        plural: 'companies',
+        dirs: ['companies'],
+        pageType: 'company',
+        customBehavior: { backlinks: true, healthMetrics: true, enrichment: true },
+        enrichment: { requestType: 'company' },
+      },
+      {
+        key: 'meeting',
+        singular: 'meeting',
+        plural: 'meetings',
+        dirs: ['meetings'],
+        pageType: 'meeting',
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'concept',
+        singular: 'concept',
+        plural: 'concepts',
+        dirs: ['concepts'],
+        pageType: 'concept',
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'deal',
+        singular: 'deal',
+        plural: 'deals',
+        dirs: ['deal'],
+        pageType: 'deal',
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'civic',
+        singular: 'civic',
+        plural: 'civic',
+        dirs: ['civic'],
+        pageType: 'civic',
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'project',
+        singular: 'project',
+        plural: 'projects',
+        dirs: ['project', 'projects'],
+        pageType: 'project',
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'source',
+        singular: 'source',
+        plural: 'sources',
+        dirs: ['source'],
+        pageType: 'source',
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'media',
+        singular: 'media item',
+        plural: 'media',
+        dirs: ['media'],
+        pageType: 'media',
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'yc',
+        singular: 'yc page',
+        plural: 'yc pages',
+        dirs: ['yc'],
+        pageType: 'yc',
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'tech',
+        singular: 'tech page',
+        plural: 'tech pages',
+        dirs: ['tech'],
+        pageType: undefined,
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'finance',
+        singular: 'finance page',
+        plural: 'finance pages',
+        dirs: ['finance'],
+        pageType: undefined,
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'personal',
+        singular: 'personal page',
+        plural: 'personal pages',
+        dirs: ['personal'],
+        pageType: undefined,
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'openclaw',
+        singular: 'openclaw page',
+        plural: 'openclaw pages',
+        dirs: ['openclaw'],
+        pageType: undefined,
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'legacy-entity',
+        singular: 'legacy entity',
+        plural: 'legacy entities',
+        dirs: ['entities'],
+        pageType: undefined,
+        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        enrichment: undefined,
+      },
+    ]);
+  });
+
   test('ENTITY_REFERENCE_DIRS is exact and ordered', () => {
     expect(ENTITY_REFERENCE_DIRS).toEqual([
       'people',
@@ -90,7 +243,7 @@ describe('entity-taxonomy (contract)', () => {
   test('DIR_PATTERN is the canonical alternation exported for link extraction', () => {
     expect(DIR_PATTERN).toBe(buildEntityDirRegexFragment());
     expect(DIR_PATTERN).toBe(
-      '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)',
+      '(?:companies|concepts|entities|meetings|openclaw|personal|projects|finance|project|people|source|civic|media|deal|tech|yc)',
     );
   });
 
@@ -151,12 +304,60 @@ describe('entity-taxonomy (contract)', () => {
   });
 
   test('inferFsLinkTypeByTopDirs matches extract.ts inferTypeByDir behavior', () => {
+    expect(FS_LINK_TYPE_RULES).toEqual([
+      { fromDir: 'people', toDir: 'companies', type: 'founded', whenFrontmatterArrayField: 'founded' },
+      { fromDir: 'people', toDir: 'companies', type: 'works_at' },
+      { fromDir: 'people', toDir: 'deals', type: 'involved_in' },
+      { fromDir: 'deals', toDir: 'companies', type: 'deal_for' },
+      { fromDir: 'meetings', toDir: 'people', type: 'attended' },
+    ]);
     expect(inferFsLinkTypeByTopDirs('people', 'companies', {})).toBe('works_at');
     expect(inferFsLinkTypeByTopDirs('people', 'companies', { founded: ['acme'] })).toBe('founded');
     expect(inferFsLinkTypeByTopDirs('people', 'deals', {})).toBe('involved_in');
     expect(inferFsLinkTypeByTopDirs('deals', 'companies', {})).toBe('deal_for');
     expect(inferFsLinkTypeByTopDirs('meetings', 'people', {})).toBe('attended');
     expect(inferFsLinkTypeByTopDirs('concepts', 'people', {})).toBe('mentions');
+  });
+
+  test('InferredLinkType is derived from RELATIONSHIP values', () => {
+    for (const v of Object.values(RELATIONSHIP)) {
+      const label: InferredLinkType = v;
+      expect(label).toBe(v);
+    }
+  });
+
+  test('asStoredLinkType bridges inferred labels to stored strings (identity)', () => {
+    expect(asStoredLinkType(RELATIONSHIP.WORKS_AT)).toBe('works_at');
+    const inferred: InferredLinkType = RELATIONSHIP.MENTIONS;
+    const stored: string = inferred;
+    expect(stored).toBe('mentions');
+  });
+
+  test('DB/API link surfaces remain arbitrary strings, not InferredLinkType-only', () => {
+    const link = {
+      from_slug: 'a',
+      to_slug: 'b',
+      link_type: 'legacy_custom_type',
+      context: '',
+    } as Link;
+    const fromRow: string = link.link_type;
+    expect(fromRow).toBe('legacy_custom_type');
+
+    const path = {
+      from_slug: 'x',
+      to_slug: 'y',
+      link_type: 'filter_value',
+      context: '',
+      depth: 1,
+    } as GraphPath;
+    expect(path.link_type).toBe('filter_value');
+
+    const batch: LinkBatchInput = {
+      from_slug: 'p',
+      to_slug: 'q',
+      link_type: 'arbitrary_api_input',
+    };
+    expect(batch.link_type).toBe('arbitrary_api_input');
   });
 });
 
