@@ -80,6 +80,14 @@ gbrain frontmatter validate <path> --json
 
 Exit code 0 = clean; 1 = errors found. Use this in CI pipelines or pre-commit hooks.
 
+Important CLI scope pitfall: `gbrain frontmatter validate` is a **single-target** command. Do not pass several file paths in one invocation and assume all were checked; validate a directory, or loop over files one at a time and record each result. In one reviewer run, a multi-path invocation only reported the final target, so the safe pattern is:
+
+```bash
+for f in changed-a.md changed-b.md; do
+  gbrain frontmatter validate "$f" --json
+done
+```
+
 ### Phase 3: Fix
 
 When issues are found:
