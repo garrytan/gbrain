@@ -79,6 +79,59 @@ export function shouldSpawnAutopilotWorker(args: string[]): boolean {
   return !args.includes('--no-worker');
 }
 
+/**
+ * Test if a PID is alive by sending signal 0 (probe, no delivery).
+ * Returns true if the process exists and we have permission to signal it.
+ * EPERM (exists but other user) is treated as alive — we can't prove it
+ * isn't a running autopilot, so be conservative and don't take over.
+ */
+export function isPidAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: unknown) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Decide whether the current process should acquire the autopilot lock.
+ *
+ * Pre-fix behavior was mtime-only: any lock file with mtime < 10 min
+ * blocked acquisition, even if the holder PID was already dead. SIGKILL,
+ * OOM, and power loss all leave a fresh-mtime lock with a dead PID, which
+ * defeated launchd's KeepAlive respawn — every revival saw the stale
+ * lock, exited silently, and the cycle repeated until the lock aged out
+ * (up to 10 min of brain downtime).
+ *
+ * Post-fix: probe the holder PID. Dead PID + any mtime → take over.
+ * Alive PID + fresh mtime → another instance really is running, exit.
+ * Alive PID + old mtime → stuck instance, take over (the original mtime
+ * fallback, preserved as a backstop).
+ *
+ * Pure function for testability — accepts now() so tests can fix time.
+ */
+export function decideLockAcquisition(
+  lockPath: string,
+  currentPid: number,
+  nowMs: number,
+): { action: 'acquire' } | { action: 'exit'; holderPid: number } | { action: 'takeover'; reason: string } {
+  const fs = require('fs');
+  if (!fs.existsSync(lockPath)) return { action: 'acquire' };
+
+  const stat = fs.statSync(lockPath);
+  const ageMinutes = (nowMs - stat.mtimeMs) / 60000;
+  const raw = (() => { try { return fs.readFileSync(lockPath, 'utf-8').trim(); } catch { return ''; } })();
+  const holderPid = parseInt(raw, 10);
+  const sameProcess = Number.isFinite(holderPid) && holderPid === currentPid;
+  const alive = !sameProcess && isPidAlive(holderPid);
+
+  if (alive && ageMinutes < 10) return { action: 'exit', holderPid };
+  const reason = !alive ? `dead pid ${raw || '<empty>'}` : `>10 min old`;
+  return { action: 'takeover', reason };
+}
+
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
@@ -117,18 +170,17 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
-  // Lock file to prevent concurrent instances (#14)
+  // Lock file to prevent concurrent instances (#14).
   const lockPath = join(process.env.HOME || '', '.gbrain', 'autopilot.lock');
   try {
     mkdirSync(join(process.env.HOME || '', '.gbrain'), { recursive: true });
-    if (existsSync(lockPath)) {
-      const stat = require('fs').statSync(lockPath);
-      const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
-      if (ageMinutes < 10) {
-        console.error('Another autopilot instance is running (lock file is fresh). Exiting.');
-        process.exit(0);
-      }
-      console.log('Stale lock file found (>10 min). Taking over.');
+    const decision = decideLockAcquisition(lockPath, process.pid, Date.now());
+    if (decision.action === 'exit') {
+      console.error(`Another autopilot instance is running (pid ${decision.holderPid}). Exiting.`);
+      process.exit(0);
+    }
+    if (decision.action === 'takeover') {
+      console.log(`Stale lock file found (${decision.reason}). Taking over.`);
     }
     writeFileSync(lockPath, String(process.pid));
   } catch { /* best-effort */ }
