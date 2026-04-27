@@ -155,8 +155,29 @@ def _parse_extraction(raw_text: str) -> dict:
         return {"skip_reason": f"parse_error: {e}", "decisions":[], "insights":[], "entities":[], "concepts":[]}
 
 # ─── Auth mode 1: claude CLI (subscription) ──────────────
+def _find_claude_bin() -> str | None:
+    """Find `claude` CLI even if it's not in the spawned hook's PATH.
+    Stop hooks inherit a minimal PATH from Claude Code's launcher, so
+    shutil.which alone misses Homebrew/bun/local installs. We probe the
+    common locations explicitly."""
+    candidates = []
+    via_path = shutil.which("claude")
+    if via_path:
+        candidates.append(via_path)
+    candidates.extend([
+        "/opt/homebrew/bin/claude",      # macOS Apple Silicon Homebrew
+        "/usr/local/bin/claude",          # macOS Intel Homebrew + Linux
+        str(HOME / ".bun/bin/claude"),    # bun install -g
+        str(HOME / ".local/bin/claude"),  # pip --user
+        "/snap/bin/claude",               # Linux snap
+    ])
+    for c in candidates:
+        if c and Path(c).is_file() and os.access(c, os.X_OK):
+            return c
+    return None
+
 def call_via_claude_cli(transcript: str) -> dict:
-    claude_bin = shutil.which("claude")
+    claude_bin = _find_claude_bin()
     if not claude_bin:
         return {"skip_reason": "claude_cli_not_found"}
     full_prompt = f"{SYSTEM_PROMPT}\n\n{EXTRACTION_PROMPT}{transcript}\n=== TRANSCRIPT END ===\n\nNow output the JSON object:"
