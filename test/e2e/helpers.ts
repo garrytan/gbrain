@@ -57,21 +57,30 @@ export function hasDatabase(): boolean {
   return !!DATABASE_URL;
 }
 
+// Track whether the DB is already connected. bun test 1.2.x runs every
+// describe's `beforeAll` serially before any test starts, then runs every
+// `afterAll` likewise. With a global singleton engine + db connection,
+// describe N+1's setupDB() races describe N's afterAll() — the last
+// `teardownDB()` closes the connection that earlier describe tests still
+// need. Making setupDB idempotent (no disconnect/reconnect when already
+// pointed at the right URL) and teardownDB conditional fixes this without
+// requiring every test file to manage its own engine.
+let dbInitialized = false;
+
 /**
  * Connect to DB, run schema init, truncate all tables.
- * Call in beforeAll() of each test file.
+ * Idempotent — safe to call from multiple describe.beforeAll hooks.
  */
 export async function setupDB(): Promise<PostgresEngine> {
   if (!DATABASE_URL) {
     throw new Error('DATABASE_URL not set. Copy .env.testing.example to .env.testing and configure it.');
   }
 
-  // Disconnect any prior connection (clean slate)
-  await db.disconnect();
-
-  // Connect fresh
-  await db.connect({ database_url: DATABASE_URL });
-  await db.initSchema();
+  if (!dbInitialized) {
+    await db.connect({ database_url: DATABASE_URL });
+    await db.initSchema();
+    dbInitialized = true;
+  }
 
   // Truncate all data tables (preserves schema + extensions)
   const conn = db.getConnection();
@@ -85,20 +94,23 @@ export async function setupDB(): Promise<PostgresEngine> {
     ON CONFLICT (key) DO NOTHING
   `);
 
-  engine = new PostgresEngine();
-  await engine.connect({ database_url: DATABASE_URL });
+  if (!engine) {
+    engine = new PostgresEngine();
+    await engine.connect({ database_url: DATABASE_URL });
+  }
   return engine;
 }
 
 /**
- * Disconnect from DB. Call in afterAll() of each test file.
+ * No-op while the test process is alive. Real teardown happens via
+ * Bun's process exit — postgres.js closes pooled connections then.
+ *
+ * Why: bun test runs every describe's afterAll AFTER every describe's
+ * test body finishes. Closing the shared engine between describes would
+ * leave later describes unable to query (see comment on dbInitialized).
  */
 export async function teardownDB(): Promise<void> {
-  if (engine) {
-    await engine.disconnect();
-    engine = null;
-  }
-  await db.disconnect();
+  // Intentionally empty — connection closes on process exit.
 }
 
 /**
