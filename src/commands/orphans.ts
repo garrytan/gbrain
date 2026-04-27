@@ -50,6 +50,17 @@ const DENY_PREFIXES = [
   'scripts/',
   'templates/',
   'openclaw/config/',
+  // Raw-import leaf pages — same exclusion list used by `getHealth`'s
+  // orphan denominator in pglite-engine.ts and postgres-engine.ts.
+  // These are external data dumps (per-thread email, per-event calendar
+  // invites, contacts dumps, transcript JSONs); having no inbound
+  // wikilinks is the expected steady state, not a content problem.
+  // Aligning the two surfaces means `gbrain orphans` and brain_score
+  // agree on which pages count as orphan signal vs. background noise.
+  'daily/email/',
+  'daily/calendar/',
+  'sources/contacts/',
+  'sources/meetings/',
 ];
 
 /** First slug segments where no inbound links is expected */
