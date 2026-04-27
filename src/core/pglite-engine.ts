@@ -20,6 +20,7 @@ import type {
   EngineConfig,
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { getEmbeddingModel } from './embedding-config.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
@@ -474,7 +475,7 @@ export class PGLiteEngine implements BrainEngine {
         rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now(), $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
         params.push(
           pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-          embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+          embeddingStr, chunk.model || getEmbeddingModel(), chunk.token_count || null,
           chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
           chunk.start_line ?? null, chunk.end_line ?? null,
           parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
@@ -483,7 +484,7 @@ export class PGLiteEngine implements BrainEngine {
         rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
         params.push(
           pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-          chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+          chunk.model || getEmbeddingModel(), chunk.token_count || null,
           chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
           chunk.start_line ?? null, chunk.end_line ?? null,
           parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,

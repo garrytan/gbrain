@@ -2,15 +2,23 @@
  * Embedding Service
  * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * Default: OpenAI text-embedding-3-large at 1536 dimensions.
+ * Configuration is read from `embedding-config.ts` (env-driven).
+ *
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
 
 import OpenAI from 'openai';
+import {
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  getEmbeddingModel,
+  getEmbeddingDimensions,
+  getEmbeddingBaseUrl,
+  getEmbeddingApiKey,
+} from './embedding-config.ts';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
@@ -21,9 +29,24 @@ let client: OpenAI | null = null;
 
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI();
+    const apiKey = getEmbeddingApiKey();
+    const baseURL = getEmbeddingBaseUrl();
+    client = new OpenAI({
+      ...(apiKey ? { apiKey } : {}),
+      ...(baseURL ? { baseURL } : {}),
+    });
   }
   return client;
+}
+
+/**
+ * Reset the cached OpenAI client. Tests use this when they re-stub env vars
+ * mid-suite; production code never needs to call it.
+ *
+ * @internal
+ */
+export function resetEmbeddingClient(): void {
+  client = null;
 }
 
 export async function embed(text: string): Promise<Float32Array> {
@@ -60,12 +83,14 @@ export async function embedBatch(
 }
 
 async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
+  const model = getEmbeddingModel();
+  const dimensions = getEmbeddingDimensions();
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const response = await getClient().embeddings.create({
-        model: MODEL,
+        model,
         input: texts,
-        dimensions: DIMENSIONS,
+        dimensions,
       });
 
       // Sort by index to maintain order
@@ -104,7 +129,22 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
+/**
+ * Backward-compat exports. Module-load constants are kept around because
+ * other call sites import them directly; they reflect the env at first import.
+ * Prefer the function form for code that may run after env mutation (tests).
+ */
+export const EMBEDDING_MODEL = getEmbeddingModel();
+export const EMBEDDING_DIMENSIONS = getEmbeddingDimensions();
+
+// Re-export config helpers so callers that already import from `embedding.ts`
+// keep working. New code should import from `embedding-config.ts` directly.
+export {
+  getEmbeddingModel,
+  getEmbeddingDimensions,
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_EMBEDDING_DIMENSIONS,
+};
 
 /**
  * v0.20.0 Cathedral II Layer 8 (D1): USD cost per 1k tokens for
@@ -115,6 +155,10 @@ export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
  * Value: $0.00013 / 1k tokens as of 2026. Update when OpenAI changes
  * pricing. Single source of truth — every cost-preview surface reads
  * this constant, so a pricing change is a one-line edit.
+ *
+ * Only meaningful when the configured model is OpenAI's; for self-hosted
+ * embedders the cost is zero by definition. Callers can branch on
+ * `getEmbeddingModel()` if they need a strict zero for non-OpenAI runs.
  */
 export const EMBEDDING_COST_PER_1K_TOKENS = 0.00013;
 

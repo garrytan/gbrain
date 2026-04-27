@@ -80,6 +80,35 @@ describe('migrate v20 — sources_table_additive', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// v30 — dynamic_embedding_dimensions
+// ─────────────────────────────────────────────────────────────────
+describe('migrate v30 — dynamic_embedding_dimensions', () => {
+  const v30 = MIGRATIONS.find(m => m.version === 30);
+
+  test('v30 exists with the expected name', () => {
+    expect(v30).toBeDefined();
+    expect(v30!.name).toBe('dynamic_embedding_dimensions');
+  });
+
+  test('v30 is handler-only (no SQL string)', () => {
+    expect(v30!.sql).toBe('');
+    expect(typeof v30!.handler).toBe('function');
+  });
+
+  test('LATEST_VERSION includes v30', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(30);
+  });
+
+  test('v30 is the latest by default', () => {
+    // Defensive: v30 should remain the tail of the chain unless a later
+    // migration explicitly supersedes it. If a v31 lands, this assertion
+    // tells the contributor to think about ordering with the dim re-type.
+    const versions = MIGRATIONS.map(m => m.version);
+    expect(Math.max(...versions)).toBe(LATEST_VERSION);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
 // v0.18.0 — v17 pages_source_id_composite_unique (Step 2, Lane B)
 // ─────────────────────────────────────────────────────────────────
 describe('migrate v21 — pages_source_id_composite_unique', () => {
