@@ -1,0 +1,9 @@
+.git
+node_modules
+bin/
+test/
+docs/
+*.test.ts
+.env*
+*.local
+.gbrain/

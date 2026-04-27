@@ -1,0 +1,14 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Required env vars (set in Railway dashboard):
+#   DATABASE_URL      — Railway Postgres connection string (auto-injected)
+#   GBRAIN_HTTP_TOKEN — Bearer token for API auth
+#   OPENAI_API_KEY    — For vector search / embedding (optional if pre-embedded)
