@@ -42,8 +42,18 @@ MAX_TRANSCRIPT_CHARS = 30000
 MODEL = "claude-haiku-4-5-20251001"
 
 # ─── Logging ─────────────────────────────────────────────
+def _ensure_secure(path: Path) -> None:
+    """Ensure file exists with 600 perms (owner-only)."""
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    try:
+        path.chmod(0o600)
+    except Exception:
+        pass
+
 def log(msg: str) -> None:
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_secure(LOG_FILE)
     with LOG_FILE.open("a") as f:
         f.write(f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} {msg}\n")
 
@@ -136,12 +146,12 @@ def _extract_first_json_object(text: str) -> str | None:
 def _parse_extraction(raw_text: str) -> dict:
     json_text = _extract_first_json_object(raw_text)
     if not json_text:
-        (HOME / ".gbrain/hooks/last-extraction-raw.txt").write_text(raw_text[:8000])
+        _p = HOME / ".gbrain/hooks/last-extraction-raw.txt"; _ensure_secure(_p); _p.write_text(raw_text[:8000]); _p.chmod(0o600)
         return {"skip_reason": "no_json_object_found", "decisions":[], "insights":[], "entities":[], "concepts":[]}
     try:
         return json.loads(json_text)
     except Exception as e:
-        (HOME / ".gbrain/hooks/last-extraction-raw.txt").write_text(raw_text[:8000])
+        _p = HOME / ".gbrain/hooks/last-extraction-raw.txt"; _ensure_secure(_p); _p.write_text(raw_text[:8000]); _p.chmod(0o600)
         return {"skip_reason": f"parse_error: {e}", "decisions":[], "insights":[], "entities":[], "concepts":[]}
 
 # ─── Auth mode 1: claude CLI (subscription) ──────────────
@@ -203,7 +213,7 @@ WRITE_FAILURES_LOG = HOME / ".gbrain/hooks/write-failures.log"
 
 def _log_write_failure(slug: str, reason: str, stderr: str = "") -> None:
     try:
-        WRITE_FAILURES_LOG.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_secure(WRITE_FAILURES_LOG)
         with WRITE_FAILURES_LOG.open("a") as f:
             ts = datetime.now(timezone.utc).isoformat(timespec='seconds')
             f.write(f"{ts}\tslug={slug}\treason={reason}\tstderr={stderr[:300]}\n")
@@ -312,7 +322,7 @@ def main():
         log(f"[empty:{session_id}] auth={auth_mode} Haiku returned 0 signals ({extraction_secs}s, transcript {bytes_size}b) — likely operational session, or prompt needs tuning. Saved raw to last-extraction-raw.txt")
         # Save the raw signals we got for debugging
         try:
-            (HOME / ".gbrain/hooks/last-extraction-raw.txt").write_text(json.dumps(signals, indent=2)[:8000])
+            _p = HOME / ".gbrain/hooks/last-extraction-raw.txt"; _ensure_secure(_p); _p.write_text(json.dumps(signals, indent=2)[:8000]); _p.chmod(0o600)
         except Exception:
             pass
         return 0
