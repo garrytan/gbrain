@@ -86,12 +86,17 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
-
+    // Run migrations FIRST so that upgrade brains (pre-v0.13) get the new
+    // columns (link_source, origin_page_id, origin_field) before the schema
+    // SQL tries to CREATE INDEX on them.  On a fresh brain the migration
+    // chain is a no-op (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS everywhere)
+    // and the subsequent schema SQL creates the full schema cleanly.
     const { applied } = await runMigrations(this);
     if (applied > 0) {
       console.log(`  ${applied} migration(s) applied`);
     }
+
+    await this.db.exec(PGLITE_SCHEMA_SQL);
   }
 
   async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {

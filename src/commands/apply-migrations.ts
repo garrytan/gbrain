@@ -17,6 +17,73 @@ import { loadConfig } from '../core/config.ts';
 import { loadCompletedMigrations, appendCompletedMigration, type CompletedMigrationEntry } from '../core/preferences.ts';
 import { migrations, compareVersions, type Migration, type OrchestratorOpts } from './migrations/index.ts';
 
+/** Advisory lock ID for apply-migrations mutual-exclusion gate. Must match the unlock in releasePostgresGate. */
+const GATE_LOCK_ID = 43n;
+
+/**
+ * Acquire the apply-migrations gate lock.
+ *
+ * Uses pg_try_advisory_lock so we never block — if another apply-migrations
+ * is already running, we exit immediately with a clear message. This solves
+ * the postinstall race where `bun install`'s postinstall hook and a foreground
+ * `gbrain apply-migrations --yes` race on DB advisory locks and one gets
+ * SIGTERM'd mid-orchestrator (leaving the migration wedge at 'partial').
+ *
+ * Returns true if acquired, false if another runner holds the lock.
+ */
+async function acquirePostgresGate(): Promise<boolean> {
+  try {
+    const { createEngine } = await import('../core/engine-factory.ts');
+    const { toEngineConfig } = await import('../core/config.ts');
+    const config = loadConfig();
+    if (!config) return false; // no brain configured — nothing to migrate
+    const engine = await createEngine(toEngineConfig(config));
+    await engine.connect(toEngineConfig(config));
+    try {
+      // Use the engine's transaction API which is engine-agnostic.
+      // For postgres-engine, tx.executeRaw maps to the raw conn.
+      // For pglite-engine, advisory locks are also supported.
+      const acquired = await engine.transaction(async (tx) => {
+        // pg_try_advisory_lock returns true if acquired, false if contended.
+        // The lock is released automatically at transaction end.
+        const result = await tx.executeRaw(
+          `SELECT pg_try_advisory_lock(${GATE_LOCK_ID}) AS acquired`,
+          [],
+        );
+        return (result as unknown as { acquired: boolean }[])[0]?.acquired ?? false;
+      });
+      return acquired;
+    } finally {
+      await engine.disconnect();
+    }
+  } catch {
+    // Non-postgres engine (pglite with no postgres fallback) — skip the gate.
+    // PGLite is single-process so concurrent apply-migrations is not possible.
+    return true;
+  }
+}
+
+/** Release the gate lock by explicitly unlocking (called after ledger check). */
+async function releasePostgresGate(): Promise<void> {
+  try {
+    const { createEngine } = await import('../core/engine-factory.ts');
+    const { toEngineConfig } = await import('../core/config.ts');
+    const config = loadConfig();
+    if (!config) return;
+    const engine = await createEngine(toEngineConfig(config));
+    await engine.connect(toEngineConfig(config));
+    try {
+      await engine.transaction(async (tx) => {
+        await tx.executeRaw(`SELECT pg_advisory_unlock(${GATE_LOCK_ID})`, []);
+      });
+    } finally {
+      await engine.disconnect();
+    }
+  } catch {
+    // Best-effort unlock; the lock auto-releases on engine disconnect anyway.
+  }
+}
+
 /** Bug 3 — max consecutive partials before we wedge a migration. */
 const MAX_CONSECUTIVE_PARTIALS = 3;
 
@@ -251,6 +318,23 @@ function orchestratorOptsFrom(cli: ApplyMigrationsArgs): OrchestratorOpts {
 export async function runApplyMigrations(args: string[]): Promise<void> {
   const cli = parseArgs(args);
   if (cli.help) { printHelp(); return; }
+
+  // Mutual-exclusion gate: prevent postinstall/upgrade racing on DB advisory locks.
+  // pg_try_advisory_lock returns immediately (never blocks) if another runner holds the lock.
+  // PGLite engines fall through (single-process, no concurrent access possible).
+  // Also release the lock immediately since we only need the gate for the initial
+  // ledger check — orchestrators manage their own lock lifecycles internally.
+  const acquired = await acquirePostgresGate();
+  if (!acquired) {
+    console.error(
+      'Another apply-migrations is already running (DB advisory lock held).\n' +
+      'If no other process is running, the lock may be stale from a previous crash.\n' +
+      'Wait for the other process to finish, or restart the gbrain server.\n' +
+      'To override, run: gbrain apply-migrations --force-retry <version>',
+    );
+    process.exit(3);
+  }
+  await releasePostgresGate();
 
   const installed = VERSION.replace(/^v/, '').trim() || '0.0.0';
 
