@@ -20,6 +20,8 @@ import { join } from 'path';
 const LOCK_DIR_NAME = '.gbrain-lock';
 const LOCK_FILE = 'lock';
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes — embed jobs can be long
+const RETRY_DELAY_MS = 500; // Delay between acquisition attempts
+const STALE_CLEANUP_DELAY_MS = 100; // Brief delay after cleaning stale lock before retrying
 
 export interface LockHandle {
   lockDir: string;
@@ -77,20 +79,40 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
 
         // Is the locking process still alive?
         if (!isProcessAlive(lockPid)) {
-          // Stale lock — clean it up
-          try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition, try again */ }
+          // Stale lock (dead process) — remove immediately, no need to wait
+          try {
+            rmSync(lockDir, { recursive: true, force: true });
+            // Brief delay to let the filesystem settle after removal
+            await new Promise(r => setTimeout(r, STALE_CLEANUP_DELAY_MS));
+          } catch {
+            // Race condition — another process may have already cleaned it up; retry
+            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+            continue;
+          }
         } else if (Date.now() - lockTime > STALE_THRESHOLD_MS) {
-          // Lock held for too long — assume stale (e.g., process hung)
-          // Still alive but probably stuck — force remove
-          try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+          // Lock held for too long by a live process — assume hung, force remove
+          try {
+            rmSync(lockDir, { recursive: true, force: true });
+            await new Promise(r => setTimeout(r, STALE_CLEANUP_DELAY_MS));
+          } catch {
+            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+            continue;
+          }
         } else {
           // Lock is held by a live process — wait and retry
           await new Promise(r => setTimeout(r, 1000));
           continue;
         }
       } catch {
-        // Corrupt lock file — remove it
-        try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+        // Corrupt or unreadable lock file — attempt removal
+        try {
+          rmSync(lockDir, { recursive: true, force: true });
+          await new Promise(r => setTimeout(r, STALE_CLEANUP_DELAY_MS));
+        } catch {
+          // Could not remove — retry after delay
+          await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+          continue;
+        }
       }
     }
 
@@ -107,8 +129,8 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
 
       return { lockDir, acquired: true };
     } catch (e: unknown) {
-      // mkdir failed — someone else grabbed it between our check and mkdir
-      // This is fine, we'll retry
+      // mkdir failed — someone else grabbed it between our check and mkdir, or stale removal
+      // didn't take effect yet. Either way, we'll retry.
       if (Date.now() - startTime >= timeoutMs) {
         // Timeout — report which process holds the lock
         const lockPath = join(lockDir, LOCK_FILE);
@@ -116,7 +138,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
           const lockData = JSON.parse(readFileSync(lockPath, 'utf-8'));
           throw new Error(
             `GBrain: Timed out waiting for PGLite lock. Process ${lockData.pid} has held it since ${new Date(lockData.acquired_at).toISOString()} (command: ${lockData.command}). ` +
-            `If that process is dead, remove ${lockDir} and try again.`
+            `If that process is dead, run: rm -rf ${lockDir}`
           );
         } catch (readErr) {
           if (readErr instanceof Error && readErr.message.startsWith('GBrain')) throw readErr;
@@ -126,7 +148,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
         }
       }
       // Brief wait before retry
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
     }
   }
 
