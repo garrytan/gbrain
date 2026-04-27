@@ -134,15 +134,18 @@ export interface BrainEngine {
   upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
   getChunks(slug: string): Promise<Chunk[]>;
   /**
-   * Count chunks across the entire brain where embedded_at IS NULL.
+   * Count chunks across the entire brain where embedding IS NULL.
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
    * does no further work after a single SELECT count(*) (~50 bytes wire).
+   * Predicate is `embedding IS NULL` (not `embedded_at IS NULL`) - the
+   * bulk-import path can leave embedded_at populated while embedding is
+   * NULL, so the embedding column is the truth source for "needs work".
    */
   countStaleChunks(): Promise<number>;
   /**
-   * Return every chunk where embedded_at IS NULL, with the metadata needed
+   * Return every chunk where embedding IS NULL, with the metadata needed
    * to call embedBatch + upsertChunks. The `embedding` column is omitted
-   * by design — stale rows have NULL embeddings, so shipping them wastes
+   * by design - stale rows have NULL embeddings, so shipping them wastes
    * wire bytes for no gain. Caller groups by slug, embeds, and re-upserts.
    *
    * Bounded by an internal LIMIT of 100000 to mirror listPages.
@@ -150,11 +153,14 @@ export interface BrainEngine {
   listStaleChunks(): Promise<StaleChunkRow[]>;
   deleteChunks(slug: string): Promise<void>;
   /**
-   * Returns slugs of pages that need embedding work - either they have at least
-   * one chunk with embedded_at IS NULL, OR they have no chunk rows at all (pages
-   * created via direct putPage() that haven't been chunked yet, e.g. migrate-engine
-   * or enrichment-service writes). Used by embed --stale to avoid 15K per-page
-   * probe queries on fully-embedded brains. Returns [] when nothing is pending.
+   * Returns slugs of pages that need embedding work - either they have at
+   * least one chunk with embedding IS NULL, OR they have no chunk rows at
+   * all (pages created via direct putPage() that haven't been chunked yet,
+   * e.g. migrate-engine or enrichment-service writes). Used by embed --stale
+   * to avoid 15K per-page probe queries on fully-embedded brains, and to
+   * surface zero-chunk pages to embedAllStale's worker pool. Returns [] when
+   * nothing is pending. Predicate is `embedding IS NULL` to match
+   * countStaleChunks/listStaleChunks - embedded_at can lag during bulk import.
    */
   listSlugsPendingEmbedding(): Promise<string[]>;
 
