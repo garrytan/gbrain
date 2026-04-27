@@ -44,8 +44,9 @@ export interface EntityCustomBehavior {
    *   target (cost + false positives for types that are not “entity pages” in the people/company sense).
    *
    * **Set `true` only when** maintaining symmetric citations for that dir set is a product requirement
-   * (today: `people` / `companies`). Keep independent of {@link healthMetrics} and {@link enrichment};
-   * a type can be link-checked without being in `getHealth()` entity denominators or vice versa.
+   * (today: `people` / `companies`). Keep independent of {@link healthMetrics} and top-level
+   * {@link EntityTypeDefinition.enrichment}; a type can be link-checked without being in `getHealth()`
+   * entity denominators or vice versa.
    */
   backlinks: boolean;
   /**
@@ -71,48 +72,6 @@ export interface EntityCustomBehavior {
    * changing this flag changes SQL denominators and doctor-facing numbers—treat as a behavioral contract.
    */
   healthMetrics: boolean;
-  /**
-   * Whether the **global** {@link import('./enrichment-service.ts').enrichEntity} pipeline may
-   * create or update pages of this kind (stub body, mention-based tier, timeline backlink). The
-   * service is built for a **closed** set of request kinds: {@link EnrichmentRequestType} and
-   * {@link ENRICHMENT_SLUG_PREFIX_BY_REQUEST_TYPE}; only those rows should set this to **true**
-   * and pair it with {@link EnrichmentEntityBehavior} (e.g. `requestType` on the row).
-   *
-   * **Prefer `false` when:**
-   *
-   * - Pages should come from deliberate authoring, ingest, or another skill (not “named in chat →
-   *   create thin page”). *Examples in {@link ENTITY_TYPES}:*
-   *   rows `meeting`, `concept`, `deal`, `media`, `source` usually stay **false** so meetings,
-   *   write-ups, and sources are created where the workflow already owns quality and structure.
-   * - Auto-stubs would pollute search and the graph (high volume, arbitrary titles, or types that
-   *   are namespaces rather than “entities” in the people/company sense: *e.g.* `tech`, `finance`,
-   *   `personal`, `openclaw`, `legacy-entity`).
-   * - You have not yet extended `EnrichmentRequestType`, slug prefixes, and stub content for the
-   *   new type; turning this on without wiring would let call sites compile while behavior stays
-   *   undefined or wrong.
-   *
-   * **Set `true` only when** this type is a first-class enrichment target: same lifecycle as
-   * `person` / `company` today (stub generator, tiering, optional external research in the enrich
-   * skill). Must agree with the row’s optional `enrichment` property ({@link EnrichmentEntityBehavior})
-   * and the taxonomy maps ({@link ENRICHMENT_SLUG_PREFIX_BY_REQUEST_TYPE}) above.
-   */
-  enrichment: boolean;
-}
-
-/**
- * Canonical slug prefixes for enrichment stub pages. **Single source** for enrichment request
- * kinds: {@link EnrichmentRequestType} is `keyof` this object (duplicate keys are invalid in JS/TS).
- */
-export const ENRICHMENT_SLUG_PREFIX_BY_REQUEST_TYPE = {
-  person: 'people',
-  company: 'companies',
-} as const;
-
-/** Enrichment API / `slugifyEntity` discriminator; extends automatically when you add a map entry. */
-export type EnrichmentRequestType = keyof typeof ENRICHMENT_SLUG_PREFIX_BY_REQUEST_TYPE;
-
-export interface EnrichmentEntityBehavior {
-  requestType: EnrichmentRequestType;
 }
 
 /**
@@ -122,15 +81,16 @@ export interface EnrichmentEntityBehavior {
  * target without becoming a health-metric entity, a backlink target, or an
  * enrichment-created page.
  *
- * **Custom behavior booleans vs optional `enrichment` object:**
+ * **Custom behavior booleans vs optional top-level `enrichment`:**
  *
  * - **`customBehavior.backlinks`** — Gates {@link BACKLINK_ENTITY_DIRS} / {@link isBacklinkEntityDir}
  *   (check-backlinks Iron Law targets). See {@link EntityCustomBehavior.backlinks}.
  * - **`customBehavior.healthMetrics`** — Gates {@link HEALTH_ENTITY_PAGE_TYPES} / `getHealth()` entity
  *   denominators ({@link isHealthEntityPageType}). See {@link EntityCustomBehavior.healthMetrics}.
- * - **`customBehavior.enrichment`** — Gates {@link import('./enrichment-service.ts').enrichEntity}.
- *   The optional **`enrichment`** property on the row is **only** when this boolean is true and carries
- *   {@link EnrichmentEntityBehavior}. Keeping enrichment false is normal; see {@link EntityCustomBehavior.enrichment}.
+ * - **`enrichment`** — When present as **`true`**, this row’s `pageType` is part of
+ *   the `EnrichmentRequestType` union (derived from `ENTITY_TYPES` below) and
+ *   {@link import('./enrichment-service.ts').enrichEntity} may create stubs under this row’s
+ *   `referenceDirs`. Omit on types that stay workflow-owned.
  */
 export interface EntityTypeDefinition {
   /** Stable internal key for humans and tests; not stored in DB. */
@@ -152,12 +112,11 @@ export interface EntityTypeDefinition {
   /** Yes/no checklist for the places this type may have custom behavior. */
   customBehavior: EntityCustomBehavior;
   /**
-   * Required when {@link EntityCustomBehavior.enrichment} is true: wires this row’s PageType into
-   * {@link EnrichmentRequestType}. Omit when enrichment is false (most rows): those types are still
-   * linkable and extractable; they are simply out of scope for automatic stub creation via
-   * {@link import('./enrichment-service.ts').enrichEntity}.
+   * When **`true`**, {@link import('./enrichment-service.ts').enrichEntity} may create or update
+   * pages of this kind; `EnrichmentRequestType` is the union of such rows’ `pageType` values.
+   * Requires a defined `pageType` and non-empty `referenceDirs` (first entry is the canonical stub prefix).
    */
-  enrichment?: EnrichmentEntityBehavior;
+  enrichment?: true;
 }
 
 /** Canonical relationship labels produced by deterministic extractors / heuristics. */
@@ -225,8 +184,8 @@ export const ENTITY_TYPES = [
     referenceDirs: ['people'],
     pageType: 'person',
     pathInferencePatterns: ['/people/', '/person/'],
-    customBehavior: { backlinks: true, healthMetrics: true, enrichment: true },
-    enrichment: { requestType: 'person' },
+    customBehavior: { backlinks: true, healthMetrics: true },
+    enrichment: true,
   },
   {
     key: 'company',
@@ -235,8 +194,8 @@ export const ENTITY_TYPES = [
     referenceDirs: ['companies'],
     pageType: 'company',
     pathInferencePatterns: ['/companies/', '/company/'],
-    customBehavior: { backlinks: true, healthMetrics: true, enrichment: true },
-    enrichment: { requestType: 'company' },
+    customBehavior: { backlinks: true, healthMetrics: true },
+    enrichment: true,
   },
   {
     key: 'meeting',
@@ -245,7 +204,7 @@ export const ENTITY_TYPES = [
     referenceDirs: ['meetings'],
     pageType: 'meeting',
     pathInferencePatterns: ['/meetings/', '/meeting/'],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'concept',
@@ -254,7 +213,7 @@ export const ENTITY_TYPES = [
     referenceDirs: ['concepts'],
     pageType: 'concept',
     pathInferencePatterns: ['/wiki/concepts/', '/wiki/concept/'],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'deal',
@@ -263,7 +222,7 @@ export const ENTITY_TYPES = [
     referenceDirs: ['deal'],
     pageType: 'deal',
     pathInferencePatterns: ['/deals/', '/deal/'],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'civic',
@@ -272,7 +231,7 @@ export const ENTITY_TYPES = [
     referenceDirs: ['civic'],
     pageType: 'civic',
     pathInferencePatterns: ['/civic/'],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'project',
@@ -281,7 +240,7 @@ export const ENTITY_TYPES = [
     referenceDirs: ['project', 'projects'],
     pageType: 'project',
     pathInferencePatterns: ['/projects/', '/project/'],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'source',
@@ -290,7 +249,7 @@ export const ENTITY_TYPES = [
     referenceDirs: ['source'],
     pageType: 'source',
     pathInferencePatterns: ['/sources/', '/source/'],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'media',
@@ -299,7 +258,7 @@ export const ENTITY_TYPES = [
     referenceDirs: ['media'],
     pageType: 'media',
     pathInferencePatterns: ['/media/'],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'yc',
@@ -308,7 +267,7 @@ export const ENTITY_TYPES = [
     referenceDirs: ['yc'],
     pageType: 'yc',
     pathInferencePatterns: ['/yc/'],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'tech',
@@ -316,7 +275,7 @@ export const ENTITY_TYPES = [
     plural: 'tech pages',
     referenceDirs: ['tech'],
     pathInferencePatterns: [],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'finance',
@@ -324,7 +283,7 @@ export const ENTITY_TYPES = [
     plural: 'finance pages',
     referenceDirs: ['finance'],
     pathInferencePatterns: [],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'personal',
@@ -332,7 +291,7 @@ export const ENTITY_TYPES = [
     plural: 'personal pages',
     referenceDirs: ['personal'],
     pathInferencePatterns: [],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'openclaw',
@@ -340,7 +299,7 @@ export const ENTITY_TYPES = [
     plural: 'openclaw pages',
     referenceDirs: ['openclaw'],
     pathInferencePatterns: [],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
   {
     key: 'legacy-entity',
@@ -348,9 +307,58 @@ export const ENTITY_TYPES = [
     plural: 'legacy entities',
     referenceDirs: ['entities'],
     pathInferencePatterns: [],
-    customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+    customBehavior: { backlinks: false, healthMetrics: false },
   },
 ] as const satisfies readonly EntityTypeDefinition[];
+
+/** Rows where {@link EntityTypeDefinition.enrichment} is true and `pageType` is defined (enrich pipeline). */
+export type EnrichableEntityTypeDefinition = Extract<
+  (typeof ENTITY_TYPES)[number],
+  { readonly enrichment: true; readonly pageType: PageType }
+>;
+
+/**
+ * Discriminator for {@link import('./enrichment-service.ts').EnrichmentRequest.entityType}; derived from
+ * enrichable taxonomy rows’ `pageType`.
+ */
+export type EnrichmentRequestType = EnrichableEntityTypeDefinition['pageType'];
+
+/** Runtime enrichable rows (same gate as {@link EnrichableEntityTypeDefinition}). */
+export const ENRICHMENT_ENTITY_TYPES = ENTITY_TYPES.filter((e): e is EnrichableEntityTypeDefinition => {
+  if (!('enrichment' in e) || e.enrichment !== true) return false;
+  return 'pageType' in e && e.pageType !== undefined;
+});
+
+/** Resolve the taxonomy row + canonical slug prefix for an enrich request. */
+function enrichmentRowAndSlugPrefix(type: EnrichmentRequestType): {
+  row: EnrichableEntityTypeDefinition;
+  slugPrefix: string;
+} {
+  const row = ENRICHMENT_ENTITY_TYPES.find(e => e.pageType === type);
+  if (!row) throw new Error(`Unknown enrichment PageType: ${String(type)}`);
+  const dirs = row.referenceDirs as readonly string[];
+  const slugPrefix = dirs[0];
+  if (!slugPrefix) {
+    throw new Error(`taxonomy: enrichment row '${row.key}' must have non-empty referenceDirs`);
+  }
+  return { row, slugPrefix };
+}
+
+/** All top-level slug dirs for enrich-created pages (every `referenceDirs` entry per enrichable row). */
+export const ENRICHMENT_REFERENCE_DIRS = ENRICHMENT_ENTITY_TYPES.flatMap(e => [...e.referenceDirs]);
+
+const ENRICHMENT_REFERENCE_DIR_SET = new Set<string>(ENRICHMENT_REFERENCE_DIRS);
+
+/** Whether a search-result slug prefix indicates an enrich-stub directory. */
+export function isEnrichmentReferenceDir(dir: string): boolean {
+  return ENRICHMENT_REFERENCE_DIR_SET.has(dir);
+}
+
+/** Title case for stub `**Type:**` lines (uses the row's {@link EntityTypeDefinition.singular}). */
+export function enrichmentDisplayLabelForPageType(type: EnrichmentRequestType): string {
+  const { row } = enrichmentRowAndSlugPrefix(type);
+  return row.singular.replace(/\b[a-z]/g, c => c.toUpperCase());
+}
 
 /** Flatten of each row’s {@link EntityTypeDefinition.referenceDirs} in {@link ENTITY_TYPES} order. */
 export const ENTITY_REFERENCE_DIRS = ENTITY_TYPES.flatMap(e => e.referenceDirs);
@@ -390,7 +398,8 @@ export const HEALTH_ENTITY_PAGE_TYPES = ENTITY_TYPES.filter(
 
 
 export function enrichmentSlugPrefixForEntityType(type: EnrichmentRequestType): string {
-  return ENRICHMENT_SLUG_PREFIX_BY_REQUEST_TYPE[type];
+  const { slugPrefix } = enrichmentRowAndSlugPrefix(type);
+  return slugPrefix;
 }
 
 export const FS_LINK_TYPE_RULES = [

@@ -1,4 +1,5 @@
 import { describe, test, expect } from 'bun:test';
+import { enrichmentDisplayLabelForPageType } from '../src/core/entity-taxonomy.ts';
 import {
   slugifyEntity,
   entityPagePath,
@@ -9,6 +10,11 @@ import {
 } from '../src/core/enrichment-service.ts';
 
 describe('enrichment-service', () => {
+  test('enrichment stub Type labels derive from taxonomy singular', () => {
+    expect(enrichmentDisplayLabelForPageType('person')).toBe('Person');
+    expect(enrichmentDisplayLabelForPageType('company')).toBe('Company');
+  });
+
   describe('slugifyEntity', () => {
     test('person names → people/ prefix', () => {
       expect(slugifyEntity('Jane Doe', 'person')).toBe('people/jane-doe');
@@ -157,6 +163,8 @@ describe('enrichment-service', () => {
       expect(putCalls).toHaveLength(1);
       expect(timelineCalls).toHaveLength(1);
       expect(linkCalls).toHaveLength(1);
+      const page = putCalls[0]?.page as { compiled_truth?: string };
+      expect(page?.compiled_truth).toContain('**Type:** Person');
     });
 
     test('update path: skips create and tolerates timeline/link insertion failures', async () => {

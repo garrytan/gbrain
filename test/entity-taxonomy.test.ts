@@ -8,6 +8,8 @@ import {
   ENTITY_REFERENCE_DIRS,
   BACKLINK_ENTITY_DIRS,
   HEALTH_ENTITY_PAGE_TYPES,
+  ENRICHMENT_ENTITY_TYPES,
+  ENRICHMENT_REFERENCE_DIRS,
   RELATIONSHIP,
   FRONTMATTER_RELATIONSHIP_MAP,
   FS_LINK_TYPE_RULES,
@@ -40,8 +42,8 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'people',
         dirs: ['people'],
         pageType: 'person',
-        customBehavior: { backlinks: true, healthMetrics: true, enrichment: true },
-        enrichment: { requestType: 'person' },
+        customBehavior: { backlinks: true, healthMetrics: true },
+        enrichment: true,
       },
       {
         key: 'company',
@@ -49,8 +51,8 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'companies',
         dirs: ['companies'],
         pageType: 'company',
-        customBehavior: { backlinks: true, healthMetrics: true, enrichment: true },
-        enrichment: { requestType: 'company' },
+        customBehavior: { backlinks: true, healthMetrics: true },
+        enrichment: true,
       },
       {
         key: 'meeting',
@@ -58,7 +60,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'meetings',
         dirs: ['meetings'],
         pageType: 'meeting',
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -67,7 +69,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'concepts',
         dirs: ['concepts'],
         pageType: 'concept',
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -76,7 +78,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'deals',
         dirs: ['deal'],
         pageType: 'deal',
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -85,7 +87,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'civic',
         dirs: ['civic'],
         pageType: 'civic',
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -94,7 +96,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'projects',
         dirs: ['project', 'projects'],
         pageType: 'project',
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -103,7 +105,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'sources',
         dirs: ['source'],
         pageType: 'source',
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -112,7 +114,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'media',
         dirs: ['media'],
         pageType: 'media',
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -121,7 +123,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'yc pages',
         dirs: ['yc'],
         pageType: 'yc',
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -130,7 +132,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'tech pages',
         dirs: ['tech'],
         pageType: undefined,
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -139,7 +141,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'finance pages',
         dirs: ['finance'],
         pageType: undefined,
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -148,7 +150,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'personal pages',
         dirs: ['personal'],
         pageType: undefined,
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -157,7 +159,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'openclaw pages',
         dirs: ['openclaw'],
         pageType: undefined,
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
       {
@@ -166,7 +168,7 @@ describe('entity-taxonomy (contract)', () => {
         plural: 'legacy entities',
         dirs: ['entities'],
         pageType: undefined,
-        customBehavior: { backlinks: false, healthMetrics: false, enrichment: false },
+        customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
     ]);
@@ -199,6 +201,11 @@ describe('entity-taxonomy (contract)', () => {
 
   test('HEALTH_ENTITY_PAGE_TYPES is exact', () => {
     expect(HEALTH_ENTITY_PAGE_TYPES).toEqual(['person', 'company']);
+  });
+
+  test('enrichment entity keys and reference dirs are derived from enrichable rows', () => {
+    expect(ENRICHMENT_ENTITY_TYPES.map(e => e.key)).toEqual(['person', 'company']);
+    expect(ENRICHMENT_REFERENCE_DIRS).toEqual(['people', 'companies']);
   });
 
   test('RELATIONSHIP values are exact', () => {

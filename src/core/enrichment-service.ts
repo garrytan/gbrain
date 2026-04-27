@@ -4,11 +4,10 @@
  * Shared library callable from any ingest pathway. Handles the brain CRUD
  * for entity enrichment: check brain, create/update page, backlink, timeline.
  *
- * **Which entity kinds:** {@link EnrichmentRequest.entityType} is only `person` | `company`
- * ({@link EnrichmentRequestType}), matching {@link import('./entity-taxonomy.ts').ENTITY_TYPES}
- * rows where {@link import('./entity-taxonomy.ts').EntityCustomBehavior.enrichment} is true.
- * Other PageTypes stay human- or workflow-owned; see that flag’s doc for why most taxonomy rows
- * keep `enrichment: false`.
+ * **Which entity kinds:** {@link EnrichmentRequest.entityType} is {@link EnrichmentRequestType},
+ * the union of {@link import('./entity-taxonomy.ts').ENTITY_TYPES} rows where top-level
+ * {@link import('./entity-taxonomy.ts').EntityTypeDefinition.enrichment} is **`true`** (and `pageType`
+ * is set). Other PageTypes stay human- or workflow-owned.
  *
  * External API enrichment (people data APIs, professional networks) remains
  * agent-orchestrated per the enrich skill file. This library handles the
@@ -21,7 +20,12 @@
 
 import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
-import { enrichmentSlugPrefixForEntityType, type EnrichmentRequestType } from './entity-taxonomy.ts';
+import {
+  enrichmentDisplayLabelForPageType,
+  enrichmentSlugPrefixForEntityType,
+  isEnrichmentReferenceDir,
+  type EnrichmentRequestType,
+} from './entity-taxonomy.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -211,7 +215,7 @@ async function countMentions(
     const sources = new Set<string>();
     for (const r of results) {
       const prefix = r.slug.split('/')[0];
-      if (prefix === 'people' || prefix === 'companies') sources.add('enrich');
+      if (isEnrichmentReferenceDir(prefix)) sources.add('enrich');
       else if (prefix === 'meetings') sources.add('meeting-ingestion');
       else if (prefix === 'media') sources.add('media-ingest');
       else if (prefix === 'sources' || prefix === 'ideas') sources.add('idea-ingest');
@@ -242,16 +246,14 @@ function suggestTier(
 }
 
 /** Generate stub content for a new entity page. */
-function generateStubContent(name: string, type: 'person' | 'company', context: string): string {
-  if (type === 'person') {
-    return `# ${name}\n\n**Type:** Person\n\n## Summary\n\n*Stub page. ${context}*\n\n## Timeline\n`;
-  }
-  return `# ${name}\n\n**Type:** Company\n\n## Summary\n\n*Stub page. ${context}*\n\n## Timeline\n`;
+function generateStubContent(name: string, type: EnrichmentRequestType, context: string): string {
+  const typeLabel = enrichmentDisplayLabelForPageType(type);
+  return `# ${name}\n\n**Type:** ${typeLabel}\n\n## Summary\n\n*Stub page. ${context}*\n\n## Timeline\n`;
 }
 
 /** Simple entity extraction from text using regex patterns. */
-export function extractEntities(text: string): Array<{ name: string; type: 'person' | 'company'; context: string }> {
-  const entities: Array<{ name: string; type: 'person' | 'company'; context: string }> = [];
+export function extractEntities(text: string): Array<{ name: string; type: EnrichmentRequestType; context: string }> {
+  const entities: Array<{ name: string; type: EnrichmentRequestType; context: string }> = [];
   const seen = new Set<string>();
 
   // Match capitalized multi-word names (likely people or companies)
