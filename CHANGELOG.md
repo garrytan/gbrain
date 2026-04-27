@@ -1,6 +1,14 @@
 # Changelog
 
 All notable changes to GBrain will be documented in this file.
+## [0.22.5] - 2026-04-27
+
+### Security hotfix: HTTP transport for remote MCP
+
+- **`gbrain serve --http`** — built-in HTTP transport with bearer token auth. Uses the existing `access_tokens` table. No OAuth, no registration endpoint. This is the recommended way to expose GBrain remotely.
+- **SECURITY.md** — added security advisory and guidance for remote MCP deployments.
+- Standalone OAuth wrappers with open client registration should require a registration secret. See SECURITY.md for details.
+
 
 ## [0.22.4] - 2026-04-26
 

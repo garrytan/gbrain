@@ -1,5 +1,8 @@
 # Deploy GBrain Remote MCP Server
 
+> **v0.22.5+:** Use `gbrain serve --http` for remote access. It includes built-in
+> bearer token auth with no OAuth registration surface. See [SECURITY.md](../../SECURITY.md).
+
 Access your brain from any device, any AI client. GBrain's MCP server runs locally
 via `gbrain serve` (stdio). For remote access, wrap it in an HTTP server behind a
 public tunnel.

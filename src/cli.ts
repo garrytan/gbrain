@@ -447,7 +447,7 @@ async function handleCliOnly(command: string, args: string[]) {
       }
       case 'serve': {
         const { runServe } = await import('./commands/serve.ts');
-        await runServe(engine);
+        await runServe(engine, args);
         return; // serve doesn't disconnect
       }
       case 'call': {
