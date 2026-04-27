@@ -1065,6 +1065,61 @@ export const MIGRATIONS: Migration[] = [
     },
     sql: '',
   },
+  {
+    version: 30,
+    name: 'sources_config_jsonb_object',
+    // v0.22.1 — repair source config rows written as JSONB strings/arrays by
+    // older source-management paths. `sources.config` is documented as an
+    // object ({ federated, access_policy, ... }); storing a JSON string makes
+    // `sources list` report false federation after `sources federate` says
+    // success. Normalize existing rows without changing valid object configs.
+    sql: `
+      DO $$
+      DECLARE
+        r RECORD;
+        parsed JSONB;
+        elem JSONB;
+        merged JSONB;
+      BEGIN
+        FOR r IN SELECT id, config FROM sources LOOP
+          parsed := r.config;
+
+          IF jsonb_typeof(parsed) = 'string' THEN
+            BEGIN
+              parsed := (parsed #>> '{}')::jsonb;
+            EXCEPTION WHEN others THEN
+              parsed := '{}'::jsonb;
+            END;
+          END IF;
+
+          IF jsonb_typeof(parsed) = 'array' THEN
+            merged := '{}'::jsonb;
+            FOR elem IN SELECT value FROM jsonb_array_elements(parsed) LOOP
+              IF jsonb_typeof(elem) = 'string' THEN
+                BEGIN
+                  elem := (elem #>> '{}')::jsonb;
+                EXCEPTION WHEN others THEN
+                  elem := '{}'::jsonb;
+                END;
+              END IF;
+
+              IF jsonb_typeof(elem) = 'object' THEN
+                merged := merged || elem;
+              END IF;
+            END LOOP;
+            parsed := merged;
+          END IF;
+
+          IF jsonb_typeof(parsed) IS DISTINCT FROM 'object' THEN
+            parsed := '{}'::jsonb;
+          END IF;
+
+          UPDATE sources SET config = parsed WHERE id = r.id;
+        END LOOP;
+      END $$;
+    `,
+  },
+
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
