@@ -47,6 +47,28 @@ Universal migration from any wiki, note tool, or brain system into GBrain.
 5. **Verify.** Check gbrain health and statistics, spot-check pages.
 6. **Build links.** Extract cross-references from content and create typed links in gbrain.
 
+## Privacy-Sensitive Repo Split / Extraction
+
+Use this same migration discipline when a gbrain needs to become shareable by others and private/personal material must be extracted into a separate private brain. The class of task is: identify private pages and raw sidecars, copy full-fidelity material to a private repo, redact or stub the shared repo, rebuild/verify indexes, and prove sensitive terms no longer appear in shared search.
+
+Recommended frontmatter markers for migration-ready private pages:
+
+```yaml
+sensitivity: private
+access: ds-only
+migration_target: ds-private-gbrain
+contains_pii: true
+contains_family_data: true
+contains_medical_or_insurance_data: true
+```
+
+Private extraction checklist:
+1. Identify candidates by frontmatter/tags/path plus patterns such as `personal-admin`, insurance, medical, finance, family names, policy numbers, invoice numbers, benefit schedules, and `.raw/` sidecars.
+2. Preserve full pages, source PDFs, extracted text, and checksums in the private repo; keep source data immutable until verification is complete.
+3. Replace shared pages with redacted general versions or access stubs. Remove policy/member identifiers, family names, premiums, invoices, raw file paths, and private operational notes.
+4. Rebuild or clean the shared gbrain DB/embedding index so deleted private chunks are not still queryable.
+5. Verify both sides: private repo search should find the sensitive identifiers; shared repo search should not. Also check derived pages, reports, context packs, backups, and runtime logs if broader access is being granted.
+
 ## Obsidian Migration
 
 1. Import the vault directory into gbrain (Obsidian vaults are markdown directories)

@@ -111,11 +111,25 @@ function shouldExecuteBridgeWrites(): boolean {
 }
 
 function gbrainCli(): string {
-  return process.env.DS_BRAIN_GBRAIN_CLI || '/srv/hermes/users/ds/.bun/bin/gbrain';
+  return process.env.DS_BRAIN_GBRAIN_CLI || '/srv/hermes/gbrain/bin/gbrain-shared';
 }
 
 function pathExists(path: string): boolean {
   return require('node:fs').existsSync(path);
+}
+
+function isExecutableFile(path: string): boolean {
+  const fs = require('node:fs');
+  try {
+    const real = fs.realpathSync(path);
+    return (fs.statSync(real).mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+function bunCli(): string {
+  return process.env.DS_BRAIN_BUN || '/srv/hermes/gbrain/bin/bun';
 }
 
 function decodeBuffer(value: Uint8Array | ArrayBuffer | null | undefined): string {
@@ -131,12 +145,17 @@ function runGbrain(args: string[]): { ok: boolean; stdout: string; stderr: strin
     return { ok: false, stdout: '', stderr: '', error: `gbrain_cli_missing:${cli}` };
   }
   const path = require('node:path');
+  const bun = bunCli();
+  const cmd = isExecutableFile(cli) ? [cli, ...args] : [bun, cli, ...args];
+  if (cmd[0] === bun && !pathExists(bun)) {
+    return { ok: false, stdout: '', stderr: '', error: `bun_cli_missing:${bun}` };
+  }
   const proc = Bun.spawnSync({
-    cmd: [cli, ...args],
+    cmd,
     env: {
       ...process.env,
-      HOME: process.env.HOME || '/srv/hermes/users/ds',
-      PATH: `${path.dirname(cli)}:${process.env.PATH || ''}`,
+      HOME: process.env.HOME || '/srv/hermes/users/ds-brain',
+      PATH: `${path.dirname(cli)}:${path.dirname(bun)}:${process.env.PATH || ''}`,
     },
     stdout: 'pipe',
     stderr: 'pipe',
