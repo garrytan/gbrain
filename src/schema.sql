@@ -24,13 +24,18 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 --             - access_policy: forward-compat slot, no enforcement in v0.17.
 --               Write-side lockdown: mutated only when ctx.remote=false.
 CREATE TABLE IF NOT EXISTS sources (
-  id            TEXT PRIMARY KEY,
-  name          TEXT NOT NULL UNIQUE,
-  local_path    TEXT,
-  last_commit   TEXT,
-  last_sync_at  TIMESTAMPTZ,
-  config        JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  id              TEXT PRIMARY KEY,
+  name            TEXT NOT NULL UNIQUE,
+  local_path      TEXT,
+  last_commit     TEXT,
+  last_sync_at    TIMESTAMPTZ,
+  config          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- v0.20.0 Cathedral II (SP-1): chunker version last used to sync this source.
+  -- performSync forces a full walk when this mismatches CURRENT_CHUNKER_VERSION,
+  -- bypassing the git-HEAD up_to_date early-return so CHUNKER_VERSION bumps
+  -- actually trigger re-chunking on upgrade.
+  chunker_version TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Seed the default source. 'default' is federated=true for backward compat
@@ -55,6 +60,10 @@ CREATE TABLE IF NOT EXISTS pages (
                 REFERENCES sources(id) ON DELETE CASCADE,
   slug          TEXT    NOT NULL,
   type          TEXT    NOT NULL,
+  -- v0.19.0: distinguishes markdown vs code pages at the DB level.
+  -- Drives orphans filter, auto-link bypass, and `query --lang`.
+  page_kind     TEXT    NOT NULL DEFAULT 'markdown'
+                CHECK (page_kind IN ('markdown','code')),
   title         TEXT    NOT NULL,
   compiled_truth TEXT   NOT NULL DEFAULT '',
   timeline      TEXT    NOT NULL DEFAULT '',
@@ -77,21 +86,111 @@ CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 -- content_chunks: chunked content with embeddings
 -- ============================================================
 CREATE TABLE IF NOT EXISTS content_chunks (
-  id            SERIAL PRIMARY KEY,
-  page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  chunk_index   INTEGER NOT NULL,
-  chunk_text    TEXT    NOT NULL,
-  chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
-  token_count   INTEGER,
-  embedded_at   TIMESTAMPTZ,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                    SERIAL PRIMARY KEY,
+  page_id               INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  chunk_index           INTEGER NOT NULL,
+  chunk_text            TEXT    NOT NULL,
+  chunk_source          TEXT    NOT NULL DEFAULT 'compiled_truth',
+  embedding             vector(1536),
+  model                 TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  token_count           INTEGER,
+  embedded_at           TIMESTAMPTZ,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.19.0: code chunk metadata. Nullable — markdown chunks leave these NULL.
+  -- Powers `query --lang`, `code-def <symbol>`, and `code-refs <symbol>`.
+  language              TEXT,
+  symbol_name           TEXT,
+  symbol_type           TEXT,
+  start_line            INTEGER,
+  end_line              INTEGER,
+  -- v0.20.0 Cathedral II: qualified symbol identity + parent scope + doc-comment
+  -- + chunk-grain FTS. All nullable — markdown chunks leave these NULL.
+  parent_symbol_path    TEXT[],
+  doc_comment           TEXT,
+  symbol_name_qualified TEXT,
+  search_vector         TSVECTOR
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+-- v0.19.0: partial indexes — only code chunks populate these columns.
+CREATE INDEX IF NOT EXISTS idx_chunks_symbol_name ON content_chunks(symbol_name) WHERE symbol_name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE language IS NOT NULL;
+-- v0.20.0 Cathedral II: GIN index on the new chunk-grain FTS vector.
+CREATE INDEX IF NOT EXISTS idx_chunks_search_vector ON content_chunks USING GIN(search_vector);
+CREATE INDEX IF NOT EXISTS idx_chunks_symbol_qualified
+  ON content_chunks(symbol_name_qualified) WHERE symbol_name_qualified IS NOT NULL;
+
+-- v0.20.0 Cathedral II: chunk-grain FTS trigger.
+-- Weight 'A' on doc_comment + symbol_name_qualified; weight 'B' on chunk_text.
+-- NL queries ("how do we handle errors") rank doc-comment hits above body text.
+-- BEFORE INSERT OR UPDATE OF specific columns — only refires when those change,
+-- not on every chunk update (e.g., embedding refresh doesn't trigger rebuild).
+CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER AS $fn$
+BEGIN
+  NEW.search_vector :=
+    setweight(to_tsvector('english', COALESCE(NEW.doc_comment, '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(NEW.symbol_name_qualified, '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(NEW.chunk_text, '')), 'B');
+  RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON content_chunks;
+CREATE TRIGGER chunk_search_vector_trigger
+  BEFORE INSERT OR UPDATE OF chunk_text, doc_comment, symbol_name_qualified
+  ON content_chunks
+  FOR EACH ROW EXECUTE FUNCTION update_chunk_search_vector();
+
+-- ============================================================
+-- code_edges_chunk + code_edges_symbol: v0.20.0 Cathedral II structural edges
+-- ============================================================
+-- Two-table design (codex F4 + SP-7):
+--   - code_edges_chunk: resolved edges (both endpoints = known chunk IDs)
+--   - code_edges_symbol: unresolved refs (target known by qualified name,
+--     defining chunk not yet imported)
+-- Readers UNION both tables; no promotion step.
+-- Source scoping: from_chunk_id -> content_chunks -> pages.source_id
+-- determines the source. Resolution logic MUST scope on source (codex SP-3);
+-- only --all-sources callers bypass this. UNIQUE keys don't include source_id
+-- because from_chunk_id already pins it.
+CREATE TABLE IF NOT EXISTS code_edges_chunk (
+  id                    SERIAL PRIMARY KEY,
+  from_chunk_id         INTEGER NOT NULL REFERENCES content_chunks(id) ON DELETE CASCADE,
+  to_chunk_id           INTEGER NOT NULL REFERENCES content_chunks(id) ON DELETE CASCADE,
+  from_symbol_qualified TEXT NOT NULL,
+  to_symbol_qualified   TEXT NOT NULL,
+  edge_type             TEXT NOT NULL,
+  edge_metadata         JSONB NOT NULL DEFAULT '{}',
+  source_id             TEXT REFERENCES sources(id) ON DELETE CASCADE,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT code_edges_chunk_unique UNIQUE (from_chunk_id, to_chunk_id, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from
+  ON code_edges_chunk(from_chunk_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to
+  ON code_edges_chunk(to_chunk_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_to_symbol
+  ON code_edges_chunk(to_symbol_qualified, edge_type);
+
+CREATE TABLE IF NOT EXISTS code_edges_symbol (
+  id                    SERIAL PRIMARY KEY,
+  from_chunk_id         INTEGER NOT NULL REFERENCES content_chunks(id) ON DELETE CASCADE,
+  from_symbol_qualified TEXT NOT NULL,
+  to_symbol_qualified   TEXT NOT NULL,
+  edge_type             TEXT NOT NULL,
+  edge_metadata         JSONB NOT NULL DEFAULT '{}',
+  source_id             TEXT REFERENCES sources(id) ON DELETE CASCADE,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT code_edges_symbol_unique UNIQUE (from_chunk_id, to_symbol_qualified, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_from
+  ON code_edges_symbol(from_chunk_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
+  ON code_edges_symbol(to_symbol_qualified, edge_type);
 
 -- ============================================================
 -- links: cross-references between pages

@@ -17,8 +17,8 @@ import { existsSync, unlinkSync } from 'fs';
 
 let lintCalls: Array<{ target: string; fix: boolean; dryRun: boolean | undefined }> = [];
 let backlinksCalls: Array<{ action: string; dir: string; dryRun: boolean | undefined }> = [];
-let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined }> = [];
-let extractCalls: Array<{ mode: string; dir: string }> = [];
+let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined; noExtract: boolean | undefined; sourceId: string | undefined }> = [];
+let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
 let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
 let orphansCalls: number = 0;
 
@@ -49,7 +49,7 @@ mock.module('../../src/commands/backlinks.ts', () => ({
 // Mock sync
 mock.module('../../src/commands/sync.ts', () => ({
   performSync: async (_engine: any, opts: any) => {
-    syncCalls.push({ dryRun: opts.dryRun, noPull: opts.noPull });
+    syncCalls.push({ dryRun: opts.dryRun, noPull: opts.noPull, noExtract: opts.noExtract, sourceId: opts.sourceId });
     return {
       status: opts.dryRun ? 'dry_run' : 'synced',
       fromCommit: 'abcd',
@@ -72,8 +72,8 @@ mock.module('../../src/commands/sync.ts', () => ({
 // Mock extract
 mock.module('../../src/commands/extract.ts', () => ({
   runExtractCore: async (_engine: any, opts: any) => {
-    extractCalls.push({ mode: opts.mode, dir: opts.dir });
-    return { links_created: 7, timeline_entries_created: 3, pages_processed: 5 };
+    extractCalls.push({ mode: opts.mode, dir: opts.dir, slugs: opts.slugs });
+    return { links_created: 7, timeline_entries_created: 3, pages_processed: opts.slugs?.length ?? 5 };
   },
   walkMarkdownFiles: () => [],
   extractMarkdownLinks: () => [],
@@ -390,5 +390,153 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     });
     // Cycle still completed all phases.
     expect(report.phases.length).toBe(6);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// Wave regression guards (#417 + Codex F2)
+// ─────────────────────────────────────────────────────────────────
+
+describe('runCycle — incremental extract slug propagation (#417)', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    syncCalls = [];
+    extractCalls = [];
+  });
+
+  test('cycle threads sync.pagesAffected into extract phase as the slugs argument', async () => {
+    // performSync mock returns pagesAffected = ['a', 'b']. The extract phase
+    // must receive those exact slugs, not undefined (which would trigger a full walk).
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain' });
+
+    // Sync ran once
+    expect(syncCalls.length).toBe(1);
+    // Extract ran once with the slugs from sync (not undefined)
+    expect(extractCalls.length).toBe(1);
+    expect(extractCalls[0].slugs).toEqual(['a', 'b']);
+  });
+
+  test('extract phase falls back to full walk when sync was skipped (slugs undefined)', async () => {
+    // Run only the extract phase — sync didn't run, so syncPagesAffected
+    // is undefined and extract should walk the full directory (slugs:undefined).
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['extract'] });
+
+    expect(syncCalls.length).toBe(0);
+    expect(extractCalls.length).toBe(1);
+    expect(extractCalls[0].slugs).toBeUndefined();
+  });
+});
+
+describe('runCycle — Codex F2: noExtract is gated on whether extract phase runs', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    syncCalls = [];
+    extractCalls = [];
+  });
+
+  test('full cycle (sync + extract): noExtract=true so sync skips inline extraction (extract phase handles it)', async () => {
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['sync', 'extract'] });
+
+    expect(syncCalls.length).toBe(1);
+    expect(syncCalls[0].noExtract).toBe(true);  // dedupe enabled
+    expect(extractCalls.length).toBe(1);        // extract phase ran
+  });
+
+  test('phases:[sync] only: noExtract=false so sync runs inline extraction (no silent extract drop)', async () => {
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['sync'] });
+
+    expect(syncCalls.length).toBe(1);
+    // Critical: noExtract must be false here. If it were true, the user just lost
+    // their extraction without any indication. This is the F2 regression guard.
+    expect(syncCalls[0].noExtract).toBe(false);
+    expect(extractCalls.length).toBe(0); // extract phase did NOT run
+  });
+});
+
+// ─── sourceId resolution (regression #475) ─────────────────────────
+//
+// Production OpenClaw deployment hit a 30+ min hang on every autopilot
+// cycle because runPhaseSync was calling performSync without sourceId,
+// so sync read the global config.sync.last_commit key (which had drifted
+// out of git history after a force-push GC'd the commit). The per-source
+// sources.last_commit anchor was valid the entire time. PR #475 added
+// resolveSourceForDir() so the cycle reads the per-source anchor instead.
+//
+// These tests pin the resolver -> performSync(opts.sourceId) plumbing.
+
+describe('runCycle — sourceId resolution (regression #475)', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    await (sharedEngine as any).db.query('DELETE FROM sources');
+  });
+
+  test('seeded sources row → performSync receives matching sourceId', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['default', 'default', '/tmp/brain-475-a'],
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-a' });
+    expect(syncCalls.at(-1)?.sourceId).toBe('default');
+  });
+
+  test('no matching sources row → performSync receives sourceId=undefined', async () => {
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-b' });
+    expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
+  });
+
+  test('different brainDir than registered source → undefined (no cross-match)', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['other', 'other', '/some/other/brain'],
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-c' });
+    expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
+  });
+
+  test('sources table missing (very old brain) → catch returns undefined, sync still runs', async () => {
+    // CRITICAL: do NOT DROP TABLE on the shared engine. initSchema() only
+    // re-runs PENDING migrations; once schema_version is at latest, the
+    // v20 migration that creates `sources` will not re-execute. Use a
+    // fresh one-shot engine so the shared engine isn't degraded for
+    // every later test in this file.
+    const fresh = new PGLiteEngine();
+    await fresh.connect({});
+    await fresh.initSchema();
+    await (fresh as any).db.query('DROP TABLE IF EXISTS sources CASCADE');
+    try {
+      await runCycle(fresh, { brainDir: '/tmp/brain-475-d' });
+      expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
+    } finally {
+      await fresh.disconnect();
+    }
+  });
+
+  test('multiple rows with same local_path → resolver returns one matching id (non-deterministic)', async () => {
+    // Schema has no UNIQUE on local_path; SQL has no ORDER BY. Either id
+    // is acceptable; the contract is "any matching id, never null when
+    // matches exist." This test pins behavior so the follow-up
+    // UNIQUE-constraint TODO has a regression target.
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES
+        ('first', 'first', '/tmp/brain-475-e'),
+        ('second', 'second', '/tmp/brain-475-e')`,
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-e' });
+    const sourceId = syncCalls.at(-1)?.sourceId;
+    expect(sourceId).toBeDefined();
+    expect(['first', 'second']).toContain(sourceId as string);
+  });
+
+  test('empty-string id row → resolver propagates as "" (defensive)', async () => {
+    // Schema has id as PRIMARY KEY (NOT NULL), so NULL id can't happen.
+    // Empty string CAN be inserted, and the resolver's `rows[0]?.id`
+    // would treat any falsy id as "no source" via the optional chain.
+    // This test pins the current behavior (we DO pass '' through to
+    // performSync) so a future refactor doesn't silently regress it.
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ('', 'empty', '/tmp/brain-475-f')`,
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-f' });
+    expect(syncCalls.at(-1)?.sourceId).toBe('');
   });
 });

@@ -328,6 +328,34 @@ describe('MinionSupervisor', () => {
     }, 15_000);
   });
 
+  describe('integration: --max-rss spawn args (v0.21)', () => {
+    it('passes --max-rss 2048 to spawned worker by default', async () => {
+      const outFile = join(tmpdir(), `gbrain-sup-maxrss-${process.pid}-${Date.now()}.txt`);
+      try { unlinkSync(outFile); } catch { /* may not exist */ }
+
+      // Worker logs its argv to OUT_FILE so the test can assert --max-rss 2048
+      // landed there. spawnOnce in supervisor.ts builds:
+      //   ['jobs', 'work', '--concurrency', '1', '--queue', 'default', '--max-rss', '2048']
+      const h = makeHarness('maxrss-default', `printf '%s\\n' "$*" > "$OUT_FILE" ; exit 0`);
+
+      try {
+        const sup = spawnSupervisor(h, {
+          OUT_FILE: outFile,
+          SUP_MAX_CRASHES: '1',
+        });
+
+        await sup.exited;
+
+        expect(existsSync(outFile)).toBe(true);
+        const argv = readFileSync(outFile, 'utf8').trim();
+        expect(argv).toContain('--max-rss 2048');
+      } finally {
+        try { unlinkSync(outFile); } catch { /* noop */ }
+        h.cleanup();
+      }
+    }, 15_000);
+  });
+
   describe('integration: audit file rotation + helper', () => {
     it('computeSupervisorAuditFilename returns supervisor-YYYY-Www.jsonl format', () => {
       const jan15_2026 = new Date(Date.UTC(2026, 0, 15));  // Thu

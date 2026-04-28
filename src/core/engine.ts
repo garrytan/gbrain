@@ -1,6 +1,6 @@
 import type {
   Page, PageInput, PageFilters,
-  Chunk, ChunkInput,
+  Chunk, ChunkInput, StaleChunkRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -9,6 +9,7 @@ import type {
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
+  CodeEdgeInput, CodeEdgeResult,
 } from './types.ts';
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -132,6 +133,21 @@ export interface BrainEngine {
   // Chunks
   upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
   getChunks(slug: string): Promise<Chunk[]>;
+  /**
+   * Count chunks across the entire brain where embedded_at IS NULL.
+   * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
+   * does no further work after a single SELECT count(*) (~50 bytes wire).
+   */
+  countStaleChunks(): Promise<number>;
+  /**
+   * Return every chunk where embedded_at IS NULL, with the metadata needed
+   * to call embedBatch + upsertChunks. The `embedding` column is omitted
+   * by design — stale rows have NULL embeddings, so shipping them wastes
+   * wire bytes for no gain. Caller groups by slug, embeds, and re-upserts.
+   *
+   * Bounded by an internal LIMIT of 100000 to mirror listPages.
+   */
+  listStaleChunks(): Promise<StaleChunkRow[]>;
   deleteChunks(slug: string): Promise<void>;
 
   // Links
@@ -269,4 +285,63 @@ export interface BrainEngine {
 
   // Raw SQL (for Minions job queue and other internal modules)
   executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+
+  // ============================================================
+  // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
+  // ============================================================
+  /**
+   * Bulk-insert code edges. Resolved edges (to_chunk_id set) land in
+   * code_edges_chunk; unresolved refs (to_chunk_id null, to_symbol_qualified
+   * set) land in code_edges_symbol. ON CONFLICT DO NOTHING handles idempotency.
+   * Returns count of rows actually inserted.
+   */
+  addCodeEdges(edges: CodeEdgeInput[]): Promise<number>;
+
+  /**
+   * Delete all code edges involving these chunk IDs, in BOTH directions, across
+   * both code_edges_chunk and code_edges_symbol. Called by importCodeFile on
+   * per-chunk invalidation (codex SP-2): when a chunk's text changed, stale
+   * inbound edges from other pages pointing at the old symbol must wipe before
+   * new edges write.
+   */
+  deleteCodeEdgesForChunks(chunkIds: number[]): Promise<void>;
+
+  /**
+   * "Who calls this symbol?" Returns UNION of code_edges_chunk +
+   * code_edges_symbol matching `to_symbol_qualified = qualifiedName`.
+   * Source scoping (codex SP-3): if opts.sourceId is set, filter by the
+   * anchor chunk's source; if opts.allSources, ignore scoping.
+   */
+  getCallersOf(
+    qualifiedName: string,
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+  ): Promise<CodeEdgeResult[]>;
+
+  /**
+   * "What does this symbol call?" Returns edges from chunks whose
+   * from_symbol_qualified = qualifiedName. Same source-scoping semantics
+   * as getCallersOf.
+   */
+  getCalleesOf(
+    qualifiedName: string,
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+  ): Promise<CodeEdgeResult[]>;
+
+  /**
+   * All edges touching a chunk in the given direction. Used by A2 two-pass
+   * retrieval to expand from anchor chunks. direction='in' returns edges
+   * pointing AT the chunk; 'out' returns edges FROM it; 'both' unions.
+   */
+  getEdgesByChunk(
+    chunkId: number,
+    opts?: { direction?: 'in' | 'out' | 'both'; edgeType?: string; limit?: number },
+  ): Promise<CodeEdgeResult[]>;
+
+  /**
+   * Chunk-grain keyword search. Ranks by content_chunks.search_vector
+   * without the dedup-to-page pass that searchKeyword applies. Consumed
+   * by A2 two-pass retrieval as its anchor source. Most callers should
+   * prefer searchKeyword (external contract: page-grain best-chunk-per-page).
+   */
+  searchKeywordChunks(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
 }

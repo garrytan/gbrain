@@ -9,7 +9,7 @@ import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
-  Chunk, ChunkInput,
+  Chunk, ChunkInput, StaleChunkRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -20,6 +20,8 @@ import type {
   EngineConfig,
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
+import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
 type PGLiteDB = PGlite;
 
@@ -84,30 +86,126 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    const { rows: sourceIdRows } = await this.db.query(
-      `SELECT EXISTS (
-         SELECT 1
-         FROM information_schema.columns
-         WHERE table_name = 'pages'
-           AND column_name = 'source_id'
-       ) AS exists`
-    );
-    const missingPagesSourceId = !(sourceIdRows[0] as { exists?: boolean } | undefined)?.exists;
-
-    // Upgrade path for pre-v0.18 brains: let numbered migrations add
-    // pages.source_id before the latest embedded schema references it.
-    if (missingPagesSourceId) {
-      const { applied } = await runMigrations(this);
-      if (applied > 0) {
-        console.log(`  ${applied} migration(s) applied`);
-      }
-    }
+    // Pre-schema bootstrap: add forward-referenced state the embedded schema
+    // blob requires but that older brains don't have yet. Without this, a
+    // pre-v0.18 brain hits `CREATE INDEX idx_pages_source_id ON pages(source_id)`
+    // (issues #366/#375/#378/#396) or a pre-v0.13 brain hits
+    // `CREATE INDEX idx_links_source ON links(link_source)` (#266/#357), and
+    // initSchema crashes before runMigrations gets a chance to apply the
+    // missing column. Bootstrap is structurally idempotent and a no-op on
+    // fresh installs and modern brains.
+    await this.applyForwardReferenceBootstrap();
 
     await this.db.exec(PGLITE_SCHEMA_SQL);
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {
       console.log(`  ${applied} migration(s) applied`);
+    }
+  }
+
+  /**
+   * Bootstrap state that PGLITE_SCHEMA_SQL forward-references but that older
+   * brains don't have yet. Currently covers:
+   *
+   *   - `sources` table + default seed (FK target of pages.source_id) — v0.18
+   *   - `pages.source_id` column (indexed by `idx_pages_source_id`) — v0.18
+   *   - `links.link_source` column (indexed by `idx_links_source`) — v0.13
+   *   - `links.origin_page_id` column (indexed by `idx_links_origin`) — v0.13
+   *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
+   *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
+   *
+   * **Maintenance contract:** when a future migration adds a column-with-index
+   * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
+   * AND `test/schema-bootstrap-coverage.test.ts`'s `REQUIRED_BOOTSTRAP_COVERAGE`.
+   * The coverage test fails loudly if the bootstrap drifts behind the schema.
+   */
+  private async applyForwardReferenceBootstrap(): Promise<void> {
+    // Single round-trip probe for every forward-reference target.
+    const { rows } = await this.db.query(`
+      SELECT
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='pages') AS pages_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='pages' AND column_name='source_id') AS source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='links') AS links_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='links' AND column_name='link_source') AS link_source_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='links' AND column_name='origin_page_id') AS origin_page_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='content_chunks') AS chunks_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='symbol_name') AS symbol_name_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists
+    `);
+    const probe = rows[0] as {
+      pages_exists: boolean;
+      source_id_exists: boolean;
+      links_exists: boolean;
+      link_source_exists: boolean;
+      origin_page_id_exists: boolean;
+      chunks_exists: boolean;
+      symbol_name_exists: boolean;
+      language_exists: boolean;
+    };
+
+    const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
+    const needsLinksBootstrap = probe.links_exists
+      && (!probe.link_source_exists || !probe.origin_page_id_exists);
+    const needsChunksBootstrap = probe.chunks_exists
+      && (!probe.symbol_name_exists || !probe.language_exists);
+
+    // Fresh installs (no tables yet) and modern brains both no-op.
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap) return;
+
+    console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
+
+    if (needsPagesBootstrap) {
+      // Mirror schema-embedded.ts shape for `sources` so the subsequent
+      // PGLITE_SCHEMA_SQL CREATE TABLE IF NOT EXISTS is a true no-op.
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS sources (
+          id            TEXT PRIMARY KEY,
+          name          TEXT NOT NULL UNIQUE,
+          local_path    TEXT,
+          last_commit   TEXT,
+          last_sync_at  TIMESTAMPTZ,
+          config        JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        INSERT INTO sources (id, name, config)
+          VALUES ('default', 'default', '{"federated": true}'::jsonb)
+          ON CONFLICT (id) DO NOTHING;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
+          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+      `);
+    }
+
+    if (needsLinksBootstrap) {
+      // v11 (links_provenance_columns) is responsible for the CHECK constraint
+      // and backfill. The bootstrap only adds enough state for SCHEMA_SQL's
+      // `CREATE INDEX idx_links_source/origin` not to crash. v11 runs later
+      // via runMigrations and is idempotent (`IF NOT EXISTS` everywhere).
+      await this.db.exec(`
+        ALTER TABLE links ADD COLUMN IF NOT EXISTS link_source TEXT;
+        ALTER TABLE links ADD COLUMN IF NOT EXISTS origin_page_id INTEGER
+          REFERENCES pages(id) ON DELETE SET NULL;
+      `);
+    }
+
+    if (needsChunksBootstrap) {
+      // v26 (content_chunks_code_metadata) adds the full code-chunk metadata
+      // surface (language, symbol_name, symbol_type, start_line, end_line).
+      // The bootstrap only adds the two columns the schema blob's partial
+      // indexes reference (idx_chunks_symbol_name, idx_chunks_language).
+      // v26 runs later via runMigrations and adds the rest idempotently.
+      await this.db.exec(`
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS language TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name TEXT;
+      `);
     }
   }
 
@@ -153,11 +251,13 @@ export class PGLiteEngine implements BrainEngine {
     // a parameter. ON CONFLICT target becomes (source_id, slug) since the
     // global UNIQUE(slug) was dropped in migration v17. Step 5+ will
     // surface an explicit sourceId param on putPage for multi-source sync.
+    const pageKind = page.page_kind || 'markdown';
     const { rows } = await this.db.query(
-      `INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, now())
+      `INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, now())
        ON CONFLICT (source_id, slug) DO UPDATE SET
          type = EXCLUDED.type,
+         page_kind = EXCLUDED.page_kind,
          title = EXCLUDED.title,
          compiled_truth = EXCLUDED.compiled_truth,
          timeline = EXCLUDED.timeline,
@@ -165,7 +265,7 @@ export class PGLiteEngine implements BrainEngine {
          content_hash = EXCLUDED.content_hash,
          updated_at = now()
        RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at`,
-      [slug, page.type, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash]
+      [slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash]
     );
     return rowToPage(rows[0] as Record<string, unknown>);
   }
@@ -231,6 +331,19 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Search
+  //
+  // v0.20.0 Cathedral II Layer 3 (1b): keyword search now ranks at
+  // chunk-grain internally using content_chunks.search_vector, then dedups
+  // to best-chunk-per-page on the way out. External shape (page-grain,
+  // one row per matched page, best chunk selected) is identical to
+  // v0.19.0 — backlinks, enrichment-service.countMentions, list_pages,
+  // etc. all see the same contract. A2 two-pass (Layer 7) consumes
+  // searchKeywordChunks for raw chunk-grain results without the dedup.
+  //
+  // The DISTINCT ON pattern is translated into a two-stage query because
+  // PGLite's query planner handles CTEs-with-DISTINCT-ON less optimally
+  // than direct window function + GROUP BY. Fetch more chunks than the
+  // page limit (3x) to ensure N dedup'd pages survive; bounded and fast.
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
     const limit = clampSearchLimit(opts?.limit);
     const offset = opts?.offset || 0;
@@ -240,21 +353,109 @@ export class PGLiteEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
+    // Fetch 3x to give dedup headroom, then page-dedup + re-limit.
+    const innerLimit = Math.min(limit * 3, MAX_SEARCH_LIMIT * 3);
+
+    // Source-aware ranking (v0.22): see postgres-engine.ts for rationale.
+    const boostMap = resolveBoostMap();
+    const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
+    const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+
+    // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
+    const params: unknown[] = [query, innerLimit, limit, offset];
+    let extraFilter = '';
+    if (opts?.language) {
+      params.push(opts.language);
+      extraFilter += ` AND cc.language = $${params.length}`;
+    }
+    if (opts?.symbolKind) {
+      params.push(opts.symbolKind);
+      extraFilter += ` AND cc.symbol_type = $${params.length}`;
+    }
+
+    const { rows } = await this.db.query(
+      `WITH ranked AS (
+         SELECT
+           p.slug, p.id as page_id, p.title, p.type, p.source_id,
+           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+           ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
+           CASE WHEN p.updated_at < (
+             SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+           ) THEN true ELSE false END AS stale
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause}
+         ORDER BY score DESC
+         LIMIT $2
+       ),
+       best_per_page AS (
+         SELECT DISTINCT ON (slug) *
+         FROM ranked
+         ORDER BY slug, score DESC
+       )
+       SELECT * FROM best_per_page
+       ORDER BY score DESC
+       LIMIT $3 OFFSET $4`,
+      params
+    );
+
+    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+  }
+
+  /**
+   * v0.20.0 Cathedral II Layer 3 (1b) chunk-grain keyword search.
+   *
+   * Ranks at chunk grain via content_chunks.search_vector WITHOUT the
+   * dedup-to-page pass that searchKeyword applies on return. Used by
+   * A2 two-pass retrieval (Layer 7) as the anchor-discovery primitive:
+   * two-pass wants the top-N chunks (regardless of page), not the
+   * best chunk per top-N pages.
+   *
+   * Most callers should prefer searchKeyword (external page-grain
+   * contract). This method is intentionally a narrow internal knob.
+   */
+  async searchKeywordChunks(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
+    const limit = clampSearchLimit(opts?.limit);
+    const offset = opts?.offset || 0;
+    const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
+
+    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    }
+
+    // Source-aware ranking applied here too — searchKeywordChunks is the
+    // chunk-grain anchor primitive that two-pass retrieval (Layer 7) uses.
+    const boostMap = resolveBoostMap();
+    const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
+    const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+
+    const params: unknown[] = [query, limit, offset];
+    let extraFilter = '';
+    if (opts?.language) {
+      params.push(opts.language);
+      extraFilter += ` AND cc.language = $${params.length}`;
+    }
+    if (opts?.symbolKind) {
+      params.push(opts.symbolKind);
+      extraFilter += ` AND cc.symbol_type = $${params.length}`;
+    }
+
     const { rows } = await this.db.query(
       `SELECT
-        p.slug, p.id as page_id, p.title, p.type, p.source_id,
-        cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-        ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS score,
-        CASE WHEN p.updated_at < (
-          SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-        ) THEN true ELSE false END AS stale
-      FROM pages p
-      JOIN content_chunks cc ON cc.page_id = p.id
-      WHERE p.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}
-      ORDER BY score DESC
-      LIMIT $2
-      OFFSET $3`,
-      [query, limit, offset]
+         p.slug, p.id as page_id, p.title, p.type, p.source_id,
+         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+         ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
+         CASE WHEN p.updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+         ) THEN true ELSE false END AS stale
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause}
+       ORDER BY score DESC
+       LIMIT $2 OFFSET $3`,
+      params
     );
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
@@ -270,21 +471,57 @@ export class PGLiteEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
+    // Two-stage CTE (v0.22): pure-distance ORDER BY in inner CTE preserves
+    // HNSW; outer SELECT re-ranks by raw_score * source_factor over the
+    // narrow candidate pool. innerLimit scales with offset to preserve the
+    // pagination contract. See postgres-engine.ts searchVector for rationale.
+    const boostMap = resolveBoostMap();
+    // Outer SELECT references the aliased CTE column. Aliasing the CTE as `hc`
+    // disambiguates the correlated subquery (`te.page_id = hc.page_id`) from
+    // the inner column. Without the alias, an unqualified `page_id` in the
+    // subquery's WHERE would lexically resolve back to `te.page_id` itself
+    // and degrade to `te.page_id = te.page_id` (always true), making every
+    // result stale=true. Codex caught this in adversarial review.
+    const sourceFactorCaseOnSlug = buildSourceFactorCase('hc.slug', boostMap, opts?.detail);
+    const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    const innerLimit = offset + Math.max(limit * 5, 100);
+
+    const params: unknown[] = [vecStr, innerLimit, limit, offset];
+    let extraFilter = '';
+    if (opts?.language) {
+      params.push(opts.language);
+      extraFilter += ` AND cc.language = $${params.length}`;
+    }
+    if (opts?.symbolKind) {
+      params.push(opts.symbolKind);
+      extraFilter += ` AND cc.symbol_type = $${params.length}`;
+    }
+
     const { rows } = await this.db.query(
-      `SELECT
-        p.slug, p.id as page_id, p.title, p.type, p.source_id,
-        cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-        1 - (cc.embedding <=> $1::vector) AS score,
-        CASE WHEN p.updated_at < (
-          SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-        ) THEN true ELSE false END AS stale
-      FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NOT NULL ${detailFilter}
-      ORDER BY cc.embedding <=> $1::vector
-      LIMIT $2
-      OFFSET $3`,
-      [vecStr, limit, offset]
+      `WITH hnsw_candidates AS (
+         SELECT
+           p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
+           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+           1 - (cc.embedding <=> $1::vector) AS raw_score
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE cc.embedding IS NOT NULL ${detailFilter}${extraFilter} ${hardExcludeClause}
+         ORDER BY cc.embedding <=> $1::vector
+         LIMIT $2
+       )
+       SELECT
+         hc.slug, hc.page_id, hc.title, hc.type, hc.source_id,
+         hc.chunk_id, hc.chunk_index, hc.chunk_text, hc.chunk_source,
+         hc.raw_score * ${sourceFactorCaseOnSlug} AS score,
+         CASE WHEN hc.updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = hc.page_id
+         ) THEN true ELSE false END AS stale
+       FROM hnsw_candidates hc
+       ORDER BY score DESC
+       LIMIT $3
+       OFFSET $4`,
+      params
     );
 
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
@@ -328,8 +565,14 @@ export class PGLiteEngine implements BrainEngine {
       return;
     }
 
-    // Batch upsert: build dynamic multi-row INSERT
-    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at)';
+    // Batch upsert: build dynamic multi-row INSERT.
+    // v0.19.0: includes language/symbol_name/symbol_type/start_line/end_line
+    // so code chunks carry their tree-sitter metadata into the DB. Markdown
+    // chunks pass NULL for all five. Order must match the column list.
+    // v0.20.0 Cathedral II Layer 6: adds parent_symbol_path / doc_comment /
+    // symbol_name_qualified so nested-chunk emission (A3) and eventual A1
+    // edge resolution can round-trip metadata through upserts.
+    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified)';
     const rowParts: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -338,16 +581,34 @@ export class PGLiteEngine implements BrainEngine {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
         : null;
+      const parentPath = chunk.parent_symbol_path && chunk.parent_symbol_path.length > 0
+        ? chunk.parent_symbol_path
+        : null;
 
       if (embeddingStr) {
-        rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now(), $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
+        params.push(
+          pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
+          embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+          chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
+          chunk.start_line ?? null, chunk.end_line ?? null,
+          parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
+        );
       } else {
-        rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || 'text-embedding-3-large', chunk.token_count || null);
+        rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
+        params.push(
+          pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
+          chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+          chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
+          chunk.start_line ?? null, chunk.end_line ?? null,
+          parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
+        );
       }
     }
 
+    // CONSISTENCY: when chunk_text changes and no new embedding is supplied, BOTH embedding AND
+    // embedded_at must reset to NULL so `embed --stale` correctly picks up the row for re-embedding.
+    // See postgres-engine.ts upsertChunks for the full rationale — pglite mirrors it for parity.
     await this.db.query(
       `INSERT INTO content_chunks ${cols} VALUES ${rowParts.join(', ')}
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
@@ -356,7 +617,18 @@ export class PGLiteEngine implements BrainEngine {
          embedding = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding ELSE COALESCE(EXCLUDED.embedding, content_chunks.embedding) END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
-         embedded_at = COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)`,
+         embedded_at = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
+           ELSE COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
+         END,
+         language = EXCLUDED.language,
+         symbol_name = EXCLUDED.symbol_name,
+         symbol_type = EXCLUDED.symbol_type,
+         start_line = EXCLUDED.start_line,
+         end_line = EXCLUDED.end_line,
+         parent_symbol_path = EXCLUDED.parent_symbol_path,
+         doc_comment = EXCLUDED.doc_comment,
+         symbol_name_qualified = EXCLUDED.symbol_name_qualified`,
       params
     );
   }
@@ -370,6 +642,29 @@ export class PGLiteEngine implements BrainEngine {
       [slug]
     );
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r));
+  }
+
+  async countStaleChunks(): Promise<number> {
+    const { rows } = await this.db.query(
+      `SELECT count(*)::int AS count
+         FROM content_chunks
+        WHERE embedding IS NULL`,
+    );
+    const count = (rows[0] as { count: number } | undefined)?.count ?? 0;
+    return Number(count);
+  }
+
+  async listStaleChunks(): Promise<StaleChunkRow[]> {
+    const { rows } = await this.db.query(
+      `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+              cc.model, cc.token_count
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NULL
+        ORDER BY p.id, cc.chunk_index
+        LIMIT 100000`,
+    );
+    return rows as unknown as StaleChunkRow[];
   }
 
   async deleteChunks(slug: string): Promise<void> {
@@ -1076,4 +1371,184 @@ export class PGLiteEngine implements BrainEngine {
     const { rows } = await this.db.query(sql, params);
     return rows as T[];
   }
+
+  // ============================================================
+  // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)
+  // ============================================================
+  // Declared here so the interface contract is satisfied and consumers can
+  // import against them. Implementations throw until the edge extractor +
+  // per-lang tree-sitter queries land in Layer 5/6.
+  // ============================================================
+
+  async addCodeEdges(edges: import('./types.ts').CodeEdgeInput[]): Promise<number> {
+    if (edges.length === 0) return 0;
+    let inserted = 0;
+    // Split into resolved vs unresolved. Resolved rows carry to_chunk_id
+    // (known target chunk); unresolved rows only know the qualified name.
+    const resolved = edges.filter(e => e.to_chunk_id != null);
+    const unresolved = edges.filter(e => e.to_chunk_id == null);
+
+    if (resolved.length > 0) {
+      const rowParts: string[] = [];
+      const params: unknown[] = [];
+      let p = 1;
+      for (const e of resolved) {
+        rowParts.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}::jsonb, $${p++})`);
+        params.push(
+          e.from_chunk_id, e.to_chunk_id, e.from_symbol_qualified,
+          e.to_symbol_qualified, e.edge_type,
+          JSON.stringify(e.edge_metadata ?? {}),
+          e.source_id ?? null,
+        );
+      }
+      const res = await this.db.query(
+        `INSERT INTO code_edges_chunk
+           (from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
+         VALUES ${rowParts.join(', ')}
+         ON CONFLICT (from_chunk_id, to_chunk_id, edge_type) DO NOTHING`,
+        params,
+      );
+      inserted += res.affectedRows ?? 0;
+    }
+    if (unresolved.length > 0) {
+      const rowParts: string[] = [];
+      const params: unknown[] = [];
+      let p = 1;
+      for (const e of unresolved) {
+        rowParts.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}::jsonb, $${p++})`);
+        params.push(
+          e.from_chunk_id, e.from_symbol_qualified, e.to_symbol_qualified, e.edge_type,
+          JSON.stringify(e.edge_metadata ?? {}),
+          e.source_id ?? null,
+        );
+      }
+      const res = await this.db.query(
+        `INSERT INTO code_edges_symbol
+           (from_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id)
+         VALUES ${rowParts.join(', ')}
+         ON CONFLICT (from_chunk_id, to_symbol_qualified, edge_type) DO NOTHING`,
+        params,
+      );
+      inserted += res.affectedRows ?? 0;
+    }
+    return inserted;
+  }
+
+  async deleteCodeEdgesForChunks(chunkIds: number[]): Promise<void> {
+    if (chunkIds.length === 0) return;
+    // Both directions on code_edges_chunk; from-only on code_edges_symbol
+    // (unresolved edges don't have a to_chunk_id to match against).
+    await this.db.query(
+      `DELETE FROM code_edges_chunk WHERE from_chunk_id = ANY($1::int[]) OR to_chunk_id = ANY($1::int[])`,
+      [chunkIds],
+    );
+    await this.db.query(
+      `DELETE FROM code_edges_symbol WHERE from_chunk_id = ANY($1::int[])`,
+      [chunkIds],
+    );
+  }
+
+  async getCallersOf(
+    qualifiedName: string,
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+  ): Promise<import('./types.ts').CodeEdgeResult[]> {
+    const limit = Math.min(opts?.limit ?? 100, 500);
+    const sourceClause = opts?.allSources || !opts?.sourceId
+      ? ''
+      : `AND source_id = '${opts.sourceId.replace(/'/g, "''")}'`;
+    const { rows } = await this.db.query(
+      `SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
+              edge_type, edge_metadata, source_id, true as resolved
+         FROM code_edges_chunk
+         WHERE to_symbol_qualified = $1 ${sourceClause}
+       UNION ALL
+       SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
+              edge_type, edge_metadata, source_id, false as resolved
+         FROM code_edges_symbol
+         WHERE to_symbol_qualified = $1 ${sourceClause}
+       LIMIT $2`,
+      [qualifiedName, limit],
+    );
+    return (rows as Record<string, unknown>[]).map(rowToCodeEdge);
+  }
+
+  async getCalleesOf(
+    qualifiedName: string,
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+  ): Promise<import('./types.ts').CodeEdgeResult[]> {
+    const limit = Math.min(opts?.limit ?? 100, 500);
+    const sourceClause = opts?.allSources || !opts?.sourceId
+      ? ''
+      : `AND source_id = '${opts.sourceId.replace(/'/g, "''")}'`;
+    const { rows } = await this.db.query(
+      `SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
+              edge_type, edge_metadata, source_id, true as resolved
+         FROM code_edges_chunk
+         WHERE from_symbol_qualified = $1 ${sourceClause}
+       UNION ALL
+       SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
+              edge_type, edge_metadata, source_id, false as resolved
+         FROM code_edges_symbol
+         WHERE from_symbol_qualified = $1 ${sourceClause}
+       LIMIT $2`,
+      [qualifiedName, limit],
+    );
+    return (rows as Record<string, unknown>[]).map(rowToCodeEdge);
+  }
+
+  async getEdgesByChunk(
+    chunkId: number,
+    opts?: { direction?: 'in' | 'out' | 'both'; edgeType?: string; limit?: number },
+  ): Promise<import('./types.ts').CodeEdgeResult[]> {
+    const direction = opts?.direction ?? 'both';
+    const limit = Math.min(opts?.limit ?? 50, 200);
+    const edgeTypeClause = opts?.edgeType ? `AND edge_type = '${opts.edgeType.replace(/'/g, "''")}'` : '';
+    // Build the chunk-table filter based on direction. Unresolved edges
+    // (code_edges_symbol) only carry from_chunk_id — there's no inbound
+    // direction into them from a chunk ID, so we include them only when
+    // direction is 'out' or 'both'.
+    let chunkFilter = '';
+    if (direction === 'in') chunkFilter = `WHERE to_chunk_id = $1`;
+    else if (direction === 'out') chunkFilter = `WHERE from_chunk_id = $1`;
+    else chunkFilter = `WHERE from_chunk_id = $1 OR to_chunk_id = $1`;
+
+    let symbolFilter = '';
+    if (direction === 'out' || direction === 'both') {
+      symbolFilter = `WHERE from_chunk_id = $1`;
+    }
+
+    const unionClause = symbolFilter ? `
+      UNION ALL
+      SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
+             edge_type, edge_metadata, source_id, false as resolved
+        FROM code_edges_symbol
+        ${symbolFilter} ${edgeTypeClause}
+    ` : '';
+
+    const { rows } = await this.db.query(
+      `SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
+              edge_type, edge_metadata, source_id, true as resolved
+         FROM code_edges_chunk
+         ${chunkFilter} ${edgeTypeClause}
+       ${unionClause}
+       LIMIT $2`,
+      [chunkId, limit],
+    );
+    return (rows as Record<string, unknown>[]).map(rowToCodeEdge);
+  }
+
+}
+
+function rowToCodeEdge(row: Record<string, unknown>): import('./types.ts').CodeEdgeResult {
+  return {
+    id: row.id as number,
+    from_chunk_id: row.from_chunk_id as number,
+    to_chunk_id: row.to_chunk_id == null ? null : (row.to_chunk_id as number),
+    from_symbol_qualified: (row.from_symbol_qualified as string) ?? '',
+    to_symbol_qualified: (row.to_symbol_qualified as string) ?? '',
+    edge_type: (row.edge_type as string) ?? '',
+    edge_metadata: (row.edge_metadata as Record<string, unknown>) ?? {},
+    source_id: row.source_id == null ? null : (row.source_id as string),
+    resolved: Boolean(row.resolved),
+  };
 }

@@ -106,8 +106,9 @@ describe('buildPlan — diff against completed + installed VERSION', () => {
     // skippedFuture until the binary catches up. v0.13.0 = frontmatter graph,
     // v0.13.1 = Knowledge Runtime grandfather, v0.14.0 = shell jobs +
     // autopilot cooperative, v0.16.0 = subagent runtime, v0.18.0 = multi-
-    // source brains, v0.18.1 = RLS hardening (this branch).
-    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.0', '0.12.2', '0.13.0', '0.13.1', '0.14.0', '0.16.0', '0.18.0', '0.18.1']);
+    // source brains, v0.18.1 = RLS hardening, v0.21.0 = Cathedral II
+    // (renumbered from v0.20.0 after master shipped v0.20.x in parallel).
+    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.0', '0.12.2', '0.13.0', '0.13.1', '0.14.0', '0.16.0', '0.18.0', '0.18.1', '0.21.0', '0.22.4']);
   });
 
   test('already applied → v0.11.0 lands in `applied` bucket, not pending', () => {
@@ -143,11 +144,11 @@ describe('buildPlan — diff against completed + installed VERSION', () => {
     const idx = indexCompleted([]);
     const plan = buildPlan(idx, '0.12.0');
     expect(plan.pending.map(m => m.version)).toContain('0.11.0');
-    // v0.12.2, v0.13.0, v0.13.1, v0.14.0, v0.16.0, v0.18.0, v0.18.1 were
-    // added later; installed=0.12.0 means they belong in skippedFuture, not
-    // pending. v0.11.0 and v0.12.0 stay pending despite being ≤ installed —
+    // v0.12.2, v0.13.0, v0.13.1, v0.14.0, v0.16.0, v0.18.0, v0.18.1, v0.21.0
+    // were added later; installed=0.12.0 means they belong in skippedFuture,
+    // not pending. v0.11.0 and v0.12.0 stay pending despite being ≤ installed —
     // that is the H9 invariant.
-    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.2', '0.13.0', '0.13.1', '0.14.0', '0.16.0', '0.18.0', '0.18.1']);
+    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.2', '0.13.0', '0.13.1', '0.14.0', '0.16.0', '0.18.0', '0.18.1', '0.21.0', '0.22.4']);
   });
 
   test('--migration filter narrows to one version', () => {

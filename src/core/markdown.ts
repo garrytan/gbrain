@@ -2,6 +2,29 @@ import matter from 'gray-matter';
 import type { PageType } from './types.ts';
 import { slugifyPath } from './sync.ts';
 
+export type ParseValidationCode =
+  | 'MISSING_OPEN'
+  | 'MISSING_CLOSE'
+  | 'YAML_PARSE'
+  | 'SLUG_MISMATCH'
+  | 'NULL_BYTES'
+  | 'NESTED_QUOTES'
+  | 'EMPTY_FRONTMATTER';
+
+export interface ParseValidationError {
+  code: ParseValidationCode;
+  message: string;
+  line?: number;
+}
+
+export interface ParseOpts {
+  /** When true, errors[] is populated. Existing callers unaffected. */
+  validate?: boolean;
+  /** When validate is true and frontmatter has a `slug:` field that doesn't
+   *  match expectedSlug, emits SLUG_MISMATCH. */
+  expectedSlug?: string;
+}
+
 export interface ParsedMarkdown {
   frontmatter: Record<string, unknown>;
   compiled_truth: string;
@@ -10,6 +33,8 @@ export interface ParsedMarkdown {
   type: PageType;
   title: string;
   tags: string[];
+  /** Present iff opts.validate. Empty array means no errors. */
+  errors?: ParseValidationError[];
 }
 
 /**
@@ -33,26 +58,53 @@ export interface ParsedMarkdown {
  * heading (backward-compat for existing files). A bare `---` in body text
  * is treated as a markdown horizontal rule, not a timeline separator.
  */
-export function parseMarkdown(content: string, filePath?: string): ParsedMarkdown {
-  const { data: frontmatter, content: body } = matter(content);
+export function parseMarkdown(
+  content: string,
+  filePath?: string,
+  opts?: ParseOpts,
+): ParsedMarkdown {
+  const errors: ParseValidationError[] = [];
 
-  // Split body at first standalone ---
+  // gray-matter is forgiving: it returns empty data + original content for
+  // pretty much any input. The validation surface below catches the cases
+  // it silently swallows. Validation only runs when opts.validate is true,
+  // so existing callers are unaffected.
+  let parsed: ReturnType<typeof matter> | null = null;
+  let yamlParseError: Error | null = null;
+  try {
+    parsed = matter(content);
+  } catch (e) {
+    yamlParseError = e as Error;
+  }
+
+  if (opts?.validate) {
+    collectValidationErrors(content, errors, {
+      yamlParseError,
+      expectedSlug: opts.expectedSlug,
+      parsedFrontmatter: parsed?.data ?? {},
+    });
+  }
+
+  // When YAML parsing failed (rare; gray-matter is forgiving), fall back to
+  // empty frontmatter + raw content as the body so non-validate callers still
+  // get a usable shape.
+  const frontmatter = (parsed?.data ?? {}) as Record<string, unknown>;
+  const body = parsed?.content ?? content;
+
   const { compiled_truth, timeline } = splitBody(body);
 
-  // Extract metadata from frontmatter
   const type = (frontmatter.type as PageType) || inferType(filePath);
   const title = (frontmatter.title as string) || inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = (frontmatter.slug as string) || inferSlug(filePath);
 
-  // Remove processed fields from frontmatter (they're stored as columns)
   const cleanFrontmatter = { ...frontmatter };
   delete cleanFrontmatter.type;
   delete cleanFrontmatter.title;
   delete cleanFrontmatter.tags;
   delete cleanFrontmatter.slug;
 
-  return {
+  const result: ParsedMarkdown = {
     frontmatter: cleanFrontmatter,
     compiled_truth: compiled_truth.trim(),
     timeline: timeline.trim(),
@@ -61,6 +113,149 @@ export function parseMarkdown(content: string, filePath?: string): ParsedMarkdow
     title,
     tags,
   };
+  if (opts?.validate) result.errors = errors;
+  return result;
+}
+
+/**
+ * Inspect raw content for the 7 frontmatter validation classes that gray-matter
+ * silently accepts. Mutates `errors` in place. The order of checks is
+ * deliberate: cheap byte-level checks first, then structural checks, then
+ * YAML-parse-dependent checks.
+ */
+function collectValidationErrors(
+  content: string,
+  errors: ParseValidationError[],
+  ctx: {
+    yamlParseError: Error | null;
+    expectedSlug?: string;
+    parsedFrontmatter: Record<string, unknown>;
+  },
+): void {
+  // 1. NULL_BYTES — binary corruption indicator.
+  const nullIdx = content.indexOf('\x00');
+  if (nullIdx >= 0) {
+    const line = content.slice(0, nullIdx).split('\n').length;
+    errors.push({
+      code: 'NULL_BYTES',
+      message: 'Content contains null bytes (likely binary corruption)',
+      line,
+    });
+  }
+
+  // 2. MISSING_OPEN — first non-empty line must be `---`.
+  const lines = content.split('\n');
+  let firstNonEmpty = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().length > 0) {
+      firstNonEmpty = i;
+      break;
+    }
+  }
+  if (firstNonEmpty === -1) {
+    // Empty file: treat as MISSING_OPEN. Don't run other structural checks.
+    errors.push({
+      code: 'MISSING_OPEN',
+      message: 'File is empty or whitespace-only; expected frontmatter starting with ---',
+      line: 1,
+    });
+    return;
+  }
+  if (lines[firstNonEmpty].trim() !== '---') {
+    errors.push({
+      code: 'MISSING_OPEN',
+      message: 'Frontmatter must start with --- on the first non-empty line',
+      line: firstNonEmpty + 1,
+    });
+    // Without an opener we can't reason about MISSING_CLOSE / EMPTY_FRONTMATTER
+    // / NESTED_QUOTES inside frontmatter. Stop structural checks here.
+    return;
+  }
+
+  // 3. MISSING_CLOSE — find the next `---` after the opener. If a markdown
+  //    heading appears before it, that's a strong signal the closing
+  //    delimiter is missing (the heading was meant to be in the body).
+  let closeLine = -1;
+  let headingBeforeClose = -1;
+  for (let i = firstNonEmpty + 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t === '---') {
+      closeLine = i;
+      break;
+    }
+    if (/^#{1,6}\s/.test(t) && headingBeforeClose === -1) {
+      headingBeforeClose = i;
+    }
+  }
+  if (closeLine === -1) {
+    errors.push({
+      code: 'MISSING_CLOSE',
+      message:
+        headingBeforeClose >= 0
+          ? `No closing --- before heading at line ${headingBeforeClose + 1}`
+          : 'No closing --- delimiter found',
+      line: headingBeforeClose >= 0 ? headingBeforeClose + 1 : firstNonEmpty + 1,
+    });
+    return;
+  }
+  if (headingBeforeClose >= 0 && headingBeforeClose < closeLine) {
+    errors.push({
+      code: 'MISSING_CLOSE',
+      message: `Heading at line ${headingBeforeClose + 1} found inside frontmatter zone (closing --- comes after)`,
+      line: headingBeforeClose + 1,
+    });
+  }
+
+  // 4. EMPTY_FRONTMATTER — open and close present but nothing meaningful between.
+  const fmBody = lines.slice(firstNonEmpty + 1, closeLine).join('\n').trim();
+  if (fmBody.length === 0) {
+    errors.push({
+      code: 'EMPTY_FRONTMATTER',
+      message: 'Frontmatter block is empty',
+      line: firstNonEmpty + 1,
+    });
+  }
+
+  // 5. NESTED_QUOTES — common breakage pattern: `title: "Name "Nick" Last"`.
+  //    Detect any frontmatter `key: ...` line whose value contains 3 or more
+  //    unescaped double-quote characters. A clean quoted value has 2.
+  for (let i = firstNonEmpty + 1; i < closeLine; i++) {
+    const line = lines[i];
+    const m = line.match(/^\s*[A-Za-z_][\w-]*\s*:\s*(.*)$/);
+    if (!m) continue;
+    const value = m[1];
+    let count = 0;
+    for (let j = 0; j < value.length; j++) {
+      if (value[j] === '"' && (j === 0 || value[j - 1] !== '\\')) count++;
+    }
+    if (count >= 3) {
+      errors.push({
+        code: 'NESTED_QUOTES',
+        message: 'Nested double quotes in YAML value (use single quotes for the outer)',
+        line: i + 1,
+      });
+    }
+  }
+
+  // 6. YAML_PARSE — gray-matter threw.
+  if (ctx.yamlParseError) {
+    errors.push({
+      code: 'YAML_PARSE',
+      message: `YAML parse failed: ${ctx.yamlParseError.message}`,
+      line: firstNonEmpty + 1,
+    });
+  }
+
+  // 7. SLUG_MISMATCH — only when expectedSlug was provided and a slug field exists.
+  if (ctx.expectedSlug && typeof ctx.parsedFrontmatter.slug === 'string') {
+    const declared = ctx.parsedFrontmatter.slug as string;
+    if (declared !== ctx.expectedSlug) {
+      errors.push({
+        code: 'SLUG_MISMATCH',
+        message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`,
+      });
+    }
+  }
 }
 
 /**
