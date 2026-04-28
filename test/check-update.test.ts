@@ -1,5 +1,5 @@
-import { describe, test, expect } from 'bun:test';
-import { parseSemver, isMinorOrMajorBump, extractChangelogBetween, classifyHttpStatus } from '../src/commands/check-update.ts';
+import { describe, test, expect, afterEach } from 'bun:test';
+import { parseSemver, isMinorOrMajorBump, extractChangelogBetween, classifyHttpStatus, fetchLatestRelease } from '../src/commands/check-update.ts';
 
 describe('parseSemver', () => {
   test('parses standard version', () => {
@@ -145,6 +145,69 @@ describe('classifyHttpStatus', () => {
       expect(classifyHttpStatus(status).transient).toBe(true);
     }
     expect(classifyHttpStatus(404).transient).toBe(false);
+  });
+});
+
+describe('fetchLatestRelease (malformed responses)', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  function stubFetch(response: Response) {
+    globalThis.fetch = (async () => response) as unknown as typeof fetch;
+  }
+
+  test('2xx with non-JSON body → transient http_error (does not throw)', async () => {
+    stubFetch(new Response('<html>cloudflare error</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    }));
+    const result = await fetchLatestRelease();
+    expect(result).toEqual({ ok: false, error: 'http_error', transient: true });
+  });
+
+  test('2xx with truncated JSON → transient http_error (does not throw)', async () => {
+    stubFetch(new Response('{"tag_name": "v0.5.', { status: 200 }));
+    const result = await fetchLatestRelease();
+    expect(result).toEqual({ ok: false, error: 'http_error', transient: true });
+  });
+
+  test('2xx with JSON missing tag_name → transient http_error', async () => {
+    stubFetch(new Response('{"name":"some release"}', { status: 200 }));
+    const result = await fetchLatestRelease();
+    expect(result).toEqual({ ok: false, error: 'http_error', transient: true });
+  });
+
+  test('2xx with empty tag_name → transient http_error', async () => {
+    stubFetch(new Response('{"tag_name": ""}', { status: 200 }));
+    const result = await fetchLatestRelease();
+    expect(result).toEqual({ ok: false, error: 'http_error', transient: true });
+  });
+
+  test('2xx with valid tag_name → ok', async () => {
+    stubFetch(new Response(JSON.stringify({
+      tag_name: 'v0.22.4',
+      published_at: '2026-04-27T00:00:00Z',
+      html_url: 'https://github.com/garrytan/gbrain/releases/tag/v0.22.4',
+    }), { status: 200 }));
+    const result = await fetchLatestRelease();
+    expect(result).toEqual({
+      ok: true,
+      tag: 'v0.22.4',
+      published_at: '2026-04-27T00:00:00Z',
+      url: 'https://github.com/garrytan/gbrain/releases/tag/v0.22.4',
+    });
+  });
+
+  test('2xx with valid tag_name but missing optional fields → ok with empty defaults', async () => {
+    stubFetch(new Response('{"tag_name":"v0.1.0"}', { status: 200 }));
+    const result = await fetchLatestRelease();
+    expect(result).toEqual({ ok: true, tag: 'v0.1.0', published_at: '', url: '' });
+  });
+
+  test('404 still returns no_releases (regression guard)', async () => {
+    stubFetch(new Response('not found', { status: 404 }));
+    const result = await fetchLatestRelease();
+    expect(result).toEqual({ ok: false, error: 'no_releases', transient: false });
   });
 });
 
