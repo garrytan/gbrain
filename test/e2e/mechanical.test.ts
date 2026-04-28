@@ -211,7 +211,11 @@ describeE2E('E2E: Links', () => {
   });
 
   test('remove_link removes the link', async () => {
-    await callOp('add_link', { from: 'people/marcus-reid', to: 'companies/threshold-ventures' });
+    await callOp('add_link', {
+      from: 'people/marcus-reid',
+      to: 'companies/threshold-ventures',
+      link_type: 'mentions',
+    });
     await callOp('remove_link', { from: 'people/marcus-reid', to: 'companies/threshold-ventures' });
 
     const links = await callOp('get_links', { slug: 'people/marcus-reid' }) as any[];
@@ -1379,7 +1383,11 @@ describeE2E('E2E: Performance Baselines', () => {
     }
 
     const [___, linkMs] = await time(async () => {
-      await callOp('add_link', { from: 'people/sarah-chen', to: 'companies/novamind' });
+      await callOp('add_link', {
+        from: 'people/sarah-chen',
+        to: 'companies/novamind',
+        link_type: 'mentions',
+      });
       await callOp('get_backlinks', { slug: 'companies/novamind' });
     });
 

@@ -35,7 +35,7 @@ RESPOND with brain context (every answer is better with context)
 WRITE: update brain pages (new info → compiled truth + timeline)
   │  → gbrain put {slug} (update page)
   │  → add_timeline_entry (append to timeline)
-  │  → add_link (cross-reference to other entities)
+  │  → add_link / `gbrain link … --link-type <T>` (T must be a taxonomy RELATIONSHIP label)
   │
   ▼
 SYNC: gbrain indexes changes

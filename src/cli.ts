@@ -82,14 +82,21 @@ async function main() {
     const params = parseOpArgs(op, subArgs);
 
     // Validate required params before calling handler
+    const missingRequired: string[] = [];
     for (const [key, def] of Object.entries(op.params)) {
       if (def.required && params[key] === undefined) {
-        const cliName = op.cliHints?.name || op.name;
-        const positional = op.cliHints?.positional || [];
-        const usage = positional.map(p => `<${p}>`).join(' ');
-        console.error(`Usage: gbrain ${cliName} ${usage}`);
-        process.exit(1);
+        missingRequired.push(key);
       }
+    }
+    if (missingRequired.length > 0) {
+      const cliName = op.cliHints?.name || op.name;
+      const positional = op.cliHints?.positional || [];
+      const usage = positional.map(p => `<${p}>`).join(' ');
+      const flags = missingRequired.map(k => `--${k.replace(/_/g, '-')}`).join(', ');
+      console.error(`Missing required option(s): ${flags}`);
+      console.error(`Usage: gbrain ${cliName} ${usage} [options]`);
+      console.error(`Try: gbrain ${cliName} --help`);
+      process.exit(1);
     }
 
     const ctx = makeContext(engine, params);
@@ -653,7 +660,7 @@ EMBEDDINGS
   embed [<slug>|--all|--stale]       Generate/refresh embeddings
 
 LINKS
-  link <from> <to> [--type T]        Create typed link
+  link <from> <to> --link-type <T>   Create typed link (taxonomy label, required)
   unlink <from> <to>                 Remove link
   backlinks <slug>                   Incoming links
   graph <slug> [--depth N]           Traverse link graph (returns nodes)

@@ -1893,7 +1893,8 @@ EMBEDDINGS
   gbrain embed [<slug>|--all|--stale]   Generate/refresh embeddings
 
 LINKS + GRAPH
-  gbrain link|unlink|backlinks          Cross-reference management
+  gbrain link <from> <to> --link-type <T>  Manual edge (T = RELATIONSHIP label, required)
+  gbrain unlink|backlinks                Remove or list links
   gbrain extract links|timeline|all     Batch backfill from existing pages
                                         (--source db|fs, --type, --since, --dry-run)
   gbrain graph-query <slug>             Typed traversal (--type T --depth N
@@ -4796,6 +4797,8 @@ says `# Based on gbrain v0.10.0` at the top, it doesn't know about v0.12.0 featu
 The agent will keep manually calling `gbrain link` after every `put_page` (now redundant —
 auto-link does it), miss out on `gbrain graph-query` for relationship questions, and
 not know to backfill the structured timeline.
+
+**Typed manual links:** MCP `add_link` and CLI `gbrain link` require `--link-type <T>` where `T` is an exact match to a value in `RELATIONSHIP` (`src/core/entity-taxonomy.ts`), for example `mentions`, `works_at`, `attended`. Omitting `link_type` or using an unknown string fails with `invalid_params`. Graph traversal (`traverse_graph`) still filters by arbitrary stored `link_type` strings so legacy rows keep working.
 
 ## How to apply
 

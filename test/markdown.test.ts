@@ -104,6 +104,21 @@ Content
       expect(parseMarkdown(md, path).type).toBe(inferPageTypeFromPath(path));
     }
   });
+
+  test.each([
+    ['writing/my-essay.md', 'writing'],
+    ['wiki/analysis/system-design.md', 'analysis'],
+    ['wiki/guides/setup.md', 'guide'],
+    ['wiki/guide/onboarding.md', 'guide'],
+    ['wiki/hardware/device.md', 'hardware'],
+    ['wiki/architecture/service-map.md', 'architecture'],
+    ['wiki/concepts/rrf.md', 'concept'],
+    ['wiki/concept/rrf.md', 'concept'],
+  ] as const)('infers wiki/writing type %s -> %s', (path, expectedType) => {
+    const md = `---\ntitle: Fixture\n---\nBody\n`;
+    const parsed = parseMarkdown(md, path);
+    expect(parsed.type).toBe(expectedType);
+  });
 });
 
 describe('splitBody', () => {

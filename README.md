@@ -625,7 +625,8 @@ EMBEDDINGS
   gbrain embed [<slug>|--all|--stale]   Generate/refresh embeddings
 
 LINKS + GRAPH
-  gbrain link|unlink|backlinks          Cross-reference management
+  gbrain link <from> <to> --link-type <T>  Manual edge (T = RELATIONSHIP label, required)
+  gbrain unlink|backlinks                Remove or list links
   gbrain extract links|timeline|all     Batch backfill from existing pages
                                         (--source db|fs, --type, --since, --dry-run)
   gbrain graph-query <slug>             Typed traversal (--type T --depth N

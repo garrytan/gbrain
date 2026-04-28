@@ -3,8 +3,10 @@
  *
  * - **Inference**: closed union `InferredLinkType` / `RELATIONSHIP` in entity-taxonomy + link-extraction.
  * - **Storage / API / reads**: {@link StoredLinkType} (= `string`; `links.link_type` is TEXT without CHECK).
- * - **Bridge**: `asStoredLinkType()` only where deterministic candidates become DB rows (extract batch,
- *   put_page auto-link). User/API paths (`add_link`, `traverse_graph`, CLI graph-query) stay open strings.
+ * - **Bridge**: `asStoredLinkType()` where deterministic candidates become DB rows (extract batch,
+ *   put_page auto-link). Manual `add_link` validates to `InferredLinkType` at the operation boundary; DB
+ *   remains TEXT. `traverse_graph` / graph-query filters stay arbitrary string filters (historical rows
+ *   may use labels outside the taxonomy).
  *
  * Rejects (by design): DB ENUM/CHECK on link_type, narrowing `Link.link_type` to the inference union.
  */
@@ -78,7 +80,7 @@ describe('typing strategy (chosen: inferred union + string at boundary)', () => 
 });
 
 describe('call sites — persistence bridge vs open string paths', () => {
-  test('asStoredLinkType used only at extract + runAutoLink persistence; add_link / traverse stay raw string', () => {
+  test('asStoredLinkType at extract + runAutoLink; add_link uses parseManualLinkTypeOrThrow; traverse filter stays string', () => {
     const extractTs = readRepoFile('src/commands/extract.ts');
     const operationsTs = readRepoFile('src/core/operations.ts');
     const graphQueryTs = readRepoFile('src/commands/graph-query.ts');
@@ -87,9 +89,9 @@ describe('call sites — persistence bridge vs open string paths', () => {
     expect(extractTs).toContain('asStoredLinkType');
     expect(extractTs).toContain('link_type: asStoredLinkType');
 
-    expect(operationsTs).toContain('asStoredLinkType(c.linkType)');
-    expect(operationsTs).toContain('(p.link_type as string)');
-    expect(operationsTs).toContain("link_type: { type: 'string'");
+    expect(operationsTs).toContain('c.linkType');
+    expect(operationsTs).toContain('parseManualLinkTypeOrThrow(p.link_type)');
+    expect(operationsTs).toContain("link_type: {");
 
     expect(graphQueryTs).toContain('linkType?: string');
     expect(graphQueryTs).toContain('traversePaths');

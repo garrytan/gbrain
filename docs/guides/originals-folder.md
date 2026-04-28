@@ -47,8 +47,8 @@ on user_message(message):
 
         # Step 3: Cross-link to everything that shaped the thinking
         for entity in idea.influences:
-            gbrain add_link originals/{slug} <entity_slug>
-            gbrain add_link <entity_slug> originals/{slug}
+            gbrain link originals/{slug} <entity_slug> --link-type mentions
+            gbrain link <entity_slug> originals/{slug} --link-type mentions
 
         # Step 4: Sync
         gbrain sync

@@ -14,7 +14,7 @@ import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
-import { asStoredLinkType } from './entity-taxonomy.ts';
+import { parseManualLinkTypeOrThrow, type InferredLinkType } from './entity-taxonomy.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -452,7 +452,7 @@ async function runAutoLink(
     for (const c of out) {
       try {
         await tx.addLink(
-          slug, c.targetSlug, c.context, asStoredLinkType(c.linkType),
+          slug, c.targetSlug, c.context, c.linkType,
           c.linkSource, c.originSlug, c.originField,
         );
         const existKey = `${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`;
@@ -469,7 +469,7 @@ async function runAutoLink(
     for (const c of inc) {
       try {
         await tx.addLink(
-          c.fromSlug!, c.targetSlug, c.context, asStoredLinkType(c.linkType),
+          c.fromSlug!, c.targetSlug, c.context, c.linkType,
           'frontmatter', c.originSlug, c.originField,
         );
         const existKey = `${c.fromSlug}\u0000${c.linkType}`;
@@ -661,15 +661,28 @@ const add_link: Operation = {
   params: {
     from: { type: 'string', required: true },
     to: { type: 'string', required: true },
-    link_type: { type: 'string', description: 'Link type (e.g., invested_in, works_at)' },
+    link_type: {
+      type: 'string',
+      required: true,
+      description:
+        'Relationship label (required). Exact match to RELATIONSHIP / InferredLinkType in entity-taxonomy (e.g. mentions, works_at, invested_in, founded). Case-sensitive.',
+    },
     context: { type: 'string', description: 'Context for the link' },
   },
   mutating: true,
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
+    let linkType: InferredLinkType;
+    try {
+      linkType = parseManualLinkTypeOrThrow(p.link_type);
+    } catch (e: unknown) {
+      throw new OperationError('invalid_params', e instanceof Error ? e.message : String(e));
+    }
+    if (ctx.dryRun) {
+      return { dry_run: true, action: 'add_link', from: p.from, to: p.to, link_type: linkType };
+    }
     await ctx.engine.addLink(
       p.from as string, p.to as string,
-      (p.context as string) || '', (p.link_type as string) || '',
+      (p.context as string) || '', linkType,
     );
     return { status: 'ok' };
   },

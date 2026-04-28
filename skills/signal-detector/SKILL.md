@@ -12,7 +12,7 @@ tools:
   - query
   - get_page
   - put_page
-  - add_link
+  - add_link (manual calls: taxonomy `link_type` / CLI `--link-type`)
   - add_timeline_entry
 mutating: true
 writes_pages: true
@@ -81,6 +81,8 @@ references a person or company, the auto-link post-hook on `put_page`
 automatically creates the link from the new page to that entity. You don't
 need to call `gbrain link` manually. Timeline entries still need explicit calls.
 
+**Manual link:** `gbrain link <from> <to> --link-type <T>` with `T` from `RELATIONSHIP` in `entity-taxonomy.ts` (required).
+
 ### Phase 3: Signal Logging
 
 Always log a one-line summary:
@@ -108,5 +110,5 @@ The output is brain pages created/updated and the signal log line.
 - `query` — semantic search for related context
 - `get_page` — load existing entity pages
 - `put_page` — create/update brain pages
-- `add_link` — cross-reference entities
+- `add_link` — cross-reference entities (required taxonomy `link_type`; same strings as `RELATIONSHIP` in `entity-taxonomy.ts`)
 - `add_timeline_entry` — record events on entity timelines

@@ -12,7 +12,7 @@ tools:
   - query
   - get_page
   - put_page
-  - add_link
+  - add_link (manual calls: taxonomy `link_type` / CLI `--link-type`)
   - add_timeline_entry
   - get_backlinks
   - sync_brain
@@ -157,7 +157,7 @@ the citation is `[gstack:plans/foo]`. That's the whole rule.
 - `query` — hybrid vector+keyword search
 - `get_page` — read a brain page
 - `put_page` — create/update brain pages
-- `add_link` — cross-reference entities
+- `add_link` — cross-reference entities (`link_type` must be a `RELATIONSHIP` value from `entity-taxonomy.ts`; CLI: `gbrain link <from> <to> --link-type <T>`; missing/invalid types error with `invalid_params`)
 - `add_timeline_entry` — record events
 - `get_backlinks` — check who references an entity
 - `sync_brain` — sync changes to the index

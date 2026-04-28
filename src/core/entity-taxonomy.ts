@@ -145,9 +145,9 @@ export type InferredLinkType = (typeof RELATIONSHIP)[keyof typeof RELATIONSHIP];
 
 /**
  * What the **database and public API** store and return for `link_type` / graph edge type: plain
- * `TEXT` with no DB-level enum. User-provided and agent-injected values are not limited to
- * `InferredLinkType`. Use this name at persistence and read boundaries; use `InferredLinkType` only
- * on paths that originate from deterministic extractors.
+ * `TEXT` with no DB-level enum. Historical rows and non-`add_link` writers may use labels outside
+ * {@link InferredLinkType}. The `add_link` operation validates manual writes to the taxonomy union;
+ * `traverse_graph` and reads still treat `link_type` as an arbitrary string filter or stored value.
  */
 export type StoredLinkType = string;
 
@@ -157,6 +157,52 @@ export type StoredLinkType = string;
  */
 export function asStoredLinkType(type: InferredLinkType): StoredLinkType {
   return type;
+}
+
+/** Fast membership check for manual `add_link` / CLI validation (values of {@link RELATIONSHIP}). */
+const RECOGNIZED_MANUAL_LINK_TYPE_SET = new Set<string>(Object.values(RELATIONSHIP));
+
+/**
+ * Comma-separated sorted list of allowed manual link types (for errors and short docs).
+ * Same vocabulary as {@link RELATIONSHIP} / {@link InferredLinkType}.
+ */
+export const MANUAL_LINK_TYPE_ALLOWED_HINT: string = Object.values(RELATIONSHIP)
+  .slice()
+  .sort()
+  .join(', ');
+
+/**
+ * Normalizes user input for manual link type checks: `undefined` / `null` → `''`, non-strings → `''`,
+ * strings → `trim()`. Callers that need to reject non-strings should do so before or use
+ * {@link parseManualLinkTypeOrThrow}.
+ */
+export function normalizeManualLinkTypeInput(raw: unknown): string {
+  if (raw === undefined || raw === null) return '';
+  if (typeof raw !== 'string') return '';
+  return raw.trim();
+}
+
+export function isRecognizedManualLinkType(normalized: string): normalized is InferredLinkType {
+  return RECOGNIZED_MANUAL_LINK_TYPE_SET.has(normalized);
+}
+
+/**
+ * Validates manual `link_type` for `add_link`: required non-empty after trim, exact case-sensitive
+ * match to a {@link RELATIONSHIP} value. Throws `Error` with a concise message; map to
+ * `OperationError('invalid_params', …)` at the operation boundary.
+ */
+export function parseManualLinkTypeOrThrow(raw: unknown): InferredLinkType {
+  if (raw !== undefined && raw !== null && typeof raw !== 'string') {
+    throw new Error(`link_type must be a string (got ${typeof raw})`);
+  }
+  const normalized = normalizeManualLinkTypeInput(raw);
+  if (normalized === '') {
+    throw new Error(`link_type is required; allowed values are: ${MANUAL_LINK_TYPE_ALLOWED_HINT}`);
+  }
+  if (!isRecognizedManualLinkType(normalized)) {
+    throw new Error(`invalid link_type ${JSON.stringify(normalized)}; allowed values are: ${MANUAL_LINK_TYPE_ALLOWED_HINT}`);
+  }
+  return normalized;
 }
 
 export interface FrontmatterLinkFieldMapping {

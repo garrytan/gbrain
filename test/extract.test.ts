@@ -127,6 +127,34 @@ describe('extractLinksFromFile', () => {
     const links = await extractLinksFromFile(content, 'people/alice.md', allSlugs);
     expect(links[0].link_type).toBe(RELATIONSHIP.FOUNDED);
   });
+
+  it('infers involved_in type for people -> deals', async () => {
+    const content = 'See [Seed](../deals/seed.md).';
+    const allSlugs = new Set(['people/alice', 'deals/seed']);
+    const links = await extractLinksFromFile(content, 'people/alice.md', allSlugs);
+    expect(links[0].link_type).toBe('involved_in');
+  });
+
+  it('infers attended type for meetings -> people', async () => {
+    const content = 'Met [Alice](../people/alice.md).';
+    const allSlugs = new Set(['meetings/board-sync', 'people/alice']);
+    const links = await extractLinksFromFile(content, 'meetings/board-sync.md', allSlugs);
+    expect(links[0].link_type).toBe('attended');
+  });
+
+  it('people -> companies infers founded when frontmatter.founded is an array', async () => {
+    const content = [
+      '---',
+      'title: Alice',
+      'founded: [Brex]',
+      '---',
+      '',
+      'Built [Brex](../companies/brex.md).',
+    ].join('\n');
+    const allSlugs = new Set(['people/alice', 'companies/brex']);
+    const links = await extractLinksFromFile(content, 'people/alice.md', allSlugs);
+    expect(links[0].link_type).toBe('founded');
+  });
 });
 
 describe('extractTimelineFromContent', () => {
