@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/garrytan-gbrain-badge.png)](https://mseep.ai/app/garrytan-gbrain)
+
 # GBrain
 
 Your AI agent is smart but forgetful. GBrain gives it a brain.
