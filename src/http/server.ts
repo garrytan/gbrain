@@ -18,10 +18,10 @@ function err(code: string, message: string, status = 400): Response {
   return Response.json({ ok: false, error: message, code }, { status });
 }
 
-function verifyToken(expected: string | undefined, authHeader: string | null): boolean {
+function verifyToken(expected: string | undefined, authHeader: string | null, queryToken?: string | null): boolean {
   if (!expected) return true; // no token configured = open (dev mode)
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  const provided = authHeader.slice(7).trim();
+  const provided = queryToken?.trim() || (authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : '');
+  if (!provided) return false;
   // constant-time comparison
   if (provided.length !== expected.length) return false;
   let diff = 0;
@@ -60,7 +60,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
       }
 
       // ── all other routes require auth ─────────────────────────────────────
-      if (!verifyToken(expectedToken, req.headers.get('Authorization'))) {
+      if (!verifyToken(expectedToken, req.headers.get('Authorization'), url.searchParams.get('token'))) {
         return err('unauthorized', 'Valid Bearer token required', 401);
       }
 
