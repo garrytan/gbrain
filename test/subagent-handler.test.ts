@@ -1,8 +1,8 @@
 /**
- * Subagent handler tests with a mocked Anthropic Messages client.
+ * Subagent handler tests with a mocked unified AI provider.
  *
- * Strategy: every test scripts a sequence of Messages API responses, hands
- * them to a FakeMessagesClient, and inspects (a) the SubagentResult the
+ * Strategy: every test scripts a sequence of ChatResult responses, hands
+ * them to a FakeAIProvider, and inspects (a) the SubagentResult the
  * handler returns and (b) the persisted rows in subagent_messages +
  * subagent_tool_executions. Replay tests simulate a crash by constructing
  * a fresh handler bound to the same job row with partial state already
@@ -18,10 +18,9 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import {
   makeSubagentHandler,
   RateLeaseUnavailableError,
-  type MessagesClient,
 } from '../src/core/minions/handlers/subagent.ts';
 import type { ToolDef, MinionJobContext } from '../src/core/minions/types.ts';
-import type Anthropic from '@anthropic-ai/sdk';
+import type { ChatParams, ChatResult, AIProvider } from '../src/llm/provider.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -44,29 +43,31 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM minion_jobs');
 });
 
-// ── FakeMessagesClient ──────────────────────────────────────
+// ── FakeAIProvider ──────────────────────────────────────────
 
-type FakeResponse = Partial<Anthropic.Message> & { content: Anthropic.Message['content'] };
+type FakeResponse = Partial<ChatResult> & { content: ChatResult['content'] };
 
-class FakeMessagesClient implements MessagesClient {
-  public calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
+class FakeAIProvider implements AIProvider {
+  public calls: ChatParams[] = [];
   constructor(private responses: FakeResponse[]) {}
-  async create(
-    params: Anthropic.MessageCreateParamsNonStreaming,
-  ): Promise<Anthropic.Message> {
+
+  async chat(params: ChatParams): Promise<ChatResult> {
     this.calls.push(params);
-    if (this.responses.length === 0) throw new Error('FakeMessagesClient: out of scripted responses');
+    if (this.responses.length === 0) throw new Error('FakeAIProvider: out of scripted responses');
     const r = this.responses.shift()!;
     return {
-      id: `msg_${this.calls.length}`,
-      type: 'message',
       role: 'assistant',
-      model: params.model,
-      stop_reason: 'end_turn',
-      stop_sequence: null,
-      usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } as any,
+      usage: { input_tokens: 10, output_tokens: 5, cache_read: 0, cache_create: 0 },
       ...r,
-    } as Anthropic.Message;
+    };
+  }
+
+  async embed(_texts: string[]): Promise<Float32Array[]> {
+    throw new Error('FakeAIProvider does not support embeddings');
+  }
+
+  supportsFeature(_feature: string): boolean {
+    return false;
   }
 }
 
@@ -124,10 +125,10 @@ function makeThrowingTool(name = 'broken'): ToolDef {
 
 describe('subagent handler happy path', () => {
   test('no-tool end_turn: returns text response + persists user + assistant rows', async () => {
-    const client = new FakeMessagesClient([
-      { content: [{ type: 'text', text: 'hello world' }] as any, stop_reason: 'end_turn' },
+    const provider = new FakeAIProvider([
+      { content: [{ type: 'text', text: 'hello world' }], stop_reason: 'end_turn' },
     ]);
-    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const handler = makeSubagentHandler({ engine, provider, toolRegistry: [] });
     const ctx = await makeCtx({ prompt: 'hi' });
 
     const result = await handler(ctx);
@@ -147,25 +148,25 @@ describe('subagent handler happy path', () => {
 
   test('single tool_use turn: tool executes, two-phase row goes complete', async () => {
     const tool = makeEchoTool();
-    const client = new FakeMessagesClient([
+    const provider = new FakeAIProvider([
       {
         content: [
-          { type: 'tool_use', id: 'tu_1', name: 'echo', input: { value: 'v1' } } as any,
+          { type: 'tool_use', id: 'tu_1', name: 'echo', input: { value: 'v1' } },
         ],
         stop_reason: 'tool_use' as any,
       },
       {
-        content: [{ type: 'text', text: 'done' }] as any,
+        content: [{ type: 'text', text: 'done' }],
         stop_reason: 'end_turn',
       },
     ]);
-    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+    const handler = makeSubagentHandler({ engine, provider, toolRegistry: [tool] });
     const ctx = await makeCtx({ prompt: 'go' });
 
     const result = await handler(ctx);
     expect(result.stop_reason).toBe('end_turn');
     expect(result.result).toBe('done');
-    expect(client.calls.length).toBe(2);
+    expect(provider.calls.length).toBe(2);
 
     // tool_executions row complete with echoed output
     const rows = await engine.executeRaw<{ status: string; output: unknown }>(
@@ -180,17 +181,17 @@ describe('subagent handler happy path', () => {
 
   test('tool throws: row goes failed, model sees error, loop continues', async () => {
     const tool = makeThrowingTool();
-    const client = new FakeMessagesClient([
+    const provider = new FakeAIProvider([
       {
-        content: [{ type: 'tool_use', id: 'tu_1', name: 'broken', input: {} } as any],
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'broken', input: {} }],
         stop_reason: 'tool_use' as any,
       },
       {
-        content: [{ type: 'text', text: 'recovered' }] as any,
+        content: [{ type: 'text', text: 'recovered' }],
         stop_reason: 'end_turn',
       },
     ]);
-    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+    const handler = makeSubagentHandler({ engine, provider, toolRegistry: [tool] });
     const ctx = await makeCtx({ prompt: 'try' });
 
     const result = await handler(ctx);
@@ -206,14 +207,14 @@ describe('subagent handler happy path', () => {
   });
 
   test('unknown tool name fails execution but loop continues', async () => {
-    const client = new FakeMessagesClient([
+    const provider = new FakeAIProvider([
       {
-        content: [{ type: 'tool_use', id: 'tu_nope', name: 'no_such_tool', input: {} } as any],
+        content: [{ type: 'tool_use', id: 'tu_nope', name: 'no_such_tool', input: {} }],
         stop_reason: 'tool_use' as any,
       },
-      { content: [{ type: 'text', text: 'ok' }] as any, stop_reason: 'end_turn' },
+      { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' },
     ]);
-    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const handler = makeSubagentHandler({ engine, provider, toolRegistry: [] });
     const ctx = await makeCtx({ prompt: 'x' });
 
     const result = await handler(ctx);
@@ -230,12 +231,12 @@ describe('subagent handler happy path', () => {
   test('max_turns exceeded returns stop_reason=max_turns', async () => {
     // Model keeps calling tool_use forever; we cap at 2 turns.
     const echoing: FakeResponse[] = Array.from({ length: 5 }).map((_, i) => ({
-      content: [{ type: 'tool_use', id: `tu_${i}`, name: 'echo', input: {} } as any],
+      content: [{ type: 'tool_use', id: `tu_${i}`, name: 'echo', input: {} }],
       stop_reason: 'tool_use' as any,
     }));
-    const client = new FakeMessagesClient(echoing);
+    const provider = new FakeAIProvider(echoing);
     const tool = makeEchoTool();
-    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+    const handler = makeSubagentHandler({ engine, provider, toolRegistry: [tool] });
     const ctx = await makeCtx({ prompt: 'loop', max_turns: 2 });
 
     const result = await handler(ctx);
@@ -246,29 +247,29 @@ describe('subagent handler happy path', () => {
 
 describe('subagent handler replay (crash recovery)', () => {
   test('resumes from persisted messages when prior rows exist', async () => {
-    // Seed an in-progress conversation by running the first client, then
+    // Seed an in-progress conversation by running the first provider, then
     // running a second handler on the SAME job with responses starting at
     // turn 2. No duplicate user-seed row (ON CONFLICT DO NOTHING).
     const tool = makeEchoTool();
-    const client1 = new FakeMessagesClient([
+    const provider1 = new FakeAIProvider([
       {
-        content: [{ type: 'tool_use', id: 'tu_1', name: 'echo', input: { v: 1 } } as any],
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'echo', input: { v: 1 } }],
         stop_reason: 'tool_use' as any,
       },
     ]);
-    const handler1 = makeSubagentHandler({ engine, client: client1, toolRegistry: [tool] });
+    const handler1 = makeSubagentHandler({ engine, provider: provider1, toolRegistry: [tool] });
     const ctx = await makeCtx({ prompt: 'start' });
 
     // Run handler1 until it WOULD make a second LLM call — force that
     // second call to error so we persist only the first assistant message.
     try {
-      const client1b = new FakeMessagesClient([
+      const provider1b = new FakeAIProvider([
         {
-          content: [{ type: 'tool_use', id: 'tu_1', name: 'echo', input: { v: 1 } } as any],
+          content: [{ type: 'tool_use', id: 'tu_1', name: 'echo', input: { v: 1 } }],
           stop_reason: 'tool_use' as any,
         },
       ]);
-      const interrupted = makeSubagentHandler({ engine, client: client1b, toolRegistry: [tool] });
+      const interrupted = makeSubagentHandler({ engine, provider: provider1b, toolRegistry: [tool] });
       await interrupted(ctx);
     } catch {
       // Out-of-scripted-responses — simulates worker kill before turn 2.
@@ -283,18 +284,18 @@ describe('subagent handler replay (crash recovery)', () => {
     const preCount = parseInt(preRows[0]!.c, 10);
     expect(preCount).toBeGreaterThanOrEqual(1);
 
-    // Resume with a fresh handler + client that supplies ONE more response.
-    const client2 = new FakeMessagesClient([
-      { content: [{ type: 'text', text: 'resumed ok' }] as any, stop_reason: 'end_turn' },
+    // Resume with a fresh handler + provider that supplies ONE more response.
+    const provider2 = new FakeAIProvider([
+      { content: [{ type: 'text', text: 'resumed ok' }], stop_reason: 'end_turn' },
     ]);
-    const handler2 = makeSubagentHandler({ engine, client: client2, toolRegistry: [tool] });
+    const handler2 = makeSubagentHandler({ engine, provider: provider2, toolRegistry: [tool] });
     const result = await handler2(ctx);
 
     expect(result.result).toBe('resumed ok');
     expect(result.stop_reason).toBe('end_turn');
-    // Second client should see the prior conversation in the messages
+    // Second provider should see the prior conversation in the messages
     // array — at minimum the user seed + prior assistant + tool_result.
-    expect(client2.calls[0]!.messages.length).toBeGreaterThan(1);
+    expect(provider2.calls[0]!.messages.length).toBeGreaterThan(1);
   });
 
   test('prior completed tool exec is replayed without re-invoking execute', async () => {
@@ -328,17 +329,17 @@ describe('subagent handler replay (crash recovery)', () => {
 
     // Handler MUST NOT call the throwing execute and MUST end the loop on
     // the next LLM response.
-    const client = new FakeMessagesClient([
-      { content: [{ type: 'text', text: 'finished after replay' }] as any, stop_reason: 'end_turn' },
+    const provider = new FakeAIProvider([
+      { content: [{ type: 'text', text: 'finished after replay' }], stop_reason: 'end_turn' },
     ]);
-    const handler = makeSubagentHandler({ engine, client, toolRegistry: [throwingTool] });
+    const handler = makeSubagentHandler({ engine, provider, toolRegistry: [throwingTool] });
     const result = await handler(ctx);
 
     expect(result.stop_reason).toBe('end_turn');
     expect(result.result).toBe('finished after replay');
     // Only one LLM call made on this resume (we had 2 persisted messages +
     // the tool result synthesis happened when resuming, then model spoke).
-    expect(client.calls.length).toBe(1);
+    expect(provider.calls.length).toBe(1);
   });
 
   test('pending non-idempotent tool exec rejects on resume', async () => {
@@ -363,19 +364,19 @@ describe('subagent handler replay (crash recovery)', () => {
       [ctx.id],
     );
 
-    const client = new FakeMessagesClient([]);
-    const handler = makeSubagentHandler({ engine, client, toolRegistry: [nonIdempotent] });
+    const provider = new FakeAIProvider([]);
+    const handler = makeSubagentHandler({ engine, provider, toolRegistry: [nonIdempotent] });
     await expect(handler(ctx)).rejects.toThrow(/non-idempotent/);
   });
 });
 
 describe('subagent handler lease behavior', () => {
   test('acquires + releases a lease around the LLM call', async () => {
-    const client = new FakeMessagesClient([
-      { content: [{ type: 'text', text: 'ok' }] as any, stop_reason: 'end_turn' },
+    const provider = new FakeAIProvider([
+      { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' },
     ]);
     const handler = makeSubagentHandler({
-      engine, client, toolRegistry: [], maxConcurrent: 1, rateLeaseKey: 'k1',
+      engine, provider, toolRegistry: [], maxConcurrent: 1, rateLeaseKey: 'k1',
     });
     const ctx = await makeCtx({ prompt: 'hi' });
     await handler(ctx);
@@ -395,9 +396,9 @@ describe('subagent handler lease behavior', () => {
        VALUES ('k_cap', $1, now() + interval '1 minute')`,
       [owner.id],
     );
-    const client = new FakeMessagesClient([]);
+    const provider = new FakeAIProvider([]);
     const handler = makeSubagentHandler({
-      engine, client, toolRegistry: [], maxConcurrent: 1, rateLeaseKey: 'k_cap',
+      engine, provider, toolRegistry: [], maxConcurrent: 1, rateLeaseKey: 'k_cap',
     });
     const ctx = await makeCtx({ prompt: 'blocked' });
     await expect(handler(ctx)).rejects.toBeInstanceOf(RateLeaseUnavailableError);
@@ -406,61 +407,49 @@ describe('subagent handler lease behavior', () => {
 
 describe('subagent handler input validation', () => {
   test('missing prompt throws', async () => {
-    const client = new FakeMessagesClient([]);
-    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const provider = new FakeAIProvider([]);
+    const handler = makeSubagentHandler({ engine, provider, toolRegistry: [] });
     const ctx = await makeCtx({});
     await expect(handler(ctx)).rejects.toThrow(/prompt/);
   });
 
   test('allowed_tools unknown name rejected at dispatch', async () => {
     const tool = makeEchoTool('real');
-    const client = new FakeMessagesClient([]);
-    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+    const provider = new FakeAIProvider([]);
+    const handler = makeSubagentHandler({ engine, provider, toolRegistry: [tool] });
     const ctx = await makeCtx({ prompt: 'x', allowed_tools: ['real', 'ghost_tool'] });
     await expect(handler(ctx)).rejects.toThrow(/unknown tool/);
   });
 });
 
-describe('makeSubagentHandler default client construction', () => {
-  test('factory default wires sdk.messages through to the handler', async () => {
-    // Regression guard for the v0.16.0 shipped bug: makeSubagentHandler
-    // was casting `new Anthropic()` (top-level SDK class) to MessagesClient,
-    // but `.create()` lives at sdk.messages.create. Every subagent job in
-    // production died with "client.create is not a function" on first LLM
-    // call. This test exercises the default-client path (no `deps.client`
-    // injected) via the makeAnthropic dep-injection seam, so the exact
-    // default-branch construction is covered without a real API call.
-    const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
-    const fakeSdk = {
-      messages: {
-        async create(
-          params: Anthropic.MessageCreateParamsNonStreaming,
-        ): Promise<Anthropic.Message> {
-          calls.push(params);
-          return {
-            id: 'msg_regression',
-            type: 'message',
-            role: 'assistant',
-            model: params.model,
-            stop_reason: 'end_turn',
-            stop_sequence: null,
-            content: [{ type: 'text', text: 'ok' }],
-            usage: {
-              input_tokens: 1,
-              output_tokens: 1,
-              cache_read_input_tokens: 0,
-              cache_creation_input_tokens: 0,
-            },
-          } as unknown as Anthropic.Message;
-        },
+describe('makeSubagentHandler default provider construction', () => {
+  test('factory default wires getLlmProvider through to the handler', async () => {
+    // Regression guard: the default-provider path (no `deps.provider`
+    // injected) should call getLlmProvider(config). We inject a fake
+    // provider via the config so the exact default-branch construction is
+    // covered without a real API call.
+    const calls: ChatParams[] = [];
+    const fakeProvider: AIProvider = {
+      async chat(params: ChatParams): Promise<ChatResult> {
+        calls.push(params);
+        return {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'ok' }],
+          usage: { input_tokens: 1, output_tokens: 1, cache_read: 0, cache_create: 0 },
+        };
       },
-    } as unknown as Anthropic;
+      async embed(_texts: string[]): Promise<Float32Array[]> {
+        throw new Error('not implemented');
+      },
+      supportsFeature(_feature: string): boolean {
+        return false;
+      },
+    };
 
-    // Crucial: do NOT pass `client`. Only `makeAnthropic`. This forces the
-    // factory to hit the default-client branch (`deps.client ?? makeAnthropic().messages`).
+    // Pass the fake provider directly — this exercises the deps.provider branch.
     const handler = makeSubagentHandler({
       engine,
-      makeAnthropic: () => fakeSdk,
+      provider: fakeProvider,
       toolRegistry: [],
     });
     const ctx = await makeCtx({ prompt: 'hello' });

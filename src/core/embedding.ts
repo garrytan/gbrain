@@ -2,13 +2,19 @@
  * Embedding Service
  * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * Provider-agnostic via the unified AI provider layer. Defaults to
+ * OpenAI-compatible adapter; any provider with an OpenAI Embeddings
+ * endpoint works (DeepSeek, Groq, Ollama, local proxies).
+ *
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
 
-import OpenAI from 'openai';
+import { getEmbeddingProvider } from '../llm/factory.ts';
+import type { AIProvider } from '../llm/provider.ts';
 
+// Backward-compatible defaults. The runtime model may differ when the
+// user configures a custom embedding_provider / embedding_model.
 const MODEL = 'text-embedding-3-large';
 const DIMENSIONS = 1536;
 const MAX_CHARS = 8000;
@@ -17,13 +23,15 @@ const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
 
-let client: OpenAI | null = null;
-
-function getClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI();
+function getProvider(): AIProvider {
+  const provider = getEmbeddingProvider();
+  if (!provider) {
+    throw new Error(
+      'No embedding provider configured. Set OPENAI_API_KEY or configure ' +
+        'embedding_provider in ~/.gbrain/config.json',
+    );
   }
-  return client;
+  return provider;
 }
 
 export async function embed(text: string): Promise<Float32Array> {
@@ -62,23 +70,22 @@ export async function embedBatch(
 async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await getClient().embeddings.create({
-        model: MODEL,
-        input: texts,
-        dimensions: DIMENSIONS,
-      });
-
-      // Sort by index to maintain order
-      const sorted = response.data.sort((a, b) => a.index - b.index);
-      return sorted.map(d => new Float32Array(d.embedding));
+      const provider = getProvider();
+      return await provider.embed(texts);
     } catch (e: unknown) {
       if (attempt === MAX_RETRIES - 1) throw e;
 
       // Check for rate limit with Retry-After header
       let delay = exponentialDelay(attempt);
 
-      if (e instanceof OpenAI.APIError && e.status === 429) {
-        const retryAfter = e.headers?.['retry-after'];
+      // Duck-type check for OpenAI-compatible rate-limit errors
+      if (
+        typeof e === 'object' &&
+        e !== null &&
+        'status' in e &&
+        (e as any).status === 429
+      ) {
+        const retryAfter = (e as any).headers?.['retry-after'];
         if (retryAfter) {
           const parsed = parseInt(retryAfter, 10);
           if (!isNaN(parsed)) {
@@ -115,6 +122,9 @@ export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
  * Value: $0.00013 / 1k tokens as of 2026. Update when OpenAI changes
  * pricing. Single source of truth — every cost-preview surface reads
  * this constant, so a pricing change is a one-line edit.
+ *
+ * NOTE: When using a non-OpenAI embedding provider, cost estimation
+ * degrades gracefully (shows "cost unknown") — see slice #5.
  */
 export const EMBEDDING_COST_PER_1K_TOKENS = 0.00013;
 

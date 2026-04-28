@@ -21,6 +21,10 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  const providerIndex = args.indexOf('--provider');
+  const cliProvider = providerIndex !== -1 ? args[providerIndex + 1] : null;
+  const baseUrlIndex = args.indexOf('--base-url');
+  const cliBaseUrl = baseUrlIndex !== -1 ? args[baseUrlIndex + 1] : null;
 
   // Schema-only path: apply initSchema against the already-configured engine
   // without ever calling saveConfig. Used by apply-migrations, the stopgap
@@ -47,7 +51,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath });
+    return initPGLite({ jsonOutput, apiKey, customPath, isNonInteractive, provider: cliProvider, baseUrl: cliBaseUrl });
   }
 
   // Supabase/Postgres mode
@@ -66,7 +70,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, isNonInteractive, provider: cliProvider, baseUrl: cliBaseUrl });
 }
 
 /**
@@ -102,7 +106,7 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
   }
 }
 
-async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
+async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null; isNonInteractive: boolean; provider: string | null; baseUrl: string | null }) {
   const dbPath = opts.customPath || join(homedir(), '.gbrain', 'brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
 
@@ -111,10 +115,16 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
     await engine.connect({ database_path: dbPath, engine: 'pglite' });
     await engine.initSchema();
 
+    const existing = loadConfig();
+    const aiConfig = opts.isNonInteractive
+      ? buildNonInteractiveAiConfig(existing, opts.apiKey, opts.provider, opts.baseUrl)
+      : await providerWizard(existing, opts.provider, opts.baseUrl);
+
     const config: GBrainConfig = {
       engine: 'pglite',
       database_path: dbPath,
-      ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+      ...migrateLegacyKeys(existing),
+      ...aiConfig,
     };
     saveConfig(config);
 
@@ -143,7 +153,7 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   }
 }
 
-async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null }) {
+async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null; isNonInteractive: boolean; provider: string | null; baseUrl: string | null }) {
   const { databaseUrl } = opts;
 
   // Detect Supabase direct connection URLs and warn about IPv6
@@ -194,10 +204,16 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
     console.log('Running schema migration...');
     await engine.initSchema();
 
+    const existing = loadConfig();
+    const aiConfig = opts.isNonInteractive
+      ? buildNonInteractiveAiConfig(existing, opts.apiKey, opts.provider, opts.baseUrl)
+      : await providerWizard(existing, opts.provider, opts.baseUrl);
+
     const config: GBrainConfig = {
       engine: 'postgres',
       database_url: databaseUrl,
-      ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
+      ...migrateLegacyKeys(existing),
+      ...aiConfig,
     };
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
@@ -349,6 +365,146 @@ export function installDefaultTemplates(workspaceDir: string): string[] {
   }
 
   return installed;
+}
+
+// ── Provider configuration helpers ──────────────────────────
+
+function migrateLegacyKeys(existing: GBrainConfig | null): Partial<GBrainConfig> {
+  if (!existing) return {};
+  const migrated: Partial<GBrainConfig> = {};
+
+  // If user already has multi-provider fields, nothing to migrate.
+  if (existing.llm_provider) return migrated;
+
+  if (existing.anthropic_api_key) {
+    migrated.llm_provider = 'anthropic';
+    migrated.llm_api_key = existing.anthropic_api_key;
+  } else if (existing.openai_api_key) {
+    migrated.llm_provider = 'openai';
+    migrated.llm_api_key = existing.openai_api_key;
+  }
+
+  if (existing.openai_api_key && !existing.anthropic_api_key) {
+    migrated.embedding_provider = 'openai';
+    migrated.embedding_api_key = existing.openai_api_key;
+  }
+
+  return migrated;
+}
+
+function buildNonInteractiveAiConfig(
+  existing: GBrainConfig | null,
+  cliKey: string | null,
+  cliProvider: string | null,
+  cliBaseUrl: string | null,
+): Partial<GBrainConfig> {
+  const cfg: Partial<GBrainConfig> = {};
+
+  // Provider precedence: CLI flag > env > existing config > inferred from key env.
+  const provider = cliProvider
+    || process.env.LLM_PROVIDER
+    || existing?.llm_provider
+    || (process.env.ANTHROPIC_API_KEY ? 'anthropic' : null)
+    || (process.env.OPENAI_API_KEY ? 'openai' : null)
+    || (process.env.DEEPSEEK_API_KEY ? 'deepseek' : null)
+    || 'anthropic';
+
+  cfg.llm_provider = provider;
+
+  // Key precedence: CLI --key > provider-specific env > LLM_API_KEY env > existing.
+  const key = cliKey
+    || (provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : null)
+    || (provider === 'openai' ? process.env.OPENAI_API_KEY : null)
+    || (provider === 'deepseek' ? process.env.DEEPSEEK_API_KEY : null)
+    || process.env.LLM_API_KEY
+    || existing?.llm_api_key
+    || null;
+
+  if (key) cfg.llm_api_key = key;
+  if (cliBaseUrl) cfg.llm_base_url = cliBaseUrl;
+
+  // Embedding defaults to OpenAI if available, otherwise same as LLM.
+  const embedKey = process.env.OPENAI_API_KEY
+    || process.env.EMBEDDING_API_KEY
+    || existing?.embedding_api_key
+    || null;
+
+  if (embedKey) {
+    cfg.embedding_provider = process.env.EMBEDDING_PROVIDER
+      || existing?.embedding_provider
+      || (process.env.OPENAI_API_KEY ? 'openai' : provider);
+    cfg.embedding_api_key = embedKey;
+  }
+
+  return cfg;
+}
+
+async function providerWizard(
+  existing: GBrainConfig | null,
+  cliProvider: string | null,
+  cliBaseUrl: string | null,
+): Promise<Partial<GBrainConfig>> {
+  if (cliProvider) {
+    return buildNonInteractiveAiConfig(existing, null, cliProvider, cliBaseUrl);
+  }
+
+  console.log('\n--- AI Provider Setup ---');
+  console.log('Choose your LLM provider:');
+  console.log('  1) Anthropic (Claude) — best reasoning, prompt caching');
+  console.log('  2) OpenAI (GPT-4o) — fast, great tool use');
+  console.log('  3) DeepSeek — cost-effective, OpenAI-compatible');
+  console.log('  4) Custom (OpenAI-compatible endpoint)');
+
+  const choice = await readLine('Provider [1]: ');
+  const providerMap: Record<string, string> = {
+    '1': 'anthropic',
+    '2': 'openai',
+    '3': 'deepseek',
+    '4': 'custom',
+  };
+  const provider = providerMap[choice || '1'] || 'anthropic';
+
+  const cfg: Partial<GBrainConfig> = { llm_provider: provider };
+
+  if (provider === 'custom') {
+    const baseUrl = await readLine('Base URL (e.g. http://localhost:11434/v1): ');
+    if (!baseUrl) {
+      console.error('Custom provider requires a base URL.');
+      process.exit(1);
+    }
+    cfg.llm_base_url = baseUrl;
+  }
+
+  // API key prompt
+  const envKey = provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY
+    : provider === 'openai' ? process.env.OPENAI_API_KEY
+    : provider === 'deepseek' ? process.env.DEEPSEEK_API_KEY
+    : process.env.LLM_API_KEY;
+
+  if (envKey) {
+    console.log(`Using ${provider} API key from environment.`);
+    cfg.llm_api_key = envKey;
+  } else {
+    const key = await readLine(`Enter ${provider} API key (or set env var and re-run): `);
+    if (!key) {
+      console.warn('No API key provided. You can add one later by editing ~/.gbrain/config.json');
+    } else {
+      cfg.llm_api_key = key;
+    }
+  }
+
+  // Embedding provider
+  const hasOpenAI = !!process.env.OPENAI_API_KEY;
+  if (provider !== 'openai' && hasOpenAI) {
+    console.log('Using OpenAI for embeddings (OPENAI_API_KEY detected).');
+    cfg.embedding_provider = 'openai';
+    cfg.embedding_api_key = process.env.OPENAI_API_KEY;
+  } else if (cfg.llm_api_key) {
+    cfg.embedding_provider = provider === 'custom' ? 'custom' : provider;
+    cfg.embedding_api_key = cfg.llm_api_key;
+  }
+
+  return cfg;
 }
 
 /**

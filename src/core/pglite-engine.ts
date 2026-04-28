@@ -60,7 +60,7 @@ export class PGLiteEngine implements BrainEngine {
       const original = err instanceof Error ? err.message : String(err);
       const wrapped = new Error(
         `PGLite failed to initialize its WASM runtime.\n` +
-        `  This is most commonly the macOS 26.3 WASM bug: https://github.com/garrytan/gbrain/issues/223\n` +
+        `  This is most commonly the macOS 26.3 WASM bug: https://github.com/momoiicom/open-gbrain/issues/223\n` +
         `  Run \`gbrain doctor\` for a full diagnosis.\n` +
         `  Original error: ${original}`
       );

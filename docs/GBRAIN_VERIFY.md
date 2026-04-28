@@ -111,8 +111,10 @@ gbrain stats
 gbrain embed --stale
 ```
 
-If `OPENAI_API_KEY` is not set, embeddings can't be generated. Keyword search
-still works without embeddings, but hybrid/semantic search won't.
+If no embedding provider is configured (`OPENAI_API_KEY`, `EMBEDDING_API_KEY`,
+or `embedding_provider` in `~/.gbrain/config.json`), embeddings can't be
+generated. Keyword search still works without embeddings, but hybrid/semantic
+search won't.
 
 ### 4c. End-to-End Test
 
@@ -156,17 +158,39 @@ gbrain stats
 
 **Expected:** Embedded chunk count matches (or is close to) total chunk count.
 
-**If zero or very low:** `OPENAI_API_KEY` may be missing or invalid. Check:
+**If zero or very low:** The embedding provider API key may be missing or invalid. Check:
 
 ```bash
-echo $OPENAI_API_KEY | head -c 10
+gbrain doctor --json | grep embedding_provider
 ```
 
-If blank, set the key. Then:
+Or inspect your config:
+
+```bash
+cat ~/.gbrain/config.json | grep -E 'embedding|api_key'
+```
+
+If blank, set the key (e.g. `OPENAI_API_KEY`) or run `gbrain init --provider openai`. Then:
 
 ```bash
 gbrain embed --stale
 ```
+
+---
+
+## 5b. LLM Provider Configured (v0.23+)
+
+If you use subagents (`gbrain agent run`), verify the LLM provider is wired:
+
+```bash
+gbrain doctor --json | grep llm_provider
+```
+
+**Expected:** `llm_provider` check returns `"ok"` with the provider name.
+
+**If it fails:** Run `gbrain init --provider <name>` and enter your API key, or
+set the relevant env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `LLM_API_KEY`,
+etc.) and re-run `gbrain init --non-interactive`.
 
 ---
 
@@ -278,6 +302,9 @@ gbrain search "test query from your brain content"
 
 # 5. Catch any unembedded chunks
 gbrain embed --stale
+
+# 5b. LLM provider health
+gbrain doctor --json | grep -E 'llm_provider|embedding_provider'
 
 # 6. Auto-update
 gbrain check-update --json

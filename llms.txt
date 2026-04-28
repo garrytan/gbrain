@@ -2,47 +2,47 @@
 
 > GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
 
-Repo: https://github.com/garrytan/gbrain
+Repo: https://github.com/momoiicom/open-gbrain
 
 ## Core entry points
 
-- [AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md): Start here if you are not Claude Code. Install order, trust boundary, skill resolver, config/debug/migration pointers.
-- [CLAUDE.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md): Architecture reference. Key files, trust boundaries, engine factory, test layout.
-- [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md): 9-step agent installation.
-- [skills/RESOLVER.md](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/RESOLVER.md): Skill dispatcher. Read first for any task.
-- [README.md](https://raw.githubusercontent.com/garrytan/gbrain/master/README.md): Project overview, benchmarks, 30-minute setup.
+- [AGENTS.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/AGENTS.md): Start here if you are not Claude Code. Install order, trust boundary, skill resolver, config/debug/migration pointers.
+- [CLAUDE.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/CLAUDE.md): Architecture reference. Key files, trust boundaries, engine factory, test layout.
+- [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/INSTALL_FOR_AGENTS.md): 9-step agent installation.
+- [skills/RESOLVER.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/skills/RESOLVER.md): Skill dispatcher. Read first for any task.
+- [README.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/README.md): Project overview, benchmarks, 30-minute setup.
 
 ## Configuration
 
-- [docs/ENGINES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ENGINES.md): PGLite vs Postgres trade-off and when to migrate.
-- [docs/GBRAIN_RECOMMENDED_SCHEMA.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md): MECE directory structure (people/, companies/, concepts/).
-- [docs/guides/live-sync.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/live-sync.md): Incremental markdown sync setup.
-- [docs/guides/cron-schedule.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/cron-schedule.md): Recurring job scheduling.
-- [docs/guides/minions-deployment.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-deployment.md): Deploying the gbrain jobs worker: crontab + watchdog, inline --follow, systemd/Procfile/fly.toml, upgrade checklist.
-- [docs/guides/quiet-hours.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/quiet-hours.md): Notification hold + timezone-aware delivery.
-- [docs/mcp/DEPLOY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY.md): MCP server deployment.
+- [docs/ENGINES.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/ENGINES.md): PGLite vs Postgres trade-off and when to migrate.
+- [docs/GBRAIN_RECOMMENDED_SCHEMA.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md): MECE directory structure (people/, companies/, concepts/).
+- [docs/guides/live-sync.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/live-sync.md): Incremental markdown sync setup.
+- [docs/guides/cron-schedule.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/cron-schedule.md): Recurring job scheduling.
+- [docs/guides/minions-deployment.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/minions-deployment.md): Deploying the gbrain jobs worker: crontab + watchdog, inline --follow, systemd/Procfile/fly.toml, upgrade checklist.
+- [docs/guides/quiet-hours.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/quiet-hours.md): Notification hold + timezone-aware delivery.
+- [docs/mcp/DEPLOY.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/mcp/DEPLOY.md): MCP server deployment.
 
 ## Debugging
 
-- [docs/GBRAIN_VERIFY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VERIFY.md): 7-check post-setup verification. Start here when something feels off.
-- [docs/guides/minions-fix.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-fix.md): Troubleshooting the Minions job queue.
-- [docs/integrations/reliability-repair.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/integrations/reliability-repair.md): Data integrity recovery.
+- [docs/GBRAIN_VERIFY.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/GBRAIN_VERIFY.md): 7-check post-setup verification. Start here when something feels off.
+- [docs/guides/minions-fix.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/minions-fix.md): Troubleshooting the Minions job queue.
+- [docs/integrations/reliability-repair.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/integrations/reliability-repair.md): Data integrity recovery.
 
 ## Migrations
 
-- [docs/UPGRADING_DOWNSTREAM_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md): Patches for downstream agent skill forks. One section per release.
-- [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version (v0.5.0 - v0.14.1) agent-executable migration instructions.
-- [CHANGELOG.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md): Release-summary voice + itemized changes + self-repair block per version.
+- [docs/UPGRADING_DOWNSTREAM_AGENTS.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md): Patches for downstream agent skill forks. One section per release.
+- [skills/migrations/](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/skills/migrations/): Per-version (v0.5.0 - v0.14.1) agent-executable migration instructions.
+- [CHANGELOG.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/CHANGELOG.md): Release-summary voice + itemized changes + self-repair block per version.
 
 ## Philosophy
 
-- [docs/ethos/THIN_HARNESS_FAT_SKILLS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ethos/THIN_HARNESS_FAT_SKILLS.md): Why skills live in markdown.
-- [docs/ethos/MARKDOWN_SKILLS_AS_RECIPES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ethos/MARKDOWN_SKILLS_AS_RECIPES.md): Homebrew for Personal AI.
+- [docs/ethos/THIN_HARNESS_FAT_SKILLS.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/ethos/THIN_HARNESS_FAT_SKILLS.md): Why skills live in markdown.
+- [docs/ethos/MARKDOWN_SKILLS_AS_RECIPES.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/ethos/MARKDOWN_SKILLS_AS_RECIPES.md): Homebrew for Personal AI.
 
 ## Optional
 
-- [docs/designs/](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/designs/): Forward-looking designs.
-- [docs/architecture/infra-layer.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/infra-layer.md): Shared infra patterns.
+- [docs/designs/](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/designs/): Forward-looking designs.
+- [docs/architecture/infra-layer.md](https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/architecture/infra-layer.md): Shared infra patterns.
 
 ## Operational tips
 

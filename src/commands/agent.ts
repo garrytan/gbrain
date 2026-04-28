@@ -66,7 +66,9 @@ USAGE
 SUBMITTING
   gbrain agent run <prompt>
     --subagent-def <name>        Named plugin subagent (from GBRAIN_PLUGIN_PATH)
-    --model <id>                 Anthropic model id (defaults to sonnet)
+    --model <id>                 Model id (defaults to provider's smart tier)
+    --provider <name>            LLM provider: anthropic, openai, deepseek, custom
+    --base-url <url>             Custom OpenAI-compatible base URL
     --max-turns <n>              Max assistant turns (default 20)
     --tools a,b,c                Subset of registered tool names (comma list)
     --timeout-ms <n>             Per-job wall-clock timeout
@@ -84,8 +86,9 @@ VIEWING
 
 NOTES
   Submitting subagent jobs is trusted-only; MCP submitters receive
-  permission_denied. The worker needs ANTHROPIC_API_KEY set, or the
-  first LLM turn of a claimed job fails.
+  permission_denied.   The worker needs the provider API key set
+  (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY, LLM_API_KEY), or the first LLM
+  turn of a claimed job fails.
 `);
 }
 
@@ -94,6 +97,8 @@ NOTES
 interface RunFlags {
   subagentDef?: string;
   model?: string;
+  provider?: string;
+  baseUrl?: string;
   maxTurns?: number;
   tools?: string[];
   timeoutMs?: number;
@@ -115,6 +120,8 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
     switch (a) {
       case '--subagent-def': flags.subagentDef = args[++i]; i++; break;
       case '--model':        flags.model = args[++i]; i++; break;
+      case '--provider':     flags.provider = args[++i]; i++; break;
+      case '--base-url':     flags.baseUrl = args[++i]; i++; break;
       case '--max-turns':    flags.maxTurns = parseInt(args[++i] ?? '', 10); i++; break;
       case '--tools':        flags.tools = (args[++i] ?? '').split(',').map(s => s.trim()).filter(Boolean); i++; break;
       case '--timeout-ms':   flags.timeoutMs = parseInt(args[++i] ?? '', 10); i++; break;
@@ -152,6 +159,8 @@ export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<
   const data: SubagentHandlerData = { prompt };
   if (flags.subagentDef) data.subagent_def = flags.subagentDef;
   if (flags.model) data.model = flags.model;
+  if (flags.provider) data.provider = flags.provider;
+  if (flags.baseUrl) data.base_url = flags.baseUrl;
   if (flags.maxTurns) data.max_turns = flags.maxTurns;
   if (flags.tools && flags.tools.length > 0) data.allowed_tools = flags.tools;
 
@@ -201,6 +210,8 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
       ...(entry.input_vars ? { input_vars: entry.input_vars } : {}),
       ...(flags.subagentDef ? { subagent_def: flags.subagentDef } : {}),
       ...(flags.model ? { model: flags.model } : {}),
+      ...(flags.provider ? { provider: flags.provider } : {}),
+      ...(flags.baseUrl ? { base_url: flags.baseUrl } : {}),
       ...(flags.maxTurns ? { max_turns: flags.maxTurns } : {}),
       ...(flags.tools && flags.tools.length > 0 ? { allowed_tools: flags.tools } : {}),
     };
@@ -232,6 +243,8 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
       ...(entry.input_vars ? { input_vars: entry.input_vars } : {}),
       ...(flags.subagentDef ? { subagent_def: flags.subagentDef } : {}),
       ...(flags.model ? { model: flags.model } : {}),
+      ...(flags.provider ? { provider: flags.provider } : {}),
+      ...(flags.baseUrl ? { base_url: flags.baseUrl } : {}),
       ...(flags.maxTurns ? { max_turns: flags.maxTurns } : {}),
       ...(flags.tools && flags.tools.length > 0 ? { allowed_tools: flags.tools } : {}),
     };

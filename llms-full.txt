@@ -3,13 +3,13 @@
 > GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
 
 This file concatenates core GBrain documentation for single-fetch ingestion.
-For the link-only index, see `llms.txt`. Source of truth: https://github.com/garrytan/gbrain.
+For the link-only index, see `llms.txt`. Source of truth: https://github.com/momoiicom/open-gbrain.
 
 # Core entry points
 
 ## AGENTS.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/AGENTS.md
 
 # Agents working on GBrain
 
@@ -75,7 +75,7 @@ publishing: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork
 
 ## CLAUDE.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/CLAUDE.md
 
 # CLAUDE.md
 
@@ -976,7 +976,7 @@ Key routing rules:
 
 ## INSTALL_FOR_AGENTS.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/INSTALL_FOR_AGENTS.md
 
 # GBrain Installation Guide for AI Agents
 
@@ -1153,7 +1153,7 @@ columns. PGLite brains no-op. If wiki-style imports were truncated by the old
 
 ## skills/RESOLVER.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/skills/RESOLVER.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/skills/RESOLVER.md
 
 # GBrain Skill Resolver
 
@@ -1264,7 +1264,7 @@ These apply to ALL brain-writing skills:
 
 ## README.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/README.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/README.md
 
 # GBrain
 
@@ -1984,7 +1984,7 @@ MIT
 
 ## docs/ENGINES.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ENGINES.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/ENGINES.md
 
 # Pluggable Engine Architecture
 
@@ -2082,7 +2082,7 @@ export interface BrainEngine {
 
 **Slug-based API, not ID-based.** Every method takes slugs, not numeric IDs. The engine resolves slugs to IDs internally. This keeps the interface portable... slugs are strings, IDs are database-specific.
 
-**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that. This is intentional: embedding is an external API call (OpenAI), not a storage concern. All engines share the same embedding service.
+**Embedding is NOT in the engine.** The engine stores embeddings and searches by vector, but it doesn't generate embeddings. `src/core/embedding.ts` handles that via a pluggable provider layer (OpenAI, DeepSeek, or any OpenAI-compatible endpoint). This is intentional: embedding is an external API call, not a storage concern. All engines share the same embedding service.
 
 **Chunking is NOT in the engine.** Same logic. `src/core/chunkers/` handles chunking. The engine stores and retrieves chunks. All engines share the same chunkers.
 
@@ -2145,7 +2145,7 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 **PGLite-specific details:**
 - Uses `pglite-schema.ts` for DDL (pgvector extension, pg_trgm, triggers, indexes)
 - Parameterized queries throughout (shared utilities in `src/core/utils.ts`)
-- `hybridSearch` keyword-only fallback when `OPENAI_API_KEY` is not set
+- `hybridSearch` keyword-only fallback when no embedding provider is configured
 - Data stored at `~/.gbrain/brain.db` (configurable)
 - pgvector HNSW index for cosine similarity vector search (same as Postgres)
 - tsvector + ts_rank for full-text search (same as Postgres)
@@ -2225,7 +2225,7 @@ Note: The original SQLite engine plan (`docs/SQLITE_ENGINE.md`) was superseded b
 
 ## docs/GBRAIN_RECOMMENDED_SCHEMA.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md
 
 <!-- schema-version: 0.5.0 -->
 <!-- source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md -->
@@ -3245,7 +3245,7 @@ The human's job: curate sources, direct analysis, ask good questions, and think 
 
 ## docs/guides/live-sync.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/live-sync.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/live-sync.md
 
 # Live Sync: Keep the Index Current
 
@@ -3390,7 +3390,7 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
 
 ## docs/guides/cron-schedule.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/cron-schedule.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/cron-schedule.md
 
 # Reference Cron Schedule
 
@@ -3590,7 +3590,7 @@ echo "Dream cycle complete at $(date)"
 
 ## docs/guides/minions-deployment.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-deployment.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/minions-deployment.md
 
 # Minions Worker Deployment Guide
 
@@ -3929,7 +3929,7 @@ sudo systemctl daemon-reload
 
 ## docs/guides/quiet-hours.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/quiet-hours.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/quiet-hours.md
 
 # Quiet Hours and Timezone-Aware Delivery
 
@@ -4101,7 +4101,7 @@ Set `enabled: false` to disable quiet hours entirely (e.g., for 24/7 monitoring)
 
 ## docs/mcp/DEPLOY.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/mcp/DEPLOY.md
 
 # Deploy GBrain Remote MCP Server
 
@@ -4232,7 +4232,7 @@ for a reference implementation.
 
 ## docs/GBRAIN_VERIFY.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VERIFY.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/GBRAIN_VERIFY.md
 
 # GBrain Installation Verification Runbook
 
@@ -4347,8 +4347,10 @@ gbrain stats
 gbrain embed --stale
 ```
 
-If `OPENAI_API_KEY` is not set, embeddings can't be generated. Keyword search
-still works without embeddings, but hybrid/semantic search won't.
+If no embedding provider is configured (`OPENAI_API_KEY`, `EMBEDDING_API_KEY`,
+or `embedding_provider` in `~/.gbrain/config.json`), embeddings can't be
+generated. Keyword search still works without embeddings, but hybrid/semantic
+search won't.
 
 ### 4c. End-to-End Test
 
@@ -4392,17 +4394,39 @@ gbrain stats
 
 **Expected:** Embedded chunk count matches (or is close to) total chunk count.
 
-**If zero or very low:** `OPENAI_API_KEY` may be missing or invalid. Check:
+**If zero or very low:** The embedding provider API key may be missing or invalid. Check:
 
 ```bash
-echo $OPENAI_API_KEY | head -c 10
+gbrain doctor --json | grep embedding_provider
 ```
 
-If blank, set the key. Then:
+Or inspect your config:
+
+```bash
+cat ~/.gbrain/config.json | grep -E 'embedding|api_key'
+```
+
+If blank, set the key (e.g. `OPENAI_API_KEY`) or run `gbrain init --provider openai`. Then:
 
 ```bash
 gbrain embed --stale
 ```
+
+---
+
+## 5b. LLM Provider Configured (v0.23+)
+
+If you use subagents (`gbrain agent run`), verify the LLM provider is wired:
+
+```bash
+gbrain doctor --json | grep llm_provider
+```
+
+**Expected:** `llm_provider` check returns `"ok"` with the provider name.
+
+**If it fails:** Run `gbrain init --provider <name>` and enter your API key, or
+set the relevant env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `LLM_API_KEY`,
+etc.) and re-run `gbrain init --non-interactive`.
 
 ---
 
@@ -4515,6 +4539,9 @@ gbrain search "test query from your brain content"
 # 5. Catch any unembedded chunks
 gbrain embed --stale
 
+# 5b. LLM provider health
+gbrain doctor --json | grep -E 'llm_provider|embedding_provider'
+
 # 6. Auto-update
 gbrain check-update --json
 
@@ -4532,7 +4559,7 @@ end-to-end sync test (4c), push a real change and verify it appears in search.
 
 ## docs/guides/minions-fix.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-fix.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/guides/minions-fix.md
 
 # Minions fix — repairing a half-migrated install
 
@@ -4698,7 +4725,7 @@ Each phase is idempotent. Re-running is safe. Common failure modes:
 
 ## docs/integrations/reliability-repair.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/integrations/reliability-repair.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/integrations/reliability-repair.md
 
 # Reliability repair (v0.12.2)
 
@@ -4773,7 +4800,7 @@ should match your expectations for the corpus.
 
 ## docs/UPGRADING_DOWNSTREAM_AGENTS.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md
+Source: https://raw.githubusercontent.com/momoiicom/open-gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md
 
 # Upgrading Downstream Agents
 

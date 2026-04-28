@@ -36,6 +36,17 @@ export interface GBrainConfig {
    * validates the shape at runtime.
    */
   storage?: unknown;
+
+  // Multi-provider AI fields (v0.23.0)
+  llm_provider?: string;
+  llm_api_key?: string;
+  smart_model?: string;
+  fast_model?: string;
+  embedding_model?: string;
+  embedding_provider?: string;
+  embedding_api_key?: string;
+  llm_base_url?: string;
+  embedding_base_url?: string;
 }
 
 /**
@@ -64,6 +75,10 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
+    ...(process.env.DEEPSEEK_API_KEY ? { llm_api_key: process.env.DEEPSEEK_API_KEY } : {}),
+    ...(process.env.LLM_API_KEY ? { llm_api_key: process.env.LLM_API_KEY } : {}),
+    ...(process.env.EMBEDDING_API_KEY ? { embedding_api_key: process.env.EMBEDDING_API_KEY } : {}),
   };
   return merged as GBrainConfig;
 }

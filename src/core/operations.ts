@@ -13,6 +13,7 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
+import { getEmbeddingProvider } from '../llm/factory.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
 
@@ -271,11 +272,11 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    // Skip embedding when no OpenAI key is configured. importFromContent's existing
-    // try/catch around embed only catches; without a key the OpenAI client would
+    // Skip embedding when no embedding provider is available. importFromContent's existing
+    // try/catch around embed only catches; without a provider the SDK would
     // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
     // giving up. Detect early.
-    const noEmbed = !process.env.OPENAI_API_KEY;
+    const noEmbed = !getEmbeddingProvider();
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own

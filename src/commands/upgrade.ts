@@ -30,7 +30,7 @@ export async function runUpgrade(args: string[]) {
     case 'binary':
       console.log('Binary self-update not yet implemented.');
       console.log('Download the latest binary from GitHub Releases:');
-      console.log('  https://github.com/garrytan/gbrain/releases');
+      console.log('  https://github.com/momoiicom/open-gbrain/releases');
       break;
 
     case 'clawhub':
@@ -48,7 +48,7 @@ export async function runUpgrade(args: string[]) {
       console.log('Try one of:');
       console.log('  bun update gbrain');
       console.log('  clawhub update gbrain');
-      console.log('  Download from https://github.com/garrytan/gbrain/releases');
+      console.log('  Download from https://github.com/momoiicom/open-gbrain/releases');
   }
 
   if (upgraded) {
