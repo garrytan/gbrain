@@ -329,15 +329,18 @@ export const ENRICHMENT_ENTITY_TYPES = ENTITY_TYPES.filter((e): e is EnrichableE
   return 'pageType' in e && e.pageType !== undefined;
 });
 
+const ENRICHMENT_ROW_BY_PAGE_TYPE = new Map<EnrichmentRequestType, EnrichableEntityTypeDefinition>(
+  ENRICHMENT_ENTITY_TYPES.map(e => [e.pageType, e]),
+);
+
 /** Resolve the taxonomy row + canonical slug prefix for an enrich request. */
 function enrichmentRowAndSlugPrefix(type: EnrichmentRequestType): {
   row: EnrichableEntityTypeDefinition;
   slugPrefix: string;
 } {
-  const row = ENRICHMENT_ENTITY_TYPES.find(e => e.pageType === type);
+  const row = ENRICHMENT_ROW_BY_PAGE_TYPE.get(type);
   if (!row) throw new Error(`Unknown enrichment PageType: ${String(type)}`);
-  const dirs = row.referenceDirs as readonly string[];
-  const slugPrefix = dirs[0];
+  const slugPrefix = row.referenceDirs[0];
   if (!slugPrefix) {
     throw new Error(`taxonomy: enrichment row '${row.key}' must have non-empty referenceDirs`);
   }
