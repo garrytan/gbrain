@@ -297,13 +297,23 @@ export async function scanIntegrity(
   const { limit = Infinity, typeFilter, batchLoad = true } = opts;
 
   // Fast path: single SQL query instead of N sequential getPage() calls.
-  // This eliminates ~500 round-trips through PgBouncer that caused doctor
-  // to timeout on deployments using transaction-mode connection pooling.
-  if (batchLoad && limit !== Infinity) {
+  // Eliminates ~500 round-trips through PgBouncer that caused doctor to
+  // timeout on transaction-mode pooling. Postgres-only: PGLite has no
+  // postgres.js connection, so the gate keeps the GBRAIN_DEBUG fallback
+  // log clean for real Postgres errors instead of expected PGLite skips.
+  if (batchLoad && limit !== Infinity && engine.kind === 'postgres') {
     try {
       return await scanIntegrityBatch(limit, typeFilter);
-    } catch {
-      // Fall through to sequential path (e.g. PGLite, no DB connection)
+    } catch (err) {
+      // GBRAIN_DEBUG=1 surfaces real Postgres errors (deadlock, connection
+      // drop, SQL bug) that would otherwise vanish into the sequential
+      // fallback. Quiet by default since the fallback is harmless.
+      if (process.env.GBRAIN_DEBUG) {
+        console.error(
+          '[integrity] batch path failed, falling back to sequential:',
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
   }
 
@@ -345,10 +355,16 @@ async function scanIntegrityBatch(
 ): Promise<IntegrityScanResult> {
   const sql = db.getConnection();
   const typeCondition = typeFilter ? sql`AND slug LIKE ${typeFilter + '/%'}` : sql``;
+  // Boolean validate is the documented contract; stringly-typed 'false' (quoted
+  // YAML) diverges from the sequential path's strict === false check. Intentional
+  // — gbrain lint should reject stringly-typed validate at write time.
   const validateCondition = sql`AND (frontmatter->>'validate' IS NULL OR frontmatter->>'validate' != 'false')`;
 
+  // DISTINCT ON (slug) mirrors getAllSlugs()'s Set<string> semantics: multi-source
+  // brains can have the same slug under multiple source_ids (UNIQUE(source_id, slug)
+  // since v0.18.0); we want one scan per slug, not one per row.
   const rows = await sql`
-    SELECT slug, compiled_truth, frontmatter
+    SELECT DISTINCT ON (slug) slug, compiled_truth, frontmatter
     FROM pages
     WHERE 1=1 ${typeCondition} ${validateCondition}
     ORDER BY slug
