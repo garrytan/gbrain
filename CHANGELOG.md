@@ -2,11 +2,11 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.22.9] - 2026-04-27
+## [0.22.11] - 2026-04-27
 
 **Storage tiering, finally working. Brains scaling past 100K files stop bloating git.**
 
-The original storage-tiering branch shipped two silent bugs (gray-matter on YAML returned empty data; `manageGitignore` was defined and never invoked) so the feature was a no-op for every user who tried it. v0.22.9 rewrites the broken bits, hardens the surface, and adds proper test coverage. If you have a brain repo north of 100K files where bulk machine-generated content (tweets, articles, transcripts) is the size driver, this is the release that pulls it out of git without losing any data.
+The original storage-tiering branch shipped two silent bugs (gray-matter on YAML returned empty data; `manageGitignore` was defined and never invoked) so the feature was a no-op for every user who tried it. v0.22.11 rewrites the broken bits, hardens the surface, and adds proper test coverage. If you have a brain repo north of 100K files where bulk machine-generated content (tweets, articles, transcripts) is the size driver, this is the release that pulls it out of git without losing any data.
 
 Configure tiering in `gbrain.yml` at the brain repo root:
 
@@ -26,7 +26,7 @@ storage:
 
 ### The numbers that matter
 
-200K-page brain, half tweets and articles. Before v0.22.9:
+200K-page brain, half tweets and articles. Before v0.22.11:
 
 | Metric | Before | After | Δ |
 |--------|--------|-------|---|
@@ -41,7 +41,7 @@ storage:
 
 If you've been reading the storage-tiering docs and waiting for the feature to actually do something: it does now. If you're already over 50K files: configure `gbrain.yml`, run `gbrain sync`, watch `.gitignore` update itself, watch your next clone get faster.
 
-## To take advantage of v0.22.9
+## To take advantage of v0.22.11
 
 1. Add a `storage:` section to `gbrain.yml` at your brain repo root with `db_tracked` and `db_only` arrays. The directory paths must end with `/` (the validator auto-normalizes if you forget, with a one-time info note).
 2. Run `gbrain sync`. It updates `.gitignore` automatically on success.
