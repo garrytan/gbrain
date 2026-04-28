@@ -109,7 +109,7 @@ describe('sources add', () => {
     expect(insert!.params[0]).toBe('gstack');
     expect(insert!.params[1]).toBe('gstack'); // name defaults to id
     expect(insert!.params[2]).toBe('/tmp/gstack');
-    expect(insert!.params[3]).toBe('{}'); // federated unset → empty config
+    expect(insert!.params).toEqual(['gstack', 'gstack', '/tmp/gstack']); // federated unset → empty config
   });
 
   test('--federated sets config.federated = true', async () => {
@@ -126,7 +126,7 @@ describe('sources add', () => {
     });
     await runSources(engine, ['add', 'wiki', '--path', '/tmp/wiki', '--federated']);
     const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
-    expect(insert!.params[3]).toBe('{"federated":true}');
+    expect(insert!.params[3]).toBe(true);
   });
 
   test('--no-federated sets config.federated = false (isolation opt-in)', async () => {
@@ -143,7 +143,7 @@ describe('sources add', () => {
     });
     await runSources(engine, ['add', 'yc-media', '--path', '/tmp/yc', '--no-federated']);
     const insert = calls.find(c => c.sql.includes('INSERT INTO sources'));
-    expect(insert!.params[3]).toBe('{"federated":false}');
+    expect(insert!.params[3]).toBe(false);
   });
 
   test('rejects overlapping paths (per eng review finding 4.1)', async () => {
@@ -231,9 +231,9 @@ describe('sources federate / unfederate', () => {
       ],
     });
     await runSources(engine, ['federate', 'gstack']);
-    const upd = calls.find(c => c.sql.includes('UPDATE sources SET config'));
+    const upd = calls.find(c => c.sql.includes('UPDATE sources'));
     expect(upd).toBeDefined();
-    expect(JSON.parse(upd!.params[0] as string)).toEqual({ federated: true });
+    expect(upd!.params).toEqual([true, 'gstack']);
   });
 
   test('unfederate preserves other config keys', async () => {
@@ -243,10 +243,10 @@ describe('sources federate / unfederate', () => {
       ],
     });
     await runSources(engine, ['unfederate', 'gstack']);
-    const upd = calls.find(c => c.sql.includes('UPDATE sources SET config'));
-    const parsed = JSON.parse(upd!.params[0] as string);
-    // Must preserve ttl_days while flipping federated.
-    expect(parsed.ttl_days).toBe(90);
-    expect(parsed.federated).toBe(false);
+    const upd = calls.find(c => c.sql.includes('UPDATE sources'));
+    // Must preserve ttl_days while flipping federated in SQL.
+    expect(upd!.sql).toContain("jsonb_typeof(config) = 'object'");
+    expect(upd!.sql).toContain("- 'federated'");
+    expect(upd!.params).toEqual([false, 'gstack']);
   });
 });

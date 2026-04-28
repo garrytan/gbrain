@@ -64,10 +64,20 @@ interface SourceListEntry {
 // ── Helpers ─────────────────────────────────────────────────
 
 function parseConfig(config: unknown): Record<string, unknown> {
-  if (typeof config === 'string') {
-    try { return JSON.parse(config) as Record<string, unknown>; } catch { return {}; }
+  let value = config;
+
+  // Older installs could store JSONB config as a JSON string; later jsonb
+  // concatenation could then create arrays like ["{...}", {...}]. Normalize
+  // defensively on read while repair scripts/migrations fix rows to objects.
+  for (let i = 0; i < 3 && typeof value === 'string'; i++) {
+    try { value = JSON.parse(value); } catch { return {}; }
   }
-  if (typeof config === 'object' && config !== null) return config as Record<string, unknown>;
+
+  if (Array.isArray(value)) {
+    return value.reduce<Record<string, unknown>>((acc, item) => ({ ...acc, ...parseConfig(item) }), {});
+  }
+
+  if (typeof value === 'object' && value !== null) return value as Record<string, unknown>;
   return {};
 }
 
@@ -138,13 +148,21 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     }
   }
 
-  const config = federated === null ? {} : { federated };
-  await engine.executeRaw(
-    `INSERT INTO sources (id, name, local_path, config)
-         VALUES ($1, $2, $3, $4::jsonb)
-     ON CONFLICT (id) DO NOTHING`,
-    [id, displayName, localPath, JSON.stringify(config)],
-  );
+  if (federated === null) {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+           VALUES ($1, $2, $3, '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, displayName, localPath],
+    );
+  } else {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+           VALUES ($1, $2, $3, jsonb_build_object('federated', $4::boolean))
+       ON CONFLICT (id) DO NOTHING`,
+      [id, displayName, localPath, federated],
+    );
+  }
 
   const created = await fetchSource(engine, id);
   if (!created) {
@@ -315,11 +333,12 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
     console.error(`Source "${id}" not found.`);
     process.exit(4);
   }
-  const config = parseConfig(src.config);
-  config.federated = value;
   await engine.executeRaw(
-    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
-    [JSON.stringify(config), id],
+    `UPDATE sources
+        SET config = ((CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END) - 'federated')
+          || jsonb_build_object('federated', $1::boolean)
+      WHERE id = $2`,
+    [value, id],
   );
   console.log(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
 }
