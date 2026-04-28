@@ -13,7 +13,7 @@ RUN bun build --compile --target=bun-linux-x64 \
 # ── runtime image ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/bin/gbrain /usr/local/bin/gbrain
