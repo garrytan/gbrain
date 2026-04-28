@@ -1,0 +1,556 @@
+/**
+ * Entity and relationship taxonomy for markdown link extraction, filesystem extract, path→PageType
+ * inference, enrichment slugs, and health metrics.
+ *
+ * **`referenceDirs` ({@link EntityTypeDefinition})** — Declares which **top-level slug segments**
+ * identify this kind of page in wiki links and markdown (`people/…`, `deal/…`). Multiple strings
+ * on one row are aliases for the same logical type (e.g. singular vs plural folders), not a
+ * statement about regex or matching order.
+ *
+ * **Combined list — {@link ENTITY_REFERENCE_DIRS}** — Every row’s `referenceDirs` flattened in
+ * {@link ENTITY_TYPES} order (stable exports and contract tests). {@link isEntityReferenceDir}
+ * uses set membership only.
+ *
+ * **Directory alternation — {@link DIR_PATTERN} via {@link buildEntityDirRegexFragment}** — The
+ * extractor whitelist is built from that combined list. When token names **share prefixes**
+ * (`project` vs `projects`), ambiguity is resolved **in this module** by sorting alternatives
+ * longest-token-first before building `(?:…|…)`, not by reordering `ENTITY_TYPES` or entries inside
+ * `referenceDirs`.
+ *
+ * **`inferPageTypeFromPath`** — Overlapping path substring patterns can classify the same path
+ * differently depending on rule order. Prefer mutually exclusive fragments; curate
+ * {@link SPECIAL_PAGE_TYPE_INFERENCE_RULES} vs entity-derived rules; add explicit precedence on
+ * {@link PageTypeInferenceRule} if needed; or evolve the helper to compare longest match first.
+ */
+import type { PageType } from './types.ts';
+
+export interface EntityCustomBehavior {
+  /**
+   * Whether `gbrain check-backlinks` ({@link import('../commands/backlinks.ts').extractEntityRefs}-style
+   * filtering via {@link isBacklinkEntityDir}) treats outbound links into this row’s dirs as **backlink
+   * gaps** when the target page does not link back (Iron Law targets). When **true**, this row’s
+   * `referenceDirs` are merged into {@link BACKLINK_ENTITY_DIRS}. Same mechanical plumbing as other
+   * dir lists; this flag only gates the **backlink checker**, not extraction or graph ingest.
+   *
+   * **Prefer `false` when:**
+   *
+   * - Reciprocal backlinks are not part of the workflow or would be noisy (many-to-one cites,
+   *   glossaries, media, sources). *Examples in {@link ENTITY_TYPES}:*
+   *   `meeting`, `concept`, `deal`, `media`, `source`, `project` typically stay **false** so those
+   *   link types do not participate in missing-backlink reports.
+   * - The directory is organizational (`tech`, `finance`, `personal`, `openclaw`) or a catch-all
+   *   (`legacy-entity`): you still want links and extraction, but not enforced mutual linking.
+   * - Enabling it would imply every mention of that kind requires a timeline/backlink row on the
+   *   target (cost + false positives for types that are not “entity pages” in the people/company sense).
+   *
+   * **Set `true` only when** maintaining symmetric citations for that dir set is a product requirement
+   * (today: `people` / `companies`). Keep independent of {@link healthMetrics} and top-level
+   * {@link EntityTypeDefinition.enrichment}; a type can be link-checked without being in `getHealth()`
+   * entity denominators or vice versa.
+   */
+  backlinks: boolean;
+  /**
+   * Whether this row’s `pageType` (required for **true**) is included in {@link HEALTH_ENTITY_PAGE_TYPES}
+   * and {@link HealthEntityPageType}. Engines pass that list to {@link import('./engine.ts').BrainHealth}
+   * / `getHealth()` so **entity-page** metrics use a bounded set: entity `pages` rows, link/timeline
+   * coverage ratios, and “most connected” scoped to those types ({@link isHealthEntityPageType} for
+   * predicates). Return shape is {@link import('./types.ts').BrainHealth}. Independent of {@link backlinks}
+   * (graph coverage vs reciprocal-link policy).
+   *
+   * **Prefer `false` when:**
+   *
+   * - The PageType should not drive the **entity slice** of the health dashboard (`doctor`, brain score
+   *   components that use entity denominators). *Examples in {@link ENTITY_TYPES}:*
+   *   `meeting`, `concept`, `deal`, `media`, `source`, `project`, `yc`, `civic`, `tech`, … stay **false**
+   *   so volumes of notes, meetings, or namespaces do not dilute or dominate entity coverage KPIs meant
+   *   for core contact/company pages.
+   * - You have no `pageType` on the row yet; health metrics require a stable DB `pages.type` value—do
+   *   not toggle **true** without defining `pageType`.
+   *
+   * **Set `true` only when** this PageType should count as a **first-class entity target** for those
+   * ratios (today: `person` / `company`). Must agree with a defined {@link EntityTypeDefinition.pageType};
+   * changing this flag changes SQL denominators and doctor-facing numbers—treat as a behavioral contract.
+   */
+  healthMetrics: boolean;
+}
+
+/**
+ * Fillable form for adding a new entity-like type.
+ *
+ * Think through every boolean deliberately. A new type can be a markdown reference
+ * target without becoming a health-metric entity, a backlink target, or an
+ * enrichment-created page.
+ *
+ * **Custom behavior booleans vs optional top-level `enrichment`:**
+ *
+ * - **`customBehavior.backlinks`** — Gates {@link BACKLINK_ENTITY_DIRS} / {@link isBacklinkEntityDir}
+ *   (check-backlinks Iron Law targets). See {@link EntityCustomBehavior.backlinks}.
+ * - **`customBehavior.healthMetrics`** — Gates {@link HEALTH_ENTITY_PAGE_TYPES} / `getHealth()` entity
+ *   denominators ({@link isHealthEntityPageType}). See {@link EntityCustomBehavior.healthMetrics}.
+ * - **`enrichment`** — When present as **`true`**, this row’s `pageType` is part of
+ *   the `EnrichmentRequestType` union (derived from `ENTITY_TYPES` below) and
+ *   {@link import('./enrichment-service.ts').enrichEntity} may create stubs under this row’s
+ *   `referenceDirs`. Omit on types that stay workflow-owned.
+ */
+export interface EntityTypeDefinition {
+  /** Stable internal key for humans and tests; not stored in DB. */
+  key: string;
+  /** Human singular name: "person", "company", "media item". */
+  singular: string;
+  /** Human plural name and the first naming decision for new entity types. */
+  plural: string;
+  /**
+   * Top-level slug segments for this type in entity links (`people/foo`, …). Multiple entries
+   * are folder aliases for the same kind. How all rows’ dirs feed {@link ENTITY_REFERENCE_DIRS}
+   * and {@link DIR_PATTERN} is described in the **module overview** (file top).
+   */
+  referenceDirs: readonly string[];
+  /** PageType inferred from path patterns, when this maps to a typed page. */
+  pageType?: PageType;
+  /** Path fragments that infer pageType. Add both singular and plural paths when both exist. */
+  pathInferencePatterns: readonly string[];
+  /** Yes/no checklist for the places this type may have custom behavior. */
+  customBehavior: EntityCustomBehavior;
+  /**
+   * When **`true`**, {@link import('./enrichment-service.ts').enrichEntity} may create or update
+   * pages of this kind; `EnrichmentRequestType` is the union of such rows’ `pageType` values.
+   * Requires a defined `pageType` and non-empty `referenceDirs` (first entry is the canonical stub prefix).
+   */
+  enrichment?: true;
+}
+
+/** Canonical relationship labels produced by deterministic extractors / heuristics. */
+export const RELATIONSHIP = Object.freeze({
+  MENTIONS: 'mentions',
+  WORKS_AT: 'works_at',
+  INVESTED_IN: 'invested_in',
+  FOUNDED: 'founded',
+  ADVISES: 'advises',
+  ATTENDED: 'attended',
+  SOURCE: 'source',
+  RELATED_TO: 'related_to',
+  DISCUSSED_IN: 'discussed_in',
+  YC_PARTNER: 'yc_partner',
+  LED_ROUND: 'led_round',
+  INVOLVED_IN: 'involved_in',
+  DEAL_FOR: 'deal_for',
+} as const);
+
+/**
+ * Values the **code** can assign from heuristics: `inferLinkType`, frontmatter mapping, fs rules.
+ * Tight union so new relationship labels are added in one place (`RELATIONSHIP`) and typecheck
+ * at call sites that *produce* graph edges from markdown.
+ */
+export type InferredLinkType = (typeof RELATIONSHIP)[keyof typeof RELATIONSHIP];
+
+/**
+ * What the **database and public API** store and return for `link_type` / graph edge type: plain
+ * `TEXT` with no DB-level enum. Historical rows and non-`add_link` writers may use labels outside
+ * {@link InferredLinkType}. The `add_link` operation validates manual writes to the taxonomy union;
+ * `traverse_graph` and reads still treat `link_type` as an arbitrary string filter or stored value.
+ */
+export type StoredLinkType = string;
+
+/**
+ * Converts an inferred label into the persisted form (`links.link_type`).
+ * Identity today; keeps a single choke point if inference labels are ever renamed or normalized.
+ */
+export function asStoredLinkType(type: InferredLinkType): StoredLinkType {
+  return type;
+}
+
+/** Fast membership check for manual `add_link` / CLI validation (values of {@link RELATIONSHIP}). */
+const RECOGNIZED_MANUAL_LINK_TYPE_SET = new Set<string>(Object.values(RELATIONSHIP));
+
+/**
+ * Comma-separated sorted list of allowed manual link types (for errors and short docs).
+ * Same vocabulary as {@link RELATIONSHIP} / {@link InferredLinkType}.
+ */
+export const MANUAL_LINK_TYPE_ALLOWED_HINT: string = Object.values(RELATIONSHIP)
+  .slice()
+  .sort()
+  .join(', ');
+
+/**
+ * Normalizes user input for manual link type checks: `undefined` / `null` → `''`, non-strings → `''`,
+ * strings → `trim()`. Callers that need to reject non-strings should do so before or use
+ * {@link parseManualLinkTypeOrThrow}.
+ */
+export function normalizeManualLinkTypeInput(raw: unknown): string {
+  if (raw === undefined || raw === null) return '';
+  if (typeof raw !== 'string') return '';
+  return raw.trim();
+}
+
+export function isRecognizedManualLinkType(normalized: string): normalized is InferredLinkType {
+  return RECOGNIZED_MANUAL_LINK_TYPE_SET.has(normalized);
+}
+
+/**
+ * Validates manual `link_type` for `add_link`: required non-empty after trim, exact case-sensitive
+ * match to a {@link RELATIONSHIP} value. Throws `Error` with a concise message; map to
+ * `OperationError('invalid_params', …)` at the operation boundary.
+ */
+export function parseManualLinkTypeOrThrow(raw: unknown): InferredLinkType {
+  if (raw !== undefined && raw !== null && typeof raw !== 'string') {
+    throw new Error(`link_type must be a string (got ${typeof raw})`);
+  }
+  const normalized = normalizeManualLinkTypeInput(raw);
+  if (normalized === '') {
+    throw new Error(`link_type is required; allowed values are: ${MANUAL_LINK_TYPE_ALLOWED_HINT}`);
+  }
+  if (!isRecognizedManualLinkType(normalized)) {
+    throw new Error(`invalid link_type ${JSON.stringify(normalized)}; allowed values are: ${MANUAL_LINK_TYPE_ALLOWED_HINT}`);
+  }
+  return normalized;
+}
+
+export interface FrontmatterLinkFieldMapping {
+  fields: string[];
+  pageType?: string;
+  type: InferredLinkType;
+  direction: 'outgoing' | 'incoming';
+  dirHint: string | string[];
+}
+
+export interface PageTypeInferenceRule {
+  patterns: string[];
+  type: PageType;
+}
+
+/**
+ * Ordered registry of entity-like types (fillable form). Directory naming and path-inference
+ * hazards are summarized in the **module overview** (file top).
+ */
+export const ENTITY_TYPES = [
+  {
+    key: 'person',
+    singular: 'person',
+    plural: 'people',
+    referenceDirs: ['people'],
+    pageType: 'person',
+    pathInferencePatterns: ['/people/', '/person/'],
+    customBehavior: { backlinks: true, healthMetrics: true },
+    enrichment: true,
+  },
+  {
+    key: 'company',
+    singular: 'company',
+    plural: 'companies',
+    referenceDirs: ['companies'],
+    pageType: 'company',
+    pathInferencePatterns: ['/companies/', '/company/'],
+    customBehavior: { backlinks: true, healthMetrics: true },
+    enrichment: true,
+  },
+  {
+    key: 'meeting',
+    singular: 'meeting',
+    plural: 'meetings',
+    referenceDirs: ['meetings'],
+    pageType: 'meeting',
+    pathInferencePatterns: ['/meetings/', '/meeting/'],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'concept',
+    singular: 'concept',
+    plural: 'concepts',
+    referenceDirs: ['concepts'],
+    pageType: 'concept',
+    pathInferencePatterns: ['/wiki/concepts/', '/wiki/concept/'],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'deal',
+    singular: 'deal',
+    plural: 'deals',
+    referenceDirs: ['deal'],
+    pageType: 'deal',
+    pathInferencePatterns: ['/deals/', '/deal/'],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'civic',
+    singular: 'civic',
+    plural: 'civic',
+    referenceDirs: ['civic'],
+    pageType: 'civic',
+    pathInferencePatterns: ['/civic/'],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'project',
+    singular: 'project',
+    plural: 'projects',
+    referenceDirs: ['project', 'projects'],
+    pageType: 'project',
+    pathInferencePatterns: ['/projects/', '/project/'],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'source',
+    singular: 'source',
+    plural: 'sources',
+    referenceDirs: ['source'],
+    pageType: 'source',
+    pathInferencePatterns: ['/sources/', '/source/'],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'media',
+    singular: 'media item',
+    plural: 'media',
+    referenceDirs: ['media'],
+    pageType: 'media',
+    pathInferencePatterns: ['/media/'],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'yc',
+    singular: 'yc page',
+    plural: 'yc pages',
+    referenceDirs: ['yc'],
+    pageType: 'yc',
+    pathInferencePatterns: ['/yc/'],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'tech',
+    singular: 'tech page',
+    plural: 'tech pages',
+    referenceDirs: ['tech'],
+    pathInferencePatterns: [],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'finance',
+    singular: 'finance page',
+    plural: 'finance pages',
+    referenceDirs: ['finance'],
+    pathInferencePatterns: [],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'personal',
+    singular: 'personal page',
+    plural: 'personal pages',
+    referenceDirs: ['personal'],
+    pathInferencePatterns: [],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'openclaw',
+    singular: 'openclaw page',
+    plural: 'openclaw pages',
+    referenceDirs: ['openclaw'],
+    pathInferencePatterns: [],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+  {
+    key: 'legacy-entity',
+    singular: 'legacy entity',
+    plural: 'legacy entities',
+    referenceDirs: ['entities'],
+    pathInferencePatterns: [],
+    customBehavior: { backlinks: false, healthMetrics: false },
+  },
+] as const satisfies readonly EntityTypeDefinition[];
+
+/** Rows where {@link EntityTypeDefinition.enrichment} is true and `pageType` is defined (enrich pipeline). */
+export type EnrichableEntityTypeDefinition = Extract<
+  (typeof ENTITY_TYPES)[number],
+  { readonly enrichment: true; readonly pageType: PageType }
+>;
+
+/**
+ * Discriminator for {@link import('./enrichment-service.ts').EnrichmentRequest.entityType}; derived from
+ * enrichable taxonomy rows’ `pageType`.
+ */
+export type EnrichmentRequestType = EnrichableEntityTypeDefinition['pageType'];
+
+/** Runtime enrichable rows (same gate as {@link EnrichableEntityTypeDefinition}). */
+export const ENRICHMENT_ENTITY_TYPES = ENTITY_TYPES.filter((e): e is EnrichableEntityTypeDefinition => {
+  if (!('enrichment' in e) || e.enrichment !== true) return false;
+  return 'pageType' in e && e.pageType !== undefined;
+});
+
+const ENRICHMENT_ROW_BY_PAGE_TYPE = new Map<EnrichmentRequestType, EnrichableEntityTypeDefinition>(
+  ENRICHMENT_ENTITY_TYPES.map(e => [e.pageType, e]),
+);
+
+/** Resolve the taxonomy row + canonical slug prefix for an enrich request. */
+function enrichmentRowAndSlugPrefix(type: EnrichmentRequestType): {
+  row: EnrichableEntityTypeDefinition;
+  slugPrefix: string;
+} {
+  const row = ENRICHMENT_ROW_BY_PAGE_TYPE.get(type);
+  if (!row) throw new Error(`Unknown enrichment PageType: ${String(type)}`);
+  const slugPrefix = row.referenceDirs[0];
+  if (!slugPrefix) {
+    throw new Error(`taxonomy: enrichment row '${row.key}' must have non-empty referenceDirs`);
+  }
+  return { row, slugPrefix };
+}
+
+/** All top-level slug dirs for enrich-created pages (every `referenceDirs` entry per enrichable row). */
+export const ENRICHMENT_REFERENCE_DIRS = ENRICHMENT_ENTITY_TYPES.flatMap(e => [...e.referenceDirs]);
+
+const ENRICHMENT_REFERENCE_DIR_SET = new Set<string>(ENRICHMENT_REFERENCE_DIRS);
+
+/** Whether a search-result slug prefix indicates an enrich-stub directory. */
+export function isEnrichmentReferenceDir(dir: string): boolean {
+  return ENRICHMENT_REFERENCE_DIR_SET.has(dir);
+}
+
+/** Title case for stub `**Type:**` lines (uses the row's {@link EntityTypeDefinition.singular}). */
+export function enrichmentDisplayLabelForPageType(type: EnrichmentRequestType): string {
+  const { row } = enrichmentRowAndSlugPrefix(type);
+  return row.singular.replace(/\b[a-z]/g, c => c.toUpperCase());
+}
+
+/** Flatten of each row’s {@link EntityTypeDefinition.referenceDirs} in {@link ENTITY_TYPES} order. */
+export const ENTITY_REFERENCE_DIRS = ENTITY_TYPES.flatMap(e => e.referenceDirs);
+
+/**
+ * Directory names whose inbound links `gbrain check-backlinks` may treat as backlink gaps.
+ * Derived from each row’s {@link EntityCustomBehavior.backlinks}: when true, that row’s
+ * `referenceDirs` are concatenated (same mechanical pattern as {@link ENTITY_REFERENCE_DIRS},
+ * different {@link EntityCustomBehavior} gate).
+ */
+export const BACKLINK_ENTITY_DIRS = ENTITY_TYPES
+  .filter(e => e.customBehavior.backlinks)
+  .flatMap(e => e.referenceDirs);
+
+/**
+ * PageType values included in `getHealth()` entity-coverage denominators.
+ * Derived at the type level from `ENTITY_TYPES` rows whose {@link EntityCustomBehavior.healthMetrics}
+ * is true and which define a `pageType` — the type and the runtime array below stay aligned with
+ * that checklist field (not with `backlinks`).
+ */
+export type HealthEntityPageType = Extract<
+  (typeof ENTITY_TYPES)[number],
+  { readonly customBehavior: { readonly healthMetrics: true }; readonly pageType: PageType }
+>['pageType'];
+
+/** Runtime filter for {@link HEALTH_ENTITY_PAGE_TYPES}; same {@link EntityCustomBehavior.healthMetrics} gate as {@link HealthEntityPageType}. */
+type EntityTypeWithHealthMetrics = Extract<
+  (typeof ENTITY_TYPES)[number],
+  { readonly customBehavior: { readonly healthMetrics: true }; readonly pageType: PageType }
+>;
+
+/** Same members as {@link HealthEntityPageType}; built from {@link EntityCustomBehavior.healthMetrics} + `pageType`. */
+export const HEALTH_ENTITY_PAGE_TYPES = ENTITY_TYPES.filter(
+  (e): e is EntityTypeWithHealthMetrics =>
+    e.customBehavior.healthMetrics && 'pageType' in e && e.pageType !== undefined,
+).map(e => e.pageType);
+
+
+export function enrichmentSlugPrefixForEntityType(type: EnrichmentRequestType): string {
+  const { slugPrefix } = enrichmentRowAndSlugPrefix(type);
+  return slugPrefix;
+}
+
+export const FS_LINK_TYPE_RULES = [
+  { fromDir: 'people', toDir: 'companies', type: RELATIONSHIP.FOUNDED, whenFrontmatterArrayField: 'founded' },
+  { fromDir: 'people', toDir: 'companies', type: RELATIONSHIP.WORKS_AT },
+  { fromDir: 'people', toDir: 'deals', type: RELATIONSHIP.INVOLVED_IN },
+  { fromDir: 'deals', toDir: 'companies', type: RELATIONSHIP.DEAL_FOR },
+  { fromDir: 'meetings', toDir: 'people', type: RELATIONSHIP.ATTENDED },
+] as const;
+
+export const FRONTMATTER_RELATIONSHIP_MAP: readonly FrontmatterLinkFieldMapping[] = [
+  // Person pages → companies
+  { fields: ['company', 'companies'], pageType: 'person', type: RELATIONSHIP.WORKS_AT, direction: 'outgoing', dirHint: 'companies' },
+  { fields: ['founded'], pageType: 'person', type: RELATIONSHIP.FOUNDED, direction: 'outgoing', dirHint: 'companies' },
+  // Company pages (incoming relationships — subject of the verb lives elsewhere)
+  { fields: ['key_people'], pageType: 'company', type: RELATIONSHIP.WORKS_AT, direction: 'incoming', dirHint: 'people' },
+  { fields: ['partner'], pageType: 'company', type: RELATIONSHIP.YC_PARTNER, direction: 'incoming', dirHint: 'people' },
+  { fields: ['investors'], pageType: 'company', type: RELATIONSHIP.INVESTED_IN, direction: 'incoming', dirHint: ['companies', 'funds', 'people'] },
+  // Deal pages (all incoming — deals are the object)
+  { fields: ['investors'], pageType: 'deal', type: RELATIONSHIP.INVESTED_IN, direction: 'incoming', dirHint: ['companies', 'funds', 'people'] },
+  { fields: ['lead'], pageType: 'deal', type: RELATIONSHIP.LED_ROUND, direction: 'incoming', dirHint: ['companies', 'funds', 'people'] },
+  // Meeting pages
+  { fields: ['attendees'], pageType: 'meeting', type: RELATIONSHIP.ATTENDED, direction: 'incoming', dirHint: 'people' },
+  // Any page type
+  { fields: ['sources'], type: RELATIONSHIP.DISCUSSED_IN, direction: 'incoming', dirHint: ['source', 'media'] },
+  { fields: ['source'], type: RELATIONSHIP.SOURCE, direction: 'outgoing', dirHint: '' },
+  { fields: ['related', 'see_also'], type: RELATIONSHIP.RELATED_TO, direction: 'outgoing', dirHint: '' },
+];
+
+const SPECIAL_PAGE_TYPE_INFERENCE_RULES: readonly PageTypeInferenceRule[] = [
+  { patterns: ['/writing/'], type: 'writing' },
+  { patterns: ['/wiki/analysis/'], type: 'analysis' },
+  { patterns: ['/wiki/guides/', '/wiki/guide/'], type: 'guide' },
+  { patterns: ['/wiki/hardware/'], type: 'hardware' },
+  { patterns: ['/wiki/architecture/'], type: 'architecture' },
+  { patterns: ['/emails/', '/email/'], type: 'email' },
+  { patterns: ['/slack/'], type: 'slack' },
+  { patterns: ['/cal/', '/calendar/'], type: 'calendar-event' },
+  { patterns: ['/notes/', '/note/'], type: 'note' },
+];
+
+// Mirrors src/core/markdown.ts inferType() precedence. Special subtypes stay first
+// because they are stronger signals than broader entity/content directories.
+export const PAGE_TYPE_INFERENCE_RULES: readonly PageTypeInferenceRule[] = [
+  ...SPECIAL_PAGE_TYPE_INFERENCE_RULES.slice(0, 5),
+  ...ENTITY_TYPES
+    .filter(
+      (e): e is (typeof ENTITY_TYPES)[number] & { readonly pageType: PageType } =>
+        'pageType' in e && e.pageType !== undefined && e.pathInferencePatterns.length > 0,
+    )
+    .map(e => ({ patterns: [...e.pathInferencePatterns], type: e.pageType })),
+  ...SPECIAL_PAGE_TYPE_INFERENCE_RULES.slice(5),
+];
+
+/** Builds `(?:…|…)` for {@link DIR_PATTERN}; longest-token-first policy — module overview (file top). */
+export function buildEntityDirRegexFragment(dirs: readonly string[] = ENTITY_REFERENCE_DIRS): string {
+  const ordered = [...dirs].sort((a, b) => b.length - a.length || a.localeCompare(b));
+  return `(?:${ordered.join('|')})`;
+}
+
+/** Directory alternation for link extractors ({@link buildEntityDirRegexFragment}). */
+export const DIR_PATTERN = buildEntityDirRegexFragment();
+
+const ENTITY_DIR_SET = new Set<string>(ENTITY_REFERENCE_DIRS as readonly string[]);
+const BACKLINK_DIR_SET = new Set<string>(BACKLINK_ENTITY_DIRS as readonly string[]);
+const HEALTH_TYPE_SET = new Set<string>(HEALTH_ENTITY_PAGE_TYPES as readonly string[]);
+
+export function isEntityReferenceDir(dir: string): boolean {
+  return ENTITY_DIR_SET.has(dir);
+}
+
+export function isBacklinkEntityDir(dir: string): boolean {
+  return BACKLINK_DIR_SET.has(dir);
+}
+
+export function isHealthEntityPageType(type: string): type is HealthEntityPageType {
+  return HEALTH_TYPE_SET.has(type);
+}
+
+export function inferPageTypeFromPath(filePath?: string): PageType {
+  if (!filePath) return 'concept';
+  const lower = ('/' + filePath).toLowerCase();
+  for (const rule of PAGE_TYPE_INFERENCE_RULES) {
+    for (const p of rule.patterns) {
+      if (lower.includes(p)) return rule.type;
+    }
+  }
+  return 'concept';
+}
+
+export function inferFsLinkTypeByTopDirs(
+  fromTopDir: string,
+  toTopDir: string,
+  frontmatter?: Record<string, unknown>,
+): InferredLinkType {
+  const from = fromTopDir.split('/')[0];
+  const to = toTopDir.split('/')[0];
+  for (const rule of FS_LINK_TYPE_RULES) {
+    if (from !== rule.fromDir || to !== rule.toDir) continue;
+    if ('whenFrontmatterArrayField' in rule && !Array.isArray(frontmatter?.[rule.whenFrontmatterArrayField])) continue;
+    return rule.type;
+  }
+  return RELATIONSHIP.MENTIONS;
+}
+

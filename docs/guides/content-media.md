@@ -46,8 +46,8 @@ on user_shares_media(url_or_file):
 
         # Step 4: Extract and cross-reference entities
         for person in transcript.mentioned_people:
-            gbrain add_link <slug> <person_slug>
-            gbrain add_link <person_slug> <slug>
+            gbrain link <slug> <person_slug> --link-type mentions
+            gbrain link <person_slug> <slug> --link-type mentions
             gbrain add_timeline_entry <person_slug> \
                 --entry "Discussed in {video_title}: {what_was_said}" \
                 --source "YouTube: {url}"
@@ -80,8 +80,8 @@ on user_shares_media(url_or_file):
 
         # Extract entities and cross-reference
         for entity in bundle.mentioned_entities:
-            gbrain add_link <slug> <entity_slug>
-            gbrain add_link <entity_slug> <slug>
+            gbrain link <slug> <entity_slug> --link-type mentions
+            gbrain link <entity_slug> <slug> --link-type mentions
 
     # PATTERN 3: PDFs and Documents
     elif media.type == "pdf" or media.type == "document":
@@ -109,8 +109,8 @@ on user_shares_media(url_or_file):
         """
 
         for entity in document.mentioned_entities:
-            gbrain add_link <slug> <entity_slug>
-            gbrain add_link <entity_slug> <slug>
+            gbrain link <slug> <entity_slug> --link-type mentions
+            gbrain link <entity_slug> <slug> --link-type mentions
 
     # Always sync after ingestion
     gbrain sync

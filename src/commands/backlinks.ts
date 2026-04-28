@@ -13,6 +13,7 @@
 import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative, basename } from 'path';
 import { extractEntityRefs as canonicalExtractEntityRefs } from '../core/link-extraction.ts';
+import { isBacklinkEntityDir } from '../core/entity-taxonomy.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
@@ -40,7 +41,7 @@ interface BacklinkGap {
 export function extractEntityRefs(content: string, _pagePath: string): { name: string; slug: string; dir: string }[] {
   const refs = canonicalExtractEntityRefs(content);
   return refs
-    .filter(r => r.dir === 'people' || r.dir === 'companies')
+    .filter(r => isBacklinkEntityDir(r.dir))
     .map(r => ({
       name: r.name,
       slug: r.slug.startsWith(`${r.dir}/`) ? r.slug.slice(r.dir.length + 1) : r.slug,

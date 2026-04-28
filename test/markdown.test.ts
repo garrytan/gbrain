@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { parseMarkdown, serializeMarkdown, splitBody } from '../src/core/markdown.ts';
+import { inferPageTypeFromPath } from '../src/core/entity-taxonomy.ts';
 
 describe('Markdown Parser', () => {
   test('parses frontmatter + compiled_truth + timeline (explicit sentinel)', () => {
@@ -74,7 +75,7 @@ title: Someone
 Content
 `;
     const parsed = parseMarkdown(md, 'people/someone.md');
-    expect(parsed.type).toBe('person');
+    expect(parsed.type).toBe(inferPageTypeFromPath('people/someone.md'));
   });
 
   test('infers slug from file path', () => {
@@ -88,21 +89,32 @@ Content
     expect(parsed.slug).toBe('concepts/do-things-that-dont-scale');
   });
 
-  // v0.20: BrainBench / native inbox-chat-calendar Page types. These 5 directory
-  // heuristics exercise PageType 'email | slack | calendar-event | note | meeting'
-  // which were added for amara-life-v1 ingest but are useful for any gbrain user
-  // ingesting an inbox dump, Slack export, iCal, meeting transcript, or daily notes.
+  test('delegates inferred type to entity-taxonomy path rules', () => {
+    const md = `---\ntitle: Fixture\n---\nBody\n`;
+    const paths = [
+      'writing/my-essay.md',
+      'wiki/analysis/system-design.md',
+      'wiki/guides/setup.md',
+      'people/alice.md',
+      'deals/acme-seed.md',
+      'meetings/m-0001.md',
+      'slack/sl-0001.md',
+    ];
+    for (const path of paths) {
+      expect(parseMarkdown(md, path).type).toBe(inferPageTypeFromPath(path));
+    }
+  });
+
   test.each([
-    ['emails/em-0001.md', 'email'],
-    ['email/em-0001.md', 'email'],
-    ['slack/sl-0037.md', 'slack'],
-    ['cal/evt-0042.md', 'calendar-event'],
-    ['calendar/evt-0042.md', 'calendar-event'],
-    ['notes/2026-04-standup.md', 'note'],
-    ['note/2026-04-standup.md', 'note'],
-    ['meetings/mtg-0003.md', 'meeting'],
-    ['meeting/mtg-0003.md', 'meeting'],
-  ] as const)('infers type %s -> %s', (path, expectedType) => {
+    ['writing/my-essay.md', 'writing'],
+    ['wiki/analysis/system-design.md', 'analysis'],
+    ['wiki/guides/setup.md', 'guide'],
+    ['wiki/guide/onboarding.md', 'guide'],
+    ['wiki/hardware/device.md', 'hardware'],
+    ['wiki/architecture/service-map.md', 'architecture'],
+    ['wiki/concepts/rrf.md', 'concept'],
+    ['wiki/concept/rrf.md', 'concept'],
+  ] as const)('infers wiki/writing type %s -> %s', (path, expectedType) => {
     const md = `---\ntitle: Fixture\n---\nBody\n`;
     const parsed = parseMarkdown(md, path);
     expect(parsed.type).toBe(expectedType);
@@ -282,23 +294,8 @@ Some content.`;
   });
 
   test('infers type from various directory paths', () => {
-    expect(parseMarkdown('', 'people/someone.md').type).toBe('person');
-    expect(parseMarkdown('', 'concepts/thing.md').type).toBe('concept');
-    expect(parseMarkdown('', 'companies/acme.md').type).toBe('company');
-  });
-
-  test('infers type from wiki subdirectory paths', () => {
-    expect(parseMarkdown('', 'tech/wiki/concepts/longevity-science.md').type).toBe('concept');
-    expect(parseMarkdown('', 'tech/wiki/guides/team-os-claude-code.md').type).toBe('guide');
-    expect(parseMarkdown('', 'tech/wiki/analysis/agi-timeline-debate.md').type).toBe('analysis');
-    expect(parseMarkdown('', 'tech/wiki/hardware/h100-vs-gb200-training-benchmarks.md').type).toBe('hardware');
-    expect(parseMarkdown('', 'tech/wiki/architecture/kb-infrastructure.md').type).toBe('architecture');
-    expect(parseMarkdown('', 'finance/wiki/analysis/polymarket-bot-automation-thesis.md').type).toBe('analysis');
-    expect(parseMarkdown('', 'personal/wiki/concepts/career-regrets-2026-framework.md').type).toBe('concept');
-  });
-
-  test('infers writing type from /writing/ paths', () => {
-    expect(parseMarkdown('', 'writing/post.md').type).toBe('writing');
-    expect(parseMarkdown('', 'projects/blog/writing/essay.md').type).toBe('writing');
+    expect(parseMarkdown('', 'people/someone.md').type).toBe(inferPageTypeFromPath('people/someone.md'));
+    expect(parseMarkdown('', 'concepts/thing.md').type).toBe(inferPageTypeFromPath('concepts/thing.md'));
+    expect(parseMarkdown('', 'companies/acme.md').type).toBe(inferPageTypeFromPath('companies/acme.md'));
   });
 });

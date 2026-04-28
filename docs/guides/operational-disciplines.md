@@ -70,7 +70,7 @@ on nightly_schedule("02:00"):
         existing_links = gbrain get_links <page.slug>
         for mention in mentions:
             if mention not in existing_links:
-                gbrain add_link <page.slug> <mention_slug>  # fix broken graph
+                gbrain link <page.slug> <mention_slug> --link-type mentions  # fix broken graph
 
     # 5b: Citation audit -- find facts without sources
     for page in pages:

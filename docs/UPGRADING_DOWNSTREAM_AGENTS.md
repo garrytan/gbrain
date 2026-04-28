@@ -20,6 +20,8 @@ The agent will keep manually calling `gbrain link` after every `put_page` (now r
 auto-link does it), miss out on `gbrain graph-query` for relationship questions, and
 not know to backfill the structured timeline.
 
+**Typed manual links:** MCP `add_link` and CLI `gbrain link` require `--link-type <T>` where `T` is an exact match to a value in `RELATIONSHIP` (`src/core/entity-taxonomy.ts`), for example `mentions`, `works_at`, `attended`. Omitting `link_type` or using an unknown string fails with `invalid_params`. Graph traversal (`traverse_graph`) still filters by arbitrary stored `link_type` strings so legacy rows keep working.
+
 ## How to apply
 
 1. Identify your forked skill files. Typically at `~/git/<your-agent>/workspace/skills/` or wherever your agent's skill directory lives.

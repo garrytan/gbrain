@@ -62,10 +62,10 @@ on enrich(entity, trigger):
         gbrain add_timeline_entry <entity_slug> --entry "Enriched: {new_signal}"
         # Flag contradictions -- don't silently resolve them
 
-    # Step 7: Cross-reference the graph
-    gbrain add_link <person_slug> <company_slug>       # person -> company
-    gbrain add_link <company_slug> <person_slug>       # company -> person
-    gbrain add_link <person_slug> <deal_slug>          # person -> deal
+    # Step 7: Cross-reference the graph (link_type = RELATIONSHIP label, required)
+    gbrain link <person_slug> <company_slug> --link-type works_at
+    gbrain link <company_slug> <person_slug> --link-type works_at
+    gbrain link <person_slug> <deal_slug> --link-type involved_in
     # Every entity page links to every other entity page that references it
 
 # People page sections (not a LinkedIn profile -- a living portrait):

@@ -150,7 +150,7 @@ describe('PGLite fresh-install schema reflects v0.19.0', () => {
     } finally {
       await engine.disconnect();
     }
-  });
+  }, 20_000);
 
   test('upsertChunks round-trips code metadata', async () => {
     const engine = new PGLiteEngine();

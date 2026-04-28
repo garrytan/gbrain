@@ -49,8 +49,8 @@ on new_meeting_transcript(meeting):
 
     # Step 5: Back-link everything (bidirectional graph)
     for entity in all_entities_mentioned:
-        gbrain add_link <slug> <entity_slug>   # meeting -> entity
-        gbrain add_link <entity_slug> <slug>    # entity -> meeting
+        gbrain link <slug> <entity_slug> --link-type mentions
+        gbrain link <entity_slug> <slug> --link-type mentions
 
     # Step 6: Sync so new pages are immediately searchable
     gbrain sync

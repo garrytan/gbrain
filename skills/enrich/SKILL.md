@@ -16,7 +16,7 @@ tools:
   - put_page
   - search
   - query
-  - add_link
+  - add_link (manual calls: taxonomy `link_type` / CLI `--link-type`)
   - add_timeline_entry
   - get_backlinks
 mutating: true
@@ -345,5 +345,5 @@ Both page types have bidirectional back-links to every entity they mention.
 - List pages in gbrain by type (list_pages)
 - Store raw API data in gbrain (put_raw_data)
 - Retrieve raw data from gbrain (get_raw_data)
-- Link entities in gbrain (add_link)
+- Link entities in gbrain (`add_link` / `gbrain link … --link-type <T>`; `T` must be a `RELATIONSHIP` label)
 - Check backlinks in gbrain (get_backlinks)

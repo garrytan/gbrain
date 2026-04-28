@@ -1,7 +1,20 @@
 import { describe, test, expect } from 'bun:test';
-import { slugifyEntity, entityPagePath, extractEntities } from '../src/core/enrichment-service.ts';
+import { enrichmentDisplayLabelForPageType } from '../src/core/entity-taxonomy.ts';
+import {
+  slugifyEntity,
+  entityPagePath,
+  extractEntities,
+  enrichEntity,
+  enrichEntities,
+  extractAndEnrich,
+} from '../src/core/enrichment-service.ts';
 
 describe('enrichment-service', () => {
+  test('enrichment stub Type labels derive from taxonomy singular', () => {
+    expect(enrichmentDisplayLabelForPageType('person')).toBe('Person');
+    expect(enrichmentDisplayLabelForPageType('company')).toBe('Company');
+  });
+
   describe('slugifyEntity', () => {
     test('person names → people/ prefix', () => {
       expect(slugifyEntity('Jane Doe', 'person')).toBe('people/jane-doe');
@@ -80,32 +93,142 @@ describe('enrichment-service', () => {
     });
   });
 
-  describe('enrichEntity (mock)', () => {
-    test('module exports enrichEntity function', async () => {
-      const mod = await import('../src/core/enrichment-service.ts');
-      expect(typeof mod.enrichEntity).toBe('function');
+  describe('enrichEntity / enrichEntities', () => {
+    function makeEngineMock(opts?: {
+      existingSlugs?: string[];
+      searchSlugs?: string[];
+      failTimeline?: boolean;
+      failLink?: boolean;
+    }) {
+      const existing = new Set(opts?.existingSlugs ?? []);
+      const putCalls: Array<{ slug: string; page: unknown }> = [];
+      const timelineCalls: Array<{ slug: string; entry: unknown }> = [];
+      const linkCalls: Array<{ from: string; to: string; context: string }> = [];
+
+      const engine = {
+        async searchKeyword() {
+          return (opts?.searchSlugs ?? []).map(slug => ({ slug }));
+        },
+        async getPage(slug: string) {
+          return existing.has(slug) ? ({ slug } as any) : null;
+        },
+        async putPage(slug: string, page: unknown) {
+          putCalls.push({ slug, page });
+          existing.add(slug);
+          return { slug, ...(page as any) };
+        },
+        async addTimelineEntry(slug: string, entry: unknown) {
+          timelineCalls.push({ slug, entry });
+          if (opts?.failTimeline) throw new Error('timeline failed');
+        },
+        async addLink(from: string, to: string, context: string) {
+          linkCalls.push({ from, to, context });
+          if (opts?.failLink) throw new Error('link failed');
+        },
+      } as any;
+
+      return { engine, putCalls, timelineCalls, linkCalls };
+    }
+
+    test('create path: builds new page, timeline, and backlink with source-aware mention signals', async () => {
+      const { engine, putCalls, timelineCalls, linkCalls } = makeEngineMock({
+        searchSlugs: [
+          'people/alice',
+          'companies/acme',
+          'meetings/board-sync',
+          'media/articles/one',
+          'sources/book-notes',
+          'ideas/new-thesis',
+          'voice-notes/daily',
+          'misc/random',
+        ],
+      });
+
+      const result = await enrichEntity(engine, {
+        entityName: 'Jane Doe',
+        entityType: 'person',
+        context: 'mentioned in board recap',
+        sourceSlug: 'meetings/board-sync',
+      });
+
+      expect(result.slug).toBe('people/jane-doe');
+      expect(result.action).toBe('created');
+      expect(result.mentionCount).toBe(8);
+      expect(result.tier).toBe(1);
+      expect(result.timelineAdded).toBe(true);
+      expect(result.backlinkCreated).toBe(true);
+      expect(result.mentionSources.sort()).toEqual(
+        ['brain-ops', 'enrich', 'idea-ingest', 'media-ingest', 'meeting-ingestion', 'voice-note'].sort(),
+      );
+      expect(putCalls).toHaveLength(1);
+      expect(timelineCalls).toHaveLength(1);
+      expect(linkCalls).toHaveLength(1);
+      const page = putCalls[0]?.page as { compiled_truth?: string };
+      expect(page?.compiled_truth).toContain('**Type:** Person');
     });
 
-    test('module exports enrichEntities for batch processing', async () => {
-      const mod = await import('../src/core/enrichment-service.ts');
-      expect(typeof mod.enrichEntities).toBe('function');
+    test('update path: skips create and tolerates timeline/link insertion failures', async () => {
+      const { engine, putCalls } = makeEngineMock({
+        existingSlugs: ['companies/acme'],
+        failTimeline: true,
+        failLink: true,
+      });
+
+      const result = await enrichEntity(engine, {
+        entityName: 'Acme',
+        entityType: 'company',
+        context: 'mentioned in memo',
+        sourceSlug: 'notes/memo',
+      });
+
+      expect(result.slug).toBe('companies/acme');
+      expect(result.action).toBe('updated');
+      expect(result.timelineAdded).toBe(false);
+      expect(result.backlinkCreated).toBe(false);
+      expect(putCalls).toHaveLength(0);
     });
 
-    test('module exports extractAndEnrich for text processing', async () => {
-      const mod = await import('../src/core/enrichment-service.ts');
-      expect(typeof mod.extractAndEnrich).toBe('function');
-    });
-  });
+    test('explicit tier stays fixed; tierEscalated reflects higher suggested priority', async () => {
+      const { engine } = makeEngineMock({
+        searchSlugs: ['people/a', 'people/b', 'people/c', 'people/d', 'people/e', 'people/f', 'people/g', 'people/h'],
+      });
 
-  describe('tier auto-escalation logic', () => {
-    // We test the tier suggestion indirectly through the public interface
-    // The actual suggestTier function is private, but its behavior is
-    // observable through enrichEntity's return value (needs engine mock for full test)
-    test('enrichment result includes tier fields', async () => {
-      const mod = await import('../src/core/enrichment-service.ts');
-      // Verify the EnrichmentResult type shape is correct by checking exports
-      expect(mod.enrichEntity).toBeDefined();
-      // Full tier escalation testing requires engine mock (covered in E2E)
+      const result = await enrichEntity(engine, {
+        entityName: 'Priority Person',
+        entityType: 'person',
+        context: 'mentioned often',
+        sourceSlug: 'meetings/review',
+        tier: 3,
+      });
+
+      expect(result.suggestedTier).toBe(1);
+      expect(result.tier).toBe(3);
+      expect(result.tierEscalated).toBe(true);
+    });
+
+    test('enrichEntities processes batch and emits progress callback', async () => {
+      const { engine } = makeEngineMock();
+      const progress: string[] = [];
+
+      const results = await enrichEntities(engine, [
+        { entityName: 'Jane Doe', entityType: 'person', context: 'ctx1', sourceSlug: 'notes/one' },
+        { entityName: 'Acme Corp', entityType: 'company', context: 'ctx2', sourceSlug: 'notes/two' },
+      ], {
+        throttle: false,
+        onProgress(done, total, name) {
+          progress.push(`${done}/${total}:${name}`);
+        },
+      });
+
+      expect(results).toHaveLength(2);
+      expect(progress).toEqual(['1/2:Jane Doe', '2/2:Acme Corp']);
+    });
+
+    test('extractAndEnrich short-circuits when no entities are detected', async () => {
+      const { engine, putCalls } = makeEngineMock();
+      const results = await extractAndEnrich(engine, 'all lowercase text with no names', 'notes/empty');
+      expect(results).toEqual([]);
+      expect(putCalls).toHaveLength(0);
     });
   });
 });

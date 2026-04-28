@@ -9,7 +9,7 @@ tools:
   - search
   - get_page
   - put_page
-  - add_link
+  - add_link (manual calls: taxonomy `link_type` / CLI `--link-type`)
   - add_timeline_entry
   - sync_brain
 mutating: true
@@ -304,7 +304,7 @@ Raw source: [preserved at path / uploaded to cloud]
 - Read a page from gbrain (get_page)
 - Store/update a page in gbrain (put_page)
 - Add a timeline entry in gbrain (add_timeline_entry)
-- Link entities in gbrain (add_link)
+- Link entities in gbrain (`add_link` / `gbrain link … --link-type <T>`; `T` must be a `RELATIONSHIP` label)
 - List tags for a page (get_tags)
 - Tag a page in gbrain (add_tag)
 - Store raw data in gbrain (put_raw_data)

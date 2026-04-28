@@ -8,7 +8,7 @@ triggers:
 tools:
   - put_page
   - search
-  - add_link
+  - add_link (manual calls: taxonomy `link_type` / CLI `--link-type`)
   - add_tag
   - sync_brain
 mutating: true
@@ -129,7 +129,7 @@ Verification:
 
 - Store/update pages in gbrain (put_page)
 - Read pages from gbrain (get_page)
-- Link entities in gbrain (add_link)
+- Link entities in gbrain (`add_link` / `gbrain link … --link-type <T>`; `T` must be a `RELATIONSHIP` label)
 - Tag pages in gbrain (add_tag)
 - Get gbrain statistics (get_stats)
 - Check gbrain health (get_health)

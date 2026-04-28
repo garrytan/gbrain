@@ -4,6 +4,11 @@
  * Shared library callable from any ingest pathway. Handles the brain CRUD
  * for entity enrichment: check brain, create/update page, backlink, timeline.
  *
+ * **Which entity kinds:** {@link EnrichmentRequest.entityType} is {@link EnrichmentRequestType},
+ * the union of {@link import('./entity-taxonomy.ts').ENTITY_TYPES} rows where top-level
+ * {@link import('./entity-taxonomy.ts').EntityTypeDefinition.enrichment} is **`true`** (and `pageType`
+ * is set). Other PageTypes stay human- or workflow-owned.
+ *
  * External API enrichment (people data APIs, professional networks) remains
  * agent-orchestrated per the enrich skill file. This library handles the
  * brain-side operations.
@@ -15,6 +20,12 @@
 
 import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
+import {
+  enrichmentDisplayLabelForPageType,
+  enrichmentSlugPrefixForEntityType,
+  isEnrichmentReferenceDir,
+  type EnrichmentRequestType,
+} from './entity-taxonomy.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,7 +33,7 @@ import { waitForCapacity } from './backoff.ts';
 
 export interface EnrichmentRequest {
   entityName: string;
-  entityType: 'person' | 'company';
+  entityType: EnrichmentRequestType;
   context: string;
   sourceSlug: string;
   tier?: 1 | 2 | 3;
@@ -45,19 +56,18 @@ export interface EnrichmentResult {
 // ---------------------------------------------------------------------------
 
 /** Convert an entity name to a URL-safe slug. */
-export function slugifyEntity(name: string, type: 'person' | 'company'): string {
+export function slugifyEntity(name: string, type: EnrichmentRequestType): string {
+  const prefix = enrichmentSlugPrefixForEntityType(type);
   const slug = name
     .toLowerCase()
-    .replace(/['']/g, '')
+    .replace(/'/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-
-  const prefix = type === 'person' ? 'people' : 'companies';
   return `${prefix}/${slug}`;
 }
 
 /** Get the brain page path for an entity. */
-export function entityPagePath(name: string, type: 'person' | 'company'): string {
+export function entityPagePath(name: string, type: EnrichmentRequestType): string {
   return slugifyEntity(name, type);
 }
 
@@ -73,6 +83,7 @@ export async function enrichEntity(
   engine: BrainEngine,
   request: EnrichmentRequest,
 ): Promise<EnrichmentResult> {
+  const today = new Date().toISOString().slice(0, 10);
   const slug = slugifyEntity(request.entityName, request.entityType);
 
   // 1. Count existing mentions for tier auto-escalation
@@ -92,16 +103,14 @@ export async function enrichEntity(
     action = 'updated';
   } else {
     // CREATE path — new entity page
-    const title = request.entityName;
-    const type = request.entityType;
     const content = generateStubContent(request.entityName, request.entityType, request.context);
     await engine.putPage(slug, {
-      title,
-      type,
+      title: request.entityName,
+      type: request.entityType,
       compiled_truth: content,
       timeline: '',
       frontmatter: {
-        created: new Date().toISOString().split('T')[0],
+        created: today,
         source: request.sourceSlug,
         tier,
       },
@@ -113,7 +122,7 @@ export async function enrichEntity(
   let timelineAdded = false;
   try {
     await engine.addTimelineEntry(slug, {
-      date: new Date().toISOString().split('T')[0] ?? '',
+      date: today,
       summary: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`,
       source: request.sourceSlug,
     });
@@ -203,8 +212,9 @@ async function countMentions(
     // Derive sources from slug prefixes since SearchResult has no metadata.skill
     const sources = new Set<string>();
     for (const r of results) {
-      const prefix = r.slug.split('/')[0];
-      if (prefix === 'people' || prefix === 'companies') sources.add('enrich');
+      const slash = r.slug.indexOf('/');
+      const prefix = slash === -1 ? r.slug : r.slug.slice(0, slash);
+      if (isEnrichmentReferenceDir(prefix)) sources.add('enrich');
       else if (prefix === 'meetings') sources.add('meeting-ingestion');
       else if (prefix === 'media') sources.add('media-ingest');
       else if (prefix === 'sources' || prefix === 'ideas') sources.add('idea-ingest');
@@ -221,7 +231,7 @@ async function countMentions(
 function suggestTier(
   mentionCount: number,
   mentionSources: string[],
-  context: string,
+  _context: string,
 ): 1 | 2 | 3 {
   // 8+ mentions OR meeting/conversation source → Tier 1
   if (mentionCount >= 8) return 1;
@@ -235,35 +245,34 @@ function suggestTier(
 }
 
 /** Generate stub content for a new entity page. */
-function generateStubContent(name: string, type: 'person' | 'company', context: string): string {
-  if (type === 'person') {
-    return `# ${name}\n\n**Type:** Person\n\n## Summary\n\n*Stub page. ${context}*\n\n## Timeline\n`;
-  }
-  return `# ${name}\n\n**Type:** Company\n\n## Summary\n\n*Stub page. ${context}*\n\n## Timeline\n`;
+function generateStubContent(name: string, type: EnrichmentRequestType, context: string): string {
+  const typeLabel = enrichmentDisplayLabelForPageType(type);
+  return `# ${name}\n\n**Type:** ${typeLabel}\n\n## Summary\n\n*Stub page. ${context}*\n\n## Timeline\n`;
 }
 
 /** Simple entity extraction from text using regex patterns. */
-export function extractEntities(text: string): Array<{ name: string; type: 'person' | 'company'; context: string }> {
-  const entities: Array<{ name: string; type: 'person' | 'company'; context: string }> = [];
+export function extractEntities(text: string): Array<{ name: string; type: EnrichmentRequestType; context: string }> {
+  const entities: Array<{ name: string; type: EnrichmentRequestType; context: string }> = [];
   const seen = new Set<string>();
 
   // Match capitalized multi-word names (likely people or companies)
   // Pattern: 2-4 capitalized words in sequence
   const namePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b/g;
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = namePattern.exec(text)) !== null) {
     const name = match[1];
-    if (seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
 
     // Simple heuristics for type classification
     const isCompany = /Inc\b|Corp\b|Ltd\b|LLC\b|Co\b|Labs?\b|Tech\b|AI\b|Capital\b|Ventures?\b|Fund\b/i.test(name);
     const type = isCompany ? 'company' : 'person';
 
     // Extract surrounding context (50 chars each side)
-    const idx = match.index;
-    const start = Math.max(0, idx - 50);
-    const end = Math.min(text.length, idx + name.length + 50);
+    const index = match.index;
+    const start = Math.max(0, index - 50);
+    const end = Math.min(text.length, index + name.length + 50);
     const context = text.slice(start, end).replace(/\n/g, ' ').trim();
 
     entities.push({ name, type, context });

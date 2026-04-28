@@ -15,7 +15,7 @@ tools:
   - query
   - get_page
   - put_page
-  - add_link
+  - add_link (manual calls: taxonomy `link_type` / CLI `--link-type`)
   - add_timeline_entry
 mutating: true
 writes_pages: true
@@ -92,6 +92,8 @@ auto-link post-hook automatically creates `attended` links from the meeting
 to each attendee whose page is referenced as `[Name](people/slug)`. You don't
 need to call `gbrain link` for attendees. You DO still need `gbrain timeline-add`
 for dated events (auto-link only handles links, not timeline entries).
+
+If you add edges manually, use `gbrain link <from> <to> --link-type <T>` where `T` is a `RELATIONSHIP` label from `entity-taxonomy.ts` (e.g. `mentions`, `attended`). Omitting `--link-type` fails validation.
 
 ### Phase 4: Entity propagation (MANDATORY)
 

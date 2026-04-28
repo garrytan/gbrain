@@ -23,7 +23,7 @@ tools:
   - put_page
   - list_pages
   - get_backlinks
-  - add_link
+  - add_link (manual calls: taxonomy `link_type` / CLI `--link-type`)
   - search
 mutating: true
 ---
@@ -313,7 +313,7 @@ The maintenance report follows this structure:
 - List pages in gbrain with filters (list_pages)
 - Read a page from gbrain (get_page)
 - Check backlinks in gbrain (get_backlinks)
-- Link entities in gbrain (add_link)
+- Link entities in gbrain (`add_link` / `gbrain link … --link-type <T>`; `T` must be a `RELATIONSHIP` label)
 - Remove links in gbrain (remove_link)
 - Tag a page in gbrain (add_tag)
 - Remove a tag in gbrain (remove_tag)

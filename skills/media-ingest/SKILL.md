@@ -18,7 +18,7 @@ tools:
   - query
   - get_page
   - put_page
-  - add_link
+  - add_link (manual calls: taxonomy `link_type` / CLI `--link-type`)
   - add_timeline_entry
   - file_upload
 mutating: true

@@ -16,6 +16,7 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import type { GraphPath } from '../core/types.ts';
+import { RELATIONSHIP } from '../core/entity-taxonomy.ts';
 
 interface Args {
   slug?: string;
@@ -42,14 +43,14 @@ function parseArgs(args: string[]): Args {
 }
 
 function printHelp() {
+  const linkTypes = Object.values(RELATIONSHIP).join(', ');
   console.log(`Usage: gbrain graph-query <slug> [options]
 
 Traverse the link graph from a page. Returns an indented tree of edges.
 Per-edge type filter: traversal only follows matching links.
 
 Options:
-  --type <link_type>   Filter to one link type (attended, works_at, invested_in,
-                       founded, advises, mentions, source).
+  --type <link_type>   Filter to one link type (${linkTypes}).
   --depth <N>          Max traversal depth (default 5).
   --direction <dir>    'out' (default), 'in', or 'both'.
   -h, --help           Show this message.
