@@ -105,7 +105,8 @@ function stripComments(s: string): string {
 // brace. Good enough for the small number of methods in this file.
 function extractMethod(source: string, name: string): string {
   // Find "async <name>(" at method-definition indentation (2 spaces).
-  const openRe = new RegExp(`^\\s+async\\s+${name}\\s*\\(`, 'm');
+  // Accept an optional generic parameter list (`async transaction<T>(...)`).
+  const openRe = new RegExp(`^\\s+async\\s+${name}(?:\\s*<[^>]+>)?\\s*\\(`, 'm');
   const match = openRe.exec(source);
   if (!match) {
     throw new Error(`method ${name} not found in postgres-engine.ts`);
@@ -125,3 +126,53 @@ function extractMethod(source: string, name: string): string {
   }
   throw new Error(`unbalanced braces in ${name}`);
 }
+
+/**
+ * Supabase pooler (PgBouncer transaction mode, port 6543) silently strips
+ * connection-level statement_timeout startup parameters and session-scoped
+ * SET. Only `SET LOCAL` inside an explicit transaction survives. Without
+ * this, schema bootstrap, migrations, and put_page write paths silently
+ * hit the pooler's 2-min default — visible as "canceling statement due to
+ * statement timeout" with no other context.
+ *
+ * These guardrails lock in the SET LOCAL placement so a future refactor
+ * doesn't regress the fix. DB-free — pure source inspection.
+ */
+describe('postgres-engine / pooler timeout compatibility', () => {
+  test('runMigration prepends SET LOCAL statement_timeout = 0', () => {
+    const fn = stripComments(extractMethod(SRC, 'runMigration'));
+    // Must contain SET LOCAL prefix concatenated before the migration sqlStr.
+    expect(fn).toMatch(/SET\s+LOCAL\s+statement_timeout\s*=\s*0\s*;[\s\S]*\+\s*sqlStr/);
+  });
+
+  test('runMigration does not use a bare SET (would leak across pooled connections)', () => {
+    const fn = stripComments(extractMethod(SRC, 'runMigration'));
+    expect(fn).not.toMatch(/[^L]\bSET\s+(?!LOCAL\s)statement_timeout/i);
+  });
+
+  test('initSchema wraps SCHEMA_SQL in a conn.begin() transaction', () => {
+    const fn = extractMethod(SRC, 'initSchema');
+    expect(fn).toMatch(/conn\.begin\s*\(\s*async\s*\(\s*tx\s*\)\s*=>/);
+    // SCHEMA_SQL must be inside that transaction, not a bare conn.unsafe().
+    const stripped = stripComments(fn);
+    expect(stripped).toMatch(/tx\.unsafe\s*\(\s*SCHEMA_SQL\s*\)/);
+    expect(stripped).not.toMatch(/conn\.unsafe\s*\(\s*SCHEMA_SQL\s*\)/);
+  });
+
+  test('initSchema sets SET LOCAL statement_timeout = 0 inside the SCHEMA_SQL transaction', () => {
+    const fn = extractMethod(SRC, 'initSchema');
+    expect(fn).toMatch(/SET\s+LOCAL\s+statement_timeout\s*=\s*0/);
+  });
+
+  test('transaction() sets SET LOCAL statement_timeout = 0 before the user callback', () => {
+    const fn = extractMethod(SRC, 'transaction');
+    expect(fn).toMatch(/tx\.unsafe\s*\(\s*['"]SET LOCAL statement_timeout = 0['"]\s*\)/);
+    // Ordering: SET must be issued before fn(txEngine) so user code runs
+    // under the loosened timeout. Verify by source position.
+    const setIdx = fn.search(/SET\s+LOCAL\s+statement_timeout/);
+    const callIdx = fn.search(/fn\s*\(\s*txEngine\s*\)/);
+    expect(setIdx).toBeGreaterThan(-1);
+    expect(callIdx).toBeGreaterThan(-1);
+    expect(setIdx).toBeLessThan(callIdx);
+  });
+});

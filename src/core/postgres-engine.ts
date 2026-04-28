@@ -101,9 +101,22 @@ export class PostgresEngine implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      // Wrap SCHEMA_SQL in a transaction so `SET LOCAL statement_timeout = 0`
+      // takes effect on Supabase's transaction pooler (PgBouncer at port 6543).
+      // On the pooler, session-level SET and connection startup params are
+      // stripped/ignored; only SET LOCAL inside an explicit transaction
+      // survives. Without this wrap, the SCHEMA_SQL bootstrap (which can
+      // include long backfills the first time it touches a brain with
+      // thousands of rows) is killed by the default 2-min statement_timeout.
+      await conn.begin(async (tx) => {
+        await tx.unsafe('SET LOCAL statement_timeout = 0');
+        await tx.unsafe(SCHEMA_SQL);
+      });
 
-      // Run any pending migrations automatically
+      // Run any pending migrations automatically. Each migration is wrapped
+      // in its own transaction by runMigrations() / engine.transaction(),
+      // and runMigration() prepends `SET LOCAL statement_timeout = 0` there
+      // — so they're independently protected from the pooler timeout.
       const { applied } = await runMigrations(this);
       if (applied > 0) {
         console.log(`  ${applied} migration(s) applied`);
@@ -116,6 +129,15 @@ export class PostgresEngine implements BrainEngine {
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
     const conn = this._sql || db.getConnection();
     return conn.begin(async (tx) => {
+      // Bypass Supabase pooler's 2-min default for the duration of this
+      // transaction. SET LOCAL is scoped here only — query paths that want a
+      // tight fail-fast (e.g., searchKeyword/searchVector) override it with
+      // their own SET LOCAL inside the same transaction. Without this,
+      // importFromContent's chunk upserts + tag reconciliation can exceed
+      // 2 min on slow links and put_page silently fails on every write.
+      // Migration paths get this for free since they go through transaction()
+      // via runMigrations().
+      await tx.unsafe('SET LOCAL statement_timeout = 0');
       // Create a scoped engine with tx as its connection, no shared state mutation
       const txEngine = Object.create(this) as PostgresEngine;
       Object.defineProperty(txEngine, 'sql', { get: () => tx });
@@ -1370,7 +1392,14 @@ export class PostgresEngine implements BrainEngine {
   // Migration support
   async runMigration(_version: number, sqlStr: string): Promise<void> {
     const conn = this.sql;
-    await conn.unsafe(sqlStr);
+    // Disable statement_timeout for migrations. Supabase's default (60-120s)
+    // kills long ALTER TABLE backfills — e.g., v0.13's
+    // `UPDATE links SET link_source = 'markdown'` on a brain with thousands
+    // of edges. SET LOCAL is scoped to the surrounding transaction (migrate.ts
+    // wraps runMigration in engine.transaction by default). Outside a
+    // transaction Postgres just emits a warning and proceeds, which is fine
+    // for the CONCURRENTLY-only non-transactional path.
+    await conn.unsafe('SET LOCAL statement_timeout = 0;\n' + sqlStr);
   }
 
   async getChunksWithEmbeddings(slug: string): Promise<Chunk[]> {
