@@ -140,6 +140,14 @@ export interface CycleOpts {
    * + refreshes the cycle-lock-table TTL.
    */
   yieldBetweenPhases?: () => Promise<void>;
+  /**
+   * AbortSignal from the Minions worker. When aborted (timeout, cancel,
+   * lock-loss), runCycle bails between phases and returns a 'failed' report
+   * instead of running the next phase. Without this, a timed-out
+   * autopilot-cycle handler ignores the abort and runs until the worker
+   * wedges (the 98-waiting-0-active incident on 2026-04-24).
+   */
+  signal?: AbortSignal;
 }
 
 // ─── Lock primitives ───────────────────────────────────────────────
@@ -344,6 +352,20 @@ async function safeYield(hook?: () => Promise<void>) {
   }
 }
 
+/**
+ * Check if the abort signal has fired. Called between phases so that a
+ * timed-out Minions job bails promptly instead of grinding through all
+ * remaining phases while the worker thinks it's still at capacity.
+ */
+function checkAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const reason = signal.reason instanceof Error
+      ? signal.reason.message
+      : String(signal.reason || 'aborted');
+    throw new Error(`[cycle] aborted between phases: ${reason}`);
+  }
+}
+
 // ─── Phase runners ─────────────────────────────────────────────────
 
 async function runPhaseLint(brainDir: string, dryRun: boolean): Promise<PhaseResult> {
@@ -416,19 +438,55 @@ async function runPhaseBacklinks(brainDir: string, dryRun: boolean): Promise<Pha
   }
 }
 
+/** Extended sync result that also carries the changed slug list for downstream phases. */
+interface SyncPhaseResult extends PhaseResult {
+  /** Slugs that sync added or modified. Used by extract for incremental processing. */
+  pagesAffected?: string[];
+}
+
+/**
+ * Resolve the source id for a brain directory by looking up the sources
+ * table. Returns undefined when no registered source matches (falls back
+ * to pre-v0.18 global config.sync.* keys).
+ */
+async function resolveSourceForDir(
+  engine: BrainEngine,
+  brainDir: string,
+): Promise<string | undefined> {
+  try {
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`,
+      [brainDir],
+    );
+    return rows[0]?.id;
+  } catch {
+    // sources table might not exist on very old brains — fall through.
+    return undefined;
+  }
+}
+
 async function runPhaseSync(
   engine: BrainEngine,
   brainDir: string,
   dryRun: boolean,
   pull: boolean,
-): Promise<PhaseResult> {
+  willRunExtractPhase: boolean,
+): Promise<SyncPhaseResult> {
   try {
     const { performSync } = await import('../commands/sync.ts');
+    // Resolve the per-source id so sync reads source-scoped last_commit
+    // instead of the global config key. The global key can drift out of
+    // git history (force push, GC) causing a full reimport of all files.
+    const sourceId = await resolveSourceForDir(engine, brainDir);
     const result = await performSync(engine, {
       repoPath: brainDir,
+      sourceId,
       dryRun,
       noPull: !pull,
-      noEmbed: true, // embed is a separate phase
+      noEmbed: true,                       // embed is a separate phase
+      noExtract: willRunExtractPhase,      // dedupe ONLY when cycle's extract phase will also run.
+                                           // If extract isn't scheduled (e.g. `gbrain dream --phase sync`),
+                                           // sync's inline extract still runs to preserve prior behavior.
     });
     const syncedCount = result.added + result.modified;
     return {
@@ -448,6 +506,7 @@ async function runPhaseSync(
         syncStatus: result.status,
         dryRun,
       },
+      pagesAffected: result.pagesAffected,
     };
   } catch (e) {
     return {
@@ -465,6 +524,7 @@ async function runPhaseExtract(
   engine: BrainEngine,
   brainDir: string,
   dryRun: boolean,
+  changedSlugs?: string[],
 ): Promise<PhaseResult> {
   try {
     const { runExtractCore } = await import('../commands/extract.ts');
@@ -480,15 +540,29 @@ async function runPhaseExtract(
         details: { dryRun: true, reason: 'no_dry_run_support' },
       };
     }
-    const result = await runExtractCore(engine, { mode: 'all', dir: brainDir });
+    // Incremental path: if sync told us which slugs changed, only extract those.
+    // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
+    const result = await runExtractCore(engine, {
+      mode: 'all',
+      dir: brainDir,
+      slugs: changedSlugs,  // undefined = full walk (first run / manual)
+    });
     const linksCreated = result?.links_created ?? 0;
     const timelineCreated = result?.timeline_entries_created ?? 0;
+    const incremental = changedSlugs !== undefined;
     return {
       phase: 'extract',
       status: 'ok',
       duration_ms: 0,
-      summary: `${linksCreated} link(s), ${timelineCreated} timeline entries`,
-      details: { linksCreated, timelineCreated, pages_processed: result?.pages_processed ?? 0 },
+      summary: incremental
+        ? `${linksCreated} link(s), ${timelineCreated} timeline entries (incremental: ${changedSlugs.length} slugs)`
+        : `${linksCreated} link(s), ${timelineCreated} timeline entries`,
+      details: {
+        linksCreated, timelineCreated,
+        pages_processed: result?.pages_processed ?? 0,
+        incremental,
+        ...(incremental ? { slugs_targeted: changedSlugs.length } : {}),
+      },
     };
   } catch (e) {
     return {
@@ -644,6 +718,7 @@ export async function runCycle(
   try {
     // ── Phase 1: lint ────────────────────────────────────────────
     if (phases.includes('lint')) {
+      checkAborted(opts.signal);
       progress.start('cycle.lint');
       const { result, duration_ms } = await timePhase(() => runPhaseLint(opts.brainDir, dryRun));
       result.duration_ms = duration_ms;
@@ -654,6 +729,7 @@ export async function runCycle(
 
     // ── Phase 2: backlinks ──────────────────────────────────────
     if (phases.includes('backlinks')) {
+      checkAborted(opts.signal);
       progress.start('cycle.backlinks');
       const { result, duration_ms } = await timePhase(() => runPhaseBacklinks(opts.brainDir, dryRun));
       result.duration_ms = duration_ms;
@@ -663,7 +739,10 @@ export async function runCycle(
     }
 
     // ── Phase 3: sync ───────────────────────────────────────────
+    // Track which slugs sync touched so extract can run incrementally.
+    let syncPagesAffected: string[] | undefined;
     if (phases.includes('sync')) {
+      checkAborted(opts.signal);
       if (!engine) {
         phaseResults.push({
           phase: 'sync',
@@ -674,8 +753,10 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.sync');
-        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, opts.brainDir, dryRun, pull));
+        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, opts.brainDir, dryRun, pull, phases.includes('extract')));
         result.duration_ms = duration_ms;
+        // Capture changed slugs for incremental extract.
+        syncPagesAffected = (result as SyncPhaseResult).pagesAffected;
         phaseResults.push(result);
         progress.finish();
       }
@@ -684,6 +765,7 @@ export async function runCycle(
 
     // ── Phase 4: extract ────────────────────────────────────────
     if (phases.includes('extract')) {
+      checkAborted(opts.signal);
       if (!engine) {
         phaseResults.push({
           phase: 'extract',
@@ -693,8 +775,11 @@ export async function runCycle(
           details: { reason: 'no_database' },
         });
       } else {
+        // Pass changed slugs from sync for incremental extract.
+        // If sync didn't run (phases exclude it) or failed, syncPagesAffected
+        // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, opts.brainDir, dryRun));
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, opts.brainDir, dryRun, syncPagesAffected));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -704,6 +789,7 @@ export async function runCycle(
 
     // ── Phase 5: embed ──────────────────────────────────────────
     if (phases.includes('embed')) {
+      checkAborted(opts.signal);
       if (!engine) {
         phaseResults.push({
           phase: 'embed',
@@ -724,6 +810,7 @@ export async function runCycle(
 
     // ── Phase 6: orphans ────────────────────────────────────────
     if (phases.includes('orphans')) {
+      checkAborted(opts.signal);
       if (!engine) {
         phaseResults.push({
           phase: 'orphans',

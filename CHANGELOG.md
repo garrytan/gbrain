@@ -99,6 +99,342 @@ prior version's upgrade attempt:
    - your prior gbrain version (`gbrain --version`)
    - which step broke
 
+## [0.22.6] - 2026-04-28
+
+### Schema verification after migrations
+
+- Post-migration schema verification catches columns that were defined in migrations but silently failed to create (common with PgBouncer transaction-mode poolers).
+- Self-healing: automatically adds missing columns via ALTER TABLE when detected.
+- Prevents the "column X does not exist" embed failures that occur when schema version is ahead of actual table state.
+
+## [0.22.5] - 2026-04-27
+
+## **Autopilot stops re-importing your whole brain when a commit gets garbage-collected.**
+## **Cycle reads the per-source `sources.last_commit` anchor instead of the drift-prone global key.**
+
+`gbrain dream` and the `autopilot-cycle` worker were calling `performSync()` without `sourceId`, so sync read the global `config.sync.last_commit` key. When that commit gets GC'd from git history (a force push, a squash, an `--amend` chain), `git cat-file -t <anchor>` fails, sync concludes "force push happened," and triggers a full reimport of every page. On a 78K-page brain that's ~30 minutes per cycle, the autopilot job hits its timeout, dead-letters, and the next cron tick does it again. Production OpenClaw deployment hit exactly this pattern: every cycle ran the full reimport while the per-source `sources.last_commit` (`00a62e50`) was a valid HEAD ancestor the entire time.
+
+v0.22.5 threads `sourceId` through the cycle. `runPhaseSync()` now resolves the brain directory against the `sources` table (`SELECT id FROM sources WHERE local_path = $1`) and passes the result to `performSync()`. When a source row matches, sync reads `sources.last_commit` (per-source, always written back on every successful sync). When no row matches (pre-v0.18 brain or never-registered path), it falls through to the global key ... fully backward compatible. Six new regression tests pin the resolver behavior, including the table-missing fallback for old brains and the empty-string-id defensive case.
+
+### The numbers that matter
+
+Production behavior on a 78,797-page brain:
+
+| Metric | Pre-v0.22.5 (master) | v0.22.5 | Δ |
+|---|---|---|---|
+| Autopilot cycle wall time (steady state) | 30+ min (then timeout) | <1 sec | -1800x |
+| Files re-imported per cycle (steady state) | 78,797 | 0 | -78,797 |
+| `autopilot-cycle` jobs hitting `max_stalled` | every cycle | 0 | -100% |
+| Cycle phases that consult per-source anchor | 0 | 1 (sync) | +1 |
+| New regression tests in `test/core/cycle.test.ts` | n/a | 6 | +6 |
+
+Resolver behavior matrix (every row covered by a test):
+
+| Scenario | sourceId passed | Anchor read from | Backward compatible |
+|---|---|---|---|
+| Sources row matches `brainDir` (current install) | `"default"` | `sources.last_commit` ✅ | Yes |
+| No sources row (pre-v0.18 brain) | `undefined` | `config.sync.last_commit` | Yes |
+| `sources` table doesn't exist (very old brain) | `undefined` (catch) | `config.sync.last_commit` | Yes |
+| Multiple rows share a `local_path` (no UNIQUE) | one of the matching ids (non-deterministic) | the matched row's anchor | Yes |
+| Empty-string id row | `""` (defensive ... won't happen in practice) | empty-string source row | Yes |
+
+### What this means for builders
+
+If your brain has been silently doing a full reimport every autopilot cycle, `gbrain upgrade` plus your next cycle will fix it ... no manual action needed. The fix is mechanical and idempotent. If you've been running with the operational band-aid that copied the per-source anchor to the global key every 5 minutes (the pre-PR workaround), you can take it out after upgrading. Two follow-ups are filed for v0.23: a `UNIQUE` index on `sources.local_path` so duplicate-path resolution is deterministic, and narrowing the resolver's bare `catch` to PostgreSQL's `42P01` (undefined_table) so real DB errors don't get silently swallowed into the global-fallback path.
+
+## To take advantage of v0.22.5
+
+`gbrain upgrade` runs `gbrain post-upgrade` which runs `gbrain apply-migrations`. v0.22.5 has no schema migration ... the fix is pure code, no data backfill ... so the upgrade itself is the entire action.
+
+1. **Upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+
+2. **Verify the next autopilot cycle is fast.** Either let `gbrain autopilot` tick naturally, or run one cycle directly:
+   ```bash
+   gbrain dream --phase sync --json | jq '.phases[] | select(.phase == "sync")'
+   ```
+   On a brain with a registered source, the sync phase should report incremental status (`up_to_date` or a small added/modified count) and complete in seconds. If it reports thousands of files added/modified on a brain you haven't actually changed, file an issue ... the resolver isn't matching your `brainDir` to a `sources.local_path` (likely a path-normalization mismatch ... see TODO 1 below).
+
+3. **Optional ... confirm the resolver matched.** The `sources` row used by `gbrain dream` should match your brain directory exactly:
+   ```bash
+   gbrain query 'SELECT id, local_path FROM sources' --json
+   ```
+   If the path stored in `sources.local_path` differs from the directory `gbrain dream --dir <path>` is invoked with (trailing slash, symlink resolution), v0.22.5 will fall back to the legacy global-key path silently for that source. A future v0.23 fix will normalize both sides; for now you can re-register the source with the canonical absolute path.
+
+4. **If any step fails or the numbers look wrong,** file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+**Hotfix.** `src/core/cycle.ts` ... new `resolveSourceForDir(engine, brainDir)` helper queries `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`. `runPhaseSync()` calls it before `performSync()` and threads the result as `sourceId`. Bare `try/catch` swallows missing-table errors so pre-v0.18 brains keep working unchanged. 26 new lines, one file. The fix funnels into the existing `readSyncAnchor()` branching at `src/commands/sync.ts:174-188`, which already chose between per-source and global anchors when given a `sourceId`; the cycle just wasn't passing one.
+
+**Tests.** 6 new test cases in `test/core/cycle.test.ts` covering every branch of the resolver:
+- **Test 1** ... seeded `sources` row → `performSync` receives matching `sourceId`.
+- **Test 2** ... no row → `sourceId=undefined`, falls through to global key.
+- **Test 3** ... different `brainDir` than registered source → undefined (no cross-match).
+- **Test 4** ... `sources` table missing (very old brain) → catch returns undefined, sync still runs. Uses a fresh `PGLiteEngine` (not the shared one) because `initSchema()` only re-runs PENDING migrations; `DROP TABLE` on the shared engine would have left it permanently degraded for every subsequent test in the file. Codex review caught this landmine.
+- **Test 5** ... duplicate `local_path` rows → resolver returns one of the matching ids (non-deterministic; the SQL has no `ORDER BY`). Documents the contract for the v0.23 UNIQUE-constraint follow-up.
+- **Test 6** ... empty-string id row → resolver propagates `""` (defensive case Codex flagged ... PK prevents NULL but `''` can be inserted).
+
+The `performSync` mock in `test/core/cycle.test.ts:50-65` was extended to capture `sourceId` alongside the existing `dryRun / noPull / noExtract` opts. The new `describe` block runs after the existing 22 tests; the shared PGLite engine cleanup pattern (`DELETE FROM sources` in `beforeEach`) keeps state from leaking between tests.
+
+### For contributors
+
+When threading new options through `runCycle → runPhaseSync → performSync`, extend the `syncCalls` capture shape in `test/core/cycle.test.ts:20` and add per-option assertions to the existing `describe('runCycle — dryRun propagates...')` and `describe('runCycle — phase selection')` blocks. The `cycle.test.ts` shared-engine pattern is fast (~1.4s for 28 tests on PGLite in-memory) but `initSchema()` only runs PENDING migrations ... if your test needs to mutate the schema mid-suite (DROP TABLE, ALTER, etc.), spin up a fresh `PGLiteEngine` and dispose in `finally` instead of touching the shared engine. The v0.22.5 test 4 is the canonical example.
+
+The bare `catch` in `resolveSourceForDir` is intentional for v0.22.5 because narrowing to a PG-specific error code (`error.code === '42P01'`) requires engine-aware error introspection that the existing PGLite engine doesn't expose uniformly with postgres-engine. v0.23 will add a small `isMissingRelationError(error, engine.kind)` helper to `src/core/utils.ts` and the resolver will rethrow everything else.
+
+## [0.22.4] - 2026-04-26
+
+## **Frontmatter-guard ships. Broken brain pages can't hide.**
+## **Seven validation classes, source-aware audit, doctor subcheck, pre-commit hook, zero resolver warnings.**
+
+v0.22.4 fixes the seven `gbrain check-resolvable` warnings that lived on master and ships frontmatter-guard as a real feature: a TypeScript validator inside `parseMarkdown(..., {validate:true})`, a top-level `gbrain frontmatter` CLI (`validate` / `audit` / `install-hook`), a new `frontmatter_integrity` subcheck under `gbrain doctor`, and an audit-only migration that surveys every registered source and queues per-source TODOs without mutating brain content. PR #392's aspirational `lib/brain-writer.mjs` is finally written, in TypeScript, on top of the tools gbrain already ships.
+
+The migration is **audit-only**. It writes a JSON report to `~/.gbrain/migrations/v0.22.4-audit.json` and emits per-source entries to `pending-host-work.jsonl` with the exact fix command. It never silently rewrites your brain pages. The agent reads `skills/migrations/v0.22.4.md` after upgrade, surfaces the counts to you, and runs `gbrain frontmatter validate <source-path> --fix` only with explicit consent. `--fix` writes `.bak` backups for every modified file (the safety contract for non-git brain repos, which `getWorkingTreeStatus` rejects).
+
+`gbrain frontmatter` is source-aware throughout. `audit [--source <id>]` walks every registered source via `source-resolver.ts` (gbrain has been multi-source since v0.18.0; the single-`brainRoot` model would have shipped a half-broken feature). The CLI, doctor subcheck, and migration phase all call into one shared `scanBrainSources()` ... single source of truth for what counts as malformed.
+
+### The numbers that matter
+
+Counted against gbrain's own checked-in `skills/` tree:
+
+| Metric | Pre-v0.22.4 (master) | v0.22.4 | Δ |
+|---|---|---|---|
+| `gbrain check-resolvable` warnings | 7 | 0 | -7 |
+| Frontmatter validation classes | 3 (in `lint`) | 7 (in `parseMarkdown`) | +4 |
+| Auto-fixable error codes | 0 | 4 (NULL_BYTES, MISSING_CLOSE, NESTED_QUOTES, SLUG_MISMATCH) | +4 |
+| Doctor subchecks | 17 | 18 (+frontmatter_integrity) | +1 |
+| `gbrain frontmatter` subcommands | 0 | 3 (validate, audit, install-hook) | +3 |
+| Skills in `skills/` | 29 | 30 (+frontmatter-guard) | +1 |
+| Pre-commit hook helper | none | `gbrain frontmatter install-hook` | ✓ |
+| Source-aware audit | n/a | walks every registered source | ✓ |
+
+Frontmatter validation surface (the 7 codes shipped):
+
+| Code | What it catches | Auto-fix |
+|---|---|---|
+| `MISSING_OPEN` | File doesn't start with `---` | No (human review) |
+| `MISSING_CLOSE` | No closing `---` before first heading | Yes ... inserts `---` |
+| `YAML_PARSE` | YAML failed to parse | Sometimes |
+| `SLUG_MISMATCH` | Frontmatter `slug:` differs from path-derived slug | Yes ... removes field |
+| `NULL_BYTES` | Binary corruption (`\x00`) | Yes ... strips bytes |
+| `NESTED_QUOTES` | `title: "outer "inner" outer"` shape | Yes ... switches outer to single quotes |
+| `EMPTY_FRONTMATTER` | Open + close present, nothing meaningful between | No (human review) |
+
+### What this means for builders
+
+If you've been ignoring `gbrain check-resolvable` warnings because the messages were misleading (the action message said "Add disambiguation rule in RESOLVER.md OR narrow triggers" ... but only the second branch actually silenced the MECE warning, since the checker doesn't parse RESOLVER.md disambiguation rules), v0.22.4 closes the loop. Trigger overlap is fixed at the frontmatter layer. `enrich/SKILL.md` delegates citation rules to `conventions/quality.md` instead of inlining them. Routing-eval fixtures embed actual trigger keywords. `frontmatter-guard` is registered. `gbrain check-resolvable --json` returns `ok: true, issues: []`.
+
+If your agent writes brain pages, plumb its writes through `parseMarkdown(content, path, { validate: true, expectedSlug })` (the export is in `gbrain/markdown`) and check the returned `errors` array. The 7-error envelope is stable from v0.22.4 onward. Or call `gbrain frontmatter validate <path> --json` from your script and parse the envelope. For brain repos that ARE git repos, install the pre-commit hook with `gbrain frontmatter install-hook` and stop bad frontmatter at the commit boundary.
+
+If you maintain a downstream OpenClaw fork, see `docs/UPGRADING_DOWNSTREAM_AGENTS.md` for the v0.22.4 diff pattern. The short version: drop any references to the never-existed `lib/brain-writer.mjs` and replace with `gbrain frontmatter validate` calls.
+
+## To take advantage of v0.22.4
+
+`gbrain upgrade` runs `gbrain post-upgrade` which runs `gbrain apply-migrations`. If that chain was interrupted or if `gbrain doctor` reports `frontmatter_integrity` issues:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+   The `v0.22.4` orchestrator (v0_22_4.ts) runs schema (no-op) → audit → emit-todo. The audit phase writes a per-source JSON report to `~/.gbrain/migrations/v0.22.4-audit.json` and queues one entry per source with issues to `~/.gbrain/migrations/pending-host-work.jsonl`. **It never modifies brain content.**
+
+2. **Read the audit report:**
+   ```bash
+   cat ~/.gbrain/migrations/v0.22.4-audit.json | jq '.errors_by_code, .per_source[].source_id'
+   ```
+
+3. **Fix mechanical issues with explicit consent.** For each source with errors > 0, run:
+   ```bash
+   gbrain frontmatter validate <source-path> --fix
+   ```
+   This writes `.bak` backups for every modified file. SLUG_MISMATCH errors are surfaced for manual review (gbrain derives slug from path; a mismatch usually means the file was renamed deliberately or the slug field is stale).
+
+4. **Verify the outcome:**
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.name == "frontmatter_integrity")'
+   gbrain frontmatter audit --json | jq '.total'
+   gbrain check-resolvable --json | jq '.report.issues | map(select(.severity=="warning" or .severity=="error")) | length'
+   ```
+   All three should report 0 issues.
+
+5. **If any step fails or the numbers look wrong,** file an issue at https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/migrations/v0.22.4-audit.json`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+**Part A ... `gbrain check-resolvable` reaches 0 warnings.** Drop `"citation audit"` from `skills/maintain/SKILL.md` frontmatter; the trigger lives only on `citation-fixer` now. RESOLVER.md gains a citation-audit disambiguation row pointing both skills so agents still pick the right one. RESOLVER.md broadens query triggers (`"who is"`, `"background on"`, `"notes on"`) and `query/SKILL.md` mirrors them in its frontmatter. `skills/enrich/SKILL.md` replaces the inlined citation rules block with `> **Convention:** see \`skills/conventions/quality.md\`` (the format `extractDelegationTargets` recognizes). Routing-eval fixtures for `citation-fixer` rewritten to embed `"fix citations"` so substring matching passes.
+
+**Part B ... frontmatter-guard library + CLI + doctor + migration + skill + pre-commit hook.**
+
+- **`src/core/markdown.ts`** ... `parseMarkdown(content, filePath?, opts?)` gains an opt-in `opts.validate` flag. When true, returns `errors[]` with the seven canonical codes. Existing callers unaffected. Validation logic for all seven codes lives here as the single source of truth.
+- **`src/commands/lint.ts`** ... frontmatter-rule lint cases delegate to `parseMarkdown(..., {validate:true})`. New rule names: `frontmatter-missing-close`, `frontmatter-yaml-parse`, `frontmatter-null-bytes`, `frontmatter-nested-quotes`, `frontmatter-slug-mismatch`, `frontmatter-empty`. Suppresses MISSING_OPEN to avoid double-reporting with the legacy `no-frontmatter` rule.
+- **`src/core/brain-writer.ts`** (NEW) ... thin orchestrator (~280 lines). Exports `autoFixFrontmatter`, `writeBrainPage`, `scanBrainSources`. `writeBrainPage` is path-guarded (refuses writes outside `sourcePath`), always writes `<file>.bak` before any in-place mutation. `scanBrainSources` walks every registered source via direct SQL against `sources.local_path`, uses `isSyncable()` from sync.ts as the canonical brain-page filter, blocks symlinks (matches sync's no-symlink policy), and respects `AbortSignal`.
+- **`src/commands/frontmatter.ts`** (NEW) ... `gbrain frontmatter validate <path> [--json] [--fix] [--dry-run]` and `gbrain frontmatter audit [--source <id>] [--json]`. The `audit` subcommand is read-only; `--fix` only exists on `validate`. CLI handles `--help` without a DB connection.
+- **`src/commands/frontmatter-install-hook.ts`** (NEW) ... `gbrain frontmatter install-hook [--source <id>] [--force] [--uninstall]`. Writes `.githooks/pre-commit` per source (skips non-git sources with a one-line note), runs `git config core.hooksPath .githooks` if unset, refuses to clobber existing hooks without `--force` (writes `.bak`). The hook script gracefully degrades when `gbrain` is missing on PATH (prints a warning, exits 0 ... doesn't break commits).
+- **`src/commands/doctor.ts`** ... new `frontmatter_integrity` subcheck calls `scanBrainSources()` and reports per-source counts plus the fix hint. Wraps in a doctor progress phase with heartbeat.
+- **`src/commands/migrations/v0_22_4.ts`** (NEW) ... audit-only orchestrator with three phases (schema no-op, audit, emit-todo). Idempotent + resumable. Skips cleanly when no sources are registered. Per-source TODO entries reference the dotted-filename migration doc (`skills/migrations/v0.22.4.md`) per the existing `pending-host-work.jsonl` convention.
+- **`skills/frontmatter-guard/SKILL.md`** (NEW) ... agent-agnostic; routes to `gbrain frontmatter` CLI invocations, drops OpenClaw-specific paths from PR #392's spec. Registered in `skills/manifest.json` and `skills/RESOLVER.md` with substring-matchable triggers.
+- **`docs/integrations/pre-commit.md`** (NEW) ... recipe doc covering install / bypass / uninstall and downstream-fork notes.
+- **`docs/UPGRADING_DOWNSTREAM_AGENTS.md`** ... v0.22.4 section with the diff pattern for forks that had inline frontmatter validators.
+
+**Tests.** 9 new test files / 4 updated test files. Unit coverage on every new module:
+- `test/markdown-validation.test.ts` (NEW) ... all 7 codes exercised against hand-crafted fixtures.
+- `test/lint-frontmatter.test.ts` (NEW) ... lint emits findings for each fixable code; double-report suppression verified.
+- `test/brain-writer.test.ts` (NEW) ... `autoFixFrontmatter` idempotency, `writeBrainPage` path-guard + `.bak` backup, `scanBrainSources` per-source rollup, AbortSignal mid-scan, single-source filter, missing-source-path graceful skip, symlink no-loop.
+- `test/frontmatter-cli.test.ts` (NEW) ... subprocess `validate / --fix --dry-run / --fix / --json` + recursive directory scan with `isSyncable` filter parity.
+- `test/frontmatter-install-hook.test.ts` (NEW) ... hook install / overwrite-protection / `--force` / `--uninstall` / silent-refresh on already-installed.
+- `test/migrations-v0_22_4.test.ts` (NEW) ... orchestrator phase coverage including dotted-filename JSONL contract and idempotent re-emit.
+- `test/check-resolvable.test.ts` (UPDATE) ... regression guard asserting the actual checked-in `skills/` tree has 0 warnings + 0 errors.
+- `test/doctor.test.ts` (UPDATE) ... assertion that `frontmatter_integrity` subcheck calls `scanBrainSources` and the fix hint references the right CLI command.
+- `test/apply-migrations.test.ts` (UPDATE) ... `skippedFuture` arrays extended to include v0.22.4.
+- `test/migration-orchestrator-v0_21_0.test.ts` (UPDATE) ... relaxed "is the latest" assertion to "is registered with v0.22.4 after it."
+
+### For contributors
+
+`brain-writer.ts` is the canonical place to add new frontmatter validation rules. Add the code to `parseMarkdown`'s `collectValidationErrors`, surface the lint rule name in `lint.ts`'s `FRONTMATTER_RULE_NAMES`, decide if it's auto-fixable (add to `FRONTMATTER_FIXABLE`), and write the auto-fix logic in `brain-writer.ts:autoFixFrontmatter`. Tests in `test/markdown-validation.test.ts` + `test/brain-writer.test.ts`. The lint output uses the `frontmatter-<code>` naming convention; CI consumers can target specific rule names in their lint configs.
+
+`gbrain frontmatter` is wired through `src/cli.ts:handleCliOnly` so `--help` works without a DB connection. The `audit` subcommand instantiates an engine internally via `loadConfig() + createEngine()`. New subcommands of `frontmatter` should follow this pattern: parse flags first, only connect to the engine when the subcommand actually needs DB access.
+
+The v0.22.4 orchestrator is intentionally audit-only because brain content is too important to silently mutate during `apply-migrations`. Future migrations that need to rewrite brain pages should follow this two-step pattern: write the audit report + queue the fix command, let the agent run the fix with explicit user consent.
+
+## [0.22.2] - 2026-04-26
+
+**Worker no longer freezes silently. Restart-on-RSS, cold-start retry, autopilot backpressure.**
+
+The minions worker has been freezing every few hours in production. RSS climbs from 68 MB at boot to ~15 GB over ~7 hours, the process stops claiming jobs but never crashes (no OOM, no SIGSEGV), the cron keeps enqueuing autopilot-cycle jobs every 5 minutes into a queue nobody is draining, and within 2-3 hours the queue piles up to 28+ waiting jobs. Shell jobs in flight when the worker froze hit `max_stalled` and dead-letter, producing an 18% shell-job failure rate over 24h. The brainstorm caught the root chain ... memory leak, wedged worker, supervisor cold-start race, no backpressure ... and v0.22.2 ships the three in-repo defenses that close the cascade end-to-end while the underlying memory leak gets investigated separately.
+
+The watchdog is the keystone. The worker now self-terminates when RSS crosses a threshold (default 2048 MB under the supervisor) and the supervisor's exponential-backoff respawn picks up a fresh process. Both per-job AND a 60-second periodic timer check, so the watchdog still fires when every concurrency slot is wedged and zero jobs are completing ... the actual production freeze pattern. On trip, the worker fires `shutdownAbort` (so the shell handler runs its SIGTERM→5s→SIGKILL cleanup on child processes) and aborts every per-job signal (so cooperative handlers bail instead of waiting out the 30s drain). Closes the zombie-shell-children gap a Codex review surfaced.
+
+Cold-start auth races on container boot are gone. Every CLI command's `connectEngine()` bootstrap retries transient errors (3 attempts, 1s/2s/4s backoff) by default. PgBouncer rejecting the first connect on a freshly-pinged Supabase pooler is the production failure mode that killed autopilot on cold start; the retry handles it transparently. Operators who genuinely want fail-fast on a misconfigured `DATABASE_URL` pass `--no-retry-connect` or set `GBRAIN_NO_RETRY_CONNECT=1`.
+
+Autopilot stops piling jobs into a dead queue. `autopilot-cycle` submissions now use `maxWaiting: 1` so the v0.19.1 `pg_advisory_xact_lock` coalesce path caps the queue at 1 active + 1 waiting instead of letting it grow unbounded. The 3rd+ submission coalesces and writes a backpressure-audit JSONL line. Combined with the existing per-slot `idempotency_key`, cross-slot pile-ups are bounded.
+
+### The numbers that matter
+
+Production data from the 2026-04-25 incident, plus the watchdog defaults:
+
+| Metric                                  | Before          | After (supervised path) |
+|-----------------------------------------|-----------------|-------------------------|
+| Waiting-jobs pileup at freeze           | 28+             | 2 (capped at 1+1)       |
+| Worker RSS at freeze                    | 14.8 GB         | ~2 GB self-terminate    |
+| Time to detect freeze                   | hours (manual)  | ≤60s (periodic timer)   |
+| Cold-start auth-fail recovery           | manual restart  | 3 attempts in ~7s       |
+
+Bare `gbrain jobs work` (operators not using the supervisor) keeps current unbounded behavior to preserve workloads with legitimately large embed/import working sets ... pass `--max-rss N` explicitly to enable the watchdog there.
+
+### What this means for operators
+
+If you run `gbrain jobs supervisor` (the production-recommended path), `gbrain upgrade` is the only step. The supervisor injects `--max-rss 2048` to its spawned worker by default; hourly watchdog exits look like clean shutdowns to the supervisor's stable-run reset, not crashes. If you run `gbrain autopilot --install`, the autopilot's worker spawn loop now has the same stable-run reset pattern, so a watchdog-driven exit every hour does NOT trip the give-up-after-5-crashes threshold. If your container hits zombie process accumulation, add `--init` to `docker run` or `tini` as PID 1 ... that's a host-side concern, not a gbrain change.
+
+## To take advantage of v0.22.2
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **No manual SKILL.md or AGENTS.md edits required.** This release is code-only ... no schema changes, no new skills.
+3. **Verify the watchdog is wired (Postgres + supervisor path):**
+   ```bash
+   gbrain jobs supervisor --json &
+   ps -ef | grep "gbrain jobs work" | grep -- "--max-rss 2048"
+   ```
+   You should see the spawned worker child carrying `--max-rss 2048` in its argv.
+4. **If you supervise via `gbrain autopilot --install`,** the watchdog gets injected automatically. Existing crontab/launchd/systemd installs do not need to be reinstalled ... the autopilot binary picks up the new spawn args on next restart.
+5. **For hosts hitting zombie process accumulation** (PID-table fills up over weeks): add `--init` to `docker run`, or set `tini` as PID 1 in your Dockerfile. Not a gbrain code change ... operational note.
+6. **If any step fails or behavior looks off,** please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+#### Added
+
+- `MinionWorkerOpts` gains `maxRssMb`, `getRss`, and `rssCheckInterval` ... watchdog plumbing with a deterministic-test seam for the RSS readback.
+- `MinionWorker.gracefulShutdown(reason)` ... unified-style shutdown that fires `shutdownAbort` + per-job aborts + `running=false`. Reused by the per-job and periodic-timer check sites.
+- 60-second periodic RSS check (`rssCheckInterval` default 60_000) running alongside the existing stalled-jobs timer in `start()`. Closes the freeze-with-zero-completions production scenario.
+- `--max-rss MB` flag on `gbrain jobs work` (no default, opt-in for bare workers) and `gbrain jobs supervisor` (default 2048). `--max-rss 0` disables; `< 256` errors out as a likely GB-vs-MB unit-confusion typo.
+- `connectWithRetry()` + `isRetryableDbConnectError()` in `src/core/db.ts`. 5-pattern transient-error matcher (auth-failed, connection-refused, db-starting, terminated-unexpectedly, ECONNRESET). Permanent errors (extension-missing, schema conflicts) do NOT retry.
+- `--no-retry-connect` flag and `GBRAIN_NO_RETRY_CONNECT=1` env var ... operator escape hatch for fail-fast on misconfigured DATABASE_URL.
+- Autopilot worker spawn now carries `--max-rss 2048` and a stable-run reset window (5 minutes uptime → reset crash counter to 1). Mirrors the supervisor pattern at `supervisor.ts:471-476` so hourly watchdog exits don't kill autopilot after ~5 hours.
+- `autopilot-cycle` submission passes `maxWaiting: 1` to `queue.add()`. Combined with the existing per-slot `idempotency_key`, this caps cross-slot queue depth at 1 active + 1 waiting.
+- 11 new tests in `test/minions.test.ts` covering the watchdog (5 cases including the production-freeze-regression case where zero jobs ever complete) and `connectWithRetry` (6 cases including the noRetry opt-out, transient/permanent error distinction, and successful retry).
+- New supervisor integration test asserting `--max-rss 2048` lands in the spawned worker's argv by default.
+
+#### Changed
+
+- `MinionSupervisor` `SupervisorOpts` gains `maxRssMb` (default 2048). The spawn-args builder appends `--max-rss N` when `maxRssMb > 0`.
+- `connectEngine()` in `src/cli.ts` now wraps `engine.connect()` in `connectWithRetry` by default. Behavior change for cold-start auth races; preserve original fail-fast with `--no-retry-connect` per call site.
+
+#### Out of scope (follow-ups)
+
+- The 40 MB/job memory leak itself ... separate investigation needs heap snapshots and a real reproducer. The watchdog removes urgency.
+- Zombie process reaping via `tini` or `--init` ... Render/Docker host-side configuration, documented above.
+- Refactoring SIGTERM/SIGINT/watchdog into one `unifiedShutdown(reason)` helper ... right shape long-term, premature for this PR.
+
+### For contributors
+
+- The watchdog cleanup path (`gracefulShutdown`) is intentionally co-located with `MinionWorker.stop()`. When a third caller appears (e.g., a future `pause()` method), extracting `unifiedShutdown(reason)` becomes worth the refactor. Until then, three lines is not a DRY emergency.
+- `isRetryableDbConnectError()` lives in `src/core/db.ts` and owns its own 5-pattern matcher. PR #406 (when it merges) introduces a 13-pattern matcher in `src/core/minions/supervisor.ts`; the right move at that merge is to delete the supervisor's local copy and import from `db.ts` (correct dependency direction, low → high). A follow-up TODO captures this.
+## [0.22.1] - 2026-04-26
+
+**Autopilot stops being a noisy neighbor.**
+
+Five hotfixes shipping together: incremental extract, cooperative cycle abort, supervisor watchdog reconnect, session-level connection timeouts, and server-side embed-stale filtering. The wave's theme is unified: gbrain's overnight maintenance loop was reading too much, ignoring abort signals, and quietly poisoning shared infrastructure when things went wrong. After this release the loop only reads pages that changed, bails cleanly when timeouts fire, and recovers from connection-pool poisoning without manual intervention.
+
+### For everyone
+
+These two fixes apply to both PGLite (default install) and Postgres / Supabase users:
+
+- **#417 incremental extract** — `gbrain dream` cycles no longer re-read every markdown file when only a handful changed. The cycle still walks the directory tree to build the link-resolution set (a fast `readdir` pass), but `readFileSync` runs only on pages sync flagged as added or modified. On a 54,461-page production brain this turned a 10-minute extract phase into a sub-second pass; on a 500-page brain you get the same proportional win.
+- **#403 cycle abort** — when a cycle phase hits a per-job timeout, `runCycle` now bails at the next phase boundary instead of grinding through extract → embed → orphans while the worker thinks the job is done. A 30-second grace-then-evict safety net in `MinionWorker` frees the slot even if a future handler ignores the abort signal entirely. Cooperative — can't interrupt a phase mid-execution — but prevents the cascade that was wedging workers.
+
+### For Postgres / Supabase users
+
+Three fixes that no-op on PGLite (no network, no pooler, no per-connection state):
+
+- **#406 supervisor watchdog reconnect** — when the connection pool gets poisoned (PgBouncer rotation, Supabase pool bounce), the supervisor's watchdog now detects three consecutive health-check failures and calls `engine.reconnect()` to swap in a fresh pool. Workers crash cleanly on poisoned connections; supervisor catches it within ~3 health-check intervals (~3 minutes) instead of staying degraded until manual restart. Recovery is structural, not per-call magic.
+- **#363 session timeouts** *(Contributed by @orendi84)* — every Postgres connection now sets `statement_timeout` and `idle_in_transaction_session_timeout` as connection-time startup parameters. An orphaned pgbouncer backend can no longer hold a `RowExclusiveLock` for hours and block schema migrations. Defaults: 5 minutes each. Override per-GUC via `GBRAIN_STATEMENT_TIMEOUT` / `GBRAIN_IDLE_TX_TIMEOUT` / `GBRAIN_CLIENT_CHECK_INTERVAL`. Closes #361.
+- **#409 embed egress** *(Contributed by @atrevino47)* — `embed --stale` now filters server-side on `embedding IS NULL` instead of pulling every chunk's `vector(1536)` over the wire and discarding the unwanted ones client-side. On a fully-embedded 1.5K-page brain that's the difference between ~76 MB per call and a single `count()` round-trip. With autopilot firing every 5–10 minutes plus a 2-hour cron, one production user blew past Supabase's 5 GB free-tier ceiling at 102 GB used — that pattern is gone now. Two new `BrainEngine` methods (`countStaleChunks`, `listStaleChunks`) plus a consistency fix in `upsertChunks` so when `chunk_text` changes without a new embedding, both `embedding` and `embedded_at` reset to NULL together (no more "embedded_at says yes, embedding says NULL").
+
+### Production proof point
+
+The wave was driven by a 54,461-page OpenClaw production deployment where extract took 600+ seconds and the queue stalled at 20–36 waiting jobs (all returning `skipped: cycle_already_running`). All five fixes ran as hotfixes there for 12+ hours stable before this release. The numbers are extreme; the underlying bugs are not.
+
+### Eng-review tightening
+
+The original #406 wrapped `executeRaw` in a per-call retry that auto-recovered from connection errors. Eng-review dropped that wrapper as unsound — a SQL-prefix regex isn't a safe idempotence boundary (writable CTEs, side-effecting SELECTs). What ships from #406 is the structural reconnect path, not the per-call retry. Recovery moves up one layer to the supervisor watchdog. See `TODOS.md` for the planned caller-opt-in retry follow-up.
+
+### Test coverage
+
+15 new test cases across `test/extract-incremental.test.ts` (new), `test/core/cycle.test.ts`, and `test/connection-resilience.test.ts`:
+- 8 cases for `#417`: empty/undefined slugs, [a,b]-only reads, deleted-file handling, mode filter, dry-run, BATCH_SIZE flush, full-slug-set resolution.
+- 4 cases for `#417` + Codex F2: cycle threads `pagesAffected` into extract, full-walk fallback, F2 noExtract gating (full cycle vs sync-only).
+- 3 cases for D3: `executeRaw` has no per-call retry wrapper, `reconnect()` still exists, supervisor still has 3-strikes path.
+
+### To take advantage of v0.22.1
+
+No manual step. PGLite users get the universal fixes automatically on next cycle. Postgres users additionally get session timeouts on the next pool reconnect, server-side stale filtering on the next `embed --stale`, and supervisor reconnect on the next pool poisoning event.
+
+```bash
+gbrain upgrade
+gbrain doctor    # verify (optional)
+```
+
+If anything looks wrong post-upgrade, file an issue: https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+
 ## [0.22.0] - 2026-04-25
 
 **Search stops getting swamped by chat logs. Curated pages win by default.**

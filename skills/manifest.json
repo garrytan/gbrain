@@ -45,6 +45,11 @@
       "description": "Share brain pages as beautiful password-protected HTML (code + skill pair, zero LLM calls)"
     },
     {
+      "name": "frontmatter-guard",
+      "path": "frontmatter-guard/SKILL.md",
+      "description": "Validate and auto-repair YAML frontmatter on brain pages; gates against malformed YAML, missing closing ---, nested quotes, slug mismatches, null bytes"
+    },
+    {
       "name": "signal-detector",
       "path": "signal-detector/SKILL.md",
       "description": "Always-on ambient signal capture. Fires on every message to detect original thinking and entity mentions."

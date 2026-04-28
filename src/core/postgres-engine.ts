@@ -3,9 +3,10 @@ import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnectio
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import { verifySchema } from './schema-verify.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
-  Chunk, ChunkInput,
+  Chunk, ChunkInput, StaleChunkRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -21,9 +22,23 @@ import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, pa
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
+// CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
+// executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
+// retry as unsound (regex idempotence-boundary doesn't hold for writable
+// CTEs or side-effecting SELECTs). Recovery now happens at the supervisor
+// level (3-strikes-then-reconnect). The unit tests in
+// test/connection-resilience.test.ts retain a self-contained copy of the
+// helper so the regression-against-future-reintroduction guard still works.
+// See TODOS.md item: "err.code-based connection-error matching" for the
+// follow-up that will reintroduce a typed retry mechanism.
+
 export class PostgresEngine implements BrainEngine {
   readonly kind = 'postgres' as const;
   private _sql: ReturnType<typeof postgres> | null = null;
+  /** Saved config for reconnection. */
+  private _savedConfig: (EngineConfig & { poolSize?: number }) | null = null;
+  /** Whether a reconnect is in progress (prevents concurrent reconnects). */
+  private _reconnecting = false;
 
   // Instance connection (for workers) or fall back to module global (backward compat)
   get sql(): ReturnType<typeof postgres> {
@@ -33,6 +48,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig & { poolSize?: number }): Promise<void> {
+    this._savedConfig = config;
     if (config.poolSize) {
       // Instance-level connection for worker isolation. resolvePoolSize lets
       // GBRAIN_POOL_SIZE cap below the caller's requested size when set — the
@@ -45,12 +61,20 @@ export class PostgresEngine implements BrainEngine {
       // "prepared statement does not exist" under load just like the module
       // singleton did before v0.15.4.
       const prepare = db.resolvePrepare(url);
+      // Session timeouts (statement_timeout + idle_in_transaction_session_timeout)
+      // keep orphan pgbouncer backends from holding locks for hours when the
+      // postgres.js client disconnects mid-transaction. See resolveSessionTimeouts
+      // in db.ts for context + env var overrides.
+      const timeouts = db.resolveSessionTimeouts();
       const opts: Record<string, unknown> = {
         max: size,
         idle_timeout: 20,
         connect_timeout: 10,
         types: { bigint: postgres.BigInt },
       };
+      if (Object.keys(timeouts).length > 0) {
+        opts.connection = timeouts;
+      }
       if (typeof prepare === 'boolean') {
         opts.prepare = prepare;
       }
@@ -101,6 +125,14 @@ export class PostgresEngine implements BrainEngine {
       const { applied } = await runMigrations(this);
       if (applied > 0) {
         console.log(`  ${applied} migration(s) applied`);
+      }
+
+      // Post-migration schema verification: catches columns that migrations
+      // defined but PgBouncer transaction-mode silently failed to create.
+      // Self-heals missing columns via ALTER TABLE ADD COLUMN IF NOT EXISTS.
+      const verify = await verifySchema(this);
+      if (verify.healed.length > 0) {
+        console.log(`  Schema verify: self-healed ${verify.healed.length} missing column(s)`);
       }
     } finally {
       await conn`SELECT pg_advisory_unlock(42)`;
@@ -696,7 +728,13 @@ export class PostgresEngine implements BrainEngine {
       }
     }
 
-    // Single statement upsert: preserves existing embeddings via COALESCE when new value is NULL
+    // Single statement upsert: preserves existing embeddings via COALESCE when new value is NULL.
+    // CONSISTENCY: when chunk_text changes and no new embedding is supplied, BOTH embedding AND
+    // embedded_at must reset to NULL so `embed --stale` correctly picks up the row for re-embedding.
+    // Without this, embedded_at lies (says "embedded" while embedding=NULL), and any staleness
+    // predicate on embedded_at would silently skip the row. This is why the egress fix predicates
+    // on `embedding IS NULL` rather than `embedded_at IS NULL` — and it's why we now keep both
+    // columns honest at write time.
     await sql.unsafe(
       `INSERT INTO content_chunks ${cols} VALUES ${rows.join(', ')}
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
@@ -705,7 +743,10 @@ export class PostgresEngine implements BrainEngine {
          embedding = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding ELSE COALESCE(EXCLUDED.embedding, content_chunks.embedding) END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
-         embedded_at = COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at),
+         embedded_at = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
+           ELSE COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
+         END,
          language = EXCLUDED.language,
          symbol_name = EXCLUDED.symbol_name,
          symbol_type = EXCLUDED.symbol_type,
@@ -727,6 +768,30 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY cc.chunk_index
     `;
     return rows.map((r) => rowToChunk(r as Record<string, unknown>));
+  }
+
+  async countStaleChunks(): Promise<number> {
+    const sql = this.sql;
+    const [row] = await sql`
+      SELECT count(*)::int AS count
+      FROM content_chunks
+      WHERE embedding IS NULL
+    `;
+    return Number((row as { count?: number } | undefined)?.count ?? 0);
+  }
+
+  async listStaleChunks(): Promise<StaleChunkRow[]> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+             cc.model, cc.token_count
+      FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      WHERE cc.embedding IS NULL
+      ORDER BY p.id, cc.chunk_index
+      LIMIT 100000
+    `;
+    return rows as unknown as StaleChunkRow[];
   }
 
   async deleteChunks(slug: string): Promise<void> {
@@ -1452,9 +1517,34 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => rowToChunk(r as Record<string, unknown>, true));
   }
 
+  /**
+   * Reconnect the engine by tearing down the current pool and creating a fresh one.
+   * No-ops if no saved config (module-singleton mode) or if already reconnecting.
+   */
+  async reconnect(): Promise<void> {
+    if (!this._savedConfig || this._reconnecting) return;
+    this._reconnecting = true;
+    try {
+      // Tear down old pool (best-effort — it may already be dead)
+      try { await this.disconnect(); } catch { /* swallow */ }
+      // Create fresh pool
+      await this.connect(this._savedConfig);
+    } finally {
+      this._reconnecting = false;
+    }
+  }
+
   async executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
     const conn = this.sql;
     return conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]) as unknown as T[];
+    // Pre-#406 behavior: throw on any error including connection death.
+    // Per-call auto-retry is not safe here because executeRaw is also used
+    // for non-transactional mutations (DELETE/UPDATE/INSERT in sources.ts,
+    // ALTER TABLE in migrations) where retrying after a connection-mid-statement
+    // death can phantom-write a row that already committed on the server.
+    // Recovery instead happens at the supervisor level: the watchdog detects
+    // 3 consecutive health-check failures and calls engine.reconnect() to
+    // swap in a fresh pool. See db.ts setSessionDefaults / supervisor.ts.
   }
 
   // ============================================================

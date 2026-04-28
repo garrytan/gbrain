@@ -49,9 +49,14 @@ describe('v0.21.0 orchestrator — Cathedral II migration', () => {
     expect(skippedCount).toBeGreaterThanOrEqual(2);
   });
 
-  test('v0.21.0 is the latest registered migration', async () => {
+  test('v0.21.0 is registered in the migrations array', async () => {
     const { migrations } = await import('../src/commands/migrations/index.ts');
-    const last = migrations[migrations.length - 1]!;
-    expect(last.version).toBe('0.21.0');
+    const versions = migrations.map(m => m.version);
+    expect(versions).toContain('0.21.0');
+    // v0.21.0 must come before any v0.22+ migration (semver order).
+    const idx21 = versions.indexOf('0.21.0');
+    const idx22 = versions.indexOf('0.22.4');
+    if (idx22 !== -1) expect(idx21).toBeLessThan(idx22);
+    expect(migrations[idx21]!.version).toBe('0.21.0');
   });
 });

@@ -8,7 +8,6 @@ description: |
 triggers:
   - "brain health"
   - "check backlinks"
-  - "citation audit"
   - "maintenance"
   - "orphan pages"
   - "stale pages"

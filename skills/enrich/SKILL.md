@@ -55,18 +55,7 @@ they building, what makes them tick, where are they headed.
 
 ## Citation Requirements (MANDATORY)
 
-Every fact must carry an inline `[Source: ...]` citation.
-
-Three formats:
-- **Direct attribution:** `[Source: User, {context}, YYYY-MM-DD]`
-- **API/external:** `[Source: {provider} enrichment, YYYY-MM-DD]`
-- **Synthesis:** `[Source: compiled from {list of sources}]`
-
-Source precedence (highest to lowest):
-1. User's direct statements
-2. Compiled truth (pre-existing brain synthesis)
-3. Timeline entries (raw evidence)
-4. External sources (API enrichment, web search)
+> **Convention:** see `skills/conventions/quality.md` for citation formats and source precedence.
 
 When sources conflict, note the contradiction with both citations.
 
