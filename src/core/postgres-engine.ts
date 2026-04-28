@@ -208,15 +208,57 @@ export class PostgresEngine implements BrainEngine {
     // connection from the pool, lives past this method, and either
     // clips an unrelated caller's long-running query (DoS) or — via
     // `SET statement_timeout = 0` — disables the guard for them.
+    // Detect CJK characters — PostgreSQL's simple/english configs can't tokenize
+    // them. Fall back to pg_trgm ILIKE for any query that contains CJK.
+    const hasCJK = /[　-鿿가-힯豈-﫿]/.test(query);
+    const likePattern = `%${query}%`;
+
     const rows = await sql.begin(async sql => {
       await sql`SET LOCAL statement_timeout = '8s'`;
-      // CTE: rank pages by FTS score, then pick the best chunk per page in SQL
+      if (hasCJK) {
+        // pg_trgm path: search title + compiled_truth + chunk_text via ILIKE
+        return await sql`
+          WITH matched_pages AS (
+            SELECT DISTINCT ON (p.slug)
+              p.id, p.slug, p.title, p.type,
+              CASE
+                WHEN p.title ILIKE ${likePattern} THEN 1.0
+                WHEN p.compiled_truth ILIKE ${likePattern} THEN 0.7
+                ELSE 0.5
+              END AS score
+            FROM pages p
+            LEFT JOIN content_chunks cc ON cc.page_id = p.id
+            WHERE p.title ILIKE ${likePattern}
+               OR p.compiled_truth ILIKE ${likePattern}
+               OR cc.chunk_text ILIKE ${likePattern}
+              ${type ? sql`AND p.type = ${type}` : sql``}
+              ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
+            ORDER BY p.slug, score DESC
+            LIMIT ${limit}
+            OFFSET ${offset}
+          ),
+          best_chunks AS (
+            SELECT DISTINCT ON (mp.slug)
+              mp.slug, mp.id as page_id, mp.title, mp.type, mp.score,
+              cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
+            FROM matched_pages mp
+            JOIN content_chunks cc ON cc.page_id = mp.id
+            ${detailLow ? sql`WHERE cc.chunk_source = 'compiled_truth'` : sql``}
+            ORDER BY mp.slug, cc.chunk_index
+          )
+          SELECT slug, page_id, title, type, chunk_id, chunk_index, chunk_text, chunk_source, score,
+            false AS stale
+          FROM best_chunks
+          ORDER BY score DESC
+        `;
+      }
+      // FTS path for Latin/simple scripts
       return await sql`
         WITH ranked_pages AS (
           SELECT p.id, p.slug, p.title, p.type,
-            ts_rank(p.search_vector, websearch_to_tsquery('english', ${query})) AS score
+            ts_rank(p.search_vector, websearch_to_tsquery('simple', ${query})) AS score
           FROM pages p
-          WHERE p.search_vector @@ websearch_to_tsquery('english', ${query})
+          WHERE p.search_vector @@ websearch_to_tsquery('simple', ${query})
             ${type ? sql`AND p.type = ${type}` : sql``}
             ${excludeSlugs?.length ? sql`AND p.slug != ALL(${excludeSlugs})` : sql``}
           ORDER BY score DESC

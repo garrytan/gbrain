@@ -343,10 +343,10 @@ BEGIN
   WHERE page_id = NEW.id;
 
   NEW.search_vector :=
-    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(NEW.compiled_truth, '')), 'B') ||
-    setweight(to_tsvector('english', coalesce(NEW.timeline, '')), 'C') ||
-    setweight(to_tsvector('english', coalesce(timeline_text, '')), 'C');
+    setweight(to_tsvector('simple', coalesce(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(NEW.compiled_truth, '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(NEW.timeline, '')), 'C') ||
+    setweight(to_tsvector('simple', coalesce(timeline_text, '')), 'C');
 
   RETURN NEW;
 END;

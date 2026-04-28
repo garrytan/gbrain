@@ -207,13 +207,13 @@ export class PGLiteEngine implements BrainEngine {
       `SELECT
         p.slug, p.id as page_id, p.title, p.type,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-        ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS score,
+        ts_rank(p.search_vector, websearch_to_tsquery('simple', $1)) AS score,
         CASE WHEN p.updated_at < (
           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
         ) THEN true ELSE false END AS stale
       FROM pages p
       JOIN content_chunks cc ON cc.page_id = p.id
-      WHERE p.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}
+      WHERE p.search_vector @@ websearch_to_tsquery('simple', $1) ${detailFilter}
       ORDER BY score DESC
       LIMIT $2
       OFFSET $3`,
