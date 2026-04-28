@@ -394,6 +394,16 @@ export const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_budget_reservations_expires
         ON budget_reservations(expires_at) WHERE status = 'held';
+      -- Match the RLS-ON + no-policies + BYPASSRLS pattern from schema.sql.
+      -- Only enable if the current role has BYPASSRLS so we don't lock
+      -- anyone out who happens to run this as a non-postgres role.
+      DO $$
+      BEGIN
+        IF (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) THEN
+          ALTER TABLE budget_ledger ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE budget_reservations ENABLE ROW LEVEL SECURITY;
+        END IF;
+      END $$;
     `,
   },
   {

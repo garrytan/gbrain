@@ -638,6 +638,7 @@ DECLARE
 BEGIN
   SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
   IF has_bypass THEN
+    -- Core knowledge graph
     ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
     ALTER TABLE content_chunks ENABLE ROW LEVEL SECURITY;
     ALTER TABLE links ENABLE ROW LEVEL SECURITY;
@@ -648,7 +649,18 @@ BEGIN
     ALTER TABLE ingest_log ENABLE ROW LEVEL SECURITY;
     ALTER TABLE config ENABLE ROW LEVEL SECURITY;
     ALTER TABLE files ENABLE ROW LEVEL SECURITY;
+    -- Auth + request logging
+    ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE mcp_request_log ENABLE ROW LEVEL SECURITY;
+    -- Minion runtime
     ALTER TABLE minion_jobs ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE minion_inbox ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE minion_attachments ENABLE ROW LEVEL SECURITY;
+    -- Subagent runtime
+    ALTER TABLE subagent_messages ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE subagent_tool_executions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE subagent_rate_leases ENABLE ROW LEVEL SECURITY;
+    -- Multi-source + file migration
     ALTER TABLE sources ENABLE ROW LEVEL SECURITY;
     ALTER TABLE file_migration_ledger ENABLE ROW LEVEL SECURITY;
     ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
