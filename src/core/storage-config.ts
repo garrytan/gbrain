@@ -215,10 +215,10 @@ export function loadStorageConfig(repoPath?: string | null): StorageConfig | nul
     return null;
   }
 
-  const config = normalizeStorageConfig(raw);
+  const merged = normalizeStorageConfig(raw);
 
   // Empty storage section → return as-is but warn.
-  if (config.db_tracked.length === 0 && config.db_only.length === 0) {
+  if (merged.db_tracked.length === 0 && merged.db_only.length === 0) {
     if (!_missingStorageWarned) {
       _missingStorageWarned = true;
       console.warn(
@@ -227,9 +227,19 @@ export function loadStorageConfig(repoPath?: string | null): StorageConfig | nul
           `or remove gbrain.yml to suppress this warning.`,
       );
     }
+    return merged;
   }
 
-  return config;
+  // Normalize cosmetic issues + throw on semantic overlap (D7).
+  // Throws StorageConfigError on overlap — propagates to the caller.
+  return normalizeAndValidateStorageConfig(merged);
+}
+
+export class StorageConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StorageConfigError';
+  }
 }
 
 /**
@@ -239,12 +249,13 @@ export function loadStorageConfig(repoPath?: string | null): StorageConfig | nul
  * Always runs against the canonical (db_tracked / db_only) shape — error
  * messages reference canonical names regardless of which keys the user
  * wrote in gbrain.yml.
+ *
+ * Pure: does not mutate. For the auto-normalize behavior (D7), see
+ * `normalizeAndValidateStorageConfig` below.
  */
 export function validateStorageConfig(config: StorageConfig): string[] {
   const warnings: string[] = [];
 
-  // Overlap between tiers: ambiguous semantics — does `media/` win as
-  // db-tracked or db-only? Caller treats this as an error per D7.
   const trackedSet = new Set(config.db_tracked);
   for (const path of config.db_only) {
     if (trackedSet.has(path)) {
@@ -252,7 +263,6 @@ export function validateStorageConfig(config: StorageConfig): string[] {
     }
   }
 
-  // Trailing slash is canonical. Caller may auto-normalize per D7+D8.
   const allPaths = [...config.db_tracked, ...config.db_only];
   for (const path of allPaths) {
     if (!path.endsWith('/')) {
@@ -261,6 +271,62 @@ export function validateStorageConfig(config: StorageConfig): string[] {
   }
 
   return warnings;
+}
+
+/**
+ * Auto-normalize and strict-validate per D7+D8.
+ *
+ *   1. Cosmetic fixups are applied silently with a one-time info message
+ *      naming what changed:
+ *        - missing trailing `/` is added
+ *      The message helps the user learn the canonical form without nagging.
+ *   2. Semantic problems THROW (don't return warnings):
+ *        - same directory in both tiers (ambiguous routing)
+ *
+ * Caller passes a fresh raw config; this returns the normalized shape that
+ * the rest of the code (matcher, sync, etc.) sees.
+ */
+let _normalizationInfoEmitted = false;
+
+export function normalizeAndValidateStorageConfig(input: StorageConfig): StorageConfig {
+  const normalize = (paths: string[]): { normalized: string[]; changed: string[] } => {
+    const normalized: string[] = [];
+    const changed: string[] = [];
+    for (const p of paths) {
+      if (p.endsWith('/')) {
+        normalized.push(p);
+      } else {
+        normalized.push(p + '/');
+        changed.push(`"${p}" → "${p}/"`);
+      }
+    }
+    return { normalized, changed };
+  };
+
+  const tracked = normalize(input.db_tracked);
+  const dbonly = normalize(input.db_only);
+  const allChanged = [...tracked.changed, ...dbonly.changed];
+
+  if (allChanged.length > 0 && !_normalizationInfoEmitted) {
+    _normalizationInfoEmitted = true;
+    console.warn(
+      `Note: normalized ${allChanged.length} storage path(s) in gbrain.yml — ` +
+        `${allChanged.join(', ')}. Add trailing "/" to suppress this note.`,
+    );
+  }
+
+  // Semantic check: overlap between tiers throws. Ambiguous routing.
+  const trackedSet = new Set(tracked.normalized);
+  for (const path of dbonly.normalized) {
+    if (trackedSet.has(path)) {
+      throw new StorageConfigError(
+        `gbrain.yml: directory "${path}" appears in both db_tracked and db_only — ` +
+          `pick one tier. Edit gbrain.yml to remove the overlap.`,
+      );
+    }
+  }
+
+  return { db_tracked: tracked.normalized, db_only: dbonly.normalized };
 }
 
 /**
@@ -307,4 +373,5 @@ export const isSupabaseOnly = isDbOnly;
 export function __resetMissingStorageWarning(): void {
   _missingStorageWarned = false;
   _deprecationWarned = false;
+  _normalizationInfoEmitted = false;
 }

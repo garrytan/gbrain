@@ -8,6 +8,8 @@ import {
   isSupabaseOnly,
   getStorageTier,
   loadStorageConfig,
+  normalizeAndValidateStorageConfig,
+  StorageConfigError,
   __resetMissingStorageWarning,
 } from '../src/core/storage-config.ts';
 import type { StorageConfig } from '../src/core/storage-config.ts';
@@ -73,6 +75,35 @@ describe('Storage Configuration', () => {
       expect(isGitTracked('people/', testConfig)).toBe(true);
       expect(isGitTracked('peoplex/test', testConfig)).toBe(false);
       expect(isSupabaseOnly('mediax/test', testConfig)).toBe(false);
+    });
+
+    test('normalizeAndValidateStorageConfig auto-adds trailing slash silently with info note', () => {
+      __resetMissingStorageWarning();
+      const warnings: string[] = [];
+      const orig = console.warn;
+      console.warn = (...a: unknown[]) => { warnings.push(a.map(String).join(' ')); };
+      try {
+        const out = normalizeAndValidateStorageConfig({
+          db_tracked: ['people', 'companies/'],
+          db_only: ['media/x'],
+        });
+        expect(out.db_tracked).toEqual(['people/', 'companies/']);
+        expect(out.db_only).toEqual(['media/x/']);
+        expect(warnings.length).toBe(1);
+        expect(warnings[0]).toMatch(/normalized.*"people".*"people\/".*"media\/x".*"media\/x\/"/);
+      } finally {
+        console.warn = orig;
+      }
+    });
+
+    test('normalizeAndValidateStorageConfig throws on tier overlap', () => {
+      __resetMissingStorageWarning();
+      expect(() =>
+        normalizeAndValidateStorageConfig({
+          db_tracked: ['media/'],
+          db_only: ['media/'],
+        }),
+      ).toThrow(StorageConfigError);
     });
 
     test('regression — media/xerox does NOT match media/x (path-segment matcher)', () => {
