@@ -67,12 +67,25 @@ export function buildBacklinkEntry(sourceTitle: string, sourcePath: string, date
   return `- **${date}** | Referenced in [${sourceTitle}](${sourcePath})`;
 }
 
-/** Scan a brain directory for back-link gaps */
-export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
-  const gaps: BacklinkGap[] = [];
+/**
+ * Canonical shape of a Referenced-in line written by the fix path:
+ *   `- **YYYY-MM-DD** | Referenced in [Title](relative-path)`
+ * The fix path strips every line that matches and rewrites from the brain's
+ * current source state. Lines that don't match (manual Timeline entries,
+ * Layer B `[Source: Calendar]` lines, ad-hoc bullets) are preserved.
+ *
+ * Captures: 1=date, 2=display title, 3=href.
+ */
+const REFERENCED_IN_LINE_RE = /^- \*\*(\d{4}-\d{2}-\d{2})\*\* \| Referenced in \[([^\]]+)\]\(([^)]+)\)\s*$/;
 
-  // Collect all markdown files
-  const allPages: { path: string; relPath: string; content: string }[] = [];
+interface BrainPage {
+  path: string;
+  relPath: string;
+  content: string;
+}
+
+function walkBrainPages(brainDir: string): BrainPage[] {
+  const pages: BrainPage[] = [];
   function walk(dir: string) {
     for (const entry of readdirSync(dir)) {
       if (entry.startsWith('.')) continue;
@@ -82,98 +95,204 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
       } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
         const relPath = relative(brainDir, full);
         try {
-          allPages.push({ path: full, relPath, content: readFileSync(full, 'utf-8') });
+          pages.push({ path: full, relPath, content: readFileSync(full, 'utf-8') });
         } catch { /* skip unreadable */ }
       }
     }
   }
   walk(brainDir);
+  return pages;
+}
 
-  // Build a lookup of existing pages by directory/slug
-  const pagesBySlug = new Map<string, { path: string; content: string }>();
-  for (const page of allPages) {
-    const slug = page.relPath.replace('.md', '');
-    pagesBySlug.set(slug, { path: page.path, content: page.content });
+/**
+ * Build the brain's incoming-source map: target slug → set of source rel-paths
+ * that mention the target (one entry per distinct source, regardless of how
+ * many wikilinks the source has). Drives the rewrite path's canonical set.
+ */
+function buildIncomingMap(pages: BrainPage[], pagesBySlug: Map<string, BrainPage>): Map<string, Set<string>> {
+  const incoming = new Map<string, Set<string>>();
+  for (const source of pages) {
+    const refs = extractEntityRefs(source.content, source.relPath);
+    const seenTargets = new Set<string>();
+    for (const ref of refs) {
+      const targetSlug = `${ref.dir}/${ref.slug}`;
+      // Per-source-target dedup: many wikilinks → one canonical Referenced-in line.
+      if (seenTargets.has(targetSlug)) continue;
+      seenTargets.add(targetSlug);
+      if (!pagesBySlug.has(targetSlug)) continue;
+      // No self-reference: a page mentioning its own slug shouldn't backlink to itself.
+      if (source.relPath === targetSlug + '.md') continue;
+      let set = incoming.get(targetSlug);
+      if (!set) { set = new Set(); incoming.set(targetSlug, set); }
+      set.add(source.relPath);
+    }
+  }
+  return incoming;
+}
+
+/** Parse existing Referenced-in lines on a target page → href → {date, title}. */
+function parseExistingBacklinks(content: string): Map<string, { date: string; title: string }> {
+  const out = new Map<string, { date: string; title: string }>();
+  for (const line of content.split('\n')) {
+    const m = line.match(REFERENCED_IN_LINE_RE);
+    if (!m) continue;
+    out.set(m[3], { date: m[1], title: m[2] });
+  }
+  return out;
+}
+
+function stripBacklinkLines(content: string): string {
+  return content
+    .split('\n')
+    .filter(line => !REFERENCED_IN_LINE_RE.test(line))
+    .join('\n');
+}
+
+function insertBacklinksIntoTimeline(content: string, lines: string[]): string {
+  if (lines.length === 0) return content;
+  const block = lines.join('\n');
+  const headerIdx = content.indexOf('## Timeline');
+  if (headerIdx >= 0) {
+    const afterHeader = headerIdx + '## Timeline'.length;
+    const restOfFile = content.slice(afterHeader);
+    const nextSectionRel = restOfFile.search(/\n##\s/);
+    const insertAt = nextSectionRel === -1 ? content.length : afterHeader + nextSectionRel;
+    const before = content.slice(0, insertAt);
+    const after = content.slice(insertAt);
+    const sep = before.endsWith('\n') ? '' : '\n';
+    return before + sep + block + '\n' + after;
+  }
+  // No Timeline section — create one at end of file.
+  const sep = content.endsWith('\n') ? '' : '\n';
+  return content + sep + '\n## Timeline\n\n' + block + '\n';
+}
+
+/**
+ * Scan a brain directory for missing back-links. Each (target, source) pair
+ * produces at most one gap regardless of how many wikilink mentions the
+ * source contains. Pairs already represented by any line containing the
+ * source filename in the target are not reported.
+ */
+export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
+  const pages = walkBrainPages(brainDir);
+  const pagesBySlug = new Map<string, BrainPage>();
+  for (const page of pages) {
+    pagesBySlug.set(page.relPath.replace('.md', ''), page);
   }
 
-  // For each page, check entity references
-  for (const page of allPages) {
+  const gaps: BacklinkGap[] = [];
+  const seenPair = new Set<string>();
+
+  for (const page of pages) {
     const refs = extractEntityRefs(page.content, page.relPath);
     const sourceFilename = basename(page.relPath);
+    const seenTargetsForThisSource = new Set<string>();
 
     for (const ref of refs) {
       const targetSlug = `${ref.dir}/${ref.slug}`;
-      const target = pagesBySlug.get(targetSlug);
-      if (!target) continue; // target page doesn't exist
+      if (seenTargetsForThisSource.has(targetSlug)) continue;
+      seenTargetsForThisSource.add(targetSlug);
 
-      // Check if the target already has a back-link to this source page
-      if (!hasBacklink(target.content, sourceFilename)) {
-        gaps.push({
-          sourcePage: page.relPath,
-          targetPage: targetSlug + '.md',
-          entityName: ref.name,
-          sourceTitle: extractPageTitle(page.content),
-        });
-      }
+      const target = pagesBySlug.get(targetSlug);
+      if (!target) continue;
+      if (hasBacklink(target.content, sourceFilename)) continue;
+
+      const pairKey = `${targetSlug}.md\0${page.relPath}`;
+      if (seenPair.has(pairKey)) continue;
+      seenPair.add(pairKey);
+
+      gaps.push({
+        sourcePage: page.relPath,
+        targetPage: targetSlug + '.md',
+        entityName: ref.name,
+        sourceTitle: extractPageTitle(page.content),
+      });
     }
   }
 
   return gaps;
 }
 
-/** Fix back-link gaps by appending timeline entries to target pages */
-export function fixBacklinkGaps(brainDir: string, gaps: BacklinkGap[], dryRun: boolean = false): number {
+/**
+ * Rewrite-not-append fix path. For every page in the brain, recomputes the
+ * canonical Referenced-in line set from current source state, strips any
+ * existing Referenced-in lines, and reinserts the canonical sorted set
+ * inside the Timeline section. Idempotent: re-running with no source-state
+ * change produces byte-identical output.
+ *
+ * Self-heals against three previously-silent failure modes:
+ *   1. Multi-mention sources writing N copies of the same line per cycle.
+ *   2. Source page renamed / moved → stale Referenced-in lines lingering.
+ *   3. Source page deleted → stale Referenced-in lines lingering.
+ *
+ * Returns the count of NEW canonical lines created across all touched
+ * pages (i.e. entries not previously present). Stale-line cleanup is not
+ * counted here — see the strip-only pass for affected pages with no
+ * incoming sources.
+ *
+ * The `_gaps` argument is accepted for API compatibility but ignored;
+ * the rewrite path computes the canonical set itself from a fresh walk.
+ */
+export function fixBacklinkGaps(brainDir: string, _gaps: BacklinkGap[], dryRun: boolean = false): number {
   const today = new Date().toISOString().slice(0, 10);
-  let fixed = 0;
-
-  // Group gaps by target page to batch writes
-  const byTarget = new Map<string, BacklinkGap[]>();
-  for (const gap of gaps) {
-    const existing = byTarget.get(gap.targetPage) || [];
-    existing.push(gap);
-    byTarget.set(gap.targetPage, existing);
+  const pages = walkBrainPages(brainDir);
+  const pagesBySlug = new Map<string, BrainPage>();
+  for (const page of pages) {
+    pagesBySlug.set(page.relPath.replace('.md', ''), page);
   }
 
-  for (const [targetPage, targetGaps] of byTarget) {
-    const targetPath = join(brainDir, targetPage);
-    if (!existsSync(targetPath)) continue;
+  const incoming = buildIncomingMap(pages, pagesBySlug);
+  let written = 0;
 
-    let content = readFileSync(targetPath, 'utf-8');
+  // Pass 1: targets with at least one incoming source. Strip-and-rewrite.
+  for (const [targetSlug, sourceRelPaths] of incoming) {
+    const target = pagesBySlug.get(targetSlug);
+    if (!target) continue;
 
-    for (const gap of targetGaps) {
-      // Compute relative path from target to source
-      const targetDir = targetPage.split('/').slice(0, -1);
-      const sourceDir = gap.sourcePage.split('/');
-      const depth = targetDir.length;
-      const relPrefix = '../'.repeat(depth);
-      const relPath = relPrefix + gap.sourcePage;
+    const targetDirDepth = targetSlug.split('/').length - 1;
+    const relPrefix = '../'.repeat(targetDirDepth);
+    const existing = parseExistingBacklinks(target.content);
 
-      const entry = buildBacklinkEntry(gap.sourceTitle, relPath, today);
-
-      // Insert into Timeline section
-      if (content.includes('## Timeline')) {
-        const parts = content.split('## Timeline');
-        const afterTimeline = parts[1];
-        const nextSection = afterTimeline.match(/\n## /);
-        if (nextSection) {
-          const insertIdx = parts[0].length + '## Timeline'.length + nextSection.index!;
-          content = content.slice(0, insertIdx) + '\n' + entry + content.slice(insertIdx);
-        } else {
-          content = content.trimEnd() + '\n' + entry + '\n';
-        }
-      } else {
-        // Add Timeline section
-        content = content.trimEnd() + '\n\n## Timeline\n\n' + entry + '\n';
-      }
-      fixed++;
+    const canonical: { href: string; date: string; title: string }[] = [];
+    for (const sourceRelPath of sourceRelPaths) {
+      const source = pagesBySlug.get(sourceRelPath.replace('.md', ''));
+      if (!source) continue;
+      const href = relPrefix + sourceRelPath;
+      // Preserve the date of the existing line if any — cycles must be idempotent.
+      const date = existing.get(href)?.date ?? today;
+      const title = extractPageTitle(source.content);
+      canonical.push({ href, date, title });
     }
 
-    if (!dryRun) {
-      writeFileSync(targetPath, content);
+    canonical.sort((a, b) => {
+      if (a.date < b.date) return -1;
+      if (a.date > b.date) return 1;
+      return a.href < b.href ? -1 : a.href > b.href ? 1 : 0;
+    });
+
+    const newLines = canonical.filter(c => !existing.has(c.href)).length;
+    const lines = canonical.map(c => buildBacklinkEntry(c.title, c.href, c.date));
+    let next = stripBacklinkLines(target.content);
+    next = insertBacklinksIntoTimeline(next, lines);
+
+    if (next !== target.content) {
+      if (!dryRun) writeFileSync(target.path, next);
+      written += newLines;
     }
   }
 
-  return fixed;
+  // Pass 2: targets with stale Referenced-in lines but no longer any
+  // incoming sources. Strip them.
+  for (const target of pages) {
+    const slug = target.relPath.replace('.md', '');
+    if (incoming.has(slug)) continue;
+    const stripped = stripBacklinkLines(target.content);
+    if (stripped !== target.content && !dryRun) {
+      writeFileSync(target.path, stripped);
+    }
+  }
+
+  return written;
 }
 
 export interface BacklinksOpts {
