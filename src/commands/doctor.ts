@@ -524,7 +524,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain link-extract && gbrain timeline-extract`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain extract all --source db`,
       });
     }
 
