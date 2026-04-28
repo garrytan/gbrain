@@ -25,26 +25,42 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   // Load storage configuration if repo path is provided
   const storageConfig = repoPath ? loadStorageConfig(repoPath) : null;
   
-  // Build filters
-  const filters: any = { limit: 100000 };
-  if (typeFilter) {
-    filters.type = typeFilter;
-  }
-  
-  let pages = await engine.listPages(filters);
-  
-  // Apply slug prefix filter
-  if (slugPrefix) {
-    pages = pages.filter(page => page.slug.startsWith(slugPrefix));
-  }
-  
-  // Apply restore-only filter: db_only pages missing from disk.
+  // Build filters. slugPrefix is engine-side (Issue #13) — no in-memory
+  // post-filter, no full-table load.
+  const filters: import('../core/types.ts').PageFilters = { limit: 100000 };
+  if (typeFilter) filters.type = typeFilter;
+  if (slugPrefix) filters.slugPrefix = slugPrefix;
+
+  let pages: import('../core/types.ts').Page[];
+
+  // Restore-only path: query each db_only directory with slugPrefix instead
+  // of loading every page in the brain. On a 200K-page brain where 95% is
+  // db_only, this is roughly the same load — but on brains where only 5K
+  // out of 200K are db_only, this is a ~40x reduction.
   if (restoreOnly && repoPath && storageConfig) {
-    pages = pages.filter(page => {
-      if (!isDbOnly(page.slug, storageConfig)) return false;
-      const filePath = join(repoPath, page.slug + '.md');
-      return !existsSync(filePath);
-    });
+    const seen = new Set<string>();
+    pages = [];
+    for (const dir of storageConfig.db_only) {
+      const tierFilters: import('../core/types.ts').PageFilters = {
+        ...filters,
+        slugPrefix: filters.slugPrefix
+          ? // If user passed --slug-prefix, only include tier dirs that start with it.
+            (dir.startsWith(filters.slugPrefix) ? dir : undefined)
+          : dir,
+      };
+      if (!tierFilters.slugPrefix) continue;
+      const tierPages = await engine.listPages(tierFilters);
+      for (const p of tierPages) {
+        if (seen.has(p.slug)) continue;
+        seen.add(p.slug);
+        if (!isDbOnly(p.slug, storageConfig)) continue; // belt-and-suspenders
+        const filePath = join(repoPath, p.slug + '.md');
+        if (existsSync(filePath)) continue;
+        pages.push(p);
+      }
+    }
+  } else {
+    pages = await engine.listPages(filters);
   }
   if (restoreOnly) {
     console.log(`Restoring ${pages.length} db_only pages to ${outDir}/`);

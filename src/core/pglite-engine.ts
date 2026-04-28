@@ -175,6 +175,13 @@ export class PGLiteEngine implements BrainEngine {
       params.push(filters.updated_after);
       where.push(`p.updated_at > $${params.length}::timestamptz`);
     }
+    // slugPrefix uses the (source_id, slug) UNIQUE btree for index range scans.
+    // Escape LIKE metacharacters so the user prefix is treated as a literal.
+    if (filters?.slugPrefix) {
+      const escaped = filters.slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+      params.push(escaped);
+      where.push(`p.slug LIKE $${params.length} ESCAPE '\\'`);
+    }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     params.push(limit, offset);

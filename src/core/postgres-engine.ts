@@ -174,11 +174,17 @@ export class PostgresEngine implements BrainEngine {
     const tagJoin = filters?.tag ? sql`JOIN tags t ON t.page_id = p.id` : sql``;
     const tagCondition = filters?.tag ? sql`AND t.tag = ${filters.tag}` : sql``;
     const updatedCondition = updatedAfter ? sql`AND p.updated_at > ${updatedAfter}::timestamptz` : sql``;
+    // slugPrefix uses the (source_id, slug) UNIQUE btree index for range scans.
+    // Escape LIKE metacharacters so the user prefix is treated as a literal.
+    const slugPrefix = filters?.slugPrefix;
+    const slugCondition = slugPrefix
+      ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
+      : sql``;
 
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition}
+      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition}
       ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
     `;
 

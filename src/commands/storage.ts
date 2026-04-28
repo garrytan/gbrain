@@ -130,49 +130,34 @@ async function runStorageStatus(engine: BrainEngine, args: string[]) {
 async function getStorageStatus(engine: BrainEngine, repoPath: string | null): Promise<StorageStatusResult> {
   const config = repoPath ? loadStorageConfig(repoPath) : null;
   const warnings = config ? validateStorageConfig(config) : [];
-  
-  // Get all pages from database
-  const pages = await engine.listPages({ limit: 1000000 });
-  
-  // Categorize pages by storage tier
-  const pagesByTier: Record<StorageTier, number> = {
-    db_tracked: 0,
-    db_only: 0,
-    unspecified: 0,
-  };
 
-  const diskUsageByTier: Record<StorageTier, number> = {
-    db_tracked: 0,
-    db_only: 0,
-    unspecified: 0,
-  };
-
+  const pagesByTier: Record<StorageTier, number> = { db_tracked: 0, db_only: 0, unspecified: 0 };
+  const diskUsageByTier: Record<StorageTier, number> = { db_tracked: 0, db_only: 0, unspecified: 0 };
   const missingFiles: Array<{ slug: string; expectedPath: string }> = [];
+
+  // Storage status needs the global view (to compute "unspecified" pages
+  // that don't match any tier prefix). A single full scan is unavoidable
+  // here. The slugPrefix filter (Issue #13) optimizes per-tier consumers
+  // like `gbrain export --restore-only`. Step 5 reduces per-page disk
+  // syscall cost via a single recursive readdirSync.
+  const pages = await engine.listPages({ limit: 1_000_000 });
 
   for (const page of pages) {
     const tier = config ? getStorageTier(page.slug, config) : 'unspecified';
     pagesByTier[tier]++;
-
-    // Check if file exists and calculate disk usage
-    if (repoPath) {
-      const filePath = join(repoPath, page.slug + '.md');
-      if (existsSync(filePath)) {
-        try {
-          const stats = statSync(filePath);
-          diskUsageByTier[tier] += stats.size;
-        } catch {
-          // Ignore errors reading file stats
-        }
-      } else if (config && tier === 'db_only') {
-        // db-only file that's missing from disk — restore candidate
-        missingFiles.push({
-          slug: page.slug,
-          expectedPath: filePath,
-        });
+    if (!repoPath) continue;
+    const filePath = join(repoPath, page.slug + '.md');
+    if (existsSync(filePath)) {
+      try {
+        diskUsageByTier[tier] += statSync(filePath).size;
+      } catch {
+        // ignore stat errors
       }
+    } else if (config && tier === 'db_only') {
+      missingFiles.push({ slug: page.slug, expectedPath: filePath });
     }
   }
-  
+
   return {
     config,
     repoPath,
@@ -180,7 +165,7 @@ async function getStorageStatus(engine: BrainEngine, repoPath: string | null): P
     pagesByTier,
     missingFiles,
     diskUsageByTier,
-    warnings
+    warnings,
   };
 }
 
