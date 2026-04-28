@@ -43,7 +43,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({}); // in-memory PGLite
   await engine.initSchema(); // installs pages, minion_jobs, config, etc.
-});
+}, 30000);
 
 afterAll(async () => {
   await engine.disconnect();

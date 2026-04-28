@@ -811,6 +811,14 @@ export const MIGRATIONS: Migration[] = [
         RAISE NOTICE 'v24: RLS backfill complete (role % has BYPASSRLS)', current_user;
       END $$;
     `,
+    // PGLite has no RLS engine and is intrinsically single-tenant (local file).
+    // The 8 ALTER TABLE ... ENABLE ROW LEVEL SECURITY statements above also
+    // target tables that may not exist on PGLite (subagent_*, minion_inbox),
+    // since pglite-schema.ts is the canonical PGLite schema source. No-op
+    // override keeps PGLite upgrades unwedged and the version bump intact.
+    sqlFor: {
+      pglite: '',
+    },
   },
   {
     version: 25,

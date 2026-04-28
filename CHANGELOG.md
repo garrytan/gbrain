@@ -97,6 +97,103 @@ If anything breaks: `gbrain doctor`, `~/.gbrain/upgrade-errors.jsonl` (if presen
 
 
 
+## [0.22.6.1] - 2026-04-26
+
+**Old brains can upgrade again.**
+**Two-year, ten-issue wedge cycle ends. Pre-v0.13/v0.18/v0.19 brains all upgrade clean.**
+
+If you've been pinned to an older gbrain because `gbrain upgrade` wedges your brain
+with `column "source_id" does not exist` or `column "link_source" does not exist`,
+v0.22.6.1 unblocks you. The fix lives in `initSchema()` itself, where it should
+have lived all along.
+
+The bug class is structural: gbrain ships an "embedded latest schema" SQL blob
+that runs before numbered migrations on every connect. The blob references
+columns that newer migrations introduce. On any brain older than the migration
+that adds those columns, the blob crashes before the migration can run. This
+incident family hit users 10+ times across 6 schema versions over 2 years
+(issues #239, #243, #266, #357, #366, #374, #375, #378, #395, #396).
+
+The fix is a narrow pre-schema bootstrap. `initSchema()` now probes for the
+specific forward-referenced state the schema blob needs (`pages.source_id`,
+`links.link_source`, `links.origin_page_id`, `content_chunks.symbol_name`,
+`content_chunks.language`, plus the `sources` FK target table) and adds only
+that state if missing. Then SCHEMA_SQL replays cleanly. Then the normal
+migration chain runs as usual. Fresh installs and modern brains both no-op.
+
+A test guard prevents this incident family from recurring. Every future
+migration that adds a column-with-index to PGLITE_SCHEMA_SQL must extend the
+bootstrap; the CI guard fails loudly if not. The pattern that broke gbrain ten
+times in two years is now structurally prevented.
+
+Also includes the v24 PGLite RLS fix from #395 (community PR by @jdcastro2):
+`rls_backfill_missing_tables` now no-ops on PGLite via `sqlFor.pglite: ''`,
+since PGLite has no RLS engine and is single-tenant by definition.
+
+### The numbers that matter
+
+| Metric | v0.22.0 | v0.22.6.1 | Δ |
+|---|---|---|---|
+| Pre-v0.13 brain upgrades cleanly | wedges on `link_source` | passes | ✓ |
+| Pre-v0.18 brain upgrades cleanly | wedges on `source_id` | passes | ✓ |
+| Pre-v0.21 brain upgrades cleanly | wedges on `symbol_name` | passes | ✓ |
+| v24 RLS migration on PGLite | wedges (table doesn't exist) | no-op | ✓ |
+| Issues closed | — | #366, #375, #378, #395, #396 | 5 |
+| Issue families resolved | — | wedge-cycle | the whole class |
+
+### What this means for you
+
+If you've been on v0.13.x, v0.14.x, v0.17.x, v0.18.x, v0.19.x, v0.20.x, or v0.22.0 and
+your `gbrain upgrade` failed, run it again. It should walk to v0.22.6.1 cleanly.
+If you wedged on the v24 RLS migration on a PGLite brain, the same thing.
+
+If you're on a fresh install or already on v0.22.0, this patch is invisible.
+The bootstrap probe runs once per connect, sees nothing to do, and returns.
+
+### Itemized changes
+
+#### Fixed
+- `gbrain upgrade` no longer wedges on pre-v0.18 brains that lack `pages.source_id`. The schema blob's `CREATE INDEX idx_pages_source_id` previously crashed before migration v21 could add the column. Closes #366, #375, #378, #396.
+- `gbrain upgrade` no longer wedges on pre-v0.13 brains that lack `links.link_source` or `links.origin_page_id`. The schema blob's `CREATE INDEX idx_links_source/origin` previously crashed before migration v11 could add the columns. Closes #266, #357.
+- `gbrain upgrade` no longer wedges on pre-v0.19 brains that lack `content_chunks.symbol_name` or `content_chunks.language`. The schema blob's partial indexes previously crashed before migration v26 could add the columns.
+- Migration v24 (`rls_backfill_missing_tables`) no-ops on PGLite via `sqlFor.pglite: ''`. PGLite has no RLS engine and is single-tenant. The migration previously tried to ALTER subagent tables that don't exist in pglite-schema.ts. Closes #395. Contributed by @jdcastro2.
+
+#### Changed
+- `PGLiteEngine.initSchema()` and `PostgresEngine.initSchema()` now call a new private `applyForwardReferenceBootstrap()` before running the embedded schema blob. The bootstrap probes for missing forward-referenced state and adds only what's needed. No-op on fresh installs and modern brains.
+
+#### For contributors
+- New CI guard `test/schema-bootstrap-coverage.test.ts` enforces that `applyForwardReferenceBootstrap` covers every forward reference in PGLITE_SCHEMA_SQL. When you add a new column-with-index in the schema blob, extend `REQUIRED_BOOTSTRAP_COVERAGE` and the bootstrap function. The test fails loudly if you skip step one.
+- New `test/bootstrap.test.ts` covers the bootstrap contract: no-op on fresh install, idempotent, no-op on modern brain, full path pre-v0.18, fresh-install regression, pre-v0.13 links shape.
+- New `test/e2e/postgres-bootstrap.test.ts` exercises `PostgresEngine.initSchema()` directly (not the standalone `db.initSchema` from `src/core/db.ts`, which only runs SCHEMA_SQL and would have produced false-positive coverage). Codex caught this E2E shape gap during plan review.
+- Wave PRs incorporated with attribution: @vinsew (#398), @jdcastro2 (#399), @schnubb-web (#402). The narrow-bootstrap shape supersedes #402's broader "run all migrations early" approach, which would have crashed on v24 trying to alter tables that the schema blob hadn't created yet (codex finding during plan review).
+
+## To take advantage of v0.22.6.1
+
+`gbrain upgrade` should do this automatically. If you're currently wedged on a
+prior version's upgrade attempt:
+
+1. **Run the upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   ```
+   Expected: `schema_version: Version 29 (latest: 29)` clean, no
+   `column "..." does not exist` errors, no wedged migration ledger.
+
+3. **If wedged after upgrade,** run the migration runner directly:
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+
+4. **If any step still fails,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - your prior gbrain version (`gbrain --version`)
+   - which step broke
+
 ## [0.22.6] - 2026-04-28
 
 ### Schema verification after migrations

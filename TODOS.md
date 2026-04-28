@@ -1,5 +1,26 @@
 # TODOS
 
+## test-infra
+
+### Parallel-load timeout flake on v0.21 PGLite-heavy tests
+**Priority:** P0
+
+**What:** 22 tests added in v0.21.0 (Code Cathedral II) consistently fail in the full `bun test` run with timeout-pattern elapsed times of 7-10s, but pass in isolation. Every failing test calls `engine.initSchema()` in `beforeAll` without a timeout extension. Under parallel load (168 test files now run concurrently after v0.21 added ~24 new files), `initSchema` exceeds bun's default 5s `beforeAll` timeout.
+
+Affected files include (non-exhaustive): `test/sync-strategy.test.ts`, `test/cathedral-ii-brainbench.test.ts`, `test/code-edges.test.ts`, `test/reindex-code.test.ts`, `test/reconcile-links.test.ts`, `test/two-pass.test.ts`, `test/parent-symbol-path.test.ts`, `test/pglite-v0_19.test.ts`.
+
+**Why:** Currently triaged as "skip pre-existing, ship anyway" but that's not a real fix. Blocks /ship for anyone whose CHANGELOG-time test run sees them.
+
+**Pros:** Fixing it lets /ship run cleanly without manual triage every release.
+
+**Cons:** ~22 file edits adding `beforeAll(async () => {...}, 30000)` is mechanical but dull.
+
+**Context:** Same pattern fixed in v0.20.5 wave for `test/e2e/minions-shell-pglite.test.ts`. Single-file repro: each fails in `bun test`, passes in `bun test <file>`. Reproduces with my changes stashed, so it's on master.
+
+**Effort:** S (human: ~30 min / CC: ~5 min). Mechanical: grep for `beforeAll(async () => {` in affected files, add `, 30000)` argument.
+
+**Depends on / blocked by:** Nothing.
+
 ## resolver / check-resolvable (v0.22.4 follow-ups)
 
 ### D10 — Extend `check-resolvable` to parse RESOLVER.md disambiguation rules
