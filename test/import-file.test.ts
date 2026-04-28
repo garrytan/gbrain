@@ -149,6 +149,27 @@ Content.
     expect(result.slug).toBe('concepts/from-path');
   });
 
+  test('preserves non-ASCII path-derived slug during import', async () => {
+    const filePath = join(TMP, 'unicode-path.md');
+    writeFileSync(filePath, `---
+type: person
+title: Unicode Example
+---
+
+Content.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'people/\ud55c\uae00-\uc608\uc2dc.md', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('people/\ud55c\uae00-\uc608\uc2dc');
+
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[0]).toBe('people/\ud55c\uae00-\uc608\uc2dc');
+  });
+
   test('skips symlinks in importFromFile (defense-in-depth)', async () => {
     // Even if the walker somehow passes a symlink through, importFromFile
     // should catch it and return skipped.

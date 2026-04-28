@@ -206,14 +206,17 @@ export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
 }
 
 /**
- * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
+ * Slugify a single path segment: lowercase, strip punctuation, spaces → hyphens.
+ * Unicode letters/numbers are preserved. Otherwise a filename like
+ * `people/<unicode>.md` collapses to `people`, colliding with the parent page.
  */
 export function slugifySegment(segment: string): string {
   return segment
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
+    .normalize('NFC')                     // Recompose non-Latin scripts decomposed by NFD
     .toLowerCase()
-    .replace(/[^a-z0-9.\s_-]/g, '')      // Keep alphanumeric, dots, spaces, underscores, hyphens
+    .replace(/[^\p{L}\p{N}.\s_-]/gu, '') // Keep Unicode letters/numbers, dots, spaces, underscores, hyphens
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens

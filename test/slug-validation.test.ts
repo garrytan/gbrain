@@ -51,6 +51,11 @@ describe('slugifySegment', () => {
   test('handles curly quotes and ellipsis', () => {
     expect(slugifySegment('she\u2026said \u201chello\u201d')).toBe('shesaid-hello');
   });
+
+  test('preserves non-ASCII letters instead of collapsing segment', () => {
+    expect(slugifySegment('\ud55c\uae00-\uc608\uc2dc')).toBe('\ud55c\uae00-\uc608\uc2dc');
+    expect(slugifySegment('\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8')).toBe('\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8');
+  });
 });
 
 describe('slugifyPath', () => {
@@ -81,6 +86,11 @@ describe('slugifyPath', () => {
 
   test('filters empty segments from all-special-chars dirs', () => {
     expect(slugifyPath('!!!/file.md')).toBe('file');
+  });
+
+  test('preserves non-ASCII filename segments to avoid parent-slug collisions', () => {
+    expect(slugifyPath('people/\ud55c\uae00-\uc608\uc2dc.md')).toBe('people/\ud55c\uae00-\uc608\uc2dc');
+    expect(slugifyPath('notes/\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8.md')).toBe('notes/\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8');
   });
 
   test('preserves dots in filenames', () => {
