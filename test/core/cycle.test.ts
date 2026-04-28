@@ -17,7 +17,7 @@ import { existsSync, unlinkSync } from 'fs';
 
 let lintCalls: Array<{ target: string; fix: boolean; dryRun: boolean | undefined }> = [];
 let backlinksCalls: Array<{ action: string; dir: string; dryRun: boolean | undefined }> = [];
-let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined; noExtract: boolean | undefined }> = [];
+let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined; noExtract: boolean | undefined; sourceId: string | undefined }> = [];
 let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
 let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
 let orphansCalls: number = 0;
@@ -49,7 +49,7 @@ mock.module('../../src/commands/backlinks.ts', () => ({
 // Mock sync
 mock.module('../../src/commands/sync.ts', () => ({
   performSync: async (_engine: any, opts: any) => {
-    syncCalls.push({ dryRun: opts.dryRun, noPull: opts.noPull, noExtract: opts.noExtract });
+    syncCalls.push({ dryRun: opts.dryRun, noPull: opts.noPull, noExtract: opts.noExtract, sourceId: opts.sourceId });
     return {
       status: opts.dryRun ? 'dry_run' : 'synced',
       fromCommit: 'abcd',
@@ -450,5 +450,93 @@ describe('runCycle — Codex F2: noExtract is gated on whether extract phase run
     // their extraction without any indication. This is the F2 regression guard.
     expect(syncCalls[0].noExtract).toBe(false);
     expect(extractCalls.length).toBe(0); // extract phase did NOT run
+  });
+});
+
+// ─── sourceId resolution (regression #475) ─────────────────────────
+//
+// Production OpenClaw deployment hit a 30+ min hang on every autopilot
+// cycle because runPhaseSync was calling performSync without sourceId,
+// so sync read the global config.sync.last_commit key (which had drifted
+// out of git history after a force-push GC'd the commit). The per-source
+// sources.last_commit anchor was valid the entire time. PR #475 added
+// resolveSourceForDir() so the cycle reads the per-source anchor instead.
+//
+// These tests pin the resolver -> performSync(opts.sourceId) plumbing.
+
+describe('runCycle — sourceId resolution (regression #475)', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    await (sharedEngine as any).db.query('DELETE FROM sources');
+  });
+
+  test('seeded sources row → performSync receives matching sourceId', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['default', 'default', '/tmp/brain-475-a'],
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-a' });
+    expect(syncCalls.at(-1)?.sourceId).toBe('default');
+  });
+
+  test('no matching sources row → performSync receives sourceId=undefined', async () => {
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-b' });
+    expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
+  });
+
+  test('different brainDir than registered source → undefined (no cross-match)', async () => {
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['other', 'other', '/some/other/brain'],
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-c' });
+    expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
+  });
+
+  test('sources table missing (very old brain) → catch returns undefined, sync still runs', async () => {
+    // CRITICAL: do NOT DROP TABLE on the shared engine. initSchema() only
+    // re-runs PENDING migrations; once schema_version is at latest, the
+    // v20 migration that creates `sources` will not re-execute. Use a
+    // fresh one-shot engine so the shared engine isn't degraded for
+    // every later test in this file.
+    const fresh = new PGLiteEngine();
+    await fresh.connect({});
+    await fresh.initSchema();
+    await (fresh as any).db.query('DROP TABLE IF EXISTS sources CASCADE');
+    try {
+      await runCycle(fresh, { brainDir: '/tmp/brain-475-d' });
+      expect(syncCalls.at(-1)?.sourceId).toBeUndefined();
+    } finally {
+      await fresh.disconnect();
+    }
+  });
+
+  test('multiple rows with same local_path → resolver returns one matching id (non-deterministic)', async () => {
+    // Schema has no UNIQUE on local_path; SQL has no ORDER BY. Either id
+    // is acceptable; the contract is "any matching id, never null when
+    // matches exist." This test pins behavior so the follow-up
+    // UNIQUE-constraint TODO has a regression target.
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES
+        ('first', 'first', '/tmp/brain-475-e'),
+        ('second', 'second', '/tmp/brain-475-e')`,
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-e' });
+    const sourceId = syncCalls.at(-1)?.sourceId;
+    expect(sourceId).toBeDefined();
+    expect(['first', 'second']).toContain(sourceId as string);
+  });
+
+  test('empty-string id row → resolver propagates as "" (defensive)', async () => {
+    // Schema has id as PRIMARY KEY (NOT NULL), so NULL id can't happen.
+    // Empty string CAN be inserted, and the resolver's `rows[0]?.id`
+    // would treat any falsy id as "no source" via the optional chain.
+    // This test pins the current behavior (we DO pass '' through to
+    // performSync) so a future refactor doesn't silently regress it.
+    await (sharedEngine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ('', 'empty', '/tmp/brain-475-f')`,
+    );
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain-475-f' });
+    expect(syncCalls.at(-1)?.sourceId).toBe('');
   });
 });

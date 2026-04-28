@@ -2,6 +2,7 @@ import postgres from 'postgres';
 import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type { BrainEngine } from './engine.ts';
+import { verifySchema } from './schema-verify.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -236,6 +237,8 @@ export async function initSchema(): Promise<void> {
     await conn`SELECT pg_advisory_unlock(42)`;
   }
 }
+
+export { verifySchema } from './schema-verify.ts';
 
 export async function withTransaction<T>(fn: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
   const conn = getConnection();

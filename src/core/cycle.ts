@@ -444,6 +444,27 @@ interface SyncPhaseResult extends PhaseResult {
   pagesAffected?: string[];
 }
 
+/**
+ * Resolve the source id for a brain directory by looking up the sources
+ * table. Returns undefined when no registered source matches (falls back
+ * to pre-v0.18 global config.sync.* keys).
+ */
+async function resolveSourceForDir(
+  engine: BrainEngine,
+  brainDir: string,
+): Promise<string | undefined> {
+  try {
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`,
+      [brainDir],
+    );
+    return rows[0]?.id;
+  } catch {
+    // sources table might not exist on very old brains — fall through.
+    return undefined;
+  }
+}
+
 async function runPhaseSync(
   engine: BrainEngine,
   brainDir: string,
@@ -453,8 +474,13 @@ async function runPhaseSync(
 ): Promise<SyncPhaseResult> {
   try {
     const { performSync } = await import('../commands/sync.ts');
+    // Resolve the per-source id so sync reads source-scoped last_commit
+    // instead of the global config key. The global key can drift out of
+    // git history (force push, GC) causing a full reimport of all files.
+    const sourceId = await resolveSourceForDir(engine, brainDir);
     const result = await performSync(engine, {
       repoPath: brainDir,
+      sourceId,
       dryRun,
       noPull: !pull,
       noEmbed: true,                       // embed is a separate phase

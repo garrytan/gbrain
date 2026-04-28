@@ -15,6 +15,11 @@
 # the natural per-file test time of 5-10s.
 #
 # Exits non-zero on the first failing file so CI fails fast.
+#
+# `--timeout=60000` matches the unit test suite. Bun's default is 5s,
+# which is too tight for setupDB's TRUNCATE CASCADE on ~30 tables on
+# CI runners under load (one CI flake observed on PR #475 hitting
+# exactly 5000.09ms in the Tags beforeAll).
 
 set -euo pipefail
 
@@ -30,7 +35,7 @@ for f in test/e2e/*.test.ts; do
   name=$(basename "$f")
   echo ""
   echo "=== $name ==="
-  if output=$(bun test "$f" 2>&1); then
+  if output=$(bun test --timeout=60000 "$f" 2>&1); then
     pass_files=$((pass_files + 1))
     # Extract pass/fail counts from bun's summary (e.g., "123 pass")
     p=$(echo "$output" | grep -oE '[0-9]+ pass' | tail -1 | grep -oE '[0-9]+' || echo 0)
