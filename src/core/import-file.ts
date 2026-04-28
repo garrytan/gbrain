@@ -10,6 +10,7 @@ import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs } from './link-extraction.ts';
 import { embedBatch } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
+import { validateSlug } from './utils.ts';
 import type { ChunkInput, PageType } from './types.ts';
 
 /**
@@ -187,6 +188,13 @@ export async function importFromContent(
   content: string,
   opts: { noEmbed?: boolean } = {},
 ): Promise<ImportResult> {
+  // Normalize once so every step in the write pipeline (existing-page lookup,
+  // putPage, tag/chunk reconciliation, and caller-visible result) uses the
+  // same canonical slug. Engines validate/lowercase writes, so mixed-case CLI
+  // slugs must not make later same-transaction reads miss the newly written
+  // page.
+  slug = validateSlug(slug);
+
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.

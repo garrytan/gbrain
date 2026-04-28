@@ -10,6 +10,7 @@ import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
+import { validateSlug } from './utils.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
@@ -214,7 +215,7 @@ const get_page: Operation = {
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
   },
   handler: async (ctx, p) => {
-    const slug = p.slug as string;
+    const slug = validateSlug(p.slug as string);
     const fuzzy = (p.fuzzy as boolean) || false;
 
     let page = await ctx.engine.getPage(slug);
@@ -249,7 +250,7 @@ const put_page: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
-    const slug = p.slug as string;
+    const slug = validateSlug(p.slug as string);
 
     // Subagent namespace enforcement (v0.15+). Runs BEFORE the dry-run
     // short-circuit so preview calls surface the same rejection. Confines
@@ -521,8 +522,9 @@ const delete_page: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_page', slug: p.slug };
-    await ctx.engine.deletePage(p.slug as string);
+    const slug = validateSlug(p.slug as string);
+    if (ctx.dryRun) return { dry_run: true, action: 'delete_page', slug };
+    await ctx.engine.deletePage(slug);
     return { status: 'deleted' };
   },
   cliHints: { name: 'delete', positional: ['slug'] },
