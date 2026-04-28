@@ -1,8 +1,10 @@
-# Storage Tiering: git-tracked vs supabase-only directories
+# Storage Tiering: db-tracked vs db-only directories
 
 ## Overview
 
 GBrain supports storage tiering to separate version-controlled content from bulk machine-generated data. This prevents git repositories from becoming bloated with large amounts of automatically generated content while still preserving it in the database.
+
+> Note on naming: prior to v0.23.0 the keys were `git_tracked` / `supabase_only`. The canonical names are now `db_tracked` / `db_only` (engine-agnostic — works on both PGLite and Postgres). The deprecated keys still load with a once-per-process warning. Run `gbrain doctor --fix` for an automated rename when that path lands.
 
 ## Configuration
 
@@ -10,8 +12,8 @@ Add a `storage` section to your `gbrain.yml` file in the brain repository root:
 
 ```yaml
 storage:
-  # Directories that are git-tracked (version controlled, human-edited)
-  git_tracked:
+  # Directories that are version-controlled (human-edited, committed to git).
+  db_tracked:
     - people/
     - companies/
     - deals/
@@ -19,78 +21,89 @@ storage:
     - yc/
     - ideas/
     - projects/
-    
-  # Directories persisted via Supabase only (bulk ingest, machine-generated)
-  # These are written to disk as a local cache but not committed to git.
-  # `gbrain export` restores them from Supabase when missing.
-  supabase_only:
+
+  # Directories persisted via the brain database only (bulk machine-generated
+  # content). Written to disk as a local cache but not committed to git;
+  # `gbrain sync` auto-manages .gitignore for these paths. `gbrain export
+  # --restore-only` repopulates missing files from the database.
+  db_only:
     - media/x/
     - media/articles/
     - meetings/transcripts/
 ```
 
+Path requirements:
+
+- Each directory must end with `/` for canonical form. The validator auto-normalizes missing trailing slashes (one-time info note shows what changed).
+- A directory cannot appear in both tiers — that's a tier-overlap error and `loadStorageConfig` throws `StorageConfigError`. Edit `gbrain.yml` to remove the overlap and try again.
+
 ## Behavior Changes
 
-### 1. `gbrain sync` - Automatic .gitignore Management
+### 1. `gbrain sync` — automatic .gitignore management
 
-When storage configuration is present, `sync` automatically manages `.gitignore` entries:
+When storage configuration is present, `gbrain sync` automatically manages `.gitignore` entries on every successful sync:
 
-- Adds missing `supabase_only` directory patterns to `.gitignore`
-- Prevents duplicate entries
-- Adds a comment section for auto-managed entries
-- Only runs when not in `--dry-run` mode
+- Adds missing `db_only` directory patterns to `.gitignore`.
+- Idempotent — re-running adds no duplicate entries.
+- Stable comment header so the managed block is grep-able.
+- Skipped on `--dry-run` (don't mutate disk in preview mode).
+- Skipped on `blocked_by_failures` status (sync state is inconsistent).
+- Skipped when the repo is a git submodule (`.git` is a file, not a directory) — submodule .gitignore changes don't survive parent updates. A warning explains.
+- Skipped entirely when `GBRAIN_NO_GITIGNORE=1` is set (escape hatch for shared-repo setups where a maintainer wants gbrain to leave .gitignore alone).
+- Failures (write permission denied, etc.) are caught and logged, never crash sync.
 
 Example `.gitignore` addition:
+
 ```gitignore
-# Auto-managed by gbrain (supabase-only directories)
+# Auto-managed by gbrain (db_only directories)
 media/x/
 media/articles/
 meetings/transcripts/
 ```
 
-### 2. `gbrain export` - Enhanced Restore Capabilities
-
-New flags for targeted export:
+### 2. `gbrain export --restore-only` — repopulate missing db_only files
 
 ```bash
-# Restore only missing supabase-only files from database
+# Restore only missing db_only files from the database.
 gbrain export --restore-only --repo /path/to/brain
 
-# Filter by page type
+# Filter by page type.
 gbrain export --restore-only --type media --repo /path/to/brain
 
-# Filter by slug prefix
+# Filter by slug prefix.
 gbrain export --restore-only --slug-prefix media/x/ --repo /path/to/brain
 
-# Combine filters
+# Combine filters.
 gbrain export --restore-only --type media --slug-prefix media/x/ --repo /path/to/brain
 ```
 
 The `--restore-only` flag:
-- Only exports pages that match `supabase_only` patterns
-- Only includes pages where the file is missing from disk
-- Ideal for container restart recovery scenarios
 
-### 3. `gbrain storage status` - Storage Health Dashboard
+- Resolves repoPath via the chain `--repo` → typed `sources.getDefault()` → hard error.
+  Never falls through to the current directory.
+- Only exports pages that match `db_only` patterns AND are missing from disk.
+- Ideal for container restart recovery and fresh clones.
 
-New command to inspect storage tier configuration and health:
+### 3. `gbrain storage status` — storage-tier health dashboard
 
 ```bash
-# Human-readable status
+# Human-readable status.
 gbrain storage status --repo /path/to/brain
 
-# JSON output for scripts
+# JSON output for scripts and orchestrators.
 gbrain storage status --repo /path/to/brain --json
 ```
 
 Output includes:
-- Total page counts by storage tier
-- Disk usage breakdown
-- Missing files that need restoration
-- Configuration validation warnings
-- Current storage tier directory listing
+
+- Total page counts by storage tier.
+- Disk usage breakdown by tier.
+- Missing files that need restoration (top 10 shown; full list in `--json`).
+- Configuration validation warnings.
+- Current tier directory listing.
 
 Example output:
+
 ```
 Storage Status
 ==============
@@ -99,18 +112,18 @@ Repository: /data/brain
 Total pages: 15,243
 
 Storage Tiers:
-─────────────
-Git tracked:    2,156 pages
-Supabase only:  12,887 pages
+-------------
+DB tracked:     2,156 pages
+DB only:        12,887 pages
 Unspecified:    200 pages
 
 Disk Usage:
-──────────
-Git tracked:    45.2 MB
-Supabase only:  2.1 GB
+-----------
+DB tracked:     45.2 MB
+DB only:        2.1 GB
 
 Missing Files (need restore):
-────────────────────────────
+-----------------------------
   media/x/tweet-1234567890
   media/x/tweet-0987654321
   ... and 47 more
@@ -118,71 +131,80 @@ Missing Files (need restore):
 Use: gbrain export --restore-only --repo "/data/brain"
 
 Configuration:
-─────────────
-Git tracked directories:
-  • people/
-  • companies/
-  • deals/
+--------------
+DB tracked directories:
+  - people/
+  - companies/
+  - deals/
 
-Supabase-only directories:
-  • media/x/
-  • media/articles/
-  • meetings/transcripts/
+DB-only directories:
+  - media/x/
+  - media/articles/
+  - meetings/transcripts/
 ```
 
 ## Validation
 
-The system validates storage configuration and warns about:
+`loadStorageConfig` runs `normalizeAndValidateStorageConfig` after parsing:
 
-- Directories appearing in both `git_tracked` and `supabase_only`
-- Directory paths not ending with `/` (consistency recommendation)
-- `supabase_only` directories not present in `.gitignore`
+- Auto-fixes (silent, with one-time info note showing what changed):
+  - Missing trailing `/` is added: `'media/x'` → `'media/x/'`.
+- Throws `StorageConfigError` (caller sees a clean exit-1 with actionable message):
+  - Same directory in both `db_tracked` and `db_only` (ambiguous routing).
 
-## Use Cases
+## Use cases
 
-### 1. Brain Repository Scaling
+### Brain repository scaling
 
-Perfect for brain repositories approaching 100K+ files where:
-- Core knowledge (people, companies, deals) remains git-tracked
-- Bulk data (tweets, articles, transcripts) moves to supabase-only
-- Development stays fast with smaller git repos
-- Full data remains available via database
+Perfect for brain repositories crossing 50K-200K+ files where:
 
-### 2. Container-based Deployments
+- Core knowledge (people, companies, deals) remains git-tracked.
+- Bulk data (tweets, articles, transcripts) moves to db_only.
+- Development stays fast with smaller git repos.
+- Full data remains available via the database.
+
+### Container-based deployments
 
 Essential for ephemeral container environments:
-- Git repo contains only essential files
-- Container restarts don't lose supabase-only data
-- `gbrain export --restore-only` quickly restores bulk files when needed
-- Local disk acts as cache layer
 
-### 3. Multi-Environment Consistency
+- Git repo contains only essential files.
+- Container restarts don't lose db_only data.
+- `gbrain export --restore-only` quickly restores bulk files when needed.
+- Local disk acts as a cache layer.
+
+### Multi-environment consistency
 
 Enables consistent data access across environments:
-- Development: small git clone, restore bulk data on demand
-- Production: full dataset via database, selective local caching
-- CI/CD: fast tests with git-tracked data only
 
-## Migration Strategy
+- Development: small git clone, restore bulk data on demand.
+- Production: full dataset via the database, selective local caching.
+- CI/CD: fast tests with git-tracked data only.
 
-1. **Assess current repository**: Use `gbrain storage status` to understand current distribution
-2. **Plan directory structure**: Identify which directories should be git-tracked vs supabase-only
-3. **Create gbrain.yml**: Add storage configuration to repository root
-4. **Test with dry-run**: Use `gbrain sync --dry-run` to verify behavior
-5. **Update .gitignore**: Let `gbrain sync` auto-manage entries
-6. **Verify exports**: Test `gbrain export --restore-only` for container scenarios
+## Migration strategy
 
-## Best Practices
+1. **Assess current repository**: use `gbrain storage status` to understand current distribution.
+2. **Plan directory structure**: identify which directories should be db_tracked vs db_only.
+3. **Create `gbrain.yml`**: add storage configuration to the repository root.
+4. **Test with dry-run**: `gbrain sync --dry-run` to verify behavior; `.gitignore` is NOT touched on dry-run.
+5. **Run a real sync**: `gbrain sync` updates `.gitignore` automatically on success.
+6. **Verify restore**: test `gbrain export --restore-only --repo .` against a small db_only directory.
 
-- **Directory naming**: Always end storage paths with `/` for consistency
-- **Start small**: Begin with clearly machine-generated directories in `supabase_only`
-- **Monitor warnings**: Address configuration validation warnings promptly
-- **Test restore**: Regularly test `--restore-only` in staging environments
-- **Document decisions**: Comment your `gbrain.yml` to explain tier choices
+## Best practices
+
+- **Directory naming**: end storage paths with `/` (canonical form). The validator normalizes if you forget.
+- **Start small**: begin with clearly machine-generated directories in `db_only`.
+- **Address validation errors**: tier overlap is an error, not a warning. Fix it before sync.
+- **Test restore**: regularly test `--restore-only` in staging environments.
+- **Document decisions**: comment your `gbrain.yml` to explain tier choices.
+
+## PGLite engine note
+
+On the PGLite engine (gbrain's local-only embedded Postgres), the "DB" your db_only pages live in IS the local file gbrain uses for everything else. The `.gitignore` housekeeping still helps (keeps bulk content out of git history), but the offload-to-DB promise is technically vacuous. A once-per-process soft-warn explains when the engine is detected. To get full tiering, migrate to Postgres with `gbrain migrate --to supabase`.
 
 ## Compatibility
 
-- **Backward compatible**: Systems without `gbrain.yml` work unchanged
-- **Progressive enhancement**: Add configuration when needed
-- **Database unchanged**: All data remains in Supabase regardless of tier
-- **Existing workflows**: All existing `sync` and `export` behavior preserved
+- **Backward compatible**: systems without `gbrain.yml` work unchanged.
+- **Progressive enhancement**: add configuration when needed.
+- **Database unchanged**: all data remains in Postgres regardless of tier.
+- **Existing workflows**: all existing `sync` and `export` behavior preserved.
+- **Deprecated keys**: `git_tracked` / `supabase_only` still load with a once-per-process warning.

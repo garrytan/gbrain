@@ -359,6 +359,30 @@ accumulate rows across separate single-skill installs instead of overwriting eac
 Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist
 and the anti-patterns it catches.
 
+## Storage tiering: keep bulk content out of git (v0.23.0)
+
+When your brain crosses 100K files and bulk machine-generated content (tweets, articles, transcripts)
+becomes the size driver, declare which directories belong in git and which live in the database only.
+
+```yaml
+# gbrain.yml at the brain repo root
+storage:
+  db_tracked:
+    - people/
+    - companies/
+    - deals/
+  db_only:
+    - media/x/
+    - media/articles/
+    - meetings/transcripts/
+```
+
+`gbrain sync` auto-manages your `.gitignore` for `db_only` paths. `gbrain export --restore-only --repo .`
+repopulates missing files from the database (container restart, fresh clone, accidental rm).
+`gbrain storage status` shows the tier breakdown.
+
+Full guide: [docs/storage-tiering.md](docs/storage-tiering.md).
+
 ## Getting Data In
 
 GBrain ships integration recipes that your agent sets up for you. Each recipe tells the agent what credentials to ask for, how to validate, and what cron to register.

@@ -2,6 +2,86 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.23.0] - 2026-04-27
+
+**Storage tiering, finally working. Brains scaling past 100K files stop bloating git.**
+
+The pre-v0.23 storage-tiering branch shipped two silent bugs (gray-matter on YAML returned empty data; `manageGitignore` was defined and never invoked) so the feature was a no-op for every user who tried it. v0.23.0 rewrites the broken bits, hardens the surface, and adds proper test coverage. If you have a brain repo north of 100K files where bulk machine-generated content (tweets, articles, transcripts) is the size driver, this is the release that pulls it out of git without losing any data.
+
+Configure tiering in `gbrain.yml` at the brain repo root:
+
+```yaml
+storage:
+  db_tracked:
+    - people/
+    - companies/
+    - deals/
+  db_only:
+    - media/x/
+    - media/articles/
+    - meetings/transcripts/
+```
+
+`gbrain sync` then auto-manages your `.gitignore` for `db_only` directories so bulk content stops landing in commits. `gbrain export --restore-only` repopulates missing `db_only` files from the database (container restart, fresh clone, accidental rm). `gbrain storage status` shows the breakdown — counts, disk usage, missing files.
+
+### The numbers that matter
+
+200K-page brain, half tweets and articles. Before v0.23.0:
+
+| Metric | Before | After | Δ |
+|--------|--------|-------|---|
+| `gbrain.yml` actually loads | no (silent null) | yes | feature works |
+| `.gitignore` auto-manages | no (function never called) | yes | docs match reality |
+| `--restore-only` without `--repo` | silent full export | hard error | no data-loss footgun |
+| `media/xerox` matched against `media/x` | yes (collision) | no | path-segment matching |
+| Per-page disk syscalls during status | ~400K (existsSync + statSync) | ~one per dir + one stat per .md | single-walk scan |
+| Validation surfaces overlap | warning only | throws StorageConfigError | semantic error caught |
+
+### What this means for your brain
+
+If you've been reading the storage-tiering docs and waiting for the feature to actually do something: it does now. If you're already over 50K files: configure `gbrain.yml`, run `gbrain sync`, watch `.gitignore` update itself, watch your next clone get faster.
+
+## To take advantage of v0.23.0
+
+1. Add a `storage:` section to `gbrain.yml` at your brain repo root with `db_tracked` and `db_only` arrays. The directory paths must end with `/` (the validator auto-normalizes if you forget, with a one-time info note).
+2. Run `gbrain sync`. It updates `.gitignore` automatically on success.
+3. Run `gbrain storage status` to see the tier breakdown and any missing `db_only` files.
+4. If files are missing on disk (e.g., after a container restart): `gbrain export --restore-only --repo /path/to/brain`.
+5. If you previously had `git_tracked` / `supabase_only` keys: they still load, with a once-per-process deprecation warning. Rename to `db_tracked` / `db_only` at your convenience.
+6. On PGLite: tiering has limited effect (the "DB" is your local file). The `.gitignore` housekeeping still helps. A one-time soft-warn explains.
+
+If anything looks off, file an issue at <https://github.com/garrytan/gbrain/issues> with `gbrain doctor` output and the contents of your `gbrain.yml`.
+
+### Itemized changes
+
+#### Critical fixes
+
+- **YAML parser swap**: replaced `gray-matter` with a dedicated YAML reader for the `gbrain.yml` shape. The original code called `matter()` on a delimiter-less file, which always returned `{data: {}}` — `loadStorageConfig` returned null on every install. The dedicated parser handles top-level `storage:` plus nested array-valued keys, with comment + blank-line tolerance. Once-per-process sanity warning when `gbrain.yml` exists but has no `storage:` section.
+- **`manageGitignore` actually runs now**: wired into `runSync` after every successful sync (skipped on dry-run, blocked-by-failures, and unhandled errors). Idempotent. Detects git submodule context (`.git` is a file, not a directory) and skips with an actionable warning. Honors `GBRAIN_NO_GITIGNORE=1` for shared-repo setups.
+- **No more silent `--restore-only` footgun**: `gbrain export --restore-only` without `--repo` now resolves through a typed `getDefaultSourcePath()` accessor (sources table → null → hard error). Never falls through to the current directory. Never silently re-exports your entire database into the wrong place.
+
+#### New + renamed surface
+
+- **Canonical key names**: `db_tracked` / `db_only` replace the vendor-baked `git_tracked` / `supabase_only`. The deprecated keys still load, with a once-per-process warning suggesting `gbrain doctor --fix` for an automated rename. Canonical wins when both shapes coexist.
+- **Engine-side `slugPrefix` filter**: `PageFilters.slugPrefix` lands on both engines as `WHERE slug LIKE prefix || '%'` with literal-escape of LIKE metacharacters. Uses the existing `(source_id, slug)` UNIQUE btree index for range scans. Powers `gbrain export --restore-only` per-tier queries and `gbrain export --slug-prefix`.
+- **Single-walk filesystem scan**: `src/core/disk-walk.ts` exposes `walkBrainRepo(repoPath)` that returns `Map<slug, {size, mtimeMs}>` from one recursive `readdirSync`. Replaces the per-page `existsSync + statSync` loop in `gbrain storage status` (~400K syscalls on a 200K-page brain → tens).
+- **Path-segment matching**: tier directory matcher requires trailing `/` and treats the slash as a path separator. `media/x/` does not match `media/xerox/foo`. Validator (`normalizeAndValidateStorageConfig`) auto-fixes missing trailing `/`, throws `StorageConfigError` on tier overlap.
+
+#### Architecture cleanup
+
+- `src/commands/storage.ts` split into pure data + JSON formatter + human formatter + thin dispatcher, matching the `orphans.ts` precedent. `getStorageStatus` is exported for `gbrain doctor` integration. ASCII-only output (no unicode box-drawing) for cross-platform terminal compatibility.
+- Distinct nominal types `PageCountsByTier` and `DiskUsageByTier` so accidental swaps between page counts and byte totals are compile-time errors.
+- PGLite soft-warn on storage tiering (D4): the feature is partial on PGLite (the "DB" is your local file), but `.gitignore` housekeeping still helps. Once-per-process warning explains and proceeds.
+
+#### Tests + CI guards
+
+- New unit tests across `test/storage-config.test.ts`, `test/storage-sync.test.ts`, `test/storage-status.test.ts`, `test/storage-export.test.ts`, `test/storage-pglite.test.ts`, `test/disk-walk.test.ts`. Plus extensions to `test/source-resolver.test.ts` and `test/pglite-engine.test.ts`. The single-line test that would have caught the original gray-matter P0 (write a real `gbrain.yml`, call `loadStorageConfig`, assert non-null) now exists.
+- New CI guard `scripts/check-trailing-newline.sh` (sibling to the existing jsonb-pattern + progress-to-stdout guards). Wired into `bun run test`. Fixed pre-existing missing newline in `docs/storage-tiering.md`.
+
+### For contributors
+
+- The eng-review path forward is documented in `~/.claude/plans/lets-take-a-look-ticklish-pizza.md` (15 numbered defects + D1-D8 abstraction calls). Every commit on this branch maps to one numbered step in the plan.
+
 ## [0.22.6] - 2026-04-28
 
 ### Schema verification after migrations
