@@ -77,6 +77,12 @@ If the user skips soul-audit on first boot:
 Four files generated/updated. Report: "Soul audit complete: SOUL.md, USER.md,
 ACCESS_POLICY.md, HEARTBEAT.md created. Re-run any phase anytime to update."
 
+## Storage/Routing Notes
+
+For multi-profile/private-shared deployments, treat `SOUL.md`, `USER.md`, `ACCESS_POLICY.md`, and `HEARTBEAT.md` as profile/sensitive artifacts by default. Store profile-local copies under the active profile directory (for example `/srv/hermes/profiles/ds-brain/`) and preserve durable DS-only archives in a private brain area (for example `/srv/hermes/gbrain/private/repo/_profile/`). Do not write these files into a shared/team-queryable brain root unless the user explicitly asks for a redacted shared artifact.
+
+On case-sensitive filesystems, avoid creating uppercase/lowercase duplicates such as `SOUL.md` and `soul.md`; pick the deployment's profile/private convention and clean duplicates only after inspecting content and git status.
+
 ## Anti-Patterns
 
 - Shipping pre-filled SOUL.md or USER.md content (privacy violation)

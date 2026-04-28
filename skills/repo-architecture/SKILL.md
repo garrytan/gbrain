@@ -45,9 +45,21 @@ This skill guarantees:
 
 Advisory: "File this at `{type}/{slug}.md` because the primary subject is {reason}."
 
+## Root and Case Hygiene
+
+In shared/team-queryable brain repos, keep the root minimal and public. For the DS deployment, the shared root convention is lowercase scaffolding only: `brain_schema.md`, `home.md`, `index.md`, and `readme.md`.
+
+If a case-sensitive filesystem shows duplicates such as `README.md`/`readme.md`, `HOME.md`/`home.md`, or `USER.md`/`user.md`, treat it as a routing/canonicalization cleanup task:
+
+1. Inspect `git status`, tracked files, content diffs, and private/profile counterparts before deleting anything.
+2. Prefer the lowercase shared scaffolding page when both variants are public scaffolds.
+3. Route profile/sensitive artifacts such as `USER.md`, `SOUL.md`, `HEARTBEAT.md`, and `ACCESS_POLICY.md` to the active profile directory and/or a private brain `_profile/` archive, not shared root.
+4. After cleanup, verify the shared root file list and run the relevant brain doctor/import checks.
+
 ## Anti-Patterns
 
 - Filing by format ("it's a PDF so it goes in sources/")
 - Filing by source ("it came from email so it goes in sources/")
 - Creating pages without checking if one already exists
 - Using `sources/` for anything except raw data dumps
+- Leaving uppercase/lowercase duplicate root pages in place because they "look like the same file" in an editor; Linux treats them as different paths.
