@@ -131,7 +131,7 @@ Priority order -- stop when you have enough signal for the entity's tier.
 - Social media is the highest-texture signal for what someone actually thinks
 
 **4d. People enrichment APIs (Tier 1)**
-- LinkedIn data, career history, connections, education
+- LinkedIn data, career history, connections, education. For finding and appending LinkedIn profiles specifically, use the `linkedin-enrichment` skill (`skills/linkedin-enrichment/SKILL.md`).
 
 **4e. Company enrichment APIs (Tier 1)**
 - Company data, financials, headcount, key hires, recent news
