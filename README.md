@@ -20,6 +20,7 @@ GBrain is designed to be installed and operated by an AI agent. If you don't hav
 
 - **[OpenClaw](https://openclaw.ai)** ... Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** ... Deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
+- **[Nanobot](https://github.com/HKUDS/nanobot)** ... Self-hosted, `uv tool install nanobot-ai` (lightweight, runs on Linux, macOS, and Windows)
 
 Paste this into your agent:
 
