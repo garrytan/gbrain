@@ -302,7 +302,9 @@ const put_page: Operation = {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
         if (enabled) {
-          autoLinks = await runAutoLink(ctx.engine, slug, result.parsedPage);
+          autoLinks = await runAutoLink(
+            ctx.engine, slug, result.parsedPage, result.status === 'skipped',
+          );
         }
       } catch (e) {
         autoLinks = { error: e instanceof Error ? e.message : String(e) };
@@ -381,6 +383,7 @@ async function runAutoLink(
   engine: BrainEngine,
   slug: string,
   parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },
+  contentUnchanged: boolean = false,
 ): Promise<{ created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
   // Live-mode resolver: per-put throwaway cache, pg_trgm + optional search.
@@ -444,6 +447,33 @@ async function runAutoLink(
     const incKeys = new Set(inc.map(c =>
       `${c.fromSlug}\u0000${c.linkType}`
     ));
+
+    // TODOS.md P2: when content is unchanged AND existing reconcilable links
+    // already match the desired set, skip the per-candidate addLink/removeLink
+    // loops. Saves N round-trips per identical re-write (cron-style re-syncs,
+    // bulk MCP usage). Conservative: requires contentUnchanged to gate; the
+    // getLinks/getBacklinks reads above still run so drift detection is intact.
+    if (contentUnchanged) {
+      // Baseline is reconcilableOut, not existingOut: manual edges
+      // (link_source === 'manual') are never reconciled, so they must not
+      // influence the equality check.
+      const existingOutKeys = new Set(reconcilableOut.map(l =>
+        `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}`
+      ));
+      // Incoming keys omit link_source because existingIn was already filtered
+      // above to (link_source === 'frontmatter' && origin_slug === slug).
+      const existingInKeys = new Set(existingIn.map(l =>
+        `${l.from_slug}\u0000${l.link_type}`
+      ));
+      const setsEqual = (a: Set<string>, b: Set<string>) => {
+        if (a.size !== b.size) return false;
+        for (const x of a) if (!b.has(x)) return false;
+        return true;
+      };
+      if (setsEqual(outKeys, existingOutKeys) && setsEqual(incKeys, existingInKeys)) {
+        return { created: 0, removed: 0, errors: 0 };
+      }
+    }
 
     let created = 0, removed = 0, errors = 0;
 
