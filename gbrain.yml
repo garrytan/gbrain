@@ -1,5 +1,6 @@
 storage:
-  git_tracked:
+  # Directories that are version-controlled — human-curated, edited by hand.
+  db_tracked:
     - people/
     - companies/
     - deals/
@@ -7,8 +8,11 @@ storage:
     - yc/
     - ideas/
     - projects/
-    
-  supabase_only:
+
+  # Directories persisted via the brain database only — bulk machine-generated
+  # content. .gitignored automatically by `gbrain sync`. Restorable from the DB
+  # via `gbrain export --restore-only`.
+  db_only:
     - media/x/
     - media/articles/
     - meetings/transcripts/

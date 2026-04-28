@@ -76,28 +76,28 @@ async function runStorageStatus(engine: BrainEngine, args: string[]) {
   console.log(`Total pages: ${result.totalPages}\n`);
   
   console.log('Storage Tiers:');
-  console.log('─────────────');
-  console.log(`Git tracked:    ${result.pagesByTier.git_tracked.toLocaleString()} pages`);
-  console.log(`Supabase only:  ${result.pagesByTier.supabase_only.toLocaleString()} pages`);
+  console.log('-------------');
+  console.log(`DB tracked:     ${result.pagesByTier.db_tracked.toLocaleString()} pages`);
+  console.log(`DB only:        ${result.pagesByTier.db_only.toLocaleString()} pages`);
   console.log(`Unspecified:    ${result.pagesByTier.unspecified.toLocaleString()} pages`);
-  
-  if (result.diskUsageByTier.git_tracked > 0 || result.diskUsageByTier.supabase_only > 0) {
+
+  if (result.diskUsageByTier.db_tracked > 0 || result.diskUsageByTier.db_only > 0) {
     console.log('\nDisk Usage:');
-    console.log('──────────');
-    if (result.diskUsageByTier.git_tracked > 0) {
-      console.log(`Git tracked:    ${formatBytes(result.diskUsageByTier.git_tracked)}`);
+    console.log('-----------');
+    if (result.diskUsageByTier.db_tracked > 0) {
+      console.log(`DB tracked:     ${formatBytes(result.diskUsageByTier.db_tracked)}`);
     }
-    if (result.diskUsageByTier.supabase_only > 0) {
-      console.log(`Supabase only:  ${formatBytes(result.diskUsageByTier.supabase_only)}`);
+    if (result.diskUsageByTier.db_only > 0) {
+      console.log(`DB only:        ${formatBytes(result.diskUsageByTier.db_only)}`);
     }
     if (result.diskUsageByTier.unspecified > 0) {
       console.log(`Unspecified:    ${formatBytes(result.diskUsageByTier.unspecified)}`);
     }
   }
-  
+
   if (result.missingFiles.length > 0) {
     console.log('\nMissing Files (need restore):');
-    console.log('────────────────────────────');
+    console.log('-----------------------------');
     for (const missing of result.missingFiles.slice(0, 10)) {
       console.log(`  ${missing.slug}`);
     }
@@ -106,24 +106,24 @@ async function runStorageStatus(engine: BrainEngine, args: string[]) {
     }
     console.log(`\nUse: gbrain export --restore-only --repo "${result.repoPath}"`);
   }
-  
+
   if (result.warnings.length > 0) {
     console.log('\nWarnings:');
-    console.log('─────────');
+    console.log('---------');
     for (const warning of result.warnings) {
-      console.log(`  ⚠️  ${warning}`);
+      console.log(`  ! ${warning}`);
     }
   }
-  
+
   console.log('\nConfiguration:');
-  console.log('─────────────');
-  console.log('Git tracked directories:');
-  for (const dir of result.config.git_tracked) {
-    console.log(`  • ${dir}`);
+  console.log('--------------');
+  console.log('DB tracked directories:');
+  for (const dir of result.config.db_tracked) {
+    console.log(`  - ${dir}`);
   }
-  console.log('\nSupabase-only directories:');
-  for (const dir of result.config.supabase_only) {
-    console.log(`  • ${dir}`);
+  console.log('\nDB-only directories:');
+  for (const dir of result.config.db_only) {
+    console.log(`  - ${dir}`);
   }
 }
 
@@ -136,23 +136,23 @@ async function getStorageStatus(engine: BrainEngine, repoPath: string | null): P
   
   // Categorize pages by storage tier
   const pagesByTier: Record<StorageTier, number> = {
-    git_tracked: 0,
-    supabase_only: 0,
-    unspecified: 0
+    db_tracked: 0,
+    db_only: 0,
+    unspecified: 0,
   };
-  
+
   const diskUsageByTier: Record<StorageTier, number> = {
-    git_tracked: 0,
-    supabase_only: 0,
-    unspecified: 0
+    db_tracked: 0,
+    db_only: 0,
+    unspecified: 0,
   };
-  
-  const missingFiles: Array<{ slug: string; expectedPath: string; }> = [];
-  
+
+  const missingFiles: Array<{ slug: string; expectedPath: string }> = [];
+
   for (const page of pages) {
     const tier = config ? getStorageTier(page.slug, config) : 'unspecified';
     pagesByTier[tier]++;
-    
+
     // Check if file exists and calculate disk usage
     if (repoPath) {
       const filePath = join(repoPath, page.slug + '.md');
@@ -163,11 +163,11 @@ async function getStorageStatus(engine: BrainEngine, repoPath: string | null): P
         } catch {
           // Ignore errors reading file stats
         }
-      } else if (config && tier === 'supabase_only') {
-        // This is a supabase-only file that's missing from disk
+      } else if (config && tier === 'db_only') {
+        // db-only file that's missing from disk — restore candidate
         missingFiles.push({
           slug: page.slug,
-          expectedPath: filePath
+          expectedPath: filePath,
         });
       }
     }

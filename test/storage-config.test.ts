@@ -14,8 +14,8 @@ import type { StorageConfig } from '../src/core/storage-config.ts';
 
 describe('Storage Configuration', () => {
   const testConfig: StorageConfig = {
-    git_tracked: ['people/', 'companies/', 'deals/'],
-    supabase_only: ['media/x/', 'media/articles/', 'meetings/transcripts/']
+    db_tracked: ['people/', 'companies/', 'deals/'],
+    db_only: ['media/x/', 'media/articles/', 'meetings/transcripts/'],
   };
 
   describe('validateStorageConfig', () => {
@@ -24,19 +24,19 @@ describe('Storage Configuration', () => {
       expect(warnings).toEqual([]);
     });
 
-    test('should warn about overlap between git_tracked and supabase_only', () => {
+    test('should warn about overlap between db_tracked and db_only', () => {
       const invalidConfig: StorageConfig = {
-        git_tracked: ['people/', 'media/'],
-        supabase_only: ['media/', 'articles/']
+        db_tracked: ['people/', 'media/'],
+        db_only: ['media/', 'articles/'],
       };
       const warnings = validateStorageConfig(invalidConfig);
-      expect(warnings).toContain('Directory "media/" appears in both git_tracked and supabase_only');
+      expect(warnings).toContain('Directory "media/" appears in both db_tracked and db_only');
     });
 
     test('should warn about paths not ending with /', () => {
       const invalidConfig: StorageConfig = {
-        git_tracked: ['people', 'companies/'],
-        supabase_only: ['media/x/', 'articles']
+        db_tracked: ['people', 'companies/'],
+        db_only: ['media/x/', 'articles'],
       };
       const warnings = validateStorageConfig(invalidConfig);
       expect(warnings).toContain('Directory path "people" should end with "/" for consistency');
@@ -45,35 +45,32 @@ describe('Storage Configuration', () => {
   });
 
   describe('Storage tier detection', () => {
-    test('should identify git-tracked pages', () => {
+    test('identifies db-tracked pages', () => {
       expect(isGitTracked('people/john-doe', testConfig)).toBe(true);
       expect(isGitTracked('companies/acme-corp', testConfig)).toBe(true);
       expect(isGitTracked('deals/series-a', testConfig)).toBe(true);
     });
 
-    test('should identify supabase-only pages', () => {
+    test('identifies db-only pages', () => {
       expect(isSupabaseOnly('media/x/tweet-123', testConfig)).toBe(true);
       expect(isSupabaseOnly('media/articles/blog-post', testConfig)).toBe(true);
       expect(isSupabaseOnly('meetings/transcripts/standup', testConfig)).toBe(true);
     });
 
-    test('should return false for non-matching paths', () => {
+    test('returns false for non-matching paths', () => {
       expect(isGitTracked('media/x/tweet-123', testConfig)).toBe(false);
       expect(isSupabaseOnly('people/john-doe', testConfig)).toBe(false);
     });
 
-    test('should correctly determine storage tier', () => {
-      expect(getStorageTier('people/john-doe', testConfig)).toBe('git_tracked');
-      expect(getStorageTier('media/x/tweet-123', testConfig)).toBe('supabase_only');
+    test('correctly determines storage tier (canonical names)', () => {
+      expect(getStorageTier('people/john-doe', testConfig)).toBe('db_tracked');
+      expect(getStorageTier('media/x/tweet-123', testConfig)).toBe('db_only');
       expect(getStorageTier('projects/random-thing', testConfig)).toBe('unspecified');
     });
 
-    test('should handle edge cases', () => {
-      // Exact match shouldn't match (needs prefix)
+    test('handles prefix edge cases', () => {
       expect(isGitTracked('people', testConfig)).toBe(false);
       expect(isGitTracked('people/', testConfig)).toBe(true);
-
-      // Partial match shouldn't match
       expect(isGitTracked('peoplex/test', testConfig)).toBe(false);
       expect(isSupabaseOnly('mediax/test', testConfig)).toBe(false);
     });
@@ -123,19 +120,19 @@ describe('loadStorageConfig — real-disk loader', () => {
     try {
       const yaml = `# Brain storage tiering config
 storage:
-  git_tracked:
+  db_tracked:
     - people/
     - companies/
     - deals/
-  supabase_only:
+  db_only:
     - media/x/
     - media/articles/
 `;
       writeFileSync(join(tmp, 'gbrain.yml'), yaml);
       const config = loadStorageConfig(tmp);
       expect(config).not.toBeNull();
-      expect(config!.git_tracked).toEqual(['people/', 'companies/', 'deals/']);
-      expect(config!.supabase_only).toEqual(['media/x/', 'media/articles/']);
+      expect(config!.db_tracked).toEqual(['people/', 'companies/', 'deals/']);
+      expect(config!.db_only).toEqual(['media/x/', 'media/articles/']);
       expect(warnings).toEqual([]);
     } finally {
       cleanup();
@@ -146,17 +143,17 @@ storage:
     try {
       const yaml = `
 storage:
-  git_tracked:
+  db_tracked:
     - people/  # human-curated
     - companies/
 
-  supabase_only:
+  db_only:
     - media/x/    # bulk tweets
 `;
       writeFileSync(join(tmp, 'gbrain.yml'), yaml);
       const config = loadStorageConfig(tmp);
-      expect(config!.git_tracked).toEqual(['people/', 'companies/']);
-      expect(config!.supabase_only).toEqual(['media/x/']);
+      expect(config!.db_tracked).toEqual(['people/', 'companies/']);
+      expect(config!.db_only).toEqual(['media/x/']);
     } finally {
       cleanup();
     }
@@ -165,14 +162,61 @@ storage:
   test('strips quoted values', () => {
     try {
       const yaml = `storage:
-  git_tracked:
+  db_tracked:
     - "people/"
     - 'companies/'
-  supabase_only: []
+  db_only: []
 `;
       writeFileSync(join(tmp, 'gbrain.yml'), yaml);
       const config = loadStorageConfig(tmp);
-      expect(config!.git_tracked).toEqual(['people/', 'companies/']);
+      expect(config!.db_tracked).toEqual(['people/', 'companies/']);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('reads deprecated keys (git_tracked / supabase_only) with once-per-process warning', () => {
+    try {
+      const yaml = `storage:
+  git_tracked:
+    - people/
+  supabase_only:
+    - media/x/
+`;
+      writeFileSync(join(tmp, 'gbrain.yml'), yaml);
+      const config = loadStorageConfig(tmp);
+      expect(config!.db_tracked).toEqual(['people/']);
+      expect(config!.db_only).toEqual(['media/x/']);
+      expect(warnings.some((w) => /deprecated/.test(w))).toBe(true);
+
+      // Second call: no second deprecation warning (once-per-process).
+      const before = warnings.length;
+      loadStorageConfig(tmp);
+      const newWarnings = warnings.slice(before);
+      expect(newWarnings.filter((w) => /deprecated/.test(w))).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('canonical keys win over deprecated keys when both present', () => {
+    try {
+      const yaml = `storage:
+  db_tracked:
+    - new-people/
+  git_tracked:
+    - old-people/
+  db_only:
+    - new-media/
+  supabase_only:
+    - old-media/
+`;
+      writeFileSync(join(tmp, 'gbrain.yml'), yaml);
+      const config = loadStorageConfig(tmp);
+      expect(config!.db_tracked).toEqual(['new-people/']);
+      expect(config!.db_only).toEqual(['new-media/']);
+      // Stronger deprecation warning when both shapes coexist.
+      expect(warnings.some((w) => /deprecated.*ignored/.test(w))).toBe(true);
     } finally {
       cleanup();
     }
@@ -197,17 +241,17 @@ storage:
   test('warns when storage section is empty', () => {
     try {
       const yaml = `storage:
-  git_tracked: []
-  supabase_only: []
+  db_tracked: []
+  db_only: []
 `;
       writeFileSync(join(tmp, 'gbrain.yml'), yaml);
       const config = loadStorageConfig(tmp);
       // Empty config is returned (not null) but warning fires.
       expect(config).not.toBeNull();
-      expect(config!.git_tracked).toEqual([]);
-      expect(config!.supabase_only).toEqual([]);
-      expect(warnings.length).toBe(1);
-      expect(warnings[0]).toMatch(/no storage configuration/);
+      expect(config!.db_tracked).toEqual([]);
+      expect(config!.db_only).toEqual([]);
+      const noConfigWarnings = warnings.filter((w) => /no storage configuration/.test(w));
+      expect(noConfigWarnings.length).toBe(1);
     } finally {
       cleanup();
     }
@@ -216,7 +260,7 @@ storage:
   test('throws on unreadable gbrain.yml (permission denied) — does not silently disable feature', () => {
     try {
       const yamlPath = join(tmp, 'gbrain.yml');
-      writeFileSync(yamlPath, 'storage:\n  git_tracked:\n    - x/\n');
+      writeFileSync(yamlPath, 'storage:\n  db_tracked:\n    - x/\n');
       // Simulate unreadable: chmod 000. May not work on all CI; skip if not supported.
       const fs = require('fs');
       fs.chmodSync(yamlPath, 0o000);

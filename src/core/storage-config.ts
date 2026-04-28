@@ -1,16 +1,31 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
+/**
+ * Storage tier configuration loaded from gbrain.yml.
+ *
+ * The canonical key names are `db_tracked` and `db_only` (engine-agnostic).
+ * The deprecated keys `git_tracked` and `supabase_only` are still read for
+ * backward compatibility but emit a once-per-process deprecation warning.
+ * Sunset: future release will reject the deprecated names.
+ */
 export interface StorageConfig {
-  git_tracked: string[];
-  supabase_only: string[];
+  db_tracked: string[];
+  db_only: string[];
 }
 
-export type StorageTier = 'git_tracked' | 'supabase_only' | 'unspecified';
+export type StorageTier = 'db_tracked' | 'db_only' | 'unspecified';
+
+/** Recognized YAML keys (canonical and deprecated). */
+const STORAGE_KEYS = new Set([
+  'db_tracked', 'db_only',
+  'git_tracked', 'supabase_only', // deprecated aliases
+]);
 
 /**
- * Parse the gbrain.yml shape: a top-level `storage:` section with two
- * array-valued keys (`git_tracked:` and `supabase_only:`).
+ * Parse the gbrain.yml shape: a top-level `storage:` section with up to four
+ * array-valued nested keys (canonical `db_tracked` / `db_only` plus the
+ * deprecated aliases `git_tracked` / `supabase_only`).
  *
  * Intentionally narrow. Does NOT handle the full YAML spec — only the file
  * shape gbrain controls. Trades expressiveness for zero-dep parsing and
@@ -21,22 +36,32 @@ export type StorageTier = 'git_tracked' | 'supabase_only' | 'unspecified';
  * delimiter-less YAML and broke the entire feature on every install.
  * The defect that prompted this rewrite: storage-config.ts:24 in the
  * pre-v0.22.3 implementation.
+ *
+ * Returns the raw key map. The caller (loadStorageConfig) is responsible
+ * for normalizing deprecated keys → canonical, emitting deprecation
+ * warnings, and merging if both old and new keys appear.
  */
-function parseStorageYaml(content: string): StorageConfig | null {
+type RawStorage = {
+  db_tracked?: string[];
+  db_only?: string[];
+  git_tracked?: string[];
+  supabase_only?: string[];
+};
+
+function parseStorageYaml(content: string): RawStorage | null {
   const lines = content.split('\n').map((line) => line.replace(/\r$/, ''));
 
   let inStorage = false;
-  let currentList: 'git_tracked' | 'supabase_only' | null = null;
-  const config: StorageConfig = { git_tracked: [], supabase_only: [] };
+  let currentList: keyof RawStorage | null = null;
+  const raw: RawStorage = {};
   let sawStorage = false;
 
-  for (const raw of lines) {
-    // Strip comments. Conservative: only strip `#` not preceded by anything
-    // (since values shouldn't contain `#` for this shape).
-    const noComment = raw.replace(/\s+#.*$/, '').replace(/^#.*$/, '');
+  for (const line of lines) {
+    // Strip comments. Conservative: drop trailing `# ...` and full-line `#`.
+    const noComment = line.replace(/\s+#.*$/, '').replace(/^#.*$/, '');
     if (noComment.trim() === '') continue;
 
-    // Top-level key (no leading space).
+    // Top-level key (no leading whitespace).
     if (!noComment.startsWith(' ') && !noComment.startsWith('\t')) {
       const colon = noComment.indexOf(':');
       if (colon === -1) continue;
@@ -47,7 +72,6 @@ function parseStorageYaml(content: string): StorageConfig | null {
         currentList = null;
         continue;
       }
-      // Other top-level keys end the storage section.
       inStorage = false;
       currentList = null;
       continue;
@@ -56,33 +80,88 @@ function parseStorageYaml(content: string): StorageConfig | null {
     if (!inStorage) continue;
 
     const indented = noComment.replace(/^\s+/, '');
-    const indent = noComment.length - indented.length;
 
-    // Indent 2 (or any single-level indent inside storage): a nested key.
-    // Indent > 2 (typically 4): a list item (- value).
     if (indented.startsWith('-')) {
-      // Array item.
       if (!currentList) continue;
       const value = indented.slice(1).trim().replace(/^["']|["']$/g, '');
-      if (value) config[currentList].push(value);
+      if (value) {
+        if (!raw[currentList]) raw[currentList] = [];
+        raw[currentList]!.push(value);
+      }
       continue;
     }
 
-    // Nested key.
     const colon = indented.indexOf(':');
     if (colon === -1) continue;
     const key = indented.slice(0, colon).trim();
-    if (key === 'git_tracked' || key === 'supabase_only') {
-      currentList = key;
+    if (STORAGE_KEYS.has(key)) {
+      currentList = key as keyof RawStorage;
+      // Inline empty list: `db_only: []`.
+      const remainder = indented.slice(colon + 1).trim();
+      if (remainder === '[]' && !raw[currentList]) {
+        raw[currentList] = [];
+      }
       continue;
     }
-    // Unrecognized nested key — ignore but reset list context.
     currentList = null;
-    void indent; // indent is informational; we infer structure from `-` prefix.
   }
 
   if (!sawStorage) return null;
-  return config;
+  return raw;
+}
+
+/**
+ * Normalize raw parsed keys into canonical StorageConfig shape.
+ *
+ * Resolution order (per plan eng-review pass 2 finding #2):
+ *   1. If canonical keys present, use them.
+ *   2. Else if deprecated keys present, map to canonical AND emit a
+ *      once-per-process deprecation warning suggesting `gbrain doctor --fix`.
+ *   3. If both are present, canonical wins. Deprecated keys are ignored
+ *      with a stronger warning (the user is mid-migration).
+ *
+ * Validation (validateStorageConfig) always runs against the canonical
+ * shape, so error messages reference `db_only` / `db_tracked` regardless
+ * of which keys the user wrote.
+ */
+let _deprecationWarned = false;
+
+function normalizeStorageConfig(raw: RawStorage): StorageConfig {
+  const hasCanonical = Boolean(raw.db_tracked || raw.db_only);
+  const hasDeprecated = Boolean(raw.git_tracked || raw.supabase_only);
+
+  if (hasDeprecated && !_deprecationWarned) {
+    _deprecationWarned = true;
+    const which = [
+      raw.git_tracked ? '`git_tracked`' : null,
+      raw.supabase_only ? '`supabase_only`' : null,
+    ].filter(Boolean).join(' and ');
+    if (hasCanonical) {
+      console.warn(
+        `Warning: ${which} in gbrain.yml is deprecated and ignored ` +
+          `(canonical keys db_tracked/db_only are present). ` +
+          `Remove the deprecated keys, or run \`gbrain doctor --fix\`.`,
+      );
+    } else {
+      console.warn(
+        `Warning: ${which} in gbrain.yml is deprecated. ` +
+          `Rename to db_tracked / db_only — see docs/storage-tiering.md. ` +
+          `Run \`gbrain doctor --fix\` for an automated rename.`,
+      );
+    }
+  }
+
+  if (hasCanonical) {
+    return {
+      db_tracked: raw.db_tracked ?? [],
+      db_only: raw.db_only ?? [],
+    };
+  }
+
+  return {
+    db_tracked: raw.git_tracked ?? [],
+    db_only: raw.supabase_only ?? [],
+  };
 }
 
 /**
@@ -113,9 +192,9 @@ export function loadStorageConfig(repoPath?: string | null): StorageConfig | nul
   // Throwing here lets the caller decide whether to crash or fall back.
   const content = readFileSync(yamlPath, 'utf-8');
 
-  let parsed: StorageConfig | null;
+  let raw: RawStorage | null;
   try {
-    parsed = parseStorageYaml(content);
+    raw = parseStorageYaml(content);
   } catch (error) {
     console.warn(
       `Warning: Failed to parse gbrain.yml: ${error instanceof Error ? error.message : String(error)}`,
@@ -123,41 +202,58 @@ export function loadStorageConfig(repoPath?: string | null): StorageConfig | nul
     return null;
   }
 
-  // Sanity warning: file exists but `storage:` section is missing OR empty.
-  // Catches the silent-no-op failure mode that was the original P0 bug.
-  if (parsed === null || (parsed.git_tracked.length === 0 && parsed.supabase_only.length === 0)) {
+  // No storage section at all → null (with sanity warning).
+  if (raw === null) {
     if (!_missingStorageWarned) {
       _missingStorageWarned = true;
       console.warn(
         `Warning: ${yamlPath} exists but has no storage configuration. ` +
-          `Add a "storage:" section with git_tracked / supabase_only arrays, ` +
+          `Add a "storage:" section with db_tracked / db_only arrays, ` +
           `or remove gbrain.yml to suppress this warning.`,
       );
     }
-    return parsed; // null OR empty — either way the feature is effectively off.
+    return null;
   }
 
-  return parsed;
+  const config = normalizeStorageConfig(raw);
+
+  // Empty storage section → return as-is but warn.
+  if (config.db_tracked.length === 0 && config.db_only.length === 0) {
+    if (!_missingStorageWarned) {
+      _missingStorageWarned = true;
+      console.warn(
+        `Warning: ${yamlPath} exists but has no storage configuration. ` +
+          `Add a "storage:" section with db_tracked / db_only arrays, ` +
+          `or remove gbrain.yml to suppress this warning.`,
+      );
+    }
+  }
+
+  return config;
 }
 
 /**
  * Validate storage configuration for conflicts and issues.
  * Returns warning strings; callers decide how to surface them.
+ *
+ * Always runs against the canonical (db_tracked / db_only) shape — error
+ * messages reference canonical names regardless of which keys the user
+ * wrote in gbrain.yml.
  */
 export function validateStorageConfig(config: StorageConfig): string[] {
   const warnings: string[] = [];
 
   // Overlap between tiers: ambiguous semantics — does `media/` win as
-  // git-tracked or supabase-only? Caller treats this as an error per D7.
-  const gitSet = new Set(config.git_tracked);
-  for (const path of config.supabase_only) {
-    if (gitSet.has(path)) {
-      warnings.push(`Directory "${path}" appears in both git_tracked and supabase_only`);
+  // db-tracked or db-only? Caller treats this as an error per D7.
+  const trackedSet = new Set(config.db_tracked);
+  for (const path of config.db_only) {
+    if (trackedSet.has(path)) {
+      warnings.push(`Directory "${path}" appears in both db_tracked and db_only`);
     }
   }
 
   // Trailing slash is canonical. Caller may auto-normalize per D7+D8.
-  const allPaths = [...config.git_tracked, ...config.supabase_only];
+  const allPaths = [...config.db_tracked, ...config.db_only];
   for (const path of allPaths) {
     if (!path.endsWith('/')) {
       warnings.push(`Directory path "${path}" should end with "/" for consistency`);
@@ -167,21 +263,29 @@ export function validateStorageConfig(config: StorageConfig): string[] {
   return warnings;
 }
 
-export function isGitTracked(slug: string, config: StorageConfig): boolean {
-  return config.git_tracked.some((dir) => slug.startsWith(dir));
+export function isDbTracked(slug: string, config: StorageConfig): boolean {
+  return config.db_tracked.some((dir) => slug.startsWith(dir));
 }
 
-export function isSupabaseOnly(slug: string, config: StorageConfig): boolean {
-  return config.supabase_only.some((dir) => slug.startsWith(dir));
+export function isDbOnly(slug: string, config: StorageConfig): boolean {
+  return config.db_only.some((dir) => slug.startsWith(dir));
 }
 
 export function getStorageTier(slug: string, config: StorageConfig): StorageTier {
-  if (isGitTracked(slug, config)) return 'git_tracked';
-  if (isSupabaseOnly(slug, config)) return 'supabase_only';
+  if (isDbTracked(slug, config)) return 'db_tracked';
+  if (isDbOnly(slug, config)) return 'db_only';
   return 'unspecified';
 }
 
-/** Reset the once-per-process warning flag. Test-only. */
+// ── Deprecated aliases — to be removed in a future release ────────
+// Kept so existing callers (storage.ts, export.ts) compile during the
+// step-by-step refactor. Will be deleted once those call sites migrate
+// to the canonical names.
+export const isGitTracked = isDbTracked;
+export const isSupabaseOnly = isDbOnly;
+
+/** Reset once-per-process warning flags. Test-only. */
 export function __resetMissingStorageWarning(): void {
   _missingStorageWarned = false;
+  _deprecationWarned = false;
 }

@@ -601,40 +601,40 @@ export async function runSync(engine: BrainEngine, args: string[]) {
 }
 
 /**
- * Auto-manage .gitignore entries for supabase-only directories
+ * Auto-manage .gitignore entries for db_only directories.
+ *
+ * Only runs on successful sync (caller decides). Idempotent: re-running adds
+ * no duplicate entries. Comments are stable so the managed block is grep-able.
  */
 async function manageGitignore(repoPath: string): Promise<void> {
   const storageConfig = loadStorageConfig(repoPath);
-  if (!storageConfig || storageConfig.supabase_only.length === 0) {
+  if (!storageConfig || storageConfig.db_only.length === 0) {
     return;
   }
 
   const gitignorePath = join(repoPath, '.gitignore');
   let gitignoreContent = '';
-  
-  // Read existing .gitignore
+
   if (existsSync(gitignorePath)) {
     gitignoreContent = readFileSync(gitignorePath, 'utf-8');
   }
-  
-  // Check which supabase-only directories are missing from .gitignore
+
+  const existingLines = new Set(gitignoreContent.split('\n').map((line) => line.trim()));
   const linesToAdd: string[] = [];
-  const existingLines = new Set(gitignoreContent.split('\n').map(line => line.trim()));
-  
-  for (const dir of storageConfig.supabase_only) {
+
+  for (const dir of storageConfig.db_only) {
     if (!existingLines.has(dir) && !existingLines.has(`/${dir}`)) {
       linesToAdd.push(dir);
     }
   }
-  
-  // Add missing entries
+
   if (linesToAdd.length > 0) {
     if (gitignoreContent && !gitignoreContent.endsWith('\n')) {
       gitignoreContent += '\n';
     }
-    gitignoreContent += '\n# Auto-managed by gbrain (supabase-only directories)\n';
+    gitignoreContent += '\n# Auto-managed by gbrain (db_only directories)\n';
     gitignoreContent += linesToAdd.join('\n') + '\n';
-    
+
     writeFileSync(gitignorePath, gitignoreContent);
   }
 }

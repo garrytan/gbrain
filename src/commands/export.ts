@@ -4,7 +4,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { loadStorageConfig, isSupabaseOnly, getStorageTier } from '../core/storage-config.ts';
+import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
 import type { PageType } from '../core/types.ts';
 
 export async function runExport(engine: BrainEngine, args: string[]) {
@@ -38,19 +38,16 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     pages = pages.filter(page => page.slug.startsWith(slugPrefix));
   }
   
-  // Apply restore-only filter
+  // Apply restore-only filter: db_only pages missing from disk.
   if (restoreOnly && repoPath && storageConfig) {
     pages = pages.filter(page => {
-      // Only include supabase-only pages that are missing from disk
-      if (!isSupabaseOnly(page.slug, storageConfig)) {
-        return false;
-      }
+      if (!isDbOnly(page.slug, storageConfig)) return false;
       const filePath = join(repoPath, page.slug + '.md');
       return !existsSync(filePath);
     });
   }
   if (restoreOnly) {
-    console.log(`Restoring ${pages.length} supabase-only pages to ${outDir}/`);
+    console.log(`Restoring ${pages.length} db_only pages to ${outDir}/`);
   } else {
     console.log(`Exporting ${pages.length} pages to ${outDir}/`);
   }
