@@ -22,7 +22,10 @@ export async function startMcpServer(engine: BrainEngine) {
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
   // MCP stdio callers are remote/untrusted; dispatch defaults remote=true.
-  server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+  // The MCP SDK's response type widened in 1.29 to allow a managed-task wrapper;
+  // gbrain ops are synchronous, so we return the legacy `{ content, isError? }`
+  // shape and cast through `any` (the SDK accepts it via the ServerResult union).
+  server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
     const { name, arguments: params } = request.params;
     return dispatchToolCall(engine, name, params, { remote: true });
   });
