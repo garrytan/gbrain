@@ -865,7 +865,8 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     const repoPath = typeof job.data.repoPath === 'string' ? job.data.repoPath : undefined;
     const noPull = !!job.data.noPull;
     const noEmbed = job.data.noEmbed !== false;
-    const result = await performSync(engine, { repoPath, noPull, noEmbed });
+    const concurrency = typeof job.data.concurrency === 'number' ? job.data.concurrency : 4;
+    const result = await performSync(engine, { repoPath, noPull, noEmbed, concurrency });
     return result;
   });
 

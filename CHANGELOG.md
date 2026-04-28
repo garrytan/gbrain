@@ -2,6 +2,17 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.23.0] - 2026-04-28
+
+### Parallel sync — bounded concurrent imports
+
+- `gbrain sync --concurrency N` (alias `--workers N`) parallelizes the import phase using per-worker Postgres engine instances with an atomic queue index (same pattern as `gbrain import --workers N`).
+- **Auto-concurrency:** when a sync touches >100 files and the user didn't set `--concurrency`, defaults to 4 workers. Small incremental syncs stay serial.
+- **Full sync** now passes `--workers N` to `runImport()` — first syncs on large brains (7,000+ pages) go ~4× faster.
+- **Minion sync handler** defaults to concurrency=4, configurable via job params.
+- Delete and rename phases remain serial (order-dependent, fast).
+- PGLite falls back to serial automatically (single-connection engine).
+
 ## [0.22.6] - 2026-04-28
 
 ### Schema verification after migrations

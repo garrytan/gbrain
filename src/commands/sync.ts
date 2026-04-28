@@ -19,6 +19,7 @@ import { errorFor, serializeError } from '../core/errors.ts';
 import type { SyncManifest } from '../core/sync.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { loadConfig } from '../core/config.ts';
 
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures';
@@ -157,6 +158,16 @@ export interface SyncOpts {
   sourceId?: string;
   /** Multi-repo: sync strategy override (markdown, code, auto). */
   strategy?: 'markdown' | 'code' | 'auto';
+  /**
+   * Number of parallel workers for the import phase. When > 1, each worker
+   * gets its own small Postgres connection pool and files are dispatched via
+   * an atomic queue index (same pattern as `import --workers N`).
+   *
+   * Deletes and renames remain serial (order-dependent).
+   * Default: 1 (serial). Auto-concurrency sets this to 4 when
+   * totalChanges > 100 and the user didn't explicitly set it.
+   */
+  concurrency?: number;
 }
 
 function git(repoPath: string, ...args: string[]): string {
@@ -486,21 +497,30 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // gate `sync.last_commit` advancement and record recoverable errors.
   const failedFiles: Array<{ path: string; error: string; line?: number }> = [];
   const addsAndMods = [...filtered.added, ...filtered.modified];
+
+  // Resolve effective concurrency: explicit opt > auto (4 for large syncs) > 1.
+  const effectiveConcurrency = opts.concurrency
+    ? opts.concurrency
+    : (addsAndMods.length > 100 ? 4 : 1);
+
   if (addsAndMods.length > 0) {
     progress.start('sync.imports', addsAndMods.length);
-    for (const path of addsAndMods) {
-      const filePath = join(repoPath, path);
+
+    // Core import logic shared by serial and parallel paths.
+    // repoPath is validated non-null at the top of performSync; narrow for TS.
+    const syncRepoPath = repoPath!;
+    async function importOnePath(eng: BrainEngine, path: string): Promise<void> {
+      const filePath = join(syncRepoPath, path);
       if (!existsSync(filePath)) {
         progress.tick(1, `skip:${path}`);
-        continue;
+        return;
       }
       try {
-        const result = await importFile(engine, filePath, path, { noEmbed });
+        const result = await importFile(eng, filePath, path, { noEmbed });
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
         } else if (result.status === 'skipped' && (result as any).error) {
-          // importFile returned a non-throw skip with a reason.
           failedFiles.push({ path, error: String((result as any).error) });
         }
       } catch (e: unknown) {
@@ -510,6 +530,53 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       }
       progress.tick(1, path);
     }
+
+    if (effectiveConcurrency > 1 && addsAndMods.length > 50) {
+      // Parallel import: per-worker Postgres engines with small pools.
+      // Same pattern as import.ts --workers N.
+      const config = loadConfig();
+      if (config?.engine === 'pglite') {
+        // PGLite is single-connection — fall back to serial.
+        for (const path of addsAndMods) {
+          await importOnePath(engine, path);
+        }
+      } else {
+        const { PostgresEngine } = await import('../core/postgres-engine.ts');
+        const { resolvePoolSize } = await import('../core/db.ts');
+        const workerPoolSize = Math.min(2, resolvePoolSize(2));
+        const workerCount = Math.min(effectiveConcurrency, addsAndMods.length);
+
+        console.log(`  Parallel sync: ${workerCount} workers for ${addsAndMods.length} files`);
+
+        const workerEngines = await Promise.all(
+          Array.from({ length: workerCount }, async () => {
+            const eng = new PostgresEngine();
+            await eng.connect({ database_url: config!.database_url!, poolSize: workerPoolSize });
+            return eng;
+          }),
+        );
+
+        // Atomic queue index — no lock needed, JS is single-threaded.
+        let queueIndex = 0;
+        await Promise.all(
+          workerEngines.map(async (eng) => {
+            while (true) {
+              const idx = queueIndex++;
+              if (idx >= addsAndMods.length) break;
+              await importOnePath(eng, addsAndMods[idx]);
+            }
+          }),
+        );
+
+        await Promise.all(workerEngines.map((e) => e.disconnect()));
+      }
+    } else {
+      // Serial path (small diffs or explicit --concurrency 1).
+      for (const path of addsAndMods) {
+        await importOnePath(engine, path);
+      }
+    }
+
     progress.finish();
   }
 
@@ -644,10 +711,20 @@ async function performFullSync(
     };
   }
 
-  console.log(`Running full import of ${repoPath}...`);
+  // Resolve effective concurrency for full sync: explicit opt > auto 4 > 1.
+  // Auto-concurrency only kicks in when Postgres is detected (config.database_url set).
+  // PGLite is single-connection — import.ts --workers falls back to serial for
+  // PGLite, but we also need config.database_url to not be null for the worker
+  // engines to connect. Detect PGLite by checking the engine class name.
+  const config = loadConfig();
+  const isPGLite = engine.constructor.name === 'PGLiteEngine';
+  const isPostgres = !isPGLite && !!config?.database_url;
+  const fullConcurrency = opts.concurrency ?? (isPostgres ? 4 : 1);
+  console.log(`Running full import of ${repoPath}${fullConcurrency > 1 ? ` (${fullConcurrency} workers)` : ''}...`);
   const { runImport } = await import('./import.ts');
   const importArgs = [repoPath];
   if (opts.noEmbed) importArgs.push('--no-embed');
+  if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
   const result = await runImport(engine, importArgs, { commit: headCommit });
 
   // Bug 9 — gate the full-sync bookmark on success. runImport already
@@ -728,6 +805,8 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
   const strategyArg = args.find((a, i) => args[i - 1] === '--strategy') as SyncOpts['strategy'] | undefined;
+  const concurrencyStr = args.find((a, i) => args[i - 1] === '--concurrency' || args[i - 1] === '--workers');
+  const concurrency = concurrencyStr ? parseInt(concurrencyStr, 10) : undefined;
 
   // v0.18.0 Step 5: --source resolves to a sources(id) row. Falls back
   // to pre-v0.17 global config (sync.repo_path + sync.last_commit) when
@@ -820,6 +899,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
         dryRun, full, noPull, noEmbed, skipFailed, retryFailed,
         sourceId: src.id,
         strategy: cfg.strategy,
+        concurrency,
       };
       try {
         const result = await performSync(engine, repoOpts);
@@ -831,7 +911,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId, strategy: strategyArg };
+  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId, strategy: strategyArg, concurrency };
 
   // Bug 9 — --retry-failed: before running normal sync, clear acknowledgment
   // flags so the sync picks them up as fresh work. The actual re-attempt
