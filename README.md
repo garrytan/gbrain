@@ -359,7 +359,7 @@ accumulate rows across separate single-skill installs instead of overwriting eac
 Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist
 and the anti-patterns it catches.
 
-## Storage tiering: keep bulk content out of git (v0.23.0)
+## Storage tiering: keep bulk content out of git (v0.22.9)
 
 When your brain crosses 100K files and bulk machine-generated content (tweets, articles, transcripts)
 becomes the size driver, declare which directories belong in git and which live in the database only.

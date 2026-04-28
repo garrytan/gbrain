@@ -4,7 +4,7 @@
 
 GBrain supports storage tiering to separate version-controlled content from bulk machine-generated data. This prevents git repositories from becoming bloated with large amounts of automatically generated content while still preserving it in the database.
 
-> Note on naming: prior to v0.23.0 the keys were `git_tracked` / `supabase_only`. The canonical names are now `db_tracked` / `db_only` (engine-agnostic — works on both PGLite and Postgres). The deprecated keys still load with a once-per-process warning. Run `gbrain doctor --fix` for an automated rename when that path lands.
+> Note on naming: prior to v0.22.9 the keys were `git_tracked` / `supabase_only`. The canonical names are now `db_tracked` / `db_only` (engine-agnostic — works on both PGLite and Postgres). The deprecated keys still load with a once-per-process warning. Run `gbrain doctor --fix` for an automated rename when that path lands.
 
 ## Configuration
 
