@@ -160,6 +160,16 @@ export interface MinionWorkerOpts {
   stalledInterval?: number; // ms, default 30000
   maxStalledCount?: number; // default 1
   pollInterval?: number; // ms, default 5000 (for PGLite fallback)
+  /** RSS threshold in MB. When exceeded, worker triggers graceful shutdown
+   *  so a supervisor can respawn it. 0 or undefined = disabled. */
+  maxRssMb?: number;
+  /** Optional injection point for RSS readback. Defaults to
+   *  `() => process.memoryUsage().rss`. Tests inject deterministic sequences. */
+  getRss?: () => number;
+  /** Periodic RSS check interval in ms, default 60000. Catches the freeze
+   *  case where all concurrency slots are wedged with zero job completions
+   *  so the per-job check never fires. */
+  rssCheckInterval?: number;
 }
 
 // --- Job Context (passed to handlers) ---

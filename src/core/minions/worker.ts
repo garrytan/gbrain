@@ -56,6 +56,11 @@ export class MinionWorker {
    *  deploy restart — they still get the full 30s cleanup race instead. */
   private shutdownAbort = new AbortController();
 
+  /** Cumulative jobs that finished (success or failure). Used in watchdog log lines. */
+  private jobsCompleted = 0;
+  /** Idempotency latch for gracefulShutdown — per-job and periodic check sites can race. */
+  private gracefulShutdownFired = false;
+
   private opts: Required<MinionWorkerOpts>;
 
   constructor(
@@ -73,6 +78,9 @@ export class MinionWorker {
       stalledInterval: opts?.stalledInterval ?? 30000,
       maxStalledCount: opts?.maxStalledCount ?? 1,
       pollInterval: opts?.pollInterval ?? 5000,
+      maxRssMb: opts?.maxRssMb ?? 0,
+      getRss: opts?.getRss ?? (() => process.memoryUsage().rss),
+      rssCheckInterval: opts?.rssCheckInterval ?? 60000,
     };
   }
 
@@ -136,6 +144,17 @@ export class MinionWorker {
       }
     }, this.opts.stalledInterval);
 
+    // Periodic RSS watchdog — closes the production-freeze regression where
+    // all concurrency slots are wedged with zero job completions, so the
+    // per-job check in executeJob().finally() never fires. Disabled when
+    // maxRssMb is 0 (default for bare `gbrain jobs work`; supervisor sets 2048).
+    let rssTimer: ReturnType<typeof setInterval> | null = null;
+    if (this.opts.maxRssMb > 0) {
+      rssTimer = setInterval(() => {
+        this.checkMemoryLimit('periodic');
+      }, this.opts.rssCheckInterval);
+    }
+
     try {
       while (this.running) {
         // Promote delayed jobs
@@ -181,6 +200,7 @@ export class MinionWorker {
       }
     } finally {
       clearInterval(stalledTimer);
+      if (rssTimer) clearInterval(rssTimer);
       process.removeListener('SIGTERM', shutdown);
       process.removeListener('SIGINT', shutdown);
 
@@ -257,6 +277,55 @@ export class MinionWorker {
     this.running = false;
   }
 
+  /** RSS watchdog. Called from the per-job finally and the periodic timer.
+   *  Idempotent: returns early if already not running or already shut down.
+   *  When threshold is exceeded, hands off to gracefulShutdown(). */
+  private checkMemoryLimit(source: 'post-job' | 'periodic'): void {
+    if (this.opts.maxRssMb <= 0) return;
+    if (!this.running) return;
+    if (this.gracefulShutdownFired) return;
+
+    let rss = 0;
+    try {
+      rss = this.opts.getRss();
+    } catch {
+      // process.memoryUsage() effectively cannot throw, but be safe.
+      return;
+    }
+    const rssMb = Math.round(rss / (1024 * 1024));
+    if (rssMb < this.opts.maxRssMb) return;
+
+    const ts = new Date().toISOString().slice(11, 19);
+    console.warn(
+      `[watchdog ${ts}] rss=${rssMb}MB threshold=${this.opts.maxRssMb}MB ` +
+      `jobs_completed=${this.jobsCompleted} source=${source} — draining`,
+    );
+    this.gracefulShutdown('watchdog');
+  }
+
+  /** Trigger a unified-style graceful shutdown. Fires shutdownAbort + per-job
+   *  aborts + running=false in that order so:
+   *  1. Shell handlers (and anything subscribed to ctx.shutdownSignal) start
+   *     their cleanup sequence (SIGTERM → 5s grace → SIGKILL on children).
+   *  2. Cooperative handlers see ctx.signal.aborted and bail instead of
+   *     waiting out the 30s drain.
+   *  3. Main loop exits at the top of the next iteration.
+   *  The existing 30s drain in start()'s finally then backstops genuinely
+   *  uninterruptible work. */
+  private gracefulShutdown(reason: string): void {
+    if (this.gracefulShutdownFired) return;
+    this.gracefulShutdownFired = true;
+    if (!this.shutdownAbort.signal.aborted) {
+      this.shutdownAbort.abort(new Error(reason));
+    }
+    for (const entry of this.inFlight.values()) {
+      if (!entry.abort.signal.aborted) {
+        entry.abort.abort(new Error(reason));
+      }
+    }
+    this.running = false;
+  }
+
   /** Launch a job as an independent in-flight promise. */
   private launchJob(job: MinionJob, lockToken: string): void {
     const abort = new AbortController();
@@ -277,12 +346,30 @@ export class MinionWorker {
     // The .finally clearTimeout below ensures process exit isn't delayed by a
     // dangling timer on normal completion.
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
     if (job.timeout_ms != null) {
       timeoutTimer = setTimeout(() => {
         if (!abort.signal.aborted) {
           console.warn(`Job ${job.id} (${job.name}) hit per-job timeout (${job.timeout_ms}ms), aborting`);
           abort.abort(new Error('timeout'));
         }
+        // Safety net: if the handler doesn't resolve within 30s after abort,
+        // force-evict from inFlight so the worker can pick up new jobs.
+        // Without this, a handler that ignores AbortSignal wedges the worker
+        // forever (the 98-waiting-0-active incident on 2026-04-24).
+        graceTimer = setTimeout(() => {
+          if (this.inFlight.has(job.id)) {
+            console.warn(
+              `Job ${job.id} (${job.name}) did not exit within 30s of abort. ` +
+              `Force-evicting from inFlight to unblock worker. ` +
+              `The handler is still running but the worker will claim new jobs.`
+            );
+            clearInterval(lockTimer);
+            this.inFlight.delete(job.id);
+            // Best-effort: mark as dead in DB so it doesn't get reclaimed
+            this.queue.failJob(job.id, lockToken, 'handler ignored abort signal (force-evicted)', 'dead').catch(() => {});
+          }
+        }, 30_000);
       }, job.timeout_ms);
     }
 
@@ -290,7 +377,10 @@ export class MinionWorker {
       .finally(() => {
         clearInterval(lockTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (graceTimer) clearTimeout(graceTimer);
         this.inFlight.delete(job.id);
+        this.jobsCompleted += 1;
+        this.checkMemoryLimit('post-job');
       });
 
     this.inFlight.set(job.id, { job, lockToken, lockTimer, abort, promise });

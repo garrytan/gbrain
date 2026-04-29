@@ -458,6 +458,75 @@ in depth, not the primary boundary.
 
 ---
 
+## v0.22.4 — frontmatter-guard adoption
+
+### 1. Stop hand-rolling frontmatter validators
+
+If your fork has scripts that call `js-yaml` directly to validate brain page
+frontmatter, replace them with `gbrain frontmatter validate` calls. The CLI
+covers the seven canonical error classes and ships a `--json` envelope that's
+stable across releases.
+
+```diff
+- # Custom validator script
+- node scripts/validate-frontmatter.mjs <path>
++ gbrain frontmatter validate <path> --json
+```
+
+For consumers that need the validator inside another script, import from
+gbrain's `markdown` export instead of duplicating logic:
+
+```ts
+import { parseMarkdown } from 'gbrain/markdown';
+
+const parsed = parseMarkdown(content, filePath, { validate: true, expectedSlug });
+for (const err of parsed.errors ?? []) {
+  // err.code: MISSING_OPEN | MISSING_CLOSE | YAML_PARSE | SLUG_MISMATCH |
+  //           NULL_BYTES | NESTED_QUOTES | EMPTY_FRONTMATTER
+}
+```
+
+### 2. Drop any references to `lib/brain-writer.mjs`
+
+If your fork's skills or scripts referenced an aspirational
+`lib/brain-writer.mjs` (it never shipped — the spec was in PR #392 and never
+landed), replace those references with the gbrain CLI. The `frontmatter-guard`
+skill lives at `skills/frontmatter-guard/SKILL.md` and points at
+`gbrain frontmatter validate` / `audit` / `install-hook`.
+
+### 3. Wire the doctor subcheck into your health pipeline
+
+`gbrain doctor` now reports `frontmatter_integrity` automatically. If your
+fork has a custom health pipeline (e.g. a daily Slack post about brain
+health), pull from `gbrain doctor --json` and surface the
+`frontmatter_integrity` row counts.
+
+### 4. (Optional) Install the pre-commit hook on brain repos
+
+For sources backed by git, the v0.22.4 install-hook helper drops a
+pre-commit script that blocks commits with malformed frontmatter:
+
+```bash
+gbrain frontmatter install-hook
+```
+
+Skip this if your brain isn't a git repo or if your downstream agent already
+enforces validation at write time. See `docs/integrations/pre-commit.md` for
+the full recipe.
+
+### 5. Migration ergonomics — read pending-host-work.jsonl
+
+After `gbrain apply-migrations --yes` runs the v0.22.4 audit, your agent
+should read `~/.gbrain/migrations/pending-host-work.jsonl` (filter to
+`migration === "0.22.4"`) and walk each entry's `command` field. Each entry
+points to a per-source `gbrain frontmatter validate <source_path> --fix`
+command — surface counts to the user, get explicit consent, then run.
+
+The migration is **audit-only**. It never mutates brain content during
+`apply-migrations`. Your agent runs the fix command with user consent.
+
+---
+
 ## Future versions
 
 When gbrain ships a new version, this doc will be updated with the diffs for that

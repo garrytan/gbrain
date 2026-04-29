@@ -18,6 +18,7 @@
 
 import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative } from 'path';
+import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 
 export interface LintIssue {
   file: string;
@@ -26,6 +27,25 @@ export interface LintIssue {
   message: string;
   fixable: boolean;
 }
+
+/** Map of frontmatter validation codes to lint rule names. Stable across
+ *  releases — agents and CI consumers can target specific rule names. */
+const FRONTMATTER_RULE_NAMES: Record<ParseValidationCode, string> = {
+  MISSING_OPEN: 'frontmatter-missing-open',
+  MISSING_CLOSE: 'frontmatter-missing-close',
+  YAML_PARSE: 'frontmatter-yaml-parse',
+  SLUG_MISMATCH: 'frontmatter-slug-mismatch',
+  NULL_BYTES: 'frontmatter-null-bytes',
+  NESTED_QUOTES: 'frontmatter-nested-quotes',
+  EMPTY_FRONTMATTER: 'frontmatter-empty',
+};
+
+/** Codes whose lint findings are fixable by `gbrain frontmatter validate --fix`. */
+const FRONTMATTER_FIXABLE: ReadonlySet<ParseValidationCode> = new Set<ParseValidationCode>([
+  'MISSING_CLOSE',
+  'NULL_BYTES',
+  'NESTED_QUOTES',
+]);
 
 // ── LLM artifact patterns ──────────────────────────────────────────
 
@@ -43,6 +63,25 @@ const LLM_PREAMBLES = [
 export function lintContent(content: string, filePath: string): LintIssue[] {
   const issues: LintIssue[] = [];
   const lines = content.split('\n');
+
+  // ── Frontmatter validation (delegates to parseMarkdown(validate:true)) ──
+  // This is the single source of truth for frontmatter shape rules. Each
+  // ParseValidationCode maps to a stable lint rule name in
+  // FRONTMATTER_RULE_NAMES. Keeps brain-page lint, doctor's
+  // frontmatter_integrity subcheck, and the frontmatter CLI in lockstep.
+  const parsed = parseMarkdown(content, filePath, { validate: true });
+  for (const err of parsed.errors ?? []) {
+    // Skip MISSING_OPEN — the legacy `no-frontmatter` rule below covers this
+    // exact case with a stable rule name. Emitting both is double-reporting.
+    if (err.code === 'MISSING_OPEN') continue;
+    issues.push({
+      file: filePath,
+      line: err.line ?? 1,
+      rule: FRONTMATTER_RULE_NAMES[err.code],
+      message: err.message,
+      fixable: FRONTMATTER_FIXABLE.has(err.code),
+    });
+  }
 
   // Rule: LLM preamble artifacts
   for (const pattern of LLM_PREAMBLES) {

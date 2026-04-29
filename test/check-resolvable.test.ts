@@ -255,6 +255,21 @@ describe("DRY detection — checkResolvable", () => {
   });
 });
 
+describe("v0.22.4 regression — actual repo skills/ has 0 warnings", () => {
+  test("repo skills/ pass check-resolvable cleanly", () => {
+    // The contract for v0.22.4 (Part A): zero warnings, zero errors
+    // against the actual checked-in skills/ tree. Guards against future
+    // regressions that re-introduce trigger overlap, DRY violations, or
+    // routing-eval fixture drift.
+    const report = checkResolvable(SKILLS_DIR);
+    const errors = report.issues.filter(i => i.severity === "error");
+    const warnings = report.issues.filter(i => i.severity === "warning");
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+});
+
 // bun:test has no beforeEach/afterEach at module scope cleanly interacting
 // with closures; a small helper keeps cleanup readable and per-test.
 function afterEachCleanup(fn: () => void) {

@@ -147,22 +147,41 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   let stopping = false;
   let workerProc: ChildProcess | null = null;
   let crashCount = 0;
+  let lastWorkerStartTime = 0;
+
+  // Stable-run reset window (matches MinionSupervisor.ts:471-476 pattern). If the
+  // worker ran > 5min before exit, treat as a fresh cycle (crashCount=1) so the
+  // RSS watchdog firing hourly does NOT trip autopilot's give-up threshold after
+  // ~5 hours of healthy uptime.
+  const STABLE_RUN_RESET_MS = 5 * 60 * 1000;
 
   if (spawnManagedWorker) {
     const cliPath = resolveGbrainCliPath();
     const startWorker = () => {
-      const child = spawn(cliPath, ['jobs', 'work'], { stdio: 'inherit', env: process.env });
+      // Inject the RSS watchdog default (2048 MB) for the autopilot-supervised
+      // worker. Bare `gbrain jobs work` has no default; the supervisor and
+      // autopilot are the production paths that opt in.
+      const args = ['jobs', 'work', '--max-rss', '2048'];
+      const child = spawn(cliPath, args, { stdio: 'inherit', env: process.env });
       workerProc = child;
-      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid})`);
+      lastWorkerStartTime = Date.now();
+      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid}, watchdog: 2048MB)`);
       child.on('exit', (code) => {
         workerProc = null;
         if (stopping) return;
+        const runDuration = Date.now() - lastWorkerStartTime;
+        if (runDuration > STABLE_RUN_RESET_MS) {
+          // Stable run — forgive prior crash history. A watchdog-driven hourly
+          // exit (the production path post-fix) lands here every time.
+          crashCount = 1;
+        } else {
+          crashCount++;
+        }
         if (crashCount >= 5) {
-          console.error('[autopilot] 5 consecutive worker crashes, giving up.');
+          console.error(`[autopilot] 5 consecutive worker crashes (run ${runDuration}ms), giving up.`);
           process.exit(1);
         }
-        crashCount++;
-        console.error(`[autopilot] worker exited code=${code}, restart #${crashCount} in 10s`);
+        console.error(`[autopilot] worker exited code=${code} after ${runDuration}ms, restart #${crashCount} in 10s`);
         setTimeout(startWorker, 10_000);
       });
     };
@@ -290,6 +309,12 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             idempotency_key: `autopilot-cycle:${slot}`,
             max_attempts: 2,
             timeout_ms: timeoutMs,
+            // Submission backpressure: when the worker is dead or wedged,
+            // idempotency_key only dedupes within a slot; cross-slot pile-up
+            // is what produced the 28+ waiting-jobs production incident.
+            // maxWaiting: 1 caps at 1 active + 1 waiting; queue.add coalesces
+            // the 3rd+ submission and writes a backpressure-audit JSONL line.
+            maxWaiting: 1,
           },
         );
         if (jsonMode) {

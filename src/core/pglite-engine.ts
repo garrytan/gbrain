@@ -9,7 +9,7 @@ import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
-  Chunk, ChunkInput,
+  Chunk, ChunkInput, StaleChunkRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -86,6 +86,12 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
+    // Pre-schema bootstrap: add forward-referenced state the embedded schema
+    // blob requires but that older brains don't have yet (issues #366/#375/
+    // #378/#396 + #266/#357). Bootstrap is idempotent and a no-op on fresh
+    // installs and modern brains.
+    await this.applyForwardReferenceBootstrap();
+
     // Resolve embedding dim/model from gateway (v0.14+). Defaults preserve v0.13.
     let dims = 1536;
     let model = 'text-embedding-3-large';
@@ -100,6 +106,111 @@ export class PGLiteEngine implements BrainEngine {
     const { applied } = await runMigrations(this);
     if (applied > 0) {
       console.log(`  ${applied} migration(s) applied`);
+    }
+  }
+
+  /**
+   * Bootstrap state that PGLITE_SCHEMA_SQL forward-references but that older
+   * brains don't have yet. Currently covers:
+   *
+   *   - `sources` table + default seed (FK target of pages.source_id) — v0.18
+   *   - `pages.source_id` column (indexed by `idx_pages_source_id`) — v0.18
+   *   - `links.link_source` column (indexed by `idx_links_source`) — v0.13
+   *   - `links.origin_page_id` column (indexed by `idx_links_origin`) — v0.13
+   *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
+   *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
+   *
+   * **Maintenance contract:** when a future migration adds a column-with-index
+   * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
+   * AND `test/schema-bootstrap-coverage.test.ts`'s `REQUIRED_BOOTSTRAP_COVERAGE`.
+   * The coverage test fails loudly if the bootstrap drifts behind the schema.
+   */
+  private async applyForwardReferenceBootstrap(): Promise<void> {
+    // Single round-trip probe for every forward-reference target.
+    const { rows } = await this.db.query(`
+      SELECT
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='pages') AS pages_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='pages' AND column_name='source_id') AS source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='links') AS links_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='links' AND column_name='link_source') AS link_source_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='links' AND column_name='origin_page_id') AS origin_page_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='content_chunks') AS chunks_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='symbol_name') AS symbol_name_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists
+    `);
+    const probe = rows[0] as {
+      pages_exists: boolean;
+      source_id_exists: boolean;
+      links_exists: boolean;
+      link_source_exists: boolean;
+      origin_page_id_exists: boolean;
+      chunks_exists: boolean;
+      symbol_name_exists: boolean;
+      language_exists: boolean;
+    };
+
+    const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
+    const needsLinksBootstrap = probe.links_exists
+      && (!probe.link_source_exists || !probe.origin_page_id_exists);
+    const needsChunksBootstrap = probe.chunks_exists
+      && (!probe.symbol_name_exists || !probe.language_exists);
+
+    // Fresh installs (no tables yet) and modern brains both no-op.
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap) return;
+
+    console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
+
+    if (needsPagesBootstrap) {
+      // Mirror schema-embedded.ts shape for `sources` so the subsequent
+      // PGLITE_SCHEMA_SQL CREATE TABLE IF NOT EXISTS is a true no-op.
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS sources (
+          id            TEXT PRIMARY KEY,
+          name          TEXT NOT NULL UNIQUE,
+          local_path    TEXT,
+          last_commit   TEXT,
+          last_sync_at  TIMESTAMPTZ,
+          config        JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        INSERT INTO sources (id, name, config)
+          VALUES ('default', 'default', '{"federated": true}'::jsonb)
+          ON CONFLICT (id) DO NOTHING;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_id TEXT
+          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+      `);
+    }
+
+    if (needsLinksBootstrap) {
+      // v11 (links_provenance_columns) is responsible for the CHECK constraint
+      // and backfill. The bootstrap only adds enough state for SCHEMA_SQL's
+      // `CREATE INDEX idx_links_source/origin` not to crash. v11 runs later
+      // via runMigrations and is idempotent (`IF NOT EXISTS` everywhere).
+      await this.db.exec(`
+        ALTER TABLE links ADD COLUMN IF NOT EXISTS link_source TEXT;
+        ALTER TABLE links ADD COLUMN IF NOT EXISTS origin_page_id INTEGER
+          REFERENCES pages(id) ON DELETE SET NULL;
+      `);
+    }
+
+    if (needsChunksBootstrap) {
+      // v26 (content_chunks_code_metadata) adds the full code-chunk metadata
+      // surface (language, symbol_name, symbol_type, start_line, end_line).
+      // The bootstrap only adds the two columns the schema blob's partial
+      // indexes reference (idx_chunks_symbol_name, idx_chunks_language).
+      // v26 runs later via runMigrations and adds the rest idempotently.
+      await this.db.exec(`
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS language TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name TEXT;
+      `);
     }
   }
 
@@ -500,6 +611,9 @@ export class PGLiteEngine implements BrainEngine {
       }
     }
 
+    // CONSISTENCY: when chunk_text changes and no new embedding is supplied, BOTH embedding AND
+    // embedded_at must reset to NULL so `embed --stale` correctly picks up the row for re-embedding.
+    // See postgres-engine.ts upsertChunks for the full rationale — pglite mirrors it for parity.
     await this.db.query(
       `INSERT INTO content_chunks ${cols} VALUES ${rowParts.join(', ')}
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
@@ -508,7 +622,10 @@ export class PGLiteEngine implements BrainEngine {
          embedding = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding ELSE COALESCE(EXCLUDED.embedding, content_chunks.embedding) END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
-         embedded_at = COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at),
+         embedded_at = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
+           ELSE COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
+         END,
          language = EXCLUDED.language,
          symbol_name = EXCLUDED.symbol_name,
          symbol_type = EXCLUDED.symbol_type,
@@ -530,6 +647,29 @@ export class PGLiteEngine implements BrainEngine {
       [slug]
     );
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r));
+  }
+
+  async countStaleChunks(): Promise<number> {
+    const { rows } = await this.db.query(
+      `SELECT count(*)::int AS count
+         FROM content_chunks
+        WHERE embedding IS NULL`,
+    );
+    const count = (rows[0] as { count: number } | undefined)?.count ?? 0;
+    return Number(count);
+  }
+
+  async listStaleChunks(): Promise<StaleChunkRow[]> {
+    const { rows } = await this.db.query(
+      `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+              cc.model, cc.token_count
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NULL
+        ORDER BY p.id, cc.chunk_index
+        LIMIT 100000`,
+    );
+    return rows as unknown as StaleChunkRow[];
   }
 
   async deleteChunks(slug: string): Promise<void> {
