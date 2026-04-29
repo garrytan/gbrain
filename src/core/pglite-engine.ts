@@ -6,6 +6,7 @@ import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnectio
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { resolveEmbeddingConfig } from './embedding.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -102,6 +103,55 @@ export class PGLiteEngine implements BrainEngine {
     if (applied > 0) {
       console.log(`  ${applied} migration(s) applied`);
     }
+
+    await this.ensureEmbeddingConfiguration();
+  }
+
+  /**
+   * Align the physical vector column with the active embedding model.
+   * pgvector HNSW indexes only support <=2000 dimensions; Perplexity's
+   * pplx-embed-context-v1-4b emits 2560-d vectors, so those brains run
+   * vector search without HNSW instead of failing schema init.
+   *
+   * Changing dimensions invalidates existing embeddings. We clear them,
+   * alter the column, and let `gbrain embed --stale` rebuild with the
+   * active provider.
+   */
+  private async ensureEmbeddingConfiguration(): Promise<void> {
+    const config = resolveEmbeddingConfig();
+    const desiredType = `vector(${config.dimensions})`;
+    const { rows } = await this.db.query(
+      `SELECT format_type(a.atttypid, a.atttypmod) AS typ
+         FROM pg_attribute a
+         JOIN pg_class c ON c.oid = a.attrelid
+        WHERE c.relname = 'content_chunks'
+          AND a.attname = 'embedding'
+          AND NOT a.attisdropped`,
+    );
+    const currentType = (rows[0] as { typ?: string } | undefined)?.typ;
+
+    if (currentType !== desiredType) {
+      await this.db.exec(`DROP INDEX IF EXISTS idx_chunks_embedding;`);
+      console.log(`  Reconfiguring embeddings: ${currentType || 'unknown'} → ${desiredType}; existing embeddings marked stale`);
+      await this.db.exec(`
+        UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;
+        ALTER TABLE content_chunks ALTER COLUMN embedding TYPE ${desiredType} USING NULL;
+      `);
+    }
+
+    if (config.dimensions <= 2000) {
+      await this.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);`);
+    } else {
+      await this.db.exec(`DROP INDEX IF EXISTS idx_chunks_embedding;`);
+    }
+
+    await this.db.query(`
+      INSERT INTO config (key, value) VALUES
+        ('embedding_model', $1),
+        ('embedding_dimensions', $2),
+        ('embedding_base_url', $3)
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    `, [config.model, String(config.dimensions), config.baseURL || '']);
   }
 
   /**

@@ -624,6 +624,21 @@ FILES
 EMBEDDINGS
   gbrain embed [<slug>|--all|--stale]   Generate/refresh embeddings
 
+  Defaults: OpenAI text-embedding-3-large, 1536 dimensions.
+  OpenAI-compatible embedding providers can be configured with:
+    GBRAIN_EMBEDDING_MODEL
+    GBRAIN_EMBEDDING_DIMENSIONS
+    GBRAIN_EMBEDDING_BASE_URL
+    GBRAIN_EMBEDDING_API_KEY
+
+  Perplexity local embed example:
+    GBRAIN_EMBEDDING_MODEL=pplx-embed-context-v1-4b
+    GBRAIN_EMBEDDING_DIMENSIONS=2560
+    GBRAIN_EMBEDDING_BASE_URL=http://127.0.0.1:8790/v1
+
+  Note: pgvector HNSW indexes support up to 2000 dimensions. 2560-d
+  Perplexity brains work, but vector search runs without HNSW indexing.
+
 LINKS + GRAPH
   gbrain link|unlink|backlinks          Cross-reference management
   gbrain extract links|timeline|all     Batch backfill from existing pages

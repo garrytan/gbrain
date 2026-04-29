@@ -651,6 +651,10 @@ FILES
 
 EMBEDDINGS
   embed [<slug>|--all|--stale]       Generate/refresh embeddings
+                                      Configure provider with GBRAIN_EMBEDDING_MODEL,
+                                      GBRAIN_EMBEDDING_DIMENSIONS,
+                                      GBRAIN_EMBEDDING_BASE_URL,
+                                      GBRAIN_EMBEDDING_API_KEY
 
 LINKS
   link <from> <to> [--type T]        Create typed link

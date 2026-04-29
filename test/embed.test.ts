@@ -9,6 +9,27 @@ let maxConcurrentEmbedCalls = 0;
 let totalEmbedCalls = 0;
 
 mock.module('../src/core/embedding.ts', () => ({
+  resolveEmbeddingConfig: (env: Record<string, string | undefined> = process.env) => {
+    const model = env.GBRAIN_EMBEDDING_MODEL || 'text-embedding-3-large';
+    const dimensions = Number.parseInt(env.GBRAIN_EMBEDDING_DIMENSIONS || '1536', 10);
+    if (!Number.isInteger(dimensions) || dimensions <= 0) {
+      throw new Error('GBRAIN_EMBEDDING_DIMENSIONS must be a positive integer');
+    }
+    const baseURL = env.GBRAIN_EMBEDDING_BASE_URL || undefined;
+    const isPerplexityConfig = model.toLowerCase().includes('pplx') || model.toLowerCase().includes('perplexity') || (baseURL?.toLowerCase().includes('perplexity') ?? false);
+    return {
+      model,
+      dimensions,
+      baseURL,
+      apiKey: env.GBRAIN_EMBEDDING_API_KEY
+        || (isPerplexityConfig ? (env.PERPLEXITY_API_KEY || env.PPLX_API_KEY) : undefined)
+        || env.OPENAI_API_KEY
+        || (baseURL ? 'not-needed' : undefined),
+    };
+  },
+  EMBEDDING_MODEL: 'text-embedding-3-large',
+  EMBEDDING_DIMENSIONS: 1536,
+  EMBEDDING_COST_PER_1K_TOKENS: 0.00013,
   embedBatch: async (texts: string[]) => {
     activeEmbedCalls++;
     totalEmbedCalls++;

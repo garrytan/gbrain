@@ -3,6 +3,7 @@ import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnectio
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import { resolveEmbeddingConfig } from './embedding.ts';
 import { verifySchema } from './schema-verify.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -127,6 +128,8 @@ export class PostgresEngine implements BrainEngine {
         console.log(`  ${applied} migration(s) applied`);
       }
 
+      await this.ensureEmbeddingConfiguration();
+
       // Post-migration schema verification: catches columns that migrations
       // defined but PgBouncer transaction-mode silently failed to create.
       // Self-heals missing columns via ALTER TABLE ADD COLUMN IF NOT EXISTS.
@@ -137,6 +140,45 @@ export class PostgresEngine implements BrainEngine {
     } finally {
       await conn`SELECT pg_advisory_unlock(42)`;
     }
+  }
+
+  /** Align vector column type/index with the active embedding config. */
+  private async ensureEmbeddingConfiguration(): Promise<void> {
+    const config = resolveEmbeddingConfig();
+    const desiredType = `vector(${config.dimensions})`;
+    const conn = this.sql;
+    const rows = await conn<{ typ: string }[]>`
+      SELECT format_type(a.atttypid, a.atttypmod) AS typ
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+       WHERE c.relname = 'content_chunks'
+         AND a.attname = 'embedding'
+         AND NOT a.attisdropped
+    `;
+    const currentType = rows[0]?.typ;
+
+    if (currentType !== desiredType) {
+      await conn.unsafe(`DROP INDEX IF EXISTS idx_chunks_embedding;`);
+      console.log(`  Reconfiguring embeddings: ${currentType || 'unknown'} → ${desiredType}; existing embeddings marked stale`);
+      await conn.unsafe(`
+        UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;
+        ALTER TABLE content_chunks ALTER COLUMN embedding TYPE ${desiredType} USING NULL;
+      `);
+    }
+
+    if (config.dimensions <= 2000) {
+      await conn.unsafe(`CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);`);
+    } else {
+      await conn.unsafe(`DROP INDEX IF EXISTS idx_chunks_embedding;`);
+    }
+
+    await conn`
+      INSERT INTO config (key, value) VALUES
+        ('embedding_model', ${config.model}),
+        ('embedding_dimensions', ${String(config.dimensions)}),
+        ('embedding_base_url', ${config.baseURL || ''})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    `;
   }
 
   /**

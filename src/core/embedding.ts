@@ -9,19 +9,56 @@
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const DEFAULT_MODEL = 'text-embedding-3-large';
+const DEFAULT_DIMENSIONS = 1536;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
 
-let client: OpenAI | null = null;
+export interface EmbeddingConfig {
+  model: string;
+  dimensions: number;
+  baseURL?: string;
+  apiKey?: string;
+}
 
-function getClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI();
+export function resolveEmbeddingConfig(env: NodeJS.ProcessEnv = process.env): EmbeddingConfig {
+  const model = env.GBRAIN_EMBEDDING_MODEL || DEFAULT_MODEL;
+  const rawDimensions = env.GBRAIN_EMBEDDING_DIMENSIONS || String(DEFAULT_DIMENSIONS);
+  const dimensions = Number.parseInt(rawDimensions, 10);
+
+  if (!Number.isInteger(dimensions) || dimensions <= 0) {
+    throw new Error('GBRAIN_EMBEDDING_DIMENSIONS must be a positive integer');
+  }
+
+  const baseURL = env.GBRAIN_EMBEDDING_BASE_URL || undefined;
+  const isPerplexityConfig = model.toLowerCase().includes('pplx') || model.toLowerCase().includes('perplexity') || (baseURL?.toLowerCase().includes('perplexity') ?? false);
+  const apiKey = env.GBRAIN_EMBEDDING_API_KEY
+    || (isPerplexityConfig ? (env.PERPLEXITY_API_KEY || env.PPLX_API_KEY) : undefined)
+    || env.OPENAI_API_KEY
+    || (baseURL ? 'not-needed' : undefined);
+
+  return {
+    model,
+    dimensions,
+    baseURL,
+    apiKey,
+  };
+}
+
+let client: OpenAI | null = null;
+let clientCacheKey: string | null = null;
+
+function getClient(config: EmbeddingConfig): OpenAI {
+  const cacheKey = JSON.stringify({ baseURL: config.baseURL, apiKey: config.apiKey });
+  if (!client || clientCacheKey !== cacheKey) {
+    client = new OpenAI({
+      apiKey: config.apiKey,
+      baseURL: config.baseURL,
+    });
+    clientCacheKey = cacheKey;
   }
   return client;
 }
@@ -62,10 +99,12 @@ export async function embedBatch(
 async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await getClient().embeddings.create({
-        model: MODEL,
+      const config = resolveEmbeddingConfig();
+      const response = await getClient(config).embeddings.create({
+        model: config.model,
         input: texts,
-        dimensions: DIMENSIONS,
+        dimensions: config.dimensions,
+        encoding_format: 'float',
       });
 
       // Sort by index to maintain order
@@ -104,7 +143,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
+export { DEFAULT_MODEL as EMBEDDING_MODEL, DEFAULT_DIMENSIONS as EMBEDDING_DIMENSIONS };
 
 /**
  * v0.20.0 Cathedral II Layer 8 (D1): USD cost per 1k tokens for

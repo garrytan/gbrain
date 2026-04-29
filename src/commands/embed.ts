@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { embedBatch } from '../core/embedding.ts';
+import { embedBatch, resolveEmbeddingConfig } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
@@ -142,6 +142,7 @@ async function embedPage(
   result: EmbedResult,
 ) {
   const page = await engine.getPage(slug);
+  const embeddingConfig = resolveEmbeddingConfig();
   if (!page) {
     throw new Error(`Page not found: ${slug}`);
   }
@@ -204,6 +205,7 @@ async function embedPage(
     chunk_text: c.chunk_text,
     chunk_source: c.chunk_source,
     embedding: embeddingMap.get(c.chunk_index),
+    model: embeddingMap.has(c.chunk_index) ? embeddingConfig.model : c.model,
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
@@ -238,6 +240,7 @@ async function embedAll(
   }
 
   const pages = await engine.listPages({ limit: 100000 });
+  const embeddingConfig = resolveEmbeddingConfig();
   let processed = 0;
 
   // Concurrency limit for parallel page embedding.
@@ -285,6 +288,7 @@ async function embedAll(
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
+        model: embeddingMap.has(c.chunk_index) ? embeddingConfig.model : c.model,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(page.slug, updated);
@@ -389,6 +393,7 @@ async function embedAllStale(
   }
 
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
+  const embeddingConfig = resolveEmbeddingConfig();
   let processed = 0;
 
   async function embedOneSlug(slug: string) {
@@ -413,6 +418,7 @@ async function embedAllStale(
         // For stale chunks: pass the new embedding.
         // For non-stale chunks: pass undefined → COALESCE preserves existing embedding.
         embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+        model: staleIdxToEmbedding.has(c.chunk_index) ? embeddingConfig.model : c.model,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(slug, merged);
