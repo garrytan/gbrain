@@ -42,6 +42,11 @@ function git(repoPath: string, ...args: string[]): string {
   }).trim();
 }
 
+async function recordSyncRepoPaths(engine: BrainEngine, repoPath: string): Promise<void> {
+  await engine.setConfig('sync.repo_path', repoPath);
+  await engine.setConfig('markdown.repo_path', repoPath);
+}
+
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   // Resolve repo path
   const repoPath = opts.repoPath || await engine.getConfig('sync.repo_path');
@@ -104,6 +109,9 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
 
   // No changes
   if (lastCommit === headCommit) {
+    if (!opts.dryRun) {
+      await recordSyncRepoPaths(engine, repoPath);
+    }
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -175,6 +183,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     // Update sync state even with no syncable changes (git advanced)
     await engine.setConfig('sync.last_commit', headCommit);
     await engine.setConfig('sync.last_run', new Date().toISOString());
+    await recordSyncRepoPaths(engine, repoPath);
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -273,7 +282,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     // Update sync state AFTER all changes succeed.
     await tx.setConfig('sync.last_commit', headCommit);
     await tx.setConfig('sync.last_run', new Date().toISOString());
-    await tx.setConfig('sync.repo_path', repoPath);
+    await recordSyncRepoPaths(tx, repoPath);
 
     // Log ingest only after checkpoint update is safe.
     await tx.logIngest({

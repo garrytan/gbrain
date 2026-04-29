@@ -187,6 +187,30 @@ describe('import service', () => {
     expect(setConfigCalls.some(([key]) => key === 'sync.last_run')).toBe(true);
   });
 
+  test('runImportService records markdown.repo_path for non-git imports', async () => {
+    const rootDir = makeTempDir('mbrain-import-markdown-root-');
+    writeFileSync(join(rootDir, 'note.md'), '# note\n');
+
+    const setConfigCalls: Array<[string, unknown]> = [];
+    const engine = {
+      setConfig: async (key: string, value: unknown) => {
+        setConfigCalls.push([key, value]);
+      },
+    } as any;
+
+    const summary = await runImportService(
+      engine,
+      { rootDir, workers: 1 },
+      importDeps({
+        importFile: async () => ({ slug: 'note', status: 'imported' as const, chunks: 1 }),
+      }),
+    );
+
+    expect(summary.errors).toBe(0);
+    expect(setConfigCalls).toContainEqual(['markdown.repo_path', rootDir]);
+    expect(setConfigCalls.some(([key]) => key === 'sync.repo_path')).toBe(false);
+  });
+
   test('runImportService uses staged local concurrency for prepare work but commits in file order', async () => {
     const rootDir = makeTempDir('mbrain-import-staged-');
     for (const name of ['a.md', 'b.md', 'c.md']) {

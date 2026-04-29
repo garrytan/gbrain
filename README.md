@@ -386,6 +386,9 @@ mbrain sync --repo ~/git/brain --watch --interval 60
 mbrain embed --stale
 ```
 
+After `import` or `sync` records the markdown repo path, `put_page` / `mbrain put`
+writes the matching `<slug>.md` file first and then refreshes the database index.
+
 Links, tags, timelines, versions:
 
 ```bash

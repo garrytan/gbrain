@@ -138,5 +138,43 @@ describe('performSync incremental safety', () => {
     expect(result.pagesAffected).toContain('people/alice');
     expect(deletedPages).toEqual(['people/alice']);
     expect(setConfigCalls).toContainEqual(['sync.last_commit', headCommit]);
+    expect(setConfigCalls).toContainEqual(['markdown.repo_path', repoPath]);
+  });
+
+  test('records markdown repo path when the repo is already up to date', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'concepts'), { recursive: true });
+    writeFileSync(join(repoPath, 'concepts', 'seed.md'), '# Seed\n');
+    const headCommit = commitAll(repoPath, 'seed');
+
+    const { engine, setConfigCalls } = makeSyncEngine({
+      config: { 'sync.last_commit': headCommit },
+    });
+
+    const result = await performSync(engine, { repoPath, noPull: true });
+
+    expect(result.status).toBe('up_to_date');
+    expect(setConfigCalls).toContainEqual(['sync.repo_path', repoPath]);
+    expect(setConfigCalls).toContainEqual(['markdown.repo_path', repoPath]);
+  });
+
+  test('records markdown repo path when git advanced without syncable changes', async () => {
+    const repoPath = makeRepo();
+    writeFileSync(join(repoPath, 'README.txt'), 'seed\n');
+    const lastCommit = commitAll(repoPath, 'seed');
+
+    writeFileSync(join(repoPath, 'README.txt'), 'unsyncable update\n');
+    const headCommit = commitAll(repoPath, 'unsyncable update');
+
+    const { engine, setConfigCalls } = makeSyncEngine({
+      config: { 'sync.last_commit': lastCommit },
+    });
+
+    const result = await performSync(engine, { repoPath, noPull: true });
+
+    expect(result.status).toBe('up_to_date');
+    expect(setConfigCalls).toContainEqual(['sync.last_commit', headCommit]);
+    expect(setConfigCalls).toContainEqual(['sync.repo_path', repoPath]);
+    expect(setConfigCalls).toContainEqual(['markdown.repo_path', repoPath]);
   });
 });

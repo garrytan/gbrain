@@ -600,6 +600,8 @@ async function updateImportGitState(
   options: { advanceCommit: boolean },
 ) {
   try {
+    await engine.setConfig('markdown.repo_path', rootDir);
+
     if (!existsSync(join(rootDir, '.git'))) {
       return;
     }

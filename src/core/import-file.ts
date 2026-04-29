@@ -16,7 +16,7 @@ export interface ImportResult {
   error?: string;
 }
 
-const MAX_FILE_SIZE = 5_000_000; // 5MB
+export const MAX_MARKDOWN_IMPORT_BYTES = 5_000_000; // 5MB
 
 /**
  * Import content from a string. Core pipeline:
@@ -31,12 +31,12 @@ export async function importFromContent(
   options?: { path?: string },
 ): Promise<ImportResult> {
   const byteLength = Buffer.byteLength(content, 'utf-8');
-  if (byteLength > MAX_FILE_SIZE) {
+  if (byteLength > MAX_MARKDOWN_IMPORT_BYTES) {
     return {
       slug,
       status: 'skipped',
       chunks: 0,
-      error: `Content too large (${byteLength} bytes, max ${MAX_FILE_SIZE}).`,
+      error: `Content too large (${byteLength} bytes, max ${MAX_MARKDOWN_IMPORT_BYTES}).`,
     };
   }
 
@@ -131,7 +131,7 @@ export async function importFromFile(
   }
 
   const stat = statSync(filePath);
-  if (stat.size > MAX_FILE_SIZE) {
+  if (stat.size > MAX_MARKDOWN_IMPORT_BYTES) {
     return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes)` };
   }
 

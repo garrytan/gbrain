@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -390,6 +390,311 @@ describe('put_page content hash preconditions and mutation ledger', () => {
         dry_run: false,
       });
       expect(events[0].conflict_info).toBeNull();
+    });
+  });
+
+  test('put_page writes the markdown repo file before importing the DB projection when repo is provided', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-repo-'));
+      const slug = 'concepts/markdown-first-write';
+      const content = pageContent(
+        'Markdown First Write',
+        'Markdown-first compiled truth is written to disk.',
+        '- 2026-04-25 | Markdown-first write evidence.',
+      );
+
+      try {
+        const result = await put.handler(ctx, {
+          slug,
+          content,
+          repo: repoPath,
+          session_id: 'put-page-markdown-first-write-session',
+          source_refs: ['Source: markdown-first write test'],
+        }) as any;
+
+        const filePath = join(repoPath, 'concepts', 'markdown-first-write.md');
+        expect(result).toMatchObject({ slug, status: 'created_or_updated' });
+        expect(existsSync(filePath)).toBe(true);
+        expect(readFileSync(filePath, 'utf-8')).toBe(content);
+
+        const page = await ctx.engine.getPage(slug);
+        expect(page?.compiled_truth).toContain('Markdown-first compiled truth is written to disk.');
+        const manifest = await ctx.engine.getNoteManifestEntry('workspace:default', slug);
+        expect(manifest?.path).toBe('concepts/markdown-first-write.md');
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('put_page rejects when the markdown repo file changed independently from the DB page', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-conflict-'));
+      const slug = 'concepts/markdown-file-conflict';
+      const initial = pageContent(
+        'Markdown File Conflict',
+        'Initial compiled truth.',
+        '- 2026-04-25 | Initial evidence.',
+      );
+      const independentMarkdownEdit = pageContent(
+        'Markdown File Conflict',
+        'User edited the markdown file outside MBrain.',
+        '- 2026-04-25 | Independent markdown edit evidence.',
+      );
+      const agentUpdate = pageContent(
+        'Markdown File Conflict',
+        'Agent update should not overwrite the independent markdown edit.',
+        '- 2026-04-25 | Agent overwrite attempt evidence.',
+      );
+
+      try {
+        await put.handler(ctx, {
+          slug,
+          content: initial,
+          repo: repoPath,
+          session_id: 'put-page-markdown-file-conflict-seed',
+        });
+        const before = await ctx.engine.getPage(slug);
+        expect(before?.content_hash).toBeTruthy();
+
+        const filePath = join(repoPath, 'concepts', 'markdown-file-conflict.md');
+        writeFileSync(filePath, independentMarkdownEdit);
+
+        let error: unknown;
+        try {
+          await put.handler(ctx, {
+            slug,
+            content: agentUpdate,
+            repo: repoPath,
+            session_id: 'put-page-markdown-file-conflict-session',
+            source_refs: ['Source: markdown conflict test'],
+          });
+        } catch (caught) {
+          error = caught;
+        }
+
+        expect(error).toBeInstanceOf(OperationError);
+        expect((error as OperationError).code).toBe('write_conflict');
+        expect((error as Error).message).toContain('markdown file changed');
+        expect(readFileSync(filePath, 'utf-8')).toBe(independentMarkdownEdit);
+        const after = await ctx.engine.getPage(slug);
+        expect(after?.content_hash).toBe(before?.content_hash);
+        expect(after?.compiled_truth).toBe(before?.compiled_truth);
+        expect(after?.compiled_truth).not.toContain('Agent update should not overwrite');
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('put_page uses the configured markdown repo path when repo is omitted', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-configured-repo-'));
+      const slug = 'concepts/configured-markdown-repo';
+      const content = pageContent(
+        'Configured Markdown Repo',
+        'Configured markdown repo path should receive the page file.',
+        '- 2026-04-25 | Configured markdown repo evidence.',
+      );
+
+      try {
+        await ctx.engine.setConfig('markdown.repo_path', repoPath);
+        await put.handler(ctx, {
+          slug,
+          content,
+          session_id: 'put-page-configured-markdown-repo-session',
+          source_refs: ['Source: configured markdown repo test'],
+        });
+
+        expect(readFileSync(join(repoPath, 'concepts', 'configured-markdown-repo.md'), 'utf-8')).toBe(content);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('put_page rejects markdown targets whose parent path escapes through a symlink', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-symlink-repo-'));
+      const outsidePath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-symlink-outside-'));
+
+      try {
+        symlinkSync(outsidePath, join(repoPath, 'concepts'), 'dir');
+
+        await expect(put.handler(ctx, {
+          slug: 'concepts/symlink-escape',
+          content: pageContent(
+            'Symlink Escape',
+            'This write must not leave the configured markdown repo.',
+            '- 2026-04-25 | Symlink escape attempt.',
+          ),
+          repo: repoPath,
+          session_id: 'put-page-symlink-escape-session',
+          source_refs: ['Source: symlink escape test'],
+        })).rejects.toThrow(/escapes repo|symlink/i);
+
+        expect(existsSync(join(outsidePath, 'symlink-escape.md'))).toBe(false);
+        expect(await ctx.engine.getPage('concepts/symlink-escape')).toBeNull();
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+        rmSync(outsidePath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('oversized markdown-first put_page leaves the existing file and DB projection unchanged', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-oversized-repo-'));
+      const slug = 'concepts/oversized-markdown-first';
+      const initial = pageContent(
+        'Oversized Markdown First',
+        'Original compiled truth.',
+        '- 2026-04-25 | Initial evidence.',
+      );
+
+      try {
+        await put.handler(ctx, {
+          slug,
+          content: initial,
+          repo: repoPath,
+          session_id: 'put-page-oversized-markdown-first-seed',
+        });
+        const filePath = join(repoPath, 'concepts', 'oversized-markdown-first.md');
+        const before = await ctx.engine.getPage(slug);
+        expect(before?.content_hash).toBeTruthy();
+
+        const result = await put.handler(ctx, {
+          slug,
+          content: `${'x'.repeat(5_000_001)} ${DEFAULT_PAGE_SOURCE}`,
+          repo: repoPath,
+          session_id: 'put-page-oversized-markdown-first-session',
+          source_refs: ['Source: oversized markdown-first test'],
+        }) as any;
+
+        expect(result).toMatchObject({
+          slug,
+          status: 'skipped',
+          chunks: 0,
+        });
+        expect(result.error).toContain('Content too large');
+        expect(readFileSync(filePath, 'utf-8')).toBe(initial);
+        const after = await ctx.engine.getPage(slug);
+        expect(after?.content_hash).toBe(before?.content_hash);
+        expect(after?.compiled_truth).toBe(before?.compiled_truth);
+
+        const events = await ctx.engine.listMemoryMutationEvents({
+          session_id: 'put-page-oversized-markdown-first-session',
+        });
+        expect(events).toHaveLength(1);
+        expect(events[0].result).toBe('failed');
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('markdown-first put_page restores the file when applied ledger recording fails', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-ledger-rollback-repo-'));
+      const slug = 'concepts/markdown-ledger-rollback';
+      const initial = pageContent(
+        'Markdown Ledger Rollback',
+        'Original compiled truth.',
+        '- 2026-04-25 | Initial evidence.',
+      );
+      const update = pageContent(
+        'Markdown Ledger Rollback',
+        'This update should roll back when ledger recording fails.',
+        '- 2026-04-25 | Ledger failure attempted update.',
+      );
+
+      try {
+        await put.handler(ctx, {
+          slug,
+          content: initial,
+          repo: repoPath,
+          session_id: 'put-page-markdown-ledger-rollback-seed',
+        });
+        const before = await ctx.engine.getPage(slug);
+        expect(before?.content_hash).toBeTruthy();
+        const filePath = join(repoPath, 'concepts', 'markdown-ledger-rollback.md');
+        expect(readFileSync(filePath, 'utf-8')).toBe(initial);
+
+        const originalCreateMemoryMutationEvent = ctx.engine.createMemoryMutationEvent.bind(ctx.engine);
+        ctx.engine.createMemoryMutationEvent = async (input) => {
+          if (input.session_id === 'put-page-markdown-ledger-rollback-session') {
+            throw new Error('ledger write failed');
+          }
+          return originalCreateMemoryMutationEvent(input);
+        };
+
+        await expect(put.handler(ctx, {
+          slug,
+          content: update,
+          repo: repoPath,
+          expected_content_hash: before?.content_hash,
+          session_id: 'put-page-markdown-ledger-rollback-session',
+          source_refs: ['Source: markdown ledger rollback test'],
+        })).rejects.toThrow(/ledger write failed/);
+
+        expect(readFileSync(filePath, 'utf-8')).toBe(initial);
+        const after = await ctx.engine.getPage(slug);
+        expect(after?.content_hash).toBe(before?.content_hash);
+        expect(after?.compiled_truth).toBe(before?.compiled_truth);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('markdown-first put_page does not rewrite the file when content is unchanged', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-unchanged-repo-'));
+      const slug = 'concepts/unchanged-markdown-first';
+      const content = pageContent(
+        'Unchanged Markdown First',
+        'The file content is already current.',
+        '- 2026-04-25 | Initial unchanged markdown-first evidence.',
+      );
+
+      try {
+        await put.handler(ctx, {
+          slug,
+          content,
+          repo: repoPath,
+          session_id: 'put-page-unchanged-markdown-first-seed',
+        });
+
+        const filePath = join(repoPath, 'concepts', 'unchanged-markdown-first.md');
+        const oldDate = new Date('2026-01-01T00:00:00.000Z');
+        utimesSync(filePath, oldDate, oldDate);
+        const beforeMtime = statSync(filePath).mtimeMs;
+
+        const result = await put.handler(ctx, {
+          slug,
+          content,
+          repo: repoPath,
+          session_id: 'put-page-unchanged-markdown-first-session',
+          source_refs: ['Source: unchanged markdown-first optimization test'],
+        }) as any;
+
+        expect(result).toMatchObject({
+          slug,
+          status: 'skipped',
+          chunks: 0,
+        });
+        expect(readFileSync(filePath, 'utf-8')).toBe(content);
+        expect(statSync(filePath).mtimeMs).toBe(beforeMtime);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
     });
   });
 

@@ -4,12 +4,13 @@
  */
 
 import { randomUUID } from 'crypto';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { basename, dirname, join, relative, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import type { MBrainConfig } from './config.ts';
-import { importFromContent } from './import-file.ts';
+import { importFromContent, importFromFile, MAX_MARKDOWN_IMPORT_BYTES } from './import-file.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
+import { slugifyPath } from './sync.ts';
 import { findSlugQualityIssues } from './slug-quality.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
@@ -83,7 +84,7 @@ import type {
   RetrievalTraceWriteOutcome,
   ScopeGatePolicy,
 } from './types.ts';
-import { validateSlug } from './utils.ts';
+import { importContentHash, validateSlug } from './utils.ts';
 
 // --- MCP server instructions ---
 //
@@ -1505,6 +1506,200 @@ function putPageExpectedContentHash(value: unknown): string | undefined {
   return expected.toLowerCase();
 }
 
+async function resolvePutPageMarkdownRepoPath(engine: BrainEngine, value: unknown): Promise<string | null> {
+  const explicit = optionalPutPageString('repo', value);
+  const repoPath = explicit
+    ?? await engine.getConfig('markdown.repo_path')
+    ?? await engine.getConfig('sync.repo_path');
+  return repoPath ?? null;
+}
+
+interface PutPageMarkdownTarget {
+  repoPath: string;
+  relativePath: string;
+  filePath: string;
+}
+
+interface PutPageMarkdownSnapshot {
+  existed: boolean;
+  content: string | null;
+  isSymlink: boolean;
+}
+
+function putPageMarkdownTarget(repoPath: string, slug: string): PutPageMarkdownTarget {
+  const requestedRepoRoot = resolve(repoPath);
+  if (!existsSync(requestedRepoRoot) || !statSync(requestedRepoRoot).isDirectory()) {
+    throw new OperationError(
+      'invalid_params',
+      `put_page markdown repo does not exist or is not a directory: ${repoPath}`,
+    );
+  }
+
+  const repoRoot = realpathSync(requestedRepoRoot);
+  const relativePath = `${validateSlug(slug)}.md`;
+  const filePath = resolve(repoRoot, relativePath);
+  const relativeToRoot = relative(repoRoot, filePath);
+  if (relativeToRoot.startsWith('..') || relativeToRoot === '' || resolve(repoRoot, relativeToRoot) !== filePath) {
+    throw new OperationError('invalid_params', `put_page markdown path escapes repo for slug: ${slug}`);
+  }
+
+  const target = { repoPath: repoRoot, relativePath, filePath };
+  assertPutPageMarkdownParentIsSafe(target);
+  return target;
+}
+
+function hashMarkdownPageContent(slug: string, content: string, relativePath?: string): string {
+  return importContentHash(parseMarkdown(content, relativePath ?? `${slug}.md`));
+}
+
+function assertPutPageMarkdownContentMatchesTarget(content: string, target: PutPageMarkdownTarget): void {
+  const parsed = parseMarkdown(content, target.relativePath);
+  const expectedSlug = slugifyPath(target.relativePath);
+  let canonicalParsedSlug: string;
+  try {
+    canonicalParsedSlug = slugifyPath(validateSlug(parsed.slug));
+  } catch {
+    canonicalParsedSlug = parsed.slug;
+  }
+
+  if (canonicalParsedSlug !== expectedSlug) {
+    throw new OperationError(
+      'invalid_params',
+      `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expectedSlug}" (from ${target.relativePath}). Remove the frontmatter "slug:" line or move the file.`,
+    );
+  }
+}
+
+function assertPutPageMarkdownParentIsSafe(target: PutPageMarkdownTarget): void {
+  const directory = dirname(target.relativePath);
+  if (directory === '.' || directory === '') return;
+
+  let currentPath = target.repoPath;
+  for (const part of directory.split('/')) {
+    if (!part) continue;
+    currentPath = join(currentPath, part);
+    if (!existsSync(currentPath)) continue;
+
+    const stat = lstatSync(currentPath);
+    if (stat.isSymbolicLink()) {
+      throw new OperationError(
+        'invalid_params',
+        `put_page markdown path escapes repo through a symlink: ${relative(target.repoPath, currentPath)}`,
+      );
+    }
+    if (!stat.isDirectory()) {
+      throw new OperationError(
+        'invalid_params',
+        `put_page markdown parent is not a directory: ${relative(target.repoPath, currentPath)}`,
+      );
+    }
+
+    const realParent = realpathSync(currentPath);
+    const relativeToRoot = relative(target.repoPath, realParent);
+    if (relativeToRoot.startsWith('..') || resolve(target.repoPath, relativeToRoot) !== realParent) {
+      throw new OperationError('invalid_params', `put_page markdown path escapes repo: ${target.relativePath}`);
+    }
+  }
+}
+
+function readMarkdownTargetSnapshot(target: PutPageMarkdownTarget): PutPageMarkdownSnapshot {
+  if (!existsSync(target.filePath)) {
+    return { existed: false, content: null, isSymlink: false };
+  }
+  return {
+    existed: true,
+    content: readFileSync(target.filePath, 'utf-8'),
+    isSymlink: lstatSync(target.filePath).isSymbolicLink(),
+  };
+}
+
+function atomicWriteMarkdownTarget(target: PutPageMarkdownTarget, content: string): void {
+  const directory = dirname(target.filePath);
+  assertPutPageMarkdownParentIsSafe(target);
+  mkdirSync(directory, { recursive: true });
+  assertPutPageMarkdownParentIsSafe(target);
+  const tempPath = join(directory, `.${basename(target.filePath)}.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(tempPath, content, 'utf-8');
+    renameSync(tempPath, target.filePath);
+  } catch (error) {
+    try {
+      rmSync(tempPath, { force: true });
+    } catch {
+      // Best-effort cleanup; preserve the original write failure.
+    }
+    throw error;
+  }
+}
+
+function restoreMarkdownTargetSnapshot(target: PutPageMarkdownTarget, snapshot: PutPageMarkdownSnapshot): void {
+  if (snapshot.existed) {
+    atomicWriteMarkdownTarget(target, snapshot.content ?? '');
+    return;
+  }
+  rmSync(target.filePath, { force: true });
+}
+
+function hashMarkdownTargetSnapshot(target: PutPageMarkdownTarget, snapshot: PutPageMarkdownSnapshot): string | null {
+  if (!snapshot.existed || snapshot.content === null) return null;
+  return hashMarkdownPageContent(
+    target.relativePath.replace(/\.md$/i, ''),
+    snapshot.content,
+    target.relativePath,
+  );
+}
+
+function shouldWriteMarkdownTarget(snapshot: PutPageMarkdownSnapshot, content: string): boolean {
+  return !snapshot.existed || snapshot.isSymlink || snapshot.content !== content;
+}
+
+function putPageMarkdownPreflightError(content: string): string | null {
+  const byteLength = Buffer.byteLength(content, 'utf-8');
+  if (byteLength <= MAX_MARKDOWN_IMPORT_BYTES) return null;
+  return `Content too large (${byteLength} bytes, max ${MAX_MARKDOWN_IMPORT_BYTES}).`;
+}
+
+function putPageMarkdownConflict(input: {
+  slug: string;
+  existingPageHash: string | null;
+  expectedContentHash?: string;
+  markdownContentHash: string | null;
+}): {
+  expectedContentHash: string | null;
+  currentContentHash: string | null;
+  conflictInfo: Record<string, unknown>;
+  message: string;
+} | null {
+  if (input.markdownContentHash === null) return null;
+
+  if (input.existingPageHash === null) {
+    return {
+      expectedContentHash: input.expectedContentHash ?? null,
+      currentContentHash: input.markdownContentHash,
+      conflictInfo: {
+        reason: 'markdown_file_without_db_page',
+        markdown_content_hash: input.markdownContentHash,
+      },
+      message: `markdown file already exists for ${input.slug}`,
+    };
+  }
+
+  if (input.markdownContentHash !== input.existingPageHash) {
+    return {
+      expectedContentHash: input.expectedContentHash ?? input.existingPageHash,
+      currentContentHash: input.markdownContentHash,
+      conflictInfo: {
+        reason: 'markdown_file_changed',
+        db_content_hash: input.existingPageHash,
+        markdown_content_hash: input.markdownContentHash,
+      },
+      message: `markdown file changed since the DB page was indexed: ${input.slug}`,
+    };
+  }
+
+  return null;
+}
+
 function putPageSourceRefs(value: unknown): string[] {
   let parsed: string[] | undefined;
   if (value === undefined) {
@@ -1627,7 +1822,7 @@ async function recordPutPageConflict(
   audit: PutPageAuditContext,
   input: {
     slug: string;
-    expectedContentHash: string;
+    expectedContentHash: string | null;
     currentContentHash: string | null;
     conflictInfo: Record<string, unknown>;
   },
@@ -1676,6 +1871,21 @@ function putPageOperationResult(result: { slug: string; status: string; chunks: 
   };
 }
 
+type PutPageImportResult = Awaited<ReturnType<typeof importFromContent>>;
+type PutPageTransactionOutcome =
+  | { kind: 'result'; result: PutPageImportResult }
+  | {
+      kind: 'conflict';
+      audit: PutPageAuditContext;
+      conflict: {
+        slug: string;
+        expectedContentHash: string | null;
+        currentContentHash: string | null;
+        conflictInfo: Record<string, unknown>;
+      };
+      error: OperationError;
+    };
+
 const put_page: Operation = {
   name: 'put_page',
   description: 'Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Rejects generic, numeric-only, or globally bucketed documentation slugs. Chunks, embeds, and reconciles tags.',
@@ -1683,6 +1893,7 @@ const put_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
     expected_content_hash: { type: 'string', description: 'Optional optimistic write precondition. Existing page content_hash must match before writing.' },
+    repo: { type: 'string', description: 'Optional markdown repo root for markdown-first local/offline writes. Defaults to configured markdown.repo_path or sync.repo_path.' },
     memory_session_id: { type: 'string', description: 'Optional memory session id used for write authorization. Requires realm_id.' },
     session_id: { type: 'string', description: 'Optional audit session id. Defaults to put_page:direct.' },
     realm_id: { type: 'string', description: 'Optional audit realm id. Defaults to work.' },
@@ -1697,6 +1908,13 @@ const put_page: Operation = {
     const content = putPageContent(p.content);
     assertWritableSlugQuality(slug);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
+    const markdownRepoPath = await resolvePutPageMarkdownRepoPath(ctx.engine, p.repo);
+    const markdownTarget = markdownRepoPath ? putPageMarkdownTarget(markdownRepoPath, slug) : null;
+    if (markdownTarget) {
+      assertPutPageMarkdownContentMatchesTarget(content, markdownTarget);
+    }
+    let markdownWriteSnapshot: PutPageMarkdownSnapshot | null = null;
+    let markdownFileWritten = false;
     const memorySessionId = optionalPutPageString('memory_session_id', p.memory_session_id) ?? null;
     const authorizationRealmId = memorySessionId ? (optionalPutPageString('realm_id', p.realm_id) ?? null) : null;
     const authorizationScopeId = memorySessionId
@@ -1711,119 +1929,175 @@ const put_page: Operation = {
           expectedContentHash: putPageExpectedContentHash(p.expected_content_hash),
         };
       })();
-    const outcome = await ctx.engine.transaction(async (tx) => {
-      if (memorySessionId) {
-        await assertPutPageMemoryWriteAllowed(tx, {
-          memory_session_id: memorySessionId,
-          realm_id: authorizationRealmId,
-          scope_id: authorizationScopeId,
-        });
-        assertPutPageSourceAttribution(slug, content);
-      }
-      const audit = prevalidatedPutPage ? prevalidatedPutPage.audit : putPageAuditContext(p);
-      const expectedContentHash = prevalidatedPutPage
-        ? prevalidatedPutPage.expectedContentHash
-        : putPageExpectedContentHash(p.expected_content_hash);
-      const existing = expectedContentHash !== undefined
-        ? await tx.getPageForUpdate(slug)
-        : await tx.getPage(slug);
-      const previousHash = existing?.content_hash ?? null;
-
-      if (expectedContentHash !== undefined && !existing) {
-        return {
-          kind: 'conflict' as const,
-          audit,
-          conflict: {
-            slug,
-            expectedContentHash,
-            currentContentHash: null,
-            conflictInfo: {
-              reason: 'missing_page',
-              expected_content_hash: expectedContentHash,
-            },
-          },
-          error: new OperationError('write_conflict', `Page not found for expected content hash: ${slug}`),
-        };
-      }
-
-      if (expectedContentHash !== undefined && previousHash !== expectedContentHash) {
-        return {
-          kind: 'conflict' as const,
-          audit,
-          conflict: {
-            slug,
-            expectedContentHash,
-            currentContentHash: previousHash,
-            conflictInfo: {
-              reason: 'content_hash_mismatch',
-              expected_content_hash: expectedContentHash,
-              current_content_hash: previousHash,
-            },
-          },
-          error: new OperationError('write_conflict', `content hash mismatch for ${slug}`),
-        };
-      }
-
-      const result = await importFromContent(tx, slug, content);
-      if (result.status === 'imported') {
-        const finalPage = await tx.getPage(slug);
-        if (!finalPage?.content_hash) {
-          throw new OperationError('storage_error', `put_page import did not produce a final content hash for ${slug}`);
+    let outcome: PutPageTransactionOutcome;
+    try {
+      outcome = await ctx.engine.transaction(async (tx) => {
+        if (memorySessionId) {
+          await assertPutPageMemoryWriteAllowed(tx, {
+            memory_session_id: memorySessionId,
+            realm_id: authorizationRealmId,
+            scope_id: authorizationScopeId,
+          });
+          assertPutPageSourceAttribution(slug, content);
         }
-        await recordMemoryMutationEvent(tx, {
-          ...audit,
-          operation: 'put_page',
-          target_kind: 'page',
-          target_id: slug,
-          expected_target_snapshot_hash: expectedContentHash ?? previousHash,
-          current_target_snapshot_hash: finalPage.content_hash,
-          result: 'applied',
-          conflict_info: null,
-          dry_run: false,
-        });
-      } else if (result.error) {
-        await recordMemoryMutationEvent(tx, {
-          ...audit,
-          operation: 'put_page',
-          target_kind: 'page',
-          target_id: slug,
-          expected_target_snapshot_hash: expectedContentHash ?? previousHash,
-          current_target_snapshot_hash: previousHash,
-          result: 'failed',
-          conflict_info: null,
-          dry_run: false,
-          metadata: {
-            ...(audit.metadata ?? {}),
-            import_status: result.status,
-            error: result.error,
-          },
-        });
-      } else {
-        const finalPage = await tx.getPage(slug);
-        const currentHash = finalPage?.content_hash ?? previousHash;
-        if (!currentHash) {
-          throw new OperationError('storage_error', `put_page import skipped without a current content hash for ${slug}`);
-        }
-        await recordMemoryMutationEvent(tx, {
-          ...audit,
-          operation: 'put_page',
-          target_kind: 'page',
-          target_id: slug,
-          expected_target_snapshot_hash: expectedContentHash ?? previousHash,
-          current_target_snapshot_hash: currentHash,
-          result: 'applied',
-          conflict_info: null,
-          dry_run: false,
-          metadata: {
-            ...(audit.metadata ?? {}),
-            import_status: result.status,
-            skipped_reason: 'content_hash_unchanged',
-          },
-        });
-      }
+        const audit = prevalidatedPutPage ? prevalidatedPutPage.audit : putPageAuditContext(p);
+        const expectedContentHash = prevalidatedPutPage
+          ? prevalidatedPutPage.expectedContentHash
+          : putPageExpectedContentHash(p.expected_content_hash);
+        const existing = expectedContentHash !== undefined
+          ? await tx.getPageForUpdate(slug)
+          : await tx.getPage(slug);
+        const previousHash = existing?.content_hash ?? null;
+        const markdownSnapshot = markdownTarget ? readMarkdownTargetSnapshot(markdownTarget) : null;
+        const markdownContentHash = markdownTarget && markdownSnapshot
+          ? hashMarkdownTargetSnapshot(markdownTarget, markdownSnapshot)
+          : null;
 
-      return { kind: 'result' as const, result };
-    });
+        if (expectedContentHash !== undefined && !existing) {
+          return {
+            kind: 'conflict' as const,
+            audit,
+            conflict: {
+              slug,
+              expectedContentHash,
+              currentContentHash: null,
+              conflictInfo: {
+                reason: 'missing_page',
+                expected_content_hash: expectedContentHash,
+              },
+            },
+            error: new OperationError('write_conflict', `Page not found for expected content hash: ${slug}`),
+          };
+        }
+
+        if (expectedContentHash !== undefined && previousHash !== expectedContentHash) {
+          return {
+            kind: 'conflict' as const,
+            audit,
+            conflict: {
+              slug,
+              expectedContentHash,
+              currentContentHash: previousHash,
+              conflictInfo: {
+                reason: 'content_hash_mismatch',
+                expected_content_hash: expectedContentHash,
+                current_content_hash: previousHash,
+              },
+            },
+            error: new OperationError('write_conflict', `content hash mismatch for ${slug}`),
+          };
+        }
+
+        if (markdownTarget) {
+          const markdownConflict = putPageMarkdownConflict({
+            slug,
+            existingPageHash: previousHash,
+            expectedContentHash,
+            markdownContentHash,
+          });
+          if (markdownConflict) {
+            return {
+              kind: 'conflict' as const,
+              audit,
+              conflict: {
+                slug,
+                expectedContentHash: markdownConflict.expectedContentHash,
+                currentContentHash: markdownConflict.currentContentHash,
+                conflictInfo: markdownConflict.conflictInfo,
+              },
+              error: new OperationError(
+                'write_conflict',
+                markdownConflict.message,
+                'Run mbrain import for the markdown repo or merge the file changes before retrying put_page.',
+              ),
+            };
+          }
+        }
+
+        const result = await (markdownTarget
+          ? (() => {
+            const preflightError = putPageMarkdownPreflightError(content);
+            if (preflightError) {
+              return {
+                slug,
+                status: 'skipped' as const,
+                chunks: 0,
+                error: preflightError,
+              };
+            }
+            markdownWriteSnapshot = markdownSnapshot ?? readMarkdownTargetSnapshot(markdownTarget);
+            if (shouldWriteMarkdownTarget(markdownWriteSnapshot, content)) {
+              atomicWriteMarkdownTarget(markdownTarget, content);
+              markdownFileWritten = true;
+            }
+            return importFromFile(tx, markdownTarget.filePath, markdownTarget.relativePath);
+          })()
+          : importFromContent(tx, slug, content));
+        if (result.status === 'imported') {
+          const finalPage = await tx.getPage(slug);
+          if (!finalPage?.content_hash) {
+            throw new OperationError('storage_error', `put_page import did not produce a final content hash for ${slug}`);
+          }
+          await recordMemoryMutationEvent(tx, {
+            ...audit,
+            operation: 'put_page',
+            target_kind: 'page',
+            target_id: slug,
+            expected_target_snapshot_hash: expectedContentHash ?? previousHash,
+            current_target_snapshot_hash: finalPage.content_hash,
+            result: 'applied',
+            conflict_info: null,
+            dry_run: false,
+          });
+        } else if (result.error) {
+          await recordMemoryMutationEvent(tx, {
+            ...audit,
+            operation: 'put_page',
+            target_kind: 'page',
+            target_id: slug,
+            expected_target_snapshot_hash: expectedContentHash ?? previousHash,
+            current_target_snapshot_hash: previousHash,
+            result: 'failed',
+            conflict_info: null,
+            dry_run: false,
+            metadata: {
+              ...(audit.metadata ?? {}),
+              import_status: result.status,
+              error: result.error,
+            },
+          });
+        } else {
+          const finalPage = await tx.getPage(slug);
+          const currentHash = finalPage?.content_hash ?? previousHash;
+          if (!currentHash) {
+            throw new OperationError('storage_error', `put_page import skipped without a current content hash for ${slug}`);
+          }
+          await recordMemoryMutationEvent(tx, {
+            ...audit,
+            operation: 'put_page',
+            target_kind: 'page',
+            target_id: slug,
+            expected_target_snapshot_hash: expectedContentHash ?? previousHash,
+            current_target_snapshot_hash: currentHash,
+            result: 'applied',
+            conflict_info: null,
+            dry_run: false,
+            metadata: {
+              ...(audit.metadata ?? {}),
+              import_status: result.status,
+              skipped_reason: 'content_hash_unchanged',
+            },
+          });
+        }
+
+        return { kind: 'result' as const, result };
+      });
+    } catch (error) {
+      if (markdownTarget && markdownFileWritten && markdownWriteSnapshot) {
+        restoreMarkdownTargetSnapshot(markdownTarget, markdownWriteSnapshot);
+      }
+      throw error;
+    }
 
     if (outcome.kind === 'conflict') {
       await recordPutPageConflict(ctx.engine, outcome.audit, outcome.conflict);

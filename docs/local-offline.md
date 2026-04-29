@@ -175,13 +175,20 @@ Expected result:
 
 ## 5. Local embeddings are optional
 
-By default, local/offline mode is **write-first**:
+By default, local/offline mode is **text-first and embed-later**:
 
 - `mbrain import` does **not** block on embeddings
 - `mbrain sync` does **not** block on embeddings
 - `mbrain embed` is the explicit backfill path
 
 That means you can start with keyword search immediately, then turn on semantic backfill later.
+
+Markdown remains the durable source of truth. After `mbrain import <repo>` or
+`mbrain sync --repo <repo>`, MBrain remembers that markdown repo path. Future
+`put_page` writes from the CLI or MCP server write the corresponding
+`<slug>.md` file first, then re-import that file into SQLite. If the markdown
+file changed independently after the last import, `put_page` rejects the write
+with a conflict instead of overwriting the user's file.
 
 ### Option A: run without embeddings at first
 
@@ -483,6 +490,9 @@ mbrain search "Pedro"
 
 # keep the index current as files change
 mbrain sync --repo ~/git/brain
+
+# agent/MCP page writes now write back into ~/git/brain before indexing
+mbrain put concepts/example < page.md
 
 # optional semantic backfill later
 mbrain embed --stale

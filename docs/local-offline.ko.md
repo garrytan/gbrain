@@ -171,13 +171,20 @@ mbrain health
 
 ## 5. local/offline 모드에서 임베딩은 선택사항입니다
 
-현재 MBrain은 local/offline 모드에서 **write-first** 전략으로 동작합니다.
+현재 MBrain은 local/offline 모드에서 **text-first, embed-later** 전략으로 동작합니다.
 
 즉:
 
 - `mbrain import`가 임베딩 때문에 막히지 않고
 - `mbrain sync`도 임베딩 때문에 막히지 않으며
 - `mbrain embed`가 명시적인 backfill 경로가 됩니다
+
+마크다운은 계속 durable source of truth입니다. `mbrain import <repo>` 또는
+`mbrain sync --repo <repo>`를 실행하면 MBrain이 해당 마크다운 저장소 경로를
+기억합니다. 이후 CLI나 MCP 서버의 `put_page` 쓰기는 먼저 대응하는
+`<slug>.md` 파일을 저장한 뒤, 그 파일을 SQLite로 다시 import합니다. 마지막
+import 이후 사용자가 마크다운 파일을 직접 수정했다면, `put_page`는 사용자
+파일을 덮어쓰지 않고 conflict를 반환합니다.
 
 ### 옵션 A: 임베딩 없이 먼저 사용
 
@@ -464,6 +471,9 @@ mbrain search "Pedro"
 
 # 저장소 변경 반영
 mbrain sync --repo ~/git/brain
+
+# agent/MCP page write는 이제 ~/git/brain에 먼저 write-back
+mbrain put concepts/example < page.md
 
 # 임베딩 backfill
 mbrain embed --stale
