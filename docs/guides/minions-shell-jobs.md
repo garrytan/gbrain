@@ -73,6 +73,37 @@ On one terminal, start a persistent worker:
 GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work
 ```
 
+For a systemd user service, `EnvironmentFile=` files must use systemd syntax:
+
+```ini
+GBRAIN_ALLOW_SHELL_JOBS=1
+GBRAIN_WORKER_CONCURRENCY=1
+GBRAIN_INGEST_ENRICH=1
+GBRAIN_EMBEDDINGS_OPENAI_API_KEY=...
+```
+
+Do not put shell syntax such as `export KEY=value`, quotes intended for a shell,
+or command substitutions in files referenced by `EnvironmentFile=`. systemd
+will ignore malformed assignments and may include the ignored line in journal
+diagnostics. Keep embeddings keys available to the worker only for embedding
+phases; GBrain strips OpenAI and embedding API-key variables from the Codex
+OAuth inference child process.
+
+After editing a user service env file, prefer redacted verification:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart gbrain-worker.service
+systemctl --user is-active gbrain-worker.service
+journalctl --user -u gbrain-worker.service --since -5m --no-pager \
+  | grep -E 'Ignoring environment assignment|invalid environment' \
+  | wc -l
+```
+
+Do not paste raw journal lines into handoffs when they may contain ignored env
+assignments or secret values. Record counts/status and inspect full logs only as
+a last resort.
+
 Rewrite crontab to submit shell jobs (no `--follow`):
 
 ```cron

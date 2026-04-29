@@ -37,6 +37,17 @@ The command returns immediately with `job_id`, `status_command`, and
 gbrain jobs get <job-id>
 ```
 
+For runtime health, prefer bounded status surfaces before raw logs:
+
+```bash
+gbrain doctor --fast --json --codex-oauth-smoke
+gbrain jobs smoke --gbrain-ingest --json --timeout-ms 60000
+```
+
+The doctor smoke is opt-in and verifies the non-interactive Codex OAuth route
+for `gpt-5.4-mini`. The jobs smoke proves enqueue, worker terminal status, and
+enrichment status separately.
+
 ## Rules
 
 - Do not use GBrain MCP.
@@ -48,6 +59,9 @@ gbrain jobs get <job-id>
 - Write/enrichment inference is handled by workers through Codex OAuth with
   `gpt-5.4-mini`.
 - OpenAI API-key material is for embeddings only.
+- If source/import succeeds and enrichment fails, the job must still reach a
+  terminal result with `enrichment.status` such as `timeout`,
+  `configuration_error`, `failed`, or `skipped`.
 - When the target source has `sources.local_path`, the worker writes the source
   markdown into that filesystem brain before importing the same content into
   PostgreSQL/searchable state.
@@ -59,6 +73,8 @@ gbrain jobs get <job-id>
   hook capture.
 - Do not pass secret material as ingest content.
 - Do not re-run embedding work for unchanged chunks.
+- Do not paste raw service logs, raw prompts, or environment output into docs or
+  brain pages while debugging. Use redacted job/doctor/smoke output first.
 
 ## Output Format
 

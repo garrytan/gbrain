@@ -19,6 +19,11 @@ export interface Check {
   issues?: Array<{ type: string; skill: string; action: string; fix?: any }>;
 }
 
+function parseDoctorFlag(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  return idx >= 0 && idx + 1 < args.length ? args[idx + 1] : undefined;
+}
+
 /**
  * Run doctor with filesystem-first, DB-second architecture.
  * Filesystem checks (resolver, conformance) run without engine.
@@ -272,6 +277,34 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   } catch {
     // Best-effort. A broken JSONL should not stop doctor.
+  }
+
+  if (args.includes('--codex-oauth-smoke')) {
+    const { GBRAIN_INGEST_INFERENCE_MODEL, runCodexOAuthInference, CodexOAuthInferenceError } =
+      await import('../core/ingest/codex-oauth.ts');
+    const timeoutRaw = parseDoctorFlag(args, '--codex-oauth-timeout-ms');
+    const timeoutMs = timeoutRaw !== undefined ? Math.max(1, parseInt(timeoutRaw, 10) || 1) : 15_000;
+    try {
+      const result = await runCodexOAuthInference({
+        prompt: 'Reply with exactly: gbrain-codex-oauth-ok',
+        model: GBRAIN_INGEST_INFERENCE_MODEL,
+        timeoutMs,
+      });
+      checks.push({
+        name: 'codex_oauth_enrichment',
+        status: result.text.trim() ? 'ok' : 'fail',
+        message: `Codex OAuth enrichment available via model=${GBRAIN_INGEST_INFERENCE_MODEL}; inference env strips OpenAI API-key variables`,
+      });
+    } catch (e) {
+      const code = e instanceof CodexOAuthInferenceError ? e.code : 'runner_failed';
+      checks.push({
+        name: 'codex_oauth_enrichment',
+        status: 'fail',
+        message:
+          `Codex OAuth enrichment unavailable for model=${GBRAIN_INGEST_INFERENCE_MODEL} ` +
+          `(code=${code}). Ensure the gateway user can run non-interactive codex exec through OAuth; no API-key fallback was used.`,
+      });
+    }
   }
 
   // --- DB checks (skip if --fast or no engine) ---

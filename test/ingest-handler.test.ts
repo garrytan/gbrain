@@ -7,6 +7,7 @@ import { MinionWorker } from '../src/core/minions/worker.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import { normalizeIngestInput } from '../src/core/ingest/input.ts';
 import { makeIngestHandler } from '../src/core/ingest/handler.ts';
+import { CodexOAuthInferenceError } from '../src/core/ingest/codex-oauth.ts';
 
 let engine: PGLiteEngine;
 
@@ -33,8 +34,8 @@ function fakeJob(data: Record<string, unknown>, progress: unknown[] = []) {
     name: 'gbrain-ingest',
     data,
     attempts_made: 0,
-    signal: { aborted: false },
-    shutdownSignal: { aborted: false },
+    signal: new AbortController().signal,
+    shutdownSignal: new AbortController().signal,
     updateProgress: async (p: unknown) => { progress.push(p); },
     updateTokens: async () => {},
     log: async () => {},
@@ -126,6 +127,95 @@ describe('gbrain-ingest worker handler', () => {
     expect((second as any).status).toBe('no-op');
     const pages = await engine.listPages({ type: 'source' });
     expect(pages).toHaveLength(1);
+  });
+
+  test('enrichment timeout after import completes as terminal partial success', async () => {
+    const input = await normalizeIngestInput({
+      text: 'Remember this: bounded enrichment failures keep the source durable.',
+      title: 'Bounded enrichment',
+    });
+    const progress: unknown[] = [];
+    const result = await makeIngestHandler({
+      engine,
+      enableEnrichment: true,
+      inferenceRunner: async () => {
+        throw new CodexOAuthInferenceError('Codex OAuth inference timed out', 'timeout');
+      },
+    })(fakeJob(input as unknown as Record<string, unknown>, progress));
+
+    expect((result as any).status).toBe('succeeded');
+    expect((result as any).enrichment).toEqual(expect.objectContaining({
+      status: 'timeout',
+      error_code: 'timeout',
+    }));
+    expect(JSON.stringify((result as any).enrichment)).not.toContain('bounded enrichment failures');
+    expect(progress).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'enrich' }),
+      expect.objectContaining({ phase: 'done', enrichment_status: 'timeout' }),
+    ]));
+  });
+
+  test('configuration failure after import completes without leaking raw errors', async () => {
+    const input = await normalizeIngestInput({
+      text: 'Remember this: OAuth configuration failures should be inspectable.',
+      title: 'OAuth unavailable',
+    });
+    const result = await makeIngestHandler({
+      engine,
+      enableEnrichment: true,
+      inferenceRunner: async () => {
+        throw new CodexOAuthInferenceError('Codex OAuth route is unavailable or requires interactive authentication', 'oauth_unavailable');
+      },
+    })(fakeJob(input as unknown as Record<string, unknown>));
+
+    expect((result as any).status).toBe('succeeded');
+    expect((result as any).enrichment).toEqual(expect.objectContaining({
+      status: 'configuration_error',
+      error_code: 'oauth_unavailable',
+    }));
+  });
+
+  test('no-op imports skip enrichment runner', async () => {
+    const input = await normalizeIngestInput({ text: 'Duplicate enrichment skip.' });
+    const handler = makeIngestHandler({ engine });
+    await handler(fakeJob(input as unknown as Record<string, unknown>));
+    let invoked = false;
+
+    const second = await makeIngestHandler({
+      engine,
+      enableEnrichment: true,
+      inferenceRunner: async () => {
+        invoked = true;
+        return { route: 'codex-oauth', text: '{}' };
+      },
+    })(fakeJob(input as unknown as Record<string, unknown>));
+
+    expect((second as any).status).toBe('no-op');
+    expect((second as any).enrichment).toEqual({ status: 'skipped', reason: 'source_noop' });
+    expect(invoked).toBe(false);
+  });
+
+  test('worker abort during enrichment is propagated instead of completed', async () => {
+    const input = await normalizeIngestInput({
+      text: 'Remember this: worker aborts must not become successful jobs.',
+      title: 'Abort propagation',
+    });
+    const controller = new AbortController();
+    const job = fakeJob(input as unknown as Record<string, unknown>);
+    job.signal = controller.signal;
+
+    const promise = makeIngestHandler({
+      engine,
+      enableEnrichment: true,
+      inferenceRunner: async (req) => {
+        expect((req as any).signal).toBe(controller.signal);
+        controller.abort(new Error('timeout'));
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return { route: 'codex-oauth', text: '{}' };
+      },
+    })(job);
+
+    await expect(promise).rejects.toMatchObject({ code: 'aborted' });
   });
 
   test('URL input fetches through an SSRF-safe resolver before importing', async () => {

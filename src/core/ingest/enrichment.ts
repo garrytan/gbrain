@@ -2,9 +2,11 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
 import { slugifySegment } from '../sync.ts';
 import {
+  CodexOAuthInferenceError,
   GBRAIN_INGEST_INFERENCE_MODEL,
   runCodexOAuthInference,
   type CodexOAuthRunner,
+  type CodexOAuthInferenceErrorCode,
 } from './codex-oauth.ts';
 
 type EntityKind = 'people' | 'organizations' | 'concepts';
@@ -45,12 +47,30 @@ export interface EnrichAcceptedSourceRequest {
   sourceText: string;
   runner?: CodexOAuthRunner;
   allowPartial?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface EnrichAcceptedSourceResult {
   status: 'enriched' | 'skipped';
   updated_slugs: string[];
   skipped: number;
+}
+
+export type BoundedEnrichmentStatus =
+  | 'succeeded'
+  | 'skipped'
+  | 'failed'
+  | 'timeout'
+  | 'configuration_error';
+
+export interface BoundedEnrichmentResult {
+  status: BoundedEnrichmentStatus;
+  error_code?: CodexOAuthInferenceErrorCode | 'enrichment_failed';
+  message?: string;
+  reason?: 'disabled' | 'source_noop';
+  updated_slugs?: string[];
+  skipped?: number;
+  raw_status?: EnrichAcceptedSourceResult['status'];
 }
 
 function asArray(value: unknown): unknown[] {
@@ -184,6 +204,7 @@ export async function enrichAcceptedSource(req: EnrichAcceptedSourceRequest): Pr
     prompt: enrichmentPrompt(req.sourceTitle, req.sourceText),
     model: GBRAIN_INGEST_INFERENCE_MODEL,
     runner: req.runner,
+    signal: req.signal,
   });
   const extracted = validateEnrichmentOutput(response.text, { allowPartial: req.allowPartial });
   const nameToSlug = new Map<string, string>();
@@ -218,5 +239,43 @@ export async function enrichAcceptedSource(req: EnrichAcceptedSourceRequest): Pr
     status: updated.size > 0 || extracted.timeline.length > 0 ? 'enriched' : 'skipped',
     updated_slugs: Array.from(updated),
     skipped,
+  };
+}
+
+export function summarizeSuccessfulEnrichment(result: EnrichAcceptedSourceResult): BoundedEnrichmentResult {
+  return {
+    status: result.status === 'enriched' ? 'succeeded' : 'skipped',
+    raw_status: result.status,
+    updated_slugs: result.updated_slugs,
+    skipped: result.skipped,
+  };
+}
+
+export function summarizeFailedEnrichment(error: unknown): BoundedEnrichmentResult {
+  if (error instanceof CodexOAuthInferenceError) {
+    if (error.code === 'timeout') {
+      return {
+        status: 'timeout',
+        error_code: error.code,
+        message: 'Codex OAuth enrichment timed out',
+      };
+    }
+    if (error.code === 'configuration_error' || error.code === 'oauth_unavailable' || error.code === 'model_rejected') {
+      return {
+        status: 'configuration_error',
+        error_code: error.code,
+        message: 'Codex OAuth enrichment is unavailable or misconfigured',
+      };
+    }
+    return {
+      status: 'failed',
+      error_code: error.code,
+      message: 'Codex OAuth enrichment failed',
+    };
+  }
+  return {
+    status: 'failed',
+    error_code: 'enrichment_failed',
+    message: 'GBrain enrichment failed',
   };
 }

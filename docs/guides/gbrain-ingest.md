@@ -48,6 +48,47 @@ Progress phases include `resolve`, `wiki_write`, `db_import`, optional
 `enrich`, and `done`. Repeated identical submissions coalesce by idempotency key
 or complete as `no-op`.
 
+Enrichment has its own status inside the terminal job result:
+
+- `succeeded`: Codex OAuth returned cited JSON and the worker wrote extracted
+  people, organizations, concepts, relationships, or timeline entries.
+- `skipped`: enrichment was disabled, the source import was a no-op, or the
+  cited extraction produced no durable candidates.
+- `timeout`: the Codex OAuth enrichment attempt exceeded its bounded runtime.
+- `configuration_error`: the Codex OAuth route is unavailable, unauthenticated,
+  interactive, missing, or rejected before usable output.
+- `failed`: enrichment returned unusable output or hit another bounded failure.
+
+If source write/import succeeds but enrichment fails, the job still reaches a
+terminal result and records the enrichment status. Worker cancellation,
+lock-loss, or job timeout still aborts the child Codex process and lets Minions
+mark the job according to queue policy.
+
+## Runtime Health Checks
+
+Use the cheap checks first:
+
+```bash
+gbrain doctor --fast --json --codex-oauth-smoke
+gbrain jobs smoke --gbrain-ingest --json --timeout-ms 60000
+gbrain jobs get <job-id>
+```
+
+`doctor --codex-oauth-smoke` is opt-in because it runs a tiny live
+`codex exec` probe. It verifies the explicit `gpt-5.4-mini` Codex OAuth route
+and reports a sanitized failure if the gateway user needs OAuth setup. It does
+not fall back to an OpenAI API key.
+
+`jobs smoke --gbrain-ingest` enqueues a tiny signal-mode canary, starts a worker
+for the smoke queue, waits only for a bounded terminal state, and prints the job
+id plus `gbrain jobs get <job-id>` for follow-up. It reports enqueue, worker
+terminal status, and enrichment status separately so operators can tell queue
+health from OAuth health.
+
+Avoid pasting raw prompts, raw service logs, or secret-bearing environment
+output into docs, brain pages, or handoffs. If service logs are needed, use
+redacted counts and status summaries before inspecting full journal lines.
+
 ## Hook Canaries
 
 Unit tests prove the hook emits/enqueues distilled payloads. They do not prove a

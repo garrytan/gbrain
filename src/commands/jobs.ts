@@ -7,6 +7,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
+import { normalizeIngestInput } from '../core/ingest/input.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -111,6 +112,73 @@ function formatJobDetail(job: MinionJob): string {
   return lines.join('\n');
 }
 
+export interface GbrainIngestSmokeOpts {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  queue?: string;
+}
+
+export interface GbrainIngestSmokeResult {
+  job_id: number;
+  queued: true;
+  status_command: string;
+  queue: string;
+  terminal_status: MinionJobStatus | 'timeout';
+  timed_out: boolean;
+  enrichment_status?: string;
+}
+
+export async function runGbrainIngestSmoke(
+  engine: BrainEngine,
+  opts: GbrainIngestSmokeOpts = {},
+): Promise<GbrainIngestSmokeResult> {
+  const queueName = opts.queue ?? 'smoke';
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const pollIntervalMs = opts.pollIntervalMs ?? 250;
+  const queue = new MinionQueue(engine);
+  await queue.ensureSchema();
+  const input = await normalizeIngestInput({
+    text: `GBrain ingest smoke canary ${Date.now()}`,
+    title: 'GBrain ingest smoke canary',
+    mode: 'signal',
+    metadata: {
+      submitted_by: 'gbrain-jobs-smoke',
+      foreground_policy: 'enqueue-only',
+    },
+  });
+  const job = await queue.add('gbrain-ingest', input as unknown as Record<string, unknown>, {
+    queue: queueName,
+    max_attempts: 1,
+    timeout_ms: timeoutMs,
+    idempotency_key: `gbrain-ingest-smoke:${input.content_hash}`,
+  }, { allowProtectedSubmit: true });
+
+  const worker = new MinionWorker(engine, { queue: queueName, pollInterval: pollIntervalMs });
+  await registerBuiltinHandlers(worker, engine);
+  const workerPromise = worker.start();
+
+  let final: MinionJob | null = null;
+  for (let elapsed = 0; elapsed < timeoutMs; elapsed += pollIntervalMs) {
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+    final = await queue.getJob(job.id);
+    if (final && ['completed', 'failed', 'dead', 'cancelled'].includes(final.status)) break;
+  }
+  worker.stop();
+  await workerPromise;
+
+  const result = final?.result as Record<string, unknown> | null | undefined;
+  const enrichment = result?.enrichment as Record<string, unknown> | undefined;
+  return {
+    job_id: job.id,
+    queued: true,
+    status_command: `gbrain jobs get ${job.id}`,
+    queue: queueName,
+    terminal_status: final?.status ?? 'timeout',
+    timed_out: !final || !['completed', 'failed', 'dead', 'cancelled'].includes(final.status),
+    enrichment_status: typeof enrichment?.status === 'string' ? enrichment.status : undefined,
+  };
+}
+
 export async function runJobs(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
 
@@ -131,7 +199,8 @@ USAGE
   gbrain jobs prune [--older-than 30d]
   gbrain jobs delete <id>
   gbrain jobs stats
-  gbrain jobs smoke
+  gbrain jobs smoke [--sigkill-rescue] [--wedge-rescue]
+  gbrain jobs smoke --gbrain-ingest [--timeout-ms N] [--json]
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
   gbrain jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
@@ -485,6 +554,29 @@ HANDLER TYPES (built in)
       catch (e) {
         console.error(`SMOKE FAIL — schema init: ${e instanceof Error ? e.message : String(e)}`);
         process.exit(1);
+      }
+
+      if (hasFlag(args, '--gbrain-ingest')) {
+        const jsonMode = hasFlag(args, '--json');
+        const timeoutRaw = parseFlag(args, '--timeout-ms');
+        const timeoutMs = timeoutRaw !== undefined ? parseInt(timeoutRaw, 10) : 60_000;
+        const result = await runGbrainIngestSmoke(engine, {
+          timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 60_000,
+          queue: parseFlag(args, '--queue') ?? 'smoke',
+        });
+        if (jsonMode) {
+          console.log(JSON.stringify(result));
+        } else if (result.timed_out) {
+          console.log(`SMOKE WAIT — gbrain-ingest job #${result.job_id} did not reach terminal state before timeout`);
+          console.log(`Status: ${result.status_command}`);
+        } else {
+          console.log(
+            `SMOKE PASS — gbrain-ingest job #${result.job_id} terminal=${result.terminal_status}` +
+            `${result.enrichment_status ? ` enrichment=${result.enrichment_status}` : ''}`
+          );
+          console.log(`Status: ${result.status_command}`);
+        }
+        process.exit(result.terminal_status === 'completed' ? 0 : 1);
       }
 
       const sigkillRescue = hasFlag(args, '--sigkill-rescue');

@@ -10,7 +10,8 @@ import { slugifySegment } from '../sync.ts';
 import { writeBrainPage } from '../brain-writer.ts';
 import type { NormalizedIngestInput } from './types.ts';
 import { INGEST_PAYLOAD_VERSION } from './types.ts';
-import type { CodexOAuthRunner } from './codex-oauth.ts';
+import { CodexOAuthInferenceError, type CodexOAuthRunner } from './codex-oauth.ts';
+import type { BoundedEnrichmentResult } from './enrichment.ts';
 
 export interface FetchedText {
   finalUrl: string;
@@ -239,21 +240,31 @@ export function makeIngestHandler(deps: IngestHandlerDeps): MinionHandler {
     });
 
     const status = imported.status === 'skipped' ? 'no-op' : 'succeeded';
-    let enrichment: unknown = 'disabled';
-    if (deps.enableEnrichment && status !== 'no-op') {
+    let enrichment: BoundedEnrichmentResult = { status: 'skipped', reason: 'disabled' };
+    if (status === 'no-op') {
+      enrichment = { status: 'skipped', reason: 'source_noop' };
+    } else if (deps.enableEnrichment) {
       await job.updateProgress({ phase: 'enrich', slug });
-      const { enrichAcceptedSource } = await import('./enrichment.ts');
-      enrichment = await enrichAcceptedSource({
-        engine: deps.engine,
-        sourceSlug: slug,
-        sourceTitle: title,
-        sourceText: resolved.text,
-        runner: deps.inferenceRunner,
-        allowPartial: true,
-      });
+      const { enrichAcceptedSource, summarizeFailedEnrichment, summarizeSuccessfulEnrichment } = await import('./enrichment.ts');
+      try {
+        enrichment = summarizeSuccessfulEnrichment(await enrichAcceptedSource({
+          engine: deps.engine,
+          sourceSlug: slug,
+          sourceTitle: title,
+          sourceText: resolved.text,
+          runner: deps.inferenceRunner,
+          allowPartial: true,
+          signal: job.signal,
+        }));
+      } catch (e) {
+        if (job.signal.aborted || (e instanceof CodexOAuthInferenceError && e.code === 'aborted')) {
+          throw e;
+        }
+        enrichment = summarizeFailedEnrichment(e);
+      }
     }
 
-    await job.updateProgress({ phase: 'done', status, slug });
+    await job.updateProgress({ phase: 'done', status, slug, enrichment_status: enrichment.status });
     return {
       status,
       updated_slugs: [slug],

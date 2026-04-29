@@ -24,14 +24,14 @@ const CLI = join(__dirname, '..', 'src', 'cli.ts');
 let tmp: string;
 let origHome: string | undefined;
 
-function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
+function run(args: string[], envOverrides: Record<string, string | undefined> = {}): { exitCode: number; stdout: string; stderr: string } {
   // Strip DATABASE_URL so doctor runs filesystem-only for these tests.
   // Half-migrated checks run in the filesystem section; no DB needed.
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  const env = { ...process.env, HOME: tmp, ...envOverrides } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {
-    const stdout = execFileSync('bun', ['run', CLI, ...args], {
+    const stdout = execFileSync(process.execPath, ['run', CLI, ...args], {
       env: env as Record<string, string>,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -242,5 +242,23 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain('MINIONS HALF-INSTALLED');
     expect(result.stdout).toContain('gbrain apply-migrations --yes');
+  });
+
+  test('codex oauth smoke reports missing CLI without leaking API key env values', () => {
+    const result = run(['doctor', '--fast', '--json', '--codex-oauth-smoke'], {
+      PATH: '/tmp/gbrain-no-codex-path',
+      OPENAI_API_KEY: 'sk-test-do-not-print',
+      GBRAIN_EMBEDDINGS_OPENAI_API_KEY: 'sk-test-embed-do-not-print',
+    });
+
+    expect(result.exitCode).toBe(1);
+    const payload = JSON.parse(result.stdout);
+    const check = payload.checks.find((c: any) => c.name === 'codex_oauth_enrichment');
+    expect(check).toEqual(expect.objectContaining({
+      status: 'fail',
+    }));
+    expect(check.message).toContain('gpt-5.4-mini');
+    expect(result.stdout).not.toContain('sk-test-do-not-print');
+    expect(result.stdout).not.toContain('sk-test-embed-do-not-print');
   });
 });
