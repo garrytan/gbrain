@@ -63,8 +63,17 @@ describe('parseGlobalFlags', () => {
     expect(r.rest).toEqual(['search', 'ADU permit']);
   });
 
-  test('keeps command-local --json after the command', () => {
-    const r = parseGlobalFlags(['check-resolvable', '--skills-dir', './skills', '--json']);
+  test('strips --json after a shared-operation command and sets json=true', () => {
+    const r = parseGlobalFlags(['search', 'ADU permit', '--json']);
+    expect(r.cliOpts.json).toBe(true);
+    expect(r.rest).toEqual(['search', 'ADU permit']);
+  });
+
+  test('keeps command-local --json after an allowlisted CLI-only command', () => {
+    const r = parseGlobalFlags(
+      ['check-resolvable', '--skills-dir', './skills', '--json'],
+      { jsonPassThroughCommands: new Set(['check-resolvable']) },
+    );
     expect(r.cliOpts.json).toBe(false);
     expect(r.rest).toEqual(['check-resolvable', '--skills-dir', './skills', '--json']);
   });

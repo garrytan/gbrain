@@ -26,7 +26,7 @@ async function main() {
   // BEFORE command dispatch, so `gbrain --progress-json doctor` works.
   // The stripped argv is what the command sees.
   const rawArgs = process.argv.slice(2);
-  const { cliOpts, rest: args } = parseGlobalFlags(rawArgs);
+  const { cliOpts, rest: args } = parseGlobalFlags(rawArgs, { jsonPassThroughCommands: CLI_ONLY });
   setCliOptions(cliOpts);
 
   let command = args[0];
