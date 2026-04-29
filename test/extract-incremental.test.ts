@@ -7,28 +7,39 @@
  *
  * All tests use PGLite/in-memory — no DB connection required.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runExtractCore } from '../src/commands/extract.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 
+// One PGLite per file (beforeAll), wipe data per test (beforeEach).
+// PGLite cold-start dominates wall-time; sharing the engine across all tests
+// in this file cuts ~22s × 8 tests = ~3 min on CI.
 let engine: PGLiteEngine;
 let tempDir: string;
 
-beforeEach(async () => {
+beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({ engine: 'pglite' });
   await engine.initSchema();
+});
+
+afterAll(async () => {
+  await engine.disconnect();
+});
+
+beforeEach(async () => {
+  await resetPgliteState(engine);
   tempDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-test-'));
   mkdirSync(join(tempDir, 'people'), { recursive: true });
   mkdirSync(join(tempDir, 'companies'), { recursive: true });
 });
 
-afterEach(async () => {
-  await engine.disconnect();
+afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 

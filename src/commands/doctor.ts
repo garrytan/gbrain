@@ -249,25 +249,29 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // Without this doctor check, users see "sync blocked" and have no
   // surface showing which files to fix.
   try {
-    const { unacknowledgedSyncFailures, loadSyncFailures } = await import('../core/sync.ts');
+    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode } = await import('../core/sync.ts');
     const unacked = unacknowledgedSyncFailures();
     const all = loadSyncFailures();
     if (unacked.length > 0) {
+      const codeSummary = summarizeFailuresByCode(unacked);
+      const codeBreakdown = codeSummary.map(s => `${s.code}=${s.count}`).join(', ');
       const preview = unacked.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
       checks.push({
         name: 'sync_failures',
         status: 'warn',
         message:
-          `${unacked.length} unacknowledged sync failure(s). ${preview}` +
+          `${unacked.length} unacknowledged sync failure(s) [${codeBreakdown}]. ${preview}` +
           `${unacked.length > 3 ? `, and ${unacked.length - 3} more` : ''}. ` +
           `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge.`,
       });
     } else if (all.length > 0) {
-      // Acknowledged-only: informational, not a warning.
+      // Acknowledged-only: show code breakdown for visibility.
+      const ackedSummary = summarizeFailuresByCode(all);
+      const ackedBreakdown = ackedSummary.map(s => `${s.code}=${s.count}`).join(', ');
       checks.push({
         name: 'sync_failures',
         status: 'ok',
-        message: `${all.length} historical sync failure(s), all acknowledged.`,
+        message: `${all.length} historical sync failure(s), all acknowledged [${ackedBreakdown}].`,
       });
     }
   } catch {

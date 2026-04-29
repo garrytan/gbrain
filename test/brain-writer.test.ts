@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -9,6 +9,7 @@ import {
   BrainWriterError,
 } from '../src/core/brain-writer.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 const fence = '---';
 
@@ -115,15 +116,24 @@ describe('scanBrainSources (PGLite)', () => {
   let tmp: string;
   let engine: PGLiteEngine;
 
-  beforeEach(async () => {
-    tmp = mkdtempSync(join(tmpdir(), 'brain-writer-scan-'));
+  // One PGLite per file — beforeEach wipes data only. PGLite cold-start is
+  // ~20s on CI; sharing one engine across 6 tests in this block saves ~2 min.
+  beforeAll(async () => {
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+    tmp = mkdtempSync(join(tmpdir(), 'brain-writer-scan-'));
+  });
+
+  afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
   });
 

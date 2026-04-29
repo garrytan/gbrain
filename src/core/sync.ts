@@ -307,11 +307,93 @@ import { createHash as _createHash } from 'crypto';
 export interface SyncFailure {
   path: string;
   error: string;
+  /** Structured error code extracted from the error message. */
+  code?: string;
   commit: string;
   line?: number;
   ts: string;
   acknowledged?: boolean;
   acknowledged_at?: string;
+}
+
+/**
+ * Best-effort extraction of a structured error code from a sync failure
+ * message. Matches known ParseValidationCode patterns (SLUG_MISMATCH,
+ * YAML_PARSE, etc.) and common DB / timeout errors. Returns 'UNKNOWN'
+ * when no pattern matches.
+ *
+ * Order matters: DB-layer errors are checked BEFORE YAML-layer ones so
+ * Postgres `duplicate key value violates unique constraint` doesn't get
+ * mislabeled as a YAML duplicate-key. Frontmatter patterns key off the
+ * canonical messages emitted by `collectValidationErrors()` in markdown.ts.
+ */
+export function classifyErrorCode(errorMsg: string): string {
+  // SLUG_MISMATCH: thrown by importFromFile() at src/core/import-file.ts:374.
+  if (/slug.*does not match|SLUG_MISMATCH/i.test(errorMsg)) return 'SLUG_MISMATCH';
+
+  // DB-layer errors come BEFORE the YAML duplicate-key check. Postgres unique-
+  // constraint violations contain "duplicate key" but are not a YAML problem.
+  if (/duplicate key value violates unique constraint|DB_DUPLICATE_KEY/i.test(errorMsg)) {
+    return 'DB_DUPLICATE_KEY';
+  }
+  if (/canceling statement due to statement timeout|STATEMENT_TIMEOUT/i.test(errorMsg)) {
+    return 'STATEMENT_TIMEOUT';
+  }
+
+  // YAML / frontmatter patterns. These match either the canonical message
+  // strings in src/core/markdown.ts (collectValidationErrors) or the literal
+  // ParseValidationCode token, so they fire whether the caller stores the
+  // message or just the code.
+  if (/YAML parse failed|YAML_PARSE/i.test(errorMsg)) return 'YAML_PARSE';
+  if (/YAMLException|duplicated mapping key|YAML_DUPLICATE_KEY/i.test(errorMsg)) {
+    return 'YAML_DUPLICATE_KEY';
+  }
+  if (/File is empty or whitespace-only|Frontmatter must start with ---|MISSING_OPEN/i.test(errorMsg)) {
+    return 'MISSING_OPEN';
+  }
+  if (/No closing --- delimiter|Heading at line .* found inside frontmatter|MISSING_CLOSE/i.test(errorMsg)) {
+    return 'MISSING_CLOSE';
+  }
+  if (/Frontmatter block is empty|EMPTY_FRONTMATTER/i.test(errorMsg)) return 'EMPTY_FRONTMATTER';
+  if (/Content contains null bytes|NULL_BYTES|null byte/i.test(errorMsg)) return 'NULL_BYTES';
+  if (/Nested double quotes|NESTED_QUOTES/i.test(errorMsg)) return 'NESTED_QUOTES';
+
+  // Generic fallbacks.
+  if (/invalid UTF-?8|INVALID_UTF8/i.test(errorMsg)) return 'INVALID_UTF8';
+  return 'UNKNOWN';
+}
+
+/** Group failures by error code and return a sorted summary. */
+export function summarizeFailuresByCode(
+  failures: Array<{ error: string; code?: string }>,
+): Array<{ code: string; count: number }> {
+  const counts: Record<string, number> = {};
+  for (const f of failures) {
+    const code = f.code ?? classifyErrorCode(f.error);
+    counts[code] = (counts[code] ?? 0) + 1;
+  }
+  return Object.entries(counts)
+    .sort(([, a], [, b]) => b - a)
+    .map(([code, count]) => ({ code, count }));
+}
+
+/**
+ * Format a code-grouped summary as a human-readable multi-line string for
+ * stderr / doctor output. Accepts either raw failures (which are summarized
+ * internally) or an already-summarized `{code, count}[]` shape (the return
+ * value of `summarizeFailuresByCode` or `AcknowledgeResult.summary`).
+ * Returns an empty string when the input is empty.
+ */
+export function formatCodeBreakdown(
+  input: Array<{ error: string; code?: string }> | Array<{ code: string; count: number }>,
+): string {
+  // Distinguish by shape: summary entries have a numeric `count`. Empty array
+  // returns '' from either branch — both paths produce a 0-length join.
+  const summary =
+    input.length > 0 && typeof (input[0] as { count?: unknown }).count === 'number'
+      ? (input as Array<{ code: string; count: number }>)
+      : summarizeFailuresByCode(input as Array<{ error: string; code?: string }>);
+  return summary.map(s => `  ${s.code}: ${s.count}`).join('\n');
 }
 
 function _failuresDir(): string {
@@ -370,6 +452,7 @@ export function recordSyncFailures(
     const entry: SyncFailure = {
       path: f.path,
       error: f.error,
+      code: classifyErrorCode(f.error),
       commit,
       line: f.line,
       ts: now,
@@ -380,28 +463,42 @@ export function recordSyncFailures(
   }
 }
 
+export interface AcknowledgeResult {
+  count: number;
+  summary: Array<{ code: string; count: number }>;
+}
+
 /**
  * Mark all unacknowledged failures as acknowledged. Used by
- * `gbrain sync --skip-failed`. Returns the number newly acknowledged.
+ * `gbrain sync --skip-failed`. Returns count and a structured summary
+ * grouped by error code so the operator can see *why* files were skipped.
  *
  * We do not delete — acknowledged entries stay as historical record so
  * doctor can still show them under a "previously skipped" bucket.
  */
-export function acknowledgeSyncFailures(): number {
+export function acknowledgeSyncFailures(): AcknowledgeResult {
   const entries = loadSyncFailures();
-  if (entries.length === 0) return 0;
+  if (entries.length === 0) return { count: 0, summary: [] };
   const now = new Date().toISOString();
   let changed = 0;
+  const newlyAcked: SyncFailure[] = [];
   const updated = entries.map(e => {
     if (e.acknowledged) return e;
     changed++;
-    return { ...e, acknowledged: true, acknowledged_at: now };
+    // Backfill code for entries that predate the code field.
+    const code = e.code ?? classifyErrorCode(e.error);
+    const acked = { ...e, code, acknowledged: true, acknowledged_at: now };
+    newlyAcked.push(acked);
+    return acked;
   });
-  if (changed === 0) return 0;
+  if (changed === 0) return { count: 0, summary: [] };
   _mkdirSync(_failuresDir(), { recursive: true });
   const fd = require('fs').writeFileSync;
   fd(syncFailuresPath(), updated.map(e => JSON.stringify(e)).join('\n') + '\n');
-  return changed;
+  return {
+    count: changed,
+    summary: summarizeFailuresByCode(newlyAcked),
+  };
 }
 
 /** Return only unacknowledged failures. */

@@ -1,10 +1,11 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { buildSyncManifest, isSyncable, pathToSlug } from '../src/core/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 describe('buildSyncManifest', () => {
   test('parses A/M/D entries from single commit', () => {
@@ -204,11 +205,20 @@ describe('performSync dry-run never writes', () => {
   let engine: PGLiteEngine;
   let repoPath: string;
 
-  beforeEach(async () => {
+  // One PGLite per file — beforeEach wipes data only. Each test still gets a
+  // fresh git repo via mkdtempSync, but skips the ~20s PGLite cold-start.
+  beforeAll(async () => {
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
+  });
 
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
     repoPath = mkdtempSync(join(tmpdir(), 'gbrain-sync-dryrun-'));
     execSync('git init', { cwd: repoPath, stdio: 'pipe' });
     execSync('git config user.email "test@test.com"', { cwd: repoPath, stdio: 'pipe' });
@@ -233,8 +243,7 @@ describe('performSync dry-run never writes', () => {
     execSync('git add -A && git commit -m "initial"', { cwd: repoPath, stdio: 'pipe' });
   });
 
-  afterEach(async () => {
-    await engine.disconnect();
+  afterEach(() => {
     if (repoPath) rmSync(repoPath, { recursive: true, force: true });
   });
 

@@ -65,6 +65,74 @@ If you've been resisting frontmatter ceremony — same. Throw bare markdown into
 #### Tests
 - `test/frontmatter-inference.test.ts` (new, 35 cases) — date extraction (5), title extraction from filenames (5) and headings (4 incl. 20-line boundary), inference for every directory rule (13 incl. Apple Notes subfolder tagging), serialization with YAML-safe quoting (4), `applyInference` integration (2), rule ordering and catch-all coverage (2).
 
+## [0.22.9] - 2026-04-29
+
+**Sync failures now tell you why, not just how many.**
+**`gbrain sync --skip-failed` and `gbrain doctor` group failures by error code, so 2,685 silent SLUG_MISMATCH files don't hide behind a single count.**
+
+Before this release, when sync hit per-file parse errors the only signal was a number:
+
+```
+Sync blocked: 2688 file(s) failed to parse. Fix the YAML frontmatter...
+```
+
+That count is useless when you're staring at 2,688 files and don't know what's wrong. On a real 81K-page brain, 2,685 of those turned out to be `SLUG_MISMATCH` from a posterous import — a single root cause hiding behind a giant number. It took manual `cat ~/.gbrain/sync-failures.jsonl | jq` to figure that out.
+
+After:
+
+```
+Sync blocked: 2688 file(s) failed to parse:
+  SLUG_MISMATCH: 2685
+  YAML_DUPLICATE_KEY: 3
+
+Fix the YAML frontmatter in the files above and re-run, or use 'gbrain sync --skip-failed' to acknowledge and move on.
+
+# gbrain sync --skip-failed
+Acknowledged 2688 failure(s) and advancing past them:
+  SLUG_MISMATCH: 2685
+  YAML_DUPLICATE_KEY: 3
+```
+
+`gbrain doctor` shows the same breakdown for unacknowledged AND historical entries:
+
+```
+[WARN] sync_failures: 2688 unacknowledged sync failure(s) [SLUG_MISMATCH=2685, YAML_DUPLICATE_KEY=3].
+[OK]   sync_failures: 500544 historical sync failure(s), all acknowledged [SLUG_MISMATCH=2685, ...].
+```
+
+The classifier knows the canonical messages from `collectValidationErrors()` in `src/core/markdown.ts` (8 frontmatter codes), Postgres unique-constraint violations (`DB_DUPLICATE_KEY`), statement-timeout errors (`STATEMENT_TIMEOUT`), invalid UTF-8, and YAML duplicates. DB-layer errors check before YAML-layer ones — so a Postgres `duplicate key value violates unique constraint` no longer mislabels as a YAML duplicate. Unrecognized errors fall through to `UNKNOWN`.
+
+### What this means for you
+
+If `gbrain sync` blocks with parse failures, the breakdown tells you what to fix first. SLUG_MISMATCH is one fix-pattern (frontmatter says one slug, path says another); YAML_PARSE is a different one (malformed YAML); STATEMENT_TIMEOUT means a DB timeout, not a parse problem. You stop staring at counts and start fixing root causes.
+
+### For contributors
+
+`acknowledgeSyncFailures()` in `src/core/sync.ts` now returns `{count, summary}` instead of `number`. If you import this directly from `gbrain/sync`, replace `n` with `result.count` and use `result.summary` (an `Array<{code, count}>`) for the new code-grouped breakdown. The function is reachable via the package exports map; this is a deliberate, non-shimmed breaking change. There is a new `formatCodeBreakdown()` helper in the same module that accepts either raw failures or pre-summarized input — use it instead of building breakdown strings inline.
+
+### Itemized changes
+
+#### Added
+
+- `classifyErrorCode(errorMsg)` in `src/core/sync.ts` — best-effort error-code extraction from sync failure messages. Codes: `SLUG_MISMATCH`, `YAML_PARSE`, `YAML_DUPLICATE_KEY`, `MISSING_OPEN`, `MISSING_CLOSE`, `EMPTY_FRONTMATTER`, `NULL_BYTES`, `NESTED_QUOTES`, `DB_DUPLICATE_KEY`, `STATEMENT_TIMEOUT`, `INVALID_UTF8`, `UNKNOWN`.
+- `summarizeFailuresByCode(failures)` — groups failures by code and returns a sorted `Array<{code, count}>`.
+- `formatCodeBreakdown(input)` — renders a multi-line `code: count` string from either raw failures or a pre-computed summary. Single helper, two input shapes.
+- `code?: string` field on the `SyncFailure` JSONL row in `~/.gbrain/sync-failures.jsonl`. Populated at write-time so the classifier runs once per failure, not on every load.
+- `AcknowledgeResult` interface as the new return shape of `acknowledgeSyncFailures()`.
+- 15 new test cases in `test/sync-failures.test.ts`: DB-vs-YAML duplicate-key disambiguation, canonical-message coverage for all 7 frontmatter codes, `acknowledgeSyncFailures()` legacy-entry backfill branch, `formatCodeBreakdown()` dual-input shape.
+
+#### Changed
+
+- `gbrain sync` blocked-message: now lists code breakdown above the fix instructions (both incremental and full-sync paths).
+- `gbrain sync --skip-failed` ack message: now lists what was skipped, grouped by code.
+- `gbrain doctor` `sync_failures` check: warn-and-ok messages both include `[code=count, ...]` breakdown.
+- `recordSyncFailures()` now stores `code` alongside `error` so downstream readers don't re-classify.
+- `acknowledgeSyncFailures()` backfills `code` on legacy rows that predate the field — upgrade-safe for users with existing `~/.gbrain/sync-failures.jsonl`.
+- DB-layer error patterns (`DB_DUPLICATE_KEY`, `STATEMENT_TIMEOUT`) check BEFORE YAML patterns in the classifier, so Postgres errors don't get YAML-labeled.
+- Frontmatter regex patterns rewritten to match canonical messages from `collectValidationErrors()` (`File is empty...`, `No closing --- delimiter found`, `Frontmatter block is empty`) instead of aspirational code-token strings (`missing.*open`) that never appeared in practice.
+
+Closes #500. Eng-review plan: `~/.claude/plans/then-codex-synchronous-toucan.md` (codex outside-voice agreed on all 7 findings).
+
 ## [0.22.8] - 2026-04-28
 
 ## **Doctor stops timing out on Supabase. Integrity scan finishes in ~6s, multi-source brains get correct counts.**

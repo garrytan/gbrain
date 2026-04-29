@@ -1,5 +1,93 @@
 # TODOS
 
+## sync error-code classification (PR #501 follow-ups)
+
+### Plumb structured `ParseValidationCode` through `ImportResult`
+**Priority:** P2
+
+**What:** Replace the regex-on-error-message path in `src/core/sync.ts:classifyErrorCode`
+with a structured `code` field threaded through `ImportResult` from the parse layer.
+
+Three changes:
+1. `src/core/import-file.ts:362` — call `parseMarkdown(content, relativePath, { validate: true, expectedSlug })`
+   so `parsed.errors[0].code` is populated.
+2. `src/core/import-file.ts` — add `code?: string` to `ImportResult`. Promote the
+   structured code (or `'SLUG_MISMATCH'` when the existing expectedSlug check trips)
+   into the result envelope alongside `error`.
+3. `src/commands/sync.ts:488` — extend `failedFiles` shape with `code?: string`.
+   `recordSyncFailures` already accepts the field; the only thing missing is the
+   capture site populating it.
+4. `src/core/sync.ts:classifyErrorCode` — keep as a fallback for un-coded errors
+   (DB exceptions, generic catches). Primary path reads the structured code.
+
+**Why:** The repo already has `ParseValidationCode` + `ParseValidationError` in
+`src/core/markdown.ts:5-18`, and three other consumers (`src/commands/lint.ts:72`,
+`src/commands/frontmatter.ts:148`, `src/core/brain-writer.ts:314`) read structured
+errors directly. Sync is the outlier — it calls `parseMarkdown` without validation
+and reverse-engineers codes via regex. PR #501 shipped that regex out of pragmatism;
+this TODO removes ~50% of `classifyErrorCode` and eliminates a class of false-positives.
+
+**Pros:**
+- One source of truth for parse codes (the enum in `markdown.ts`).
+- Eliminates regex fragility — adding a new validation code in `markdown.ts`
+  automatically flows to sync without a new regex.
+- Closes the case where canonical messages (`File is empty...`, `No closing ---...`)
+  don't match aspirational regex patterns.
+
+**Cons:** Touches `ImportResult` interface, which ripples through `src/commands/import.ts:105`,
+`src/commands/sync.ts:498-510`, `src/core/cycle.ts`, brain-writer reconciler.
+
+**Context:** PR #501 documented this as P3 in the eng review at
+`~/.claude/plans/then-codex-synchronous-toucan.md`. Codex's outside-voice review
+agreed independently. The fix is small — ~50 lines including tests + downstream
+call sites — and it's the correct architectural endpoint.
+
+**Effort:** M (human: ~2 hr / CC: ~20 min).
+
+**Depends on / blocked by:** Nothing.
+
+### CHANGELOG migration note for `acknowledgeSyncFailures()` shape change
+**Priority:** P0 — required at /ship time
+
+**What:** When PR #501 ships, the release CHANGELOG entry MUST include this
+`### For contributors` block:
+
+```markdown
+### For contributors
+
+`acknowledgeSyncFailures()` now returns `{count, summary}` instead of `number`.
+If you import this directly from `gbrain/sync`, replace `n` with `result.count`
+and use `result.summary` for the new code-grouped breakdown.
+```
+
+**Why:** The function is exported from `src/core/sync.ts:433` and reachable via
+the package exports map. External TS consumers (gbrain-evals, host agent forks)
+that imported it got `number` and now get an object — silent type break.
+
+**Effort:** XS (human: ~1 min). Just don't forget.
+
+**Depends on / blocked by:** PR #501 ship.
+
+### Concurrent-safe ack of `~/.gbrain/sync-failures.jsonl`
+**Priority:** P3
+
+**What:** Two concurrent `gbrain sync` runs hitting `acknowledgeSyncFailures()`
+can clobber each other. The function does a whole-file `writeFileSync` rewrite
+(`src/core/sync.ts:433-455`); `recordSyncFailures()` does independent
+`appendFileSync` (`src/core/sync.ts:395-416`). Concurrent ack + append can lose rows.
+
+**Why:** Pre-existing — predates PR #501. Real risk only on autopilot setups where
+multiple sync invocations might overlap (rare today, more likely as multi-source
+sync matures).
+
+**Fix sketch:** Atomic rename pattern (write to `sync-failures.jsonl.tmp`, then
+`renameSync`) plus a file lock for the read-modify-write cycle. Or move the
+acknowledged-set to the DB.
+
+**Effort:** S (human: ~1 hr / CC: ~10 min).
+
+**Depends on / blocked by:** Nothing.
+
 ## test-infra
 
 ### Parallel-load timeout flake on v0.21 PGLite-heavy tests
