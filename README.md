@@ -77,6 +77,26 @@ bun add -g github:meghendra6/mbrain
 mbrain --version
 ```
 
+#### Local source checkout install
+
+If you are installing from a local source checkout instead of the GitHub package,
+build the standalone binary and put it on your user `PATH`:
+
+```bash
+bun install
+bun run build
+mkdir -p "$HOME/.local/bin"
+install -m 755 bin/mbrain "$HOME/.local/bin/mbrain"
+command -v mbrain
+mbrain --version
+```
+
+`bun link` runs the checkout's TypeScript source directly, so that workflow
+requires dependencies to be installed in the checkout. The standalone binary path
+above is the stable local-development install path. If `command -v mbrain` does
+not resolve to `$HOME/.local/bin/mbrain`, add `$HOME/.local/bin` to your shell
+`PATH` before continuing.
+
 ### 3. Create a local brain
 
 ```bash
@@ -497,6 +517,13 @@ For local/default verification, run:
 bun test
 bun run test:e2e:sqlite
 bunx tsc --noEmit --pretty false
+```
+
+For install validation of an already installed command, run the bounded MCP
+smoke check instead of the long lifecycle E2E test:
+
+```bash
+MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 ```
 
 The SQLite E2E suite covers:

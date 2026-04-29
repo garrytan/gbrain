@@ -117,6 +117,24 @@ mbrain --version
 
 Expected result: `mbrain` prints a version string.
 
+If you are working from a local source checkout, build and install the
+standalone binary instead of relying on a source symlink:
+
+```bash
+bun install
+bun run build
+mkdir -p "$HOME/.local/bin"
+install -m 755 bin/mbrain "$HOME/.local/bin/mbrain"
+command -v mbrain
+mbrain --version
+```
+
+`bun link` points the global command back to `src/cli.ts`, which means the
+checkout must have its dependencies installed. The compiled binary is the stable
+local checkout install path. If `command -v mbrain` does not resolve to
+`$HOME/.local/bin/mbrain`, add `$HOME/.local/bin` to your shell `PATH` before
+continuing.
+
 ### Step 3: Initialize a local brain
 
 Default path:
@@ -343,7 +361,7 @@ Then point Codex at that wrapper instead of assuming custom env support in every
 The shortest path mirrors the Codex setup:
 
 ```bash
-claude mcp add mbrain -- mbrain serve
+claude mcp add -s user mbrain -- mbrain serve
 ```
 
 What this does:
@@ -352,11 +370,18 @@ What this does:
 - `mbrain serve` reads `~/.mbrain/config.json`
 - all MCP calls hit your local SQLite brain
 
+The `-s user` flag makes the MCP server available to Claude Code user-wide. If
+you intentionally want a project-local registration, use:
+
+```bash
+claude mcp add -s local mbrain -- mbrain serve
+```
+
 Recommended workflow:
 
 1. run `mbrain init --local`
 2. run `mbrain import /path/to/brain`
-3. run `claude mcp add mbrain -- mbrain serve`
+3. run `claude mcp add -s user mbrain -- mbrain serve`
 4. start a new Claude Code session
 5. ask Claude Code to call a simple MBrain tool
 
@@ -400,6 +425,7 @@ The agent rules teach your AI client the brain-agent loop: read brain before res
 mbrain setup-agent              # auto-detect and set up all installed clients
 mbrain setup-agent --claude     # Claude Code only
 mbrain setup-agent --codex      # Codex only
+mbrain setup-agent --claude --scope local  # Claude project-local MCP registration
 mbrain setup-agent --skip-mcp   # inject rules only, skip MCP registration
 mbrain setup-agent --print      # print the rules to stdout instead of writing files
 mbrain setup-agent --json       # machine-readable output
@@ -409,8 +435,12 @@ mbrain setup-agent --json       # machine-readable output
 
 | Client | MCP registration | Rules injected into |
 |--------|-----------------|---------------------|
-| Claude Code | `claude mcp add mbrain -- mbrain serve` | `~/.claude/CLAUDE.md` |
+| Claude Code | `claude mcp add -s user mbrain -- mbrain serve` | `~/.claude/CLAUDE.md` |
 | Codex | `codex mcp add mbrain -- mbrain serve` | `~/.codex/AGENTS.md` |
+
+Claude Code registration defaults to user scope. Pass
+`mbrain setup-agent --claude --scope local` when you want MBrain registered only
+for the current Claude Code project.
 
 Rules are wrapped in `<!-- MBRAIN:RULES:START -->` / `<!-- MBRAIN:RULES:END -->` markers so existing content is never touched. Running `setup-agent` again updates the mbrain section in place.
 
@@ -459,7 +489,7 @@ Or manually:
 
 ```bash
 codex mcp add mbrain -- mbrain serve
-claude mcp add mbrain -- mbrain serve
+claude mcp add -s user mbrain -- mbrain serve
 ```
 
 After this:
@@ -531,6 +561,13 @@ Then verify MCP:
    - `search`
    - `query`
    - `get_page`
+
+For an installed-command smoke check that exercises the stdio MCP server without
+running the full lifecycle E2E test:
+
+```bash
+MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
+```
 
 If you configured embeddings:
 

@@ -384,7 +384,8 @@ USAGE
 SETUP
   init [--local|--pglite|--supabase|--url <conn>]
                                     Create brain (SQLite local, PGLite, or managed Postgres)
-  setup-agent [--claude|--codex]     Register MCP, inject rules, install Claude stop hook
+  setup-agent [--claude|--codex] [--scope user|local]
+                                    Register MCP, inject rules, install Claude stop hook
   migrate --to <supabase|pglite>     Transfer brain between engines
   upgrade                            Self-update
   check-update [--json]              Check for new versions

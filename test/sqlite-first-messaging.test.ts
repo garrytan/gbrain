@@ -37,6 +37,16 @@ describe('SQLite-first product messaging', () => {
     expect(readme).not.toContain('auto-provision Supabase via CLI');
   });
 
+  test('README documents a stable local source checkout install path', () => {
+    const readme = readRepoFile('README.md');
+
+    expect(readme).toContain('Local source checkout install');
+    expect(readme).toContain('bun install');
+    expect(readme).toContain('bun run build');
+    expect(readme).toContain('mkdir -p "$HOME/.local/bin"');
+    expect(readme).toContain('install -m 755 bin/mbrain "$HOME/.local/bin/mbrain"');
+  });
+
   test('README does not advertise shipped SQLite support as future work', () => {
     const readme = readRepoFile('README.md');
 
@@ -79,6 +89,31 @@ describe('SQLite-first product messaging', () => {
       expect(guide).toContain('local/offline');
       expect(guide).toContain('managed/Postgres');
     }
+  });
+
+  test('local offline guides make Claude MCP user scope explicit', () => {
+    const english = readRepoFile('docs/local-offline.md');
+    const korean = readRepoFile('docs/local-offline.ko.md');
+
+    for (const guide of [english, korean]) {
+      expect(guide).toContain('claude mcp add -s user mbrain -- mbrain serve');
+      expect(guide).toContain('mbrain setup-agent --claude --scope local');
+      expect(guide).toContain('mkdir -p "$HOME/.local/bin"');
+    }
+  });
+
+  test('setup skill reflects local SQLite support instead of stale Postgres-only guidance', () => {
+    const setupSkill = readRepoFile('skills/setup/SKILL.md');
+
+    expect(setupSkill).toContain('mbrain init --local');
+    expect(setupSkill).toContain('Local SQLite');
+    expect(setupSkill).toContain('Managed Postgres');
+    expect(setupSkill).toContain('mkdir -p "$HOME/.local/bin"');
+    expect(setupSkill).not.toContain('There is no `--local`, `--sqlite`, or offline mode');
+    expect(setupSkill).not.toContain('MBrain requires Postgres + pgvector');
+    expect(setupSkill).not.toContain('Every check should be OK');
+    expect(setupSkill).not.toContain('Live Sync Setup (MUST ADD)');
+    expect(setupSkill).not.toContain('pooler bug is silently skipping pages');
   });
 
   test('repository no longer ships historical RFC docs as current guidance', () => {

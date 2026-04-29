@@ -5,49 +5,98 @@ Set up MBrain from scratch. Target: working brain in under 5 minutes.
 ## Install (if not already installed)
 
 ```bash
-bun add github:meghendra6/mbrain
+bun add -g github:meghendra6/mbrain
+mbrain --version
 ```
 
-## How MBrain connects
+If you are installing from a local source checkout, use the compiled binary path:
 
-MBrain connects directly to Postgres over the wire protocol. NOT through the
-Supabase REST API. You need the **database connection string** (a `postgresql://` URI),
-not the project URL or anon key. The password is embedded in the connection string.
+```bash
+bun install
+bun run build
+mkdir -p "$HOME/.local/bin"
+install -m 755 bin/mbrain "$HOME/.local/bin/mbrain"
+command -v mbrain
+mbrain --version
+```
 
-Use the **Shared Pooler** connection string (port 6543), not the direct connection
-(port 5432). The direct hostname resolves to IPv6 only, which many environments
-can't reach. Find it: go to the project, click **Get Connected** next to the
-project URL, then **Direct Connection String** > **Session Pooler**, and copy
-the **Shared Pooler** connection string.
+Do not rely on `bun link` unless the checkout has dependencies installed; it runs
+the source `src/cli.ts` entrypoint directly. If `command -v mbrain` does not
+resolve to `$HOME/.local/bin/mbrain`, add `$HOME/.local/bin` to the shell `PATH`
+before continuing.
 
-**Do NOT ask for the Supabase anon key.** MBrain doesn't use it.
+## Runtime profiles
 
-## Why Supabase
+MBrain has three setup profiles:
 
-Supabase gives you managed Postgres + pgvector (vector search built in) for $25/mo:
-- 8GB database + 100GB storage on Pro tier
-- No server to manage, automatic backups, dashboard for debugging
-- pgvector pre-installed, just works
-- Alternative: any Postgres with pgvector extension (self-hosted, Neon, Railway, etc.)
+- **Local SQLite**: recommended default for one-person local/offline installs.
+- **PGLite**: local Postgres-like compatibility profile.
+- **Managed Postgres**: optional hosted/remote profile for pgvector scale,
+  remote MCP, and cloud file/storage workflows.
 
-## Prerequisites
+Default to Local SQLite when the user wants "local Codex/Claude memory",
+"offline", "no Supabase", or a personal brain on one machine. Use Managed
+Postgres only when the user explicitly wants hosted scale, remote access, or
+already has a Postgres connection string.
 
-- A Supabase account (Pro tier recommended, $25/mo) OR any Postgres with pgvector
-- An OpenAI API key (for semantic search embeddings, ~$4-5 for 7,500 pages)
-- A git-backed markdown knowledge base (or start fresh)
+## Local/offline prerequisites
+
+- Bun installed and on `PATH`
+- A markdown knowledge base, Obsidian vault, or starter directory
+- No required Supabase, OpenAI, Anthropic, or hosted database account
+- Optional local embedding runtime such as Ollama for semantic backfill later
+
+## Managed Postgres prerequisites
+
+- A Postgres database with pgvector, such as Supabase, Neon, Railway, or
+  self-hosted Postgres
+- A `postgresql://` database connection string, not a Supabase project URL or
+  anon key
+- Optional OpenAI API key if using hosted embedding generation
 
 ## Available init options
 
+- `mbrain init --local` -- recommended personal/offline SQLite path
+- `mbrain init --pglite` -- local PGLite profile
 - `mbrain init --supabase` -- interactive wizard (prompts for connection string)
 - `mbrain init --url <connection_string>` -- direct, no prompts
 - `mbrain init --non-interactive --url <connection_string>` -- for scripts/agents
 - `mbrain doctor --json` -- health check after init
 
-There is no `--local`, `--sqlite`, or offline mode. MBrain requires Postgres + pgvector.
+## Phase A: Local SQLite Setup (recommended default)
 
-## Phase A: Supabase Setup (recommended)
+Use this path unless the user clearly asks for hosted Postgres:
 
-Guide the user through creating a Supabase project:
+```bash
+mbrain init --local
+mbrain doctor --json
+mbrain setup-agent
+```
+
+If the user has both Codex and Claude Code, `mbrain setup-agent` detects both.
+Claude Code MCP registration defaults to user scope. For a project-local Claude
+registration, run:
+
+```bash
+mbrain setup-agent --claude --scope local
+```
+
+Manual MCP registration:
+
+```bash
+codex mcp add mbrain -- mbrain serve
+claude mcp add -s user mbrain -- mbrain serve
+```
+
+Warnings about managed/Postgres-only capabilities are expected in local/offline
+mode when the doctor output marks those surfaces as unsupported.
+
+## Phase B: Managed Postgres / Supabase Setup (optional)
+
+Use this path when the user explicitly wants hosted Postgres or remote/cloud
+workflows.
+
+For Supabase, guide the user through creating a project:
 
 1. "Go to https://supabase.com and sign up or log in."
 2. "Click 'New Project' in the top left."
@@ -68,7 +117,7 @@ Guide the user through creating a Supabase project:
 env as `SUPABASE_ACCESS_TOKEN`. mbrain doesn't store it, you need it for future
 `mbrain doctor` runs. Generate at: https://supabase.com/dashboard/account/tokens
 
-## Phase B: BYO Postgres (alternative)
+### BYO Postgres
 
 If the user already has Postgres with pgvector:
 
@@ -78,7 +127,7 @@ If the user already has Postgres with pgvector:
 
 If the connection fails with ECONNREFUSED and the URL contains `supabase.co`,
 the user probably pasted the direct connection (IPv6 only). Guide them to the
-Session pooler string instead (see Phase A step 4).
+Session pooler string instead (see Phase B step 4).
 
 ## Phase C: First Import
 
@@ -192,27 +241,38 @@ maintains itself.'"
 
 ## Phase F: Health Check
 
-Run `mbrain doctor --json` and report the results. Every check should be OK.
-If any check fails, the doctor output tells you exactly what's wrong and how to fix it.
+Run `mbrain doctor --json` and report the execution envelope plus any failures or
+warnings.
+
+For Local SQLite, unsupported managed/Postgres-only surfaces can be reported as
+unsupported capabilities without making the install unhealthy. The important
+checks are:
+
+- config exists and points at the expected local SQLite database
+- schema is initialized
+- local query/search works after import
+- MCP registration points at `mbrain serve`
+
+For Managed Postgres, also verify the database connection, schema, pgvector
+extension, and any hosted embedding configuration the user chose.
 
 ## Error Recovery
 
 **If any mbrain command fails, run `mbrain doctor --json` first.** Report the full
-output. It checks connection, pgvector, RLS, schema version, and embeddings.
+output. Interpret the output based on the active profile.
 
 | What You See | Why | Fix |
 |---|---|---|
-| Connection refused | Supabase project paused, IPv6, or wrong URL | Use Session pooler (port 6543), or supabase.com/dashboard > Restore |
-| Password authentication failed | Wrong password | Project Settings > Database > Reset password |
-| pgvector not available | Extension not enabled | Run `CREATE EXTENSION vector;` in SQL Editor |
-| OpenAI key invalid | Expired or wrong key | platform.openai.com/api-keys > Create new |
+| SQLite file missing | Local config points at a path that does not exist | Rerun `mbrain init --local` or set the intended `MBRAIN_DATABASE_PATH` |
 | No pages found | Query before import | Import files into mbrain first |
-| RLS not enabled | Security gap | Run `mbrain init` again (auto-enables RLS) |
+| `mbrain serve` works in shell but not MCP client | Client has different PATH or config env | Use the default config path or register a wrapper script that exports env |
+| Connection refused | Managed Postgres is paused, unreachable, or URL is wrong | Use a reachable connection string; for Supabase prefer Session pooler |
+| Password authentication failed | Managed Postgres password is wrong | Reset or re-copy the database password |
+| pgvector not available | Managed profile is missing vector extension | Enable pgvector in the database |
 
 ## Phase G: Auto-Update Check (if not already configured)
 
-If the user's install did NOT include setting up auto-update checks (e.g., they
-used the manual install path or an older version of the OpenClaw/Hermes paste), offer it:
+If the user's install did not include update checks, offer it:
 
 > "Would you like daily MBrain update checks? I'll let you know when there's a
 > new version worth upgrading to — including new skills and schema recommendations.
@@ -224,55 +284,46 @@ If they agree:
 
 If already configured or user declines, skip.
 
-## Phase H: Live Sync Setup (MUST ADD)
+## Phase H: Sync Setup
 
-The brain repo is the source of truth. If sync doesn't run automatically, the
-vector DB falls behind and mbrain returns stale answers. This phase is not optional.
+The markdown brain repo is the source of truth. Choose the sync setup that fits
+the active profile and user workflow:
 
-Read `docs/MBRAIN_SKILLPACK.md` Section 18 for the full reference. Key points:
+- For a first local install, start with manual `mbrain sync --repo <path>` and
+  verify that edited markdown appears in `mbrain search`.
+- For daily local use, offer cron or watch mode if the user wants automatic
+  refresh.
+- For Managed Postgres, confirm the connection string supports the transaction
+  behavior used by sync before recommending automation.
 
-1. **Check the connection pooler first.** Sync uses transactions on every import.
-   If `DATABASE_URL` uses Supabase's Transaction mode pooler, sync will throw
-   `.begin() is not a function` and silently skip most pages. Verify the connection
-   string uses Session mode (port 6543, Session mode) or direct (port 5432).
+Verification is behavior-based:
 
-2. **Set up automatic sync.** Choose the approach that fits your environment:
-   - **Cron** (recommended for agents): register a cron every 5-30 minutes:
-     `mbrain sync --repo /data/brain && mbrain embed --stale`
-   - **Watch mode**: `mbrain sync --watch --repo /data/brain` under a process
-     manager. Pair with a cron fallback (watch exits after 5 consecutive failures).
-   - **Webhook or git hook**: if available in your environment.
+- `mbrain stats` should show the expected page count.
+- A test edit should appear in `mbrain search`.
+- Optional embeddings can be backfilled later with `mbrain embed --stale`.
 
-3. **Verify sync works.** Don't just check that the command ran. Check that it
-   worked:
-   - `mbrain stats` should show page count close to syncable file count in the repo.
-   - If page count is way too low, the pooler bug is silently skipping pages.
-   - Push a test change and confirm it appears in `mbrain search`.
+## Phase I: Verification
 
-4. **Chain sync + embed.** Always run both: `mbrain sync --repo <path> && mbrain
-   embed --stale`. For small syncs, embeddings are generated inline. The `embed
-   --stale` is a safety net for any stale chunks.
+Run the smallest verification set that proves the selected profile works:
 
-Tell the user: "Live sync is configured. The brain will stay current automatically.
-I'll verify it's working in the next phase."
+For Local SQLite:
 
-## Phase I: Full Verification
+```bash
+mbrain init --local
+mbrain import /path/to/brain
+mbrain search "<phrase from imported notes>"
+mbrain doctor --json
+mbrain stats
+```
 
-Run the full verification runbook to confirm the entire installation is working.
+For MCP install validation:
 
-1. Read `docs/MBRAIN_VERIFY.md`
-2. Execute each check in order
-3. Report results to the user
-4. Fix any failures before declaring setup complete
+```bash
+MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
+```
 
-Every check in the runbook should pass. The most important one is check 4 (live
-sync actually works): push a change, wait for sync, search for the corrected text.
-"Sync ran" is not the same as "sync worked."
-
-Tell the user: "I've verified the full MBrain installation. Here's the status of
-each check: [list results]. Everything is working / [specific item] needs attention."
-
-If already configured or user declines, skip.
+For Managed Postgres, read `docs/MBRAIN_VERIFY.md` and run the relevant managed
+checks in addition to the local CLI/MCP checks.
 
 ## Schema State Tracking
 

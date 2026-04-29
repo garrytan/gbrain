@@ -15,7 +15,17 @@ function writeFakeCli(name: string) {
     scriptPath,
     `#!/bin/sh
 if [ "$1" = "mcp" ] && [ "$2" = "list" ]; then
+  if [ -f "$HOME/${name}-mcp-list.txt" ]; then
+    cat "$HOME/${name}-mcp-list.txt"
+  fi
   exit 0
+fi
+if [ "$1" = "mcp" ] && [ "$2" = "get" ]; then
+  if [ -f "$HOME/${name}-mcp-get.txt" ]; then
+    cat "$HOME/${name}-mcp-get.txt"
+    exit 0
+  fi
+  exit 1
 fi
 if [ "$1" = "mcp" ] && [ "$2" = "add" ]; then
   echo "$@" >> "$HOME/${name}-mcp-add.log"
@@ -115,6 +125,78 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('not a crash');
     expect(result.stdout).toContain('MBRAIN_STOP_HOOK=0');
     expect(result.stdout).toContain('~/.claude/mbrain-skip-dirs');
+  });
+
+  test('setup-agent registers Claude MCP at user scope by default', async () => {
+    const result = await runSetupAgent(['--claude']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(readFileSync(join(tempHome, 'claude-mcp-add.log'), 'utf-8'))
+      .toBe('mcp add -s user mbrain -- mbrain serve\n');
+    expect(result.stdout).toContain('Claude MCP scope: user');
+  });
+
+  test('setup-agent does not treat project-local Claude MCP as user-scope registration', async () => {
+    writeFileSync(join(tempHome, 'claude-mcp-list.txt'), 'mbrain: mbrain serve - connected\n', 'utf-8');
+    writeFileSync(
+      join(tempHome, 'claude-mcp-get.txt'),
+      [
+        'mbrain:',
+        '  Scope: Local config (private to you in this project)',
+        '  Type: stdio',
+        '  Command: mbrain',
+        '  Args: serve',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await runSetupAgent(['--claude']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(readFileSync(join(tempHome, 'claude-mcp-add.log'), 'utf-8'))
+      .toBe('mcp add -s user mbrain -- mbrain serve\n');
+  });
+
+  test('setup-agent does not treat user-scope Claude MCP as local registration', async () => {
+    writeFileSync(join(tempHome, 'claude-mcp-list.txt'), 'mbrain: mbrain serve - connected\n', 'utf-8');
+    writeFileSync(
+      join(tempHome, 'claude-mcp-get.txt'),
+      [
+        'mbrain:',
+        '  Scope: User config',
+        '  Type: stdio',
+        '  Command: mbrain',
+        '  Args: serve',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await runSetupAgent(['--claude', '--scope', 'local']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(readFileSync(join(tempHome, 'claude-mcp-add.log'), 'utf-8'))
+      .toBe('mcp add -s local mbrain -- mbrain serve\n');
+  });
+
+  test('setup-agent supports explicit project-local Claude MCP scope', async () => {
+    const result = await runSetupAgent(['--claude', '--scope', 'local']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(readFileSync(join(tempHome, 'claude-mcp-add.log'), 'utf-8'))
+      .toBe('mcp add -s local mbrain -- mbrain serve\n');
+    expect(result.stdout).toContain('Claude MCP scope: local');
+  });
+
+  test('setup-agent rejects invalid Claude MCP scope', async () => {
+    const result = await runSetupAgent(['--claude', '--scope', 'workspace']);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('--scope must be either "user" or "local"');
+    expect(existsSync(join(tempHome, 'claude-mcp-add.log'))).toBe(false);
   });
 
   test('setup-agent preserves existing settings.json fields when adding the stop hook', async () => {

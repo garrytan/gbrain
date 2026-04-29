@@ -19,6 +19,8 @@ interface DetectedClient {
   mcpRegistered: boolean;
 }
 
+type ClaudeMcpScope = 'user' | 'local';
+
 export async function runSetupAgent(args: string[]) {
   const home = process.env.HOME || process.env.USERPROFILE || '';
   const forceClaudeOnly = args.includes('--claude');
@@ -26,6 +28,12 @@ export async function runSetupAgent(args: string[]) {
   const printOnly = args.includes('--print');
   const jsonOutput = args.includes('--json');
   const skipMcp = args.includes('--skip-mcp');
+  const scopeParse = parseClaudeMcpScope(args);
+  if ('error' in scopeParse) {
+    console.error(scopeParse.error);
+    process.exit(1);
+  }
+  const claudeMcpScope = scopeParse.scope;
 
   // Load the agent rules from the mbrain package
   const rulesContent = loadAgentRules();
@@ -50,7 +58,7 @@ export async function runSetupAgent(args: string[]) {
       name: 'claude',
       configDir: claudeDir,
       targetFile: join(claudeDir, 'CLAUDE.md'),
-      mcpRegistered: checkMcpRegistered('claude', home),
+      mcpRegistered: checkMcpRegistered('claude', home, claudeMcpScope),
     });
   }
 
@@ -69,13 +77,13 @@ export async function runSetupAgent(args: string[]) {
     process.exit(1);
   }
 
-  const results: Array<{ client: string; mcp: string; rules: string }> = [];
+  const results: Array<{ client: string; mcp: string; rules: string; mcp_scope?: ClaudeMcpScope }> = [];
 
   for (const client of clients) {
     // Step 1: MCP registration
     let mcpStatus = 'already_registered';
     if (!client.mcpRegistered && !skipMcp) {
-      mcpStatus = registerMcp(client.name);
+      mcpStatus = registerMcp(client.name, { claudeScope: claudeMcpScope });
     } else if (skipMcp) {
       mcpStatus = 'skipped';
     }
@@ -87,12 +95,23 @@ export async function runSetupAgent(args: string[]) {
       installClaudeStopHook(client.configDir);
     }
 
-    results.push({ client: client.name, mcp: mcpStatus, rules: rulesStatus });
+    results.push({
+      client: client.name,
+      mcp: mcpStatus,
+      rules: rulesStatus,
+      ...(client.name === 'claude' ? { mcp_scope: claudeMcpScope } : {}),
+    });
   }
 
   // Report
   if (jsonOutput) {
-    console.log(JSON.stringify({ status: 'ok', version: VERSION, clients: results }));
+    const hasClaude = results.some(r => r.client === 'claude');
+    console.log(JSON.stringify({
+      status: 'ok',
+      version: VERSION,
+      ...(hasClaude ? { claudeScope: claudeMcpScope } : {}),
+      clients: results,
+    }));
   } else {
     console.log('\nmbrain setup-agent complete:\n');
     for (const r of results) {
@@ -101,6 +120,9 @@ export async function runSetupAgent(args: string[]) {
       const rulesIcon = r.rules === 'injected' || r.rules === 'updated' ? '+' : '=';
       console.log(`  ${clientLabel}:`);
       console.log(`    [${mcpIcon}] MCP: ${r.mcp}`);
+      if (r.client === 'claude') {
+        console.log(`    [=] Claude MCP scope: ${r.mcp_scope}`);
+      }
       console.log(`    [${rulesIcon}] Rules: ${r.rules}`);
     }
     const configuredClaude = results.some(r => r.client === 'claude');
@@ -114,6 +136,34 @@ export async function runSetupAgent(args: string[]) {
     console.log('\nDone. Start a new session in your AI client to activate the rules.');
     console.log('Full reference: use the get_skillpack MCP tool inside your AI client.');
   }
+}
+
+function parseClaudeMcpScope(args: string[]): { scope: ClaudeMcpScope } | { error: string } {
+  let scope: ClaudeMcpScope = 'user';
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    let value: string | undefined;
+
+    if (arg === '--scope') {
+      value = args[i + 1];
+      if (!value || value.startsWith('--')) {
+        return { error: '--scope must be either "user" or "local"' };
+      }
+      i++;
+    } else if (arg.startsWith('--scope=')) {
+      value = arg.slice('--scope='.length);
+    } else {
+      continue;
+    }
+
+    if (value !== 'user' && value !== 'local') {
+      return { error: '--scope must be either "user" or "local"' };
+    }
+    scope = value;
+  }
+
+  return { scope };
 }
 
 function loadAgentRules(): string | null {
@@ -132,25 +182,15 @@ function loadAgentRules(): string | null {
   return null;
 }
 
-function checkMcpRegistered(client: 'claude' | 'codex', home: string): boolean {
+function checkMcpRegistered(client: 'claude' | 'codex', home: string, claudeScope: ClaudeMcpScope = 'user'): boolean {
   if (client === 'claude') {
-    // Check ~/.claude.json and ~/.claude/server.json for mbrain MCP entry
-    const paths = [
-      join(home, '.claude.json'),
-      join(home, '.claude', 'server.json'),
-    ];
-    for (const p of paths) {
-      if (existsSync(p)) {
-        try {
-          const content = readFileSync(p, 'utf-8');
-          if (content.includes('"mbrain"')) return true;
-        } catch { /* ignore read errors */ }
-      }
+    if (claudeScope === 'user' && hasClaudeUserConfigMbrain(home)) {
+      return true;
     }
-    // Also check via `claude mcp list` if available
+
     try {
-      const out = execSync('claude mcp list 2>/dev/null', { encoding: 'utf-8', timeout: 5000 });
-      if (out.split('\n').some(line => /\bmbrain\b/.test(line))) return true;
+      const out = execSync('claude mcp get mbrain 2>/dev/null', { encoding: 'utf-8', timeout: 5000 });
+      if (claudeMcpGetOutputMatchesScope(out, claudeScope)) return true;
     } catch { /* command not found or failed */ }
     return false;
   }
@@ -167,9 +207,32 @@ function checkMcpRegistered(client: 'claude' | 'codex', home: string): boolean {
   return false;
 }
 
-function registerMcp(client: 'claude' | 'codex'): string {
+function hasClaudeUserConfigMbrain(home: string): boolean {
+  const paths = [
+    join(home, '.claude.json'),
+    join(home, '.claude', 'server.json'),
+  ];
+  for (const p of paths) {
+    if (existsSync(p)) {
+      try {
+        const content = readFileSync(p, 'utf-8');
+        if (content.includes('"mbrain"')) return true;
+      } catch { /* ignore read errors */ }
+    }
+  }
+  return false;
+}
+
+function claudeMcpGetOutputMatchesScope(output: string, scope: ClaudeMcpScope): boolean {
+  const scopeLine = output.split('\n').find(line => /^\s*Scope:/i.test(line)) ?? '';
+  return scope === 'user'
+    ? /\bUser\b/i.test(scopeLine)
+    : /\bLocal\b/i.test(scopeLine);
+}
+
+function registerMcp(client: 'claude' | 'codex', opts: { claudeScope: ClaudeMcpScope }): string {
   const cmd = client === 'claude'
-    ? 'claude mcp add mbrain -- mbrain serve'
+    ? `claude mcp add -s ${opts.claudeScope} mbrain -- mbrain serve`
     : 'codex mcp add mbrain -- mbrain serve';
 
   try {
