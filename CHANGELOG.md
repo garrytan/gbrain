@@ -2,6 +2,113 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.22.7.0] - 2026-04-29
+
+**Autopilot stops querying the same expensive UNION twice per cycle.**
+**Steady-state DB time on the embed-worker pending-pages query halves.**
+
+`runCycle`'s embed phase used to call `engine.listSlugsPendingEmbedding()` purely
+to populate the cycle report's "N pending page(s)" summary string. The same
+query then ran a second time inside `runEmbedCore` -> `embedAllStale`. Two calls
+to a 14-22s UNION DISTINCT SELECT, every cycle, on a query that returns 0 rows
+in steady state. The author had marked the cycle.ts call "Cheap: paid once per
+cycle" - it was neither cheap nor paid once.
+
+This release threads the count through `EmbedResult.pending_pages` instead.
+`embedAllStale` already has `pendingSlugs.length` from its existing
+`Promise.all`; the value now surfaces on the result object so `cycle.ts` reads
+it without a second DB roundtrip.
+
+### The numbers that matter
+
+Measured on a production gbrain on Supabase Micro across 7h 11m of autopilot
+activity (`pg_stat_statements` since reset):
+
+| Metric | Before | After 2A.1 | Δ |
+|---|---|---|---|
+| `listSlugsPendingEmbedding` calls per cycle | ~2.0 | ~1.0 | -50% |
+| Calls per minute steady-state | 0.378 | ~0.20 | -47% |
+| Total DB time on this query | 9.5% of wall-clock | ~4.75% | -50% |
+| Mean latency per call | 15.0s (unchanged) | 15.0s | 0 |
+| Rows returned in steady state | 0 | 0 | 0 |
+
+The query itself is unchanged - the regex anti-existence on `pages` (UNION
+branch 2) still dominates the per-call cost. Halving the call rate halves the
+total DB time. A separate change can take the regex off the critical path if
+the remaining cost matters.
+
+### What this means for autopilot operators
+
+Brains running autopilot on Supabase Micro reclaim ~1 minute of DB capacity
+per hour that was previously burned on a redundant UNION DISTINCT scan
+returning zero rows. No config change, no migration, no autopilot pause.
+`gbrain upgrade` and let the new binary cycle once - the next
+`pg_stat_statements_reset()` will show the new rate.
+
+### Itemized changes
+
+#### Changed
+
+- `EmbedResult` (src/commands/embed.ts) gains a non-optional `pending_pages: number`
+  field, initialized to 0 in the `runEmbedCore` result literal so all three
+  return paths (slugs/all-or-stale/single-slug) satisfy the type. `embedAllStale`
+  surfaces `pendingSlugs.length` on the result right after its existing
+  `Promise.all` destructure
+- `runPhaseEmbed` in src/core/cycle.ts no longer calls
+  `engine.listSlugsPendingEmbedding()` directly. The cycle report's `summary`
+  and `details.pending_pages` now read from `result.pending_pages` returned by
+  `runEmbedCore`. The misleading "Cheap: paid once per cycle" comment is gone
+
+#### Fixed
+
+- `test/e2e/mechanical.test.ts` "listSlugsPendingEmbedding excludes pages where
+  all chunks have an embedding" now stamps both `embedding` and `embedded_at`
+  to mirror what `upsertChunks` writes after a successful embed. The prior
+  test stamped only `embedded_at`, which the function does not filter on
+  (per v0.22.1 #409 - the predicate is `embedding IS NULL`). Test was failing
+  on master without anyone catching it; now passes against the real predicate
+
+#### Tests
+
+- `test/embed.test.ts`: new test covers the fully-embedded fast path
+  (`pending_pages === 0`); `pending_pages` assertions added to the zero-chunk
+  dry-run test and the multi-page stale dry-run test
+- `test/core/cycle.test.ts`: mocked `runEmbedCore` now returns `pending_pages: 3`;
+  new assertion verifies the embed phase summary reads "3 pending page(s)"
+  from the threaded value, not from a second engine call
+
+## To take advantage of v0.22.7.0
+
+`gbrain upgrade` does this automatically. No manual action required.
+
+1. **Verify the new binary is running:**
+   ```bash
+   gbrain --version  # should show 0.22.7.0
+   ```
+2. **Optional: measure the rate change yourself.** Reset `pg_stat_statements` on
+   your brain, wait 2 hours, then compute calls-per-cycle:
+   ```bash
+   psql "$DATABASE_URL" -c "SELECT pg_stat_statements_reset();"
+   # ... wait at least 2 hours of autopilot activity ...
+   psql "$DATABASE_URL" -c "
+     WITH stats AS (
+       SELECT calls FROM pg_stat_statements
+        WHERE query LIKE '%SELECT DISTINCT p.slug%embedding IS NULL%'
+        ORDER BY total_exec_time DESC LIMIT 1
+     ), cycles AS (
+       SELECT count(*) AS n FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND finished_at >= (SELECT stats_reset FROM pg_stat_statements_info)
+          AND status = 'completed'
+     )
+     SELECT s.calls, c.n AS cycles_completed,
+            ROUND(s.calls::numeric / NULLIF(c.n, 0), 2) AS calls_per_cycle
+     FROM stats s, cycles c;
+   "
+   ```
+   Expected: `calls_per_cycle` ≈ 1.0 (was ~2.0 before).
+3. **If anything looks wrong,** file an issue with `gbrain doctor` output.
+
 ## [0.22.6.1] - 2026-04-26
 
 **Old brains can upgrade again.**
