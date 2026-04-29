@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
+import { getEmbeddingDimensions, getEmbeddingModel } from './embedding-config.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -1072,6 +1073,76 @@ export const MIGRATIONS: Migration[] = [
       pglite: `-- PGLite: no-op. RLS check runs only against Postgres E2E.`,
     },
     sql: '',
+  },
+  {
+    version: 30,
+    name: 'dynamic_embedding_dimensions',
+    // Re-type `content_chunks.embedding` to match the configured dimension
+    // (GBRAIN_EMBEDDING_DIMENSIONS env var, default 1536). Idempotent: a no-op
+    // when the stored config dim already matches the runtime config.
+    //
+    // When the dim changes, all existing embeddings are dropped (no math
+    // exists to convert across dimensions) and the user must run
+    // `gbrain embed --stale` to repopulate.
+    //
+    // Both engines use HNSW for the embedding index (schema.sql:116,
+    // pglite-schema.ts:92) so the recreate clause is identical.
+    sql: '',
+    handler: async (engine) => {
+      const targetDim = getEmbeddingDimensions();
+      const targetModel = getEmbeddingModel();
+
+      // Read current dim from the config table. Default to 1536 (legacy
+      // baseline) if the row is missing — this can happen on very old brains
+      // that pre-date the seeded `embedding_dimensions` row.
+      const dimRows = await engine.executeRaw<{ value: string }>(
+        `SELECT value FROM config WHERE key = 'embedding_dimensions'`,
+      );
+      const currentDim = dimRows.length > 0 ? parseInt(dimRows[0].value, 10) : 1536;
+
+      if (currentDim === targetDim) {
+        // Sync the model name in case the user changed it without changing dim.
+        await engine.executeRaw(
+          `INSERT INTO config (key, value) VALUES ('embedding_model', $1)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+          [targetModel],
+        );
+        return;
+      }
+
+      console.log(
+        `  v30: re-typing content_chunks.embedding from vector(${currentDim}) to vector(${targetDim})`,
+      );
+      console.log(
+        `  All existing embeddings will be dropped. Run \`gbrain embed --stale\` to repopulate.`,
+      );
+
+      await engine.executeRaw(`DROP INDEX IF EXISTS idx_chunks_embedding`);
+      // ALTER COLUMN ... USING NULL is the only safe path: we can't math
+      // a 1536-vector into a 1024-vector. Embeddings get nuked, embedded_at
+      // is reset so `gbrain embed --stale` picks them up.
+      await engine.executeRaw(
+        `ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${targetDim}) USING NULL`,
+      );
+      await engine.executeRaw(
+        `UPDATE content_chunks SET embedded_at = NULL WHERE embedded_at IS NOT NULL`,
+      );
+      await engine.executeRaw(
+        `CREATE INDEX IF NOT EXISTS idx_chunks_embedding
+           ON content_chunks USING hnsw (embedding vector_cosine_ops)`,
+      );
+
+      await engine.executeRaw(
+        `INSERT INTO config (key, value) VALUES ('embedding_dimensions', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [String(targetDim)],
+      );
+      await engine.executeRaw(
+        `INSERT INTO config (key, value) VALUES ('embedding_model', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [targetModel],
+      );
+    },
   },
 ];
 
