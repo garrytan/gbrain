@@ -63,6 +63,14 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test bun run t
 DATABASE_URL=postgresql://... bun run test:e2e
 ```
 
+`bun run test:e2e` runs through `scripts/run-e2e.sh`, which isolates `HOME` and
+`GBRAIN_HOME` to a tmpdir so test paths that call gbrain init / saveConfig cannot
+clobber your real `~/.gbrain/config.json`. The wrapper exits **2** (vs 1 for a normal
+test failure) if it detects a write to your real config after the run. Do not
+override `HOME` or `GBRAIN_HOME` when running this script. If you bypass the wrapper
+and run a single E2E file with `bun test test/e2e/...` directly, set them to a
+tmpdir yourself first.
+
 ## Building
 
 ```bash

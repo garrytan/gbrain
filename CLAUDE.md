@@ -341,6 +341,24 @@ Do not leave containers running after tests. Do not skip E2E tests.
 Never leave `gbrain-test-pg` running. If you find a stale one from a previous run,
 stop and remove it before starting a new one.
 
+**HOME isolation contract (v0.22.8.1+).** `bun run test:e2e` invokes `scripts/run-e2e.sh`,
+which redirects `HOME` and `GBRAIN_HOME` to a fresh `mktemp -d` tmpdir before bun starts
+and traps cleanup on exit. This is required because some E2E paths call gbrain init /
+saveConfig and would otherwise rewrite the developer's real `~/.gbrain/config.json`.
+Both env vars are set: `loadConfig`/`saveConfig` resolve via `HOME`, while `configPath`
+and `getDbUrlSource` honor `GBRAIN_HOME`; setting only one leaves the other path
+escaping isolation. `HOME` is exported before bun starts because Bun's `os.homedir()`
+caches at first call, so in-process mutation does not take.
+
+After the run, the wrapper compares the user's real `~/.gbrain/config.json` md5 against
+its pre-run snapshot and exits **2** (distinct from exit 1 = test failure) on any of
+three breaches: config existed before and was modified; config existed before and was
+deleted; config did not exist before but was created. **Never set `HOME=...` or
+`GBRAIN_HOME=...` yourself when running `bun run test:e2e`** — the wrapper already does
+it, and overriding will defeat the breach detector. If you need to run a single E2E
+file directly (e.g. `bun test test/e2e/foo.test.ts`), set `HOME` and `GBRAIN_HOME` to a
+tmpdir manually first, or your real config will get clobbered.
+
 ## Skills
 
 Read the skill files in `skills/` before doing brain operations. GBrain ships 29 skills
