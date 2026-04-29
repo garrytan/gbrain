@@ -114,6 +114,98 @@ describe('Bug 11 — orphan_pages is "no inbound links"', () => {
   });
 });
 
+describe('orphan denominator excludes raw-import leaf pages', () => {
+  test('daily/email/* pages do not count as orphans', async () => {
+    // 10 email-thread pages (all islanded) + 1 normal islanded page.
+    // Without the fix: orphan_pages = 11 → no_orphans_score collapses.
+    // With the fix: orphan_pages = 1 (relevant_page_count=1 too).
+    for (let i = 0; i < 10; i++) {
+      await engine.putPage(`daily/email/personal/2026/04/27/thread-${i}`, {
+        type: 'note', title: `Thread ${i}`, compiled_truth: 'body', frontmatter: {},
+      });
+    }
+    await engine.putPage('genuine-orphan', {
+      type: 'note', title: 'Real orphan', compiled_truth: 'no edges', frontmatter: {},
+    });
+
+    const h = await engine.getHealth();
+    expect(h.orphan_pages).toBe(1);
+    expect(h.page_count).toBe(11);
+    // 1 orphan / 1 relevant = 100% orphan → no_orphans_score = 0.
+    // (relevant_page_count = 11 - 10 daily/email = 1.)
+    expect(h.no_orphans_score).toBe(0);
+  });
+
+  test('daily/calendar/* pages do not count as orphans', async () => {
+    for (let i = 0; i < 5; i++) {
+      await engine.putPage(`daily/calendar/work-wag/2026/04/27/event-${i}`, {
+        type: 'note', title: `Event ${i}`, compiled_truth: 'event body', frontmatter: {},
+      });
+    }
+    const h = await engine.getHealth();
+    expect(h.orphan_pages).toBe(0);
+    expect(h.page_count).toBe(5);
+    // No relevant pages → noOrphans defaults to 1 → score 15/15.
+    expect(h.no_orphans_score).toBe(15);
+  });
+
+  test('sources/contacts/* pages do not count as orphans', async () => {
+    for (let i = 0; i < 3; i++) {
+      await engine.putPage(`sources/contacts/google/contact-${i}`, {
+        type: 'note', title: `Contact ${i}`, compiled_truth: 'contact dump', frontmatter: {},
+      });
+    }
+    const h = await engine.getHealth();
+    expect(h.orphan_pages).toBe(0);
+  });
+
+  test('sources/meetings/* pages do not count as orphans', async () => {
+    for (let i = 0; i < 4; i++) {
+      await engine.putPage(`sources/meetings/granola/transcript-${i}`, {
+        type: 'note', title: `Transcript ${i}`, compiled_truth: 'transcript', frontmatter: {},
+      });
+    }
+    const h = await engine.getHealth();
+    expect(h.orphan_pages).toBe(0);
+  });
+
+  test('relevant_page_count denominator lifts no_orphans_score when only excluded pages are orphans', async () => {
+    // 8 daily/email orphans + 2 connected normal pages.
+    // numerator (orphan_pages) = 0 (the 8 daily/email are excluded; a→b are linked)
+    // denominator (relevant_page_count) = 2
+    // noOrphans = 1 → no_orphans_score = 15/15.
+    for (let i = 0; i < 8; i++) {
+      await engine.putPage(`daily/email/personal/2026/04/27/t-${i}`, {
+        type: 'note', title: `T${i}`, compiled_truth: 'x', frontmatter: {},
+      });
+    }
+    await engine.putPage('a', { type: 'note', title: 'A', compiled_truth: 'a', frontmatter: {} });
+    await engine.putPage('b', { type: 'note', title: 'B', compiled_truth: 'b', frontmatter: {} });
+    const aId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='a'`)).rows[0].id;
+    const bId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='b'`)).rows[0].id;
+    await (engine as any).db.query(
+      `INSERT INTO links (from_page_id, to_page_id, link_type) VALUES ($1, $2, 'mentions')`,
+      [aId, bId],
+    );
+
+    const h = await engine.getHealth();
+    expect(h.orphan_pages).toBe(0);
+    expect(h.no_orphans_score).toBe(15);
+  });
+
+  test('an islanded page with a non-excluded prefix is still an orphan', async () => {
+    // Defensive: only the four specified prefixes are excluded.
+    await engine.putPage('daily/note/2026-04-27', {
+      type: 'note', title: 'Note', compiled_truth: 'note', frontmatter: {},
+    });
+    await engine.putPage('sources/blog/post', {
+      type: 'note', title: 'Post', compiled_truth: 'post', frontmatter: {},
+    });
+    const h = await engine.getHealth();
+    expect(h.orphan_pages).toBe(2);
+  });
+});
+
 describe('Bug 11 — doctor renders brain_score breakdown', () => {
   test('doctor source contains brain_score breakdown rendering', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();

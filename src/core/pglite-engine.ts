@@ -1233,12 +1233,30 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM pages p
          WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
-        -- Bug 11 — orphan = islanded (no inbound AND no outbound).
-        -- See BrainHealth.orphan_pages docstring; docs updated to match this.
+        -- Orphan = islanded (no inbound AND no outbound) AMONG pages that
+        -- could plausibly be linked. Raw-import leaf pages are external
+        -- data dumps with no expectation of inbound wikilinks; counting
+        -- them as orphans inflates the metric and obscures real graph
+        -- health. Both numerator and the relevant_page_count denominator
+        -- below exclude these prefixes:
+        --   daily/email/%       — per-thread email renders (e.g. M365 mail)
+        --   daily/calendar/%    — per-event calendar invites (Apple Cal)
+        --   sources/contacts/%  — Google Contacts dumps
+        --   sources/meetings/%  — raw transcript JSONs (granola/tldv/fathom)
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+           AND p.slug NOT LIKE 'daily/email/%'
+           AND p.slug NOT LIKE 'daily/calendar/%'
+           AND p.slug NOT LIKE 'sources/contacts/%'
+           AND p.slug NOT LIKE 'sources/meetings/%'
         ) as orphan_pages,
+        (SELECT count(*) FROM pages p
+         WHERE p.slug NOT LIKE 'daily/email/%'
+           AND p.slug NOT LIKE 'daily/calendar/%'
+           AND p.slug NOT LIKE 'sources/contacts/%'
+           AND p.slug NOT LIKE 'sources/meetings/%'
+        ) as relevant_page_count,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
@@ -1265,6 +1283,7 @@ export class PGLiteEngine implements BrainEngine {
 
     const r = h as Record<string, unknown>;
     const pageCount = Number(r.page_count);
+    const relevantPageCount = Number(r.relevant_page_count);
     const embedCoverage = Number(r.embed_coverage);
     const orphanPages = Number(r.orphan_pages);
     const deadLinks = Number(r.dead_links);
@@ -1273,7 +1292,10 @@ export class PGLiteEngine implements BrainEngine {
 
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
     const timelineCoverageDensity = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
-    const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
+    // no_orphans uses relevant_page_count (excludes daily/email/* and
+    // daily/calendar/* — raw-import leaf pages that have no expectation of
+    // inbound wikilinks). See orphan_pages CTE comment above.
+    const noOrphans = relevantPageCount > 0 ? 1 - (orphanPages / relevantPageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Bug 11 — per-component points. Sum equals brainScore by construction
     // so `doctor` can render a breakdown that adds up to the total.

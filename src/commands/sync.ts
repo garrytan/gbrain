@@ -621,11 +621,15 @@ async function performFullSync(
   // Fixes the silent-write-on-dry-run bug where performFullSync called
   // runImport unconditionally regardless of opts.dryRun.
   if (opts.dryRun) {
-    const { collectMarkdownFiles } = await import('./import.ts');
-    const allFiles = collectMarkdownFiles(repoPath);
+    const { collectMarkdownFiles, collectSyncableFiles } = await import('./import.ts');
+    // Honor strategy so dry-run of a code/auto source shows the correct
+    // file count instead of silently filtering everything out.
+    const allFiles = (opts.strategy && opts.strategy !== 'markdown')
+      ? collectSyncableFiles(repoPath, opts.strategy)
+      : collectMarkdownFiles(repoPath);
     const syncableRelPaths = allFiles
       .map(abs => relative(repoPath, abs))
-      .filter(rel => isSyncable(rel));
+      .filter(rel => isSyncable(rel, opts.strategy ? { strategy: opts.strategy } : undefined));
     console.log(
       `Full-sync dry run: ${syncableRelPaths.length} file(s) would be imported ` +
       `from ${repoPath} @ ${headCommit.slice(0, 8)}.`,
@@ -648,6 +652,15 @@ async function performFullSync(
   const { runImport } = await import('./import.ts');
   const importArgs = [repoPath];
   if (opts.noEmbed) importArgs.push('--no-embed');
+  // Forward strategy so first-sync of a code/auto source actually picks up
+  // code files. Prior to this fix, performFullSync silently dropped the
+  // strategy and runImport defaulted to markdown-only — registering a code
+  // source and running `gbrain sync --strategy code` for the first time
+  // would import only the markdown files in the repo and leave the
+  // code-grain page_kind table empty. (Fixes HANDOFF gotcha 12d.)
+  if (opts.strategy && opts.strategy !== 'markdown') {
+    importArgs.push('--strategy', opts.strategy);
+  }
   const result = await runImport(engine, importArgs, { commit: headCommit });
 
   // Bug 9 — gate the full-sync bookmark on success. runImport already

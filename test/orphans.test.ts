@@ -86,6 +86,34 @@ describe('shouldExclude', () => {
     expect(shouldExclude('entities/product-hunt')).toBe(true);
   });
 
+  test('excludes deny-prefix: daily/email/ (raw email-thread dumps)', () => {
+    expect(shouldExclude('daily/email/personal/2026/04/27/some-thread')).toBe(true);
+    expect(shouldExclude('daily/email/work-wag/2026/04/27/another-thread')).toBe(true);
+  });
+
+  test('excludes deny-prefix: daily/calendar/ (raw calendar invites)', () => {
+    expect(shouldExclude('daily/calendar/personal/2026/04/27/event-x')).toBe(true);
+    expect(shouldExclude('daily/calendar/work-dhow/2026/04/27/standup')).toBe(true);
+  });
+
+  test('excludes deny-prefix: sources/contacts/ (Google Contacts dumps)', () => {
+    expect(shouldExclude('sources/contacts/google/john-doe')).toBe(true);
+  });
+
+  test('excludes deny-prefix: sources/meetings/ (transcript JSONs)', () => {
+    expect(shouldExclude('sources/meetings/granola/2026-04-27-standup')).toBe(true);
+  });
+
+  test('does NOT exclude daily/* outside email and calendar', () => {
+    expect(shouldExclude('daily/note/2026-04-27')).toBe(false);
+    expect(shouldExclude('daily/journal/2026-04-27')).toBe(false);
+  });
+
+  test('does NOT exclude sources/* outside contacts and meetings', () => {
+    expect(shouldExclude('sources/notion/wag/some-page')).toBe(false);
+    expect(shouldExclude('sources/blog/post')).toBe(false);
+  });
+
   test('does NOT exclude a normal content page', () => {
     expect(shouldExclude('companies/acme')).toBe(false);
     expect(shouldExclude('people/jane-doe')).toBe(false);
