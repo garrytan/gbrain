@@ -1,5 +1,117 @@
 # TODOS
 
+## minions / worker (v0.22.14 follow-ups)
+
+### v0.22.15 — Embed cooperative-abort (HIGHEST PRIORITY — daily pain)
+**Priority:** P0
+
+**What:** Plumb `signal: AbortSignal` through `runPhaseEmbed` →
+`src/commands/embed.ts` → `embedBatch` in `src/core/embedding.ts`. Check
+`signal?.aborted` between OpenAI batch calls (every ~100 texts, ~2s
+real-time) and between slugs in the per-slug loop.
+
+**Why:** Embed phase ignores `signal.aborted` between batches today. Job
+wall-clock timeout fires → handler keeps running → cycle's finally block
+unreachable → `gbrain_cycle_locks` row stays held indefinitely. Every
+subsequent autopilot cron cycle sees `cycle_already_running` → skips. Lock
+TTL is 30 min; new cycles give up before that. Doctor reports UNHEALTHY.
+
+**The chain in production:** ~5min cron submits cycle → 22K stale pages →
+embed phase takes 10–15 min → 600s timeout fires → job dead-lettered → embed
+keeps running → lock held → all subsequent cycles skip. Garry hits this
+DAILY on his production brain.
+
+**Pros:** Closes the daily wedge. Makes timeouts actually effective. Lets
+operators bump worker timeouts confidently knowing abort actually stops
+work.
+
+**Cons:** Touching the embed hot path; small risk of botching the abort
+checks. Mitigation: between-batch granularity (~2s), not per-text (too fine)
+or per-slug (too coarse for 500+ chunk slugs).
+
+**Context:** PR #503 (v0.22.14) catches the SYMPTOM (worker stalled, queue
+piling up) via self-health-monitoring. This PR catches the CAUSE for one
+specific failure class. Both fixes are needed; they're complementary, not
+duplicative.
+
+**Files to touch:**
+- `src/core/cycle.ts:579` — `runPhaseEmbed(engine, dryRun)` → add
+  `signal?: AbortSignal` arg
+- `src/core/cycle.ts:803` — pass `opts.signal` through
+- `src/commands/embed.ts:~363` — accept signal, check between slugs
+- `src/core/embedding.ts:51-56` — `embedBatch(texts, onProgress?, signal?)`,
+  check between for-loop iterations of `BATCH_SIZE` slices
+
+**Tests required:**
+1. embedBatch checks signal between OpenAI calls; aborts within one batch (~2s)
+2. Per-slug loop in `embed.ts` checks signal between slugs
+3. End-to-end: cycle handler with embed phase + signal aborted mid-flight →
+   finally runs → `gbrain_cycle_locks` row deleted
+4. Regression: 1K+ chunks scenario — embed does NOT block lock release when
+   timeout fires
+
+**Effort:** M (human: ~3 hr / CC: ~30 min).
+
+**Depends on / blocked by:** Nothing. v0.22.14 ships first.
+
+### v0.23+ — Bare-worker engine reconnect parity with supervisor
+**Priority:** P2
+
+**What:** Extract the supervisor's reconnect-then-fail pattern into
+`MinionWorker` so bare workers can retry transient DB blips before exiting.
+Today the supervisor calls `engine.reconnect()` after 3 consecutive DB health
+failures (#406); the bare worker just emits `'unhealthy'` and the CLI calls
+`process.exit(1)`.
+
+**Why:** Bare-worker behavior is more disruptive than supervised behavior on
+transient PgBouncer blips. A bare worker restarts the entire process; a
+supervised worker just reconnects the pool. Operationally the supervisor
+approach is gentler (no in-flight job loss, no PM restart latency).
+
+**Pros:** Unifies bare and supervised behavior. Reduces process churn on
+transient network blips.
+
+**Cons:** More code in MinionWorker; risk of reconnect masking a real
+problem. Mitigation: cap retry attempts, fall through to `'unhealthy'`
+emission after the cap.
+
+**Context:** Filed during v0.22.14 plan-eng-review. The asymmetry is
+documented in v0.22.14 CHANGELOG as deliberate; this TODO captures the
+"unify someday" intent.
+
+**Effort:** S (human: ~2 hr / CC: ~20 min).
+
+**Depends on / blocked by:** Nothing.
+
+### v0.23+ — `minion_workers` heartbeat table for queue_health doctor (B7)
+**Priority:** P3
+
+**What:** Add a `minion_workers` table (`worker_id` PK, `hostname`,
+`last_heartbeat`, `queue`, `concurrency`, `started_at`) so the existing
+`queue_health` doctor check (Postgres path) can detect dead workers via
+heartbeat staleness instead of relying on the indirect `lock_until` proxy.
+
+**Why:** v0.19.1 added `queue_health` checks for stalled-active jobs and
+waiting-depth threshold. The worker-heartbeat subcheck was deferred (B7)
+because the `lock_until`-on-active-jobs proxy can't distinguish "worker
+exited cleanly" from "worker idle" — a check that cries wolf erodes trust
+in every doctor check. With a real heartbeat row, doctor can say "no worker
+seen in N intervals" with confidence.
+
+**Pros:** Doctor's `queue_health` becomes ground-truth. Detects "worker
+container died but cron didn't restart it" scenario.
+
+**Cons:** New table, schema migration, every health-tick UPSERTs. Costs
+a write per worker per minute (default).
+
+**Context:** Filed during v0.22.14 plan-eng-review. PR #503's self-health
+monitoring is the worker-side liveness; this would be the queue-side
+ground-truth.
+
+**Effort:** M (human: ~1 day / CC: ~1 hr).
+
+**Depends on / blocked by:** Schema migration system; nothing else.
+
 ## test-infra
 
 ### Parallel-load timeout flake on v0.21 PGLite-heavy tests
