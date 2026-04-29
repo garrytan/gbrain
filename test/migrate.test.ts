@@ -993,11 +993,12 @@ describe('v30/v31/v32 — embed-worker index backfills', () => {
   });
 
   test('LATEST_VERSION reflects the latest migration entry', () => {
-    // Bumped from 32 -> 34 in v0.22.8.0 (has_chunkable_text column + partial
-    // index). Future maintainers: this assertion guards against accidentally
-    // shipping a migration that doesn't bump LATEST_VERSION; update it when
-    // the highest-versioned migration changes.
-    expect(LATEST_VERSION).toBe(34);
+    // Bumped 32 -> 34 in v0.22.8.0 (has_chunkable_text + partial index),
+    // 34 -> 35 with trigger_function_search_path_hardening. Future
+    // maintainers: this assertion guards against accidentally shipping a
+    // migration that doesn't bump LATEST_VERSION; update it when the
+    // highest-versioned migration changes.
+    expect(LATEST_VERSION).toBe(35);
   });
 });
 
@@ -1090,5 +1091,54 @@ describe('v33/v34 — has_chunkable_text column + partial index', () => {
     // Both branches produce the same partial covering shape
     expect(src).toContain('pages(id, slug)');
     expect(src).toContain('WHERE has_chunkable_text');
+  });
+});
+
+describe('v35 — trigger function search_path hardening', () => {
+  const v35 = MIGRATIONS.find(m => m.version === 35);
+
+  test('exists with expected name + sqlFor pattern (no handler, default transaction)', () => {
+    expect(v35).toBeDefined();
+    expect(v35!.name).toBe('trigger_function_search_path_hardening');
+    // sqlFor + sql:'' fallback shape (matches v24 / v25). Not a handler
+    // migration: ALTER FUNCTION ... SET is metadata-only and composes inside
+    // the runner's default transaction wrapper.
+    expect(v35!.sql).toBe('');
+    expect(v35!.sqlFor).toBeDefined();
+    expect(v35!.handler).toBeUndefined();
+    expect(v35!.transaction).not.toBe(false);
+  });
+
+  test('Postgres branch hardens all three trigger functions', () => {
+    const pg = v35!.sqlFor!.postgres!;
+    // Functions 1+2: pg_catalog,public is sufficient because they only call
+    // pg_catalog built-ins; pg_temp implicit-first does not apply to
+    // functions/operators.
+    expect(pg).toMatch(/ALTER FUNCTION public\.notify_minion_job_change\(\)\s+SET search_path = pg_catalog, public/);
+    expect(pg).toMatch(/ALTER FUNCTION public\.update_chunk_search_vector\(\)\s+SET search_path = pg_catalog, public/);
+    // Function 3: stricter empty search_path because it reads an unqualified
+    // relation, and pg_temp implicit-first DOES apply to relations.
+    expect(pg).toMatch(/CREATE OR REPLACE FUNCTION public\.update_page_search_vector\(\)/);
+    expect(pg).toMatch(/SET search_path = ''/);
+    // Schema-qualified FROM is load-bearing for the empty-search_path version
+    // (otherwise the relation lookup fails). Asserted explicitly so a future
+    // edit that homogenises the three functions can't accidentally drop the
+    // qualifier.
+    expect(pg).toContain('FROM public.timeline_entries');
+    expect(pg).not.toMatch(/FROM\s+timeline_entries\b/);
+  });
+
+  test('PGLite branch hardens only the two functions that exist in pglite-schema.ts', () => {
+    const pl = v35!.sqlFor!.pglite!;
+    // notify_minion_job_change is intentionally absent from pglite-schema.ts
+    // (PGLite has no NOTIFY consumers). Hardening it here would fail with
+    // "function does not exist" on PGLite brains.
+    expect(pl).not.toContain('notify_minion_job_change');
+    // The two functions that DO exist on PGLite get the same hardening as
+    // their Postgres counterparts.
+    expect(pl).toMatch(/ALTER FUNCTION public\.update_chunk_search_vector\(\)\s+SET search_path = pg_catalog, public/);
+    expect(pl).toMatch(/CREATE OR REPLACE FUNCTION public\.update_page_search_vector\(\)/);
+    expect(pl).toMatch(/SET search_path = ''/);
+    expect(pl).toContain('FROM public.timeline_entries');
   });
 });

@@ -1238,6 +1238,89 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 35,
+    name: 'trigger_function_search_path_hardening',
+    // Closes Supabase advisor lint 0011 (function_search_path_mutable) for the
+    // plpgsql trigger functions. update_chunk_search_vector and
+    // notify_minion_job_change only call pg_catalog built-ins; pg_temp
+    // implicit-first does not apply to functions/operators, so
+    // SET search_path = pg_catalog, public is sufficient.
+    //
+    // update_page_search_vector reads FROM timeline_entries unqualified.
+    // pg_temp's implicit-first DOES apply to relations, so a session-planted
+    // temp table could shadow the real one. Stricter SET search_path = ''
+    // plus schema-qualified FROM public.timeline_entries closes that vector.
+    //
+    // Idempotent: ALTER FUNCTION ... SET is metadata-only (no rewrite,
+    // no recompile). Live Supabase brain already has this state from a
+    // manual fix; the migration is a no-op there. Fresh brains pick it up
+    // via SCHEMA_SQL too, which now defines the functions WITH the SET
+    // clause. This migration covers existing brains bootstrapped before v35.
+    //
+    // Engine split: notify_minion_job_change is intentionally absent from
+    // pglite-schema.ts (PGLite has no NOTIFY consumers). The PGLite branch
+    // therefore hardens only the two functions that actually exist there.
+    sql: '',
+    sqlFor: {
+      postgres: `
+        ALTER FUNCTION public.notify_minion_job_change()
+          SET search_path = pg_catalog, public;
+        ALTER FUNCTION public.update_chunk_search_vector()
+          SET search_path = pg_catalog, public;
+
+        CREATE OR REPLACE FUNCTION public.update_page_search_vector()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        SET search_path = ''
+        AS $fn$
+        DECLARE
+          timeline_text TEXT;
+        BEGIN
+          SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
+          INTO timeline_text
+          FROM public.timeline_entries
+          WHERE page_id = NEW.id;
+
+          NEW.search_vector :=
+            setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
+            setweight(to_tsvector('english', coalesce(NEW.compiled_truth, '')), 'B') ||
+            setweight(to_tsvector('english', coalesce(NEW.timeline, '')), 'C') ||
+            setweight(to_tsvector('english', coalesce(timeline_text, '')), 'C');
+
+          RETURN NEW;
+        END;
+        $fn$;
+      `,
+      pglite: `
+        ALTER FUNCTION public.update_chunk_search_vector()
+          SET search_path = pg_catalog, public;
+
+        CREATE OR REPLACE FUNCTION public.update_page_search_vector()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        SET search_path = ''
+        AS $fn$
+        DECLARE
+          timeline_text TEXT;
+        BEGIN
+          SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
+          INTO timeline_text
+          FROM public.timeline_entries
+          WHERE page_id = NEW.id;
+
+          NEW.search_vector :=
+            setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
+            setweight(to_tsvector('english', coalesce(NEW.compiled_truth, '')), 'B') ||
+            setweight(to_tsvector('english', coalesce(NEW.timeline, '')), 'C') ||
+            setweight(to_tsvector('english', coalesce(timeline_text, '')), 'C');
+
+          RETURN NEW;
+        END;
+        $fn$;
+      `,
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

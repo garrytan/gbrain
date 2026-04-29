@@ -392,13 +392,15 @@ ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
 
-CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger
+SET search_path = ''
+AS $$
 DECLARE
   timeline_text TEXT;
 BEGIN
   SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
   INTO timeline_text
-  FROM timeline_entries
+  FROM public.timeline_entries
   WHERE page_id = NEW.id;
 
   NEW.search_vector :=

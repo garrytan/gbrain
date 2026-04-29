@@ -158,7 +158,9 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedded_at_null
 -- NL queries ("how do we handle errors") rank doc-comment hits above body text.
 -- BEFORE INSERT OR UPDATE OF specific columns — only refires when those change,
 -- not on every chunk update (e.g., embedding refresh doesn't trigger rebuild).
-CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER AS $fn$
+CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER
+SET search_path = pg_catalog, public
+AS $fn$
 BEGIN
   NEW.search_vector :=
     setweight(to_tsvector('english', COALESCE(NEW.doc_comment, '')), 'A') ||
@@ -440,14 +442,20 @@ ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
 
 -- Function to rebuild search_vector for a page
-CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger AS $$
+-- search_path='' (empty) plus schema-qualified FROM public.timeline_entries:
+-- this function reads an unqualified relation, and pg_temp's implicit-first
+-- behavior applies to relations. A session that creates a temp table named
+-- timeline_entries could otherwise shadow the real one and steer trigger reads.
+CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger
+SET search_path = ''
+AS $$
 DECLARE
   timeline_text TEXT;
 BEGIN
   -- Gather timeline_entries text for this page
   SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
   INTO timeline_text
-  FROM timeline_entries
+  FROM public.timeline_entries
   WHERE page_id = NEW.id;
 
   -- Build weighted tsvector
@@ -642,7 +650,9 @@ CREATE TABLE IF NOT EXISTS gbrain_cycle_locks (
 CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
 
 -- NOTIFY trigger for real-time job events (Postgres only, not PGLite)
-CREATE OR REPLACE FUNCTION notify_minion_job_change() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION notify_minion_job_change() RETURNS trigger
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
   PERFORM pg_notify('minion_jobs', json_build_object(
     'id', NEW.id, 'status', NEW.status, 'name', NEW.name,
