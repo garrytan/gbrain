@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.22.10] - 2026-04-28
+## [0.22.13] - 2026-04-28
 
 **Sync got faster, and the bookmark stopped lying.**
 **Parallel imports, a real writer lock, and a head-drift gate that catches the worst race.**
@@ -30,7 +30,7 @@ The headline is `gbrain sync --workers N`: per-worker Postgres engines with an a
 
 If you run autopilot on a 7,000-page Postgres brain, your sync cycle gets faster on day one with no flags. If you have ever felt the bookmark "skip past" work that didn't import, you'll stop seeing it. If you have multiple Conductor workspaces poking the same brain, you'll either wait politely on the writer lock or get a clear "another sync is in progress" error. None of this requires a config change.
 
-## To take advantage of v0.22.10
+## To take advantage of v0.22.13
 
 `gbrain upgrade` should do this automatically. If you want to use the new flags right now:
 

@@ -1,6 +1,6 @@
 # TODOS
 
-## sync (v0.22.10 follow-up — PR #490 review)
+## sync (v0.22.13 follow-up — PR #490 review)
 
 ### D-PR490-1 — Plumb resolved `database_url` through `SyncOpts`
 **Priority:** P3
@@ -24,7 +24,7 @@ the resolution into `SyncOpts` makes the worker-engine creation in `sync.ts` and
 - Makes `performSync` / `performFullSync` side-effect-free with respect to the
   on-disk config file.
 - Sets up for per-source `database_url` overrides without further refactor.
-- Makes the v0.22.10 belt-and-suspenders fallback (PR #490 Q3) cleaner — no
+- Makes the v0.22.13 belt-and-suspenders fallback (PR #490 Q3) cleaner — no
   more `!config?.database_url` short-circuit inside the parallel branch.
 
 **Cons:**
@@ -34,7 +34,7 @@ the resolution into `SyncOpts` makes the worker-engine creation in `sync.ts` and
   it's just plumbing.
 
 **Context:** Surfaced during the PR #490 plan-eng-review (parallel sync).
-Deferred because it isn't on the v0.22.10 critical path. The same pattern would
+Deferred because it isn't on the v0.22.13 critical path. The same pattern would
 benefit the cycle handler and the autopilot daemon. See the plan-eng-review
 decisions log: A4 = "Defer; file as TODO."
 

@@ -172,7 +172,7 @@ export interface SyncOpts {
    * Deletes and renames remain serial (order-dependent).
    * Default: undefined → auto-concurrency picks (`src/core/sync-concurrency.ts`).
    *
-   * v0.22.10 (PR #490 Q1): when this is explicitly set, the >50-file floor
+   * v0.22.13 (PR #490 Q1): when this is explicitly set, the >50-file floor
    * is bypassed — explicit user intent beats the auto-path safety net.
    */
   concurrency?: number;
@@ -182,7 +182,7 @@ export interface SyncOpts {
    * already serializes against other cycle runs. CLI sync, jobs handler,
    * and any external caller leave this undefined so they take the lock.
    *
-   * v0.22.10 (PR #490 CODEX-2). Not part of the public CLI surface.
+   * v0.22.13 (PR #490 CODEX-2). Not part of the public CLI surface.
    */
   skipLock?: boolean;
 }
@@ -278,7 +278,7 @@ async function writeChunkerVersion(
 }
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
-  // CODEX-2 (v0.22.10): cross-process writer lock for performSync. Two
+  // CODEX-2 (v0.22.13): cross-process writer lock for performSync. Two
   // concurrent syncs can otherwise read the same last_commit anchor, both
   // write last_commit unconditionally, and the last writer wins — including
   // regressing the bookmark backwards. cycle.ts already takes gbrain-cycle
@@ -289,7 +289,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // each other AND against the cycle's sync phase.
   //
   // skipLock is reserved for callers that already serialize via another
-  // mechanism (none in v0.22.10; reserved for future).
+  // mechanism (none in v0.22.13; reserved for future).
   let lockHandle: { release: () => Promise<void> } | null = null;
   if (!opts.skipLock) {
     lockHandle = await tryAcquireDbLock(engine, SYNC_LOCK_ID);
@@ -548,7 +548,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   const failedFiles: Array<{ path: string; error: string; line?: number }> = [];
   const addsAndMods = [...filtered.added, ...filtered.modified];
 
-  // v0.22.10 (PR #490 Q5): one source of truth for the concurrency decision.
+  // v0.22.13 (PR #490 Q5): one source of truth for the concurrency decision.
   // engine.kind === 'pglite' → forced 1; explicit opts.concurrency wins;
   // auto path returns DEFAULT_PARALLEL_WORKERS only when fileCount > 100.
   const explicitConcurrency = opts.concurrency !== undefined;
@@ -564,7 +564,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     async function importOnePath(eng: BrainEngine, path: string): Promise<void> {
       const filePath = join(syncRepoPath, path);
       if (!existsSync(filePath)) {
-        // CODEX-3 (v0.22.10): a file the diff said exists at headCommit but
+        // CODEX-3 (v0.22.13): a file the diff said exists at headCommit but
         // is gone from disk means the working tree has drifted (someone ran
         // `git checkout` / `git reset` mid-sync, or the file was deleted
         // post-diff). Record as a failure so last_commit does NOT advance —
@@ -593,7 +593,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     }
 
     if (runParallel) {
-      // A1 (v0.22.10): use engine.kind discriminator instead of config?.engine
+      // A1 (v0.22.13): use engine.kind discriminator instead of config?.engine
       // string compare or constructor.name sniff. Q3: belt-and-suspenders fall
       // back to serial when database_url is unset, so we never crash on a null
       // assertion if config is missing.
@@ -609,7 +609,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         const workerCount = Math.min(effectiveConcurrency, addsAndMods.length);
         const databaseUrl = config.database_url;
 
-        // Q4 (v0.22.10): banner on stderr so stdout stays clean for --json.
+        // Q4 (v0.22.13): banner on stderr so stdout stays clean for --json.
         console.error(`  Parallel sync: ${workerCount} workers for ${addsAndMods.length} files`);
 
         const workerEngines: InstanceType<typeof PostgresEngine>[] = [];
@@ -637,7 +637,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             }),
           );
         } finally {
-          // A2 (v0.22.10): try/finally guarantees connection cleanup even when
+          // A2 (v0.22.13): try/finally guarantees connection cleanup even when
           // the worker loop throws (partial connect failure, OOM, mid-import
           // signal). Each disconnect is best-effort — one worker failing to
           // disconnect must not strand the others.
@@ -660,7 +660,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     progress.finish();
   }
 
-  // CODEX-3 (v0.22.10): head-drift gate. If git HEAD moved during the import
+  // CODEX-3 (v0.22.13): head-drift gate. If git HEAD moved during the import
   // window (someone ran `git checkout` or `git pull` in another terminal /
   // sibling Conductor workspace), the chunks we just imported reflect a
   // different tree than `headCommit` claims. Refuse to advance last_commit
@@ -814,7 +814,7 @@ async function performFullSync(
     };
   }
 
-  // v0.22.10 (PR #490 A1 + Q5): full sync is always "large" by definition
+  // v0.22.13 (PR #490 A1 + Q5): full sync is always "large" by definition
   // (entire working tree). Auto-concurrency fires unconditionally for Postgres;
   // PGLite stays serial because its engine is single-connection. Routes the
   // policy through autoConcurrency() so it stays consistent with incremental
@@ -907,7 +907,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   const yesFlag = args.includes('--yes');
   const strategyArg = args.find((a, i) => args[i - 1] === '--strategy') as SyncOpts['strategy'] | undefined;
   const concurrencyStr = args.find((a, i) => args[i - 1] === '--concurrency' || args[i - 1] === '--workers');
-  // v0.22.10 (PR #490 Q2): parseWorkers throws on '0', '-3', 'foo', '1.5' instead
+  // v0.22.13 (PR #490 Q2): parseWorkers throws on '0', '-3', 'foo', '1.5' instead
   // of silently falling through to auto-concurrency or NaN. Loud failure beats
   // a 4-worker spawn from a typo.
   let concurrency: number | undefined;

@@ -4,7 +4,7 @@
  *   T1 — sync.last_commit failure-gate under concurrency=4 request.
  *   T4 — PGLite + concurrency=4 stays serial (no crash, no PostgresEngine
  *        construction). Tightens the engine.kind guard introduced in
- *        v0.22.10 (PR #490 A1).
+ *        v0.22.13 (PR #490 A1).
  *   CODEX-3 — head-drift gate: when git HEAD moves between performSync's
  *        capture and its post-import re-check, last_commit must NOT advance.
  *
@@ -203,7 +203,7 @@ describe('sync-parallel: head-drift gate (CODEX-3)', () => {
     const result = await performSync(engine, {
       repoPath, noPull: true, noEmbed: true,
     });
-    // Per CODEX-3 (v0.22.10): vanished files now go into failedFiles
+    // Per CODEX-3 (v0.22.13): vanished files now go into failedFiles
     // (prior behavior was a benign skip, which let last_commit advance).
     expect(result.status).toBe('blocked_by_failures');
     expect(result.failedFiles ?? 0).toBeGreaterThan(0);

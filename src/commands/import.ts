@@ -34,7 +34,7 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   const jsonOutput = args.includes('--json');
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
-  // v0.22.10 (PR #490 Q2): shared parseWorkers helper rejects bad input
+  // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
   // (--workers 0, -3, "foo") with a loud error instead of silently falling
   // through to 1. Mirrors sync.ts's flag handling.
   const { parseWorkers } = await import('../core/sync-concurrency.ts');
@@ -151,7 +151,7 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   }
 
   if (actualWorkers > 1) {
-    // v0.22.10 (PR #490 A1 + Q3): use engine.kind discriminator (not config.engine
+    // v0.22.13 (PR #490 A1 + Q3): use engine.kind discriminator (not config.engine
     // string sniff) and fall back to serial when database_url is unset. Both
     // checks belt-and-suspenders so we never crash on a null assertion.
     const config = loadConfig();
@@ -168,7 +168,7 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
       const workerPoolSize = Math.min(2, resolvePoolSize(2));
       const databaseUrl = config.database_url;
 
-      // v0.22.10 (PR #490 A2): connect workers serially so a partial failure
+      // v0.22.13 (PR #490 A2): connect workers serially so a partial failure
       // leaves us with the connected ones already pushed onto workerEngines
       // for the finally-block cleanup. The prior Promise.all could leak any
       // engine that connected before another's connect() rejected.
@@ -191,7 +191,7 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
           }
         }));
       } finally {
-        // v0.22.10 (PR #490 A2): try/finally guarantees cleanup even when the
+        // v0.22.13 (PR #490 A2): try/finally guarantees cleanup even when the
         // worker loop throws. Each disconnect is best-effort — one failing
         // disconnect must not strand the others.
         await Promise.all(

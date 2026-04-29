@@ -868,7 +868,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     // after sync, OR run via the autopilot cycle which has its own embed phase).
     // Caller can opt in by passing { noEmbed: false } in job params.
     const noEmbed = job.data.noEmbed !== false;
-    // v0.22.10 (PR #490 CODEX-1): resolve sourceId from job param OR by looking
+    // v0.22.13 (PR #490 CODEX-1): resolve sourceId from job param OR by looking
     // up the sources row for repoPath. Mirrors cycle.ts:480 — without this, a
     // multi-source brain reads the global config.sync.last_commit anchor
     // instead of sources.last_commit, which on a regularly-GC'd repo can drop
@@ -887,7 +887,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
         // global config.sync.* anchor in performSync.
       }
     }
-    // v0.22.10 (PR #490 CODEX-4): route concurrency through the shared
+    // v0.22.13 (PR #490 CODEX-4): route concurrency through the shared
     // autoConcurrency helper instead of hardcoded 4. PGLite engines stay
     // serial (forced 1); explicit job param wins; auto path defaults are
     // applied inside performSync against the resolved file count.

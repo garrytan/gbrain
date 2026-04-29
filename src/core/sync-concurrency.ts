@@ -9,7 +9,7 @@
  * They drift over time and confuse users ("why does my sync not parallelize?"
  * is a different answer in each path). This module is one source of truth.
  *
- * v0.22.10 — extracted as part of the parallel-sync hardening (PR #490).
+ * v0.22.13 — extracted as part of the parallel-sync hardening (PR #490).
  */
 import type { BrainEngine } from './engine.ts';
 

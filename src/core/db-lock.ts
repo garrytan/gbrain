@@ -18,7 +18,7 @@
  * performSync (called from anywhere — cycle, jobs handler, CLI) takes
  * gbrain-sync just for the write window.
  *
- * v0.22.10 — added in PR #490 to fix CODEX-2 (no cross-process lock for
+ * v0.22.13 — added in PR #490 to fix CODEX-2 (no cross-process lock for
  * direct sync paths). The cycle path was already protected.
  */
 import { hostname } from 'os';

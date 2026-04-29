@@ -5,7 +5,7 @@
  *        actually constructs N worker engines, imports correctly, and does
  *        not leak connections (probe pg_stat_activity before/after).
  *   P4 — benchmark: serial vs concurrency=4 timing on the same fixture so
- *        the v0.22.10 CHANGELOG can quote a real number instead of "~4×".
+ *        the v0.22.13 CHANGELOG can quote a real number instead of "~4×".
  *
  * Gated on DATABASE_URL. Run via:
  *   docker run -d --name gbrain-test-pg -e POSTGRES_USER=postgres \
