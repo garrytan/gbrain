@@ -67,13 +67,13 @@ export function getEmbeddingDimensions(): number {
 export const EMBEDDING_MODEL = getEmbeddingModel();
 export const EMBEDDING_DIMENSIONS = getEmbeddingDimensions();
 
-function getEmbeddingProviderConfig(): EmbeddingProviderConfig {
+export function getEmbeddingProviderConfig(): EmbeddingProviderConfig {
   const provider = getEmbeddingProvider();
   if (provider === 'copilot') {
     return {
       provider,
       model: process.env.GBRAIN_EMBEDDING_MODEL || process.env.GBRAIN_COPILOT_EMBEDDING_MODEL || COPILOT_MODEL,
-      dimensions: parseDimensions(process.env.GBRAIN_EMBEDDING_DIMENSIONS, COPILOT_DIMENSIONS),
+      dimensions: parseEmbeddingDimensions(process.env.GBRAIN_EMBEDDING_DIMENSIONS, COPILOT_DIMENSIONS),
       batchSize: parseBatchSize(process.env.GBRAIN_EMBEDDING_BATCH_SIZE, COPILOT_BATCH_SIZE),
     };
   }
@@ -82,7 +82,7 @@ function getEmbeddingProviderConfig(): EmbeddingProviderConfig {
     return {
       provider,
       model: process.env.GBRAIN_EMBEDDING_MODEL || OPENAI_MODEL,
-      dimensions: parseDimensions(process.env.GBRAIN_EMBEDDING_DIMENSIONS, OPENAI_DIMENSIONS),
+      dimensions: parseEmbeddingDimensions(process.env.GBRAIN_EMBEDDING_DIMENSIONS, OPENAI_DIMENSIONS),
       batchSize: parseBatchSize(process.env.GBRAIN_EMBEDDING_BATCH_SIZE, OPENAI_COMPATIBLE_BATCH_SIZE),
     };
   }
@@ -90,7 +90,7 @@ function getEmbeddingProviderConfig(): EmbeddingProviderConfig {
   return {
     provider,
     model: process.env.GBRAIN_EMBEDDING_MODEL || process.env.GBRAIN_OPENAI_EMBEDDING_MODEL || OPENAI_MODEL,
-    dimensions: parseDimensions(
+    dimensions: parseEmbeddingDimensions(
       process.env.GBRAIN_EMBEDDING_DIMENSIONS || process.env.GBRAIN_OPENAI_EMBEDDING_DIMENSIONS,
       OPENAI_DIMENSIONS,
     ),
@@ -287,7 +287,7 @@ function getRetryDelay(e: unknown, attempt: number): number {
   return delay;
 }
 
-function parseDimensions(value: string | undefined, fallback: number): number {
+export function parseEmbeddingDimensions(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
   const parsed = parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {

@@ -3,6 +3,7 @@ import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnectio
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import { prepareEmbeddingSchemaSettings } from './embedding-schema.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
@@ -18,6 +19,7 @@ import type {
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
+import { validateChunkEmbeddingDimensions } from './embedding-dimensions.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
@@ -78,6 +80,7 @@ export class PostgresEngine implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
+      await prepareEmbeddingSchemaSettings(this);
       await conn.unsafe(SCHEMA_SQL);
 
       // Run any pending migrations automatically
@@ -515,6 +518,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Chunks
   async upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void> {
+    validateChunkEmbeddingDimensions(chunks);
     const sql = this.sql;
 
     // Get page_id

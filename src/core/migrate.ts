@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
+import { realignEmbeddingDimensionSql } from './embedding-schema.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -1064,6 +1065,11 @@ export const MIGRATIONS: Migration[] = [
       pglite: `-- PGLite: no-op. RLS check runs only against Postgres E2E.`,
     },
     sql: '',
+  },
+  {
+    version: 30,
+    name: 'embedding_dimension_realign',
+    sql: realignEmbeddingDimensionSql(),
   },
 ];
 
