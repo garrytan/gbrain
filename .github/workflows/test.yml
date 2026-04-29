@@ -30,7 +30,7 @@ jobs:
       - run: bun install
       - name: Typecheck
         run: bunx tsc --noEmit --pretty false
-      - run: bun test
+      - run: bun run test
 
   postgres-jsonb:
     runs-on: ubuntu-latest

@@ -25,7 +25,7 @@ jobs:
         with:
           bun-version: latest
       - run: bun install
-      - run: bun test
+      - run: bun run test
       - run: bun build --compile --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
