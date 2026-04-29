@@ -20,6 +20,9 @@ Before answering, check whether the user message mentions or depends on:
 - the user's own idea, thesis, observation, product thought, or preference
 - a cross-system or historical question that external search or raw grep cannot answer
 
+For every message, do a lightweight scan for durable knowledge signals; only
+read or write when a signal is present.
+
 If yes, read MBrain before responding. If the task is purely code editing, git
 work, file management, public library documentation, or general programming,
 only use MBrain when one of the triggers above is present.

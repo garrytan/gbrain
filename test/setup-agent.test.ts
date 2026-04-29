@@ -103,6 +103,7 @@ describe('setup-agent', () => {
     expect(result.stderr).toBe('');
     expect(result.stdout).toContain('MBRAIN:RULES:START');
     expect(result.stdout).toContain('Read First When MBrain Is Relevant');
+    expect(result.stdout).toContain('lightweight scan for durable knowledge signals');
     expect(result.stdout).toContain('Write Back Durable Knowledge');
     expect(result.stdout).toContain('Backlinks And Sync');
     expect(result.stdout).toContain('sync_brain');
