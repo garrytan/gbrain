@@ -57,15 +57,27 @@ describe('parseGlobalFlags', () => {
     expect(r.rest).toContain('--progress-interval=-1');
   });
 
+  test('strips --json before the command and sets json=true', () => {
+    const r = parseGlobalFlags(['--json', 'search', 'ADU permit']);
+    expect(r.cliOpts.json).toBe(true);
+    expect(r.rest).toEqual(['search', 'ADU permit']);
+  });
+
+  test('keeps command-local --json after the command', () => {
+    const r = parseGlobalFlags(['check-resolvable', '--skills-dir', './skills', '--json']);
+    expect(r.cliOpts.json).toBe(false);
+    expect(r.rest).toEqual(['check-resolvable', '--skills-dir', './skills', '--json']);
+  });
+
   test('unknown flags pass through unchanged', () => {
-    const r = parseGlobalFlags(['doctor', '--fast', '--json', '--foo=bar']);
-    expect(r.rest).toEqual(['doctor', '--fast', '--json', '--foo=bar']);
+    const r = parseGlobalFlags(['doctor', '--fast', '--foo=bar']);
+    expect(r.rest).toEqual(['doctor', '--fast', '--foo=bar']);
     expect(r.cliOpts).toEqual(DEFAULT_CLI_OPTIONS);
   });
 
   test('all global flags combined', () => {
-    const r = parseGlobalFlags(['--quiet', '--progress-json', '--progress-interval=250', 'sync']);
-    expect(r.cliOpts).toEqual({ quiet: true, progressJson: true, progressInterval: 250 });
+    const r = parseGlobalFlags(['--quiet', '--json', '--progress-json', '--progress-interval=250', 'sync']);
+    expect(r.cliOpts).toEqual({ quiet: true, json: true, progressJson: true, progressInterval: 250 });
     expect(r.rest).toEqual(['sync']);
   });
 });
@@ -78,7 +90,7 @@ describe('getCliOptions / setCliOptions singleton', () => {
 
   test('setCliOptions applies + getCliOptions returns a copy', () => {
     _resetCliOptionsForTest();
-    setCliOptions({ quiet: false, progressJson: true, progressInterval: 250 });
+    setCliOptions({ quiet: false, json: false, progressJson: true, progressInterval: 250 });
     expect(getCliOptions().progressJson).toBe(true);
     expect(getCliOptions().progressInterval).toBe(250);
   });
@@ -138,12 +150,12 @@ describe('CLI integration: progress streams to the right channel', () => {
 
 describe('cliOptsToProgressOptions', () => {
   test('--quiet → quiet mode', () => {
-    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: false, progressInterval: 1000 });
+    const opts = cliOptsToProgressOptions({ quiet: true, json: false, progressJson: false, progressInterval: 1000 });
     expect(opts.mode).toBe('quiet');
   });
 
   test('--progress-json → json mode with interval', () => {
-    const opts = cliOptsToProgressOptions({ quiet: false, progressJson: true, progressInterval: 500 });
+    const opts = cliOptsToProgressOptions({ quiet: false, json: false, progressJson: true, progressInterval: 500 });
     expect(opts.mode).toBe('json');
     expect(opts.minIntervalMs).toBe(500);
   });
@@ -155,7 +167,7 @@ describe('cliOptsToProgressOptions', () => {
   });
 
   test('quiet takes priority over progressJson', () => {
-    const opts = cliOptsToProgressOptions({ quiet: true, progressJson: true, progressInterval: 1000 });
+    const opts = cliOptsToProgressOptions({ quiet: true, json: false, progressJson: true, progressInterval: 1000 });
     expect(opts.mode).toBe('quiet');
   });
 });

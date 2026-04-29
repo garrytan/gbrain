@@ -94,7 +94,9 @@ async function main() {
 
     const ctx = makeContext(engine, params);
     const result = await op.handler(ctx, params);
-    const output = formatResult(op.name, result);
+    const output = getCliOptions().json
+      ? JSON.stringify(result, null, 2) + '\n'
+      : formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
     if (e instanceof OperationError) {
@@ -618,7 +620,12 @@ function printHelp() {
   console.log(`gbrain ${VERSION} -- personal knowledge brain
 
 USAGE
-  gbrain <command> [options]
+  gbrain [--json] <command> [options]
+
+GLOBAL OPTIONS
+  --json                             Emit raw JSON for shared operation commands
+  --quiet                            Suppress non-essential output
+  --progress-json                    Emit progress events as JSON
 
 SETUP
   init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)

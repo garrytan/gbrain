@@ -15,12 +15,14 @@ export interface CliOptions {
   quiet: boolean;
   progressJson: boolean;
   progressInterval: number; // ms
+  json: boolean;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
   quiet: false,
   progressJson: false,
   progressInterval: 1000,
+  json: false,
 };
 
 /**
@@ -29,6 +31,7 @@ export const DEFAULT_CLI_OPTIONS: CliOptions = {
  *
  * Recognized:
  *   --quiet
+ *   --json
  *   --progress-json
  *   --progress-interval=<ms>
  *   --progress-interval <ms>   (space-separated form)
@@ -43,6 +46,14 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
     const a = argv[i];
     if (a === '--quiet') {
       cliOpts.quiet = true;
+      continue;
+    }
+    if (a === '--json') {
+      if (rest.length === 0) {
+        cliOpts.json = true;
+        continue;
+      }
+      rest.push(a);
       continue;
     }
     if (a === '--progress-json') {
