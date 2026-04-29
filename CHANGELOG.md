@@ -2,6 +2,69 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.22.15] - 2026-04-29
+
+## **Throw bare markdown into your brain and it becomes properly typed knowledge. No YAML ceremony.**
+
+A real 81K-page brain has 9,655 files with no frontmatter. They imported fine, but every one of them landed in the DB as `type: concept`, `title: <slugified-filename>`, no date, no source, no tags. Search ranking suffered. Type-filtered queries missed them. Entity resolution fell over.
+
+This release adds path-aware frontmatter inference. `gbrain sync` now synthesizes type, date, source, and tags from the filesystem path and first heading the moment a bare-frontmatter file imports. No LLM call, fully deterministic, file on disk untouched. An Apple Note at `Apple Notes/2010-04-13 founders mtg.md` lands as `type: apple-note, title: founders mtg, date: 2010-04-13, source: apple-notes` instead of `type: concept, title: 2010 04 13 Founders Mtg`.
+
+If you want the inference written back to git, the new `gbrain frontmatter generate <path> --fix` walks a brain dir, infers frontmatter for every file that lacks it, and writes back with `.bak` safety backups. Dry-run by default.
+
+### The 9,655 numbers that matter
+
+Measured against my actual brain (gbrain v0.22.8 + the new inference path).
+
+| Behavior | Before v0.22.15 | After v0.22.15 |
+|---|---|---|
+| Files importing as `type: concept` (no frontmatter) | 9,655 | 0 |
+| Apple Notes typed correctly (`apple-note`) | 0 | 5,861 |
+| Calendar indexes typed correctly (`calendar-index`) | 0 | 3,201 |
+| Therapy sessions typed + dated | 0 | 60 |
+| Essay drafts typed + dated | 0 | 33 |
+| LLM cost for the full reclassification | n/a | $0 |
+
+The agent doing type-filtered queries on your brain (`type: person`, `type: meeting`, `type: essay`) now actually finds those pages instead of treating everything as `concept`.
+
+### What this means for you
+
+If you've been resisting frontmatter ceremony — same. Throw bare markdown into your brain and inference handles it. The rules table in `src/core/frontmatter-inference.ts` covers the obvious directories (`people/`, `companies/`, `daily/calendar/`, `writing/`, `meetings/`, `personal/`, etc.) plus a generic catch-all. Adding a new convention is one line in `DIRECTORY_RULES`.
+
+## To take advantage of v0.22.15
+
+`gbrain upgrade` should do this automatically. Then:
+
+1. **Run a dry-run preview:**
+   ```bash
+   gbrain frontmatter generate ~/brain
+   ```
+   You'll see how many files would get inferred frontmatter and the breakdown by type.
+2. **Optionally write back to git:**
+   ```bash
+   gbrain frontmatter generate ~/brain --fix
+   ```
+   Each modified file gets a `.bak` backup before rewrite.
+3. **Re-sync to pick up the new metadata:**
+   ```bash
+   gbrain sync ~/brain
+   ```
+   Inferred frontmatter is folded into `content_hash`, so previously-bare files re-import once with proper types and re-embed. Subsequent syncs are idempotent.
+4. **If anything looks off,** please file an issue: https://github.com/garrytan/gbrain/issues with the path of the misclassified file and the rule that matched.
+
+### Itemized changes
+
+#### Features
+- `src/core/frontmatter-inference.ts` (new module) — Path-aware frontmatter synthesis. `DIRECTORY_RULES` table maps path prefixes to type/date/title/source/tags. First-match-wins. Date extraction from filenames (`YYYY-MM-DD` prefix or anywhere). Title extraction with date-prefix stripping and first-`#`-heading fallback (20-line window). YAML-safe serialization with quoting for special characters.
+- `src/core/import-file.ts` — `importFromFile()` runs inference inline before `parseMarkdown()` when `opts.inferFrontmatter !== false` (default on). The synthesized frontmatter folds into the in-memory content for parsing, chunking, embedding, and content-hash computation. The file on disk is not modified.
+- `src/commands/frontmatter.ts` — New `gbrain frontmatter generate <path> [--fix] [--dry-run] [--json]` subcommand. Walks a directory (skips `.git`, `node_modules`, `.obsidian`, symlinks), runs inference on every `.md` file without frontmatter, optionally writes back with `.bak` backups. Auto-detects brain root by walking up for `.git`. Shows per-type breakdown and first-10 examples.
+
+#### Fixes
+- `src/commands/frontmatter.ts:344` — `runGenerate` dynamic path import now includes `basename`. Single-file invocation (`gbrain frontmatter generate <file>`) previously crashed with `ReferenceError: basename is not defined` on the relative-path-empty fallback at line 437.
+
+#### Tests
+- `test/frontmatter-inference.test.ts` (new, 35 cases) — date extraction (5), title extraction from filenames (5) and headings (4 incl. 20-line boundary), inference for every directory rule (13 incl. Apple Notes subfolder tagging), serialization with YAML-safe quoting (4), `applyInference` integration (2), rule ordering and catch-all coverage (2).
+
 ## [0.22.8] - 2026-04-28
 
 ## **Doctor stops timing out on Supabase. Integrity scan finishes in ~6s, multi-source brains get correct counts.**
