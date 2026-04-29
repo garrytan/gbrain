@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS pages (
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.22.8.0: pre-computed "any non-whitespace text worth chunking?" so
+  -- listSlugsPendingEmbedding's UNION branch 2 anti-joins via partial
+  -- index instead of running regexp_replace per row. Maintained by
+  -- putPage via computeHasChunkableText helper (src/core/utils.ts).
+  has_chunkable_text BOOLEAN NOT NULL DEFAULT false,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -64,6 +69,14 @@ CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+-- v0.22.7.0: slug lookups dominate listSlugsPendingEmbedding's UNION branch 2
+-- and every getPage/upsertChunks/deleteChunks call site that walks pages by
+-- slug. Postgres parity via migration v32.
+CREATE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug);
+-- v0.22.8.0: covering partial index for listSlugsPendingEmbedding's UNION
+-- branch 2. id for the anti-join, slug for the projection. Postgres
+-- parity via migration v34.
+CREATE INDEX IF NOT EXISTS idx_pages_chunkable ON pages(id, slug) WHERE has_chunkable_text;
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -93,6 +106,12 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (em
 -- v0.19.0: partial indexes for code chunk lookups.
 CREATE INDEX IF NOT EXISTS idx_chunks_symbol_name ON content_chunks(symbol_name) WHERE symbol_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE language IS NOT NULL;
+-- v0.22.7.0: partial indexes for listSlugsPendingEmbedding's UNION branch 1
+-- (the cheap "stale chunk exists" probe). Postgres parity via migrations v30/v31.
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding_null
+  ON content_chunks(page_id) WHERE embedding IS NULL;
+CREATE INDEX IF NOT EXISTS idx_chunks_embedded_at_null
+  ON content_chunks(page_id) WHERE embedded_at IS NULL;
 
 -- ============================================================
 -- links: cross-references between pages

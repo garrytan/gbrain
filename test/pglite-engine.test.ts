@@ -133,6 +133,104 @@ describe('PGLiteEngine: Pages', () => {
     const page = await engine.putPage('Test/UPPER', testPage);
     expect(page.slug).toBe('test/upper');
   });
+
+  // ─────────────────────────────────────────────────────────────────
+  // v0.22.8.0: has_chunkable_text round-trip + drift guard
+  // ─────────────────────────────────────────────────────────────────
+  // The boolean is maintained in TS via computeHasChunkableText. If a future
+  // contributor changes the SQL backfill in v33 OR the worker query in
+  // listSlugsPendingEmbedding without keeping the helper in sync, these
+  // round-trips break. They're cheap regression guards on the most fragile
+  // part of the v0.22.8.0 design (the helper-vs-SQL drift codex flagged in
+  // the Phase 2 consult Q11).
+
+  async function readHasChunkable(slug: string): Promise<boolean> {
+    const { rows } = await (engine as { db: { query: (sql: string, params: unknown[]) => Promise<{ rows: { has_chunkable_text: boolean }[] }> } }).db.query(
+      'SELECT has_chunkable_text FROM pages WHERE slug = $1',
+      [slug],
+    );
+    return rows[0]!.has_chunkable_text;
+  }
+
+  test('putPage stores has_chunkable_text=true for non-trivial content', async () => {
+    await engine.putPage('test/has-text', testPage);
+    expect(await readHasChunkable('test/has-text')).toBe(true);
+  });
+
+  test('putPage stores has_chunkable_text=false for empty content', async () => {
+    await engine.putPage('test/empty', {
+      type: 'concept', title: 'Empty',
+      compiled_truth: '', timeline: '',
+    });
+    expect(await readHasChunkable('test/empty')).toBe(false);
+  });
+
+  test('putPage stores has_chunkable_text=false for whitespace-only content', async () => {
+    await engine.putPage('test/whitespace', {
+      type: 'concept', title: 'Whitespace',
+      compiled_truth: '   \n\t  ', timeline: '\n\n',
+    });
+    expect(await readHasChunkable('test/whitespace')).toBe(false);
+  });
+
+  test('putPage stores has_chunkable_text=true if only timeline has content', async () => {
+    await engine.putPage('test/timeline-only', {
+      type: 'concept', title: 'Timeline',
+      compiled_truth: '   ', timeline: '2024: stuff happened',
+    });
+    expect(await readHasChunkable('test/timeline-only')).toBe(true);
+  });
+
+  test('upsert refreshes has_chunkable_text on subsequent putPage', async () => {
+    // Insert a real page → true
+    await engine.putPage('test/transition', testPage);
+    expect(await readHasChunkable('test/transition')).toBe(true);
+    // Update with empty content → must flip to false (otherwise stale-boolean drift)
+    await engine.putPage('test/transition', {
+      type: 'concept', title: 'Now Empty',
+      compiled_truth: '', timeline: '',
+    });
+    expect(await readHasChunkable('test/transition')).toBe(false);
+  });
+
+  test('revertToVersion refreshes has_chunkable_text (drift guard)', async () => {
+    // Codex Phase 2 review caught this: revertToVersion is a SECOND writer
+    // path on pages.compiled_truth. Without the inline SQL recompute in
+    // both engines, reverting a now-empty page back to a text-bearing
+    // version would leave has_chunkable_text=false, hiding the page from
+    // listSlugsPendingEmbedding's UNION branch 2 forever.
+    //
+    // Setup: write a real page (boolean=true), snapshot it as a version,
+    // overwrite with empty content (boolean=false), then revert.
+
+    // 1. Write a real page
+    await engine.putPage('test/revert', testPage);
+    expect(await readHasChunkable('test/revert')).toBe(true);
+
+    // 2. Snapshot it (mimics what saveVersion does in the operation layer)
+    await (engine as { db: { query: (sql: string, params: unknown[]) => Promise<{ rows: { id: number }[] }> } }).db.query(
+      `INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
+       SELECT id, compiled_truth, frontmatter FROM pages WHERE slug = $1
+       RETURNING id`,
+      ['test/revert'],
+    );
+    const { rows: versionRows } = await (engine as { db: { query: (sql: string, params: unknown[]) => Promise<{ rows: { id: number }[] }> } }).db.query(
+      `SELECT pv.id FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1`,
+      ['test/revert'],
+    );
+    const versionId = versionRows[0]!.id;
+
+    // 3. Overwrite with empty content - boolean flips to false
+    await engine.putPage('test/revert', {
+      type: 'concept', title: 'Wiped',
+      compiled_truth: '', timeline: '',
+    });
+    expect(await readHasChunkable('test/revert')).toBe(false);
+
+    // 4. Revert - boolean must flip back to true (not stay false from step 3)
+    await engine.revertToVersion('test/revert', versionId);
+    expect(await readHasChunkable('test/revert')).toBe(true);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────

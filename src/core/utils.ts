@@ -110,6 +110,59 @@ export function tryParseEmbedding(value: unknown): Float32Array | null {
   }
 }
 
+/**
+ * The 6 ASCII whitespace chars POSIX `[[:space:]]` always matches under
+ * the C / default locale: space, tab, newline, vertical tab, form feed,
+ * carriage return. PostgreSQL `regexp_replace(s, '[[:space:]]', '', 'g')`
+ * resolves the class via the prevailing `LC_CTYPE`; under the default
+ * locale (C / C.UTF-8 / en_US.UTF-8 in practice on Supabase, Linux,
+ * macOS) the match set is exactly these 6.
+ *
+ * Do NOT use JS `\s` here - it also matches Unicode whitespace
+ * (no-break space U+00A0, en-space U+2002, ideographic space U+3000,
+ * etc.) which Postgres `[[:space:]]` does NOT match under the default
+ * locale, causing `has_chunkable_text` to disagree between code (this
+ * helper) and SQL backfill / inline recompute paths. The unit test at
+ * `test/utils.test.ts:computeHasChunkableText` pins this with a U+00A0
+ * regression case.
+ *
+ * If gbrain ever ships under a Unicode-aware locale that resolves
+ * `[[:space:]]` to include U+00A0, this helper plus migration v33 plus
+ * revertToVersion's inline SQL all need to switch together.
+ */
+const POSIX_SPACE_RE = /[ \t\n\v\f\r]/g;
+
+/**
+ * Mirror of the SQL predicate used by `listSlugsPendingEmbedding` UNION
+ * branch 2 in both engines:
+ *
+ *   LENGTH(regexp_replace(COALESCE(compiled_truth, ''), '[[:space:]]', '', 'g')) > 0
+ *   OR LENGTH(regexp_replace(COALESCE(timeline, ''), '[[:space:]]', '', 'g')) > 0
+ *
+ * "Does this page have any non-whitespace text worth chunking?"
+ *
+ * Maintained on every page write (`putPage` in postgres-engine.ts and
+ * pglite-engine.ts) so the embed-worker query can filter on a partial-
+ * indexed boolean instead of running this regex over every row in a
+ * Parallel Seq Scan. See `idx_pages_chunkable` partial index and
+ * migration v29 (column + backfill).
+ *
+ * Drift risk: if this function or its SQL twin diverges, pages get
+ * mis-classified as needing-or-not-needing chunking. Round-trip tests
+ * in `test/postgres-engine.test.ts` and `test/pglite-engine.test.ts`
+ * assert this matches what the database stores; any future SQL change
+ * to the predicate must also update this helper, and vice versa.
+ */
+export function computeHasChunkableText(
+  compiled_truth: string | null | undefined,
+  timeline: string | null | undefined,
+): boolean {
+  const ct = (compiled_truth ?? '').replace(POSIX_SPACE_RE, '');
+  if (ct.length > 0) return true;
+  const tl = (timeline ?? '').replace(POSIX_SPACE_RE, '');
+  return tl.length > 0;
+}
+
 export function rowToChunk(row: Record<string, unknown>, includeEmbedding = false): Chunk {
   return {
     id: row.id as number,

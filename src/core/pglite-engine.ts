@@ -19,7 +19,7 @@ import type {
   IngestLogEntry, IngestLogInput,
   EngineConfig,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, computeHasChunkableText } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
@@ -252,9 +252,14 @@ export class PGLiteEngine implements BrainEngine {
     // global UNIQUE(slug) was dropped in migration v17. Step 5+ will
     // surface an explicit sourceId param on putPage for multi-source sync.
     const pageKind = page.page_kind || 'markdown';
+    // v0.22.8.0: maintain has_chunkable_text on every write. Mirrors
+    // postgres-engine.ts:289 - both engines must call the same helper so
+    // the boolean stays consistent across engine swaps. See utils.ts for
+    // the regex-parity rationale.
+    const hasChunkableText = computeHasChunkableText(page.compiled_truth, page.timeline);
     const { rows } = await this.db.query(
-      `INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, now())
+      `INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, has_chunkable_text, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, now())
        ON CONFLICT (source_id, slug) DO UPDATE SET
          type = EXCLUDED.type,
          page_kind = EXCLUDED.page_kind,
@@ -263,9 +268,10 @@ export class PGLiteEngine implements BrainEngine {
          timeline = EXCLUDED.timeline,
          frontmatter = EXCLUDED.frontmatter,
          content_hash = EXCLUDED.content_hash,
+         has_chunkable_text = EXCLUDED.has_chunkable_text,
          updated_at = now()
        RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at`,
-      [slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash]
+      [slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, hasChunkableText]
     );
     return rowToPage(rows[0] as Record<string, unknown>);
   }
@@ -738,6 +744,11 @@ export class PGLiteEngine implements BrainEngine {
     // embedded_at populated while embedding is NULL, and `embedding IS NULL`
     // is the truth source for "this chunk needs an embedding".
     //
+    // Branch 2 uses the v0.22.8.0 has_chunkable_text boolean + partial index
+    // idx_pages_chunkable. Mirrors postgres-engine.ts:846 - both engines
+    // must keep the same predicate so the embed worker's "needs chunking"
+    // semantics stay consistent across engine swaps.
+    //
     // Known limitation (v0.18+ multi-source): returns slugs without source_id,
     // so two pages sharing a slug across sources collapse to one entry here.
     // Matches the pre-existing slug-only semantics of getChunks, upsertChunks,
@@ -753,10 +764,7 @@ export class PGLiteEngine implements BrainEngine {
         WHERE NOT EXISTS (
           SELECT 1 FROM content_chunks WHERE page_id = p.id
         )
-          AND (
-            LENGTH(regexp_replace(COALESCE(p.compiled_truth, ''), '[[:space:]]', '', 'g')) > 0
-            OR LENGTH(regexp_replace(COALESCE(p.timeline, ''), '[[:space:]]', '', 'g')) > 0
-          )
+          AND p.has_chunkable_text
         ORDER BY 1`
     );
     return (rows as { slug: string }[]).map(r => r.slug);
@@ -1261,10 +1269,18 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async revertToVersion(slug: string, versionId: number): Promise<void> {
+    // v0.22.8.0: see postgres-engine.ts:1413 for the rationale. Inline SQL
+    // recomputes has_chunkable_text from the new compiled_truth + existing
+    // timeline so revertToVersion doesn't leave the boolean stale. Both
+    // engines must keep this in sync with putPage's TS-helper version.
     await this.db.query(
       `UPDATE pages SET
         compiled_truth = pv.compiled_truth,
         frontmatter = pv.frontmatter,
+        has_chunkable_text = (
+          LENGTH(regexp_replace(COALESCE(pv.compiled_truth, ''), '[[:space:]]', '', 'g')) > 0
+          OR LENGTH(regexp_replace(COALESCE(pages.timeline, ''), '[[:space:]]', '', 'g')) > 0
+        ),
         updated_at = now()
       FROM page_versions pv
       WHERE pages.slug = $1 AND pv.id = $2 AND pv.page_id = pages.id`,

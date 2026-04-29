@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS pages (
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.22.8.0: pre-computed "is there any non-whitespace text worth chunking?"
+  -- so listSlugsPendingEmbedding's UNION branch 2 anti-joins via partial index
+  -- instead of running regexp_replace on every row. Maintained by putPage in
+  -- both engines via computeHasChunkableText helper (src/core/utils.ts).
+  has_chunkable_text BOOLEAN NOT NULL DEFAULT false,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -81,6 +86,15 @@ CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops)
 CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
 -- v0.18.0: source-scoped scans (per /plan-eng-review Section 4).
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+-- v0.22.7.0: slug lookups dominate listSlugsPendingEmbedding's UNION branch 2
+-- and every getPage/upsertChunks/deleteChunks call site that walks pages by
+-- slug. Without this, those queries fall back to scanning all rows. Backfilled
+-- to live brains via migration v32.
+CREATE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug);
+-- v0.22.8.0: covering partial index for listSlugsPendingEmbedding's UNION
+-- branch 2. id for the anti-join, slug for the projection. Backfilled to
+-- live brains via migration v34.
+CREATE INDEX IF NOT EXISTS idx_pages_chunkable ON pages(id, slug) WHERE has_chunkable_text;
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -121,6 +135,15 @@ CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE
 CREATE INDEX IF NOT EXISTS idx_chunks_search_vector ON content_chunks USING GIN(search_vector);
 CREATE INDEX IF NOT EXISTS idx_chunks_symbol_qualified
   ON content_chunks(symbol_name_qualified) WHERE symbol_name_qualified IS NOT NULL;
+-- v0.22.7.0: partial indexes that anchor listSlugsPendingEmbedding's UNION
+-- branch 1 (the cheap "stale chunk exists" probe). Without these, the predicate
+-- runs as a seq scan over content_chunks on every autopilot cycle. Backfilled
+-- to live brains via migration v30 / v31. Predicate matches what the SQL filters
+-- on (`embedding IS NULL` is the truth source, not `embedded_at IS NULL`).
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding_null
+  ON content_chunks(page_id) WHERE embedding IS NULL;
+CREATE INDEX IF NOT EXISTS idx_chunks_embedded_at_null
+  ON content_chunks(page_id) WHERE embedded_at IS NULL;
 
 -- v0.20.0 Cathedral II: chunk-grain FTS trigger.
 -- Weight 'A' on doc_comment + symbol_name_qualified; weight 'B' on chunk_text.

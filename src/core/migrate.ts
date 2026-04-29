@@ -1073,6 +1073,171 @@ export const MIGRATIONS: Migration[] = [
     },
     sql: '',
   },
+  {
+    version: 30,
+    name: 'idx_chunks_embedding_null_backfill',
+    // v0.22.7.0: backfills idx_chunks_embedding_null on existing brains. The
+    // index was created manually on production on 2026-04-28 to anchor
+    // listSlugsPendingEmbedding's UNION branch 1 (the cheap "stale chunk"
+    // probe). Schema-embedded.ts and pglite-schema.ts now ship it for fresh
+    // installs; this migration brings older Postgres brains in line.
+    //
+    // CONCURRENTLY on Postgres so the backfill doesn't block writers; PGLite
+    // has no concurrent writers and rejects CONCURRENTLY, so it runs plain.
+    // IF NOT EXISTS is a name-only check, but `pg_index.indisvalid` of the
+    // existing live index has been verified before shipping (production already
+    // had this index valid + ready, so the migration is a no-op there).
+    sql: '',
+    transaction: false,
+    sqlFor: {
+      postgres: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null
+        ON content_chunks(page_id) WHERE embedding IS NULL;`,
+      pglite: `CREATE INDEX IF NOT EXISTS idx_chunks_embedding_null
+        ON content_chunks(page_id) WHERE embedding IS NULL;`,
+    },
+  },
+  {
+    version: 31,
+    name: 'idx_chunks_embedded_at_null_backfill',
+    // v0.22.7.0: companion to v30 for the embedded_at predicate. Both partial
+    // indexes exist because the bulk-import path can populate one column
+    // without the other (per v0.22.1 #409 — embedding IS NULL is the truth
+    // source for "needs embedding", but embedded_at IS NULL is still useful
+    // for separate diagnostic + retry paths). Same CONCURRENTLY semantics.
+    sql: '',
+    transaction: false,
+    sqlFor: {
+      postgres: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedded_at_null
+        ON content_chunks(page_id) WHERE embedded_at IS NULL;`,
+      pglite: `CREATE INDEX IF NOT EXISTS idx_chunks_embedded_at_null
+        ON content_chunks(page_id) WHERE embedded_at IS NULL;`,
+    },
+  },
+  {
+    version: 32,
+    name: 'idx_pages_slug_backfill',
+    // v0.22.7.0: backfills the non-unique slug index. `pages.slug` was
+    // unindexed except where the composite (source_id, slug) UNIQUE on
+    // pages_source_slug_key happens to cover it. listSlugsPendingEmbedding
+    // and every getPage/upsertChunks/deleteChunks call site walks pages by
+    // slug; without this, those queries fall back to scanning all rows on
+    // brains older than 2026-04-28.
+    sql: '',
+    transaction: false,
+    sqlFor: {
+      postgres: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pages_slug
+        ON pages(slug);`,
+      pglite: `CREATE INDEX IF NOT EXISTS idx_pages_slug
+        ON pages(slug);`,
+    },
+  },
+  {
+    version: 33,
+    name: 'pages_has_chunkable_text',
+    // v0.22.8.0: pre-computes "is there any non-whitespace text worth chunking?"
+    // as a stored boolean so listSlugsPendingEmbedding's UNION branch 2 can
+    // anti-join via a partial index instead of running a Parallel Seq Scan
+    // with regexp_replace on every row. Pre-fix this query was 74% of all
+    // DB time on the production brain; per-call mean 15s.
+    //
+    // The boolean is maintained in code (`putPage` in both engines via
+    // computeHasChunkableText helper in src/core/utils.ts) rather than as a
+    // generated column. Generated columns require IMMUTABLE expressions and
+    // regexp_replace's volatility class is not safely assumed; staying in
+    // app code also keeps the formula identical between Postgres and PGLite
+    // (one source of truth in the helper).
+    //
+    // ADD COLUMN + UPDATE backfill in the same migration so a half-applied
+    // run doesn't leave the column populated for some rows but not others.
+    // PG 11+ doesn't rewrite the heap for `NOT NULL DEFAULT <constant>` so
+    // ADD COLUMN is metadata-only; the UPDATE writes every row. On a 15K-row
+    // pages table on Supabase Micro this completes in ~5 seconds. The
+    // runner's 10-minute statement_timeout extension covers this comfortably.
+    //
+    // OR-form predicate (not concatenation) matches the literal shape of the
+    // existing query at postgres-engine.ts:877 / pglite-engine.ts:757 so a
+    // diff-review check can verify exact parity.
+    sql: `
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS has_chunkable_text BOOLEAN NOT NULL DEFAULT false;
+      UPDATE pages SET has_chunkable_text = (
+        LENGTH(regexp_replace(COALESCE(compiled_truth, ''), '[[:space:]]', '', 'g')) > 0
+        OR LENGTH(regexp_replace(COALESCE(timeline, ''), '[[:space:]]', '', 'g')) > 0
+      );
+    `,
+  },
+  {
+    version: 34,
+    name: 'idx_pages_chunkable',
+    // v0.22.8.0: covering partial index for listSlugsPendingEmbedding's
+    // UNION branch 2. `id` for the NOT EXISTS anti-join key, `slug` for
+    // the SELECT projection - planner gets an index-only path. Partial
+    // `WHERE has_chunkable_text` keeps the index minimal (only pages
+    // with non-trivial text content qualify, ~all pages in steady state).
+    //
+    // Uses v14's handler pattern (not the simpler v30-v32 sqlFor shape)
+    // because CONCURRENTLY is not retry-safe on its own: a timed-out or
+    // killed first attempt leaves an invalid index with this name. On
+    // retry, IF NOT EXISTS would name-check, skip the create, and the
+    // migration version would advance with a permanently-unusable index.
+    // The DO $$ block pre-drops any invalid remnant before re-creating.
+    // PGLite has no concurrent writers and doesn't have the partial-build
+    // failure mode, so it uses plain CREATE INDEX IF NOT EXISTS.
+    sql: '',
+    transaction: false,
+    handler: async (engine) => {
+      // Note on connection scoping (codex Phase 2 review): handler-based
+      // migrations bypass runMigrationSQL, so engine.runMigration() calls
+      // here run via the normal pool, NOT the reserved connection that
+      // `transaction: false` activates for sqlFor-based migrations. This
+      // means the 10-min `SET LOCAL statement_timeout` extension does NOT
+      // apply; CREATE INDEX CONCURRENTLY runs under Supabase's default
+      // 2-min server timeout. Acceptable because:
+      //   1. v34 builds a partial index on a small (id, slug) projection
+      //      where has_chunkable_text=true; even on a 100K-pages brain
+      //      this completes in single-digit seconds.
+      //   2. v14 (pages_updated_at_index) uses the same handler pattern
+      //      with the same timeout exposure and has shipped in production
+      //      since v0.14.1 without timeout incidents.
+      // If gbrain ever grows past ~500K pages, swap to the sqlFor pattern
+      // (and accept the latent retry-safety bug it brings) or extract a
+      // shared helper that does reserved-connection + DDL.
+      if (engine.kind === 'postgres') {
+        // Probe in TS, not inside a DO/EXECUTE block. Postgres requires
+        // DROP INDEX CONCURRENTLY to be a top-level statement; running it
+        // via `EXECUTE 'DROP INDEX CONCURRENTLY ...'` inside a function
+        // body fails with `cannot run inside a transaction block`. v14's
+        // DO-block pattern has the same latent bug but rarely triggers
+        // because the invalid-remnant branch is hit only after a killed
+        // build. The probe -> conditional DROP -> CREATE sequence here
+        // handles all three states cleanly: no index (skip drop), valid
+        // index (skip drop, create no-ops), invalid index (drop + create).
+        const rows = await engine.executeRaw<{ has_invalid: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_index i
+             JOIN pg_class c ON c.oid = i.indexrelid
+             WHERE c.relname = 'idx_pages_chunkable' AND NOT i.indisvalid
+           ) AS has_invalid`
+        );
+        if (rows[0]?.has_invalid) {
+          await engine.runMigration(
+            34,
+            `DROP INDEX CONCURRENTLY IF EXISTS idx_pages_chunkable;`
+          );
+        }
+        await engine.runMigration(
+          34,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pages_chunkable
+             ON pages(id, slug) WHERE has_chunkable_text;`
+        );
+      } else {
+        await engine.runMigration(
+          34,
+          `CREATE INDEX IF NOT EXISTS idx_pages_chunkable
+             ON pages(id, slug) WHERE has_chunkable_text;`
+        );
+      }
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

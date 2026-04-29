@@ -909,3 +909,186 @@ describe('resolveSessionTimeouts — env var overrides', () => {
     expect(Object.keys(t)).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// v30 / v31 / v32 — embed-worker index backfills (v0.22.7.0)
+// ---------------------------------------------------------------------------
+//
+// These three migrations bring older brains in line with the schema.sql /
+// pglite-schema.ts indexes that were added on production manually on
+// 2026-04-28 to fix the listSlugsPendingEmbedding hot path. Each runs
+// CONCURRENTLY on Postgres and plain on PGLite; transaction:false is
+// mandatory because Postgres refuses CONCURRENTLY inside a transaction.
+
+describe('v30/v31/v32 — embed-worker index backfills', () => {
+  const v30 = MIGRATIONS.find(m => m.version === 30);
+  const v31 = MIGRATIONS.find(m => m.version === 31);
+  const v32 = MIGRATIONS.find(m => m.version === 32);
+
+  test('all three exist with expected names', () => {
+    expect(v30).toBeDefined();
+    expect(v31).toBeDefined();
+    expect(v32).toBeDefined();
+    expect(v30!.name).toBe('idx_chunks_embedding_null_backfill');
+    expect(v31!.name).toBe('idx_chunks_embedded_at_null_backfill');
+    expect(v32!.name).toBe('idx_pages_slug_backfill');
+  });
+
+  test('all three are sqlFor-only (sql is empty string)', () => {
+    for (const m of [v30, v31, v32]) {
+      expect(m!.sql).toBe('');
+      expect(m!.sqlFor).toBeDefined();
+      expect(m!.sqlFor!.postgres).toBeDefined();
+      expect(m!.sqlFor!.pglite).toBeDefined();
+    }
+  });
+
+  test('all three set transaction: false (CONCURRENTLY requirement)', () => {
+    for (const m of [v30, v31, v32]) {
+      expect(m!.transaction).toBe(false);
+    }
+  });
+
+  test('Postgres path: CONCURRENTLY + IF NOT EXISTS, single statement each', () => {
+    for (const m of [v30, v31, v32]) {
+      const pg = m!.sqlFor!.postgres!;
+      expect(pg).toContain('CONCURRENTLY');
+      expect(pg).toContain('IF NOT EXISTS');
+      // Single-statement guard: at most one trailing semicolon, no internal
+      // statement boundary. Multiple CONCURRENTLY statements in one
+      // executeRaw is unsafe (per codex plan-review #3, splitting into 3
+      // separate migrations gives independent commit boundaries).
+      const stripped = pg.trim().replace(/;\s*$/, '');
+      expect(stripped).not.toContain(';');
+    }
+  });
+
+  test('PGLite path: plain CREATE INDEX IF NOT EXISTS (no CONCURRENTLY)', () => {
+    for (const m of [v30, v31, v32]) {
+      const pgl = m!.sqlFor!.pglite!;
+      expect(pgl).toContain('CREATE INDEX IF NOT EXISTS');
+      expect(pgl).not.toContain('CONCURRENTLY');
+    }
+  });
+
+  test('v30 builds idx_chunks_embedding_null with the embedding IS NULL predicate', () => {
+    expect(v30!.sqlFor!.postgres).toContain('idx_chunks_embedding_null');
+    expect(v30!.sqlFor!.postgres).toContain('content_chunks(page_id)');
+    expect(v30!.sqlFor!.postgres).toContain('WHERE embedding IS NULL');
+  });
+
+  test('v31 builds idx_chunks_embedded_at_null with the embedded_at IS NULL predicate', () => {
+    expect(v31!.sqlFor!.postgres).toContain('idx_chunks_embedded_at_null');
+    expect(v31!.sqlFor!.postgres).toContain('content_chunks(page_id)');
+    expect(v31!.sqlFor!.postgres).toContain('WHERE embedded_at IS NULL');
+  });
+
+  test('v32 builds idx_pages_slug as a non-unique slug index', () => {
+    expect(v32!.sqlFor!.postgres).toContain('idx_pages_slug');
+    expect(v32!.sqlFor!.postgres).toContain('pages(slug)');
+    // v32 must NOT add UNIQUE — the (source_id, slug) UNIQUE on
+    // pages_source_slug_key already covers per-source uniqueness, and
+    // a global UNIQUE on slug would break v0.18+ multi-source brains.
+    expect(v32!.sqlFor!.postgres).not.toMatch(/UNIQUE/i);
+  });
+
+  test('LATEST_VERSION reflects the latest migration entry', () => {
+    // Bumped from 32 -> 34 in v0.22.8.0 (has_chunkable_text column + partial
+    // index). Future maintainers: this assertion guards against accidentally
+    // shipping a migration that doesn't bump LATEST_VERSION; update it when
+    // the highest-versioned migration changes.
+    expect(LATEST_VERSION).toBe(34);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v33 / v34 — has_chunkable_text column + partial index (v0.22.8.0)
+// ---------------------------------------------------------------------------
+//
+// v33 adds a stored boolean to pages computed by computeHasChunkableText
+// (src/core/utils.ts) at write time. v34 indexes it with a partial covering
+// index for listSlugsPendingEmbedding's UNION branch 2 anti-join. Pre-fix the
+// branch was a Parallel Seq Scan with regexp_replace per row, ~74% of all
+// production DB time. Post-fix it's an index-only scan.
+
+describe('v33/v34 — has_chunkable_text column + partial index', () => {
+  const v33 = MIGRATIONS.find(m => m.version === 33);
+  const v34 = MIGRATIONS.find(m => m.version === 34);
+
+  test('both exist with expected names', () => {
+    expect(v33).toBeDefined();
+    expect(v34).toBeDefined();
+    expect(v33!.name).toBe('pages_has_chunkable_text');
+    expect(v34!.name).toBe('idx_pages_chunkable');
+  });
+
+  test('v33 adds the column with the canonical default + idempotent ADD', () => {
+    expect(v33!.sql).toContain('ALTER TABLE pages ADD COLUMN IF NOT EXISTS has_chunkable_text');
+    expect(v33!.sql).toContain('BOOLEAN NOT NULL DEFAULT false');
+  });
+
+  test('v33 backfills with the OR-form predicate (parity with the original query)', () => {
+    // Must match the literal shape of postgres-engine.ts:877 / pglite-engine.ts:757
+    // exactly so a diff-review check can verify regex-parity.
+    const sql = v33!.sql;
+    expect(sql).toContain('UPDATE pages SET has_chunkable_text');
+    expect(sql).toContain("regexp_replace(COALESCE(compiled_truth, '')");
+    expect(sql).toContain("regexp_replace(COALESCE(timeline, '')");
+    expect(sql).toContain("'[[:space:]]'");
+    // OR form, not concatenation - matches pre-fix query verbatim.
+    expect(sql).toMatch(/OR LENGTH\(regexp_replace\(COALESCE\(timeline/);
+  });
+
+  test('v33 runs in a transaction (default)', () => {
+    // Both ALTER + UPDATE are atomic so a half-applied run never leaves
+    // some rows backfilled and others stuck at the false default.
+    expect(v33!.transaction).not.toBe(false);
+  });
+
+  test('v34 uses handler pattern (not sqlFor) with transaction: false', () => {
+    // v34 deliberately mirrors v14's handler-based pattern instead of the
+    // simpler sqlFor shape used by v30-v32. See the migration's comment for
+    // why: CONCURRENTLY is not retry-safe on its own. The handler pre-drops
+    // any invalid index remnant before re-creating, so a timed-out first
+    // attempt doesn't permanently leave an unusable index that IF NOT EXISTS
+    // would silently skip.
+    expect(v34!.sql).toBe('');
+    expect(v34!.handler).toBeDefined();
+    expect(typeof v34!.handler).toBe('function');
+    expect(v34!.transaction).toBe(false);
+    // Critical retry-safety guard: if anyone simplifies v34 back to a plain
+    // sqlFor block without the pre-drop, this assertion catches it.
+    expect(v34!.sqlFor).toBeUndefined();
+  });
+
+  test('v34 handler probes invalid-index in TS, not in a DO block', () => {
+    // Inspect the handler's source. Critical structural assertions:
+    //   1. The probe uses executeRaw (TS-side SELECT) for the indisvalid
+    //      check - NOT a DO/EXECUTE block. Postgres requires DROP INDEX
+    //      CONCURRENTLY to be top-level; v14's DO-block pattern has a
+    //      latent bug that triggers only when the invalid-remnant branch
+    //      is hit. v34 does the probe in app code so the DROP can run
+    //      as its own top-level statement.
+    //   2. DROP INDEX CONCURRENTLY is issued at top level (not inside DO
+    //      or EXECUTE).
+    //   3. CREATE INDEX CONCURRENTLY IF NOT EXISTS with the partial shape.
+    //   4. PGLite branch with plain CREATE INDEX IF NOT EXISTS (no CONCURRENTLY).
+    const src = v34!.handler!.toString();
+    // (1) Probe in TS via executeRaw, with the indisvalid predicate
+    expect(src).toContain('executeRaw');
+    expect(src).toContain('indisvalid');
+    // Anti-pattern guard: handler must NOT use a DO block + EXECUTE
+    // wrapper for the DROP, because DROP INDEX CONCURRENTLY inside a
+    // function context fails at runtime.
+    expect(src).not.toContain('DO $$');
+    expect(src).not.toMatch(/EXECUTE\s+'DROP INDEX CONCURRENTLY/);
+    // (2) DROP INDEX CONCURRENTLY at top level (not wrapped)
+    expect(src).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_pages_chunkable');
+    // (3) CREATE for both engines
+    expect(src).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pages_chunkable');
+    expect(src).toContain('CREATE INDEX IF NOT EXISTS idx_pages_chunkable');
+    // Both branches produce the same partial covering shape
+    expect(src).toContain('pages(id, slug)');
+    expect(src).toContain('WHERE has_chunkable_text');
+  });
+});

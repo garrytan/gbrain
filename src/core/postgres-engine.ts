@@ -18,7 +18,7 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, computeHasChunkableText } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
@@ -297,9 +297,14 @@ export class PostgresEngine implements BrainEngine {
     // was dropped in migration v17. See pglite-engine.ts for matching
     // notes; multi-source sync (Step 5) will surface an explicit sourceId.
     const pageKind = page.page_kind || 'markdown';
+    // v0.22.8.0: maintain has_chunkable_text on every write so the embed
+    // worker's UNION branch 2 can index-scan instead of regex-seq-scan.
+    // Helper mirrors the SQL predicate exactly - if either diverges, the
+    // round-trip test in test/postgres-engine.test.ts catches it.
+    const hasChunkableText = computeHasChunkableText(page.compiled_truth, page.timeline);
     const rows = await sql`
-      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now())
+      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, has_chunkable_text, updated_at)
+      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, ${hasChunkableText}, now())
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -308,6 +313,7 @@ export class PostgresEngine implements BrainEngine {
         timeline = EXCLUDED.timeline,
         frontmatter = EXCLUDED.frontmatter,
         content_hash = EXCLUDED.content_hash,
+        has_chunkable_text = EXCLUDED.has_chunkable_text,
         updated_at = now()
       RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
     `;
@@ -856,6 +862,12 @@ export class PostgresEngine implements BrainEngine {
     // embedded_at populated while embedding is NULL, and `embedding IS NULL`
     // is the truth source for "this chunk needs an embedding".
     //
+    // Branch 2 was a regex-on-text Parallel Seq Scan (74% of all DB time
+    // pre-fix). v0.22.8.0 replaces it with an index-only scan on
+    // idx_pages_chunkable, a partial covering index keyed on (id, slug)
+    // WHERE has_chunkable_text. The boolean is maintained by putPage in
+    // both engines via computeHasChunkableText (src/core/utils.ts).
+    //
     // Known limitation (v0.18+ multi-source): returns slugs without source_id,
     // so two pages sharing a slug across sources collapse to one entry here.
     // This matches the pre-existing slug-only semantics of getChunks,
@@ -873,10 +885,7 @@ export class PostgresEngine implements BrainEngine {
        WHERE NOT EXISTS (
          SELECT 1 FROM content_chunks WHERE page_id = p.id
        )
-         AND (
-           LENGTH(regexp_replace(COALESCE(p.compiled_truth, ''), '[[:space:]]', '', 'g')) > 0
-           OR LENGTH(regexp_replace(COALESCE(p.timeline, ''), '[[:space:]]', '', 'g')) > 0
-         )
+         AND p.has_chunkable_text
        ORDER BY 1
     `;
     return rows.map((r) => r.slug);
@@ -1403,10 +1412,21 @@ export class PostgresEngine implements BrainEngine {
 
   async revertToVersion(slug: string, versionId: number): Promise<void> {
     const sql = this.sql;
+    // v0.22.8.0: recompute has_chunkable_text from the new compiled_truth +
+    // existing timeline. page_versions only snapshots compiled_truth and
+    // frontmatter, so timeline stays at its current value. Inline SQL
+    // mirrors v33 backfill shape exactly (POSIX [[:space:]] regex). Without
+    // this, reverting a page from empty -> text-bearing would leave
+    // has_chunkable_text=false and the page would be silently invisible to
+    // listSlugsPendingEmbedding's UNION branch 2.
     await sql`
       UPDATE pages SET
         compiled_truth = pv.compiled_truth,
         frontmatter = pv.frontmatter,
+        has_chunkable_text = (
+          LENGTH(regexp_replace(COALESCE(pv.compiled_truth, ''), '[[:space:]]', '', 'g')) > 0
+          OR LENGTH(regexp_replace(COALESCE(pages.timeline, ''), '[[:space:]]', '', 'g')) > 0
+        ),
         updated_at = now()
       FROM page_versions pv
       WHERE pages.slug = ${slug} AND pv.id = ${versionId} AND pv.page_id = pages.id

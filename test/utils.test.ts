@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { validateSlug, contentHash, parseEmbedding, tryParseEmbedding, rowToPage, rowToChunk, rowToSearchResult } from '../src/core/utils.ts';
+import { validateSlug, contentHash, parseEmbedding, tryParseEmbedding, rowToPage, rowToChunk, rowToSearchResult, computeHasChunkableText } from '../src/core/utils.ts';
 
 describe('validateSlug', () => {
   test('accepts valid slugs', () => {
@@ -182,5 +182,72 @@ describe('rowToSearchResult', () => {
     });
     expect(typeof r.score).toBe('number');
     expect(r.score).toBe(0.95);
+  });
+});
+
+describe('computeHasChunkableText', () => {
+  // Mirror of the SQL predicate at postgres-engine.ts:listSlugsPendingEmbedding
+  // and migrate.ts:v33 backfill. Drift between this helper and the SQL would
+  // mis-classify pages as needing-or-not-needing chunking, so these cases
+  // double as regression guards on the regex shape.
+
+  test('both null returns false', () => {
+    expect(computeHasChunkableText(null, null)).toBe(false);
+    expect(computeHasChunkableText(undefined, undefined)).toBe(false);
+  });
+
+  test('both empty returns false', () => {
+    expect(computeHasChunkableText('', '')).toBe(false);
+  });
+
+  test('compiled_truth-only whitespace returns false', () => {
+    expect(computeHasChunkableText('   \t\n\r\v\f  ', '')).toBe(false);
+  });
+
+  test('timeline-only whitespace returns false', () => {
+    expect(computeHasChunkableText('', '\n\n\t\t')).toBe(false);
+  });
+
+  test('both whitespace-only returns false', () => {
+    expect(computeHasChunkableText('  \n  ', '\t\t\n')).toBe(false);
+  });
+
+  test('single non-whitespace char in compiled_truth returns true', () => {
+    expect(computeHasChunkableText('a', '')).toBe(true);
+  });
+
+  test('single non-whitespace char in timeline returns true', () => {
+    expect(computeHasChunkableText('', 'a')).toBe(true);
+    // null compiled_truth + content in timeline still wins
+    expect(computeHasChunkableText(null, 'a')).toBe(true);
+  });
+
+  test('mixed whitespace and content returns true', () => {
+    expect(computeHasChunkableText('  hello  ', '')).toBe(true);
+    expect(computeHasChunkableText('', '   world   ')).toBe(true);
+  });
+
+  test('Unicode no-break space (U+00A0) is NOT POSIX whitespace - returns true', () => {
+    // Critical regression guard. JS \s matches U+00A0; PostgreSQL [[:space:]]
+    // does not. If this helper ever switches to /\s/g, the SQL backfill in
+    // migration v33 would diverge from the runtime helper, and pages whose
+    // content is just U+00A0 would silently change classification.
+    expect(computeHasChunkableText(' ', '')).toBe(true);
+    expect(computeHasChunkableText('', ' ')).toBe(true);
+  });
+
+  test('only POSIX whitespace chars are stripped: space, tab, LF, VT, FF, CR', () => {
+    // The 6 chars that POSIX [[:space:]] matches. Each in isolation must
+    // strip to empty.
+    for (const ch of [' ', '\t', '\n', '\v', '\f', '\r']) {
+      expect(computeHasChunkableText(ch.repeat(10), '')).toBe(false);
+    }
+  });
+
+  test('compiled_truth short-circuits: timeline not evaluated if ct has content', () => {
+    // Implementation detail check. compiled_truth being non-trivial returns
+    // true without inspecting timeline. Exercises the early-return path.
+    expect(computeHasChunkableText('hi', 'should not matter')).toBe(true);
+    expect(computeHasChunkableText('hi', '')).toBe(true);
   });
 });
