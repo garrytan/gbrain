@@ -21,6 +21,16 @@ describe('doctor command', () => {
     expect(stdout).toContain('--fast');
   });
 
+  test('frontmatter_integrity subcheck added in v0.22.4', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync('src/commands/doctor.ts', 'utf8');
+    // Subcheck name and call into shared scanner are present.
+    expect(src).toContain("name: 'frontmatter_integrity'");
+    expect(src).toContain('scanBrainSources');
+    // Fix hint points at the right CLI command.
+    expect(src).toContain('gbrain frontmatter validate');
+  });
+
   test('Check interface supports issues array', async () => {
     // `Check` is a TypeScript interface — type-only, no runtime value.
     // Importing it for type assertion is enough to validate the shape.

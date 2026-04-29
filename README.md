@@ -80,12 +80,13 @@ Add to `~/.claude/server.json` (Claude Code), Settings > MCP Servers (Cursor), o
 ### Remote MCP (Claude Desktop, Cowork, Perplexity)
 
 ```bash
-ngrok http 8787 --url your-brain.ngrok.app
-bun run src/commands/auth.ts create "claude-desktop"
+gbrain auth create "claude-desktop"            # tokens via the existing CLI
+gbrain serve --http --port 8787                 # built-in HTTP transport (Postgres-only)
+ngrok http 8787 --url your-brain.ngrok.app      # any tunnel works
 claude mcp add gbrain -t http https://your-brain.ngrok.app/mcp -H "Authorization: Bearer TOKEN"
 ```
 
-Per-client guides: [`docs/mcp/`](docs/mcp/DEPLOY.md). ChatGPT requires OAuth 2.1 (not yet implemented).
+Per-client guides: [`docs/mcp/`](docs/mcp/DEPLOY.md). Hardening defaults, env vars, and threat model: [SECURITY.md](SECURITY.md). ChatGPT requires OAuth 2.1 (not yet implemented).
 
 ### Using gbrain with GStack
 
@@ -657,6 +658,8 @@ ADMIN
   gbrain doctor --locks                 List idle-in-tx backends (57014 diagnostic, Postgres only)
   gbrain stats                          Brain statistics
   gbrain serve                          MCP server (stdio)
+  gbrain serve --http --port 8787       MCP server (HTTP, Postgres-only, bearer auth)
+  gbrain auth create|list|revoke|test   Token management for the HTTP transport
   gbrain integrations                   Integration recipe dashboard
   gbrain sources list|add|remove|...    Multi-source brain management (v0.18)
   gbrain dream [--dry-run] [--phase N]  One maintenance cycle then exit (cron-friendly)

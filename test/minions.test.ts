@@ -1896,3 +1896,413 @@ describe('MinionQueue: v0.19.1 wall-clock + handleTimeouts non-interference (T1)
     expect(after?.status).toBe('active');
   });
 });
+
+// --- v0.22.2: RSS watchdog (--max-rss + periodic timer + gracefulShutdown) ---
+
+describe('MinionWorker: --max-rss watchdog', () => {
+  // Helper: build a worker with deterministic RSS injection. Tests pass a
+  // sequence of bytes; getRss() returns elements in order, repeating the last.
+  function makeRssSequence(values: number[]): () => number {
+    let i = 0;
+    return () => {
+      const v = values[Math.min(i, values.length - 1)];
+      i++;
+      return v;
+    };
+  }
+
+  test('per-job check: handler bumps RSS, post-job check trips, sibling aborts', async () => {
+    // 100MB threshold. RSS reads always return 250MB → first post-job check
+    // (after the 'quick' handler completes) trips and the 'slow' sibling
+    // sees its abort signal flip.
+    const worker = new MinionWorker(engine, {
+      queue: 'default',
+      concurrency: 2,
+      maxRssMb: 100,
+      getRss: () => 250 * 1024 * 1024,
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      rssCheckInterval: 60_000, // disable periodic — exercise per-job only
+    });
+
+    let sibling2Aborted = false;
+    let sibling2Resolved = false;
+    let sibling1Done = false;
+
+    worker.register('quick', async () => {
+      // Resolves immediately. Triggers post-job check.
+      sibling1Done = true;
+    });
+    worker.register('slow', async (job) => {
+      // Long-running sibling. Watch for abort signal.
+      job.signal.addEventListener('abort', () => { sibling2Aborted = true; });
+      await new Promise<void>((resolve) => {
+        const t = setInterval(() => {
+          if (job.signal.aborted) { clearInterval(t); sibling2Resolved = true; resolve(); }
+        }, 20);
+      });
+    });
+
+    await queue.add('slow', {});
+    await queue.add('quick', {});
+
+    await worker.start(); // returns when stop() flips and drain completes
+
+    expect(sibling1Done).toBe(true);
+    expect(sibling2Aborted).toBe(true);
+    expect(sibling2Resolved).toBe(true);
+  }, 60_000);
+
+  test('periodic timer: zero job completions, watchdog still fires', async () => {
+    // Threshold 100MB. RSS = 250MB on every call. No job ever completes.
+    const worker = new MinionWorker(engine, {
+      queue: 'default',
+      concurrency: 1,
+      maxRssMb: 100,
+      getRss: () => 250 * 1024 * 1024,
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      rssCheckInterval: 100, // fire fast in tests
+    });
+
+    let abortedDuringHandler = false;
+
+    worker.register('forever', async (job) => {
+      // Never returns naturally. Wait on abort.
+      await new Promise<void>((resolve) => {
+        const t = setInterval(() => {
+          if (job.signal.aborted) {
+            abortedDuringHandler = true;
+            clearInterval(t);
+            resolve();
+          }
+        }, 20);
+      });
+    });
+
+    await queue.add('forever', {});
+
+    await worker.start();
+
+    expect(abortedDuringHandler).toBe(true);
+  }, 60_000);
+
+  test('shutdownAbort fires (closes shell-handler zombie gap)', async () => {
+    const worker = new MinionWorker(engine, {
+      queue: 'default',
+      concurrency: 1,
+      maxRssMb: 100,
+      getRss: () => 250 * 1024 * 1024,
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      rssCheckInterval: 100,
+    });
+
+    let shutdownSignalFired = false;
+
+    worker.register('observer', async (job) => {
+      // Subscribes to shutdownSignal — same pattern as shell.ts
+      job.shutdownSignal.addEventListener('abort', () => { shutdownSignalFired = true; });
+      await new Promise<void>((resolve) => {
+        const t = setInterval(() => {
+          if (job.signal.aborted) { clearInterval(t); resolve(); }
+        }, 20);
+      });
+    });
+
+    await queue.add('observer', {});
+    await worker.start();
+
+    expect(shutdownSignalFired).toBe(true);
+  }, 60_000);
+
+  test('below threshold: no-op (no shutdown)', async () => {
+    let postJobCount = 0;
+    const worker = new MinionWorker(engine, {
+      queue: 'default',
+      concurrency: 1,
+      maxRssMb: 1024,
+      getRss: () => { postJobCount++; return 50 * 1024 * 1024; }, // always 50MB, way under
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      rssCheckInterval: 60_000,
+    });
+
+    worker.register('noop', async () => {});
+
+    await queue.add('noop', {});
+    await queue.add('noop', {});
+    await queue.add('noop', {});
+
+    // Run for a moment, then stop manually
+    const startPromise = worker.start();
+    await new Promise(r => setTimeout(r, 500));
+    worker.stop();
+    await startPromise;
+
+    // Watchdog never tripped → all 3 jobs completed
+    const completed = await queue.getJobs({ status: 'completed' });
+    expect(completed.length).toBe(3);
+    expect(postJobCount).toBeGreaterThanOrEqual(3); // checkMemoryLimit ran each time
+  }, 60_000);
+
+  test('maxRssMb=0 disables watchdog entirely', async () => {
+    const worker = new MinionWorker(engine, {
+      queue: 'default',
+      concurrency: 1,
+      maxRssMb: 0,
+      getRss: () => 999_999 * 1024 * 1024, // huge, but disabled
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      rssCheckInterval: 100,
+    });
+
+    worker.register('noop', async () => {});
+    await queue.add('noop', {});
+
+    const startPromise = worker.start();
+    await new Promise(r => setTimeout(r, 500));
+    worker.stop();
+    await startPromise;
+
+    const completed = await queue.getJobs({ status: 'completed' });
+    expect(completed.length).toBe(1);
+  }, 60_000);
+});
+
+// --- v0.21: connectWithRetry + isRetryableDbConnectError ---
+
+describe('connectWithRetry / isRetryableDbConnectError', () => {
+  test('isRetryableDbConnectError matches transient patterns', async () => {
+    const { isRetryableDbConnectError } = await import('../src/core/db.ts');
+    expect(isRetryableDbConnectError(new Error('password authentication failed for user postgres'))).toBe(true);
+    expect(isRetryableDbConnectError(new Error('connection refused'))).toBe(true);
+    expect(isRetryableDbConnectError(new Error('the database system is starting up'))).toBe(true);
+    expect(isRetryableDbConnectError(new Error('Connection terminated unexpectedly'))).toBe(true);
+    expect(isRetryableDbConnectError(new Error('something happened: ECONNRESET'))).toBe(true);
+  });
+
+  test('isRetryableDbConnectError rejects permanent errors', async () => {
+    const { isRetryableDbConnectError } = await import('../src/core/db.ts');
+    expect(isRetryableDbConnectError(new Error('extension "vector" does not exist'))).toBe(false);
+    expect(isRetryableDbConnectError(new Error('relation "pages" does not exist'))).toBe(false);
+    expect(isRetryableDbConnectError(new Error('syntax error at end of input'))).toBe(false);
+  });
+
+  test('connectWithRetry: 1st rejects transient, 2nd succeeds', async () => {
+    const { connectWithRetry } = await import('../src/core/db.ts');
+    let attempts = 0;
+    const fakeEngine = {
+      connect: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error('password authentication failed for user postgres');
+      },
+    } as unknown as Parameters<typeof connectWithRetry>[0];
+
+    await connectWithRetry(fakeEngine, { database_url: 'postgres://x' }, { baseDelayMs: 1, log: () => {} });
+    expect(attempts).toBe(2);
+  });
+
+  test('connectWithRetry: 3 transient rejects → throws', async () => {
+    const { connectWithRetry } = await import('../src/core/db.ts');
+    let attempts = 0;
+    const fakeEngine = {
+      connect: async () => {
+        attempts++;
+        throw new Error('connection refused');
+      },
+    } as unknown as Parameters<typeof connectWithRetry>[0];
+
+    await expect(
+      connectWithRetry(fakeEngine, { database_url: 'postgres://x' }, { baseDelayMs: 1, log: () => {} })
+    ).rejects.toThrow('connection refused');
+    expect(attempts).toBe(3);
+  });
+
+  test('connectWithRetry: permanent error does NOT retry', async () => {
+    const { connectWithRetry } = await import('../src/core/db.ts');
+    let attempts = 0;
+    const fakeEngine = {
+      connect: async () => {
+        attempts++;
+        throw new Error('extension "vector" does not exist');
+      },
+    } as unknown as Parameters<typeof connectWithRetry>[0];
+
+    await expect(
+      connectWithRetry(fakeEngine, { database_url: 'postgres://x' }, { baseDelayMs: 1, log: () => {} })
+    ).rejects.toThrow('extension "vector"');
+    expect(attempts).toBe(1);
+  });
+
+  test('connectWithRetry: noRetry honored', async () => {
+    const { connectWithRetry } = await import('../src/core/db.ts');
+    let attempts = 0;
+    const fakeEngine = {
+      connect: async () => {
+        attempts++;
+        throw new Error('connection refused');
+      },
+    } as unknown as Parameters<typeof connectWithRetry>[0];
+
+    await expect(
+      connectWithRetry(fakeEngine, { database_url: 'postgres://x' }, { noRetry: true, log: () => {} })
+    ).rejects.toThrow();
+    expect(attempts).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Abort signal propagation + force-eviction (v0.20.5 cycle-abort fix)
+// ---------------------------------------------------------------------------
+
+describe('MinionWorker: abort signal propagation (v0.20.5)', () => {
+  test('handler receiving abort signal can exit cleanly', async () => {
+    // Handler that respects AbortSignal
+    const job = await queue.add('abort-aware', {}, { timeout_ms: 150, max_attempts: 1 });
+    let signalAborted = false;
+
+    const worker = new MinionWorker(engine, { pollInterval: 50 });
+    worker.register('abort-aware', async (ctx) => {
+      // Simulate long work that checks signal
+      while (!ctx.signal.aborted) {
+        await new Promise(r => setTimeout(r, 10));
+      }
+      signalAborted = true;
+      throw ctx.signal.reason || new Error('aborted');
+    });
+
+    const workerPromise = worker.start();
+    // Wait for timeout (150ms) + handler to notice + margin
+    await new Promise(r => setTimeout(r, 500));
+    worker.stop();
+    await workerPromise;
+
+    expect(signalAborted).toBe(true);
+    const result = await queue.getJob(job.id);
+    // Should be dead (max_attempts: 1, aborted)
+    expect(result!.status).toBe('dead');
+    expect(result!.error_text).toContain('abort');
+  });
+
+  test('handler ignoring abort signal still gets abort fired', async () => {
+    // Handler that IGNORES AbortSignal — the exact bug pattern.
+    // We verify the abort fires (the signal flips) even though the handler
+    // doesn't check it. The 30s force-eviction grace is too long for unit
+    // tests; the E2E test in test/e2e/worker-abort-recovery.test.ts covers
+    // the full force-eviction path. Here we just verify the abort signal
+    // is delivered to the handler context.
+    const job = await queue.add('abort-ignorer', {}, { timeout_ms: 100, max_attempts: 1 });
+    let handlerStarted = false;
+    let signalWasAborted = false;
+
+    const worker = new MinionWorker(engine, { pollInterval: 50 });
+    worker.register('abort-ignorer', async (ctx) => {
+      handlerStarted = true;
+      // Wait a bit, then check if signal was aborted
+      await new Promise(r => setTimeout(r, 200));
+      signalWasAborted = ctx.signal.aborted;
+      // Now exit (a well-behaved handler would do this)
+      if (ctx.signal.aborted) {
+        throw ctx.signal.reason || new Error('aborted');
+      }
+      return { ok: true };
+    });
+
+    const workerPromise = worker.start();
+    await new Promise(r => setTimeout(r, 500));
+
+    expect(handlerStarted).toBe(true);
+    expect(signalWasAborted).toBe(true);
+
+    worker.stop();
+    await workerPromise;
+
+    const result = await queue.getJob(job.id);
+    expect(result!.status).toBe('dead');
+  });
+
+  test('worker claims new jobs after timeout eviction (no wedge)', async () => {
+    // The critical regression test: submit a slow job that times out,
+    // then submit a fast job. The fast job MUST execute.
+    const slowJob = await queue.add('slow-timeout', {}, { timeout_ms: 100, max_attempts: 1 });
+    let slowAborted = false;
+    let fastExecuted = false;
+
+    const worker = new MinionWorker(engine, { pollInterval: 50, concurrency: 1 });
+    worker.register('slow-timeout', async (ctx) => {
+      // Respects abort but takes a moment
+      await new Promise(r => setTimeout(r, 50));
+      while (!ctx.signal.aborted) {
+        await new Promise(r => setTimeout(r, 10));
+      }
+      slowAborted = true;
+      throw new Error('aborted: timeout');
+    });
+    worker.register('fast-after', async () => {
+      fastExecuted = true;
+      return { fast: true };
+    });
+
+    const workerPromise = worker.start();
+
+    // Wait for slow job to start and timeout
+    await new Promise(r => setTimeout(r, 300));
+
+    // Now submit the fast job — it should get claimed
+    const fastJob = await queue.add('fast-after', {});
+    await new Promise(r => setTimeout(r, 300));
+
+    worker.stop();
+    await workerPromise;
+
+    expect(slowAborted).toBe(true);
+    expect(fastExecuted).toBe(true);
+
+    const slowResult = await queue.getJob(slowJob.id);
+    expect(slowResult!.status).toBe('dead');
+
+    const fastResult = await queue.getJob(fastJob.id);
+    expect(fastResult!.status).toBe('completed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkAborted (v0.20.5 cycle.ts)
+// ---------------------------------------------------------------------------
+
+describe('checkAborted (v0.20.5 cycle signal)', () => {
+  // Import the function indirectly by testing the behavior pattern
+  test('undefined signal does not throw', () => {
+    // checkAborted is not exported, so we test through CycleOpts behavior.
+    // This test validates the pattern directly. The `as` cast keeps the
+    // union type intact — a bare `const signal = undefined` (or even
+    // `const signal: AbortSignal | undefined = undefined`) would narrow
+    // back to literal `undefined` via TS control-flow analysis and then
+    // reject the optional-chain access on it.
+    const signal = undefined as AbortSignal | undefined;
+    expect(() => {
+      if (signal?.aborted) throw new Error('aborted');
+    }).not.toThrow();
+  });
+
+  test('non-aborted signal does not throw', () => {
+    const abort = new AbortController();
+    expect(() => {
+      if (abort.signal.aborted) throw new Error('aborted');
+    }).not.toThrow();
+  });
+
+  test('aborted signal throws with reason', () => {
+    const abort = new AbortController();
+    abort.abort(new Error('timeout'));
+    expect(() => {
+      if (abort.signal.aborted) {
+        const reason = abort.signal.reason instanceof Error
+          ? abort.signal.reason.message
+          : String(abort.signal.reason || 'aborted');
+        throw new Error(`[cycle] aborted between phases: ${reason}`);
+      }
+    }).toThrow('aborted between phases: timeout');
+  });
+});

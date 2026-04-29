@@ -1,8 +1,13 @@
 # Deploy GBrain Remote MCP Server
 
+> **v0.22.7+:** Use `gbrain serve --http` for remote access. It includes built-in
+> bearer token auth, default-deny CORS, two-bucket rate limiting, body cap, and
+> per-request audit log. **Postgres-only** (PGLite is local-only by design).
+> See [SECURITY.md](../../SECURITY.md) for env vars and tunable defaults.
+
 Access your brain from any device, any AI client. GBrain's MCP server runs locally
-via `gbrain serve` (stdio). For remote access, wrap it in an HTTP server behind a
-public tunnel.
+via `gbrain serve` (stdio). For remote access, expose it via the built-in HTTP
+transport behind a public tunnel.
 
 ## Two Paths
 
@@ -13,21 +18,23 @@ gbrain serve
 ```
 
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
-No server, no tunnel, no token needed.
+No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
 
-### Remote (any device, any AI client)
+### Remote (any device, any AI client) — Postgres only
 
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
   → ngrok tunnel (https://YOUR-DOMAIN.ngrok.app)
-  → Your HTTP server (wraps gbrain serve)
-  → Supabase Postgres (via pooler connection string)
+  → gbrain serve --http  (built-in transport with bearer auth)
+  → Postgres (pooler connection or self-hosted)
 ```
 
 This requires:
-1. A machine running `gbrain serve` behind an HTTP wrapper
-2. A public tunnel (ngrok, Tailscale, or cloud host)
-3. Bearer token auth for security
+1. A Postgres-backed brain (the `access_tokens` table only exists on Postgres;
+   running `gbrain serve --http` against a PGLite install fails fast at startup)
+2. A machine running `gbrain serve --http`
+3. A public tunnel (ngrok, Tailscale, or cloud host)
+4. A bearer token created via `gbrain auth create <name>`
 
 ## Remote Setup
 
@@ -46,13 +53,13 @@ ngrok http 8787 --url your-brain.ngrok.app  # Hobby tier for fixed domain
 
 ```bash
 # Create a token for each client
-bun run src/commands/auth.ts create "claude-desktop"
+gbrain auth create "claude-desktop"
 
 # List all tokens
-bun run src/commands/auth.ts list
+gbrain auth list
 
 # Revoke a token
-bun run src/commands/auth.ts revoke "claude-desktop"
+gbrain auth revoke "claude-desktop"
 ```
 
 Tokens are per-client. Create one for each device/app. Revoke individually
@@ -68,7 +75,7 @@ if compromised. Tokens are stored SHA-256 hashed in your database.
 ### 4. Verify
 
 ```bash
-bun run src/commands/auth.ts test \
+gbrain auth test \
   https://YOUR-DOMAIN.ngrok.app/mcp \
   --token YOUR_TOKEN
 ```
@@ -96,7 +103,7 @@ Funnel, and cloud hosts (Fly.io, Railway).
 Include the Authorization header: `Authorization: Bearer YOUR_TOKEN`
 
 **"invalid_token" error**
-Run `bun run src/commands/auth.ts list` to see active tokens.
+Run `gbrain auth list` to see active tokens.
 
 **"service_unavailable" error**
 Database connection failed. Check your Supabase dashboard for outages.

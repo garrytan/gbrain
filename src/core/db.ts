@@ -1,6 +1,8 @@
 import postgres from 'postgres';
 import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import type { BrainEngine } from './engine.ts';
+import { verifySchema } from './schema-verify.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -72,26 +74,78 @@ export function resolvePoolSize(explicit?: number): number {
 }
 
 /**
- * Apply session-level defaults to a fresh connection. Called from both
- * the module-level `connect()` singleton and the PostgresEngine
- * instance-level pool so the idle-in-transaction session timeout is set
- * uniformly.
+ * Session-level GUCs applied to every new backend connection. Prevents
+ * orphan pgbouncer sessions from holding locks or running queries
+ * indefinitely when the postgres.js client disconnects mid-transaction
+ * (typical cause: autopilot SIGKILL'd by launchd, worker crash-loop,
+ * or transient network drop).
  *
- * `idle_in_transaction_session_timeout = 5 min` was the v0.18.0 field
- * report's headline production issue: a 24-hour idle connection was
- * holding a lock on `pages` and blocking all DDL. 5 minutes is generous
- * for any legitimate transaction but catches crashed writers. The GUC
- * is session-scoped (safe for shared pools — no cross-statement leak).
+ * Observed failure mode these prevent: a single autopilot UPDATE on
+ * `minion_jobs.lock_until` left a pooler backend in `state='active'`
+ * / `wait_event='ClientRead'` for 24h+, holding a RowExclusiveLock
+ * that blocked every subsequent `ALTER TABLE minion_jobs ...`.
  *
- * Wrapped in try/catch because some managed Postgres tenants restrict
- * SET on the GUC; non-fatal if it fails.
+ * Defaults are conservative (chosen not to interfere with bulk work
+ * like long-running embed passes or CREATE INDEX on large tables):
+ *   - statement_timeout = '5min'
+ *   - idle_in_transaction_session_timeout = '5min' (matches v0.18.0
+ *     posture; #363's original 2min default was tightened to 5min on
+ *     merge with v0.21.0's setSessionDefaults to avoid regressing
+ *     long-running embed passes)
+ *
+ * Override per-GUC with env vars:
+ *   - GBRAIN_STATEMENT_TIMEOUT
+ *   - GBRAIN_IDLE_TX_TIMEOUT
+ *   - GBRAIN_CLIENT_CHECK_INTERVAL (Postgres 14+; empty default - opt-in
+ *     only since older self-hosted Postgres rejects this startup param)
+ *
+ * Set any env var to '0' or 'off' to disable that GUC entirely.
+ *
+ * Delivered via postgres.js's `connection` option, which sends these as
+ * startup parameters in the initial connection packet. Works correctly
+ * with PgBouncer session mode AND transaction mode: startup parameters
+ * pass through to the backend on connection creation and persist for the
+ * backend's lifetime (unlike `SET` commands which transaction-mode
+ * PgBouncer strips between transactions).
+ *
+ * Supersedes the v0.21.0 `setSessionDefaults(sql)` helper, which used
+ * a post-pool `SET` command. That approach is unreliable in PgBouncer
+ * transaction mode (transaction-mode poolers strip session-state SETs
+ * between transactions); startup parameters are durable.
  */
-export async function setSessionDefaults(sql: ReturnType<typeof postgres>): Promise<void> {
-  try {
-    await sql`SET idle_in_transaction_session_timeout = '300000'`;
-  } catch {
-    // Non-fatal: some managed Postgres may restrict this GUC
-  }
+const DEFAULT_STATEMENT_TIMEOUT = '5min';
+const DEFAULT_IDLE_TX_TIMEOUT = '5min';
+
+export function resolveSessionTimeouts(): Record<string, string> {
+  const out: Record<string, string> = {};
+  const add = (envKey: string, gucKey: string, defaultVal: string) => {
+    const raw = process.env[envKey];
+    if (raw === '0' || raw === 'off') return; // explicitly disabled
+    const val = raw ?? defaultVal;
+    if (val) out[gucKey] = val;
+  };
+  add('GBRAIN_STATEMENT_TIMEOUT', 'statement_timeout', DEFAULT_STATEMENT_TIMEOUT);
+  add('GBRAIN_IDLE_TX_TIMEOUT', 'idle_in_transaction_session_timeout', DEFAULT_IDLE_TX_TIMEOUT);
+  // client_connection_check_interval is opt-in: Postgres 14+ only, and some
+  // managed pooler tiers reject unknown startup parameters. Users can enable
+  // it explicitly once they know their Postgres version supports it.
+  add('GBRAIN_CLIENT_CHECK_INTERVAL', 'client_connection_check_interval', '');
+  return out;
+}
+
+/**
+ * Backward-compat shim for v0.21.0's `setSessionDefaults` callers.
+ * The current implementation no-ops because session timeouts are now
+ * applied at connection-startup time via `resolveSessionTimeouts()` +
+ * postgres.js's `connection` option (more durable across PgBouncer
+ * transaction mode).
+ *
+ * Kept as a callable function so existing call sites in `connect()` and
+ * `PostgresEngine.connect()` don't need to be touched on the merge —
+ * the work has already happened by the time this function would run.
+ */
+export async function setSessionDefaults(_sql: ReturnType<typeof postgres>): Promise<void> {
+  // No-op: timeouts are now applied as startup parameters in resolveSessionTimeouts().
 }
 
 export function getConnection(): ReturnType<typeof postgres> {
@@ -125,6 +179,7 @@ export async function connect(config: EngineConfig): Promise<void> {
 
   try {
     const prepare = resolvePrepare(url);
+    const timeouts = resolveSessionTimeouts();
     const opts: Record<string, unknown> = {
       max: resolvePoolSize(),
       idle_timeout: 20,
@@ -134,6 +189,9 @@ export async function connect(config: EngineConfig): Promise<void> {
         bigint: postgres.BigInt,
       },
     };
+    if (Object.keys(timeouts).length > 0) {
+      opts.connection = timeouts;
+    }
     if (typeof prepare === 'boolean') {
       opts.prepare = prepare;
       if (!prepare) {
@@ -180,9 +238,64 @@ export async function initSchema(): Promise<void> {
   }
 }
 
+export { verifySchema } from './schema-verify.ts';
+
 export async function withTransaction<T>(fn: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
   const conn = getConnection();
   return conn.begin(async (tx) => {
     return fn(tx as unknown as ReturnType<typeof postgres>);
   }) as Promise<T>;
+}
+
+const RETRYABLE_DB_CONNECT_PATTERNS = [
+  /password authentication failed/i,
+  /connection refused/i,
+  /the database system is starting up/i,
+  /Connection terminated unexpectedly/i,
+  /ECONNRESET/i,
+];
+
+export function isRetryableDbConnectError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (!msg) return false;
+  return RETRYABLE_DB_CONNECT_PATTERNS.some(p => p.test(msg));
+}
+
+export interface ConnectWithRetryOpts {
+  attempts?: number;
+  baseDelayMs?: number;
+  noRetry?: boolean;
+  log?: (line: string) => void;
+}
+
+export async function connectWithRetry(
+  engine: BrainEngine,
+  config: EngineConfig & { poolSize?: number },
+  opts: ConnectWithRetryOpts = {},
+): Promise<void> {
+  const noRetry = opts.noRetry ?? (process.env.GBRAIN_NO_RETRY_CONNECT === '1');
+  const attempts = noRetry ? 1 : (opts.attempts ?? 3);
+  const baseDelayMs = opts.baseDelayMs ?? 1000;
+  const log = opts.log ?? ((line) => console.warn(line));
+
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await engine.connect(config);
+      return;
+    } catch (e: unknown) {
+      lastErr = e;
+      const retryable = isRetryableDbConnectError(e);
+      const isLast = i === attempts - 1;
+      if (!retryable || isLast) {
+        throw e;
+      }
+      const delay = baseDelayMs * Math.pow(2, i);
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`[connect] attempt ${i + 1} failed (${msg.slice(0, 80)}), retrying in ${delay}ms`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  // Unreachable, but TS needs the throw.
+  throw lastErr;
 }

@@ -1,5 +1,72 @@
 # TODOS
 
+## test-infra
+
+### Parallel-load timeout flake on v0.21 PGLite-heavy tests
+**Priority:** P0
+
+**What:** 22 tests added in v0.21.0 (Code Cathedral II) consistently fail in the full `bun test` run with timeout-pattern elapsed times of 7-10s, but pass in isolation. Every failing test calls `engine.initSchema()` in `beforeAll` without a timeout extension. Under parallel load (168 test files now run concurrently after v0.21 added ~24 new files), `initSchema` exceeds bun's default 5s `beforeAll` timeout.
+
+Affected files include (non-exhaustive): `test/sync-strategy.test.ts`, `test/cathedral-ii-brainbench.test.ts`, `test/code-edges.test.ts`, `test/reindex-code.test.ts`, `test/reconcile-links.test.ts`, `test/two-pass.test.ts`, `test/parent-symbol-path.test.ts`, `test/pglite-v0_19.test.ts`.
+
+**Why:** Currently triaged as "skip pre-existing, ship anyway" but that's not a real fix. Blocks /ship for anyone whose CHANGELOG-time test run sees them.
+
+**Pros:** Fixing it lets /ship run cleanly without manual triage every release.
+
+**Cons:** ~22 file edits adding `beforeAll(async () => {...}, 30000)` is mechanical but dull.
+
+**Context:** Same pattern fixed in v0.20.5 wave for `test/e2e/minions-shell-pglite.test.ts`. Single-file repro: each fails in `bun test`, passes in `bun test <file>`. Reproduces with my changes stashed, so it's on master.
+
+**Effort:** S (human: ~30 min / CC: ~5 min). Mechanical: grep for `beforeAll(async () => {` in affected files, add `, 30000)` argument.
+
+**Depends on / blocked by:** Nothing.
+
+## resolver / check-resolvable (v0.22.4 follow-ups)
+
+### D10 — Extend `check-resolvable` to parse RESOLVER.md disambiguation rules
+**Priority:** P2
+
+**What:** Extend `src/core/check-resolvable.ts:357-390` to parse a structured
+disambiguation block in `RESOLVER.md` (e.g. a `## Disambiguation rules`
+numbered list with parseable `<trigger>` → `<winning-skill>` shape) and treat
+resolved overlaps as non-issues. Then the action message at
+`src/core/check-resolvable.ts:388` ("Add disambiguation rule in RESOLVER.md OR
+narrow triggers") stops lying about the OR — currently only the second branch
+silences the warning.
+
+**Why:** The current MECE-overlap fix path forces authors to delete user-facing
+triggers from skill frontmatter. That's wrong for cases where two skills
+legitimately respond to the same phrase under different contexts (e.g.
+"citation audit" → focused fix vs broader brain health). A real
+disambiguation parser would let `RESOLVER.md` carry the resolution while
+keeping both skills' triggers intact for chaining.
+
+**Pros:**
+- The action message stops misleading users.
+- v0.22.4 D2 used the "narrow triggers" path because the disambiguation
+  parser doesn't exist yet; landing this would let v0.23+ keep dual triggers
+  for genuinely-overlapping skills.
+- Aligns RESOLVER.md's stated role (the dispatcher) with what the checker
+  actually reads.
+
+**Cons:**
+- Introduces a new `RESOLVER.md` syntactic contract that other tooling now
+  has to respect (parser, lint, downstream forks reading the same file).
+- Risk of false-positive resolution if the parser is loose.
+- ~80 lines of parser + tests; not blocking anything in v0.22.4.
+
+**Context:**
+- The "OR" in the action message is misleading today. Confirmed at
+  `src/core/check-resolvable.ts:388`.
+- The MECE detector loop is at `src/core/check-resolvable.ts:357-390`.
+- The disambiguation rules already exist as prose in
+  `skills/RESOLVER.md` (the citation-audit row added in v0.22.4 is the
+  pattern). They're agent-facing routing hints today, not parsed structure.
+
+**Effort:** S (human: ~4-6 hours / CC: ~30 min for parser + 12-16 test cases).
+
+**Depends on / blocked by:** Nothing.
+
 ## code-indexing (v0.21.0 Cathedral II follow-ups)
 
 ### B2 — Magika auto-detect for extension-less files (Layer 9 deferred)
@@ -473,3 +540,135 @@ iteration's residuals.
 
 ### Implement AWS Signature V4 for S3 storage backend
 **Completed:** v0.6.0 (2026-04-10) — replaced with @aws-sdk/client-s3 for proper SigV4 signing.
+
+### Caller-opt-in retry for `executeRaw` (D3 follow-up from v0.22.1)
+**What:** Add `PostgresEngine.executeRawIdempotent(sql, params)` (or a `{retry: true}` parameter flag on `executeRaw`) so callers explicitly opt into auto-retry for statements they know are idempotent. Audit existing call sites and migrate the read-only ones (search, page fetches, etc.) to the new method.
+
+**Why:** Closes the gap left by D3's drop-the-wrapper decision in v0.22.1. The original #406 wrapped `executeRaw` in a regex-gated retry that was unsound for writable CTEs and side-effecting SELECTs. Recovery moved up to the supervisor watchdog, but per-call recovery for reads (the bulk of `executeRaw` traffic from MCP, search, page fetches) is gone. A caller-opt-in flag puts the idempotency decision where it belongs (at the call site, with full statement context).
+
+**Pros:** Restores per-call auto-recovery for reads without the phantom-write risk on mutations. Explicit > clever: each call site declares its own idempotency posture. Future caller-added mutations get safe-by-default behavior.
+
+**Cons:** Touches every existing `executeRaw` call site (~25). Requires careful audit — accidentally tagging a mutation as idempotent re-introduces the phantom-write bug.
+
+**Context:** Codex F3 demonstrated that `READ_ONLY_PREFIX = /^(\s|--.*\n)*(SELECT|WITH)\b/i` is unsound — `WITH x AS (UPDATE … RETURNING …) SELECT …` matches the prefix but updates a row; `SELECT pg_advisory_xact_lock(...)` is a SELECT with side effects. The plan-eng-review wrap-up in `~/.claude/plans/system-instruction-you-are-working-tender-horizon.md` has the full discussion.
+
+**Effort estimate:** M (human: ~1 day / CC: ~30 min including call-site audit).
+**Priority:** P2 — current behavior (no retry, supervisor recovers within ~3 min) is acceptable but per-call recovery is a real ergonomic win.
+**Depends on:** Nothing.
+
+### Replace `walkMarkdownFiles` with `engine.getAllSlugs()` in `extractForSlugs` (F1 follow-up from v0.22.1)
+**What:** The cycle path's `extractForSlugs()` at `src/commands/extract.ts:455` still does a `walkMarkdownFiles(brainDir)` to build the `allSlugs` set for link resolution. On a 54K-page brain that's a single `readdir` traversal (~hundreds of ms — acceptable, dominated by the file-content-read elimination from #417). But `engine.getAllSlugs()` exists at `extract.ts:728` and produces the same set via a single SQL query (~tens of ms).
+
+**Why:** Eliminates the residual directory walk on every cycle. Codex F1 noted that the v0.22.1 plan's "cycle never re-walks the whole tree again" claim was overstated — it stops READING file contents but still walks the directory. This TODO closes that gap honestly.
+
+**Pros:** Cycle becomes O(slugs sync touched), not O(total brain size). No more readdir on a growing brain. ~5 LOC change.
+
+**Cons:** Crosses an FS-vs-DB consistency boundary in the FS-source extract path. Edge case: a file deleted from disk but still in DB. Currently `extractForSlugs` skips with `if (!existsSync(fullPath)) continue` — unchanged. But if a markdown file references a slug whose page exists in DB but file was deleted, the link would resolve via DB but the original extractor caught it. Needs a careful test for this case.
+
+**Context:** Codex plan-review during v0.22.1 wrap, verified at `extract.ts:455-456`. The plan-eng-review session captured the rationale.
+
+**Effort estimate:** S (human: ~2 hr / CC: ~10 min including the consistency-edge-case test).
+**Priority:** P3 — pure perf, no correctness gap.
+**Depends on:** Nothing.
+
+### `err.code`-based connection-error matching in `postgres-engine.ts` (B1 follow-up from v0.22.1)
+**What:** The CONNECTION_ERROR_PATTERNS array (~12 strings: `ECONNREFUSED`, `connection terminated`, `password authentication failed`, etc.) matched against `err.message` and `err.code`. Replace with structured matching against `err.code` only, using postgres.js's typed error classes (`PostgresError` with structured codes).
+
+**Why:** String matching against error messages breaks on library upgrades (postgres.js could change its error message phrasing without bumping major). Code matching is durable. The Layer 1 cleanup follows: gbrain itself doesn't define connection-error codes; it should defer to postgres.js's classification.
+
+**Pros:** More durable across library updates. Less code (drop the 12-string array). Follows the typed-errors pattern v0.21.0 introduced (`src/core/errors.ts`).
+
+**Cons:** Requires verifying which `err.code` values postgres.js actually exposes for each connection-failure mode. May need fallback to message-substring matching for codes that postgres.js doesn't surface.
+
+**Context:** Section 2/B1 from the v0.22.1 plan-eng-review. After D3 dropped the per-call retry, `isConnectionError` is no longer in the hot path — only the supervisor watchdog cares about classifying connection errors, and it currently catches *anything*. This TODO is a cleanup pass when someone next touches that surface.
+
+**Effort estimate:** S (human: ~2 hr / CC: ~10 min).
+**Priority:** P3.
+**Depends on:** The above caller-opt-in retry (#1) is the natural co-lander since both touch the same error-classification surface.
+
+## remote MCP / HTTP transport (v0.22.7 follow-ups)
+
+### Audit-log write amplification on rejected `/mcp` traffic
+**What:** `src/mcp/http-transport.ts` writes a row to `mcp_request_log` for every
+incoming `/mcp` request, including rate-limited (429), oversized (413), and
+auth-failed (401) traffic. Under sustained attack the IP rate limit caps audit
+writes per IP at 30/min, but at scale (10K distinct IPs) that's still 300K
+inserts/min. Two follow-ups: (1) instrument the audit-write rate so we can see
+the actual production volume; (2) consider a separate "rejected" table or
+sampling for failed-auth rows so the success-path audit table doesn't get
+swamped.
+
+**Why:** Codex flagged this during the v0.22.7 ship adversarial review. We kept
+the full audit on purpose — forensic data of an attack is valuable — but want
+to revisit once we have real volume numbers.
+
+**Pros:** Bounds DB write volume under attack. Keeps the success-path audit
+table small enough for fast queries.
+
+**Cons:** Adds a second table or a sampling rule. Not free complexity. Probably
+not worth it until production hits a real attack pattern.
+
+**Context:** `src/mcp/http-transport.ts:222,235,245` (the three audit-on-reject
+call sites) + `src/schema.sql:342` (the unbounded table).
+
+**Effort estimate:** M (human: ~half day / CC: ~30 min once we have volume data).
+**Priority:** P3 — wait for evidence.
+**Depends on:** Production telemetry on `mcp_request_log` insert rate.
+
+### `validateParams` doesn't check enum values or array item types
+**What:** `src/mcp/dispatch.ts:27` (extracted from `src/mcp/server.ts` in
+v0.22.7) only checks top-level JS types. Operations declare `enum` constraints
+(e.g. `direction: 'in' | 'out' | 'both'`) and array `items: { type: ... }`
+schemas in `src/core/operations.ts`, but `validateParams` ignores both. Bad
+inputs still reach handlers — concretely, an invalid `direction` falls through
+the engine's else branch at `src/core/postgres-engine.ts:954`, widening
+traversal unexpectedly; malformed `pages_updated` arrays could be written as
+garbage JSONB.
+
+**Why:** Codex flagged this during the v0.22.7 ship adversarial review. The
+validator was lifted verbatim from the pre-existing stdio path during the
+dispatch.ts extraction — same gap exists on the stdio MCP server today, so
+this isn't a v0.22.7 regression. Still worth tightening, since "shared
+validation" is now the architectural guarantee both transports rely on.
+
+**Pros:** Better defense-in-depth at the MCP boundary. Catches malformed agent
+inputs before the engine layer has to.
+
+**Cons:** Need to walk every operation's param schema and decide which enum
+violations are user-facing errors vs internal bugs. May need a typed Zod-style
+schema layer to do this cleanly.
+
+**Context:** `src/mcp/dispatch.ts:27` + `src/core/operations.ts` (param defs).
+Same gap pre-existed on stdio MCP path.
+
+**Effort estimate:** M (human: ~half day / CC: ~30 min if we use the existing
+ParamDef shape; XL if a Zod migration is the chosen direction).
+**Priority:** P2.
+**Depends on:** Whether we want to keep the lightweight ParamDef shape or
+migrate to typed schemas.
+
+### Streaming MCP tool support (re-add SSE based on Accept header)
+**What:** v0.22.7 dropped SSE entirely from `gbrain serve --http` because no
+current MCP tool streams. When the first streaming tool ships (long-running
+agent delegation as an MCP tool, `resources/subscribe`, `sampling/createMessage`),
+re-add SSE in `/mcp` based on the `Accept` header per the Streamable HTTP
+transport spec. ~30 lines + spec compliance test.
+
+**Why:** Removing SSE simplified the v0.22.7 transport (one response path,
+fewer test cases). Adding it back when actually needed is cheap and keeps the
+code lean in the meantime.
+
+**Effort estimate:** S (human: ~2 hr / CC: ~15 min).
+**Priority:** P3 — wait for the first streaming tool.
+**Depends on:** A streaming MCP tool actually existing.
+
+### `access_tokens.scopes` enforcement
+**What:** The `access_tokens` schema has had a `scopes TEXT[]` column since
+migration v4 (`src/core/migrate.ts:84`), but nothing enforces it. v0.22.7's
+`gbrain auth create` doesn't accept a `--scopes` flag, and `dispatchToolCall`
+doesn't gate on scopes. Adding per-tool scope enforcement would let
+"claude-desktop-readonly" and "ingest-only" tokens exist.
+
+**Effort estimate:** M (human: ~1 day / CC: ~30 min for the schema-aware gate).
+**Priority:** P3.
+**Depends on:** Nothing.

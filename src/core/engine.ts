@@ -1,6 +1,6 @@
 import type {
   Page, PageInput, PageFilters,
-  Chunk, ChunkInput,
+  Chunk, ChunkInput, StaleChunkRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -133,6 +133,21 @@ export interface BrainEngine {
   // Chunks
   upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
   getChunks(slug: string): Promise<Chunk[]>;
+  /**
+   * Count chunks across the entire brain where embedded_at IS NULL.
+   * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
+   * does no further work after a single SELECT count(*) (~50 bytes wire).
+   */
+  countStaleChunks(): Promise<number>;
+  /**
+   * Return every chunk where embedded_at IS NULL, with the metadata needed
+   * to call embedBatch + upsertChunks. The `embedding` column is omitted
+   * by design — stale rows have NULL embeddings, so shipping them wastes
+   * wire bytes for no gain. Caller groups by slug, embeds, and re-upserts.
+   *
+   * Bounded by an internal LIMIT of 100000 to mirror listPages.
+   */
+  listStaleChunks(): Promise<StaleChunkRow[]>;
   deleteChunks(slug: string): Promise<void>;
 
   // Links

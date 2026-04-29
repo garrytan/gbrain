@@ -19,7 +19,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -285,6 +285,11 @@ async function handleCliOnly(command: string, args: string[]) {
     await runIntegrations(args);
     return;
   }
+  if (command === 'auth') {
+    const { runAuth } = await import('./commands/auth.ts');
+    await runAuth(args);
+    return;
+  }
   if (command === 'resolvers') {
     const { runResolvers } = await import('./commands/resolvers.ts');
     await runResolvers(args);
@@ -303,6 +308,11 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'check-backlinks') {
     const { runBacklinks } = await import('./commands/backlinks.ts');
     await runBacklinks(args);
+    return;
+  }
+  if (command === 'frontmatter') {
+    const { runFrontmatter } = await import('./commands/frontmatter.ts');
+    await runFrontmatter(args);
     return;
   }
   if (command === 'lint') {
@@ -442,7 +452,7 @@ async function handleCliOnly(command: string, args: string[]) {
       }
       case 'serve': {
         const { runServe } = await import('./commands/serve.ts');
-        await runServe(engine);
+        await runServe(engine, args);
         return; // serve doesn't disconnect
       }
       case 'call': {
@@ -576,7 +586,10 @@ async function connectEngine(): Promise<BrainEngine> {
   }
   const { createEngine } = await import('./core/engine-factory.ts');
   const engine = await createEngine(toEngineConfig(config));
-  await engine.connect(toEngineConfig(config));
+  const noRetry = process.argv.includes('--no-retry-connect') ||
+                  process.env.GBRAIN_NO_RETRY_CONNECT === '1';
+  const { connectWithRetry } = await import('./core/db.ts');
+  await connectWithRetry(engine, toEngineConfig(config), { noRetry });
   return engine;
 }
 

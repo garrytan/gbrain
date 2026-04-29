@@ -70,6 +70,21 @@ export interface Chunk {
   symbol_name_qualified?: string | null;
 }
 
+/**
+ * Lightweight row shape returned by `BrainEngine.listStaleChunks()`.
+ * Excludes the `embedding` column on purpose — only chunks needing
+ * an embedding come back, and we don't ship the (always-null on stale
+ * rows) embedding bytes over the wire. See `embed --stale` egress fix.
+ */
+export interface StaleChunkRow {
+  slug: string;
+  chunk_index: number;
+  chunk_text: string;
+  chunk_source: 'compiled_truth' | 'timeline';
+  model: string | null;
+  token_count: number | null;
+}
+
 export interface ChunkInput {
   chunk_index: number;
   chunk_text: string;

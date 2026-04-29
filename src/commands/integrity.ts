@@ -31,6 +31,7 @@ import { join, dirname } from 'path';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import * as db from '../core/db.ts';
 import { BrainWriter } from '../core/output/writer.ts';
 import {
   getDefaultRegistry,
@@ -266,6 +267,12 @@ export interface IntegrityScanOptions {
   limit?: number;
   /** Slug prefix filter (e.g. "people") — matches slugs starting with `${typeFilter}/`. */
   typeFilter?: string;
+  /**
+   * When true (default), batch-load pages via a single SQL query instead of
+   * sequential getPage() calls. Falls back to sequential on error (e.g. PGLite).
+   * Eliminates 500 round-trips through PgBouncer that caused doctor timeouts.
+   */
+  batchLoad?: boolean;
 }
 
 export interface IntegrityScanResult {
@@ -287,7 +294,29 @@ export async function scanIntegrity(
   engine: BrainEngine,
   opts: IntegrityScanOptions = {},
 ): Promise<IntegrityScanResult> {
-  const { limit = Infinity, typeFilter } = opts;
+  const { limit = Infinity, typeFilter, batchLoad = true } = opts;
+
+  // Fast path: single SQL query instead of N sequential getPage() calls.
+  // Eliminates ~500 round-trips through PgBouncer that caused doctor to
+  // timeout on transaction-mode pooling. Postgres-only: PGLite has no
+  // postgres.js connection, so the gate keeps the GBRAIN_DEBUG fallback
+  // log clean for real Postgres errors instead of expected PGLite skips.
+  if (batchLoad && limit !== Infinity && engine.kind === 'postgres') {
+    try {
+      return await scanIntegrityBatch(limit, typeFilter);
+    } catch (err) {
+      // GBRAIN_DEBUG=1 surfaces real Postgres errors (deadlock, connection
+      // drop, SQL bug) that would otherwise vanish into the sequential
+      // fallback. Quiet by default since the fallback is harmless.
+      if (process.env.GBRAIN_DEBUG) {
+        console.error(
+          '[integrity] batch path failed, falling back to sequential:',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+  }
+
   const allSlugs = [...(await engine.getAllSlugs())].sort();
 
   const bareHits: BareTweetHit[] = [];
@@ -314,6 +343,52 @@ export async function scanIntegrity(
     .map(([slug, count]) => ({ slug, count }));
 
   return { pagesScanned, bareHits, externalHits, topPages };
+}
+
+/**
+ * Batch-load integrity scan: fetches all candidate pages in a single SQL
+ * query, then scans in-memory. Reduces PgBouncer round-trips from ~500 to 1.
+ */
+async function scanIntegrityBatch(
+  limit: number,
+  typeFilter?: string,
+): Promise<IntegrityScanResult> {
+  const sql = db.getConnection();
+  const typeCondition = typeFilter ? sql`AND slug LIKE ${typeFilter + '/%'}` : sql``;
+  // Boolean validate is the documented contract; stringly-typed 'false' (quoted
+  // YAML) diverges from the sequential path's strict === false check. Intentional
+  // — gbrain lint should reject stringly-typed validate at write time.
+  const validateCondition = sql`AND (frontmatter->>'validate' IS NULL OR frontmatter->>'validate' != 'false')`;
+
+  // DISTINCT ON (slug) mirrors getAllSlugs()'s Set<string> semantics: multi-source
+  // brains can have the same slug under multiple source_ids (UNIQUE(source_id, slug)
+  // since v0.18.0); we want one scan per slug, not one per row.
+  const rows = await sql`
+    SELECT DISTINCT ON (slug) slug, compiled_truth, frontmatter
+    FROM pages
+    WHERE 1=1 ${typeCondition} ${validateCondition}
+    ORDER BY slug
+    LIMIT ${limit}
+  `;
+
+  const bareHits: BareTweetHit[] = [];
+  const externalHits: ExternalLinkHit[] = [];
+
+  for (const row of rows) {
+    const slug = row.slug as string;
+    const compiledTruth = row.compiled_truth as string;
+    bareHits.push(...findBareTweetHits(compiledTruth, slug));
+    externalHits.push(...findExternalLinks(compiledTruth, slug));
+  }
+
+  const byPage = new Map<string, number>();
+  for (const h of bareHits) byPage.set(h.slug, (byPage.get(h.slug) ?? 0) + 1);
+  const topPages = [...byPage.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([slug, count]) => ({ slug, count }));
+
+  return { pagesScanned: rows.length, bareHits, externalHits, topPages };
 }
 
 // ---------------------------------------------------------------------------
