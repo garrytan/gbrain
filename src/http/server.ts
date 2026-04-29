@@ -31,16 +31,16 @@ function verifyToken(expected: string | undefined, authHeader: string | null, qu
   return diff === 0;
 }
 
-// ── TOTP 動態鑰匙驗證 ──────────────────────────────────────────────────────────
+// ── 每日鑰匙（每天換一把，用一整天）──────────────────────────────────────────
 function generateOtp(secret: string, windowOffset = 0): string {
-  const window = Math.floor(Date.now() / 60_000) + windowOffset;
-  return createHmac('sha256', secret).update(String(window)).digest('hex').slice(0, 10);
+  const day = Math.floor(Date.now() / 86_400_000) + windowOffset; // 86400秒 = 1天
+  return createHmac('sha256', secret).update(String(day)).digest('hex').slice(0, 10);
 }
 
 function verifyOtp(secret: string, provided: string): boolean {
   if (!provided || provided.length !== 10) return false;
-  // 接受當前視窗 ±1（容許 60 秒時鐘誤差）
-  for (const offset of [0, -1, 1]) {
+  // 接受今天 + 昨天（跨日容錯）
+  for (const offset of [0, -1]) {
     const expected = generateOtp(secret, offset);
     if (provided === expected) return true;
   }
