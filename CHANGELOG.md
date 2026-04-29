@@ -2,6 +2,98 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.22.8.0] - 2026-04-29
+
+**Trigger functions get a search_path lock so Supabase advisor lint 0011 stops nagging.**
+**Fresh and existing brains both pick up the fix on next bootstrap. No manual SQL.**
+
+GBrain's three plpgsql trigger functions (chunk FTS, page FTS, minion notify)
+ran without a configured `search_path`, which Supabase's advisor flags as
+`function_search_path_mutable`. The fix is structural, not behavioral: pin a
+`search_path` on each function so a session that planted a temp table or
+shadowed schema cannot redirect lookups inside the trigger body. The migration
+is metadata-only and a no-op against brains that already had the fix applied
+manually.
+
+Two of the three functions only call pg_catalog built-ins, so a permissive
+`pg_catalog, public` search_path is enough. The third one reads from an
+unqualified relation and gets the stricter empty `search_path` plus a
+schema-qualified `FROM public.timeline_entries` so a session-planted temp
+table cannot shadow the real one.
+
+### The numbers that matter
+
+Measured on a production Supabase brain via the advisor API:
+
+| Metric | Before | After | Δ |
+|---|---|---|---|
+| `function_search_path_mutable` lints | 3 | 0 | -3 |
+
+The migration is `ALTER FUNCTION ... SET search_path` for two functions and
+`CREATE OR REPLACE` for the third. All metadata-only. No table rewrite, no
+recompile, no downtime.
+
+### What this means for brain operators
+
+Run `gbrain upgrade` and the next schema-touching CLI invocation applies
+migration v35 automatically. Brains hardened manually before this release see
+v35 as a no-op on both `ALTER FUNCTION` lines and a no-op `CREATE OR REPLACE`
+(function body unchanged from the manual fix). Either path lands at the same
+final state.
+
+### Itemized changes
+
+#### Added
+
+- Migration v35 `trigger_function_search_path_hardening` in
+  `src/core/migrate.ts`. Engine-split via `sqlFor`: Postgres branch hardens
+  all three trigger functions (`update_chunk_search_vector`,
+  `update_page_search_vector`, `notify_minion_job_change`); PGLite branch
+  hardens only the two functions that exist there. `notify_minion_job_change`
+  is intentionally absent from `src/core/pglite-schema.ts` (PGLite has no
+  NOTIFY consumers)
+
+#### Changed
+
+- `src/schema.sql` and `src/core/pglite-schema.ts`: trigger functions now
+  declare `SET search_path` inline so fresh brain bootstrap matches the
+  migration outcome. `update_page_search_vector` body schema-qualifies
+  `FROM public.timeline_entries`, load-bearing under the empty search_path
+- `src/core/schema-embedded.ts` regenerated from `src/schema.sql` via
+  `bun run build:schema`
+
+#### Tests
+
+- `test/migrate.test.ts`: bumped `LATEST_VERSION` guard to 35 and added
+  three structural assertions on v35's `sqlFor` shape (Postgres branch
+  covers all three functions, PGLite branch covers two, asymmetric
+  search_path values, schema-qualified FROM presence)
+
+## To take advantage of v0.22.8.0
+
+`gbrain upgrade` does this automatically. If it didn't, or if `gbrain doctor`
+warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify v35 applied:**
+   ```bash
+   gbrain apply-migrations --list  # v35 should show as completed
+   ```
+3. **(Postgres / Supabase only) confirm the advisor is clean.**
+   Open the Supabase dashboard, advisor, security tab. The
+   `function_search_path_mutable` finding count should drop to 0.
+4. **If any step fails or numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade
+   paths. Thank you.
+
 ## [0.22.7.0] - 2026-04-29
 
 **Autopilot stops querying the same expensive UNION twice per cycle.**
