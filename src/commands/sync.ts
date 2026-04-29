@@ -24,6 +24,7 @@ export interface SyncOpts {
   dryRun?: boolean;
   full?: boolean;
   noPull?: boolean;
+  noEmbed?: boolean;
 }
 
 const runtimeImport = new Function('specifier', 'return import(specifier)') as (
@@ -348,8 +349,9 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   const dryRun = args.includes('--dry-run');
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');
+  const noEmbed = args.includes('--no-embed');
 
-  const opts: SyncOpts = { repoPath, dryRun, full, noPull };
+  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed };
 
   if (!watch) {
     const result = await performSync(engine, opts);

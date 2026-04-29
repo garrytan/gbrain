@@ -63,6 +63,7 @@ const SYNC_CLI_SPEC: Operation = {
     dry_run: { type: 'boolean', description: 'Preview changes without applying' },
     full: { type: 'boolean', description: 'Full re-sync (ignore checkpoint)' },
     no_pull: { type: 'boolean', description: 'Skip git pull' },
+    no_embed: { type: 'boolean', description: 'Compatibility no-op: sync already defers embeddings' },
     watch: { type: 'boolean', description: 'Poll for changes continuously until interrupted' },
     interval: { type: 'number', description: 'Seconds between watch polls (default 60)' },
   },
@@ -278,6 +279,7 @@ function normalizeSyncCliExtensionArgs(params: Record<string, unknown>): string[
   if (params.dry_run === true) args.push('--dry-run');
   if (params.full === true) args.push('--full');
   if (params.no_pull === true) args.push('--no-pull');
+  if (params.no_embed === true) args.push('--no-embed');
   if (params.watch === true) args.push('--watch');
   if (typeof params.interval === 'number') args.push('--interval', String(params.interval));
 

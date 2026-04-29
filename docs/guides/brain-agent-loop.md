@@ -67,8 +67,8 @@ on_message(text):
   // 3. RESPOND (with brain context injected)
   response = compose_response(text, context)
 
-  // 4. WRITE (after responding, if new info emerged)
-  if response_contains_new_info(response):
+  // 4. WRITE (after responding, if durable new info emerged)
+  if conversation_revealed_durable_knowledge(text, response):
     for entity in mentioned_entities:
       mbrain_add_timeline_entry(entity.slug, {
         date: today,
@@ -76,8 +76,8 @@ on_message(text):
         source: "[Source: User, conversation, {date}]"
       })
 
-  // 5. SYNC
-  mbrain_sync()
+    // 5. SYNC only after a write batch
+    mbrain_sync(no_pull=true, no_embed=true)
 ```
 
 ### The Two Invariants
@@ -97,11 +97,13 @@ on_message(text):
    and update the brain later. But the brain context makes the response better.
    Read first.
 
-2. **Don't skip the write step.** "I'll update the brain later" means never.
-   Write immediately after the conversation, while the context is fresh.
+2. **Don't skip real durable writes.** "I'll update the brain later" means
+   never. Write immediately after the conversation when new durable knowledge
+   actually emerged.
 
 3. **Sync after every write batch.** Without sync, the brain search index is
-   stale. The next query won't find what you just wrote.
+   stale. The next query won't find what you just wrote. If there was no write,
+   there is nothing to sync.
 
 4. **External APIs are fallback, not primary.** `mbrain search` before
    Brave Search. `mbrain get` before Crustdata. The brain has relationship

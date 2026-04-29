@@ -1,18 +1,18 @@
 # Operational Disciplines
 
 ## Goal
-Five non-negotiable rules that separate a production brain from a demo -- signal detection, brain-first lookup, sync after every write, daily heartbeat, and nightly dream cycle.
+Five non-negotiable rules that separate a production brain from a demo -- signal detection, brain-first lookup, sync after durable write batches, daily heartbeat, and nightly dream cycle.
 
 ## What the User Gets
-Without this: the agent misses signals in conversation, wastes money on external APIs when the brain already has the answer, leaves search results stale after writes, and lets the brain rot quietly. With this: every message is scanned for entities, the brain is always consulted first, search is always current, health is monitored daily, and the brain compounds overnight.
+Without this: the agent misses signals in conversation, wastes money on external APIs when the brain already has the answer, leaves search results stale after writes, and lets the brain rot quietly. With this: every message is scanned for durable signals, the brain is consulted first when relevant, search is current after writes, health is monitored daily, and the brain compounds overnight.
 
 ## Implementation
 
 ```
 # DISCIPLINE 1: Signal Detection on Every Message (MANDATORY)
 on every_inbound_message(message):
-    # No exceptions. If the user thinks out loud and the brain doesn't
-    # capture it, the system is broken. This is the #1 discipline.
+    # Scan every message, but only write durable knowledge. Pure task
+    # mechanics, generic programming, and ephemeral status updates are passes.
 
     entities = detect_entities(message)
     #   people, companies, deals, original ideas
@@ -27,11 +27,13 @@ on every_inbound_message(message):
 
     originals = detect_original_thinking(message)
     for idea in originals:
+        if not idea.is_durable:
+            continue
         mbrain put originals/{slug} --content "{user's exact phrasing}"
 
 # DISCIPLINE 2: Brain-First Lookup Before External APIs (MANDATORY)
 on information_needed(topic):
-    # ALWAYS check the brain before reaching for the web
+    # Check the brain before external APIs when the topic is in MBrain's domain
     brain_result = mbrain search "{topic}"
     if brain_result:
         page = mbrain get <slug>
@@ -43,8 +45,8 @@ on information_needed(topic):
     # An agent that reaches for the web before checking its own brain
     # is wasting money and giving worse answers.
 
-# DISCIPLINE 3: Sync After Every Write (MANDATORY)
-on brain_write_complete():
+# DISCIPLINE 3: Sync After Every Durable Write Batch (MANDATORY)
+on brain_write_batch_complete():
     mbrain sync
     # Without this, search results are stale.
     # The page you just wrote won't appear in mbrain search or mbrain query
@@ -104,7 +106,7 @@ on nightly_schedule("02:00"):
 
 1. **The dream cycle is the most important discipline.** Brains compound overnight. Entity sweeps fix broken graphs, citation audits catch sourceless facts, and memory consolidation keeps compiled truth current. Skip the dream cycle and the brain slowly rots.
 2. **Skipping Discipline 3 (sync after write) means stale search results.** You write a page, then immediately search for it -- and get nothing back. The page exists but isn't indexed. Always sync after writes.
-3. **Signal detection must fire on EVERY message.** Not just messages that look important. The user says "I talked to Pedro yesterday about the board seat" in passing -- that's a timeline entry on Pedro's page, a potential update to his State section, and a signal about the board. If the agent doesn't catch it, the system is broken.
+3. **Signal detection must scan EVERY message, but writes are gated.** Not just messages that look important. The user says "I talked to Pedro yesterday about the board seat" in passing -- that's a timeline entry on Pedro's page, a potential update to his State section, and a signal about the board. Pure code editing or generic task mechanics with no durable knowledge should pass.
 4. **Brain-first saves money AND gives better answers.** The brain has context that external APIs don't: relationship history, meeting notes, the user's own assessment. An API lookup for "Pedro Franceschi" returns a LinkedIn profile. The brain returns the full picture including private context.
 5. **`mbrain doctor` catches silent failures.** Embedding pipelines can stall, sync can fail silently, database connections can drop. The daily heartbeat catches these before they compound into data loss.
 

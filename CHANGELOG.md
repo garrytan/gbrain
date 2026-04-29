@@ -8,7 +8,7 @@ All notable changes to MBrain will be documented in this file.
 
 ### Added
 
-- **`mbrain setup-agent --claude` now installs the session-end stop hook automatically.** A new bash hook (`~/.claude/scripts/hooks/stop-mbrain-check.sh` + `lib/mbrain-relevance.sh`) gets written, registered in `~/.claude/settings.json` as `stop:mbrain-check`, and shipped with a skip-dirs template. When a Claude Code session ends, the hook emits a `block` decision that forces the agent to do one more turn and write session-derived knowledge back to the brain — or explicitly say `MBRAIN-PASS: <reason>`. Re-entry is guarded by Claude Code's native `stop_hook_active` field, and the gate respects `MBRAIN_STOP_HOOK=0`, `~/.claude/mbrain-skip-dirs`, and missing-CLI fail-closed. Re-runs of `setup-agent` upsert a single registration (idempotent).
+- **`mbrain setup-agent --claude` now installs the session-end stop hook automatically.** A new bash hook (`~/.claude/scripts/hooks/stop-mbrain-check.sh` + `lib/mbrain-relevance.sh`) gets written, registered in `~/.claude/settings.json` as `stop:mbrain-check`, and shipped with a skip-dirs template. When a Claude Code session ends, the hook emits a `block` decision that forces one final memory check: write durable session-derived knowledge back to the brain when there is something worth saving, or explicitly say `MBRAIN-PASS: <reason>`. Re-entry is guarded by Claude Code's native `stop_hook_active` field, and the gate respects `MBRAIN_STOP_HOOK=0`, `~/.claude/mbrain-skip-dirs`, and missing-CLI fail-closed. Re-runs of `setup-agent` upsert a single registration (idempotent).
 
 ### Fixed
 

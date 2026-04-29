@@ -283,6 +283,8 @@ describe('setup-agent', () => {
     expect(hook.stdout).toContain('MBrain memory check, not a crash');
     expect(hook.stdout).toContain('Claude Code may label this as');
     expect(hook.stdout).toContain('durable knowledge');
+    expect(hook.stdout).toContain('Do not write to MBrain just because this hook fired');
+    expect(hook.stdout).toContain('purely code editing, git operations, file management, library docs, or general programming');
     expect(hook.stdout).toContain('MBRAIN-PASS');
     expect(hook.stdout).not.toContain('mbrain write check');
   });

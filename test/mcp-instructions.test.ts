@@ -70,4 +70,11 @@ describe('core tool descriptions include trigger context', () => {
     expect(addLink!.params.link_type.description).toContain('implements');
     expect(addLink!.params.link_type.description).toContain('layer_of');
   });
+
+  test('sync_brain accepts no_embed because agent rules pass it after writes', () => {
+    const syncBrain = operations.find(op => op.name === 'sync_brain');
+    expect(syncBrain).toBeDefined();
+    expect(syncBrain!.params.no_embed).toBeDefined();
+    expect(syncBrain!.params.no_embed.type).toBe('boolean');
+  });
 });

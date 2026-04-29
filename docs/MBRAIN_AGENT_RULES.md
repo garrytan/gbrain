@@ -47,6 +47,11 @@ Write to MBrain when the conversation reveals durable knowledge:
 Do not write transient task mechanics, private chain-of-thought, or generic facts
 that do not belong in the user's knowledge graph.
 
+Do not write merely because a session is ending or a hook asked for a memory
+check. If the session was purely code editing, git operations, file management,
+library documentation, or general programming with no durable knowledge, skip
+the write.
+
 ## 4. Filing Rules
 
 - Original user thinking -> `brain/originals/{slug}.md`
@@ -76,7 +81,6 @@ The user's direct statements outrank other sources.
 
 Every entity mention must be bidirectionally linked. When page A mentions page B,
 page B's timeline should link back to page A with context:
-
 `- **YYYY-MM-DD** | Referenced in [page title](path/to/page.md) -- context`
 
 After creating or updating any brain page, sync immediately:

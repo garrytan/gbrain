@@ -1,17 +1,17 @@
-# Entity Detection: Run It on Every Message
+# Entity Detection: Scan Every Message, Write Only Durable Signals
 
 ## Goal
 
-Every inbound message gets scanned for original thinking AND entity mentions so the brain grows on every conversation, automatically.
+Every inbound message gets scanned for original thinking AND entity mentions so durable signals are captured automatically without turning every mention into a write.
 
 ## What the User Gets
 
 Without this: the agent answers questions but forgets everything. You mention
 Pedro in a meeting, and next week the agent doesn't know who Pedro is.
 
-With this: every person, company, and idea mentioned in conversation gets a
-brain page. Next time Pedro comes up, the agent already has context. The
-brain compounds.
+With this: notable people, companies, and ideas mentioned with durable context
+get recorded. Next time Pedro comes up, the agent already has context. The
+brain compounds without filling up with transient task mechanics.
 
 ## Implementation
 
@@ -72,7 +72,7 @@ An unlinked mention is a broken brain.
 Format: - **YYYY-MM-DD** | Referenced in [{page title}]({path}) — {context}
 
 STEP 4 — SYNC:
-Run: mbrain sync --no-pull --no-embed
+If any page was created or updated, run: mbrain sync --no-pull --no-embed
 
 If nothing to capture, reply "No signals detected" and exit.
 `

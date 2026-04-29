@@ -417,7 +417,7 @@ This single command:
 3. **Injects** the MBrain agent rules into each client's global config
 4. **Installs** the Claude Code Stop hook that prompts for end-of-session mbrain writeback
 
-The agent rules teach your AI client the brain-agent loop: read brain before responding, write new information back, detect entities on every message, and back-link everything. Without these rules the MCP tools are available but the knowledge compounding does not happen.
+The agent rules teach your AI client the brain-agent loop: read brain when MBrain is relevant, write back durable new information with provenance, and back-link durable entity mentions. They also tell the agent to skip MBrain for purely code editing, git operations, file management, public library docs, or general programming when no durable knowledge was learned.
 
 ### Options
 
@@ -451,9 +451,9 @@ For Claude Code, `setup-agent` also installs:
 - `~/.claude/mbrain-skip-dirs`
 - `~/.claude/settings.json` Stop hook entry `stop:mbrain-check`
 
-The Stop hook runs once at session end, blocks once for relevant sessions, and asks Claude Code to either write new session knowledge back to mbrain or respond with `MBRAIN-PASS: <reason>`.
+The Stop hook runs once at session end, blocks once for eligible sessions, and asks Claude Code to either write durable session knowledge back to mbrain or respond with `MBRAIN-PASS: <reason>`.
 
-When the Stop hook blocks a response, Claude Code may display the message under a `Stop hook error` prefix. In this case, the MBrain hook is not crashing; it is asking the agent to do one final memory check. The agent should either write durable session knowledge to MBrain and sync, or respond exactly `MBRAIN-PASS: <short reason>`.
+When the Stop hook blocks a response, Claude Code may display the message under a `Stop hook error` prefix. In this case, the MBrain hook is not crashing; it is asking the agent to do one final memory check. The agent should not write just because the hook fired: it should write durable session knowledge to MBrain and sync only when there is something worth saving, otherwise respond exactly `MBRAIN-PASS: <short reason>`.
 
 To disable the reminder for one Claude session:
 
