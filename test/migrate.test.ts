@@ -287,6 +287,17 @@ describe('migration v24 — rls_backfill_missing_tables', () => {
   test('LATEST_VERSION has caught up to 24', () => {
     expect(LATEST_VERSION).toBeGreaterThanOrEqual(24);
   });
+
+  // PGLite has no RLS engine and is intrinsically single-tenant. The 8 RLS
+  // backfill ALTER statements target tables that may not exist on PGLite
+  // (subagent_*, minion_inbox aren't always present in pglite-schema.ts).
+  // sqlFor.pglite='' makes v24 a no-op on PGLite while still bumping the
+  // version counter. Engine.kind discrimination in runMigrations selects
+  // sqlFor[engine.kind] over m.sql. Issue #395.
+  test('uses a PGLite no-op override so local brains skip Postgres-only RLS ALTER TABLEs', () => {
+    const v24 = MIGRATIONS.find(m => m.version === 24);
+    expect(v24?.sqlFor?.pglite).toBe('');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────

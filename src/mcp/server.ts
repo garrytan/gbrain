@@ -2,30 +2,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError } from '../core/operations.ts';
-import type { Operation, OperationContext } from '../core/operations.ts';
-import { loadConfig } from '../core/config.ts';
+import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
-
-/** Validate required params exist and have the expected type */
-function validateParams(op: Operation, params: Record<string, unknown>): string | null {
-  for (const [key, def] of Object.entries(op.params)) {
-    if (def.required && (params[key] === undefined || params[key] === null)) {
-      return `Missing required parameter: ${key}`;
-    }
-    if (params[key] !== undefined && params[key] !== null) {
-      const val = params[key];
-      const expected = def.type;
-      if (expected === 'string' && typeof val !== 'string') return `Parameter "${key}" must be a string`;
-      if (expected === 'number' && typeof val !== 'number') return `Parameter "${key}" must be a number`;
-      if (expected === 'boolean' && typeof val !== 'boolean') return `Parameter "${key}" must be a boolean`;
-      if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return `Parameter "${key}" must be an object`;
-      if (expected === 'array' && !Array.isArray(val)) return `Parameter "${key}" must be an array`;
-    }
-  }
-  return null;
-}
+import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -40,50 +20,21 @@ export async function startMcpServer(engine: BrainEngine) {
     tools: buildToolDefs(operations),
   }));
 
-  // Dispatch tool calls to operation handlers
-  server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+  // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
+  // MCP stdio callers are remote/untrusted; dispatch defaults remote=true.
+  // The MCP SDK's response type widened in 1.29 to allow a managed-task wrapper;
+  // gbrain ops are synchronous, so we return the legacy `{ content, isError? }`
+  // shape and cast through `any` (the SDK accepts it via the ServerResult union).
+  server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
     const { name, arguments: params } = request.params;
-    const op = operations.find(o => o.name === name);
-    if (!op) {
-      return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
-    }
-
-    const ctx: OperationContext = {
-      engine,
-      config: loadConfig() || { engine: 'postgres' },
-      logger: {
-        info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
-        warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
-        error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
-      },
-      dryRun: !!(params?.dry_run),
-      // MCP stdio callers are remote/untrusted; enforce strict file confinement.
-      remote: true,
-    };
-
-    const safeParams = params || {};
-    const validationError = validateParams(op, safeParams);
-    if (validationError) {
-      return { content: [{ type: 'text', text: JSON.stringify({ error: 'invalid_params', message: validationError }, null, 2) }], isError: true };
-    }
-
-    try {
-      const result = await op.handler(ctx, safeParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (e: unknown) {
-      if (e instanceof OperationError) {
-        return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };
-      }
-      const msg = e instanceof Error ? e.message : String(e);
-      return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
-    }
+    return dispatchToolCall(engine, name, params, { remote: true });
   });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-// Backward compat: used by `gbrain call` command
+// Backward compat: used by `gbrain call` command (trusted local path).
 export async function handleToolCall(
   engine: BrainEngine,
   tool: string,
@@ -95,14 +46,10 @@ export async function handleToolCall(
   const validationError = validateParams(op, params);
   if (validationError) throw new Error(validationError);
 
-  const ctx: OperationContext = {
-    engine,
-    config: loadConfig() || { engine: 'postgres' },
-    logger: { info: console.log, warn: console.warn, error: console.error },
-    dryRun: !!(params?.dry_run),
-    // Backing path for `gbrain call` CLI command — trusted local invocation.
+  const ctx = buildOperationContext(engine, params, {
     remote: false,
-  };
+    logger: { info: console.log, warn: console.warn, error: console.error },
+  });
 
   return op.handler(ctx, params);
 }

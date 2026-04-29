@@ -1,5 +1,26 @@
 # TODOS
 
+## test-infra
+
+### Parallel-load timeout flake on v0.21 PGLite-heavy tests
+**Priority:** P0
+
+**What:** 22 tests added in v0.21.0 (Code Cathedral II) consistently fail in the full `bun test` run with timeout-pattern elapsed times of 7-10s, but pass in isolation. Every failing test calls `engine.initSchema()` in `beforeAll` without a timeout extension. Under parallel load (168 test files now run concurrently after v0.21 added ~24 new files), `initSchema` exceeds bun's default 5s `beforeAll` timeout.
+
+Affected files include (non-exhaustive): `test/sync-strategy.test.ts`, `test/cathedral-ii-brainbench.test.ts`, `test/code-edges.test.ts`, `test/reindex-code.test.ts`, `test/reconcile-links.test.ts`, `test/two-pass.test.ts`, `test/parent-symbol-path.test.ts`, `test/pglite-v0_19.test.ts`.
+
+**Why:** Currently triaged as "skip pre-existing, ship anyway" but that's not a real fix. Blocks /ship for anyone whose CHANGELOG-time test run sees them.
+
+**Pros:** Fixing it lets /ship run cleanly without manual triage every release.
+
+**Cons:** ~22 file edits adding `beforeAll(async () => {...}, 30000)` is mechanical but dull.
+
+**Context:** Same pattern fixed in v0.20.5 wave for `test/e2e/minions-shell-pglite.test.ts`. Single-file repro: each fails in `bun test`, passes in `bun test <file>`. Reproduces with my changes stashed, so it's on master.
+
+**Effort:** S (human: ~30 min / CC: ~5 min). Mechanical: grep for `beforeAll(async () => {` in affected files, add `, 30000)` argument.
+
+**Depends on / blocked by:** Nothing.
+
 ## resolver / check-resolvable (v0.22.4 follow-ups)
 
 ### D10 — Extend `check-resolvable` to parse RESOLVER.md disambiguation rules
@@ -564,3 +585,90 @@ iteration's residuals.
 **Effort estimate:** S (human: ~2 hr / CC: ~10 min).
 **Priority:** P3.
 **Depends on:** The above caller-opt-in retry (#1) is the natural co-lander since both touch the same error-classification surface.
+
+## remote MCP / HTTP transport (v0.22.7 follow-ups)
+
+### Audit-log write amplification on rejected `/mcp` traffic
+**What:** `src/mcp/http-transport.ts` writes a row to `mcp_request_log` for every
+incoming `/mcp` request, including rate-limited (429), oversized (413), and
+auth-failed (401) traffic. Under sustained attack the IP rate limit caps audit
+writes per IP at 30/min, but at scale (10K distinct IPs) that's still 300K
+inserts/min. Two follow-ups: (1) instrument the audit-write rate so we can see
+the actual production volume; (2) consider a separate "rejected" table or
+sampling for failed-auth rows so the success-path audit table doesn't get
+swamped.
+
+**Why:** Codex flagged this during the v0.22.7 ship adversarial review. We kept
+the full audit on purpose — forensic data of an attack is valuable — but want
+to revisit once we have real volume numbers.
+
+**Pros:** Bounds DB write volume under attack. Keeps the success-path audit
+table small enough for fast queries.
+
+**Cons:** Adds a second table or a sampling rule. Not free complexity. Probably
+not worth it until production hits a real attack pattern.
+
+**Context:** `src/mcp/http-transport.ts:222,235,245` (the three audit-on-reject
+call sites) + `src/schema.sql:342` (the unbounded table).
+
+**Effort estimate:** M (human: ~half day / CC: ~30 min once we have volume data).
+**Priority:** P3 — wait for evidence.
+**Depends on:** Production telemetry on `mcp_request_log` insert rate.
+
+### `validateParams` doesn't check enum values or array item types
+**What:** `src/mcp/dispatch.ts:27` (extracted from `src/mcp/server.ts` in
+v0.22.7) only checks top-level JS types. Operations declare `enum` constraints
+(e.g. `direction: 'in' | 'out' | 'both'`) and array `items: { type: ... }`
+schemas in `src/core/operations.ts`, but `validateParams` ignores both. Bad
+inputs still reach handlers — concretely, an invalid `direction` falls through
+the engine's else branch at `src/core/postgres-engine.ts:954`, widening
+traversal unexpectedly; malformed `pages_updated` arrays could be written as
+garbage JSONB.
+
+**Why:** Codex flagged this during the v0.22.7 ship adversarial review. The
+validator was lifted verbatim from the pre-existing stdio path during the
+dispatch.ts extraction — same gap exists on the stdio MCP server today, so
+this isn't a v0.22.7 regression. Still worth tightening, since "shared
+validation" is now the architectural guarantee both transports rely on.
+
+**Pros:** Better defense-in-depth at the MCP boundary. Catches malformed agent
+inputs before the engine layer has to.
+
+**Cons:** Need to walk every operation's param schema and decide which enum
+violations are user-facing errors vs internal bugs. May need a typed Zod-style
+schema layer to do this cleanly.
+
+**Context:** `src/mcp/dispatch.ts:27` + `src/core/operations.ts` (param defs).
+Same gap pre-existed on stdio MCP path.
+
+**Effort estimate:** M (human: ~half day / CC: ~30 min if we use the existing
+ParamDef shape; XL if a Zod migration is the chosen direction).
+**Priority:** P2.
+**Depends on:** Whether we want to keep the lightweight ParamDef shape or
+migrate to typed schemas.
+
+### Streaming MCP tool support (re-add SSE based on Accept header)
+**What:** v0.22.7 dropped SSE entirely from `gbrain serve --http` because no
+current MCP tool streams. When the first streaming tool ships (long-running
+agent delegation as an MCP tool, `resources/subscribe`, `sampling/createMessage`),
+re-add SSE in `/mcp` based on the `Accept` header per the Streamable HTTP
+transport spec. ~30 lines + spec compliance test.
+
+**Why:** Removing SSE simplified the v0.22.7 transport (one response path,
+fewer test cases). Adding it back when actually needed is cheap and keeps the
+code lean in the meantime.
+
+**Effort estimate:** S (human: ~2 hr / CC: ~15 min).
+**Priority:** P3 — wait for the first streaming tool.
+**Depends on:** A streaming MCP tool actually existing.
+
+### `access_tokens.scopes` enforcement
+**What:** The `access_tokens` schema has had a `scopes TEXT[]` column since
+migration v4 (`src/core/migrate.ts:84`), but nothing enforces it. v0.22.7's
+`gbrain auth create` doesn't accept a `--scopes` flag, and `dispatchToolCall`
+doesn't gate on scopes. Adding per-tool scope enforcement would let
+"claude-desktop-readonly" and "ingest-only" tokens exist.
+
+**Effort estimate:** M (human: ~1 day / CC: ~30 min for the schema-aware gate).
+**Priority:** P3.
+**Depends on:** Nothing.

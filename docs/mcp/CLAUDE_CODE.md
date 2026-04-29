@@ -21,7 +21,7 @@ claude mcp add gbrain -t http \
 ```
 
 Replace `YOUR-DOMAIN` with your ngrok domain and `YOUR_TOKEN` with a token
-from `bun run src/commands/auth.ts create "claude-code"`.
+from `gbrain auth create "claude-code"`.
 
 ## Verify
 
