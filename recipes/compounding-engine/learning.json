@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "first_run": null,
+  "last_run": null,
+  "total_cycles": 0,
+  "thresholds": {
+    "auto_apply": 0.70,
+    "skip_below": 0.30
+  },
+  "categories": {
+    "people_orphans": {
+      "description": "Persons mentioned 2+ times in pages without their own people/<slug>",
+      "applied": 0,
+      "reverted": 0,
+      "confidence": 0.80
+    },
+    "page_orphans": {
+      "description": "Pages with 0 incoming/outgoing links",
+      "applied": 0,
+      "reverted": 0,
+      "confidence": 0.75
+    },
+    "knowledge_gaps": {
+      "description": "Companies/concepts mentioned 3+ times without their own page",
+      "applied": 0,
+      "reverted": 0,
+      "confidence": 0.70
+    },
+    "concept_duplication": {
+      "description": "Originals with embedding cosine similarity >0.92",
+      "applied": 0,
+      "reverted": 0,
+      "confidence": 0.40
+    },
+    "incomplete_pages": {
+      "description": "Pages with compiled_truth < 100 chars",
+      "applied": 0,
+      "reverted": 0,
+      "confidence": 0.60
+    },
+    "archive_decay": {
+      "description": "Pages 90+ days no updates, 0 search hits",
+      "applied": 0,
+      "reverted": 0,
+      "confidence": 0.50
+    },
+    "synthesis_opportunities": {
+      "description": "3+ originals on same theme — propose consolidation concept",
+      "applied": 0,
+      "reverted": 0,
+      "confidence": 0.45
+    }
+  }
+}
