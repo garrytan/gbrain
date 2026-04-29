@@ -2,6 +2,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { operationsByName } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { createHmac } from 'crypto';
 
 export interface HttpServeOptions {
   port?: number;
@@ -14,10 +15,11 @@ function ok(data: unknown, took_ms: number): Response {
   return Response.json({ ok: true, took_ms, ...data as object });
 }
 
-function err(code: string, message: string, status = 400): Response {
-  return Response.json({ ok: false, error: message, code }, { status });
+function err(code: string, message: string, status = 400, extra?: object): Response {
+  return Response.json({ ok: false, error: message, code, ...extra }, { status });
 }
 
+// ── 靜態 token 驗證 ────────────────────────────────────────────────────────────
 function verifyToken(expected: string | undefined, authHeader: string | null, queryToken?: string | null): boolean {
   if (!expected) return true; // no token configured = open (dev mode)
   const provided = queryToken?.trim() || (authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : '');
@@ -29,6 +31,44 @@ function verifyToken(expected: string | undefined, authHeader: string | null, qu
   return diff === 0;
 }
 
+// ── TOTP 動態鑰匙驗證 ──────────────────────────────────────────────────────────
+function generateOtp(secret: string, windowOffset = 0): string {
+  const window = Math.floor(Date.now() / 60_000) + windowOffset;
+  return createHmac('sha256', secret).update(String(window)).digest('hex').slice(0, 10);
+}
+
+function verifyOtp(secret: string, provided: string): boolean {
+  if (!provided || provided.length !== 10) return false;
+  // 接受當前視窗 ±1（容許 60 秒時鐘誤差）
+  for (const offset of [0, -1, 1]) {
+    const expected = generateOtp(secret, offset);
+    if (provided === expected) return true;
+  }
+  return false;
+}
+
+// ── 認證：OTP 優先，否則 fallback 靜態 token ───────────────────────────────────
+function authenticate(
+  req: Request,
+  url: URL,
+  staticToken: string | undefined,
+  totpSecret: string | undefined
+): { ok: true } | { ok: false; needOtp: boolean } {
+  const queryOtp = url.searchParams.get('otp');
+  const queryToken = url.searchParams.get('token');
+  const authHeader = req.headers.get('Authorization');
+
+  // OTP 模式（當 GBRAIN_TOTP_SECRET 設定時）
+  if (totpSecret) {
+    const otpProvided = queryOtp ?? (authHeader?.startsWith('OTP ') ? authHeader.slice(4).trim() : null);
+    if (!otpProvided) return { ok: false, needOtp: true };
+    return verifyOtp(totpSecret, otpProvided) ? { ok: true } : { ok: false, needOtp: true };
+  }
+
+  // fallback：靜態 token
+  return verifyToken(staticToken, authHeader, queryToken) ? { ok: true } : { ok: false, needOtp: false };
+}
+
 function makeCtx(engine: BrainEngine) {
   return { engine, config: loadConfig() || { engine: 'postgres' }, remote: true as const };
 }
@@ -36,9 +76,12 @@ function makeCtx(engine: BrainEngine) {
 export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}): void {
   const port = opts.port ?? 4242;
   const host = opts.host ?? '0.0.0.0';
-  const expectedToken = opts.token ?? process.env.GBRAIN_HTTP_TOKEN;
+  const staticToken = opts.token ?? process.env.GBRAIN_HTTP_TOKEN;
+  const totpSecret = process.env.GBRAIN_TOTP_SECRET;
 
-  if (!expectedToken) {
+  if (totpSecret) {
+    console.error('GBrain HTTP: OTP mode enabled (GBRAIN_TOTP_SECRET is set)');
+  } else if (!staticToken) {
     console.error('WARNING: GBRAIN_HTTP_TOKEN is not set — API is open to anyone');
   }
 
@@ -56,11 +99,20 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
 
       // ── health (no auth) ──────────────────────────────────────────────────
       if (path === '/health' && req.method === 'GET') {
-        return ok({ status: 'ok', engine: engine.kind }, Date.now() - t0);
+        return ok({ status: 'ok', engine: engine.kind, auth: totpSecret ? 'otp' : 'token' }, Date.now() - t0);
       }
 
-      // ── all other routes require auth ─────────────────────────────────────
-      if (!verifyToken(expectedToken, req.headers.get('Authorization'), url.searchParams.get('token'))) {
+      // ── 認證 ─────────────────────────────────────────────────────────────
+      const auth = authenticate(req, url, staticToken, totpSecret);
+      if (!auth.ok) {
+        if (auth.needOtp) {
+          // LLM 收到這個就知道要跟你要鑰匙
+          return err('otp_required',
+            'This vault requires a one-time password. Ask the user to run: gbrain otp',
+            401,
+            { hint: 'Run `bun /path/to/gbrain/scripts/otp.ts` to get a 60-second key, then retry with ?otp=<code>' }
+          );
+        }
         return err('unauthorized', 'Valid Bearer token required', 401);
       }
 
@@ -110,12 +162,13 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   });
 
   console.error(`GBrain HTTP search API listening on http://${host}:${port}`);
+  console.error('Auth mode:', totpSecret ? 'OTP (dynamic key, 60s window)' : 'Static token');
   console.error('Endpoints:');
   console.error('  GET  /health');
-  console.error('  GET  /search?q=...&limit=10            (Bearer token)');
-  console.error('  POST /query   {query, limit?, expand?} (Bearer token)');
-  console.error('  GET  /page?slug=...                    (Bearer token)');
-  console.error('  GET  /pages?domain=...&limit=20        (Bearer token)');
+  console.error('  GET  /search?q=...&limit=10&otp=<code>');
+  console.error('  POST /query   {query, limit?, expand?}  Authorization: OTP <code>');
+  console.error('  GET  /page?slug=...&otp=<code>');
+  console.error('  GET  /pages?domain=...&limit=20&otp=<code>');
 
   // keep alive
   process.on('SIGINT', () => { server.stop(); process.exit(0); });
