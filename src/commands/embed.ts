@@ -48,6 +48,13 @@ export interface EmbedResult {
   total_chunks: number;
   /** Number of pages processed (whether or not they had stale chunks). */
   pages_processed: number;
+  /**
+   * Pages that have at least one chunk needing an embedding OR have no chunks
+   * but do have indexable text. Always set; 0 when no work is pending or when
+   * the call path doesn't compute a pending count (single-slug or explicit
+   * --slugs paths).
+   */
+  pending_pages: number;
   /** True if this run was a dry-run. */
   dryRun: boolean;
 }
@@ -67,6 +74,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     would_embed: 0,
     total_chunks: 0,
     pages_processed: 0,
+    pending_pages: 0,
     dryRun: !!opts.dryRun,
   };
 
@@ -368,6 +376,10 @@ async function embedAllStale(
     engine.countStaleChunks(),
     engine.listSlugsPendingEmbedding(),
   ]);
+
+  // Surface pending_pages on the result so callers (cycle.ts runPhaseEmbed)
+  // can report it without firing listSlugsPendingEmbedding a second time.
+  result.pending_pages = pendingSlugs.length;
 
   if (staleCount === 0 && pendingSlugs.length === 0) {
     if (dryRun) {

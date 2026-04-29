@@ -578,13 +578,6 @@ async function runPhaseExtract(
 
 async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean): Promise<PhaseResult> {
   try {
-    // Query pending-page count up front so the cycle report always carries it,
-    // even when runEmbedCore takes its empty fast path. Cheap: a single UNION
-    // DISTINCT SELECT, paid once per cycle. Covers both stale chunks and
-    // zero-chunk pages (created via direct putPage).
-    const pendingSlugs = await engine.listSlugsPendingEmbedding();
-    const pendingPages = pendingSlugs.length;
-
     const { runEmbedCore } = await import('../commands/embed.ts');
     const result = await runEmbedCore(engine, { stale: true, dryRun });
     const embeddedCount = dryRun ? result.would_embed : result.embedded;
@@ -593,15 +586,15 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean): Promise<Phas
       status: 'ok',
       duration_ms: 0,
       summary: dryRun
-        ? `${result.would_embed} chunk(s) would be embedded across ${pendingPages} pending page(s)`
-        : `${result.embedded} chunk(s) newly embedded across ${pendingPages} pending page(s) (${result.skipped} already had embeddings)`,
+        ? `${result.would_embed} chunk(s) would be embedded across ${result.pending_pages} pending page(s)`
+        : `${result.embedded} chunk(s) newly embedded across ${result.pending_pages} pending page(s) (${result.skipped} already had embeddings)`,
       details: {
         embedded: result.embedded,
         skipped: result.skipped,
         would_embed: result.would_embed,
         total_chunks: result.total_chunks,
         pages_processed: result.pages_processed,
-        pending_pages: pendingPages,
+        pending_pages: result.pending_pages,
         dryRun,
         // Convenience field used by CycleReport.totals.pages_embedded.
         // In dry-run, this counts pages with stale chunks that would

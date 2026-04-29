@@ -583,15 +583,20 @@ describeE2E('E2E: Chunks & Resolution', () => {
     expect(set.size).toBe(stale.length);
   });
 
-  test('listSlugsPendingEmbedding: excludes pages where all chunks have embedded_at', async () => {
+  test('listSlugsPendingEmbedding: excludes pages where all chunks have an embedding', async () => {
     const engine = getEngine();
     const conn = getConn();
 
-    // Force one page's chunks to appear embedded by stamping embedded_at.
-    // Scoped so we can revert after.
+    // listSlugsPendingEmbedding's predicate is `embedding IS NULL`, NOT
+    // `embedded_at IS NULL` (see postgres-engine.ts:846 and the v0.22.1 #409
+    // alignment in the embed.ts docstring). The bulk-import path can leave
+    // embedded_at populated while embedding is NULL, so embedding is the
+    // truth source for "this chunk needs an embedding". Stamp BOTH columns
+    // to mirror what upsertChunks() does after a successful embed.
     await conn.unsafe(`
       UPDATE content_chunks
-         SET embedded_at = now()
+         SET embedding = ('[' || array_to_string(array_fill(0::real, ARRAY[1536]), ',') || ']')::vector,
+             embedded_at = now()
        WHERE page_id = (SELECT id FROM pages WHERE slug = 'people/sarah-chen')
     `);
 
@@ -599,10 +604,11 @@ describeE2E('E2E: Chunks & Resolution', () => {
       const stale = await engine.listSlugsPendingEmbedding();
       expect(stale).not.toContain('people/sarah-chen');
     } finally {
-      // Restore NULL embedded_at so later tests in the same block aren't affected.
+      // Restore NULL on both columns so later tests in the same block aren't affected.
       await conn.unsafe(`
         UPDATE content_chunks
-           SET embedded_at = NULL
+           SET embedding = NULL,
+               embedded_at = NULL
          WHERE page_id = (SELECT id FROM pages WHERE slug = 'people/sarah-chen')
       `);
     }

@@ -154,6 +154,26 @@ describe('runEmbed --all (parallel)', () => {
     expect(getChunksCalls).toBe(0);
   });
 
+  test('fast-path: pending_pages == 0 surfaces on the result for cycle reporting', async () => {
+    // Regression guard: cycle.ts used to call listSlugsPendingEmbedding a
+    // second time to populate the cycle report's pending-page count. The fix
+    // threads it through EmbedResult.pending_pages instead. On a fully-embedded
+    // brain (Promise.all returns [] for pendingSlugs), result.pending_pages
+    // must be 0 so the cycle phase summary reads "across 0 pending page(s)".
+    const engine = mockEngine({
+      listSlugsPendingEmbedding: async () => [],
+      listPages: async () => [],
+      getChunks: async () => [],
+      upsertChunks: async () => {},
+    });
+
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const result = await runEmbedCore(engine, { stale: true, dryRun: false });
+
+    expect(result.pending_pages).toBe(0);
+    expect(result.embedded).toBe(0);
+  });
+
   test('zero-chunk pages: embedAll staleOnly chunks them on the fly and embeds', async () => {
     // Pages created via direct putPage() (migrate-engine, enrichment-service,
     // output/writer) have no content_chunks rows yet. listSlugsPendingEmbedding
@@ -256,6 +276,10 @@ describe('runEmbed --all (parallel)', () => {
     expect(totalEmbedCalls).toBe(0);
     expect(result.dryRun).toBe(true);
     expect(result.would_embed).toBeGreaterThan(0);
+    // pending_pages flows from listSlugsPendingEmbedding's return through
+    // embedAllStale into the EmbedResult so cycle.ts can report it without
+    // a second query.
+    expect(result.pending_pages).toBe(1);
   });
 
   test('fast-path: staleOnly with N stale slugs skips listPages AND getPage (no hydration fan-out)', async () => {
@@ -350,6 +374,8 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     expect(result.skipped).toBe(0);
     expect(result.total_chunks).toBe(6); // only stale chunks counted in SQL-side path
     expect(result.pages_processed).toBe(3);
+    // 3 mocked slugs in listSlugsPendingEmbedding, threaded into result.
+    expect(result.pending_pages).toBe(3);
   });
 
   test('dry-run --stale correctly identifies stale chunks (SQL-side path)', async () => {

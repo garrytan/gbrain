@@ -90,6 +90,7 @@ mock.module('../../src/commands/embed.ts', () => ({
       would_embed: opts.dryRun ? 8 : 0,
       total_chunks: 10,
       pages_processed: 3,
+      pending_pages: 3,
       dryRun: !!opts.dryRun,
     };
   },
@@ -343,6 +344,17 @@ describe('runCycle — status derivation', () => {
     expect(report.totals.pages_synced).toBe(6); // added + modified from sync mock
     expect(report.totals.pages_embedded).toBe(8);
     expect(report.totals.orphans_found).toBe(1);
+  });
+
+  test('embed phase carries pending_pages from runEmbedCore result (no second query)', async () => {
+    const report = await runCycle(sharedEngine, { brainDir: '/tmp/brain' });
+    const embedPhase = report.phases.find(p => p.phase === 'embed');
+    expect(embedPhase?.status).toBe('ok');
+    // Mocked runEmbedCore returns pending_pages: 3. Cycle must pass it through
+    // without firing engine.listSlugsPendingEmbedding() a second time.
+    expect(embedPhase?.details?.pending_pages).toBe(3);
+    // Summary string must use the threaded count, not undefined/0.
+    expect(embedPhase?.summary).toContain('3 pending page(s)');
   });
 
   test('schema_version is stable at "1"', async () => {
