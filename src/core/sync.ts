@@ -209,14 +209,21 @@ export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
  * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
  */
 export function slugifySegment(segment: string): string {
-  return segment
+  const result = segment
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
-    .toLowerCase()
-    .replace(/[^a-z0-9.\s_-]/g, '')      // Keep alphanumeric, dots, spaces, underscores, hyphens
+    .replace(/[\x00-\x1f\x7f]/g, '')     // Strip control chars
+    .replace(/[<>:"|?*\\]/g, '')          // Strip FS-forbidden chars
+    .trim()
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
+  // Fallback for empty result (CJK segments)
+  if (!result) {
+    const hash = segment.trim().slice(0, 64);
+    return `page-${hash.length}`;
+  }
+  return result;
 }
 
 /**
@@ -231,7 +238,7 @@ export function slugifyPath(filePath: string): string {
   let path = filePath.replace(/\.mdx?$/i, '');
   path = path.replace(/\\/g, '/');
   path = path.replace(/^\.?\//, '');
-  return path.split('/').map(slugifySegment).filter(Boolean).join('/');
+  return path.split('/').map(slugifySegment).filter(Boolean).join('/').toLowerCase();
 }
 
 /**

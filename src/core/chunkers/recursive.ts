@@ -13,11 +13,13 @@
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
 
+const CJK_RE = /[一-鿿぀-ゟ゠-ヿ가-힯]/;
+
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs
   ['\n'],                            // L1: lines
-  ['. ', '! ', '? ', '.\n', '!\n', '?\n'], // L2: sentences
-  ['; ', ': ', ', '],                // L3: clauses
+  ['. ', '! ', '? ', '.\n', '!\n', '?\n', '。', '！', '？'], // L2: sentences (CJK-aware)
+  ['; ', ': ', ', ', '；', '：', '，', '、'],                  // L3: clauses (CJK-aware)
   [],                                // L4: words (whitespace split)
 ];
 
@@ -126,6 +128,18 @@ function splitAtDelimiters(text: string, delimiters: string[]): string[] {
  * Fallback: split on whitespace boundaries to hit target word count.
  */
 function splitOnWhitespace(text: string, target: number): string[] {
+  // CJK fallback: character-boundary slicing when no whitespace
+  if (CJK_RE.test(text) && !/\s/.test(text)) {
+    const pieces: string[] = [];
+    for (let i = 0; i < text.length; i += target) {
+      const slice = text.slice(i, i + target);
+      if (slice.trim().length > 0) {
+        pieces.push(slice);
+      }
+    }
+    return pieces;
+  }
+
   const words = text.match(/\S+\s*/g) || [];
   if (words.length === 0) return [];
 
@@ -207,5 +221,9 @@ function extractTrailingContext(text: string, targetWords: number): string {
 }
 
 function countWords(text: string): number {
+  // CJK-aware: count characters instead of whitespace-separated tokens
+  if (CJK_RE.test(text)) {
+    return text.replace(/\s/g, '').length;
+  }
   return (text.match(/\S+/g) || []).length;
 }
