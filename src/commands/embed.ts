@@ -91,8 +91,22 @@ async function embedAll(
       continue;
     }
 
+    console.log(`Embedding ${index + 1}/${pages.length} ${page.slug}: ${targetChunks.length} chunks`);
+    let wroteBatchProgress = false;
+
     try {
-      const updates = await embedChunks(toChunkInputs(targetChunks), { provider });
+      const updates = await embedChunks(toChunkInputs(targetChunks), {
+        provider,
+        onBatchStart: (progress) => {
+          wroteBatchProgress = true;
+          process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
+        },
+        onBatchComplete: (progress) => {
+          wroteBatchProgress = true;
+          process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
+        },
+      });
+      if (wroteBatchProgress) process.stdout.write('\n');
       const merged = mergeChunkUpdates(chunks, updates.chunks);
       await engine.upsertChunks(page.slug, merged);
       embedded += updates.chunks.length;
@@ -101,10 +115,10 @@ async function embedAll(
       console.error(`\n  Error embedding ${page.slug}: ${error instanceof Error ? error.message : error}`);
     }
 
-    process.stdout.write(`\r  ${index + 1}/${pages.length} pages, ${embedded} chunks embedded`);
+    console.log(`  ${index + 1}/${pages.length} pages, ${embedded} chunks embedded`);
   }
 
-  console.log(`\n\nEmbedded ${embedded} chunks across ${touchedPages} pages`);
+  console.log(`\nEmbedded ${embedded} chunks across ${touchedPages} pages`);
 }
 
 function selectChunksToEmbed(chunks: Chunk[], staleOnly: boolean, currentModel?: string | null): Chunk[] {

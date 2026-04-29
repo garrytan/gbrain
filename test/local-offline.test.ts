@@ -6,7 +6,7 @@ import { runEmbed } from '../src/commands/embed.ts';
 import { createLocalConfigDefaults } from '../src/core/config.ts';
 import { embedChunks, getEmbeddingProvider, resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
 import { getEngineCapabilities } from '../src/core/engine-capabilities.ts';
-import { importFile } from '../src/core/import-file.ts';
+import { buildPageChunks, importFile } from '../src/core/import-file.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
@@ -101,25 +101,34 @@ function writeUserConfig(config: Record<string, unknown>) {
 function captureConsole() {
   const logs: string[] = [];
   const errors: string[] = [];
+  const stdout: string[] = [];
   const logSpy = mock((msg?: unknown) => { logs.push(String(msg ?? '')); });
   const errorSpy = mock((msg?: unknown) => { errors.push(String(msg ?? '')); });
   const exitSpy = mock((_code?: number) => undefined as never);
+  const stdoutSpy = mock((chunk: string | Uint8Array) => {
+    stdout.push(String(chunk));
+    return true;
+  });
   const originalLog = console.log;
   const originalError = console.error;
   const originalExit = process.exit;
+  const originalStdoutWrite = process.stdout.write;
 
   console.log = logSpy as typeof console.log;
   console.error = errorSpy as typeof console.error;
   process.exit = exitSpy as typeof process.exit;
+  process.stdout.write = stdoutSpy as unknown as typeof process.stdout.write;
 
   return {
     logs,
     errors,
+    stdout,
     exitSpy,
     restore() {
       console.log = originalLog;
       console.error = originalError;
       process.exit = originalExit;
+      process.stdout.write = originalStdoutWrite;
     },
   };
 }
@@ -643,6 +652,139 @@ describe('local/offline embedding flow', () => {
     }
   });
 
+  test('local provider times out slow embedding requests with diagnostics', async () => {
+    const previousLocalUrl = process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    const previousModel = process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+    const previousTimeout = process.env.MBRAIN_EMBED_TIMEOUT_MS;
+
+    process.env.MBRAIN_LOCAL_EMBEDDING_URL = 'http://127.0.0.1:4010/embed';
+    process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = 'slow-test-model';
+    process.env.MBRAIN_EMBED_TIMEOUT_MS = '1';
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (!signal) {
+        throw new Error('missing abort signal');
+      }
+
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'sqlite',
+          database_path: join(tempDir, 'brain.db'),
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+        },
+      });
+
+      await expect(provider.embedBatch(['slow text'])).rejects.toThrow(
+        /Local embedding runtime timed out after 1ms.*slow-test-model.*batch size 1.*MBRAIN_EMBED_TIMEOUT_MS/s,
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      if (previousLocalUrl === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_URL = previousLocalUrl;
+      }
+
+      if (previousModel === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = previousModel;
+      }
+
+      if (previousTimeout === undefined) {
+        delete process.env.MBRAIN_EMBED_TIMEOUT_MS;
+      } else {
+        process.env.MBRAIN_EMBED_TIMEOUT_MS = previousTimeout;
+      }
+    }
+  });
+
+  test('local provider timeout covers stalled response body reads', async () => {
+    const previousLocalUrl = process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    const previousModel = process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+    const previousTimeout = process.env.MBRAIN_EMBED_TIMEOUT_MS;
+
+    process.env.MBRAIN_LOCAL_EMBEDDING_URL = 'http://127.0.0.1:4010/embed';
+    process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = 'slow-body-model';
+    process.env.MBRAIN_EMBED_TIMEOUT_MS = '1';
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (!signal) {
+        throw new Error('missing abort signal');
+      }
+
+      return {
+        ok: true,
+        json: async () => new Promise((_resolve, reject) => {
+          const fallback = setTimeout(() => reject(new Error('body read was not aborted')), 20);
+          signal.addEventListener('abort', () => {
+            clearTimeout(fallback);
+            const error = new Error('aborted while reading body');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        }),
+      } as Response;
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'sqlite',
+          database_path: join(tempDir, 'brain.db'),
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+        },
+      });
+
+      await expect(provider.embedBatch(['slow body'])).rejects.toThrow(
+        /Local embedding runtime timed out after 1ms.*slow-body-model.*batch size 1.*MBRAIN_EMBED_TIMEOUT_MS/s,
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      if (previousLocalUrl === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_URL = previousLocalUrl;
+      }
+
+      if (previousModel === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = previousModel;
+      }
+
+      if (previousTimeout === undefined) {
+        delete process.env.MBRAIN_EMBED_TIMEOUT_MS;
+      } else {
+        process.env.MBRAIN_EMBED_TIMEOUT_MS = previousTimeout;
+      }
+    }
+  });
+
   test('embedChunks prefixes nomic documents for retrieval tasks', async () => {
     const provider = createCapturingProvider('nomic-embed-text');
 
@@ -907,6 +1049,36 @@ Updated chunk content for the same page.
     expect(after).toHaveLength(1);
     expect(after[0]?.embedded_at).toBeInstanceOf(Date);
     expect(after[0]?.model).toBe('test-local-v1');
+  });
+
+  test('stale-only embedding reports the active page and provider batch progress', async () => {
+    const fake = createFakeProvider();
+    setEmbeddingProviderForTests(fake.provider);
+    const capture = captureConsole();
+    const compiledTruth = Array.from({ length: 60_000 }, (_, index) => `word${index}`).join(' ');
+    const expectedChunks = buildPageChunks(compiledTruth, '', {});
+    const expectedBatchCount = Math.ceil(expectedChunks.length / 100);
+
+    try {
+      await engine.putPage('concepts/large-progress', {
+        type: 'concept',
+        title: 'Large Progress',
+        compiled_truth: compiledTruth,
+        timeline: '',
+        frontmatter: {},
+      });
+
+      await runEmbed(engine, ['--stale']);
+    } finally {
+      capture.restore();
+    }
+
+    expect(expectedChunks.length).toBeGreaterThan(100);
+    const output = [...capture.logs, ...capture.stdout].join('\n');
+    expect(output).toContain(`Embedding 1/1 concepts/large-progress: ${expectedChunks.length} chunks`);
+    expect(output).toContain(`batch 1/${expectedBatchCount}, 100/${expectedChunks.length} chunks`);
+    expect(output).toContain(`batch ${expectedBatchCount}/${expectedBatchCount}, ${expectedChunks.length}/${expectedChunks.length} chunks`);
+    expect(output).toContain(`1/1 pages, ${expectedChunks.length} chunks embedded`);
   });
 
   test('unchanged content does not trigger re-embedding', async () => {

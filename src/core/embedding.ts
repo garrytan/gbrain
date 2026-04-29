@@ -4,7 +4,7 @@ import type { ResolvedEmbeddingProvider } from './embedding/provider.ts';
 import { modelUsesNomicTaskPrefixes, resolveEmbeddingProvider } from './embedding/provider.ts';
 
 const MAX_CHARS = 8000;
-const BATCH_SIZE = 100;
+const DEFAULT_BATCH_SIZE = 100;
 
 export type {
   EmbeddingProviderCapability,
@@ -14,9 +14,19 @@ export type {
 export interface EmbeddingRuntimeOptions {
   config?: MBrainConfig | null;
   provider?: ResolvedEmbeddingProvider;
+  onBatchStart?: (progress: EmbeddingBatchProgress) => void;
+  onBatchComplete?: (progress: EmbeddingBatchProgress) => void;
 }
 
 type EmbeddingKind = 'document' | 'query';
+
+export interface EmbeddingBatchProgress {
+  batchIndex: number;
+  batchCount: number;
+  batchSize: number;
+  completed: number;
+  total: number;
+}
 
 export interface EmbeddedChunkBatch {
   capability: ResolvedEmbeddingProvider['capability'];
@@ -82,13 +92,29 @@ async function embedBatchForKind(
   }
 
   const results: Float32Array[] = [];
-  for (let index = 0; index < truncated.length; index += BATCH_SIZE) {
-    const batch = truncated.slice(index, index + BATCH_SIZE);
+  const batchCount = Math.ceil(truncated.length / DEFAULT_BATCH_SIZE);
+  for (let index = 0; index < truncated.length; index += DEFAULT_BATCH_SIZE) {
+    const batch = truncated.slice(index, index + DEFAULT_BATCH_SIZE);
+    const batchIndex = Math.floor(index / DEFAULT_BATCH_SIZE) + 1;
+    options.onBatchStart?.({
+      batchIndex,
+      batchCount,
+      batchSize: batch.length,
+      completed: results.length,
+      total: truncated.length,
+    });
     const batchResults = await provider.embedBatch(batch);
     if (batchResults.length !== batch.length) {
       throw new Error('Embedding provider returned an unexpected result count');
     }
     results.push(...batchResults);
+    options.onBatchComplete?.({
+      batchIndex,
+      batchCount,
+      batchSize: batch.length,
+      completed: results.length,
+      total: truncated.length,
+    });
   }
 
   return results;

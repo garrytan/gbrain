@@ -2,6 +2,7 @@ import type { EmbeddingProvider as EmbeddingProviderMode, MBrainConfig } from '.
 
 const DEFAULT_LOCAL_MODEL = 'nomic-embed-text';
 const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
+const DEFAULT_LOCAL_EMBED_TIMEOUT_MS = 300_000;
 
 export interface EmbeddingProviderCapability {
   mode: EmbeddingProviderMode;
@@ -58,6 +59,8 @@ function resolveLocalProvider(
     || config?.embedding_model
     || DEFAULT_LOCAL_MODEL;
   const configuredDimensions = parsePositiveInt(process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS);
+  const configuredTimeoutMs = parsePositiveInt(process.env.MBRAIN_EMBED_TIMEOUT_MS)
+    ?? DEFAULT_LOCAL_EMBED_TIMEOUT_MS;
 
   return {
     capability: {
@@ -68,23 +71,48 @@ function resolveLocalProvider(
       dimensions: configuredDimensions,
     },
     embedBatch: async (texts: string[]) => {
-      const response = await fetch(configuredUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: configuredModel,
-          input: texts,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Local embedding runtime returned ${response.status} ${response.statusText}`);
-      }
-
-      const payload = await response.json() as {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), configuredTimeoutMs);
+      let payload: {
         embeddings?: number[][];
         data?: Array<{ embedding?: number[] }>;
-      };
+      } | null = null;
+
+      try {
+        const response = await fetch(configuredUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            model: configuredModel,
+            input: texts,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Local embedding runtime returned ${response.status} ${response.statusText}`);
+        }
+
+        payload = await response.json() as {
+          embeddings?: number[][];
+          data?: Array<{ embedding?: number[] }>;
+        };
+      } catch (error: unknown) {
+        if (controller.signal.aborted || isAbortError(error)) {
+          throw new Error(
+            `Local embedding runtime timed out after ${configuredTimeoutMs}ms ` +
+            `(url ${configuredUrl}, model ${configuredModel}, batch size ${texts.length}). ` +
+            'Set MBRAIN_EMBED_TIMEOUT_MS to adjust.',
+          );
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      if (!payload) {
+        throw new Error('Local embedding runtime returned an unexpected embedding payload');
+      }
 
       const embeddings = Array.isArray(payload.embeddings)
         ? payload.embeddings
@@ -130,4 +158,8 @@ function parsePositiveInt(value: string | undefined): number | null {
 
 function withTrailingSlash(url: string): string {
   return url.endsWith('/') ? url : `${url}/`;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
