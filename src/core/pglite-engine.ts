@@ -294,6 +294,10 @@ export class PGLiteEngine implements BrainEngine {
       params.push(filters.updated_after);
       where.push(`p.updated_at > $${params.length}::timestamptz`);
     }
+    if (filters?.created_after) {
+      params.push(filters.created_after);
+      where.push(`p.created_at >= $${params.length}::timestamptz`);
+    }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     params.push(limit, offset);
@@ -373,12 +377,17 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
     }
+    if (opts?.since) {
+      params.push(opts.since.toISOString());
+      extraFilter += ` AND p.created_at >= $${params.length}::timestamptz`;
+    }
 
     const { rows } = await this.db.query(
       `WITH ranked AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+           p.frontmatter->>'source_url' AS source_url,
            ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
@@ -441,11 +450,16 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
     }
+    if (opts?.since) {
+      params.push(opts.since.toISOString());
+      extraFilter += ` AND p.created_at >= $${params.length}::timestamptz`;
+    }
 
     const { rows } = await this.db.query(
       `SELECT
          p.slug, p.id as page_id, p.title, p.type, p.source_id,
          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+         p.frontmatter->>'source_url' AS source_url,
          ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
          CASE WHEN p.updated_at < (
            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
@@ -497,12 +511,17 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
     }
+    if (opts?.since) {
+      params.push(opts.since.toISOString());
+      extraFilter += ` AND p.created_at >= $${params.length}::timestamptz`;
+    }
 
     const { rows } = await this.db.query(
       `WITH hnsw_candidates AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+           p.frontmatter->>'source_url' AS source_url,
            1 - (cc.embedding <=> $1::vector) AS raw_score
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
@@ -513,6 +532,7 @@ export class PGLiteEngine implements BrainEngine {
        SELECT
          hc.slug, hc.page_id, hc.title, hc.type, hc.source_id,
          hc.chunk_id, hc.chunk_index, hc.chunk_text, hc.chunk_source,
+         hc.source_url,
          hc.raw_score * ${sourceFactorCaseOnSlug} AS score,
          CASE WHEN hc.updated_at < (
            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = hc.page_id

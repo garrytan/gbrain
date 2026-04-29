@@ -76,6 +76,7 @@ export async function hybridSearch(
     // per-engine searchKeyword / searchVector apply the filters at SQL level.
     language: opts?.language,
     symbolKind: opts?.symbolKind,
+    since: opts?.since,
   };
 
   if (DEBUG && detail) {

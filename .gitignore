@@ -10,10 +10,11 @@ bin/
 *.bun-build
 .gstack/
 supabase/.temp/
-.claude/skills/
+.claude/
 .idea
 eval/reports/
 eval/data/world-v1/world.html
 
 # BrainBench amara-life-v1 Opus cache (regenerate via eval:generate-amara-life)
 eval/data/amara-life-v1/_cache/
+

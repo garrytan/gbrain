@@ -13,6 +13,7 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
+import { parseSince } from './utils.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
 
@@ -535,17 +536,22 @@ const list_pages: Operation = {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
     limit: { type: 'number', description: 'Max results (default 50)' },
+    since: { type: 'string', description: 'Only pages added after this point. Shorthand (7d, 2w, 1mo) or ISO date (2026-04-01).' },
   },
   handler: async (ctx, p) => {
+    const sinceRaw = p.since as string | undefined;
+    const createdAfter = sinceRaw ? parseSince(sinceRaw).toISOString() : undefined;
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
       limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      created_after: createdAfter,
     });
     return pages.map(pg => ({
       slug: pg.slug,
       type: pg.type,
       title: pg.title,
+      created_at: pg.created_at,
       updated_at: pg.updated_at,
     }));
   },
@@ -561,11 +567,15 @@ const search: Operation = {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    since: { type: 'string', description: 'Only pages added after this point. Shorthand (7d, 2w, 1mo) or ISO date (2026-04-01).' },
   },
   handler: async (ctx, p) => {
+    const sinceRaw = p.since as string | undefined;
+    const since = sinceRaw ? parseSince(sinceRaw) : undefined;
     const results = await ctx.engine.searchKeyword(p.query as string, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
+      since,
     });
     return dedupResults(results);
   },
@@ -587,10 +597,13 @@ const query: Operation = {
     // v0.20.0 Cathedral II Layer 7 (A2) / Layer 10 C3: two-pass structural expansion.
     near_symbol: { type: 'string', description: 'Anchor retrieval at this qualified symbol name (e.g., BrainEngine.searchKeyword). Enables A2 two-pass.' },
     walk_depth: { type: 'number', description: 'Structural walk depth 1-2. Default 0 (off). Expands anchors through code_edges with 1/(1+hop) decay.' },
+    since: { type: 'string', description: 'Only pages added after this point. Shorthand (7d, 2w, 1mo) or ISO date (2026-04-01).' },
   },
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
     const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
+    const sinceRaw = p.since as string | undefined;
+    const since = sinceRaw ? parseSince(sinceRaw) : undefined;
     return hybridSearch(ctx.engine, p.query as string, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
@@ -601,6 +614,7 @@ const query: Operation = {
       symbolKind: (p.symbol_kind as string) || undefined,
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
+      since,
     });
   },
   cliHints: { name: 'query', positional: ['query'] },

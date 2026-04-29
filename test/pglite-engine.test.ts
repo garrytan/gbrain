@@ -778,6 +778,47 @@ describe('PGLiteEngine: listPages updated_after filter', () => {
   });
 });
 
+describe('PGLiteEngine: listPages created_after filter', () => {
+  beforeEach(async () => {
+    await truncateAll();
+  });
+
+  test('filters pages by created_at >= given date', async () => {
+    await engine.putPage('test/old', testPage);
+    await new Promise(r => setTimeout(r, 10));
+    const cutoff = new Date().toISOString();
+    await new Promise(r => setTimeout(r, 10));
+    await engine.putPage('test/new', testPage);
+
+    const recent = await engine.listPages({ created_after: cutoff, limit: 100 });
+    const slugs = recent.map(p => p.slug);
+    expect(slugs).toContain('test/new');
+    expect(slugs).not.toContain('test/old');
+  });
+});
+
+describe('PGLiteEngine: search since filter', () => {
+  beforeEach(async () => {
+    await truncateAll();
+  });
+
+  test('searchKeyword respects since', async () => {
+    await engine.putPage('test/old-page', { ...testPage, compiled_truth: 'NovaMind launched in 2023.' });
+    await new Promise(r => setTimeout(r, 10));
+    const cutoff = new Date();
+    await new Promise(r => setTimeout(r, 10));
+    await engine.putPage('test/new-page', { ...testPage, compiled_truth: 'NovaMind raised Series A.' });
+
+    const recent = await engine.searchKeyword('novamind', { since: cutoff, limit: 50 });
+    const slugs = recent.map(r => r.slug);
+    expect(slugs).toContain('test/new-page');
+    expect(slugs).not.toContain('test/old-page');
+
+    const all = await engine.searchKeyword('novamind', { limit: 50 });
+    expect(all.map(r => r.slug)).toContain('test/old-page');
+  });
+});
+
 describe('PGLiteEngine: Multi-type links (v5 migration)', () => {
   beforeEach(async () => {
     await truncateAll();

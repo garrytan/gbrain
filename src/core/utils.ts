@@ -134,6 +134,44 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
   };
 }
 
+/**
+ * Parse a "since" filter value into a Date.
+ *
+ * Accepts:
+ *   - Relative shorthand: `7d`, `2w`, `3h`, `45m`, `1mo` (= 30d), `1y` (= 365d)
+ *   - ISO-8601 dates: `2026-04-01` or full timestamps `2026-04-01T12:00:00Z`
+ *
+ * Returns the resolved Date (start of the window — `now - shorthand` or the
+ * parsed timestamp). Throws on unparseable input so callers can surface a
+ * clear error instead of silently dropping the filter.
+ */
+export function parseSince(input: string): Date {
+  const trimmed = input.trim();
+  if (!trimmed) throw new Error(`Invalid --since value: empty`);
+
+  const shorthand = /^(\d+)\s*(mo|[smhdwy])$/i.exec(trimmed);
+  if (shorthand) {
+    const n = parseInt(shorthand[1], 10);
+    const unit = shorthand[2].toLowerCase();
+    const ms: Record<string, number> = {
+      s: 1000,
+      m: 60 * 1000,
+      h: 60 * 60 * 1000,
+      d: 24 * 60 * 60 * 1000,
+      w: 7 * 24 * 60 * 60 * 1000,
+      mo: 30 * 24 * 60 * 60 * 1000,
+      y: 365 * 24 * 60 * 60 * 1000,
+    };
+    return new Date(Date.now() - n * ms[unit]);
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid --since value: "${input}". Use shorthand (7d, 2w, 1mo, 3h) or ISO date (2026-04-01).`);
+  }
+  return parsed;
+}
+
 export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
   const result: SearchResult = {
     slug: row.slug as string,
@@ -146,6 +184,7 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
     chunk_index: row.chunk_index as number,
     score: Number(row.score),
     stale: Boolean(row.stale),
+    ...(row.source_url ? { source_url: row.source_url as string } : {}),
   };
   // v0.17.0: source_id comes from the p.source_id column in search
   // SELECTs. Keep the field optional so pre-v0.17 engines that didn't
