@@ -35,14 +35,14 @@ function upgradeCommandForMethod(method: string): string {
   switch (method) {
     case 'bun': return 'bun update gbrain';
     case 'clawhub': return 'clawhub update gbrain';
-    case 'binary': return 'Download from https://github.com/garrytan/gbrain/releases';
+    case 'binary': return 'Download from https://github.com/momoiicom/open-gbrain/releases';
     default: return 'gbrain upgrade';
   }
 }
 
 async function fetchLatestRelease(): Promise<{ tag: string; published_at: string; url: string } | null> {
   try {
-    const res = await fetch('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
+    const res = await fetch('https://api.github.com/repos/momoiicom/open-gbrain/releases/latest', {
       headers: { 'User-Agent': `gbrain/${VERSION}` },
       signal: AbortSignal.timeout(10_000),
     });
@@ -60,7 +60,7 @@ async function fetchLatestRelease(): Promise<{ tag: string; published_at: string
 
 async function fetchChangelog(currentVersion: string, latestVersion: string): Promise<string> {
   try {
-    const res = await fetch('https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md', {
+    const res = await fetch('https://raw.githubusercontent.com/momoiicom/open-gbrain/master/CHANGELOG.md', {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return '';

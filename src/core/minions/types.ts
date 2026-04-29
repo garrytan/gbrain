@@ -388,7 +388,7 @@ export interface SubagentHandlerData {
   prompt: string;
   /** Optional subagent definition path (skills/subagents/*.md or plugin). */
   subagent_def?: string;
-  /** Anthropic model id. Defaults to sonnet at handler resolution time. */
+  /** LLM model id. Defaults to the smart-tier model at handler resolution time. */
   model?: string;
   /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
   max_turns?: number;
@@ -402,6 +402,12 @@ export interface SubagentHandlerData {
   system?: string;
   /** Template variables for subagent_def. Arbitrary JSON-serializable. */
   input_vars?: Record<string, unknown>;
+  /** Override the LLM provider for this job (e.g., 'anthropic', 'openai', 'deepseek'). */
+  provider?: string;
+  /** Override the base URL for the LLM provider (e.g. for custom OpenAI-compatible endpoints). */
+  base_url?: string;
+  /** Override the model tier for this job ('smart' or 'fast'). */
+  tier?: 'smart' | 'fast';
 }
 
 /**

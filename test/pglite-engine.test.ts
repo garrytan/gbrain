@@ -1023,7 +1023,7 @@ describe('PGLiteEngine: v0.13.1 error-wrap on connect() (#223)', () => {
     // as a cause (that was conflating #218 and #223 — migrations run AFTER
     // create()).
     expect(src).toContain('this._db = await PGlite.create');
-    expect(src).toContain('https://github.com/garrytan/gbrain/issues/223');
+    expect(src).toContain('https://github.com/momoiicom/open-gbrain/issues/223');
     expect(src).toContain('gbrain doctor');
     expect(src).toContain('Original error:');
     // Regression guard: the user-visible error MESSAGE must not re-introduce

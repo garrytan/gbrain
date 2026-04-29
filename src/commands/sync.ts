@@ -15,6 +15,7 @@ import {
 } from '../core/sync.ts';
 import { estimateTokens, CHUNKER_VERSION } from '../core/chunkers/code.ts';
 import { EMBEDDING_MODEL, estimateEmbeddingCostUsd } from '../core/embedding.ts';
+import { loadConfig } from '../core/config.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import type { SyncManifest } from '../core/sync.ts';
 import { createProgress } from '../core/progress.ts';
@@ -770,10 +771,16 @@ export async function runSync(engine: BrainEngine, args: string[]) {
     // the cost and will run `embed --stale` later).
     if (!noEmbed) {
       const preview = estimateSyncAllCost(sources);
-      const costUsd = estimateEmbeddingCostUsd(preview.totalTokens);
+      const cfg = loadConfig();
+      const embedProvider = cfg?.embedding_provider ?? (process.env.OPENAI_API_KEY || cfg?.openai_api_key ? 'openai' : null);
+      const canEstimateCost = embedProvider === 'openai';
+      const costUsd = canEstimateCost ? estimateEmbeddingCostUsd(preview.totalTokens) : null;
+      const costFragment = costUsd !== null
+        ? `est. $${costUsd.toFixed(2)} on ${EMBEDDING_MODEL}`
+        : `cost unknown (provider: ${embedProvider ?? 'not configured'})`;
       const previewMsg =
         `sync --all preview: ${preview.totalFiles} files across ${preview.activeSources} source(s), ` +
-        `~${preview.totalTokens.toLocaleString()} tokens, est. $${costUsd.toFixed(2)} on ${EMBEDDING_MODEL}.`;
+        `~${preview.totalTokens.toLocaleString()} tokens, ${costFragment}.`;
 
       if (dryRun) {
         if (jsonOut) {

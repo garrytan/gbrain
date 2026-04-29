@@ -316,6 +316,62 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     return;
   }
 
+  // 3b. LLM provider connectivity
+  progress.heartbeat('llm_provider');
+  try {
+    const { loadConfig } = await import('../core/config.ts');
+    const { getLlmProvider } = await import('../llm/factory.ts');
+    const cfg = loadConfig();
+    if (cfg?.llm_provider) {
+      const provider = getLlmProvider(cfg);
+      if (!provider) {
+        checks.push({
+          name: 'llm_provider',
+          status: 'warn',
+          message: `Provider "${cfg.llm_provider}" could not be instantiated. Check API key and base URL in ~/.gbrain/config.json`,
+        });
+      } else {
+        checks.push({
+          name: 'llm_provider',
+          status: 'ok',
+          message: `Provider "${cfg.llm_provider}" ready (${cfg.llm_base_url ?? 'default endpoint'})`,
+        });
+      }
+    } else {
+      checks.push({
+        name: 'llm_provider',
+        status: 'warn',
+        message: 'No LLM provider configured. Subagent jobs will fail. Run: gbrain init --provider <name>',
+      });
+    }
+  } catch (e: unknown) {
+    checks.push({ name: 'llm_provider', status: 'warn', message: `Could not verify LLM provider: ${e instanceof Error ? e.message : String(e)}` });
+  }
+
+  // 3c. Embedding provider connectivity
+  progress.heartbeat('embedding_provider');
+  try {
+    const { loadConfig } = await import('../core/config.ts');
+    const { getEmbeddingProvider } = await import('../llm/factory.ts');
+    const cfg = loadConfig();
+    const embedProvider = getEmbeddingProvider(cfg);
+    if (embedProvider) {
+      checks.push({
+        name: 'embedding_provider',
+        status: 'ok',
+        message: `Embedding provider "${cfg?.embedding_provider ?? cfg?.llm_provider ?? 'openai'}" ready`,
+      });
+    } else {
+      checks.push({
+        name: 'embedding_provider',
+        status: 'warn',
+        message: 'No embedding provider configured. Semantic search will be unavailable. Set OPENAI_API_KEY or run: gbrain init',
+      });
+    }
+  } catch (e: unknown) {
+    checks.push({ name: 'embedding_provider', status: 'warn', message: `Could not verify embedding provider: ${e instanceof Error ? e.message : String(e)}` });
+  }
+
   // 4. pgvector extension
   progress.heartbeat('pgvector');
   try {
@@ -475,7 +531,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         name: 'schema_version',
         status: 'fail',
         message: `No schema version recorded. Migrations never ran. Fix: gbrain apply-migrations --yes. ` +
-                 `If you installed via 'bun install -g github:...', see https://github.com/garrytan/gbrain/issues/218.`,
+                  `If you installed via 'bun install -g github:...', see https://github.com/momoiicom/open-gbrain/issues/218.`,
       });
     } else {
       checks.push({
