@@ -183,7 +183,11 @@ function acquireLock(workspace: string, opts: InstallOptions): void {
   const existing = readLock(workspace);
   const staleMs = opts.lockStaleMs ?? DEFAULT_LOCK_STALE_MS;
   if (existing) {
-    const age = Date.now() - existing.mtimeMs;
+    // Clamp to 0. On Linux ext4, statSync().mtimeMs has sub-ms precision;
+    // Date.now() is integer ms. A file written microseconds ago can report
+    // a negative age here, which would break the staleMs:0 "any age is stale"
+    // contract the force-unlock path relies on (CI passes, local macOS masks it).
+    const age = Math.max(0, Date.now() - existing.mtimeMs);
     // `staleMs: 0` in tests means "any age counts as stale". Use >=
     // so a just-written lock qualifies when the threshold is 0.
     // Negative age (mtime in the future) happens on fast CI filesystems

@@ -12,7 +12,7 @@ For Team/Enterprise plans, an org Owner adds the connector:
    https://YOUR-DOMAIN.ngrok.app/mcp
    ```
 3. Add Bearer token authentication in Advanced Settings
-   (create one with `bun run src/commands/auth.ts create "cowork"`)
+   (create one with `gbrain auth create "cowork"`)
 4. Save
 
 Note: Cowork connects from Anthropic's cloud, not your device. Your server

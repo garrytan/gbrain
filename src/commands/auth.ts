@@ -1,20 +1,29 @@
 #!/usr/bin/env bun
 /**
- * GBrain token management — standalone script, no gbrain CLI dependency.
+ * GBrain token management.
  *
- * Usage:
+ * Wired into the CLI as of v0.22.5:
+ *   gbrain auth create "claude-desktop"
+ *   gbrain auth list
+ *   gbrain auth revoke "claude-desktop"
+ *   gbrain auth test <url> --token <token>
+ *
+ * Also runs standalone (no compiled binary required):
  *   DATABASE_URL=... bun run src/commands/auth.ts create "claude-desktop"
- *   DATABASE_URL=... bun run src/commands/auth.ts list
- *   DATABASE_URL=... bun run src/commands/auth.ts revoke "claude-desktop"
- *   DATABASE_URL=... bun run src/commands/auth.ts test <url> --token <token>
+ *
+ * Both paths require DATABASE_URL or GBRAIN_DATABASE_URL (except `test`,
+ * which only hits the remote URL and doesn't need a local DB).
  */
 import postgres from 'postgres';
 import { createHash, randomBytes } from 'crypto';
 
-const DATABASE_URL = process.env.DATABASE_URL || process.env.GBRAIN_DATABASE_URL;
-if (!DATABASE_URL && process.argv[2] !== 'test') {
-  console.error('Set DATABASE_URL or GBRAIN_DATABASE_URL environment variable.');
-  process.exit(1);
+function getDatabaseUrl(requireDb: boolean): string | undefined {
+  const url = process.env.DATABASE_URL || process.env.GBRAIN_DATABASE_URL;
+  if (!url && requireDb) {
+    console.error('Set DATABASE_URL or GBRAIN_DATABASE_URL environment variable.');
+    process.exit(1);
+  }
+  return url;
 }
 
 function hashToken(token: string): string {
@@ -27,7 +36,7 @@ function generateToken(): string {
 
 async function create(name: string) {
   if (!name) { console.error('Usage: auth create <name>'); process.exit(1); }
-  const sql = postgres(DATABASE_URL!);
+  const sql = postgres(getDatabaseUrl(true)!);
   const token = generateToken();
   const hash = hashToken(token);
 
@@ -53,7 +62,7 @@ async function create(name: string) {
 }
 
 async function list() {
-  const sql = postgres(DATABASE_URL!);
+  const sql = postgres(getDatabaseUrl(true)!);
   try {
     const rows = await sql`
       SELECT name, created_at, last_used_at, revoked_at
@@ -80,7 +89,7 @@ async function list() {
 
 async function revoke(name: string) {
   if (!name) { console.error('Usage: auth revoke <name>'); process.exit(1); }
-  const sql = postgres(DATABASE_URL!);
+  const sql = postgres(getDatabaseUrl(true)!);
   try {
     const result = await sql`
       UPDATE access_tokens SET revoked_at = now()
@@ -216,26 +225,38 @@ async function test(url: string, token: string) {
   console.log(`\n🧠 Your brain is live! (${elapsed}s)`);
 }
 
-// CLI dispatch
-const [cmd, ...args] = process.argv.slice(2);
-switch (cmd) {
-  case 'create': await create(args[0]); break;
-  case 'list': await list(); break;
-  case 'revoke': await revoke(args[0]); break;
-  case 'test': {
-    const tokenIdx = args.indexOf('--token');
-    const url = args.find(a => !a.startsWith('--') && a !== args[tokenIdx + 1]);
-    const token = tokenIdx >= 0 ? args[tokenIdx + 1] : '';
-    await test(url || '', token || '');
-    break;
-  }
-  default:
-    console.log(`GBrain Token Management
+/**
+ * Entry point for the `gbrain auth` CLI subcommand. Also reused by the
+ * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
+ * still works.
+ */
+export async function runAuth(args: string[]): Promise<void> {
+  const [cmd, ...rest] = args;
+  switch (cmd) {
+    case 'create': await create(rest[0]); return;
+    case 'list': await list(); return;
+    case 'revoke': await revoke(rest[0]); return;
+    case 'test': {
+      const tokenIdx = rest.indexOf('--token');
+      const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
+      const token = tokenIdx >= 0 ? rest[tokenIdx + 1] : '';
+      await test(url || '', token || '');
+      return;
+    }
+    default:
+      console.log(`GBrain Token Management
 
 Usage:
-  bun run src/commands/auth.ts create <name>      Create a new access token
-  bun run src/commands/auth.ts list               List all tokens
-  bun run src/commands/auth.ts revoke <name>       Revoke a token
-  bun run src/commands/auth.ts test <url> --token <token>  Smoke test a remote MCP server
+  gbrain auth create <name>           Create a new access token
+  gbrain auth list                    List all tokens
+  gbrain auth revoke <name>           Revoke a token
+  gbrain auth test <url> --token <t>  Smoke-test a remote MCP server
 `);
+  }
+}
+
+// Direct-script entry point — only runs when this file is invoked as the main module
+// (e.g. `bun run src/commands/auth.ts ...`). When imported by cli.ts, this block is skipped.
+if (import.meta.main) {
+  await runAuth(process.argv.slice(2));
 }

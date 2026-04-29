@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'fs';
 import { dirname, join } from 'path';
@@ -331,6 +332,31 @@ describe('planInstall + applyInstall', () => {
     // — simulate by writing the lock and passing lockStaleMs=0 so
     // any age looks stale.
     writeFileSync(join(workspace, '.gbrain-skillpack.lock'), '99999');
+    const opts = {
+      gbrainRoot,
+      targetWorkspace: workspace,
+      targetSkillsDir: skillsDir,
+      skillSlug: 'alpha',
+      forceUnlock: true,
+      lockStaleMs: 0,
+    };
+    const plan = planInstall(opts);
+    const result = applyInstall(plan, opts);
+    expect(result.summary.wroteNew).toBeGreaterThan(0);
+  });
+
+  it('D-CX-11: --force-unlock works when lock mtime is sub-ms ahead of Date.now (Linux fs jitter)', () => {
+    // Regression guard: on Linux ext4, statSync().mtimeMs has sub-ms precision
+    // while Date.now() is integer ms, so a just-written lock can report a
+    // negative age. If acquireLock does not clamp, stale=false and the
+    // forceUnlock path is unreachable. Simulate deterministically by pushing
+    // the lock's mtime 10ms into the future.
+    const { gbrainRoot } = scratchGbrain();
+    const { workspace, skillsDir } = scratchTarget();
+    const lockFile = join(workspace, '.gbrain-skillpack.lock');
+    writeFileSync(lockFile, '99999');
+    const future = (Date.now() + 10) / 1000;
+    utimesSync(lockFile, future, future);
     const opts = {
       gbrainRoot,
       targetWorkspace: workspace,
