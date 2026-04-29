@@ -1,29 +1,24 @@
 /**
  * Embedding Service
- * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * SiliconFlow Qwen/Qwen3-Embedding-8B at 1024 dimensions.
+ * Standard OpenAI-compatible API (input/data format).
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
 
-import OpenAI from 'openai';
-
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const MODEL = 'Qwen/Qwen3-Embedding-8B';
+const DIMENSIONS = 1024;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 32; // SiliconFlow limit
 
-let client: OpenAI | null = null;
+const EMBEDDING_URL = 'https://api.siliconflow.com/v1/embeddings';
 
-function getClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI();
-  }
-  return client;
+function getApiKey(): string {
+  return process.env.OPENAI_API_KEY ?? '';
 }
 
 export async function embed(text: string): Promise<Float32Array> {
@@ -33,11 +28,6 @@ export async function embed(text: string): Promise<Float32Array> {
 }
 
 export interface EmbedBatchOptions {
-  /**
-   * Optional callback fired after each 100-item sub-batch completes.
-   * CLI wrappers tick a reporter; Minion handlers can call
-   * job.updateProgress here instead of hooking the per-page callback.
-   */
   onBatchComplete?: (done: number, total: number) => void;
 }
 
@@ -48,7 +38,6 @@ export async function embedBatch(
   const truncated = texts.map(t => t.slice(0, MAX_CHARS));
   const results: Float32Array[] = [];
 
-  // Process in batches of BATCH_SIZE
   for (let i = 0; i < truncated.length; i += BATCH_SIZE) {
     const batch = truncated.slice(i, i + BATCH_SIZE);
     const batchResults = await embedBatchWithRetry(batch);
@@ -61,43 +50,46 @@ export async function embedBatch(
 
 async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      const response = await getClient().embeddings.create({
+    const res = await fetch(EMBEDDING_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getApiKey()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         model: MODEL,
         input: texts,
         dimensions: DIMENSIONS,
-      });
+      }),
+    });
 
-      // Sort by index to maintain order
-      const sorted = response.data.sort((a, b) => a.index - b.index);
-      return sorted.map(d => new Float32Array(d.embedding));
-    } catch (e: unknown) {
-      if (attempt === MAX_RETRIES - 1) throw e;
-
-      // Check for rate limit with Retry-After header
-      let delay = exponentialDelay(attempt);
-
-      if (e instanceof OpenAI.APIError && e.status === 429) {
-        const retryAfter = e.headers?.['retry-after'];
-        if (retryAfter) {
-          const parsed = parseInt(retryAfter, 10);
-          if (!isNaN(parsed)) {
-            delay = parsed * 1000;
-          }
-        }
+    if (!res.ok) {
+      const body = await res.text();
+      if (attempt < MAX_RETRIES - 1) {
+        await sleep(exponentialDelay(attempt));
+        continue;
       }
-
-      await sleep(delay);
+      throw new Error(`SiliconFlow embedding failed: ${res.status} ${body}`);
     }
+
+    const json = await res.json() as {
+      data?: Array<{ embedding: number[]; index: number }>;
+    };
+
+    if (!json.data || !Array.isArray(json.data)) {
+      throw new Error(`Unexpected SiliconFlow response: ${JSON.stringify(json).slice(0, 200)}`);
+    }
+
+    // Sort by index to maintain order
+    const sorted = json.data.sort((a, b) => a.index - b.index);
+    return sorted.map(d => new Float32Array(d.embedding));
   }
 
-  // Should not reach here
   throw new Error('Embedding failed after all retries');
 }
 
 function exponentialDelay(attempt: number): number {
-  const delay = BASE_DELAY_MS * Math.pow(2, attempt);
-  return Math.min(delay, MAX_DELAY_MS);
+  return Math.min(BASE_DELAY_MS * Math.pow(2, attempt), MAX_DELAY_MS);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -105,20 +97,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
+export const EMBEDDING_COST_PER_1K_TOKENS = 0.000; // Qwen3-Embedding-8B: free tier
 
-/**
- * v0.20.0 Cathedral II Layer 8 (D1): USD cost per 1k tokens for
- * text-embedding-3-large. Used by `gbrain sync --all` cost preview and
- * the reindex-code backfill command to surface expected spend before
- * the agent/user accepts an expensive operation.
- *
- * Value: $0.00013 / 1k tokens as of 2026. Update when OpenAI changes
- * pricing. Single source of truth — every cost-preview surface reads
- * this constant, so a pricing change is a one-line edit.
- */
-export const EMBEDDING_COST_PER_1K_TOKENS = 0.00013;
-
-/** Compute USD cost estimate for embedding `tokens` at current model rate. */
 export function estimateEmbeddingCostUsd(tokens: number): number {
   return (tokens / 1000) * EMBEDDING_COST_PER_1K_TOKENS;
 }
