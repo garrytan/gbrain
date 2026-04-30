@@ -108,7 +108,7 @@ describe('autopilot-cycle handler contract (v0.20.5)', () => {
     // This is a source-level regression guard
     const handlerBlock = jobsSource.slice(
       jobsSource.indexOf("worker.register('autopilot-cycle'"),
-      jobsSource.indexOf("worker.register('autopilot-cycle'") + 500,
+      jobsSource.indexOf("worker.register('autopilot-cycle'") + 2000,
     );
 
     expect(handlerBlock).toContain('signal: job.signal');

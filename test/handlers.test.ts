@@ -120,3 +120,105 @@ describe('autopilot-cycle handler — partial failure does NOT throw', () => {
     }
   }, 30_000);
 });
+
+describe('autopilot-cycle handler — phase passthrough', () => {
+  test('job.data.phases restricts which phases run', async () => {
+    const fs = await import('fs');
+    const { execSync } = await import('child_process');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const dir = fs.mkdtempSync(join(tmpdir(), 'gbrain-phase-pass-'));
+    try {
+      execSync('git init', { cwd: dir, stdio: 'pipe' });
+      execSync('git config user.email test@example.com', { cwd: dir, stdio: 'pipe' });
+      execSync('git config user.name Test', { cwd: dir, stdio: 'pipe' });
+      execSync('git commit --allow-empty -m init', { cwd: dir, stdio: 'pipe' });
+
+      const handler = (worker as any).handlers.get('autopilot-cycle');
+      // Request only lint and sync — embed should NOT appear
+      const result = await handler({
+        data: { repoPath: dir, phases: ['lint', 'sync'] },
+        signal: { aborted: false } as any,
+        job: { id: 10, name: 'autopilot-cycle' } as any,
+      });
+
+      expect(result).toBeDefined();
+      const report = (result as any).report;
+      expect(report).toBeDefined();
+      const phaseNames = report.phases.map((p: any) => p.phase);
+      expect(phaseNames).toContain('lint');
+      expect(phaseNames).toContain('sync');
+      // Phases NOT requested must be absent
+      expect(phaseNames).not.toContain('embed');
+      expect(phaseNames).not.toContain('extract');
+      expect(phaseNames).not.toContain('backlinks');
+      expect(phaseNames).not.toContain('orphans');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test('invalid phase names in job.data.phases are filtered out', async () => {
+    const fs = await import('fs');
+    const { execSync } = await import('child_process');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const dir = fs.mkdtempSync(join(tmpdir(), 'gbrain-phase-invalid-'));
+    try {
+      execSync('git init', { cwd: dir, stdio: 'pipe' });
+      execSync('git config user.email test@example.com', { cwd: dir, stdio: 'pipe' });
+      execSync('git config user.name Test', { cwd: dir, stdio: 'pipe' });
+      execSync('git commit --allow-empty -m init', { cwd: dir, stdio: 'pipe' });
+
+      const handler = (worker as any).handlers.get('autopilot-cycle');
+      // Mix valid and bogus names — only 'lint' should survive filtering
+      const result = await handler({
+        data: { repoPath: dir, phases: ['lint', 'BOGUS', 'rm -rf /'] },
+        signal: { aborted: false } as any,
+        job: { id: 11, name: 'autopilot-cycle' } as any,
+      });
+
+      const report = (result as any).report;
+      const phaseNames = report.phases.map((p: any) => p.phase);
+      expect(phaseNames).toContain('lint');
+      expect(phaseNames).not.toContain('BOGUS');
+      expect(phaseNames.length).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test('empty phases array falls back to all phases (same as no phases)', async () => {
+    const handler = (worker as any).handlers.get('autopilot-cycle');
+    // Empty array should fall through to ALL_PHASES (same as omitting phases)
+    const result = await handler({
+      data: { repoPath: '/definitely-does-not-exist-for-phase-test', phases: [] },
+      signal: { aborted: false } as any,
+      job: { id: 12, name: 'autopilot-cycle' } as any,
+    });
+
+    const report = (result as any).report;
+    // With all phases, filesystem phases fail on missing dir
+    const phaseNames = report.phases.map((p: any) => p.phase);
+    expect(phaseNames).toContain('lint');
+    expect(phaseNames).toContain('backlinks');
+    expect(phaseNames).toContain('sync');
+  }, 30_000);
+
+  test('non-array phases value is ignored (falls back to all)', async () => {
+    const handler = (worker as any).handlers.get('autopilot-cycle');
+    // String instead of array — should be ignored
+    const result = await handler({
+      data: { repoPath: '/definitely-does-not-exist-for-phase-test', phases: 'lint' },
+      signal: { aborted: false } as any,
+      job: { id: 13, name: 'autopilot-cycle' } as any,
+    });
+
+    const report = (result as any).report;
+    const phaseNames = report.phases.map((p: any) => p.phase);
+    // Should have all phases since the string was ignored
+    expect(phaseNames).toContain('lint');
+    expect(phaseNames).toContain('sync');
+    expect(phaseNames).toContain('embed');
+  }, 30_000);
+});
