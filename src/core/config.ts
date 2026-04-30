@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import type { ProviderAuthConfig } from './ai/types.ts';
 import type { EngineConfig } from './types.ts';
 
 /**
@@ -35,6 +36,8 @@ export interface GBrainConfig {
   expansion_model?: string;
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;
+  /** Optional provider auth overrides (e.g. explicit OpenClaw profile selection). */
+  provider_auth?: Record<string, ProviderAuthConfig>;
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
@@ -74,6 +77,17 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
   };
+  if (process.env.GBRAIN_OPENAI_AUTH_SOURCE === 'openclaw-codex' || process.env.GBRAIN_OPENAI_AUTH_SOURCE === 'openclaw-openai') {
+    merged.provider_auth = {
+      ...(merged.provider_auth ?? {}),
+      openai: {
+        ...(merged.provider_auth?.openai ?? {}),
+        prefer: process.env.GBRAIN_OPENAI_AUTH_SOURCE,
+        ...(process.env.GBRAIN_OPENAI_AUTH_PROFILE ? { profile: process.env.GBRAIN_OPENAI_AUTH_PROFILE } : {}),
+        ...(process.env.GBRAIN_OPENCLAW_AUTH_PATH ? { openclawAuthPath: process.env.GBRAIN_OPENCLAW_AUTH_PATH } : {}),
+      },
+    };
+  }
   return merged as GBrainConfig;
 }
 

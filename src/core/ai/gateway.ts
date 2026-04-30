@@ -30,9 +30,11 @@ import { z } from 'zod';
 
 import type {
   AIGatewayConfig,
+  AuthResolution,
   Recipe,
   TouchpointKind,
 } from './types.ts';
+import { resolveProviderAuth } from './auth.ts';
 import { resolveRecipe, assertTouchpoint } from './model-resolver.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
@@ -52,6 +54,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     embedding_dimensions: config.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     base_urls: config.base_urls,
+    provider_auth: config.provider_auth,
     env: config.env,
   };
   _modelCache.clear();
@@ -111,9 +114,8 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
     if (Array.isArray(touchpointConfig.models) && touchpointConfig.models.length === 0 && recipe.id === 'litellm') return false;
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
-    const required = recipe.auth_env?.required ?? [];
-    if (required.length === 0) return true;
-    return required.every(k => !!_config!.env[k]);
+    const resolution = resolveProviderAuth(recipe, _config!);
+    return resolution.isConfigured;
   } catch {
     return false;
   }
@@ -135,14 +137,21 @@ async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any;
   return { model, recipe, modelId: parsed.modelId };
 }
 
+function requireAuth(resolution: AuthResolution, recipe: Recipe, action: string): string {
+  if (!resolution.isConfigured || !resolution.value) {
+    throw new AIConfigError(
+      `${recipe.name} ${action} requires ${resolution.credentialKey ?? 'credentials'}.`,
+      recipe.setup_hint,
+    );
+  }
+  return resolution.value;
+}
+
 function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
+  const auth = resolveProviderAuth(recipe, cfg);
   switch (recipe.implementation) {
     case 'native-openai': {
-      const apiKey = cfg.env.OPENAI_API_KEY;
-      if (!apiKey) throw new AIConfigError(
-        `OpenAI embedding requires OPENAI_API_KEY.`,
-        recipe.setup_hint,
-      );
+      const apiKey = requireAuth(auth, recipe, 'embedding');
       const client = createOpenAI({ apiKey });
       // AI SDK v6: use .textEmbeddingModel() for embeddings
       return (client as any).textEmbeddingModel
@@ -150,11 +159,7 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         : (client as any).embedding(modelId);
     }
     case 'native-google': {
-      const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
-      if (!apiKey) throw new AIConfigError(
-        `Google embedding requires GOOGLE_GENERATIVE_AI_API_KEY.`,
-        recipe.setup_hint,
-      );
+      const apiKey = requireAuth(auth, recipe, 'embedding');
       const client = createGoogleGenerativeAI({ apiKey });
       return (client as any).textEmbeddingModel
         ? (client as any).textEmbeddingModel(modelId)
@@ -171,15 +176,9 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         recipe.setup_hint,
       );
       // For openai-compatible, auth is optional (ollama local) but pass a dummy key if unauthenticated.
-      const apiKey = recipe.auth_env?.required[0]
-        ? cfg.env[recipe.auth_env.required[0]]
-        : (cfg.env[`${recipe.id.toUpperCase()}_API_KEY`] ?? 'unauthenticated');
-      if (recipe.auth_env?.required.length && !apiKey) {
-        throw new AIConfigError(
-          `${recipe.name} requires ${recipe.auth_env.required[0]}.`,
-          recipe.setup_hint,
-        );
-      }
+      const apiKey = auth.source === 'unauthenticated'
+        ? 'unauthenticated'
+        : requireAuth(auth, recipe, 'embedding');
       const client = createOpenAICompatible({
         name: recipe.id,
         baseURL: baseUrl,
@@ -246,28 +245,26 @@ async function resolveExpansionProvider(modelStr: string): Promise<{ model: any;
 }
 
 function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
+  const auth = resolveProviderAuth(recipe, cfg);
   switch (recipe.implementation) {
     case 'native-openai': {
-      const apiKey = cfg.env.OPENAI_API_KEY;
-      if (!apiKey) throw new AIConfigError(`OpenAI expansion requires OPENAI_API_KEY.`, recipe.setup_hint);
+      const apiKey = requireAuth(auth, recipe, 'expansion');
       return createOpenAI({ apiKey }).languageModel(modelId);
     }
     case 'native-google': {
-      const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
-      if (!apiKey) throw new AIConfigError(`Google expansion requires GOOGLE_GENERATIVE_AI_API_KEY.`, recipe.setup_hint);
+      const apiKey = requireAuth(auth, recipe, 'expansion');
       return createGoogleGenerativeAI({ apiKey }).languageModel(modelId);
     }
     case 'native-anthropic': {
-      const apiKey = cfg.env.ANTHROPIC_API_KEY;
-      if (!apiKey) throw new AIConfigError(`Anthropic expansion requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
+      const apiKey = requireAuth(auth, recipe, 'expansion');
       return createAnthropic({ apiKey }).languageModel(modelId);
     }
     case 'openai-compatible': {
       const baseUrl = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
       if (!baseUrl) throw new AIConfigError(`${recipe.name} requires a base URL.`, recipe.setup_hint);
-      const apiKey = recipe.auth_env?.required[0]
-        ? cfg.env[recipe.auth_env.required[0]]
-        : 'unauthenticated';
+      const apiKey = auth.source === 'unauthenticated'
+        ? 'unauthenticated'
+        : requireAuth(auth, recipe, 'expansion');
       return createOpenAICompatible({
         name: recipe.id,
         baseURL: baseUrl,
