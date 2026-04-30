@@ -8,7 +8,7 @@ import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs } from './link-extraction.ts';
-import { embedBatch } from './embedding.ts';
+import { embedBatch, getEmbeddingModel, getEmbeddingDimensions } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageType } from './types.ts';
 
@@ -256,8 +256,10 @@ export async function importFromContent(
   if (!opts.noEmbed && chunks.length > 0) {
     try {
       const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
+      const model = `${getEmbeddingModel()}:${getEmbeddingDimensions()}`;
       for (let i = 0; i < chunks.length; i++) {
         chunks[i].embedding = embeddings[i];
+        chunks[i].model = model;
         chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
       }
     } catch (e: unknown) {
@@ -468,9 +470,11 @@ export async function importCodeFile(
     try {
       const textsToEmbed = needsEmbedIndexes.map((i) => chunks[i]!.chunk_text);
       const embeddings = await embedBatch(textsToEmbed);
+      const model = `${getEmbeddingModel()}:${getEmbeddingDimensions()}`;
       for (let j = 0; j < needsEmbedIndexes.length; j++) {
         const i = needsEmbedIndexes[j]!;
         chunks[i]!.embedding = embeddings[j]!;
+        chunks[i]!.model = model;
         chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
       }
     } catch (e: unknown) {

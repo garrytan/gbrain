@@ -6,6 +6,7 @@ import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnectio
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { prepareEmbeddingSchemaSettings } from './embedding-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -20,6 +21,7 @@ import type {
   EngineConfig,
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { validateChunkEmbeddingDimensions } from './embedding-dimensions.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
@@ -86,6 +88,8 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
+    await prepareEmbeddingSchemaSettings(this);
+
     // Pre-schema bootstrap: add forward-referenced state the embedded schema
     // blob requires but that older brains don't have yet. Without this, a
     // pre-v0.18 brain hits `CREATE INDEX idx_pages_source_id ON pages(source_id)`
@@ -554,6 +558,7 @@ export class PGLiteEngine implements BrainEngine {
 
   // Chunks
   async upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void> {
+    validateChunkEmbeddingDimensions(chunks);
     // Get page_id
     const pageResult = await this.db.query('SELECT id FROM pages WHERE slug = $1', [slug]);
     if (pageResult.rows.length === 0) throw new Error(`Page not found: ${slug}`);

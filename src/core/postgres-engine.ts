@@ -3,6 +3,7 @@ import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnectio
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import { prepareEmbeddingSchemaSettings } from './embedding-schema.ts';
 import { verifySchema } from './schema-verify.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -19,6 +20,7 @@ import type {
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
+import { validateChunkEmbeddingDimensions } from './embedding-dimensions.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
@@ -109,6 +111,8 @@ export class PostgresEngine implements BrainEngine {
     // change it.
     await conn`SELECT pg_advisory_lock(42)`;
     try {
+      await prepareEmbeddingSchemaSettings(this);
+
       // Pre-schema bootstrap: add forward-referenced state the embedded schema
       // blob requires but that older brains don't have yet. Without this, a
       // pre-v0.18 brain hits `CREATE INDEX idx_pages_source_id ON pages(source_id)`
@@ -677,6 +681,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Chunks
   async upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void> {
+    validateChunkEmbeddingDimensions(chunks);
     const sql = this.sql;
 
     // Get page_id
