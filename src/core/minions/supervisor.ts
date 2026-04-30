@@ -225,8 +225,12 @@ export class MinionSupervisor {
     process.on('SIGTERM', this.sigtermListener);
     process.on('SIGINT', this.sigintListener);
 
-    // 4. Health monitoring.
-    this.healthTimer = setInterval(() => { void this.healthCheck(); }, this.opts.healthInterval);
+    // 4. Health monitoring. Skip when healthInterval=0 — that's the explicit
+     // "disable" contract documented on `--health-interval 0`. setInterval(0)
+     // would be a tight DB-hammering loop, not the no-op users expect.
+    if (this.opts.healthInterval > 0) {
+      this.healthTimer = setInterval(() => { void this.healthCheck(); }, this.opts.healthInterval);
+    }
 
     // 5. Announce start.
     this.emit('started', {
@@ -427,6 +431,11 @@ export class MinionSupervisor {
       } else {
         delete env.GBRAIN_ALLOW_SHELL_JOBS;
       }
+      // Signal to the child worker that it's running under a supervisor.
+      // The worker's self-health-check (DB probes, stall detection) is
+      // redundant when the supervisor already provides these — setting
+      // this env var causes the worker to skip its own health timer.
+      env.GBRAIN_SUPERVISED = '1';
 
       this.lastStartTime = Date.now();
 

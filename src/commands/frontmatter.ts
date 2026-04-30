@@ -49,6 +49,10 @@ export async function runFrontmatter(args: string[]): Promise<void> {
     }
     return;
   }
+  if (sub === 'generate') {
+    await runGenerate(rest);
+    return;
+  }
   if (sub === 'install-hook') {
     const { runFrontmatterInstallHook } = await import('./frontmatter-install-hook.ts');
     await runFrontmatterInstallHook(rest);
@@ -71,10 +75,11 @@ async function connectEngineForAudit(): Promise<BrainEngine> {
 }
 
 function printHelp() {
-  console.log(`gbrain frontmatter — frontmatter validation, audit, and auto-repair
+  console.log(`gbrain frontmatter — frontmatter validation, audit, auto-repair, and generation
 
 Usage:
   gbrain frontmatter validate <path> [--json] [--fix] [--dry-run]
+  gbrain frontmatter generate <path> [--fix] [--dry-run] [--json]
   gbrain frontmatter audit [--source <id>] [--json]
   gbrain frontmatter install-hook [--source <id>] [--force] [--uninstall]
 
@@ -90,6 +95,26 @@ validate
              git and non-git brain repos.
   --dry-run  Preview --fix without writing.
   --json     Emit a JSON envelope on stdout.
+
+generate
+  Synthesize frontmatter for files that have none (MISSING_OPEN). Uses
+  directory-aware rules to infer type, title, date, source, and tags from
+  the filesystem path and file content. Zero LLM calls, fully deterministic.
+
+  Without --fix: dry-run preview showing what would be generated.
+  With --fix: writes frontmatter to files (with .bak safety backups).
+
+  Rules are defined in src/core/frontmatter-inference.ts DIRECTORY_RULES.
+  Add new directory conventions by adding rules to the table.
+
+  Examples:
+    gbrain frontmatter generate /path/to/brain              # preview all
+    gbrain frontmatter generate /path/to/brain --fix        # write all
+    gbrain frontmatter generate /path/to/brain/people/ --fix # just people/
+
+  --fix      Write generated frontmatter to files (.bak safety backups).
+  --dry-run  Preview without writing (default when --fix is omitted).
+  --json     Emit JSON output.
 
 audit
   Read-only scan across all registered sources (or one with --source <id>).
@@ -295,5 +320,172 @@ function printAuditHumanReport(report: AuditReport): void {
   }
   if (report.total > 0) {
     console.log(`\nFix with: gbrain frontmatter validate <source-path> --fix`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// generate — synthesize frontmatter for files that have none
+// ---------------------------------------------------------------------------
+
+async function runGenerate(args: string[]): Promise<void> {
+  const targetPath = args.find(a => !a.startsWith('-'));
+  const doFix = args.includes('--fix');
+  const dryRun = args.includes('--dry-run');
+  const jsonOut = args.includes('--json');
+
+  if (!targetPath) {
+    console.error('error: gbrain frontmatter generate requires a <path> argument');
+    console.error('usage: gbrain frontmatter generate <path> [--fix] [--dry-run] [--json]');
+    process.exitCode = 1;
+    return;
+  }
+
+  const { inferFrontmatter, serializeFrontmatter } = await import('../core/frontmatter-inference.ts');
+  const { resolve, relative, join, basename } = await import('path');
+  const { readFileSync, writeFileSync, copyFileSync, statSync, readdirSync, lstatSync } = await import('fs');
+
+  const rootPath = resolve(targetPath);
+  const isDir = statSync(rootPath).isDirectory();
+
+  // Find the brain root — walk up from targetPath looking for .git or known brain markers.
+  // Inference rules match against brain-root-relative paths (e.g., "people/alice.md").
+  let brainRoot = rootPath;
+  if (isDir) {
+    let candidate = rootPath;
+    for (let i = 0; i < 10; i++) {
+      try {
+        statSync(join(candidate, '.git'));
+        brainRoot = candidate;
+        break;
+      } catch {
+        const parent = resolve(candidate, '..');
+        if (parent === candidate) break;
+        candidate = parent;
+      }
+    }
+  }
+
+  interface GenerateResult {
+    path: string;
+    type: string;
+    title: string;
+    date?: string;
+    rule: string;
+  }
+
+  const results: GenerateResult[] = [];
+  let scanned = 0;
+  let skipped = 0;
+  let generated = 0;
+  let written = 0;
+
+  function processFile(absPath: string, relPath: string) {
+    scanned++;
+    if (!absPath.endsWith('.md')) return;
+
+    // Skip symlinks
+    try { if (lstatSync(absPath).isSymbolicLink()) return; } catch { return; }
+
+    let content: string;
+    try { content = readFileSync(absPath, 'utf-8'); } catch { return; }
+
+    const inferred = inferFrontmatter(relPath, content);
+    if (inferred.skipped) {
+      skipped++;
+      return;
+    }
+
+    generated++;
+    results.push({
+      path: relPath,
+      type: inferred.type,
+      title: inferred.title,
+      date: inferred.date,
+      rule: inferred.matchedRule || '(default)',
+    });
+
+    if (doFix && !dryRun) {
+      const fm = serializeFrontmatter(inferred);
+      const newContent = fm + '\n' + content;
+      // Safety: write .bak first
+      copyFileSync(absPath, absPath + '.bak');
+      writeFileSync(absPath, newContent, 'utf-8');
+      written++;
+    }
+  }
+
+  function walkDir(dir: string, rootForRel: string) {
+    let entries: string[];
+    try { entries = readdirSync(dir); } catch { return; }
+    for (const entry of entries) {
+      if (entry === '.git' || entry === 'node_modules' || entry === '.obsidian') continue;
+      const abs = join(dir, entry);
+      try {
+        const stat = statSync(abs);
+        if (stat.isDirectory()) {
+          walkDir(abs, rootForRel);
+        } else if (stat.isFile() && entry.endsWith('.md')) {
+          processFile(abs, relative(rootForRel, abs));
+        }
+      } catch { /* skip unreadable */ }
+    }
+  }
+
+  if (isDir) {
+    walkDir(rootPath, brainRoot);
+  } else {
+    const relPath = relative(brainRoot, rootPath) || basename(rootPath);
+    processFile(rootPath, relPath);
+  }
+
+  // Output
+  if (jsonOut) {
+    console.log(JSON.stringify({
+      scanned,
+      skipped,
+      generated,
+      written,
+      dryRun: !doFix || dryRun,
+      results: results.slice(0, 100), // Cap JSON output
+      totalResults: results.length,
+    }, null, 2));
+    return;
+  }
+
+  // Human-readable output
+  const mode = doFix && !dryRun ? 'WRITE' : 'DRY-RUN';
+  console.log(`\nFrontmatter generation (${mode})`);
+  console.log(`  Scanned: ${scanned} files`);
+  console.log(`  Already have frontmatter: ${skipped}`);
+  console.log(`  Would generate: ${generated}`);
+  if (doFix && !dryRun) {
+    console.log(`  Written: ${written} (with .bak backups)`);
+  }
+
+  // Show sample by type
+  const byType: Record<string, number> = {};
+  for (const r of results) {
+    byType[r.type] = (byType[r.type] || 0) + 1;
+  }
+  if (Object.keys(byType).length > 0) {
+    console.log(`\n  By type:`);
+    for (const [type, count] of Object.entries(byType).sort(([, a], [, b]) => b - a)) {
+      console.log(`    ${type}: ${count}`);
+    }
+  }
+
+  // Show first 10 examples
+  if (results.length > 0 && (!doFix || dryRun)) {
+    console.log(`\n  Examples:`);
+    for (const r of results.slice(0, 10)) {
+      console.log(`    ${r.path}`);
+      console.log(`      → type: ${r.type}, title: "${r.title}"${r.date ? `, date: ${r.date}` : ''} [rule: ${r.rule}]`);
+    }
+    if (results.length > 10) {
+      console.log(`    ... and ${results.length - 10} more`);
+    }
+    if (!doFix) {
+      console.log(`\n  To write: gbrain frontmatter generate ${targetPath} --fix`);
+    }
   }
 }

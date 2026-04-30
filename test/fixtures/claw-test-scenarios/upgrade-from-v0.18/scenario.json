@@ -1,0 +1,10 @@
+{
+  "kind": "upgrade",
+  "from_version": "0.18.0",
+  "description": "Pre-v0.18 brain shape replayed via PGLite SQL dump; migration chain walks forward to LATEST",
+  "expected_phases": [
+    "doctor.db_checks"
+  ],
+  "seed": "seed",
+  "brain": "brain"
+}

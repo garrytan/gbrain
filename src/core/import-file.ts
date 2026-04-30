@@ -339,7 +339,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: { noEmbed?: boolean; inferFrontmatter?: boolean } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -352,11 +352,25 @@ export async function importFromFile(
     return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes)` };
   }
 
-  const content = readFileSync(filePath, 'utf-8');
+  let content = readFileSync(filePath, 'utf-8');
 
   // Route code files through the code import path
   if (isCodeFilePath(relativePath)) {
     return importCodeFile(engine, relativePath, content, opts);
+  }
+
+  // v0.22.8 — Frontmatter inference: if the file has no frontmatter and
+  // inference is enabled, synthesize it from the filesystem path + content.
+  // This turns bare markdown files into fully-typed, dated, tagged pages
+  // without requiring the user to manually add YAML headers.
+  // The inference is applied to the in-memory content only; the file on disk
+  // is not modified. Use `gbrain frontmatter generate --fix` to write back.
+  if (opts.inferFrontmatter !== false) {
+    const { applyInference } = await import('./frontmatter-inference.ts');
+    const { content: inferred, inferred: meta } = applyInference(relativePath, content);
+    if (!meta.skipped) {
+      content = inferred;
+    }
   }
 
   const parsed = parseMarkdown(content, relativePath);

@@ -132,6 +132,42 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
   }
 }
 
+/**
+ * Get the local_path of the resolved source (per the resolveSourceId chain).
+ *
+ * Returns the on-disk brain repo path for the source the user is currently
+ * operating against. Used by `gbrain storage status` and `gbrain export
+ * --restore-only` to find the brain repo without raw SQL or bare try/catch.
+ *
+ * Resolution order:
+ *   1. `sources.local_path` for the resolved source id (multi-source v0.18+ path)
+ *   2. Legacy global `sync.repo_path` config key (pre-v0.18 default-source brains)
+ *   3. null
+ *
+ * @returns local_path string, or null if no path is configured anywhere.
+ * @throws  If DB error occurs (does NOT silently swallow). Callers handle
+ *          the null case to provide their own fallback (typically a hard error
+ *          telling the user to pass --repo).
+ */
+export async function getDefaultSourcePath(
+  engine: BrainEngine,
+  cwd: string = process.cwd(),
+): Promise<string | null> {
+  const sourceId = await resolveSourceId(engine, null, cwd);
+  const rows = await engine.executeRaw<{ local_path: string | null }>(
+    `SELECT local_path FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  if (rows[0]?.local_path) return rows[0].local_path;
+
+  // Legacy fallback: pre-v0.18 brains stored the repo path in the global
+  // config table under sync.repo_path. The sources table exists but its
+  // local_path is NULL for the seeded 'default' row. Fall back so storage
+  // tiering works without forcing a `gbrain sources add . --path .` migration.
+  const legacyPath = await engine.getConfig('sync.repo_path');
+  return legacyPath ?? null;
+}
+
 /** Exposed for tests. */
 export const __testing = {
   readDotfileWalk,

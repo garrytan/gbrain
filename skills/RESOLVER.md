@@ -70,6 +70,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
+| "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run" | `skills/maintain/SKILL.md` (dream cycle section) |
 | "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
 | "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain autopilot --install --repo ~/brain` |
 | Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |

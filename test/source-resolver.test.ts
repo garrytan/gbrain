@@ -14,7 +14,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { resolveSourceId, __testing } from '../src/core/source-resolver.ts';
+import { resolveSourceId, getDefaultSourcePath, __testing } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 // ── Stub engine ────────────────────────────────────────────
@@ -171,6 +171,103 @@ describe('resolveSourceId priority 6 — fallback', () => {
     const engine = makeStub(['default'], [], null);
     const id = await resolveSourceId(engine, null, '/random/dir');
     expect(id).toBe('default');
+  });
+});
+
+// ── getDefaultSourcePath ───────────────────────────────────
+
+describe('getDefaultSourcePath', () => {
+  function makeStubWithPaths(
+    registeredSources: string[],
+    sourcePaths: Record<string, string | null>,
+    defaultKey: string | null,
+  ): BrainEngine {
+    return {
+      kind: 'pglite',
+      executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
+        if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
+          const target = params?.[0];
+          return (registeredSources.includes(target as string)
+            ? [{ id: target } as unknown as T]
+            : []);
+        }
+        if (sql.includes('SELECT local_path FROM sources WHERE id = $1')) {
+          const target = params?.[0] as string;
+          if (target in sourcePaths) {
+            return [{ local_path: sourcePaths[target] } as unknown as T];
+          }
+          return [];
+        }
+        if (sql.includes('SELECT id, local_path FROM sources')) {
+          return Object.entries(sourcePaths)
+            .filter(([_, p]) => p !== null)
+            .map(([id, local_path]) => ({ id, local_path }) as unknown as T);
+        }
+        return [];
+      },
+      getConfig: async (key: string) => (key === 'sources.default' ? defaultKey : null),
+    } as unknown as BrainEngine;
+  }
+
+  test('returns local_path of resolved default source', async () => {
+    const engine = makeStubWithPaths(['default'], { default: '/path/to/brain' }, null);
+    const path = await getDefaultSourcePath(engine, '/random/dir');
+    expect(path).toBe('/path/to/brain');
+  });
+
+  test('returns null when source has no local_path', async () => {
+    const engine = makeStubWithPaths(['default'], { default: null }, null);
+    const path = await getDefaultSourcePath(engine, '/random/dir');
+    expect(path).toBeNull();
+  });
+
+  test('throws on DB error (does not silently swallow)', async () => {
+    const engine = {
+      kind: 'pglite',
+      executeRaw: async () => {
+        throw new Error('connection refused');
+      },
+      getConfig: async () => null,
+    } as unknown as BrainEngine;
+    await expect(getDefaultSourcePath(engine, '/random/dir')).rejects.toThrow(/connection refused/);
+  });
+
+  test('falls back to legacy sync.repo_path config when sources.local_path is null', async () => {
+    // Pre-v0.18 brains: 'default' source exists but local_path is NULL; the
+    // repo path lives in the global config table under sync.repo_path.
+    const engine = {
+      kind: 'pglite',
+      executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
+        if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
+          return [{ id: params?.[0] } as unknown as T];
+        }
+        if (sql.includes('SELECT local_path FROM sources WHERE id = $1')) {
+          return [{ local_path: null } as unknown as T];
+        }
+        if (sql.includes('SELECT id, local_path FROM sources')) {
+          return [];
+        }
+        return [];
+      },
+      getConfig: async (key: string) => {
+        if (key === 'sources.default') return null;
+        if (key === 'sync.repo_path') return '/legacy/brain/path';
+        return null;
+      },
+    } as unknown as BrainEngine;
+    const path = await getDefaultSourcePath(engine, '/random/dir');
+    expect(path).toBe('/legacy/brain/path');
+  });
+
+  test('respects source resolution chain (registered local_path wins over default)', async () => {
+    // CWD is inside /custom/path → wiki source matches by path → wiki's local_path returned.
+    const engine = makeStubWithPaths(
+      ['default', 'wiki'],
+      { default: '/default/path', wiki: '/custom/path' },
+      'default',
+    );
+    const path = await getDefaultSourcePath(engine, '/custom/path/sub');
+    expect(path).toBe('/custom/path');
   });
 });
 

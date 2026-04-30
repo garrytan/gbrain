@@ -97,5 +97,15 @@
     "The PRIMARY SUBJECT of the content determines the directory, not the format or source skill.",
     "When in doubt: what would you search for to find this page again?",
     "Cross-link from related directories via back-links — do not duplicate content."
-  ]
+  ],
+  "dream_synthesize_paths": {
+    "description": "Single source of truth for the v0.23 dream-cycle synthesize/patterns trusted-workspace allow-list. The cycle's synthesize phase reads this list and threads it as `allowed_slug_prefixes` to every subagent it dispatches; put_page enforces it server-side. Editing this list is the ONLY way to add a new directory the synthesis subagent may write to.",
+    "globs": [
+      "wiki/personal/reflections/*",
+      "wiki/originals/*",
+      "wiki/personal/patterns/*",
+      "wiki/people/*",
+      "dream-cycle-summaries/*"
+    ]
+  }
 }

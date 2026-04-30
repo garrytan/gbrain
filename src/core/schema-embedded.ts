@@ -597,6 +597,22 @@ CREATE TABLE IF NOT EXISTS subagent_rate_leases (
 CREATE INDEX IF NOT EXISTS idx_rate_leases_key_expires ON subagent_rate_leases (key, expires_at);
 
 -- ============================================================
+-- Dream-cycle significance verdict cache — v0.23 synthesize phase
+-- ============================================================
+-- Caches the cheap Haiku "is this transcript worth processing?" verdict
+-- per (file_path, content_hash) so backfill re-runs skip already-judged
+-- files. Distinct from raw_data (which is page-scoped); transcripts
+-- aren't pages.
+CREATE TABLE IF NOT EXISTS dream_verdicts (
+  file_path        TEXT        NOT NULL,
+  content_hash     TEXT        NOT NULL,
+  worth_processing BOOLEAN     NOT NULL,
+  reasons          JSONB,
+  judged_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (file_path, content_hash)
+);
+
+-- ============================================================
 -- Cycle coordination lock — v0.17 runCycle primitive
 -- ============================================================
 -- One row per active cycle. Any caller (autopilot daemon, Minions
@@ -663,6 +679,7 @@ BEGIN
     ALTER TABLE subagent_tool_executions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE subagent_rate_leases ENABLE ROW LEVEL SECURITY;
     ALTER TABLE gbrain_cycle_locks ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE dream_verdicts ENABLE ROW LEVEL SECURITY;
     RAISE NOTICE 'RLS enabled on all tables (role % has BYPASSRLS)', current_user;
   ELSE
     RAISE WARNING 'Skipping RLS: role % does not have BYPASSRLS privilege. Run as postgres role to enable.', current_user;

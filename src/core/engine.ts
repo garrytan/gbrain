@@ -86,6 +86,19 @@ export interface ReservedConnection {
   executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 
+/** Dream-cycle Haiku verdict on whether a transcript is worth processing. */
+export interface DreamVerdict {
+  worth_processing: boolean;
+  reasons: string[];
+  judged_at: string;
+}
+
+/** Input shape for putDreamVerdict — judged_at defaults to now() server-side. */
+export interface DreamVerdictInput {
+  worth_processing: boolean;
+  reasons: string[];
+}
+
 /** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */
 export const MAX_SEARCH_LIMIT = 100;
 
@@ -257,6 +270,12 @@ export interface BrainEngine {
   // Raw data
   putRawData(slug: string, source: string, data: object): Promise<void>;
   getRawData(slug: string, source?: string): Promise<RawData[]>;
+
+  // Dream-cycle significance verdict cache (v0.23).
+  // Keyed by (file_path, content_hash). Distinct from raw_data, which is
+  // page-scoped — transcripts being judged aren't pages yet.
+  getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null>;
+  putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void>;
 
   // Versions
   createVersion(slug: string): Promise<PageVersion>;

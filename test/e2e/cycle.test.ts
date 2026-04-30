@@ -97,8 +97,8 @@ describeE2E('E2E: runCycle against real Postgres', () => {
     });
 
     expect(report.schema_version).toBe('1');
-    // Cycle ran all 6 phases (or skipped the ones that don't support dry-run).
-    expect(report.phases.length).toBe(6);
+    // Cycle ran all 8 phases (or skipped the ones that don't support dry-run).
+    expect(report.phases.length).toBe(8);
 
     // Nothing got written.
     const afterPages = await conn.unsafe(`SELECT count(*)::int AS n FROM pages`);

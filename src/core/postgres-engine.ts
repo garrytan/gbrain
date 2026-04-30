@@ -1,5 +1,5 @@
 import postgres from 'postgres';
-import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection } from './engine.ts';
+import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection, DreamVerdict, DreamVerdictInput } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
@@ -334,11 +334,17 @@ export class PostgresEngine implements BrainEngine {
     const tagJoin = filters?.tag ? sql`JOIN tags t ON t.page_id = p.id` : sql``;
     const tagCondition = filters?.tag ? sql`AND t.tag = ${filters.tag}` : sql``;
     const updatedCondition = updatedAfter ? sql`AND p.updated_at > ${updatedAfter}::timestamptz` : sql``;
+    // slugPrefix uses the (source_id, slug) UNIQUE btree index for range scans.
+    // Escape LIKE metacharacters so the user prefix is treated as a literal.
+    const slugPrefix = filters?.slugPrefix;
+    const slugCondition = slugPrefix
+      ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
+      : sql``;
 
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition}
+      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition}
       ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
     `;
 
@@ -1295,6 +1301,39 @@ export class PostgresEngine implements BrainEngine {
       `;
     }
     return rows as unknown as RawData[];
+  }
+
+  // Dream-cycle significance verdict cache (v0.23).
+  async getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null> {
+    const sql = this.sql;
+    const rows = await sql<Array<{
+      worth_processing: boolean;
+      reasons: string[] | null;
+      judged_at: Date;
+    }>>`
+      SELECT worth_processing, reasons, judged_at
+      FROM dream_verdicts
+      WHERE file_path = ${filePath} AND content_hash = ${contentHash}
+    `;
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      worth_processing: r.worth_processing,
+      reasons: r.reasons ?? [],
+      judged_at: r.judged_at instanceof Date ? r.judged_at.toISOString() : String(r.judged_at),
+    };
+  }
+
+  async putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void> {
+    const sql = this.sql;
+    await sql`
+      INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons)
+      VALUES (${filePath}, ${contentHash}, ${verdict.worth_processing}, ${sql.json(verdict.reasons as Parameters<typeof sql.json>[0])})
+      ON CONFLICT (file_path, content_hash) DO UPDATE SET
+        worth_processing = EXCLUDED.worth_processing,
+        reasons = EXCLUDED.reasons,
+        judged_at = now()
+    `;
   }
 
   // Versions

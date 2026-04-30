@@ -129,8 +129,9 @@ Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab):
 - **Live sync** (every 15 min): `gbrain sync --repo ~/brain && gbrain embed --stale`
 - **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install)
 - **Dream cycle** (nightly): read `docs/guides/cron-schedule.md` for the full protocol.
-  Entity sweep, citation fixes, memory consolidation. This is what makes the brain
-  compound. Do not skip it.
+  Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
+  synthesis and cross-session pattern detection. 8 phases, one cron-friendly command. This
+  is what makes the brain compound. Do not skip it.
 - **Weekly**: `gbrain doctor --json && gbrain embed --stale`
 
 ## Step 8: Integrations

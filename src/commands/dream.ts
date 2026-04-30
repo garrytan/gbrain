@@ -39,12 +39,22 @@ interface DreamArgs {
   phase: CyclePhase | null;
   dir: string | null;
   help: boolean;
+  /** v0.21: ad-hoc transcript file path; implies --phase synthesize. */
+  inputFile: string | null;
+  /** v0.21: restrict synthesize to a single date (YYYY-MM-DD). */
+  date: string | null;
+  /** v0.21: backfill range start (YYYY-MM-DD). */
+  from: string | null;
+  /** v0.21: backfill range end (YYYY-MM-DD). */
+  to: string | null;
 }
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function parseArgs(args: string[]): DreamArgs {
   const phaseIdx = args.indexOf('--phase');
   const rawPhase = phaseIdx !== -1 ? args[phaseIdx + 1] : null;
-  const phase = rawPhase && (ALL_PHASES as string[]).includes(rawPhase)
+  let phase = rawPhase && (ALL_PHASES as string[]).includes(rawPhase)
     ? (rawPhase as CyclePhase)
     : null;
   if (rawPhase && !phase) {
@@ -55,6 +65,44 @@ function parseArgs(args: string[]): DreamArgs {
   const dirIdx = args.indexOf('--dir');
   const dir = dirIdx !== -1 ? args[dirIdx + 1] : null;
 
+  const inputIdx = args.indexOf('--input');
+  const inputFile = inputIdx !== -1 ? args[inputIdx + 1] ?? null : null;
+
+  const dateIdx = args.indexOf('--date');
+  const date = dateIdx !== -1 ? args[dateIdx + 1] ?? null : null;
+  if (date && !ISO_DATE_RE.test(date)) {
+    console.error(`--date must be YYYY-MM-DD; got "${date}"`);
+    process.exit(2);
+  }
+
+  const fromIdx = args.indexOf('--from');
+  const from = fromIdx !== -1 ? args[fromIdx + 1] ?? null : null;
+  if (from && !ISO_DATE_RE.test(from)) {
+    console.error(`--from must be YYYY-MM-DD; got "${from}"`);
+    process.exit(2);
+  }
+
+  const toIdx = args.indexOf('--to');
+  const to = toIdx !== -1 ? args[toIdx + 1] ?? null : null;
+  if (to && !ISO_DATE_RE.test(to)) {
+    console.error(`--to must be YYYY-MM-DD; got "${to}"`);
+    process.exit(2);
+  }
+  if (from && to && from > to) {
+    console.error(`--from (${from}) is after --to (${to}); empty range`);
+    process.exit(2);
+  }
+
+  // --input + --date / --from / --to is incoherent: --input is a single
+  // file, the date filters scan a directory.
+  if (inputFile && (date || from || to)) {
+    console.error('--input cannot be combined with --date / --from / --to');
+    process.exit(2);
+  }
+
+  // --input implies --phase synthesize.
+  if (inputFile && !phase) phase = 'synthesize';
+
   return {
     json: args.includes('--json'),
     dryRun: args.includes('--dry-run'),
@@ -62,6 +110,10 @@ function parseArgs(args: string[]): DreamArgs {
     phase,
     dir,
     help: args.includes('--help') || args.includes('-h'),
+    inputFile,
+    date,
+    from,
+    to,
   };
 }
 
@@ -104,22 +156,42 @@ async function resolveBrainDir(
 function printHelp() {
   console.log(`Usage: gbrain dream [options]
 
-Run one brain maintenance cycle: lint, backlinks, orphan sweep, sync,
-extract, and embed. Designed for cron (exits when done).
+Run one brain maintenance cycle. Eight phases:
+  lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
+
+The synthesize + patterns phases (v0.21) consolidate yesterday's
+conversation transcripts into reflections, originals, and cross-session
+pattern pages. Designed for cron (exits when done).
 
 Options:
-  --dry-run           Preview all fixes without writing (fs or DB)
+  --dry-run           Preview all fixes without writing. Note: synthesize
+                      runs the cheap Haiku significance filter (caches
+                      verdicts), but skips the Sonnet synthesis pass.
+                      "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain)
+
+  --input <file>      Synthesize a specific transcript file (implies
+                      --phase synthesize). Bypasses corpus-dir scan.
+  --date YYYY-MM-DD   Synthesize transcripts dated for one specific day.
+  --from YYYY-MM-DD   Backfill range start (use with --to).
+  --to   YYYY-MM-DD   Backfill range end.
+
   --help, -h          Show this help
 
 Examples:
   gbrain dream
   gbrain dream --dry-run --json
   gbrain dream --phase lint
+  gbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
+  gbrain dream --phase synthesize --from 2026-04-01 --to 2026-04-25
   0 2 * * * gbrain dream --json         # nightly via cron
+
+Configure synthesize:
+  gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
+  gbrain config set dream.synthesize.enabled true
 
 Related:
   gbrain autopilot --install            # continuous maintenance as a daemon
@@ -165,10 +237,14 @@ function printHuman(report: CycleReport) {
   const t = report.totals;
   const hasTotals =
     t.lint_fixes > 0 || t.backlinks_added > 0 || t.pages_synced > 0 ||
-    t.pages_extracted > 0 || t.pages_embedded > 0 || t.orphans_found > 0;
+    t.pages_extracted > 0 || t.pages_embedded > 0 || t.orphans_found > 0 ||
+    t.transcripts_processed > 0 || t.synth_pages_written > 0 || t.patterns_written > 0;
   if (hasTotals) {
     console.log(
-      `  totals: lint=${t.lint_fixes} backlinks=${t.backlinks_added} synced=${t.pages_synced} extracted=${t.pages_extracted} embedded=${t.pages_embedded} orphans=${t.orphans_found}`,
+      `  totals: lint=${t.lint_fixes} backlinks=${t.backlinks_added} synced=${t.pages_synced} ` +
+      `extracted=${t.pages_extracted} embedded=${t.pages_embedded} orphans=${t.orphans_found} ` +
+      `synth_transcripts=${t.transcripts_processed} synth_pages=${t.synth_pages_written} ` +
+      `patterns=${t.patterns_written}`,
     );
   }
 }
@@ -191,6 +267,10 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,
+    synthInputFile: opts.inputFile ?? undefined,
+    synthDate: opts.date ?? undefined,
+    synthFrom: opts.from ?? undefined,
+    synthTo: opts.to ?? undefined,
   });
 
   if (opts.json) {

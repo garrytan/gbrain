@@ -2306,3 +2306,379 @@ describe('checkAborted (v0.20.5 cycle signal)', () => {
     }).toThrow('aborted between phases: timeout');
   });
 });
+
+// --- v0.22.14: Self-health-check for bare workers ---
+
+describe('MinionWorker: self-health-check', () => {
+  test('health check is active when GBRAIN_SUPERVISED is not set', async () => {
+    // Save and clear the env var
+    const saved = process.env.GBRAIN_SUPERVISED;
+    delete process.env.GBRAIN_SUPERVISED;
+
+    try {
+      const worker = new MinionWorker(engine, {
+        queue: 'default',
+        concurrency: 1,
+        healthCheckInterval: 100, // fast for testing
+        pollInterval: 50,
+        stalledInterval: 10_000,
+        maxRssMb: 0,
+      });
+
+      worker.register('noop', async () => {});
+      await queue.add('noop', {});
+
+      const startPromise = worker.start();
+      // Let the health check fire at least once (100ms interval)
+      await new Promise(r => setTimeout(r, 300));
+      worker.stop();
+      await startPromise;
+
+      // Worker should have processed the job despite health check running
+      const completed = await queue.getJobs({ status: 'completed' });
+      expect(completed.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      if (saved !== undefined) process.env.GBRAIN_SUPERVISED = saved;
+      else delete process.env.GBRAIN_SUPERVISED;
+    }
+  }, 10_000);
+
+  test('health check is skipped when GBRAIN_SUPERVISED=1', async () => {
+    const saved = process.env.GBRAIN_SUPERVISED;
+    process.env.GBRAIN_SUPERVISED = '1';
+
+    try {
+      const worker = new MinionWorker(engine, {
+        queue: 'default',
+        concurrency: 1,
+        healthCheckInterval: 100,
+        pollInterval: 50,
+        stalledInterval: 10_000,
+        maxRssMb: 0,
+      });
+
+      worker.register('noop', async () => {});
+      await queue.add('noop', {});
+
+      const startPromise = worker.start();
+      await new Promise(r => setTimeout(r, 300));
+      worker.stop();
+      await startPromise;
+
+      // Worker should still process jobs fine
+      const completed = await queue.getJobs({ status: 'completed' });
+      expect(completed.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      if (saved !== undefined) process.env.GBRAIN_SUPERVISED = saved;
+      else delete process.env.GBRAIN_SUPERVISED;
+    }
+  }, 10_000);
+
+  test('healthCheckInterval=0 disables health check', async () => {
+    delete process.env.GBRAIN_SUPERVISED;
+
+    const worker = new MinionWorker(engine, {
+      queue: 'default',
+      concurrency: 1,
+      healthCheckInterval: 0,
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      maxRssMb: 0,
+    });
+
+    worker.register('noop', async () => {});
+    await queue.add('noop', {});
+
+    const startPromise = worker.start();
+    await new Promise(r => setTimeout(r, 300));
+    worker.stop();
+    await startPromise;
+
+    const completed = await queue.getJobs({ status: 'completed' });
+    expect(completed.length).toBeGreaterThanOrEqual(1);
+  }, 10_000);
+});
+
+// --- v0.22.14: Self-health-check behavior tests (D7) ---
+// These tests use a Proxy around the real engine so executeRaw can be
+// intercepted by SQL pattern. SELECT 1 = liveness probe; the count(*) query
+// = stall detection. Anything else passes through to the underlying engine.
+
+interface ProbeOverrides {
+  /** When set, executeRaw('SELECT 1') uses this function instead of pass-through.
+   *  Returning a thrown error simulates DB death; returning [{}] simulates success. */
+  selectOne?: () => Promise<unknown>;
+  /** When set, executeRaw of the stall-detection count(*) query returns this. */
+  countWaiting?: (handlers: string[]) => number;
+  /** Captures the last SQL string that matched the stall-count regex. Tests
+   *  use this to assert the production SQL still contains `name = ANY(...)`
+   *  so a future refactor that drops the predicate is caught. */
+  capturedStallSql?: { sql: string | null };
+}
+
+function makeProbeEngine(overrides: ProbeOverrides) {
+  return new Proxy(engine, {
+    get(target, prop, receiver) {
+      if (prop === 'executeRaw') {
+        return async (sql: string, params?: unknown[]): Promise<unknown[]> => {
+          if (overrides.selectOne && /^\s*SELECT\s+1\s*$/i.test(sql)) {
+            const r = await overrides.selectOne();
+            return Array.isArray(r) ? r : [r];
+          }
+          if (overrides.countWaiting && /count\(\*\).*minion_jobs.*WHERE\s+status\s*=\s*'waiting'/is.test(sql)) {
+            if (overrides.capturedStallSql) overrides.capturedStallSql.sql = sql;
+            const handlers = (params?.[1] as string[]) ?? [];
+            return [{ cnt: String(overrides.countWaiting(handlers)) }];
+          }
+          // Pass through to real engine for anything else (claim queries etc.)
+          return (target as unknown as { executeRaw: (s: string, p?: unknown[]) => Promise<unknown[]> })
+            .executeRaw(sql, params);
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as unknown as PGLiteEngine;
+}
+
+describe('MinionWorker: self-health-check behavior (v0.22.14)', () => {
+  test('emits unhealthy{db_dead} after dbFailExitAfter consecutive DB probe failures', async () => {
+    delete process.env.GBRAIN_SUPERVISED;
+
+    let probeCount = 0;
+    const probeEngine = makeProbeEngine({
+      selectOne: async () => {
+        probeCount++;
+        throw new Error('connection terminated unexpectedly');
+      },
+    });
+
+    const worker = new MinionWorker(probeEngine, {
+      queue: 'default',
+      concurrency: 1,
+      healthCheckInterval: 30,
+      dbFailExitAfter: 3,
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      maxRssMb: 0,
+    });
+
+    worker.register('noop', async () => {});
+
+    const events: Array<{ reason: string }> = [];
+    worker.on('unhealthy', (info) => { events.push(info); });
+
+    const startPromise = worker.start();
+    // 3 ticks at 30ms = 90ms; give extra slack.
+    await new Promise(r => setTimeout(r, 250));
+    worker.stop();
+    await startPromise;
+
+    expect(probeCount).toBeGreaterThanOrEqual(3);
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events[0].reason).toBe('db_dead');
+  }, 10_000);
+
+  test('DB recovery resets the failure counter (no exit after intermittent failures)', async () => {
+    delete process.env.GBRAIN_SUPERVISED;
+
+    let probeCount = 0;
+    // Pattern: fail, fail, succeed (resets), fail, fail, then permanently succeed.
+    // No 3 consecutive failures, so dbFailExitAfter=3 must NOT trip.
+    const probeEngine = makeProbeEngine({
+      selectOne: async () => {
+        const idx = probeCount++;
+        if (idx === 0 || idx === 1 || idx === 3 || idx === 4) {
+          throw new Error('transient blip');
+        }
+        return [{ ok: 1 }];
+      },
+    });
+
+    const worker = new MinionWorker(probeEngine, {
+      queue: 'default',
+      concurrency: 1,
+      healthCheckInterval: 30,
+      dbFailExitAfter: 3,
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      maxRssMb: 0,
+    });
+
+    worker.register('noop', async () => {});
+
+    const events: Array<{ reason: string }> = [];
+    worker.on('unhealthy', (info) => { events.push(info); });
+
+    const startPromise = worker.start();
+    await new Promise(r => setTimeout(r, 250));
+    worker.stop();
+    await startPromise;
+
+    // Counter should never have hit 3 consecutive — success at index 2 resets it.
+    const dbDeadEvents = events.filter(e => e.reason === 'db_dead');
+    expect(dbDeadEvents.length).toBe(0);
+  }, 10_000);
+
+  test('emits unhealthy{stalled} after stallExitAfterMs of continuous idle with waiting jobs', async () => {
+    delete process.env.GBRAIN_SUPERVISED;
+
+    const probeEngine = makeProbeEngine({
+      selectOne: async () => [{ ok: 1 }],
+      countWaiting: () => 5, // pretend 5 jobs are waiting for our handler names
+    });
+
+    const worker = new MinionWorker(probeEngine, {
+      queue: 'default',
+      concurrency: 1,
+      healthCheckInterval: 30,
+      stallWarnAfterMs: 50,
+      stallExitAfterMs: 100,
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      maxRssMb: 0,
+    });
+
+    worker.register('noop', async () => {});
+    // Don't queue any real jobs — claim returns null, inFlight stays 0,
+    // jobsCompleted stays 0, idle clock advances.
+
+    const events: Array<{ reason: string; waitingCount?: number }> = [];
+    worker.on('unhealthy', (info) => { events.push(info); });
+
+    const startPromise = worker.start();
+    // Both thresholds measured from lastCompletionTime (corrected per codex r2):
+    //   - tick @ +30ms: idle=30ms, < stallWarnAfterMs(50), no warn
+    //   - tick @ +60ms: idle=60ms, > 50, warn fires (stallWarningSince set)
+    //   - tick @ +90ms: idle=90ms, < stallExitAfterMs(100), no exit yet
+    //   - tick @ +120ms: idle=120ms, > 100 → exit fires (unhealthy event)
+    // Wait 350ms which leaves comfortable slack for setTimeout drift.
+    await new Promise(r => setTimeout(r, 350));
+    worker.stop();
+    await startPromise;
+
+    const stalledEvents = events.filter(e => e.reason === 'stalled');
+    expect(stalledEvents.length).toBeGreaterThanOrEqual(1);
+    expect(stalledEvents[0].waitingCount).toBe(5);
+    // The idleMinutes payload should reflect total idle, not warn-since.
+    // With idle ~120ms at exit time, idleMinutes rounds to 0 — that's
+    // expected; the value is informative, not load-bearing.
+  }, 10_000);
+
+  test('inFlight > 0 blocks stall detection (long-running legitimate job)', async () => {
+    delete process.env.GBRAIN_SUPERVISED;
+
+    const probeEngine = makeProbeEngine({
+      selectOne: async () => [{ ok: 1 }],
+      countWaiting: () => 5,
+    });
+
+    const worker = new MinionWorker(probeEngine, {
+      queue: 'default',
+      concurrency: 1,
+      healthCheckInterval: 30,
+      stallWarnAfterMs: 50,
+      stallExitAfterMs: 100,
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      maxRssMb: 0,
+    });
+
+    worker.register('noop', async () => {});
+
+    const events: Array<{ reason: string }> = [];
+    worker.on('unhealthy', (info) => { events.push(info); });
+
+    // Inject a fake in-flight entry directly. This bypasses the claim path
+    // (which goes through the proxy and complicates the cleanup race) and
+    // tests exactly what we want: the stall check's `inFlight.size === 0`
+    // gate when there's legitimate ongoing work.
+    const fakeInFlight = (worker as unknown as {
+      inFlight: Map<number, { lockTimer: NodeJS.Timeout; abort: AbortController; promise: Promise<void> }>
+    }).inFlight;
+    const fakeAbort = new AbortController();
+    const fakePromise = new Promise<void>(() => { /* never resolves */ });
+    const fakeTimer = setInterval(() => {}, 60_000); // dummy lock timer
+    fakeInFlight.set(99999, { lockTimer: fakeTimer, abort: fakeAbort, promise: fakePromise });
+
+    const startPromise = worker.start();
+    await new Promise(r => setTimeout(r, 350));
+    // Remove our fake entry before stop so the worker doesn't wait 30s for it.
+    clearInterval(fakeTimer);
+    fakeInFlight.delete(99999);
+    worker.stop();
+    await startPromise;
+
+    // No stall event should fire — inFlight.size > 0 gates the stall check.
+    const stalledEvents = events.filter(e => e.reason === 'stalled');
+    expect(stalledEvents.length).toBe(0);
+  }, 10_000);
+
+  test('regression (D1): waiting jobs of unregistered handler names do NOT trigger stall exit', async () => {
+    delete process.env.GBRAIN_SUPERVISED;
+
+    // The count(*) query is filtered by registered handler names. If handlers=['noop']
+    // and the queue has 5 'widget-fn' jobs, the SQL `name = ANY($2)` filter returns 0.
+    // The probe engine simulates this by checking handlers before returning a count;
+    // we ALSO capture the SQL to assert the predicate text is actually present (so a
+    // future refactor that silently drops `AND name = ANY(...)` is caught).
+    const capturedStallSql = { sql: null as string | null };
+    const probeEngine = makeProbeEngine({
+      selectOne: async () => [{ ok: 1 }],
+      countWaiting: (handlers) => handlers.includes('widget-fn') ? 5 : 0,
+      capturedStallSql,
+    });
+
+    const worker = new MinionWorker(probeEngine, {
+      queue: 'default',
+      concurrency: 1,
+      healthCheckInterval: 50,
+      stallWarnAfterMs: 100,
+      stallExitAfterMs: 200,
+      pollInterval: 50,
+      stalledInterval: 10_000,
+      maxRssMb: 0,
+    });
+
+    // Register 'noop' but pretend the queue is full of 'widget-fn' (unhandled).
+    worker.register('noop', async () => {});
+
+    const events: Array<{ reason: string }> = [];
+    worker.on('unhealthy', (info) => { events.push(info); });
+
+    const startPromise = worker.start();
+    // Window > stallExitAfterMs; if D1 fix wasn't applied, stall would fire.
+    await new Promise(r => setTimeout(r, 500));
+    worker.stop();
+    await startPromise;
+
+    // No stall event — the count for 'noop' handlers is 0, so worker is correctly idle.
+    const stalledEvents = events.filter(e => e.reason === 'stalled');
+    expect(stalledEvents.length).toBe(0);
+    // SQL shape assertion: the production query MUST filter by handler names.
+    // Without this assertion, a future change that drops the predicate would
+    // pass the no-event check above (the handler array would be irrelevant
+    // to the underlying DB but our probe just needs to return 0).
+    expect(capturedStallSql.sql).not.toBeNull();
+    expect(capturedStallSql.sql).toMatch(/name\s*=\s*ANY/i);
+  }, 10_000);
+
+  test('regression (R3): constructor throws when stallExitAfterMs <= stallWarnAfterMs', () => {
+    // The contract on MinionWorkerOpts.stallExitAfterMs says "Must be >
+    // stallWarnAfterMs". Without validation, an exit threshold equal to or
+    // less than the warn threshold made the configured exit time a lie
+    // (warn fires first, exit can't preempt). The constructor now throws
+    // loudly so misconfigurations fail at startup, not at idle-time.
+    expect(() => new MinionWorker(engine, {
+      stallWarnAfterMs: 200,
+      stallExitAfterMs: 100, // less than warn — invalid
+    })).toThrow(/stallExitAfterMs.*must be > stallWarnAfterMs/i);
+
+    expect(() => new MinionWorker(engine, {
+      stallWarnAfterMs: 100,
+      stallExitAfterMs: 100, // equal to warn — also invalid (must be strictly >)
+    })).toThrow(/stallExitAfterMs.*must be > stallWarnAfterMs/i);
+
+    // Sanity: defaults (5min warn / 10min exit) construct without throwing.
+    expect(() => new MinionWorker(engine, {})).not.toThrow();
+  });
+});

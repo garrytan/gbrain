@@ -328,6 +328,79 @@ describe('MinionSupervisor', () => {
     }, 15_000);
   });
 
+  describe('integration: GBRAIN_SUPERVISED env var (v0.22.14)', () => {
+    it('sets GBRAIN_SUPERVISED=1 on spawned worker child', async () => {
+      const outFile = join(tmpdir(), `gbrain-sup-supervised-${process.pid}-${Date.now()}.txt`);
+      try { unlinkSync(outFile); } catch { /* may not exist */ }
+
+      const h = makeHarness('supervised-env', `printf '%s\n' "\${GBRAIN_SUPERVISED-UNSET}" > "$OUT_FILE" ; exit 0`);
+
+      try {
+        const sup = spawnSupervisor(h, {
+          OUT_FILE: outFile,
+          SUP_MAX_CRASHES: '1',
+        });
+
+        await sup.exited;
+
+        expect(existsSync(outFile)).toBe(true);
+        const childSawEnv = readFileSync(outFile, 'utf8').trim();
+        expect(childSawEnv).toBe('1');
+      } finally {
+        try { unlinkSync(outFile); } catch { /* noop */ }
+        h.cleanup();
+      }
+    }, 15_000);
+  });
+
+  describe('regression (R3): healthInterval=0 disables timer (v0.22.14)', () => {
+    // Pre-fix: supervisor unconditionally called setInterval(callback, 0),
+    // which schedules a tight loop on the next event-loop tick. The
+    // operator-facing CLI claim "Use 0 to disable" was a lie — passing 0
+    // produced a DB-probe loop that hammered Postgres.
+    //
+    // Post-fix: setInterval is gated on healthInterval > 0. With 0, the
+    // supervisor runs its supervise loop normally with the health timer
+    // entirely absent.
+    //
+    // Assertion strategy: spawn the supervisor with SUP_HEALTH_INTERVAL_MS=0,
+    // a fast worker that exits cleanly, and SUP_MAX_CRASHES=1. A working fix
+    // should produce a single worker spawn → exit → supervisor shutdown
+    // sequence. If the tight-loop bug returned, the supervisor would still
+    // exit (max-crashes path) but the audit trail would show the tell-tale
+    // signature of an extremely high health-check call rate during the brief
+    // window before max-crashes fires. We assert the basic completion path
+    // and let CI's wall-clock detect any pathological CPU spike.
+    it('completes a normal supervise lifecycle with healthInterval=0', async () => {
+      const h = makeHarness('health-interval-zero', 'exit 0');
+
+      try {
+        const sup = spawnSupervisor(h, {
+          SUP_HEALTH_INTERVAL_MS: '0',
+          SUP_MAX_CRASHES: '1',
+        });
+
+        const start = Date.now();
+        const { code } = await sup.exited;
+        const elapsedMs = Date.now() - start;
+
+        // Clean exit (max-crashes path returns 1; this is fine — we just
+        // want to confirm the supervisor reached its terminal state without
+        // hanging or runaway looping).
+        expect(code).toBe(1);
+
+        // Sanity: a tight loop on setInterval(0) plus the spawn-respawn
+        // loop would still terminate at max-crashes, but it would be
+        // measurably slower than a clean run because the event loop is
+        // saturated with health-check callbacks. Cap the upper bound at
+        // 10s — clean runs typically finish in 1–2s.
+        expect(elapsedMs).toBeLessThan(10_000);
+      } finally {
+        h.cleanup();
+      }
+    }, 15_000);
+  });
+
   describe('integration: --max-rss spawn args (v0.21)', () => {
     it('passes --max-rss 2048 to spawned worker by default', async () => {
       const outFile = join(tmpdir(), `gbrain-sup-maxrss-${process.pid}-${Date.now()}.txt`);

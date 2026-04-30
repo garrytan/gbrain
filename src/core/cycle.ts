@@ -16,9 +16,14 @@
  *   │ Phase 1: lint --fix         (filesystem writes, no DB)    │
  *   │ Phase 2: backlinks --fix    (filesystem writes, no DB)    │
  *   │ Phase 3: sync               (DB picks up phases 1+2)      │
- *   │ Phase 4: extract            (DB picks up links from sync) │
- *   │ Phase 5: embed --stale      (DB writes)                   │
- *   │ Phase 6: orphans            (DB read, report only)        │
+ *   │ Phase 4: synthesize         (v0.23: transcripts → pages)  │
+ *   │ Phase 5: extract            (DB picks up links from sync  │
+ *   │                              + synthesize)                │
+ *   │ Phase 6: patterns           (v0.23: cross-session themes; │
+ *   │                              MUST be after extract so     │
+ *   │                              graph state is fresh)        │
+ *   │ Phase 7: embed --stale      (DB writes)                   │
+ *   │ Phase 8: orphans            (DB read, report only)        │
  *   └───────────────────────────────────────────────────────────┘
  *
  * COORDINATION:
@@ -39,20 +44,23 @@
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { homedir, hostname } from 'os';
+import { hostname } from 'os';
+import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
-export type CyclePhase = 'lint' | 'backlinks' | 'sync' | 'extract' | 'embed' | 'orphans';
+export type CyclePhase = 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'patterns' | 'embed' | 'orphans';
 
 export const ALL_PHASES: CyclePhase[] = [
   'lint',
   'backlinks',
   'sync',
+  'synthesize',
   'extract',
+  'patterns',
   'embed',
   'orphans',
 ];
@@ -60,13 +68,16 @@ export const ALL_PHASES: CyclePhase[] = [
 /**
  * Phases that mutate state (filesystem or DB) and therefore should
  * coordinate via the cycle lock. Only orphans is truly read-only
- * and skips the lock.
+ * and skips the lock. patterns mutates DB (writes pattern pages) so
+ * it acquires the lock; synthesize too.
  */
 const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'lint',
   'backlinks',
   'sync',
+  'synthesize',
   'extract',
+  'patterns',
   'embed',
 ]);
 
@@ -121,6 +132,12 @@ export interface CycleReport {
     pages_extracted: number;
     pages_embedded: number;
     orphans_found: number;
+    /** v0.23: number of transcripts the synthesize phase processed (judged + dispatched). */
+    transcripts_processed: number;
+    /** v0.23: number of new reflection/original/people pages written by synthesize. */
+    synth_pages_written: number;
+    /** v0.23: number of pattern pages written/updated by patterns phase. */
+    patterns_written: number;
   };
 }
 
@@ -141,11 +158,30 @@ export interface CycleOpts {
    */
   yieldBetweenPhases?: () => Promise<void>;
   /**
-   * AbortSignal from the Minions worker. When aborted (timeout, cancel,
-   * lock-loss), runCycle bails between phases and returns a 'failed' report
-   * instead of running the next phase. Without this, a timed-out
-   * autopilot-cycle handler ignores the abort and runs until the worker
-   * wedges (the 98-waiting-0-active incident on 2026-04-24).
+   * Generic in-phase keepalive (v0.23). Long-running phases (synthesize
+   * waiting on a fan-out aggregator, patterns rolling up reflections)
+   * call this periodically while idle to renew the cycle-lock TTL and
+   * the Minions worker job lock. Mirrors `yieldBetweenPhases` shape;
+   * passing the same function for both is the common case.
+   */
+  yieldDuringPhase?: () => Promise<void>;
+  /**
+   * Synthesize phase scope overrides (v0.23). Forwarded to runPhaseSynthesize.
+   * - `synthInputFile`: ad-hoc transcript path (`gbrain dream --input <file>`).
+   * - `synthDate` / `synthFrom` / `synthTo`: date filters for corpus scan.
+   * Mutually exclusive with each other in CLI parsing; runner trusts the
+   * caller (CLI wrapper validates).
+   */
+  synthInputFile?: string;
+  synthDate?: string;
+  synthFrom?: string;
+  synthTo?: string;
+  /**
+   * AbortSignal from the Minions worker (v0.22.1, #403). When aborted
+   * (timeout, cancel, lock-loss), runCycle bails between phases and
+   * returns a 'failed' report instead of running the next phase. Without
+   * this, a timed-out autopilot-cycle handler ignores the abort and runs
+   * until the worker wedges (the 98-waiting-0-active incident on 2026-04-24).
    */
   signal?: AbortSignal;
 }
@@ -154,7 +190,8 @@ export interface CycleOpts {
 
 const CYCLE_LOCK_ID = 'gbrain-cycle';
 const LOCK_TTL_MS = 30 * 60 * 1000;       // 30 minutes
-const LOCK_FILE_PATH_DEFAULT = join(homedir(), '.gbrain', 'cycle.lock');
+// Lazy: GBRAIN_HOME may be set after module load; resolve at call time.
+const getLockFilePathDefault = () => gbrainPath('cycle.lock');
 
 interface LockHandle {
   release: () => Promise<void>;
@@ -256,7 +293,7 @@ async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | nu
  * The file contains `{pid}\n{iso-timestamp}`. Staleness = mtime older
  * than LOCK_TTL_MS OR the PID is no longer alive on this host.
  */
-function acquireFileLock(lockPath = LOCK_FILE_PATH_DEFAULT): LockHandle | null {
+function acquireFileLock(lockPath = getLockFilePathDefault()): LockHandle | null {
   mkdirSync(join(lockPath, '..'), { recursive: true });
   const pid = process.pid;
 
@@ -763,7 +800,36 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
-    // ── Phase 4: extract ────────────────────────────────────────
+    // ── Phase 4: synthesize (v0.23) ─────────────────────────────
+    if (phases.includes('synthesize')) {
+      if (!engine) {
+        phaseResults.push({
+          phase: 'synthesize',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.synthesize');
+        const { runPhaseSynthesize } = await import('./cycle/synthesize.ts');
+        const { result, duration_ms } = await timePhase(() => runPhaseSynthesize(engine, {
+          brainDir: opts.brainDir,
+          dryRun,
+          yieldDuringPhase: opts.yieldDuringPhase,
+          inputFile: opts.synthInputFile,
+          date: opts.synthDate,
+          from: opts.synthFrom,
+          to: opts.synthTo,
+        }));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── Phase 5: extract (now picks up synthesize output) ───────
     if (phases.includes('extract')) {
       checkAborted(opts.signal);
       if (!engine) {
@@ -787,7 +853,36 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
-    // ── Phase 5: embed ──────────────────────────────────────────
+    // ── Phase 6: patterns (v0.23) ───────────────────────────────
+    // MUST run after extract so the graph state reads fresh — subagent
+    // put_page calls in synthesize set ctx.remote=true, so auto-link
+    // only fires for trusted-workspace writes (allow-listed). extract
+    // is the canonical materialization step.
+    if (phases.includes('patterns')) {
+      if (!engine) {
+        phaseResults.push({
+          phase: 'patterns',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.patterns');
+        const { runPhasePatterns } = await import('./cycle/patterns.ts');
+        const { result, duration_ms } = await timePhase(() => runPhasePatterns(engine, {
+          brainDir: opts.brainDir,
+          dryRun,
+          yieldDuringPhase: opts.yieldDuringPhase,
+        }));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── Phase 7: embed ──────────────────────────────────────────
     if (phases.includes('embed')) {
       checkAborted(opts.signal);
       if (!engine) {
@@ -808,7 +903,7 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
-    // ── Phase 6: orphans ────────────────────────────────────────
+    // ── Phase 8: orphans ────────────────────────────────────────
     if (phases.includes('orphans')) {
       checkAborted(opts.signal);
       if (!engine) {
@@ -859,6 +954,9 @@ function emptyTotals(): CycleReport['totals'] {
     pages_extracted: 0,
     pages_embedded: 0,
     orphans_found: 0,
+    transcripts_processed: 0,
+    synth_pages_written: 0,
+    patterns_written: 0,
   };
 }
 
@@ -881,6 +979,11 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
         : Number(p.details.embedded ?? 0);
     } else if (p.phase === 'orphans' && p.details) {
       t.orphans_found = Number(p.details.total_orphans ?? 0);
+    } else if (p.phase === 'synthesize' && p.details) {
+      t.transcripts_processed = Number(p.details.transcripts_processed ?? 0);
+      t.synth_pages_written = Number(p.details.pages_written ?? 0);
+    } else if (p.phase === 'patterns' && p.details) {
+      t.patterns_written = Number(p.details.patterns_written ?? 0);
     }
   }
   return t;

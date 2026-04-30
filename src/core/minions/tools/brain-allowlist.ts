@@ -91,19 +91,37 @@ function paramsToInputSchema(op: Operation): Record<string, unknown> {
 
 /**
  * For put_page specifically, the tool schema shown to the model constrains
- * `slug` to `wiki/agents/<subagentId>/...`. The server-side check in
- * operations.ts is the authoritative gate; this just helps the model write
- * correct slugs on the first try.
+ * `slug`. Two modes:
+ *
+ *  - Default (legacy): slug MUST start with `wiki/agents/<subagentId>/`,
+ *    enforced by both the JSONSchema `pattern` and the server-side check.
+ *  - Trusted-workspace (v0.23 dream cycle): when `allowedSlugPrefixes` is
+ *    set, the model is told the allowed prefixes in plain English (no
+ *    regex pattern — the prefix list is authoritative server-side, and
+ *    JSONSchema can't express "matches any of these globs" cleanly).
  */
-function namespacedPutPageSchema(op: Operation, subagentId: number): Record<string, unknown> {
+function namespacedPutPageSchema(
+  op: Operation,
+  subagentId: number,
+  allowedSlugPrefixes?: readonly string[],
+): Record<string, unknown> {
   const base = paramsToInputSchema(op);
   const props = (base.properties as Record<string, Record<string, unknown>>) ?? {};
   if (props.slug) {
-    props.slug = {
-      ...props.slug,
-      description: `Page slug. MUST start with "wiki/agents/${subagentId}/" (agents can only write under their own namespace).`,
-      pattern: `^wiki/agents/${subagentId}/.+`,
-    };
+    if (allowedSlugPrefixes && allowedSlugPrefixes.length > 0) {
+      props.slug = {
+        ...props.slug,
+        description:
+          `Page slug. MUST match one of these prefix globs: ${allowedSlugPrefixes.join(', ')}. ` +
+          `Slugs use lowercase alphanumeric segments separated by '/'. No leading slash, no '.md' extension, no underscores.`,
+      };
+    } else {
+      props.slug = {
+        ...props.slug,
+        description: `Page slug. MUST start with "wiki/agents/${subagentId}/" (agents can only write under their own namespace).`,
+        pattern: `^wiki/agents/${subagentId}/.+`,
+      };
+    }
   }
   return { ...base, properties: props };
 }
@@ -115,6 +133,14 @@ export interface BuildBrainToolsOpts {
   config: GBrainConfig;
   /** Optional filter: only include names in this set. */
   allowedNames?: ReadonlySet<string>;
+  /**
+   * Trusted-workspace allow-list (v0.23). When set, put_page is bounded
+   * to slugs matching these prefix globs instead of the legacy
+   * `wiki/agents/<id>/...` namespace. Trust comes from PROTECTED_JOB_NAMES
+   * (MCP can't submit subagent jobs) — this flows from
+   * SubagentHandlerData.allowed_slug_prefixes via the handler.
+   */
+  allowedSlugPrefixes?: readonly string[];
 }
 
 interface OpContextDeps {
@@ -123,6 +149,7 @@ interface OpContextDeps {
   subagentId: number;
   jobId: number;
   signal?: AbortSignal;
+  allowedSlugPrefixes?: readonly string[];
 }
 
 function buildOpContext(deps: OpContextDeps): OperationContext {
@@ -135,10 +162,13 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
       error: (msg: string) => process.stderr.write(`[subagent-tool:${deps.jobId}] ERROR: ${msg}\n`),
     },
     dryRun: false,
-    remote: true,                // match MCP trust boundary
+    remote: true,                // match MCP trust boundary for auto-link skip
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
+    allowedSlugPrefixes: deps.allowedSlugPrefixes
+      ? [...deps.allowedSlugPrefixes]
+      : undefined,
   };
 }
 
@@ -157,7 +187,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
 
   return picked.map<ToolDef>(op => {
     const schema = op.name === 'put_page'
-      ? namespacedPutPageSchema(op, opts.subagentId)
+      ? namespacedPutPageSchema(op, opts.subagentId, opts.allowedSlugPrefixes)
       : paramsToInputSchema(op);
 
     const toolName = sanitizeToolName(op.name);
@@ -179,6 +209,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           subagentId: opts.subagentId,
           jobId: ctx.jobId,
           signal: ctx.signal,
+          allowedSlugPrefixes: opts.allowedSlugPrefixes,
         });
         const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
         return op.handler(opCtx, params);

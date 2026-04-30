@@ -35,17 +35,17 @@
  */
 
 import { existsSync, mkdirSync, appendFileSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
-import { loadConfig, toEngineConfig } from '../../core/config.ts';
+import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
-const ROLLBACK_DIR = join(homedir(), '.gbrain', 'migrations');
-const ROLLBACK_FILE = join(ROLLBACK_DIR, 'v0_13_1-rollback.jsonl');
+// Lazy: GBRAIN_HOME may be set after module load.
+const getRollbackDir = () => gbrainPath('migrations');
+const getRollbackFile = () => join(getRollbackDir(), 'v0_13_1-rollback.jsonl');
 const BATCH_SIZE = 100;
 
 // ---------------------------------------------------------------------------
@@ -251,7 +251,8 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 // ---------------------------------------------------------------------------
 
 function ensureRollbackDir(): void {
-  if (!existsSync(ROLLBACK_DIR)) mkdirSync(ROLLBACK_DIR, { recursive: true });
+  const dir = getRollbackDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
 function appendRollbackEntry(entry: { slug: string; pre_frontmatter: Record<string, unknown> }): void {
@@ -260,7 +261,7 @@ function appendRollbackEntry(entry: { slug: string; pre_frontmatter: Record<stri
     timestamp: new Date().toISOString(),
     ...entry,
   }) + '\n';
-  appendFileSync(ROLLBACK_FILE, line, 'utf-8');
+  appendFileSync(getRollbackFile(), line, 'utf-8');
 }
 
 // ---------------------------------------------------------------------------

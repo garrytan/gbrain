@@ -20,7 +20,14 @@ import { UnrecoverableError } from './types.ts';
 import { MinionQueue } from './queue.ts';
 import { calculateBackoff } from './backoff.ts';
 import { randomUUID } from 'crypto';
+import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
+
+/** Reason payload emitted with `'unhealthy'` when self-health-check trips.
+ *  CLI layer (jobs.ts:work) subscribes and decides whether to call process.exit. */
+export type UnhealthyReason =
+  | { reason: 'db_dead'; consecutiveFailures: number; message: string }
+  | { reason: 'stalled'; waitingCount: number; idleMinutes: number };
 
 /**
  * Read the quiet_hours JSONB column off a MinionJob, if present. The
@@ -42,7 +49,13 @@ interface InFlightJob {
   promise: Promise<void>;
 }
 
-export class MinionWorker {
+/** Type-safe `on('unhealthy', ...)` for callers. */
+export interface MinionWorker {
+  on(event: 'unhealthy', listener: (info: UnhealthyReason) => void): this;
+  emit(event: 'unhealthy', info: UnhealthyReason): boolean;
+}
+
+export class MinionWorker extends EventEmitter {
   private queue: MinionQueue;
   private handlers = new Map<string, MinionHandler>();
   private running = false;
@@ -67,6 +80,7 @@ export class MinionWorker {
     private engine: BrainEngine,
     opts?: MinionWorkerOpts & MinionQueueOpts,
   ) {
+    super();
     this.queue = new MinionQueue(engine, {
       maxSpawnDepth: opts?.maxSpawnDepth,
       maxAttachmentBytes: opts?.maxAttachmentBytes,
@@ -81,7 +95,25 @@ export class MinionWorker {
       maxRssMb: opts?.maxRssMb ?? 0,
       getRss: opts?.getRss ?? (() => process.memoryUsage().rss),
       rssCheckInterval: opts?.rssCheckInterval ?? 60000,
+      healthCheckInterval: opts?.healthCheckInterval ?? 60000,
+      stallWarnAfterMs: opts?.stallWarnAfterMs ?? 5 * 60_000,
+      stallExitAfterMs: opts?.stallExitAfterMs ?? 10 * 60_000,
+      dbFailExitAfter: opts?.dbFailExitAfter ?? 3,
+      dbProbeTimeoutMs: opts?.dbProbeTimeoutMs ?? 10_000,
     };
+    // Stall thresholds contract: exit MUST be strictly greater than warn.
+    // If exit <= warn, the warn-then-exit semantics break: a single tick at
+    // idle > warn would set stallWarningSince and the subsequent tick at
+    // idle > exit could fire immediately without giving operators visibility.
+    // Reject misconfigurations at construction time so the failure mode is
+    // a loud throw on startup rather than a quiet contract violation.
+    if (this.opts.stallExitAfterMs <= this.opts.stallWarnAfterMs) {
+      throw new Error(
+        `MinionWorkerOpts: stallExitAfterMs (${this.opts.stallExitAfterMs}) must be > ` +
+        `stallWarnAfterMs (${this.opts.stallWarnAfterMs}). ` +
+        `The contract is "warn first, exit later" — they cannot fire on the same tick.`,
+      );
+    }
   }
 
   /** Register a handler for a job type. */
@@ -92,6 +124,28 @@ export class MinionWorker {
   /** Get registered handler names (used by claim query). */
   get registeredNames(): string[] {
     return Array.from(this.handlers.keys());
+  }
+
+  /** Emit 'unhealthy' with a no-listener fallback. The default contract is
+   *  fail-stop: pre-EventEmitter-refactor behavior was process.exit(1) inside
+   *  the timer; the refactor moved that responsibility to the CLI subscriber.
+   *  But direct API consumers without a listener would see emit() become a
+   *  no-op AND `healthExited=true` permanently disabling monitoring — a
+   *  silent regression. Solution: if no one subscribed, log and exit
+   *  ourselves so the worker dies and the PM restarts it. Subscribers
+   *  override this default by adding a listener before start(). */
+  private emitUnhealthy(info: UnhealthyReason): void {
+    if (this.listenerCount('unhealthy') === 0) {
+      const detail = info.reason === 'db_dead'
+        ? `DB unreachable (${info.consecutiveFailures} probes): ${info.message}`
+        : `worker stalled (${info.waitingCount} waiting, ${info.idleMinutes}m idle)`;
+      console.error(
+        `[health] FATAL: ${detail}. No 'unhealthy' listener registered; ` +
+        `defaulting to process.exit(1) for process-manager restart.`,
+      );
+      process.exit(1);
+    }
+    this.emit('unhealthy', info);
   }
 
   /** Start the worker loop. Blocks until stopped. */
@@ -155,6 +209,159 @@ export class MinionWorker {
       }, this.opts.rssCheckInterval);
     }
 
+    // Self-health-check — provides supervisor-grade monitoring for bare workers.
+    // Disabled when running under a supervisor (GBRAIN_SUPERVISED=1) or when
+    // healthCheckInterval is 0. Catches two failure modes that leave the process
+    // alive but non-functional:
+    //   1. DB connection death (Supabase/PgBouncer drops, network blip)
+    //   2. Worker stall (event loop alive but not claiming/completing jobs)
+    //
+    // On failure, emits an `'unhealthy'` event with a structured reason. The
+    // CLI layer (`src/commands/jobs.ts:work`) subscribes and decides whether to
+    // call process.exit. Library code never calls process.exit directly so
+    // MinionWorker stays embeddable in non-CLI contexts (tests, other hosts).
+    //
+    // Timer pattern: recursive setTimeout with a `running` flag, not setInterval.
+    // setInterval queues callbacks even when the prior is still awaiting; on a
+    // hung DB probe that piles up overlapping async checks racing on
+    // `consecutiveDbFailures`. The recursive pattern guarantees one tick at a time.
+    const isSupervisedChild = process.env.GBRAIN_SUPERVISED === '1';
+    let healthTimer: ReturnType<typeof setTimeout> | null = null;
+    if (!isSupervisedChild && this.opts.healthCheckInterval > 0) {
+      let consecutiveDbFailures = 0;
+      let lastKnownCompleted = this.jobsCompleted;
+      let lastCompletionTime = Date.now();
+      let stallWarningSince: number | null = null;
+      let healthRunning = false;
+      let healthExited = false;
+
+      // Race executeRaw against a wall-clock deadline. A hung connection
+      // (network-partitioned PgBouncer, deadlocked backend) would otherwise
+      // hold the await forever — the recursive setTimeout's next tick is only
+      // scheduled in `finally`, so a hung probe would silently disable the
+      // entire health monitor. The timeout treats hangs as failures and feeds
+      // them into `dbFailExitAfter`.
+      const probeWithTimeout = async (): Promise<void> => {
+        const ac = new AbortController();
+        const timeoutMs = this.opts.dbProbeTimeoutMs;
+        const timer = setTimeout(() => ac.abort(), timeoutMs);
+        try {
+          await Promise.race([
+            this.engine.executeRaw('SELECT 1'),
+            new Promise<never>((_, reject) => {
+              ac.signal.addEventListener('abort', () => {
+                reject(new Error(`probe timeout after ${timeoutMs}ms`));
+              });
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
+      const runHealthCheck = async (): Promise<void> => {
+        if (healthRunning || !this.running || healthExited) return;
+        healthRunning = true;
+        try {
+          // --- 1. DB liveness probe ---
+          try {
+            await probeWithTimeout();
+            consecutiveDbFailures = 0;
+          } catch (e) {
+            consecutiveDbFailures++;
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error(
+              `[health] DB probe failed (${consecutiveDbFailures}/${this.opts.dbFailExitAfter}): ${msg}`,
+            );
+            if (consecutiveDbFailures >= this.opts.dbFailExitAfter) {
+              console.error(
+                `[health] DB unreachable after ${this.opts.dbFailExitAfter} consecutive probes. ` +
+                `Emitting 'unhealthy' for process-manager restart.`,
+              );
+              healthExited = true;
+              this.emitUnhealthy({
+                reason: 'db_dead',
+                consecutiveFailures: consecutiveDbFailures,
+                message: msg,
+              });
+            }
+            return; // Skip stall check when DB is flaky
+          }
+
+          // --- 2. Stall detection ---
+          if (this.jobsCompleted > lastKnownCompleted) {
+            lastKnownCompleted = this.jobsCompleted;
+            lastCompletionTime = Date.now();
+            stallWarningSince = null;
+          }
+
+          const idleMs = Date.now() - lastCompletionTime;
+
+          // Only check for stalls when no jobs are in-flight and it's been a while
+          if (idleMs > this.opts.stallWarnAfterMs && this.inFlight.size === 0) {
+            try {
+              // Filter by registered handler names so a worker that doesn't
+              // claim a particular job-name doesn't false-positive when those
+              // jobs accumulate in `waiting`. Only counts work THIS worker would
+              // actually have claimed.
+              const handlerNames = this.registeredNames;
+              const rows = handlerNames.length === 0
+                ? [] as { cnt: string }[]
+                : await this.engine.executeRaw<{ cnt: string }>(
+                    `SELECT count(*)::text AS cnt FROM minion_jobs
+                     WHERE status = 'waiting'
+                       AND queue = $1
+                       AND name = ANY($2::text[])`,
+                    [this.opts.queue, handlerNames],
+                  );
+              const waiting = parseInt(rows[0]?.cnt ?? '0', 10);
+              const idleMinutes = Math.round(idleMs / 60_000);
+              if (waiting > 0) {
+                // Two thresholds, both measured from `lastCompletionTime` (NOT
+                // from when the warning fired). With defaults (warn=5min,
+                // exit=10min), the first warning fires at idle=5min and the
+                // unhealthy emit fires at idle=10min — matching the contract
+                // documented in MinionWorkerOpts.
+                if (!stallWarningSince) {
+                  stallWarningSince = Date.now();
+                  console.warn(
+                    `[health] Possible stall: ${waiting} waiting job(s) for ` +
+                    `registered handlers, 0 in-flight, ${idleMinutes}m since last completion`,
+                  );
+                } else if (idleMs > this.opts.stallExitAfterMs) {
+                  console.error(
+                    `[health] Worker stalled for ${Math.round(this.opts.stallExitAfterMs / 60_000)}+ ` +
+                    `minutes with ${waiting} waiting job(s). Emitting 'unhealthy' for process-manager restart.`,
+                  );
+                  healthExited = true;
+                  this.emitUnhealthy({
+                    reason: 'stalled',
+                    waitingCount: waiting,
+                    idleMinutes,
+                  });
+                }
+              } else {
+                stallWarningSince = null; // Queue empty (for our handlers) — not stalled, just idle
+              }
+            } catch {
+              // DB query failed — the liveness probe above will catch persistent failures
+            }
+          } else {
+            stallWarningSince = null;
+          }
+        } finally {
+          healthRunning = false;
+          if (this.running && !healthExited) {
+            healthTimer = setTimeout(runHealthCheck, this.opts.healthCheckInterval);
+          }
+        }
+      };
+
+      // First tick scheduled after one interval so newly-started workers have
+      // a chance to do real work before the stall clock starts ticking.
+      healthTimer = setTimeout(runHealthCheck, this.opts.healthCheckInterval);
+    }
+
     try {
       while (this.running) {
         // Promote delayed jobs
@@ -201,6 +408,7 @@ export class MinionWorker {
     } finally {
       clearInterval(stalledTimer);
       if (rssTimer) clearInterval(rssTimer);
+      if (healthTimer) clearTimeout(healthTimer); // recursive setTimeout pattern
       process.removeListener('SIGTERM', shutdown);
       process.removeListener('SIGINT', shutdown);
 

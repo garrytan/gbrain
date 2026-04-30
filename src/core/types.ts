@@ -45,6 +45,14 @@ export interface PageFilters {
   offset?: number;
   /** ISO date string (YYYY-MM-DD or full ISO timestamp). Filter to pages updated_at > value. */
   updated_after?: string;
+  /**
+   * Prefix-match filter on slug. Implemented as `WHERE slug LIKE prefix || '%'`
+   * in both engines so it uses the (source_id, slug) UNIQUE constraint's btree
+   * index for efficient range scans on large brains. Used by storage-tiering
+   * commands (gbrain storage status, gbrain export --restore-only) to scope
+   * queries to a tier directory without loading every page into memory.
+   */
+  slugPrefix?: string;
 }
 
 // Chunks

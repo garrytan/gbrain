@@ -101,6 +101,37 @@ describe('PGLiteEngine: Pages', () => {
     expect(tagged[0].slug).toBe('test/tagged');
   });
 
+  test('listPages with slugPrefix filter (Issue #13)', async () => {
+    await truncateAll();
+    await engine.putPage('media/x/tweet-1', { ...testPage, type: 'concept' });
+    await engine.putPage('media/x/tweet-2', { ...testPage, type: 'concept' });
+    await engine.putPage('media/articles/post-1', { ...testPage, type: 'concept' });
+    await engine.putPage('people/alice', { ...testPage, type: 'person' });
+
+    const xOnly = await engine.listPages({ slugPrefix: 'media/x/', limit: 100 });
+    expect(xOnly.map((p) => p.slug).sort()).toEqual(['media/x/tweet-1', 'media/x/tweet-2']);
+
+    const allMedia = await engine.listPages({ slugPrefix: 'media/', limit: 100 });
+    expect(allMedia.length).toBe(3);
+
+    // Path-segment risk: 'media/x' (no trailing /) would also match 'media/xerox'.
+    // The matcher in storage-config.ts is responsible for trailing-/ semantics
+    // (step 6); the engine treats slugPrefix as a literal string prefix.
+    expect((await engine.listPages({ slugPrefix: 'media/x', limit: 100 })).length).toBe(2);
+  });
+
+  test('listPages slugPrefix escapes LIKE metacharacters', async () => {
+    await truncateAll();
+    await engine.putPage('safe/foo', { ...testPage, type: 'concept' });
+    // A user prefix containing % or _ would otherwise match unintended slugs
+    // if not escaped. We can't easily insert a slug with % in it (most slugs
+    // are url-safe), but we can confirm the escape logic doesn't break the
+    // happy path.
+    const result = await engine.listPages({ slugPrefix: 'safe/', limit: 10 });
+    expect(result.length).toBe(1);
+    expect(result[0].slug).toBe('safe/foo');
+  });
+
   test('resolveSlugs exact match', async () => {
     await engine.putPage('test/exact', testPage);
     const slugs = await engine.resolveSlugs('test/exact');

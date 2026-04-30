@@ -774,6 +774,30 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
          ORDER BY depth DESC
          LIMIT 5
       `;
+      // Subcheck 3 (v0.22.14): RSS-watchdog kills in the last 24h. Bare workers
+      // newly default to --max-rss 2048 (was 0); operators who run large embed
+      // or import jobs may see kills that didn't happen pre-v0.22.14. We surface
+      // a hint when this signature appears so the upgrade path is obvious.
+      // Signature: when the watchdog trips, gracefulShutdown('watchdog') aborts
+      // in-flight jobs with `new Error('watchdog')`. The worker's failJob path
+      // (worker.ts:660-664) writes `error_text = 'aborted: watchdog'` for any
+      // job in-flight at the moment of the kill.
+      //
+      // We deliberately DO NOT do a loose `ILIKE '%watchdog%'`:
+      //   1. Parent jobs that inherit `on_child_fail='fail_parent'` get
+      //      `"child job N failed: aborted: watchdog"` — counting that
+      //      double-counts (child + parent) for one watchdog event.
+      //   2. Any user error_text containing the word "watchdog" matches.
+      // Match the exact prefix `'aborted: watchdog'` to scope this purely to
+      // the worker's own kill signature.
+      const rssKillRows: Array<{ cnt: number }> = await sql`
+        SELECT count(*)::int AS cnt
+          FROM minion_jobs
+         WHERE status IN ('dead', 'failed')
+           AND finished_at > now() - interval '24 hours'
+           AND error_text = 'aborted: watchdog'
+      `;
+      const rssKillCount = rssKillRows[0]?.cnt ?? 0;
 
       const problems: string[] = [];
       if (stalledRows.length > 0) {
@@ -792,6 +816,14 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         problems.push(
           `waiting-queue depth exceeds ${threshold} for: ${sample}. ` +
           `Fix: set maxWaiting on the submitter (or raise GBRAIN_QUEUE_WAITING_THRESHOLD).`
+        );
+      }
+      if (rssKillCount > 0) {
+        problems.push(
+          `${rssKillCount} job(s) dead-lettered for RSS-watchdog memory-limit kills in last 24h. ` +
+          `v0.22.14 changed the bare-worker --max-rss default from 0 (off) to 2048 MB. ` +
+          `Fix: raise the limit (e.g. \`gbrain jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
+          `See skills/migrations/v0.22.14.md.`
         );
       }
 

@@ -8,11 +8,9 @@
  */
 
 import { createEngine } from '../core/engine-factory.ts';
-import { loadConfig, saveConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
+import { loadConfig, saveConfig, toEngineConfig, gbrainPath, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
-import { homedir } from 'os';
-import { join } from 'path';
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -48,7 +46,7 @@ function parseArgs(args: string[]): MigrateOpts {
 }
 
 function getManifestPath(): string {
-  return join(homedir(), '.gbrain', 'migrate-manifest.json');
+  return gbrainPath('migrate-manifest.json');
 }
 
 interface MigrateManifest {
@@ -99,7 +97,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       process.exit(1);
     }
   } else {
-    targetConfig.database_path = opts.targetPath || join(homedir(), '.gbrain', 'brain.pglite');
+    targetConfig.database_path = opts.targetPath || gbrainPath('brain.pglite');
   }
 
   // Connect to target

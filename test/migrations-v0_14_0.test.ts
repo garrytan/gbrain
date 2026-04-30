@@ -16,16 +16,17 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 let tmpHome: string;
-const originalHome = process.env.HOME;
+const originalGbrainHome = process.env.GBRAIN_HOME;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-v0_14_0-'));
-  process.env.HOME = tmpHome;
+  // GBRAIN_HOME is the parent dir; configDir() appends '.gbrain' itself.
+  process.env.GBRAIN_HOME = tmpHome;
 });
 
 afterEach(() => {
-  if (originalHome) process.env.HOME = originalHome;
-  else delete process.env.HOME;
+  if (originalGbrainHome !== undefined) process.env.GBRAIN_HOME = originalGbrainHome;
+  else delete process.env.GBRAIN_HOME;
   try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 

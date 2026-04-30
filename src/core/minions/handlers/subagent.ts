@@ -149,10 +149,14 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     const systemPrompt = data.system ?? DEFAULT_SYSTEM;
 
     // Build the tool registry bound to THIS job as the owning subagent.
+    // allowed_slug_prefixes (v0.23) flows through buildBrainTools → the
+    // put_page schema description AND the OperationContext, so the model's
+    // tool schema and the server-side check stay in sync.
     const registry = deps.toolRegistry ?? buildBrainTools({
       subagentId: ctx.id,
       engine,
       config,
+      allowedSlugPrefixes: data.allowed_slug_prefixes,
     });
     const toolDefs = data.allowed_tools && data.allowed_tools.length > 0
       ? filterAllowedTools(registry, data.allowed_tools)

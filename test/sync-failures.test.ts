@@ -193,6 +193,21 @@ describe('classifyErrorCode — error message to code mapping', () => {
     expect(classifyErrorCode('invalid UTF-8 sequence at position 500')).toBe('INVALID_UTF8');
   });
 
+  test('classifies FILE_TOO_LARGE across all three production sites', async () => {
+    const { classifyErrorCode } = await import('../src/core/sync.ts');
+    // src/core/import-file.ts:352 — OS-level file size on disk
+    expect(classifyErrorCode('File too large (8432105 bytes)')).toBe('FILE_TOO_LARGE');
+    // src/core/import-file.ts:199 — content size limit (5MB cap)
+    expect(classifyErrorCode('Content too large (6000000 bytes, max 5000000). Split the content into smaller files or remove large embedded assets.')).toBe('FILE_TOO_LARGE');
+    // src/core/import-file.ts:401 — code file size cap
+    expect(classifyErrorCode('Code file too large (8000000 bytes)')).toBe('FILE_TOO_LARGE');
+  });
+
+  test('classifies SYMLINK_NOT_ALLOWED from import-file.ts symlink rejection', async () => {
+    const { classifyErrorCode } = await import('../src/core/sync.ts');
+    expect(classifyErrorCode('Skipping symlink: /path/to/link.md')).toBe('SYMLINK_NOT_ALLOWED');
+  });
+
   test('returns UNKNOWN for unrecognized errors', async () => {
     const { classifyErrorCode } = await import('../src/core/sync.ts');
     expect(classifyErrorCode('something completely different')).toBe('UNKNOWN');

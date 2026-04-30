@@ -170,6 +170,25 @@ export interface MinionWorkerOpts {
    *  case where all concurrency slots are wedged with zero job completions
    *  so the per-job check never fires. */
   rssCheckInterval?: number;
+  /** Self-health-check interval in ms. 0 = disabled. Default: 60000 (1 minute).
+   *  Automatically disabled when running under a supervisor (GBRAIN_SUPERVISED=1).
+   *  Provides DB liveness probes and stall detection for bare `gbrain jobs work`
+   *  deployments managed by external process managers (systemd, Docker, cron). */
+  healthCheckInterval?: number;
+  /** Stall detection: ms of continuous idle (waiting>0, inFlight=0, no completions)
+   *  before emitting the first warning. Default: 300000 (5 minutes). */
+  stallWarnAfterMs?: number;
+  /** Stall detection: ms of continuous idle before emitting `'unhealthy'` with
+   *  reason='stalled'. Default: 600000 (10 minutes). Must be > stallWarnAfterMs. */
+  stallExitAfterMs?: number;
+  /** DB liveness probe: number of consecutive failed `SELECT 1` probes before
+   *  emitting `'unhealthy'` with reason='db_dead'. Default: 3. */
+  dbFailExitAfter?: number;
+  /** Per-probe wall-clock timeout in ms. A `SELECT 1` that hangs longer than
+   *  this counts as a failure (fed into dbFailExitAfter). Without this, a
+   *  hung probe would wedge the recursive setTimeout chain forever and
+   *  silently disable the health monitor. Default: 10000 (10 seconds). */
+  dbProbeTimeoutMs?: number;
 }
 
 // --- Job Context (passed to handlers) ---
@@ -402,6 +421,19 @@ export interface SubagentHandlerData {
   system?: string;
   /** Template variables for subagent_def. Arbitrary JSON-serializable. */
   input_vars?: Record<string, unknown>;
+  /**
+   * Trusted-workspace allow-list for put_page (v0.23 dream cycle).
+   *
+   * When set, the subagent's put_page calls are bounded to slugs matching
+   * any of these prefix globs (e.g. ["wiki/personal/reflections/*",
+   * "wiki/originals/*"]). When unset/empty, the legacy
+   * `wiki/agents/<subagentId>/...` namespace check applies.
+   *
+   * Trust comes from PROTECTED_JOB_NAMES gating subagent submission — MCP
+   * cannot reach this field. Only cycle.ts (synthesize/patterns phases)
+   * and direct CLI submitters set it.
+   */
+  allowed_slug_prefixes?: string[];
 }
 
 /**

@@ -121,6 +121,31 @@ export function validatePageSlug(slug: string): void {
 }
 
 /**
+ * Match a slug against a list of allow-list prefix globs.
+ *
+ * Glob form: `<prefix>/*` matches any slug starting with `<prefix>/` and
+ * having at least one more segment (single or multi). Bare `<prefix>` (no
+ * trailing `/*`) matches that exact slug only. The `*` is intentionally
+ * permissive — depth is unbounded, so `wiki/originals/*` matches both
+ * `wiki/originals/idea-x` and `wiki/originals/ideas/2026-04-25-idea-y`.
+ *
+ * Used by the v0.23 dream-cycle trusted-workspace path. Order doesn't
+ * matter; the first match wins (returns true on any match).
+ */
+export function matchesSlugAllowList(slug: string, prefixes: readonly string[]): boolean {
+  for (const p of prefixes) {
+    if (p.endsWith('/*')) {
+      const base = p.slice(0, -2);
+      if (slug === base) continue;
+      if (slug.startsWith(base + '/')) return true;
+    } else if (p === slug) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Allowlist validator for uploaded file basenames. Rejects control chars, backslashes,
  * RTL overrides (\u202E), leading dot (hidden files) and leading dash (CLI flag confusion).
  * Allows extension dots and underscores. Max 255 chars.
@@ -181,6 +206,22 @@ export interface OperationContext {
   jobId?: number;
   subagentId?: number;
   viaSubagent?: boolean;
+  /**
+   * Trusted-workspace allow-list (v0.23 dream cycle). When the cycle's
+   * synthesize/patterns phases dispatch a subagent, they thread an
+   * explicit list of slug-prefix globs (e.g. "wiki/personal/reflections/*")
+   * through this field. put_page enforces it BEFORE the legacy
+   * `wiki/agents/<id>/...` namespace check.
+   *
+   * Trust comes from the SUBMITTER (subagent jobs are gated by
+   * PROTECTED_JOB_NAMES — MCP cannot submit them), not from `remote`.
+   * Every subagent tool call has `remote=true` for auto-link safety,
+   * so basing trust on `remote` is incoherent (would always reject).
+   *
+   * Empty / unset → fall back to the legacy namespace check (existing
+   * v0.15 behavior; pure addition, no regression).
+   */
+  allowedSlugPrefixes?: string[];
   /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers
@@ -264,9 +305,23 @@ const put_page: Operation = {
       if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
         throw new OperationError('permission_denied', 'put_page via subagent requires ctx.subagentId');
       }
-      const prefix = `wiki/agents/${ctx.subagentId}/`;
-      if (!slug.startsWith(prefix) || slug.length === prefix.length) {
-        throw new OperationError('permission_denied', `put_page via subagent must write under '${prefix}...'`);
+      const allowList = ctx.allowedSlugPrefixes;
+      if (allowList && allowList.length > 0) {
+        // Trusted-workspace path: explicit allow-list bounds writes.
+        // Set only by cycle.ts (synthesize/patterns) which submits subagent
+        // jobs under PROTECTED_JOB_NAMES — MCP cannot reach this branch.
+        if (!matchesSlugAllowList(slug, allowList)) {
+          throw new OperationError(
+            'permission_denied',
+            `put_page slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`
+          );
+        }
+      } else {
+        // Legacy default: agent-namespace confinement.
+        const prefix = `wiki/agents/${ctx.subagentId}/`;
+        if (!slug.startsWith(prefix) || slug.length === prefix.length) {
+          throw new OperationError('permission_denied', `put_page via subagent must write under '${prefix}...'`);
+        }
       }
     }
 
@@ -295,7 +350,16 @@ const put_page: Operation = {
       | { skipped: 'remote' }
       | undefined;
     let autoTimeline: { created: number } | { error: string } | { skipped: 'remote' } | undefined;
-    if (ctx.remote === true) {
+    // Trusted-workspace path (v0.23 dream cycle) re-enables auto-link/timeline
+    // even though ctx.remote=true, because the allow-list bounds the slug and
+    // the synthesis prompt is itself the trusted dispatcher. Without this,
+    // the cycle's `extract` phase would have to recompute every edge, and
+    // patterns (which runs after extract) would still see the right graph
+    // but auto_timeline would never fire on synth output.
+    const trustedWorkspace = ctx.viaSubagent === true
+      && Array.isArray(ctx.allowedSlugPrefixes)
+      && ctx.allowedSlugPrefixes.length > 0;
+    if (ctx.remote === true && !trustedWorkspace) {
       autoLinks = { skipped: 'remote' };
       autoTimeline = { skipped: 'remote' };
     } else if (result.parsedPage) {

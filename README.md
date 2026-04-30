@@ -132,7 +132,7 @@ GBrain ships 29 skills organized by `skills/RESOLVER.md` (or your OpenClaw's `AG
 |-------|-------------|
 | **enrich** | Tiered enrichment (Tier 1/2/3). Creates and updates person/company pages with compiled truth and timelines. |
 | **query** | 3-layer search with synthesis and citations. Says "the brain doesn't have info on X" instead of hallucinating. |
-| **maintain** | Periodic health: stale pages, orphans, dead links, citation audit, back-link enforcement, tag consistency. |
+| **maintain** | Periodic health: stale pages, orphans, dead links, citation audit, back-link enforcement, tag consistency. v0.23 adds the dream cycle's synthesize + patterns phases ... overnight conversation transcripts become reflections, originals, and 25-year patterns. |
 | **citation-fixer** | Scans pages for missing or malformed citations. Fixes format to match the standard. |
 | **repo-architecture** | Where new brain files go. Decision protocol: primary subject determines directory, not format. |
 | **publish** | Share brain pages as password-protected HTML. Zero LLM calls. |
@@ -365,6 +365,30 @@ gbrain preserves it on reinstall and emits a stderr notice telling your agent to
 **Skillify is the piece that makes the skills tree survive six months of compounding work.**
 Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist
 and the anti-patterns it catches.
+
+## Storage tiering: keep bulk content out of git (v0.22.11)
+
+When your brain crosses 100K files and bulk machine-generated content (tweets, articles, transcripts)
+becomes the size driver, declare which directories belong in git and which live in the database only.
+
+```yaml
+# gbrain.yml at the brain repo root
+storage:
+  db_tracked:
+    - people/
+    - companies/
+    - deals/
+  db_only:
+    - media/x/
+    - media/articles/
+    - meetings/transcripts/
+```
+
+`gbrain sync` auto-manages your `.gitignore` for `db_only` paths. `gbrain export --restore-only --repo .`
+repopulates missing files from the database (container restart, fresh clone, accidental rm).
+`gbrain storage status` shows the tier breakdown.
+
+Full guide: [docs/storage-tiering.md](docs/storage-tiering.md).
 
 ## Getting Data In
 
@@ -621,8 +645,11 @@ SEARCH
   gbrain query <question>              Hybrid search (vector + keyword + RRF)
 
 IMPORT
-  gbrain import <dir> [--no-embed]      Import markdown (idempotent)
-  gbrain sync [--repo <path>]           Git-to-brain incremental sync
+  gbrain import <dir> [--no-embed] [--workers N]
+                                        Import markdown (idempotent)
+  gbrain sync [--repo <path>] [--workers N]
+                                        Git-to-brain incremental sync
+                                        (>100-file diffs auto-parallelize 4 workers on Postgres)
   gbrain export [--dir ./out/]          Export to markdown
 
 FILES
@@ -668,7 +695,11 @@ ADMIN
   gbrain auth create|list|revoke|test   Token management for the HTTP transport
   gbrain integrations                   Integration recipe dashboard
   gbrain sources list|add|remove|...    Multi-source brain management (v0.18)
-  gbrain dream [--dry-run] [--phase N]  One maintenance cycle then exit (cron-friendly)
+  gbrain dream [--dry-run] [--phase N]  8-phase maintenance cycle (lint→backlinks→sync→synthesize
+                                        →extract→patterns→embed→orphans). v0.23 added synthesize +
+                                        patterns: transcripts → reflections + cross-session themes.
+  gbrain dream --input <file>           Ad-hoc transcript synthesis (implies --phase synthesize)
+  gbrain dream --date YYYY-MM-DD        Synthesize a single day; --from/--to for backfill ranges
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
   gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)

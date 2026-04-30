@@ -301,7 +301,7 @@ export function resolveSlugForPath(filePath: string, repoPrefix?: string): strin
 
 import { existsSync as _existsSync, readFileSync as _readFileSync, appendFileSync as _appendFileSync, mkdirSync as _mkdirSync } from 'fs';
 import { join as _joinPath } from 'path';
-import { homedir as _homedir } from 'os';
+import { gbrainPath as _gbrainPath } from './config.ts';
 import { createHash as _createHash } from 'crypto';
 
 export interface SyncFailure {
@@ -360,6 +360,11 @@ export function classifyErrorCode(errorMsg: string): string {
 
   // Generic fallbacks.
   if (/invalid UTF-?8|INVALID_UTF8/i.test(errorMsg)) return 'INVALID_UTF8';
+
+  // v0.22.12 additions: covers the four real production sites in src/core/import-file.ts
+  // (lines 199, 347, 352, 401) that previously bucketed to UNKNOWN.
+  if (/file too large|content too large|FILE_TOO_LARGE/i.test(errorMsg)) return 'FILE_TOO_LARGE';
+  if (/skipping symlink|symlink|SYMLINK_NOT_ALLOWED/i.test(errorMsg)) return 'SYMLINK_NOT_ALLOWED';
   return 'UNKNOWN';
 }
 
@@ -397,7 +402,7 @@ export function formatCodeBreakdown(
 }
 
 function _failuresDir(): string {
-  return _joinPath(_homedir(), '.gbrain');
+  return _gbrainPath();
 }
 
 export function syncFailuresPath(): string {

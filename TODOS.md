@@ -1,5 +1,253 @@
 # TODOS
 
+## claw-test E2E (v0.22.16 follow-ups)
+
+### Hermes runner — `src/core/claw-test/runners/hermes.ts`
+**Priority:** P2
+
+**What:** Add a Hermes implementation of the `AgentRunner` interface. v1 ships only OpenClaw; v1.1 lands hermes once we have real friction reports from openclaw to validate the contract against.
+
+**Why:** Cross-agent diff (`gbrain friction diff --base openclaw --compare hermes`) is the highest-leverage next signal. Friction unique to one agent vs common-to-both separates "agent contract bug" from "gbrain bug" automatically.
+
+**Effort:** S (CC ~30m). Depends on: v1 openclaw runner producing real friction reports first.
+
+---
+
+### Friction analytics suite — `diff` / `trend` / `migration-stub`
+**Priority:** P2
+
+**What:** Three new `gbrain friction` subcommands deferred from v1:
+- `gbrain friction diff --base <run-or-agent> --compare <run-or-agent>` (cross-agent comparison; ~80 LOC)
+- `gbrain friction trend [--since <version-or-date>] [--phase <name>]` (time-series across runs; ~60 LOC)
+- `gbrain friction migration-stub [--threshold N]` (clusters friction by phase + tokens, emits `skills/migrations/v[N+1].md` stub; ~150 LOC)
+
+**Why:** Turns point-in-time reports into a slope. Pairs with the v1.1 public scoreboard.
+
+**Effort:** M (CC ~2h total).
+
+---
+
+### Scenario expansion — `supabase-migration` and `supervisor-restart`
+**Priority:** P2
+
+**What:** Two more scenarios under `test/fixtures/claw-test-scenarios/`:
+- `supabase-migration` — `gbrain init --pglite` then `gbrain migrate --to supabase`; verifies the cross-engine migration path
+- `supervisor-restart` — kill worker mid-job; verify supervisor recovers without data loss
+
+**Why:** These are the other highest-historical-pain regression points (per CLAUDE.md fix-wave history). v1 ships only `fresh-install` + `upgrade-from-v0.18` because Codex flagged that mixing them dilutes the fresh-install signal; v1.1 lands them as separate scenarios.
+
+**Effort:** M (CC ~1h each).
+
+---
+
+### Real v0.18 SQL dump for upgrade scenario
+**Priority:** P2
+
+**What:** The `upgrade-from-v0.18` scenario ships scaffolded — `seed/dump.sql` is missing. The harness gracefully no-ops the seed phase when absent, so the scenario currently behaves like fresh-install. v1.1: generate a real v0.18-shape PGLite dump per the procedure documented in `test/fixtures/claw-test-scenarios/upgrade-from-v0.18/seed/README.md`.
+
+**Why:** Without a real seed, the scenario doesn't actually exercise the migration chain forward-walk. That's the whole point of the upgrade scenario — proves issue #239/#243/#266/#357 class regressions stay fixed.
+
+**Effort:** S (CC ~30m once a v0.18 checkout is handy). Depends on: ability to run a v0.18 gbrain build.
+
+---
+
+### Public scoreboard — `gbrain-evals.io/friction`
+**Priority:** P3
+
+**What:** Sibling-repo PR in `garrytan/gbrain-evals` that renders friction JSONL into a public dashboard. Friction count per version per agent, line charts over time. v1's JSONL already includes `gbrain_version` + `agent` tags so the scoreboard is a thin layer on top.
+
+**Why:** Marketing surface. Proves install quality is improving release-over-release. The friction loop becomes visible to the world, not just maintainers.
+
+**Effort:** M. Depends on: a working live mode and ≥10 real friction reports.
+
+---
+
+### PTY-mode transcript capture
+**Priority:** P3
+
+**What:** `transcript-capture.ts` currently uses plain `child_process.spawn` pipes. Some agents only emit ANSI colors / progress UI on a TTY. v1.1 adds a PTY mode (likely via `node-pty`) so live-mode transcripts capture the full agent UX.
+
+**Why:** Faithful transcripts make the friction → reasoning link more useful. v1 accepts that some agent UI is lost.
+
+**Effort:** S (CC ~30m). Mostly a ~30 LOC swap inside `spawnWithCapture`.
+
+---
+
+### Read-side host-isolation (`$GBRAIN_HOST_HOME`)
+**Priority:** P3
+
+**What:** v0.22.16 confined every `~/.gbrain` write site to honor `$GBRAIN_HOME`. But `src/commands/init.ts:299-313` still reads real `~/.claude` / `~/.openclaw` / `~/.codex` / `~/.factory` / `~/.kiro` for module fingerprinting (host detection). Even with write-isolation, a claw-test running on a developer's box discovers their real installed mods. v1.1: add a separate `$GBRAIN_HOST_HOME` override for the read-side detection so the claw-test can run truly hermetic.
+
+**Why:** v1's hermeticity contract is "writes are isolated, reads are not." v1.1 closes the read-side gap.
+
+**Effort:** S (CC ~30m).
+
+---
+
+### Routing-callout sweep — annotate skills the claw-test exercises
+**Priority:** P3
+
+**What:** `skills/_friction-protocol.md` is a cross-cutting convention. v1.1: sweep the 4–6 skills the claw-test actually exercises (setup, brain-ops, query, ingest, smoke-test, the migrations the test covers) and add a `> **Convention:** see [skills/_friction-protocol.md](_friction-protocol.md).` callout via the existing `src/core/dry-fix.ts` shape so DRY auto-fix doesn't fight it.
+
+**Why:** Right now agents only call `gbrain friction log` if they find the protocol skill on their own. The callouts route them there proactively from any harness-exercised skill.
+
+**Effort:** S (CC ~15m).
+
+---
+
+## minions / worker (v0.22.14 follow-ups)
+
+### v0.22.15 — Embed cooperative-abort (HIGHEST PRIORITY — daily pain)
+**Priority:** P0
+
+**What:** Plumb `signal: AbortSignal` through `runPhaseEmbed` →
+`src/commands/embed.ts` → `embedBatch` in `src/core/embedding.ts`. Check
+`signal?.aborted` between OpenAI batch calls (every ~100 texts, ~2s
+real-time) and between slugs in the per-slug loop.
+
+**Why:** Embed phase ignores `signal.aborted` between batches today. Job
+wall-clock timeout fires → handler keeps running → cycle's finally block
+unreachable → `gbrain_cycle_locks` row stays held indefinitely. Every
+subsequent autopilot cron cycle sees `cycle_already_running` → skips. Lock
+TTL is 30 min; new cycles give up before that. Doctor reports UNHEALTHY.
+
+**The chain in production:** ~5min cron submits cycle → 22K stale pages →
+embed phase takes 10–15 min → 600s timeout fires → job dead-lettered → embed
+keeps running → lock held → all subsequent cycles skip. Garry hits this
+DAILY on his production brain.
+
+**Pros:** Closes the daily wedge. Makes timeouts actually effective. Lets
+operators bump worker timeouts confidently knowing abort actually stops
+work.
+
+**Cons:** Touching the embed hot path; small risk of botching the abort
+checks. Mitigation: between-batch granularity (~2s), not per-text (too fine)
+or per-slug (too coarse for 500+ chunk slugs).
+
+**Context:** PR #503 (v0.22.14) catches the SYMPTOM (worker stalled, queue
+piling up) via self-health-monitoring. This PR catches the CAUSE for one
+specific failure class. Both fixes are needed; they're complementary, not
+duplicative.
+
+**Files to touch:**
+- `src/core/cycle.ts:579` — `runPhaseEmbed(engine, dryRun)` → add
+  `signal?: AbortSignal` arg
+- `src/core/cycle.ts:803` — pass `opts.signal` through
+- `src/commands/embed.ts:~363` — accept signal, check between slugs
+- `src/core/embedding.ts:51-56` — `embedBatch(texts, onProgress?, signal?)`,
+  check between for-loop iterations of `BATCH_SIZE` slices
+
+**Tests required:**
+1. embedBatch checks signal between OpenAI calls; aborts within one batch (~2s)
+2. Per-slug loop in `embed.ts` checks signal between slugs
+3. End-to-end: cycle handler with embed phase + signal aborted mid-flight →
+   finally runs → `gbrain_cycle_locks` row deleted
+4. Regression: 1K+ chunks scenario — embed does NOT block lock release when
+   timeout fires
+
+**Effort:** M (human: ~3 hr / CC: ~30 min).
+
+**Depends on / blocked by:** Nothing. v0.22.14 ships first.
+
+### v0.23+ — Bare-worker engine reconnect parity with supervisor
+**Priority:** P2
+
+**What:** Extract the supervisor's reconnect-then-fail pattern into
+`MinionWorker` so bare workers can retry transient DB blips before exiting.
+Today the supervisor calls `engine.reconnect()` after 3 consecutive DB health
+failures (#406); the bare worker just emits `'unhealthy'` and the CLI calls
+`process.exit(1)`.
+
+**Why:** Bare-worker behavior is more disruptive than supervised behavior on
+transient PgBouncer blips. A bare worker restarts the entire process; a
+supervised worker just reconnects the pool. Operationally the supervisor
+approach is gentler (no in-flight job loss, no PM restart latency).
+
+**Pros:** Unifies bare and supervised behavior. Reduces process churn on
+transient network blips.
+
+**Cons:** More code in MinionWorker; risk of reconnect masking a real
+problem. Mitigation: cap retry attempts, fall through to `'unhealthy'`
+emission after the cap.
+
+**Context:** Filed during v0.22.14 plan-eng-review. The asymmetry is
+documented in v0.22.14 CHANGELOG as deliberate; this TODO captures the
+"unify someday" intent.
+
+**Effort:** S (human: ~2 hr / CC: ~20 min).
+
+**Depends on / blocked by:** Nothing.
+
+### v0.23+ — `minion_workers` heartbeat table for queue_health doctor (B7)
+**Priority:** P3
+
+**What:** Add a `minion_workers` table (`worker_id` PK, `hostname`,
+`last_heartbeat`, `queue`, `concurrency`, `started_at`) so the existing
+`queue_health` doctor check (Postgres path) can detect dead workers via
+heartbeat staleness instead of relying on the indirect `lock_until` proxy.
+
+**Why:** v0.19.1 added `queue_health` checks for stalled-active jobs and
+waiting-depth threshold. The worker-heartbeat subcheck was deferred (B7)
+because the `lock_until`-on-active-jobs proxy can't distinguish "worker
+exited cleanly" from "worker idle" — a check that cries wolf erodes trust
+in every doctor check. With a real heartbeat row, doctor can say "no worker
+seen in N intervals" with confidence.
+
+**Pros:** Doctor's `queue_health` becomes ground-truth. Detects "worker
+container died but cron didn't restart it" scenario.
+
+**Cons:** New table, schema migration, every health-tick UPSERTs. Costs
+a write per worker per minute (default).
+
+**Context:** Filed during v0.22.14 plan-eng-review. PR #503's self-health
+monitoring is the worker-side liveness; this would be the queue-side
+ground-truth.
+
+**Effort:** M (human: ~1 day / CC: ~1 hr).
+
+**Depends on / blocked by:** Schema migration system; nothing else.
+
+## sync (v0.22.13 follow-up — PR #490 review)
+
+### D-PR490-1 — Plumb resolved `database_url` through `SyncOpts`
+**Priority:** P3
+
+**What:** Add `database_url?: string` (or a richer `resolvedConnection` shape) to
+`SyncOpts` and have the caller (`runSync`, the cycle handler, the jobs handler)
+populate it from the active engine instead of having `performSync` /
+`performFullSync` / `import.ts` each call `loadConfig()` separately. Today every
+sync run hits the config file three times.
+
+**Why:** v0.18 multi-source brains can in principle run different sources against
+different `database_url` endpoints (or different per-source overrides via
+`sources.config_jsonb`). Right now `loadConfig()` returns the global config, and
+that always matches the engine in practice — but the convention papers over a
+real divergence the moment someone wants per-source connection settings. Folding
+the resolution into `SyncOpts` makes the worker-engine creation in `sync.ts` and
+`import.ts` deterministic from `SyncOpts` alone.
+
+**Pros:**
+- Removes 3 redundant `loadConfig()` calls per sync.
+- Makes `performSync` / `performFullSync` side-effect-free with respect to the
+  on-disk config file.
+- Sets up for per-source `database_url` overrides without further refactor.
+- Makes the v0.22.13 belt-and-suspenders fallback (PR #490 Q3) cleaner — no
+  more `!config?.database_url` short-circuit inside the parallel branch.
+
+**Cons:**
+- API-shape change to `SyncOpts` (mild; not externally exported).
+- Touching three callers (`runSync`, jobs handler, `cycle.ts` `runPhaseSync`).
+- Only worth doing when paired with a per-source override story; otherwise
+  it's just plumbing.
+
+**Context:** Surfaced during the PR #490 plan-eng-review (parallel sync).
+Deferred because it isn't on the v0.22.13 critical path. The same pattern would
+benefit the cycle handler and the autopilot daemon. See the plan-eng-review
+decisions log: A4 = "Defer; file as TODO."
+
+**Depends on / blocked by:** Nothing structural. Best paired with the v0.18
+per-source `config_jsonb` work if/when that lands.
+
 ## sync error-code classification (PR #501 follow-ups)
 
 ### Plumb structured `ParseValidationCode` through `ImportResult`
