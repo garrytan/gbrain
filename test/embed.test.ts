@@ -18,7 +18,7 @@ mock.module('../src/core/embedding.ts', () => ({
     // Simulate API latency so concurrent workers actually overlap.
     await new Promise(r => setTimeout(r, 30));
     activeEmbedCalls--;
-    return texts.map(() => new Float32Array(1536));
+    return texts.map(() => new Float32Array(384));
   },
 }));
 

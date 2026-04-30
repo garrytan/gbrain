@@ -23,7 +23,7 @@ import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.
 mock.module('../../src/core/embedding.ts', () => ({
   embedBatch: async (texts: string[]) => {
     // Deterministic fake vector for each chunk.
-    return texts.map(() => new Float32Array(1536));
+    return texts.map(() => new Float32Array(384));
   },
 }));
 

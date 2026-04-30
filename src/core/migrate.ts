@@ -1101,6 +1101,34 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 31,
+    name: 'embedding_dimension_384',
+    // Local embedding installs can use compact 384-dimensional vectors.
+    // Existing PGLite brains created from older schemas still have
+    // content_chunks.embedding as vector(1536), which rejects the 384-dim
+    // vectors returned by the local OpenAI-compatible Qwen3 shim. Convert
+    // the column and metadata together, rebuilding the HNSW index around
+    // the type change. Existing 1536-dim embeddings are expected to be
+    // regenerated after this migration.
+    sqlFor: {
+      postgres: `
+        DROP INDEX IF EXISTS idx_chunks_embedding;
+        ALTER TABLE content_chunks ALTER COLUMN embedding DROP DEFAULT;
+        ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(384) USING NULL;
+        CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+        UPDATE config SET value = '384' WHERE key = 'embedding_dimensions';
+      `,
+      pglite: `
+        DROP INDEX IF EXISTS idx_chunks_embedding;
+        ALTER TABLE content_chunks ALTER COLUMN embedding DROP DEFAULT;
+        ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(384) USING NULL;
+        CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+        UPDATE config SET value = '384' WHERE key = 'embedding_dimensions';
+      `,
+    },
+    sql: '',
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

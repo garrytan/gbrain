@@ -211,7 +211,7 @@ describe('PGLiteEngine: Search', () => {
   });
 
   test('searchVector returns empty when no embeddings', async () => {
-    const fakeEmbedding = new Float32Array(1536);
+    const fakeEmbedding = new Float32Array(384);
     const results = await engine.searchVector(fakeEmbedding);
     expect(results.length).toBe(0);
   });
@@ -270,7 +270,7 @@ describe('PGLiteEngine: Chunks', () => {
 
   test('getChunksWithEmbeddings returns embedding data', async () => {
     await engine.putPage('test/embed', testPage);
-    const embedding = new Float32Array(1536).fill(0.1);
+    const embedding = new Float32Array(384).fill(0.1);
     await engine.upsertChunks('test/embed', [
       { chunk_index: 0, chunk_text: 'With embedding', chunk_source: 'compiled_truth', embedding },
     ]);
