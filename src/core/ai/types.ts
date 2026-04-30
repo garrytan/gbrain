@@ -55,6 +55,11 @@ export interface Recipe {
   setup_hint?: string;
 }
 
+export interface CredentialSourceInfo {
+  kind: 'env' | 'openclaw-codex-auth';
+  detail?: string;
+}
+
 export interface AIGatewayConfig {
   /** Current embedding model as "provider:modelId" (e.g. "openai:text-embedding-3-large"). */
   embedding_model?: string;
@@ -66,6 +71,8 @@ export interface AIGatewayConfig {
   base_urls?: Record<string, string>;
   /** Env snapshot read once at configuration time. Gateway never reads process.env at call time. */
   env: Record<string, string | undefined>;
+  /** Optional non-secret credential-source hints keyed by provider id. */
+  credential_sources?: Partial<Record<string, CredentialSourceInfo>>;
 }
 
 export interface ParsedModelId {

@@ -6,7 +6,7 @@
  */
 
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
-import { configureGateway, embedOne, isAvailable as gwIsAvailable } from '../core/ai/gateway.ts';
+import { configureGateway, embedOne, isAvailable as gwIsAvailable, getCredentialSource } from '../core/ai/gateway.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
@@ -40,8 +40,20 @@ function configureFromEnv(): void {
 
 function envReady(recipe: Recipe): boolean {
   const required = recipe.auth_env?.required ?? [];
+  if (recipe.id === 'openai') {
+    return !!process.env.OPENAI_API_KEY || process.env.GBRAIN_OPENCLAW_CODEX_AUTH === '1';
+  }
   if (required.length === 0) return true; // e.g. local Ollama
   return required.every(k => !!process.env[k]);
+}
+
+function providerStatus(recipe: Recipe): string {
+  if (!envReady(recipe)) return `✗ missing ${recipe.auth_env?.required?.[0] ?? 'setup'}`;
+  if (recipe.id === 'openai') {
+    if (process.env.OPENAI_API_KEY) return '✓ ready (env)';
+    if (process.env.GBRAIN_OPENCLAW_CODEX_AUTH === '1') return '✓ ready (OpenClaw auth opt-in)';
+  }
+  return '✓ ready';
 }
 
 export async function runProviders(subcommand: string | undefined, args: string[]): Promise<void> {
@@ -93,8 +105,7 @@ function runList(_args: string[]): void {
   for (const r of recipes) {
     const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
     const hasExpand = !!r.touchpoints.expansion;
-    const ready = envReady(r);
-    const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
+    const status = providerStatus(r);
     rows.push(
       r.id.padEnd(14) +
       r.tier.padEnd(18) +
@@ -134,6 +145,9 @@ async function runTest(args: string[]): Promise<void> {
     const v = await embedOne('gbrain smoke test');
     const ms = Date.now() - start;
     console.log(`  ✓ ${ms}ms, ${v.length} dims`);
+    const source = getCredentialSource('openai');
+    if (source?.kind === 'openclaw-codex-auth') console.log('  source: OpenClaw Codex auth');
+    else if (modelArg?.startsWith('openai:') || (!modelArg && process.env.OPENAI_API_KEY)) console.log('  source: env');
     console.log('\nAll probes green.');
   } catch (e) {
     const ms = Date.now() - start;
@@ -171,7 +185,9 @@ function runEnv(args: string[]): void {
     console.log('Required:');
     for (const k of required) {
       const set = !!process.env[k];
-      console.log(`  ${k.padEnd(32)} ${set ? '✓ set' : '✗ not set'}`);
+      const openclawSatisfied = recipe.id === 'openai' && k === 'OPENAI_API_KEY' && process.env.GBRAIN_OPENCLAW_CODEX_AUTH === '1';
+      const status = set ? '✓ set' : openclawSatisfied ? '✓ via OpenClaw opt-in' : '✗ not set';
+      console.log(`  ${k.padEnd(32)} ${status}`);
     }
   } else {
     console.log('Required: (none)');
@@ -185,6 +201,9 @@ function runEnv(args: string[]): void {
   }
   if (recipe.auth_env?.setup_url) {
     console.log(`\nSetup: ${recipe.auth_env.setup_url}`);
+  }
+  if (recipe.id === 'openai') {
+    console.log('\nOptional OpenClaw auth opt-in: set GBRAIN_OPENCLAW_CODEX_AUTH=1 and either GBRAIN_OPENCLAW_AUTH_PATH=/path/to/auth.json or GBRAIN_OPENCLAW_AUTH_DIR=/path/to/openclaw/auth.');
   }
   if (recipe.setup_hint) {
     console.log(`\n${recipe.setup_hint}`);

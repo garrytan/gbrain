@@ -24,5 +24,5 @@ export const openai: Recipe = {
       price_last_verified: '2026-04-20',
     },
   },
-  setup_hint: 'Get an API key at https://platform.openai.com/api-keys, then `export OPENAI_API_KEY=...`',
+  setup_hint: 'Get an API key at https://platform.openai.com/api-keys, then `export OPENAI_API_KEY=...`, or opt in to local OpenClaw Codex auth with GBRAIN_OPENCLAW_CODEX_AUTH=1.',
 };

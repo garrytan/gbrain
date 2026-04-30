@@ -32,10 +32,12 @@ import type {
   AIGatewayConfig,
   Recipe,
   TouchpointKind,
+  CredentialSourceInfo,
 } from './types.ts';
 import { resolveRecipe, assertTouchpoint } from './model-resolver.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { resolveOpenClawCodexAuthToken } from './openclaw-auth.ts';
 
 const MAX_CHARS = 8000;
 const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
@@ -53,6 +55,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     base_urls: config.base_urls,
     env: config.env,
+    credential_sources: config.credential_sources ? { ...config.credential_sources } : undefined,
   };
   _modelCache.clear();
 }
@@ -86,6 +89,25 @@ export function getExpansionModel(): string {
   return requireConfig().expansion_model ?? DEFAULT_EXPANSION_MODEL;
 }
 
+export function getCredentialSource(providerId: string): CredentialSourceInfo | null {
+  const cfg = requireConfig();
+  return cfg.credential_sources?.[providerId] ?? null;
+}
+
+function resolveOpenAIApiKey(cfg: AIGatewayConfig): string | null {
+  const direct = cfg.env.OPENAI_API_KEY?.trim();
+  if (direct) return direct;
+  const resolved = resolveOpenClawCodexAuthToken(cfg.env);
+  if (resolved) {
+    cfg.credential_sources = {
+      ...(cfg.credential_sources ?? {}),
+      openai: { kind: 'openclaw-codex-auth', detail: resolved.profilePath },
+    };
+    return resolved.token;
+  }
+  return null;
+}
+
 /**
  * Check whether a touchpoint can be served given the current config.
  * Replaces scattered `!process.env.OPENAI_API_KEY` checks (Codex C3).
@@ -112,6 +134,7 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
     const required = recipe.auth_env?.required ?? [];
+    if (recipe.id === 'openai') return !!resolveOpenAIApiKey(_config!);
     if (required.length === 0) return true;
     return required.every(k => !!_config!.env[k]);
   } catch {
@@ -138,9 +161,9 @@ async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any;
 function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
   switch (recipe.implementation) {
     case 'native-openai': {
-      const apiKey = cfg.env.OPENAI_API_KEY;
+      const apiKey = resolveOpenAIApiKey(cfg);
       if (!apiKey) throw new AIConfigError(
-        `OpenAI embedding requires OPENAI_API_KEY.`,
+        `OpenAI embedding requires OPENAI_API_KEY or opt-in OpenClaw Codex auth.`,
         recipe.setup_hint,
       );
       const client = createOpenAI({ apiKey });
@@ -248,8 +271,8 @@ async function resolveExpansionProvider(modelStr: string): Promise<{ model: any;
 function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
   switch (recipe.implementation) {
     case 'native-openai': {
-      const apiKey = cfg.env.OPENAI_API_KEY;
-      if (!apiKey) throw new AIConfigError(`OpenAI expansion requires OPENAI_API_KEY.`, recipe.setup_hint);
+      const apiKey = resolveOpenAIApiKey(cfg);
+      if (!apiKey) throw new AIConfigError(`OpenAI expansion requires OPENAI_API_KEY or opt-in OpenClaw Codex auth.`, recipe.setup_hint);
       return createOpenAI({ apiKey }).languageModel(modelId);
     }
     case 'native-google': {
