@@ -2,7 +2,9 @@ import type { BrainEngine } from '../core/engine.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { operationsByName } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
-import { createHmac } from 'crypto';
+import { createHmac, randomBytes } from 'crypto';
+
+const ALLOWED_TAGS = ['preference', 'fact', 'method', 'project', 'person', 'decision'] as const;
 
 export interface HttpServeOptions {
   port?: number;
@@ -88,6 +90,8 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   const searchOp = operationsByName['search'];
   const getPageOp = operationsByName['get_page'];
   const listPagesOp = operationsByName['list_pages'];
+  const putPageOp = operationsByName['put_page'];
+  const deletePageOp = operationsByName['delete_page'];
 
   const server = Bun.serve({
     port,
@@ -157,6 +161,53 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         return ok({ pages }, Date.now() - t0);
       }
 
+      // ── PUT /page  { content, slug?, tags?, source? } ────────────────────
+      if (path === '/page' && req.method === 'PUT') {
+        let body: Record<string, unknown>;
+        try { body = await req.json(); } catch { return err('invalid_json', 'Body must be JSON'); }
+
+        const content = body.content as string;
+        if (!content || typeof content !== 'string') return err('missing_param', 'content is required');
+        if (content.length > 50_000) return err('too_large', 'content exceeds 50k character limit');
+
+        const tags = (body.tags as string[] | undefined) ?? [];
+        const invalid = tags.filter(t => !(ALLOWED_TAGS as readonly string[]).includes(t));
+        if (invalid.length) return err('invalid_tags', `Invalid tags: ${invalid.join(', ')}. Allowed: ${ALLOWED_TAGS.join(', ')}`);
+
+        const source = (body.source as string | undefined) ?? 'agent';
+        const slug = (body.slug as string | undefined) || `mem/${new Date().toISOString().slice(0, 10)}/${randomBytes(3).toString('hex')}`;
+
+        // Prepend frontmatter unless content already has it
+        const hasfrontmatter = content.trimStart().startsWith('---');
+        const fullContent = hasfrontmatter ? content : [
+          '---',
+          `source: ${source}`,
+          tags.length ? `tags: [${tags.join(', ')}]` : null,
+          `created: ${new Date().toISOString()}`,
+          '---',
+          '',
+          content,
+        ].filter(l => l !== null).join('\n');
+
+        const result = await putPageOp.handler(ctx, { slug, content: fullContent });
+        return ok({ slug, ...(result as object) }, Date.now() - t0);
+      }
+
+      // ── DELETE /page?slug=... ─────────────────────────────────────────────
+      if (path === '/page' && req.method === 'DELETE') {
+        const slug = url.searchParams.get('slug');
+        if (!slug) return err('missing_param', 'slug is required');
+        await deletePageOp.handler(ctx, { slug });
+        return ok({ slug, deleted: true }, Date.now() - t0);
+      }
+
+      // ── GET /pages/recent?limit=N ─────────────────────────────────────────
+      if (path === '/pages/recent' && req.method === 'GET') {
+        const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10), 200);
+        const pages = await listPagesOp.handler(ctx, { domain: 'mem', limit });
+        return ok({ pages }, Date.now() - t0);
+      }
+
       return err('not_found', 'Unknown endpoint', 404);
     },
   });
@@ -169,6 +220,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   console.error('  POST /query   {query, limit?, expand?}  Authorization: OTP <code>');
   console.error('  GET  /page?slug=...&otp=<code>');
   console.error('  GET  /pages?domain=...&limit=20&otp=<code>');
+  console.error('  PUT  /page        {content, slug?, tags?, source?}');
+  console.error('  DELETE /page?slug=...&otp=<code>');
+  console.error('  GET  /pages/recent?limit=50&otp=<code>');
 
   // keep alive
   process.on('SIGINT', () => { server.stop(); process.exit(0); });
