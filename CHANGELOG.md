@@ -2,6 +2,53 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.23.1] - 2026-04-30
+
+**E2E tests can no longer clobber `~/.gbrain/config.json`. The footgun that wedged autopilot three times in 16 days is closed at the test runner.**
+
+`bun run test:e2e` previously walked `os.homedir()` via paths like `setupDB` writing the test-container config, which would overwrite the user's real `~/.gbrain/config.json` with `localhost:5434/gbrain_test`. When the test container tore down, autopilot held zombie sockets to the real Postgres, then crashlooped trying to reconnect. Three recorded incidents cost an average of 67-90 minutes of autopilot downtime each, the last one ~24 hours ago. `scripts/run-e2e.sh` now exports both `HOME` and `GBRAIN_HOME` to a `mktemp -d` tmpdir before bun starts, then md5-checks the user's real config after the run. If anything escapes the override, a three-mode breach detector exits 2 with a loud banner.
+
+### The numbers that matter
+
+Verified end-to-end against `pgvector/pgvector:pg16` on port 5434, two consecutive runs.
+
+| Metric | Before | After | Δ |
+|---|---|---|---|
+| Real config touched by `bun run test:e2e` | yes | no (md5 byte-identical) | hard guarantee |
+| Autopilot wedge after E2E run | 67-90 min per incident | none | structural fix |
+| Test files passing | 27 | 27 | parity |
+| Tests passing | 245 | 245 | parity |
+
+Both env vars are required: `loadConfig`/`saveConfig` resolve via `HOME`, while `configPath`/`getDbUrlSource` honor `GBRAIN_HOME`. Setting only one leaves the other path escaping isolation. `HOME` is exported before bun starts because `os.homedir()` caches at first call and in-process mutation does not take.
+
+### What this means for you
+
+Run `bun run test:e2e` from the gbrain repo without backing up `~/.gbrain/config.json` first. The wrapper snapshots, isolates, and verifies on its own. If the breach detector fires (exit 2 with a banner naming one of three modes: config existed and md5 changed, config existed and was deleted, or config did not exist before but was created during run), file an issue with the banner output ... that means a code path inside gbrain still escapes the override and the maintainers want to fix it.
+
+## To take advantage of v0.23.1
+
+`gbrain upgrade` ships the new test runner. No migration runs because there is no schema change.
+
+1. **Verify the new wrapper is in place:**
+   ```bash
+   grep -c 'HOME isolation' scripts/run-e2e.sh
+   ```
+   Should print a non-zero count.
+2. **Optional: confirm isolation works on your setup:**
+   ```bash
+   md5 ~/.gbrain/config.json
+   bun run test:e2e
+   md5 ~/.gbrain/config.json
+   ```
+   The two md5 outputs should match exactly. (Use `md5sum` on Linux.)
+3. **If the breach detector fires (exit 2),** file an issue at https://github.com/garrytan/gbrain/issues with the banner output and the contents of `~/.gbrain/config.json` mtime.
+
+### Itemized changes
+
+#### Fixed
+
+- **`scripts/run-e2e.sh` isolates `HOME` and `GBRAIN_HOME` to a tmpdir before bun starts.** Tolerates unset `HOME` under `set -u` via `REAL_HOME="${HOME:-/tmp}"`. `mktemp -d "${TMPDIR:-/tmp}/gbrain-e2e.XXXXXX"` for portability across BSD and GNU mktemp. Three-mode post-run breach detector covers (1) config existed and md5 changed, (2) config existed and was deleted, (3) config did not exist before but was created during run. Exit 2 on breach distinct from exit 1 (test failure). `trap 'rm -rf "$E2E_TMP_HOME"' EXIT` cleans up on any exit path. Closes the recurring E2E config-overwrite footgun.
+
 ## [0.23.0] - 2026-04-26
 
 **`gbrain dream` now actually dreams. Conversation transcripts become reflections, originals, and 25-year patterns ... overnight.**
