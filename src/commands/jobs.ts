@@ -948,10 +948,19 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? '.';
 
+    // Allow callers to select phases via job data (e.g. skip embed for
+    // fast cycles). Validates against ALL_PHASES to prevent injection.
+    const { ALL_PHASES } = await import('../core/cycle.ts');
+    const validPhases = new Set(ALL_PHASES);
+    const requestedPhases = Array.isArray(job.data.phases)
+      ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
+      : undefined;
+
     const report = await runCycle(engine, {
       brainDir: repoPath,
       pull: true, // autopilot daemon opts into git pull
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
+      ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.
         await new Promise<void>(r => setImmediate(r));

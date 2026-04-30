@@ -41,6 +41,30 @@ The friction signal comes from a new `gbrain friction {log,render,list,summary}`
 - 113 new unit tests covering: writer atomicity (concurrent appends), renderer redaction, agent registry resolution + selection precedence, multi-byte UTF-8 chunk-boundary safety, PIPE buffer drain under 256KB+ bursts, scenario load + validation, progress event parsing, SQL splitter (single-quote + line-comment handling), and full claw-test E2E (`test/e2e/claw-test.test.ts` builds a tiny `bun run src/cli.ts` shim and runs --scenario fresh-install end-to-end + a deliberate-break test that proves the friction signal fires).
 - `test/gbrain-home-isolation.test.ts` is the regression gate: spawns `gbrain init --pglite` and `gbrain import --no-embed` with `GBRAIN_HOME=<tmp>`, asserts no writes outside `<tmp>/.gbrain` (covers `import.ts:54`, `sync.ts:317`, `upgrade.ts:117`, audit dirs).
 
+## [0.22.10] - 2026-04-30
+
+**`gbrain jobs submit autopilot-cycle --params '{"phases":["lint","backlinks"]}'` now actually runs only those phases.**
+
+If you ever submitted an `autopilot-cycle` job with a `phases:` array hoping to skip embed for a fast cycle, you got the full 6-phase cycle anyway. The handler in `src/commands/jobs.ts` was calling `runCycle(...)` without forwarding `job.data.phases`, so per-cycle phase selection was silently ignored.
+
+This release wires the array through. The handler imports `ALL_PHASES` from `src/core/cycle.ts`, builds a `Set` for O(1) validation, and filters the caller's `phases` array against it before forwarding to `runCycle`. Invalid phase names get dropped (no injection surface — `ALL_PHASES` is the authoritative list). Empty arrays and non-array values fall back to the default (run all phases), preserving the prior behavior for callers who didn't ask for selective phases.
+
+### What this means for you
+
+If you've been using `gbrain jobs submit autopilot-cycle --params '{"phases":[...]}'` for triage cycles (e.g. `["lint","backlinks"]` for a fast structural sweep, skipping the slow embed phase), you'll now see those cycles take seconds instead of minutes. The CLI surface didn't change — only the worker's handler now respects the `phases` it was already accepting.
+
+### Itemized changes
+
+#### Fixed
+
+- `autopilot-cycle` minion handler in `src/commands/jobs.ts` now forwards `job.data.phases` to `runCycle()`. Previously the handler accepted the array via `MinionJobInput.params` but discarded it before dispatch.
+- Phase names validated against `ALL_PHASES` from `src/core/cycle.ts`. Filter is exhaustive: array → filtered, non-array → undefined (default), filtered-to-empty → no `phases` key in opts (also default).
+
+#### Tests
+
+- 4 new test cases in `test/handlers.test.ts` under `autopilot-cycle handler — phase passthrough`: valid phases forwarded, invalid names filtered, empty array falls back to all-phases, non-array `phases` value ignored. Pin both the contract and the fallback semantics.
+- `test/cycle-abort.test.ts` regression-guard window widened from 500 → 2000 chars so the source-level `signal: job.signal` check finds the line after the new validation block was added between `worker.register('autopilot-cycle', ...)` and the `runCycle(...)` call. Pure test fix; the handler still propagates the abort signal correctly.
+
 ## [0.22.9] - 2026-04-29
 
 **Sync failures now tell you why, not just how many.**
