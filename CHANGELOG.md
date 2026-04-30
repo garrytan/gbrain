@@ -4,9 +4,9 @@ All notable changes to GBrain will be documented in this file.
 
 ## [0.23.1] - 2026-04-30
 
-**`bun run ci:local` runs the full CI gate on your laptop in under 20 minutes. Diff-aware selector runs only the E2E files your changes touched.**
+**`bun run ci:local` runs the full CI gate on your laptop, 4-way sharded, in 3-5 minutes. Diff-aware selector runs only the E2E files your changes touched.**
 
-CI today catches typos, postgres regressions, and the 2-file Tier 1 mechanical suite. The other 27 E2E files in `test/e2e/` only run nightly, and your unit suite never runs against a real Postgres + pgvector locally. This release ships a Docker-based local CI gate that runs every check CI runs, plus the full E2E suite, plus gitleaks ... in one command. `bun run ci:local:diff` runs only the E2E files relevant to the diff against `origin/master`, falling back to "run everything" when the path-glob map doesn't recognize a changed file. Fail-closed by design: an unmapped src/ change runs all 29 E2E files, never silently nothing.
+CI today catches typos, postgres regressions, and the 2-file Tier 1 mechanical suite. The other 34 E2E files in `test/e2e/` only run nightly, and your unit suite never runs against a real Postgres + pgvector locally. This release ships a Docker-based local CI gate that runs every check CI runs, plus the full E2E suite (4-way parallel against 4 pgvector containers), plus gitleaks ... in one command. `bun run ci:local:diff` runs only the E2E files relevant to the diff against `origin/master`, falling back to "run everything" when the path-glob map doesn't recognize a changed file. Fail-closed by design: an unmapped src/ change runs all 36 E2E files, never silently nothing.
 
 The motivating story: a typical PR cycle is push → wait 8 minutes for GH Actions → fix → push → wait 8 minutes → repeat. Now you push when you're done, not to find out you're not done. The first cold run pulls the bun image, installs deps into a named volume, and runs every check; subsequent runs reuse the warm volumes and complete in 16-20 minutes for the full sequential E2E.
 
@@ -16,7 +16,8 @@ Real laptop run on the M-series host, OrbStack daemon. Reproduce with `bun run c
 
 | Metric | Before (push-and-wait) | After (`bun run ci:local`) | Δ |
 |---|---|---|---|
-| E2E files exercised before push | 0 | 29 | full coverage |
+| E2E files exercised before push | 0 | 36 | full coverage |
+| Wall-time, full gate, warm | n/a | ~3-5 min (4-way sharded) | step-change |
 | Time to first failure signal | ~3 min CI | ~30s host gitleaks + 5s smoke | 6× faster |
 | Container env divergence from CI | unknown | bit-for-bit pgvector + bun base | resolved |
 | Diff-aware selection on focused PRs | none | 3-9 E2E files for typical scoped change | ~70% fewer files |
@@ -55,15 +56,15 @@ The named volumes `gbrain-ci-node-modules`, `gbrain-ci-bun-cache`, and `gbrain-c
 ### Itemized changes
 
 #### Added
-- `bun run ci:local` runs the full local CI gate inside Docker: gitleaks (host), postgres up, container env setup, `bun install --frozen-lockfile`, unit suite, sequential E2E. Stronger than PR CI's 2-file Tier 1 set.
-- `bun run ci:local:diff` runs only the E2E files matched by the diff selector. Falls back to all 29 files when an unmapped src/ path or escape-hatch (schema, package.json, skills/) is touched.
+- `bun run ci:local` runs the full local CI gate inside Docker: gitleaks (host), 4 postgres shards up, container env setup, `bun install --frozen-lockfile`, unit suite, **4-way parallel E2E**. Stronger than PR CI's 2-file Tier 1 set.
+- `bun run ci:local:diff` runs only the E2E files matched by the diff selector. Falls back to all 36 files when an unmapped src/ path or escape-hatch (schema, package.json, skills/) is touched.
 - `bun run ci:select-e2e` prints the selector's choice for the current branch — pipe-friendly.
-- `docker-compose.ci.yml` declares `pgvector/pgvector:pg16` + `oven/bun:1` with named volumes for fast restarts.
-- `scripts/ci-local.sh` orchestrates the whole gate with `--diff`, `--no-pull`, and `--clean` flags.
+- `docker-compose.ci.yml` declares 4 `pgvector/pgvector:pg16` services (postgres-1..4) + `oven/bun:1` runner with named volumes for fast restarts. Host ports 5434-5437; override base via `GBRAIN_CI_PG_PORT`.
+- `scripts/ci-local.sh` orchestrates the whole gate with `--diff`, `--no-pull`, `--clean`, and `--no-shard` flags. Detects git worktrees (Conductor) and bind-mounts the shared gitdir at the same absolute path so in-container `git ls-files` works.
 - `scripts/select-e2e.ts` reads `git diff --name-only origin/master...HEAD` + `git ls-files --others` and emits the relevant E2E test files. Three classification cases: EMPTY → all, DOC_ONLY → none, SRC → fail-closed map narrowing.
 - `scripts/e2e-test-map.ts` is the hand-tuned path-glob → tests map, with inline comments explaining why each entry exists.
 - `test/select-e2e.test.ts` covers all 4 selector branches plus 3 codex regression guards (skills/, untracked files, unmapped src/) — 24 cases.
-- `scripts/run-e2e.sh` accepts an optional file list from argv and a `--dry-run-list` flag for the inline smoke check that runs at the start of every `ci:local`.
+- `scripts/run-e2e.sh` accepts an optional file list from argv, a `--dry-run-list` flag for the inline smoke check, and a `SHARD=N/M` env that filters every M-th file starting at index N. Sequential within a shard preserves the TRUNCATE CASCADE no-race property; parallel across shards is what makes the gate fast.
 
 #### For contributors
 - `scripts/select-e2e.ts` exports `selectTests(inputs: SelectInputs): string[]`, `classify(changedFiles: string[]): Classification`, and `matchGlob(glob, path): boolean`. The selector is a pure function — pass arrays in, get test files out — so it's trivial to test and easy to fork for another path-glob shape.
