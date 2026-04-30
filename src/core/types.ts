@@ -36,6 +36,12 @@ export interface PageInput {
    * `query --lang` filtering.
    */
   page_kind?: PageKind;
+  /**
+   * v0.27.1: optional per-page source scope. Omitted callers keep the schema
+   * default ('default'); named-source sync/import threads this explicitly so
+   * writes land under the requested sources.id row.
+   */
+  source_id?: string;
 }
 
 export interface PageFilters {

@@ -462,7 +462,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       // Reimport at new path (picks up content changes)
       const filePath = join(repoPath, to);
       if (existsSync(filePath)) {
-        const result = await importFile(engine, filePath, to, { noEmbed });
+        const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId });
         if (result.status === 'imported') chunksCreated += result.chunks;
       }
       pagesAffected.push(newSlug);
@@ -496,7 +496,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
         continue;
       }
       try {
-        const result = await importFile(engine, filePath, path, { noEmbed });
+        const result = await importFile(engine, filePath, path, { noEmbed, sourceId: opts.sourceId });
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
@@ -656,7 +656,7 @@ async function performFullSync(
   const { runImport } = await import('./import.ts');
   const importArgs = [repoPath];
   if (opts.noEmbed) importArgs.push('--no-embed');
-  const result = await runImport(engine, importArgs, { commit: headCommit });
+  const result = await runImport(engine, importArgs, { commit: headCommit, sourceId: opts.sourceId });
 
   // Bug 9 — gate the full-sync bookmark on success. runImport already
   // writes its own sync.last_commit conditionally (import.ts), but

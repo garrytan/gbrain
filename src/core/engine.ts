@@ -113,9 +113,9 @@ export interface BrainEngine {
   withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T>;
 
   // Pages CRUD
-  getPage(slug: string): Promise<Page | null>;
+  getPage(slug: string, sourceId?: string): Promise<Page | null>;
   putPage(slug: string, page: PageInput): Promise<Page>;
-  deletePage(slug: string): Promise<void>;
+  deletePage(slug: string, sourceId?: string): Promise<void>;
   listPages(filters?: PageFilters): Promise<Page[]>;
   resolveSlugs(partial: string): Promise<string[]>;
   /**
@@ -131,8 +131,8 @@ export interface BrainEngine {
   getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>>;
 
   // Chunks
-  upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
-  getChunks(slug: string): Promise<Chunk[]>;
+  upsertChunks(slug: string, chunks: ChunkInput[], sourceId?: string): Promise<void>;
+  getChunks(slug: string, sourceId?: string): Promise<Chunk[]>;
   /**
    * Count chunks across the entire brain where embedded_at IS NULL.
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
@@ -148,7 +148,7 @@ export interface BrainEngine {
    * Bounded by an internal LIMIT of 100000 to mirror listPages.
    */
   listStaleChunks(): Promise<StaleChunkRow[]>;
-  deleteChunks(slug: string): Promise<void>;
+  deleteChunks(slug: string, sourceId?: string): Promise<void>;
 
   // Links
   /**
@@ -229,9 +229,9 @@ export interface BrainEngine {
   findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags
-  addTag(slug: string, tag: string): Promise<void>;
-  removeTag(slug: string, tag: string): Promise<void>;
-  getTags(slug: string): Promise<string[]>;
+  addTag(slug: string, tag: string, sourceId?: string): Promise<void>;
+  removeTag(slug: string, tag: string, sourceId?: string): Promise<void>;
+  getTags(slug: string, sourceId?: string): Promise<string[]>;
 
   // Timeline
   /**
@@ -259,7 +259,7 @@ export interface BrainEngine {
   getRawData(slug: string, source?: string): Promise<RawData[]>;
 
   // Versions
-  createVersion(slug: string): Promise<PageVersion>;
+  createVersion(slug: string, sourceId?: string): Promise<PageVersion>;
   getVersions(slug: string): Promise<PageVersion[]>;
   revertToVersion(slug: string, versionId: number): Promise<void>;
 
