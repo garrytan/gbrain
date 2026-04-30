@@ -517,18 +517,35 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
 
   // 8. Graph health (link + timeline coverage on entity pages).
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
+  //
+  // Skip when the brain has 0 entity pages (markdown-only wikis, journals,
+  // notes brains). The coverage formula divides by entity-page count, so it's
+  // structurally undefined when no entities exist — emitting WARN under that
+  // condition is a false positive. Closes #530.
   progress.heartbeat('graph_coverage');
   try {
     const health = await engine.getHealth();
+    const entityCount = (await engine.executeRaw<{ count: number }>(
+      "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')",
+    ))[0]?.count ?? 0;
+
     const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
     const timelinePct = ((health.timeline_coverage ?? 0) * 100).toFixed(0);
-    if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
+    if (entityCount === 0) {
+      // Markdown-only / journal / wiki brain — no entity pages to compute
+      // coverage against. Coverage formula is structurally inapplicable.
+      checks.push({
+        name: 'graph_coverage',
+        status: 'ok',
+        message: 'No entity pages — graph_coverage not applicable (markdown-only brain)',
+      });
+    } else if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
       checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%` });
     } else {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain link-extract && gbrain timeline-extract`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${entityCount} entity pages). Run: gbrain extract all`,
       });
     }
 
