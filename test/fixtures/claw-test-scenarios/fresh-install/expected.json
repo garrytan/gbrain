@@ -1,0 +1,6 @@
+{
+  "min_pages_after_import": 3,
+  "min_query_results": 1,
+  "min_links_after_extract": 0,
+  "doctor_status": "ok"
+}

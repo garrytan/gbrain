@@ -15,7 +15,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
+import { gbrainPath } from '../../config.ts';
 
 export interface ShellAuditEvent {
   ts: string;
@@ -53,7 +53,7 @@ export function computeAuditFilename(now: Date = new Date()): string {
 export function resolveAuditDir(): string {
   const override = process.env.GBRAIN_AUDIT_DIR;
   if (override && override.trim().length > 0) return override;
-  return path.join(os.homedir(), '.gbrain', 'audit');
+  return gbrainPath('audit');
 }
 
 export function logShellSubmission(event: Omit<ShellAuditEvent, 'ts'>): void {

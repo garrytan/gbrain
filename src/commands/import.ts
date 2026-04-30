@@ -1,10 +1,10 @@
 import { readdirSync, lstatSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
-import { cpus, totalmem, homedir } from 'os';
+import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
-import { loadConfig } from '../core/config.ts';
+import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
@@ -61,7 +61,7 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   console.log(`Found ${allFiles.length} markdown files`);
 
   // Resume from checkpoint if available
-  const checkpointPath = join(homedir(), '.gbrain', 'import-checkpoint.json');
+  const checkpointPath = gbrainPath('import-checkpoint.json');
   let files = allFiles;
   let resumeIndex = 0;
 
@@ -137,7 +137,7 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
       // Save checkpoint every 100 files — track completed file set, not just a counter
       if (processed % 100 === 0) {
         try {
-          const cpDir = join(homedir(), '.gbrain');
+          const cpDir = gbrainPath();
           if (!existsSync(cpDir)) { const { mkdirSync } = await import('fs'); mkdirSync(cpDir, { recursive: true }); }
           writeFileSync(checkpointPath, JSON.stringify({
             dir, totalFiles: allFiles.length,

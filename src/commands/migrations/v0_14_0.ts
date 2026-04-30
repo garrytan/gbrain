@@ -22,19 +22,17 @@
  */
 
 import { existsSync, readFileSync, mkdirSync, appendFileSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
-import { loadConfig, toEngineConfig } from '../../core/config.ts';
+import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 
-// Resolve HOME at CALL time, not module-load time — Bun caches os.homedir()
-// and ignores later HOME mutations, which breaks test isolation and scripted
-// installs. Match the preferences.ts pattern.
-function resolveHome(): string { return process.env.HOME || homedir(); }
-function pendingHostWorkDir(): string { return join(resolveHome(), '.gbrain', 'migrations'); }
+// gbrainPath() honors GBRAIN_HOME at call time (not module-load) and routes
+// through the centralized config dir, so the prior resolveHome()/HOME-env
+// trick is no longer needed.
+function pendingHostWorkDir(): string { return gbrainPath('migrations'); }
 function pendingHostWorkPath(): string { return join(pendingHostWorkDir(), 'pending-host-work.jsonl'); }
 
 // ---------------------------------------------------------------------------

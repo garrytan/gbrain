@@ -18,8 +18,8 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync } from 'fs';
-import { homedir } from 'os';
-import { dirname, join } from 'path';
+import { dirname } from 'path';
+import { gbrainPath } from '../config.ts';
 
 import type { BrainEngine } from '../engine.ts';
 import {
@@ -30,7 +30,7 @@ import {
 } from './validators/index.ts';
 import type { ValidationFinding, PageValidator } from './writer.ts';
 
-const LINT_LOG_FILE = join(homedir(), '.gbrain', 'validator-lint.jsonl');
+const getLintLogFile = () => gbrainPath('validator-lint.jsonl');
 const LINT_CONFIG_KEY = 'writer.lint_on_put_page';
 
 export interface PostWriteLintOpts {
@@ -124,7 +124,8 @@ export async function runPostWriteLint(
 
 function writeLocalLintLog(slug: string, findings: ValidationFinding[]): void {
   try {
-    const dir = dirname(LINT_LOG_FILE);
+    const lintLogFile = getLintLogFile();
+    const dir = dirname(lintLogFile);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const line = JSON.stringify({
       ts: new Date().toISOString(),
@@ -133,7 +134,7 @@ function writeLocalLintLog(slug: string, findings: ValidationFinding[]): void {
       warning_count: findings.filter(f => f.severity === 'warning').length,
       findings: findings.slice(0, 20), // cap to prevent runaway log size
     }) + '\n';
-    appendFileSync(LINT_LOG_FILE, line, 'utf-8');
+    appendFileSync(lintLogFile, line, 'utf-8');
   } catch {
     // Non-fatal; logging failure shouldn't break the main flow.
   }

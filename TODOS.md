@@ -1,5 +1,100 @@
 # TODOS
 
+## claw-test E2E (v0.22.16 follow-ups)
+
+### Hermes runner — `src/core/claw-test/runners/hermes.ts`
+**Priority:** P2
+
+**What:** Add a Hermes implementation of the `AgentRunner` interface. v1 ships only OpenClaw; v1.1 lands hermes once we have real friction reports from openclaw to validate the contract against.
+
+**Why:** Cross-agent diff (`gbrain friction diff --base openclaw --compare hermes`) is the highest-leverage next signal. Friction unique to one agent vs common-to-both separates "agent contract bug" from "gbrain bug" automatically.
+
+**Effort:** S (CC ~30m). Depends on: v1 openclaw runner producing real friction reports first.
+
+---
+
+### Friction analytics suite — `diff` / `trend` / `migration-stub`
+**Priority:** P2
+
+**What:** Three new `gbrain friction` subcommands deferred from v1:
+- `gbrain friction diff --base <run-or-agent> --compare <run-or-agent>` (cross-agent comparison; ~80 LOC)
+- `gbrain friction trend [--since <version-or-date>] [--phase <name>]` (time-series across runs; ~60 LOC)
+- `gbrain friction migration-stub [--threshold N]` (clusters friction by phase + tokens, emits `skills/migrations/v[N+1].md` stub; ~150 LOC)
+
+**Why:** Turns point-in-time reports into a slope. Pairs with the v1.1 public scoreboard.
+
+**Effort:** M (CC ~2h total).
+
+---
+
+### Scenario expansion — `supabase-migration` and `supervisor-restart`
+**Priority:** P2
+
+**What:** Two more scenarios under `test/fixtures/claw-test-scenarios/`:
+- `supabase-migration` — `gbrain init --pglite` then `gbrain migrate --to supabase`; verifies the cross-engine migration path
+- `supervisor-restart` — kill worker mid-job; verify supervisor recovers without data loss
+
+**Why:** These are the other highest-historical-pain regression points (per CLAUDE.md fix-wave history). v1 ships only `fresh-install` + `upgrade-from-v0.18` because Codex flagged that mixing them dilutes the fresh-install signal; v1.1 lands them as separate scenarios.
+
+**Effort:** M (CC ~1h each).
+
+---
+
+### Real v0.18 SQL dump for upgrade scenario
+**Priority:** P2
+
+**What:** The `upgrade-from-v0.18` scenario ships scaffolded — `seed/dump.sql` is missing. The harness gracefully no-ops the seed phase when absent, so the scenario currently behaves like fresh-install. v1.1: generate a real v0.18-shape PGLite dump per the procedure documented in `test/fixtures/claw-test-scenarios/upgrade-from-v0.18/seed/README.md`.
+
+**Why:** Without a real seed, the scenario doesn't actually exercise the migration chain forward-walk. That's the whole point of the upgrade scenario — proves issue #239/#243/#266/#357 class regressions stay fixed.
+
+**Effort:** S (CC ~30m once a v0.18 checkout is handy). Depends on: ability to run a v0.18 gbrain build.
+
+---
+
+### Public scoreboard — `gbrain-evals.io/friction`
+**Priority:** P3
+
+**What:** Sibling-repo PR in `garrytan/gbrain-evals` that renders friction JSONL into a public dashboard. Friction count per version per agent, line charts over time. v1's JSONL already includes `gbrain_version` + `agent` tags so the scoreboard is a thin layer on top.
+
+**Why:** Marketing surface. Proves install quality is improving release-over-release. The friction loop becomes visible to the world, not just maintainers.
+
+**Effort:** M. Depends on: a working live mode and ≥10 real friction reports.
+
+---
+
+### PTY-mode transcript capture
+**Priority:** P3
+
+**What:** `transcript-capture.ts` currently uses plain `child_process.spawn` pipes. Some agents only emit ANSI colors / progress UI on a TTY. v1.1 adds a PTY mode (likely via `node-pty`) so live-mode transcripts capture the full agent UX.
+
+**Why:** Faithful transcripts make the friction → reasoning link more useful. v1 accepts that some agent UI is lost.
+
+**Effort:** S (CC ~30m). Mostly a ~30 LOC swap inside `spawnWithCapture`.
+
+---
+
+### Read-side host-isolation (`$GBRAIN_HOST_HOME`)
+**Priority:** P3
+
+**What:** v0.22.16 confined every `~/.gbrain` write site to honor `$GBRAIN_HOME`. But `src/commands/init.ts:299-313` still reads real `~/.claude` / `~/.openclaw` / `~/.codex` / `~/.factory` / `~/.kiro` for module fingerprinting (host detection). Even with write-isolation, a claw-test running on a developer's box discovers their real installed mods. v1.1: add a separate `$GBRAIN_HOST_HOME` override for the read-side detection so the claw-test can run truly hermetic.
+
+**Why:** v1's hermeticity contract is "writes are isolated, reads are not." v1.1 closes the read-side gap.
+
+**Effort:** S (CC ~30m).
+
+---
+
+### Routing-callout sweep — annotate skills the claw-test exercises
+**Priority:** P3
+
+**What:** `skills/_friction-protocol.md` is a cross-cutting convention. v1.1: sweep the 4–6 skills the claw-test actually exercises (setup, brain-ops, query, ingest, smoke-test, the migrations the test covers) and add a `> **Convention:** see [skills/_friction-protocol.md](_friction-protocol.md).` callout via the existing `src/core/dry-fix.ts` shape so DRY auto-fix doesn't fight it.
+
+**Why:** Right now agents only call `gbrain friction log` if they find the protocol skill on their own. The callouts route them there proactively from any harness-exercised skill.
+
+**Effort:** S (CC ~15m).
+
+---
+
 ## minions / worker (v0.22.14 follow-ups)
 
 ### v0.22.15 — Embed cooperative-abort (HIGHEST PRIORITY — daily pain)

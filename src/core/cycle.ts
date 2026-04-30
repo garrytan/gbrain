@@ -39,7 +39,8 @@
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { homedir, hostname } from 'os';
+import { hostname } from 'os';
+import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
@@ -154,7 +155,8 @@ export interface CycleOpts {
 
 const CYCLE_LOCK_ID = 'gbrain-cycle';
 const LOCK_TTL_MS = 30 * 60 * 1000;       // 30 minutes
-const LOCK_FILE_PATH_DEFAULT = join(homedir(), '.gbrain', 'cycle.lock');
+// Lazy: GBRAIN_HOME may be set after module load; resolve at call time.
+const getLockFilePathDefault = () => gbrainPath('cycle.lock');
 
 interface LockHandle {
   release: () => Promise<void>;
@@ -256,7 +258,7 @@ async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | nu
  * The file contains `{pid}\n{iso-timestamp}`. Staleness = mtime older
  * than LOCK_TTL_MS OR the PID is no longer alive on this host.
  */
-function acquireFileLock(lockPath = LOCK_FILE_PATH_DEFAULT): LockHandle | null {
+function acquireFileLock(lockPath = getLockFilePathDefault()): LockHandle | null {
   mkdirSync(join(lockPath, '..'), { recursive: true });
   const pid = process.pid;
 

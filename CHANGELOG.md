@@ -2,6 +2,45 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.22.16] - 2026-04-29
+
+**End-to-end claw-test friction harness — every release now gets a fresh-install dry-run.**
+**`gbrain claw-test` spins up a hermetic tempdir, walks the canonical first-day flow, and surfaces friction the way a real new user would hit it.**
+
+Before this release, every gbrain release shipped on faith: docs said "the agent runs `gbrain init`, then `gbrain import`, then `gbrain query`," and we'd find out at user-feedback time which step actually broke. Issue #239/#243/#266/#357/#366/#374/#375/#378/#395/#396 — ten upgrade-wedge incidents in two years — all came from this gap. There was no harness that exercised the user's-eye experience: spin up a fresh tempdir, install gbrain, watch what breaks.
+
+Now there is. `gbrain claw-test --scenario fresh-install` in scripted mode is a CI gate (~30s, no API keys). `gbrain claw-test --live --agent openclaw` spawns a real openclaw subprocess, hands it `BRIEF.md`, captures every byte of its stdin/stdout/stderr to `transcript.jsonl`, and lets the agent log friction whenever something is confusing or wrong. End-of-run renders a markdown report grouped by severity and phase, with `<HOME>` redaction so it pastes safely into PRs.
+
+The friction signal comes from a new `gbrain friction {log,render,list,summary}` CLI. Schema is a flat extension of `StructuredAgentError`. Run-id resolves from `--run-id` > `$GBRAIN_FRICTION_RUN_ID` > `standalone.jsonl`, so the same CLI works inside a harness session, manually during normal use, or from a scripted test. Append-only JSONL; readers tolerate malformed lines.
+
+**$GBRAIN_HOME is finally honored everywhere it should be.** `configDir()` in `src/core/config.ts` always supported the parent-dir override, but ~12 consumers built paths from `os.homedir()` directly and bypassed it. Critically, `loadConfig`/`saveConfig` themselves used a private helper that ignored the env. Migrated every write site to a new `gbrainPath()` helper: fail-improve, validator-lint, cycle lock, audit handlers, sync-failures, integrity logs, integrations heartbeat, init pglite path, migrate-engine manifest, import checkpoint, migration rollbacks. Read-side host-detection (`~/.claude` / `~/.openclaw` probes for mod fingerprinting) intentionally stays as-is; v1.1 will add a separate `$GBRAIN_HOST_HOME`.
+
+### Itemized changes
+
+#### Added
+
+- `gbrain claw-test --scenario {fresh-install|upgrade-from-v0.18}` — scripted-mode CI gate that runs the canonical first-day flow against a fresh tempdir. Asserts every expected `--progress-json` phase fired and doctor's `status === 'ok'`. ~30s, no API keys.
+- `gbrain claw-test --live --agent openclaw` — friction-discovery mode. Spawns real openclaw, hands it `BRIEF.md`, captures stdin/stdout/stderr to `<run>/transcript.jsonl`, lets the agent log friction. ~5–10 min and ~$1–2 in tokens.
+- `gbrain claw-test --list-agents` — reports which agent runners are registered + their detection state.
+- `gbrain friction log --severity {confused|error|blocker|nit} --phase <name> --message <text> [--hint ...] [--kind {friction|delight}] [--run-id ...]` — append a friction or delight entry.
+- `gbrain friction render --run-id <id> [--json] [--transcripts] [--no-redact]` — markdown report grouped by severity + phase; `--redact` defaults on for md output.
+- `gbrain friction list [--json]` — recent run-ids with friction/delight counts; interrupted runs marked `(interrupted)`.
+- `gbrain friction summary --run-id <id> [--json]` — two-column friction + delight summary.
+- `skills/_friction-protocol.md` — cross-cutting convention skill telling agents when to call `gbrain friction log`. Routes from any skill the claw-test exercises.
+- `gbrainPath(...segments)` helper in `src/core/config.ts` — single sugar for resolving paths under the active `$GBRAIN_HOME`. `$GBRAIN_HOME` is now validated (must be absolute, no `..` segments).
+- Two scenario fixtures in `test/fixtures/claw-test-scenarios/`: `fresh-install` (canonical 5-min flow) and `upgrade-from-v0.18` (scaffolded; real v0.18 SQL dump documented as a v1.1 follow-up).
+- New `src/core/claw-test/` module with `agent-runner.ts` (interface + registry), `transcript-capture.ts` (async-drain capture so 256KB+ bursts don't stall the child), `progress-tail.ts`, `scenarios.ts`, and `seed-pglite.ts` (~50 LOC PGLite SQL replay primitive).
+
+#### Changed
+
+- Every `~/.gbrain/...` write site now resolves through `gbrainPath()` instead of building paths from `os.homedir()`. Affected: `src/core/{fail-improve,output/post-write,cycle,sync}.ts`, `src/core/minions/{handlers/shell-audit,backpressure-audit}.ts`, `src/commands/{integrity,integrations,init,migrate-engine,import,migrations/v0_13_1,migrations/v0_14_0}.ts`. Tests that previously used the `process.env.HOME = tmpdir` workaround now use `process.env.GBRAIN_HOME` directly.
+- `loadConfig`/`saveConfig` honor `$GBRAIN_HOME`. Previously, the public `configDir()` honored it but the internal `getConfigDir()` did not — so the config file itself silently leaked into the developer's real `~/.gbrain` regardless of the env override.
+
+#### Tests
+
+- 113 new unit tests covering: writer atomicity (concurrent appends), renderer redaction, agent registry resolution + selection precedence, multi-byte UTF-8 chunk-boundary safety, PIPE buffer drain under 256KB+ bursts, scenario load + validation, progress event parsing, SQL splitter (single-quote + line-comment handling), and full claw-test E2E (`test/e2e/claw-test.test.ts` builds a tiny `bun run src/cli.ts` shim and runs --scenario fresh-install end-to-end + a deliberate-break test that proves the friction signal fires).
+- `test/gbrain-home-isolation.test.ts` is the regression gate: spawns `gbrain init --pglite` and `gbrain import --no-embed` with `GBRAIN_HOME=<tmp>`, asserts no writes outside `<tmp>/.gbrain` (covers `import.ts:54`, `sync.ts:317`, `upgrade.ts:117`, audit dirs).
+
 ## [0.22.15] - 2026-04-29
 
 ## **Throw bare markdown into your brain and it becomes properly typed knowledge. No YAML ceremony.**

@@ -23,6 +23,7 @@ import matter from 'gray-matter';
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
+import { gbrainPath } from '../core/config.ts';
 import { execSync } from 'child_process';
 
 // --- Types ---
@@ -512,7 +513,7 @@ function findRecipe(id: string): ParsedRecipe | null {
 // --- Heartbeat ---
 
 function heartbeatDir(id: string): string {
-  return join(homedir(), '.gbrain', 'integrations', id);
+  return gbrainPath('integrations', id);
 }
 
 function heartbeatPath(id: string): string {
