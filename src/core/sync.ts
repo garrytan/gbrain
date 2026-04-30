@@ -213,7 +213,7 @@ export function slugifySegment(segment: string): string {
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
     .toLowerCase()
-    .replace(/[^a-z0-9.\s_-]/g, '')      // Keep alphanumeric, dots, spaces, underscores, hyphens
+    .replace(/[^a-z0-9\u4e00-\u9fff\u3400-\u4dbf.\s_-]/g, '')      // Keep alphanumeric, CJK, dots, spaces, underscores, hyphens
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
