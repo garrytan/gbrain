@@ -25,10 +25,86 @@ import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-rank
 
 type PGLiteDB = PGlite;
 
+// Tier 3 snapshot fast-restore. Reads a tar dump produced by
+// `bun run scripts/build-pglite-snapshot.ts`. Snapshot is matched against
+// the current MIGRATIONS hash via a sidecar `.version` file; on mismatch we
+// silently fall through to a normal initSchema (snapshot is just an
+// optimization, never authoritative).
+let _snapshotWarnLogged = false;
+function tryLoadSnapshot(snapshotPath: string): Blob | null {
+  try {
+    // Lazy require so production builds without these imports don't crash.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('node:fs') as typeof import('node:fs');
+    const crypto = require('node:crypto') as typeof import('node:crypto');
+    const { MIGRATIONS } = require('./migrate.ts') as typeof import('./migrate.ts');
+    const { PGLITE_SCHEMA_SQL } = require('./pglite-schema.ts') as typeof import('./pglite-schema.ts');
+
+    if (!fs.existsSync(snapshotPath)) {
+      if (!_snapshotWarnLogged) {
+        // eslint-disable-next-line no-console
+        console.warn(`[pglite] GBRAIN_PGLITE_SNAPSHOT set but file missing: ${snapshotPath} — using normal init.`);
+        _snapshotWarnLogged = true;
+      }
+      return null;
+    }
+    const versionPath = snapshotPath.replace(/\.tar(?:\.gz)?$/, '.version');
+    if (!fs.existsSync(versionPath)) {
+      if (!_snapshotWarnLogged) {
+        // eslint-disable-next-line no-console
+        console.warn(`[pglite] snapshot version file missing: ${versionPath} — using normal init.`);
+        _snapshotWarnLogged = true;
+      }
+      return null;
+    }
+    const expectedHash = computeSnapshotSchemaHash(MIGRATIONS, PGLITE_SCHEMA_SQL, crypto);
+    const actualHash = fs.readFileSync(versionPath, 'utf8').trim();
+    if (expectedHash !== actualHash) {
+      if (!_snapshotWarnLogged) {
+        // eslint-disable-next-line no-console
+        console.warn(`[pglite] snapshot stale (schema hash mismatch) — using normal init. Rebuild with: bun run build:pglite-snapshot`);
+        _snapshotWarnLogged = true;
+      }
+      return null;
+    }
+    const buf = fs.readFileSync(snapshotPath);
+    return new Blob([buf]);
+  } catch {
+    // Any failure -> fall through to normal init. Never block tests.
+    return null;
+  }
+}
+
+export function computeSnapshotSchemaHash(
+  migrations: Array<{ version: number; name: string; sql?: string; sqlFor?: { pglite?: string } }>,
+  schemaSQL: string,
+  crypto: typeof import('node:crypto'),
+): string {
+  const hash = crypto.createHash('sha256');
+  hash.update('schema:');
+  hash.update(schemaSQL);
+  hash.update('\nmigrations:\n');
+  for (const m of migrations) {
+    hash.update(String(m.version));
+    hash.update('\t');
+    hash.update(m.name);
+    hash.update('\t');
+    hash.update(m.sql ?? '');
+    hash.update('\t');
+    hash.update(m.sqlFor?.pglite ?? '');
+    hash.update('\n');
+  }
+  return hash.digest('hex');
+}
+
 export class PGLiteEngine implements BrainEngine {
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
+  // Tier 3: when GBRAIN_PGLITE_SNAPSHOT loaded a post-initSchema state into
+  // PGlite.create(loadDataDir), initSchema is a no-op (schema is already
+  // present + migrations already applied). Saves ~1-3s per fresh test PGLite.
+  private _snapshotLoaded = false;
 
   get db(): PGLiteDB {
     if (!this._db) throw new Error('PGLite not connected. Call connect() first.');
@@ -46,9 +122,24 @@ export class PGLiteEngine implements BrainEngine {
       throw new Error('Could not acquire PGLite lock. Another gbrain process is using the database.');
     }
 
+    // Tier 3: optional snapshot fast-restore. Only applies to in-memory
+    // engines (no persistent dataDir). The snapshot was built from a fresh
+    // `initSchema()` run; if the version file matches the current MIGRATIONS
+    // hash, load the dump and skip the schema replay. Mismatch or missing
+    // file silently falls back to normal init.
+    let loadDataDir: Blob | undefined;
+    if (!dataDir && process.env.GBRAIN_PGLITE_SNAPSHOT) {
+      const snapshotResult = tryLoadSnapshot(process.env.GBRAIN_PGLITE_SNAPSHOT);
+      if (snapshotResult) {
+        loadDataDir = snapshotResult;
+        this._snapshotLoaded = true;
+      }
+    }
+
     try {
       this._db = await PGlite.create({
         dataDir,
+        loadDataDir,
         extensions: { vector, pg_trgm },
       });
     } catch (err) {
@@ -86,6 +177,11 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
+    // Tier 3: snapshot was loaded into PGlite — schema + migrations already
+    // applied. Nothing to do. Returns immediately.
+    if (this._snapshotLoaded) {
+      return;
+    }
     // Pre-schema bootstrap: add forward-referenced state the embedded schema
     // blob requires but that older brains don't have yet. Without this, a
     // pre-v0.18 brain hits `CREATE INDEX idx_pages_source_id ON pages(source_id)`
