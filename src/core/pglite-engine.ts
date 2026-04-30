@@ -4,7 +4,7 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
-import { runMigrations } from './migrate.ts';
+import { LATEST_VERSION, runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
@@ -86,12 +86,50 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+    // BAT-540: same order-of-ops fix as PostgresEngine. PGLITE_SCHEMA_SQL
+    // embeds the latest schema and references columns that pending
+    // migrations would have added (e.g. page_kind, symbol_name). On a
+    // drifted PGLite file (gbrain version-bumped without ever opening the
+    // brain), running the schema first would fail before runMigrations
+    // could self-heal. See PostgresEngine.initSchema for the full rationale.
+    const drifted = await this.isDriftedDatabase();
 
-    const { applied } = await runMigrations(this);
-    if (applied > 0) {
-      console.log(`  ${applied} migration(s) applied`);
+    if (drifted) {
+      const { applied } = await runMigrations(this);
+      if (applied > 0) {
+        console.log(`  ${applied} migration(s) applied`);
+      }
+      // Idempotent reassertion after migrations bring schema up.
+      await this.db.exec(PGLITE_SCHEMA_SQL);
+    } else {
+      await this.db.exec(PGLITE_SCHEMA_SQL);
+      const { applied } = await runMigrations(this);
+      if (applied > 0) {
+        console.log(`  ${applied} migration(s) applied`);
+      }
     }
+  }
+
+  /**
+   * Mirrors PostgresEngine.isDriftedDatabase. Returns true when the brain
+   * file has a config table with version < LATEST_VERSION. False on a
+   * fresh file (no config table) or on a brain already at LATEST_VERSION.
+   */
+  private async isDriftedDatabase(): Promise<boolean> {
+    const tableRows = await this.db.query<{ oid: string | null }>(
+      `SELECT to_regclass('public.config') AS oid`,
+    );
+    const configExists = tableRows.rows[0]?.oid != null;
+    if (!configExists) return false;
+
+    const versionRows = await this.db.query<{ value: string }>(
+      `SELECT value FROM config WHERE key = 'version'`,
+    );
+    if (versionRows.rows.length === 0) return false;
+
+    const live = parseInt(versionRows.rows[0].value, 10);
+    if (!Number.isFinite(live)) return false;
+    return live < LATEST_VERSION;
   }
 
   async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {

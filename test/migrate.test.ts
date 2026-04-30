@@ -809,3 +809,144 @@ describe('PR #356 — non-transactional DDL runs via reserved connection', () =>
     expect(fnBody).toContain("SET statement_timeout = '600000'");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// BAT-540 — initSchema must self-heal a drifted DB
+// ─────────────────────────────────────────────────────────────────
+//
+// The bug: PostgresEngine.initSchema() ran SCHEMA_SQL *before* runMigrations().
+// SCHEMA_SQL embeds the latest schema state — `CREATE INDEX ... ON
+// content_chunks(symbol_name)` was added by the v26 migration. On a drifted
+// DB (live config.version < 26) the index DDL fails because symbol_name
+// hasn't been added yet, and runMigrations never gets to run.
+//
+// Field impact (BAT-237): operators had to pull migration SQL bodies out of
+// migrate.ts and replay them via psql by hand. `gbrain init --migrate-only`,
+// the documented self-heal path, was effectively a no-op.
+//
+// The fix: detect drift (config.version < LATEST_VERSION) and run migrations
+// FIRST, then replay SCHEMA_SQL idempotently. Fresh DBs keep the historical
+// order because migrations 2..LATEST expect the v1 baseline tables to exist.
+//
+// This regression test reproduces drift on PGLite (the bug shape matches across
+// engines because PGLITE_SCHEMA_SQL has the same bleeding-edge references at
+// line 94: `CREATE INDEX ... ON content_chunks(symbol_name)`) and asserts:
+//   1. initSchema succeeds without throwing.
+//   2. config.version is bumped back to LATEST_VERSION.
+//   3. The dropped column is restored by the migration runner.
+//   4. The acceptance criterion: a put-page round-trip works end-to-end.
+describe('BAT-540 — initSchema self-heals a drifted DB', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('initSchema on a drifted DB (v25 ≤ k ≤ v26) succeeds and reaches LATEST_VERSION', async () => {
+    const db = (engine as PGLiteEngine & { db: { exec: (s: string) => Promise<unknown>; query: <T>(s: string, p?: unknown[]) => Promise<{ rows: T[] }> } }).db;
+
+    // Recreate drift: drop the v26 artifacts (the column + its index).
+    // SCHEMA_SQL re-references content_chunks(symbol_name) — without the
+    // pre-fix order swap, the next initSchema would fail right here.
+    await db.exec(`DROP INDEX IF EXISTS idx_chunks_symbol_name`);
+    await db.exec(`DROP INDEX IF EXISTS idx_chunks_language`);
+    // PGLite supports DROP COLUMN; cascade picks up the partial-index
+    // dependencies if any survived the explicit DROP INDEX above.
+    await db.exec(`ALTER TABLE content_chunks DROP COLUMN IF EXISTS symbol_name CASCADE`);
+    await db.exec(`ALTER TABLE content_chunks DROP COLUMN IF EXISTS language CASCADE`);
+
+    // Wind config.version back to v25 so the migration runner sees v26+ as
+    // pending. (Two versions behind — the issue's acceptance criterion calls
+    // out k≥2.)
+    await engine.setConfig('version', '25');
+
+    // Pre-condition: column must actually be gone, otherwise the test would
+    // pass trivially even with the bug intact.
+    const before = await db.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'content_chunks' AND column_name = 'symbol_name'
+       ) AS exists`,
+    );
+    expect(before.rows[0].exists).toBe(false);
+
+    // Act: run initSchema. With the bug, this throws because
+    // PGLITE_SCHEMA_SQL's `CREATE INDEX ... ON content_chunks(symbol_name)`
+    // hits a column that doesn't exist before runMigrations re-adds it.
+    await engine.initSchema();
+
+    // Assert: column is back, version is at LATEST, put-page round-trip works.
+    const after = await db.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'content_chunks' AND column_name = 'symbol_name'
+       ) AS exists`,
+    );
+    expect(after.rows[0].exists).toBe(true);
+
+    const versionStr = await engine.getConfig('version');
+    expect(parseInt(versionStr || '0', 10)).toBe(LATEST_VERSION);
+
+    // Acceptance: put + get a page end-to-end (mirrors the bug's manual
+    // verify line "gbrain put debug/init-order-test").
+    await engine.putPage('debug/init-order-test', {
+      type: 'concept',
+      title: 'init order test',
+      compiled_truth: 'BAT-540',
+      timeline: '',
+    });
+    const got = await engine.getPage('debug/init-order-test');
+    expect(got).not.toBeNull();
+    expect(got?.compiled_truth).toBe('BAT-540');
+  }, 120_000);
+
+  test('initSchema is idempotent on a current DB', async () => {
+    // Sanity: rerunning initSchema on a freshly-migrated DB is a no-op
+    // (no migrations applied, no errors thrown). This also exercises the
+    // "fresh / current" branch of the new drift detection.
+    await engine.initSchema();
+    const versionStr = await engine.getConfig('version');
+    expect(parseInt(versionStr || '0', 10)).toBe(LATEST_VERSION);
+  });
+});
+
+describe('BAT-540 — initSchema source-level guards', () => {
+  test('PostgresEngine.initSchema branches on a drift detector', () => {
+    const src = readFileSync(resolve('src/core/postgres-engine.ts'), 'utf-8');
+    expect(src).toContain('isDriftedDatabase');
+    // The fix is the order swap: when drifted, runMigrations must be called
+    // before SCHEMA_SQL. Locate the drifted branch and assert ordering.
+    const initIdx = src.indexOf('async initSchema');
+    expect(initIdx).toBeGreaterThan(-1);
+    const fnEnd = src.indexOf('async transaction', initIdx);
+    const body = src.slice(initIdx, fnEnd);
+    const driftedIdx = body.indexOf('if (drifted)');
+    expect(driftedIdx).toBeGreaterThan(-1);
+    const branch = body.slice(driftedIdx, body.indexOf('} else', driftedIdx));
+    const migIdx = branch.indexOf('runMigrations(this)');
+    const schemaIdx = branch.indexOf('SCHEMA_SQL');
+    expect(migIdx).toBeGreaterThan(-1);
+    expect(schemaIdx).toBeGreaterThan(migIdx);
+  });
+
+  test('PGLiteEngine.initSchema branches on the same drift detector', () => {
+    const src = readFileSync(resolve('src/core/pglite-engine.ts'), 'utf-8');
+    expect(src).toContain('isDriftedDatabase');
+    const initIdx = src.indexOf('async initSchema');
+    const fnEnd = src.indexOf('private async isDriftedDatabase', initIdx);
+    const body = src.slice(initIdx, fnEnd);
+    const driftedIdx = body.indexOf('if (drifted)');
+    expect(driftedIdx).toBeGreaterThan(-1);
+    const branch = body.slice(driftedIdx, body.indexOf('} else', driftedIdx));
+    const migIdx = branch.indexOf('runMigrations(this)');
+    const schemaIdx = branch.indexOf('PGLITE_SCHEMA_SQL');
+    expect(migIdx).toBeGreaterThan(-1);
+    expect(schemaIdx).toBeGreaterThan(migIdx);
+  });
+});

@@ -1,7 +1,7 @@
 import postgres from 'postgres';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
-import { runMigrations } from './migrate.ts';
+import { LATEST_VERSION, runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -78,16 +78,68 @@ export class PostgresEngine implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      // BAT-540: SCHEMA_SQL embeds the *latest* schema state. On a drifted DB
+      // (live version < LATEST_VERSION) it references columns that pending
+      // migrations would have added — e.g. CREATE INDEX ... ON
+      // content_chunks(symbol_name) fails on a v18 DB because symbol_name is
+      // added by the v0.19.0 migration. Running it before runMigrations()
+      // means the migration runner never gets a chance to self-heal: operators
+      // had to pull migration SQL bodies out of migrate.ts and run them
+      // manually via psql.
+      //
+      // Order: drifted DBs run migrations FIRST (bring schema up before the
+      // bleeding-edge SCHEMA_SQL replay), fresh / current DBs keep the
+      // historical order (SCHEMA_SQL builds the v1 baseline, then migrations
+      // run as no-ops to bump config.version to LATEST_VERSION).
+      const drifted = await this.isDriftedDatabase();
 
-      // Run any pending migrations automatically
-      const { applied } = await runMigrations(this);
-      if (applied > 0) {
-        console.log(`  ${applied} migration(s) applied`);
+      if (drifted) {
+        const { applied } = await runMigrations(this);
+        if (applied > 0) {
+          console.log(`  ${applied} migration(s) applied`);
+        }
+        // Idempotent reassertion. After migrations the schema is at
+        // LATEST_VERSION, so SCHEMA_SQL is mostly a no-op — but it catches
+        // any drift not covered by a numbered migration (e.g. an index
+        // hand-dropped on prod, or a trigger replaced under the hood).
+        await conn.unsafe(SCHEMA_SQL);
+      } else {
+        // Fresh install or already at LATEST_VERSION: keep the historical
+        // order. Migrations 2..LATEST expect the v1 baseline tables to
+        // exist, so SCHEMA_SQL must run first on a fresh DB.
+        await conn.unsafe(SCHEMA_SQL);
+        const { applied } = await runMigrations(this);
+        if (applied > 0) {
+          console.log(`  ${applied} migration(s) applied`);
+        }
       }
     } finally {
       await conn`SELECT pg_advisory_unlock(42)`;
     }
+  }
+
+  /**
+   * Returns true if the DB has been initialized previously and its config.version
+   * is behind LATEST_VERSION. False on fresh DBs (no config table) and on DBs
+   * already at or beyond LATEST_VERSION. The result drives initSchema()'s
+   * SCHEMA_SQL/runMigrations ordering — see BAT-540 for the recurrence.
+   *
+   * Uses to_regclass() so the lookup is cheap and side-effect-free, and does
+   * NOT throw on missing tables (information_schema.tables would also work but
+   * incurs a heavier catalog scan).
+   */
+  private async isDriftedDatabase(): Promise<boolean> {
+    const conn = this.sql;
+    const tableRows = await conn`SELECT to_regclass('public.config') AS oid`;
+    const configExists = tableRows[0]?.oid != null;
+    if (!configExists) return false; // fresh DB
+
+    const versionRows = await conn`SELECT value FROM config WHERE key = 'version'`;
+    if (versionRows.length === 0) return false; // never migrated; treat as fresh
+
+    const live = parseInt(versionRows[0].value as string, 10);
+    if (!Number.isFinite(live)) return false; // corrupt value; let SCHEMA_SQL+migrations re-establish state
+    return live < LATEST_VERSION;
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
