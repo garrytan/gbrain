@@ -25,13 +25,33 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# --dry-run-list: print the resolved file list (one per line) and exit. Used
+# by scripts/ci-local.sh to smoke-test the argv branching at startup.
+DRY_RUN_LIST=0
+if [ "${1:-}" = "--dry-run-list" ]; then
+  DRY_RUN_LIST=1
+  shift
+fi
+
+# Argv-driven file list (used by `ci:local:diff`); fall back to the full glob.
+if [ "$#" -gt 0 ]; then
+  files=("$@")
+else
+  files=(test/e2e/*.test.ts)
+fi
+
+if [ "$DRY_RUN_LIST" = "1" ]; then
+  printf '%s\n' "${files[@]}"
+  exit 0
+fi
+
 pass_files=0
 fail_files=0
 fail_list=()
 total_pass=0
 total_fail=0
 
-for f in test/e2e/*.test.ts; do
+for f in "${files[@]}"; do
   name=$(basename "$f")
   echo ""
   echo "=== $name ==="
