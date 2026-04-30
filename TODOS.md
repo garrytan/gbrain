@@ -1,6 +1,6 @@
 # TODOS
 
-## claw-test E2E (v0.24.0 follow-ups)
+## claw-test E2E (v0.22.16 follow-ups)
 
 ### Hermes runner — `src/core/claw-test/runners/hermes.ts`
 **Priority:** P2
@@ -76,7 +76,7 @@
 ### Read-side host-isolation (`$GBRAIN_HOST_HOME`)
 **Priority:** P3
 
-**What:** v0.24.0 confined every `~/.gbrain` write site to honor `$GBRAIN_HOME`. But `src/commands/init.ts:299-313` still reads real `~/.claude` / `~/.openclaw` / `~/.codex` / `~/.factory` / `~/.kiro` for module fingerprinting (host detection). Even with write-isolation, a claw-test running on a developer's box discovers their real installed mods. v1.1: add a separate `$GBRAIN_HOST_HOME` override for the read-side detection so the claw-test can run truly hermetic.
+**What:** v0.22.16 confined every `~/.gbrain` write site to honor `$GBRAIN_HOME`. But `src/commands/init.ts:299-313` still reads real `~/.claude` / `~/.openclaw` / `~/.codex` / `~/.factory` / `~/.kiro` for module fingerprinting (host detection). Even with write-isolation, a claw-test running on a developer's box discovers their real installed mods. v1.1: add a separate `$GBRAIN_HOST_HOME` override for the read-side detection so the claw-test can run truly hermetic.
 
 **Why:** v1's hermeticity contract is "writes are isolated, reads are not." v1.1 closes the read-side gap.
 

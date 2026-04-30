@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.24.0] - 2026-04-29
+## [0.22.16] - 2026-04-29
 
 **End-to-end claw-test friction harness — every release now gets a fresh-install dry-run.**
 **`gbrain claw-test` spins up a hermetic tempdir, walks the canonical first-day flow, and surfaces friction the way a real new user would hit it.**
