@@ -54,6 +54,37 @@ if [ "$CLEAN" = "1" ]; then
   docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>&1 | tail -5 || true
 fi
 
+# Tier 2: --diff fast-path. If the diff is doc-only (or empty), skip the
+# whole heavy gate (postgres + bun install + unit + E2E) and just verify
+# gitleaks on host. Doc-only diffs go from ~25 min to ~5 seconds.
+if [ "$DIFF" = "1" ]; then
+  CLASSIFICATION=$(bun run scripts/select-e2e.ts --classify-only 2>/dev/null || echo "ERR")
+  case "$CLASSIFICATION" in
+    DOC_ONLY)
+      echo "[ci-local] --diff: diff is doc-only — skipping postgres + unit + E2E (Tier 2 fast-path)."
+      echo "[ci-local] Running gitleaks on host as the only gate..."
+      if ! command -v gitleaks >/dev/null 2>&1; then
+        echo "[ci-local] WARN: gitleaks not installed; skipping. brew install gitleaks." >&2
+      else
+        gitleaks dir . --redact --no-banner
+        gitleaks git . --redact --no-banner --log-opts="origin/master..HEAD"
+      fi
+      echo "[ci-local] Doc-only fast-path complete. No code paths exercised."
+      trap - EXIT
+      exit 0
+      ;;
+    EMPTY)
+      echo "[ci-local] --diff: diff is empty (clean branch) — running full gate per fail-closed contract."
+      ;;
+    SRC)
+      echo "[ci-local] --diff: diff touches src/ — running selected E2E + full unit phase."
+      ;;
+    *)
+      echo "[ci-local] WARN: select-e2e.ts --classify-only returned '$CLASSIFICATION' — running full gate." >&2
+      ;;
+  esac
+fi
+
 # Pre-flight: postgres host ports for 4 shards. Defaults to 5434-5437 (avoid
 # 5432 manual gbrain-test-pg, 5433 commonly held by sibling projects).
 # GBRAIN_CI_PG_PORT defines BASE; shards take BASE..BASE+3.
@@ -146,68 +177,145 @@ if [ "$SHARD_TOTAL" != "$EXPECTED_ALL" ]; then
 fi
 echo "[ci-local] Smoke OK ($SMOKE_NO_ARGS files no-arg, 1 single-arg, ${SHARD_TOTAL}=4-shard total)."
 
-# Step 4: build the runner-side E2E command. Either parallel (4 shards) or
-# debug-sequential (--no-shard).
+# Step 4: build the runner-side command.
+# Tier 1: 4-shard parallel UNIT + E2E. Each shard runs ~46 unit files + ~9
+# E2E files against postgres-N. Guards + typecheck run ONCE before fan-out.
+# --no-shard runs the legacy unsharded flow (debug aid).
 if [ "$NO_SHARD" = "1" ]; then
   if [ "$DIFF" = "1" ]; then
-    RUN_E2E_CMD='SELECTED=$(bun run scripts/select-e2e.ts) && if [ -z "$SELECTED" ]; then echo "[ci-local] selector emitted nothing (doc-only diff); skipping E2E."; else echo "$SELECTED" | xargs bash scripts/run-e2e.sh; fi'
+    RUN_PHASES_CMD='echo "[runner] guards + typecheck"
+bash scripts/check-jsonb-pattern.sh
+bash scripts/check-progress-to-stdout.sh
+bash scripts/check-trailing-newline.sh
+bash scripts/check-wasm-embedded.sh
+bun run typecheck
+echo "[runner] unit (unsharded, DATABASE_URL unset)"
+env -u DATABASE_URL bash scripts/run-unit-shard.sh
+echo "[runner] e2e (unsharded, --diff selected)"
+SELECTED=$(bun run scripts/select-e2e.ts)
+if [ -z "$SELECTED" ]; then
+  echo "[runner] selector emitted nothing (doc-only diff); skipping E2E."
+else
+  DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test echo "$SELECTED" | xargs bash scripts/run-e2e.sh
+fi'
   else
-    RUN_E2E_CMD='bash scripts/run-e2e.sh'
+    RUN_PHASES_CMD='echo "[runner] guards + typecheck"
+bash scripts/check-jsonb-pattern.sh
+bash scripts/check-progress-to-stdout.sh
+bash scripts/check-trailing-newline.sh
+bash scripts/check-wasm-embedded.sh
+bun run typecheck
+echo "[runner] unit (unsharded, DATABASE_URL unset)"
+env -u DATABASE_URL bash scripts/run-unit-shard.sh
+echo "[runner] e2e (unsharded)"
+DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test bash scripts/run-e2e.sh'
   fi
 else
-  # Sharded: each shard pinned to its own postgres service. xargs -P4 fans out.
-  # Each shard writes to its own log file so output isn't tangled; we cat the
-  # logs in shard order at the end.
+  # Tier 1 sharded path. Each shard runs unit+E2E sequentially against its
+  # own postgres-N. Shards run in parallel via xargs -P4.
   if [ "$DIFF" = "1" ]; then
-    SELECT_PREFIX='SELECTED=$(bun run scripts/select-e2e.ts) && '
-    DISPATCH='if [ -z "$SELECTED" ]; then echo "[ci-local] selector emitted nothing (doc-only diff); skipping E2E."; exit 0; fi && echo "$SELECTED" | tr " " "\n" > /tmp/e2e-selected.txt && '
-    SHARD_RUN='cat /tmp/e2e-selected.txt | xargs -r bash scripts/run-e2e.sh'
+    DIFF_E2E_PREP='SELECTED=$(bun run scripts/select-e2e.ts)
+if [ -z "$SELECTED" ]; then
+  echo "" > /tmp/e2e-selected.txt
+else
+  echo "$SELECTED" | tr " " "\n" | grep -v "^$" > /tmp/e2e-selected.txt
+fi'
   else
-    SELECT_PREFIX=''
-    DISPATCH=''
-    SHARD_RUN='bash scripts/run-e2e.sh'
+    # Empty file -> run-e2e.sh uses default glob (all 36 E2E files).
+    DIFF_E2E_PREP='> /tmp/e2e-selected.txt'
   fi
-  RUN_E2E_CMD="${SELECT_PREFIX}${DISPATCH}mkdir -p /tmp/e2e-shard-logs && \
-seq 1 4 | xargs -n1 -P4 -I{} sh -c '
-  SHARD={}/4 \
-  DATABASE_URL=postgresql://postgres:postgres@postgres-{}:5432/gbrain_test \
-  ${SHARD_RUN} > /tmp/e2e-shard-logs/shard-{}.log 2>&1
-  echo \"[shard {} done] exit=\$?\"
-' && \
-echo \"\" && echo \"=== SHARD LOGS ===\" && \
-for s in 1 2 3 4; do echo \"--- shard \$s ---\" && cat /tmp/e2e-shard-logs/shard-\$s.log; done"
+  RUN_PHASES_CMD="echo \"[runner] guards + typecheck (run once before sharding)\"
+bash scripts/check-jsonb-pattern.sh
+bash scripts/check-progress-to-stdout.sh
+bash scripts/check-trailing-newline.sh
+bash scripts/check-wasm-embedded.sh
+bun run typecheck
+echo \"[runner] Tier 3: building PGLite snapshot fixture (cached across reruns)\"
+if [ ! -f test/fixtures/pglite-snapshot.tar ] || [ ! -f test/fixtures/pglite-snapshot.version ]; then
+  bun run build:pglite-snapshot
+else
+  echo \"[runner] snapshot fixture exists; engine will validate hash at load time\"
+fi
+export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
+echo \"[runner] resolving E2E file selection (--diff aware)\"
+${DIFF_E2E_PREP}
+mkdir -p /tmp/shard-logs
+echo \"[runner] Tier 1: 4-shard parallel unit + E2E (xargs -P4)\"
+set +e
+printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
+  shard=\$1
+  log=/tmp/shard-logs/shard-\${shard}.log
+  echo \"[shard \${shard}] start\" > \$log
+  echo \"[shard \${shard}] unit phase (SHARD=\${shard}/4, DATABASE_URL unset)\" >> \$log
+  env -u DATABASE_URL SHARD=\${shard}/4 bash scripts/run-unit-shard.sh >> \$log 2>&1
+  unit_exit=\$?
+  if [ \$unit_exit -ne 0 ]; then
+    echo \"[shard \${shard}] UNIT FAILED (exit=\$unit_exit)\" >> \$log
+    exit \$unit_exit
+  fi
+  echo \"[shard \${shard}] e2e phase (SHARD=\${shard}/4, DATABASE_URL=postgres-\${shard})\" >> \$log
+  if [ -s /tmp/e2e-selected.txt ]; then
+    SHARD=\${shard}/4 \\
+    DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
+    xargs -a /tmp/e2e-selected.txt bash scripts/run-e2e.sh >> \$log 2>&1
+  else
+    SHARD=\${shard}/4 \\
+    DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
+    bash scripts/run-e2e.sh >> \$log 2>&1
+  fi
+  e2e_exit=\$?
+  if [ \$e2e_exit -ne 0 ]; then
+    echo \"[shard \${shard}] E2E FAILED (exit=\$e2e_exit)\" >> \$log
+    exit \$e2e_exit
+  fi
+  echo \"[shard \${shard}] DONE\" >> \$log
+' _ {}
+shard_xargs_exit=\$?
+set -e
+echo \"\"
+echo \"=== SHARD LOGS (last 30 lines each + unit/e2e summaries) ===\"
+for s in 1 2 3 4; do
+  echo \"\"
+  echo \"--- shard \$s ---\"
+  if [ -f /tmp/shard-logs/shard-\$s.log ]; then
+    # Pull the unit + E2E summary lines explicitly so they survive even if
+    # the file is huge. Match: bun's '<N> pass / <N> fail' pairs, run-e2e.sh's
+    # 'Files: ... / Tests: ...' summary, and our own shard markers.
+    grep -E '^\\[shard|^Files: |^Tests: |Ran [0-9]+ tests|^[[:space:]]+[0-9]+ (pass|fail|skip)\$' /tmp/shard-logs/shard-\$s.log || true
+    echo \"  (last 30 lines for context)\"
+    tail -30 /tmp/shard-logs/shard-\$s.log
+  else
+    echo \"(no log file written — shard never started)\"
+  fi
+done
+echo \"\"
+if [ \$shard_xargs_exit -ne 0 ]; then
+  echo \"[runner] One or more shards failed (xargs exit=\$shard_xargs_exit). See SHARD LOGS above.\"
+  exit \$shard_xargs_exit
+fi
+echo \"[runner] All 4 shards passed.\""
 fi
 
 INNER_CMD=$(cat <<'EOF'
 set -euo pipefail
 echo "[runner] bun version: $(bun --version)"
 # oven/bun:1 omits git; many unit tests use mkdtemp + git init for fixtures.
-# Install at startup; ~5s amortized per run. Cheaper than baking a Dockerfile.
 if ! command -v git >/dev/null 2>&1; then
   echo "[runner] Installing git (debian apt)..."
   apt-get update -qq >/dev/null
   apt-get install -y -qq git ca-certificates >/dev/null
 fi
-# Container runs as root (uid 0) against a host-uid bind-mount; mark the
-# repo + any worktree gitdir as safe so `git status` etc. don't refuse.
+# Container runs as root (uid 0) against a host-uid bind-mount; mark repo +
+# any worktree gitdir as safe so `git status` etc. don't refuse.
 git config --global --add safe.directory '*' || true
 if [ ! -d /app/node_modules ] || [ -z "$(ls -A /app/node_modules 2>/dev/null)" ]; then
   echo "[runner] First run (or --clean): bun install --frozen-lockfile"
   bun install --frozen-lockfile
 fi
-# Match GH Actions structure: unit job has NO DATABASE_URL (so test/e2e/*
-# files skip via hasDatabase() at the top); E2E job sets DATABASE_URL per
-# shard via the run-e2e.sh dispatcher below. Without unset here, e2e tests
-# would run twice — once parallel-and-broken in unit phase, once correctly
-# in the sharded E2E phase.
-echo "[runner] bun run test (unit only — DATABASE_URL unset)"
-env -u DATABASE_URL bun run test
-echo "[runner] E2E (sharded 4-way, parallel)"
-__RUN_E2E__
+__RUN_PHASES__
 EOF
 )
-
-INNER_CMD="${INNER_CMD//__RUN_E2E__/$RUN_E2E_CMD}"
+INNER_CMD="${INNER_CMD/__RUN_PHASES__/$RUN_PHASES_CMD}"
 
 # Conductor / git-worktree support: when `.git` is a file (not a directory),
 # it points at a host gitdir outside the bind-mount. Without remounting that
