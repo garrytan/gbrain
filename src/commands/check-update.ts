@@ -1,9 +1,12 @@
 import { VERSION } from '../version.ts';
 import { detectInstallMethod } from './upgrade.ts';
+import { execSync } from 'child_process';
+import { realpathSync, existsSync } from 'fs';
+import { dirname, join } from 'path';
 
 interface CheckUpdateResult {
   current_version: string;
-  current_source: 'package-json';
+  current_source: 'package-json' | 'source';
   latest_version: string;
   update_available: boolean;
   upgrade_command: string;
@@ -36,7 +39,32 @@ function upgradeCommandForMethod(method: string): string {
     case 'bun': return 'bun update gbrain';
     case 'clawhub': return 'clawhub update gbrain';
     case 'binary': return 'Download from https://github.com/garrytan/gbrain/releases';
+    case 'source': return 'git pull origin master';
     default: return 'gbrain upgrade';
+  }
+}
+
+function checkSourceUpdate(): { ahead: number; commits: string[] } | null {
+  try {
+    const arg1 = process.argv[1] ?? '';
+    let dir = dirname(realpathSync(arg1));
+    let gitDir = '';
+    for (let i = 0; i < 5; i++) {
+      if (existsSync(join(dir, '.git'))) { gitDir = dir; break; }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    if (!gitDir) return null;
+    execSync('git fetch origin', { cwd: gitDir, stdio: 'pipe', timeout: 15_000 });
+    const log = execSync('git log HEAD..origin/master --oneline', {
+      cwd: gitDir, encoding: 'utf-8', timeout: 5_000,
+    }).trim();
+    if (!log) return { ahead: 0, commits: [] };
+    const commits = log.split('\n').filter(l => l.trim());
+    return { ahead: commits.length, commits };
+  } catch {
+    return null;
   }
 }
 
@@ -126,6 +154,47 @@ export async function runCheckUpdate(args: string[]) {
   const json = args.includes('--json');
   const method = detectInstallMethod();
   const upgradeCmd = upgradeCommandForMethod(method);
+
+  if (method === 'source') {
+    const sourceResult = checkSourceUpdate();
+    if (sourceResult && sourceResult.ahead > 0) {
+      if (json) {
+        console.log(JSON.stringify({
+          current_version: VERSION,
+          current_source: 'source',
+          latest_version: `${sourceResult.ahead} commit(s) behind origin/master`,
+          update_available: true,
+          upgrade_command: upgradeCmd,
+          release_url: 'https://github.com/garrytan/gbrain',
+          changelog_diff: sourceResult.commits.join('\n'),
+          published_at: '',
+        }, null, 2));
+      } else {
+        console.log(`GBrain ${VERSION} (source install) — ${sourceResult.ahead} commit(s) behind origin/master`);
+        for (const c of sourceResult.commits.slice(0, 5)) console.log(`  ${c}`);
+        if (sourceResult.commits.length > 5) console.log(`  ... and ${sourceResult.commits.length - 5} more`);
+        console.log(`Run: ${upgradeCmd}`);
+      }
+      return;
+    }
+    if (sourceResult) {
+      if (json) {
+        console.log(JSON.stringify({
+          current_version: VERSION,
+          current_source: 'source',
+          latest_version: VERSION,
+          update_available: false,
+          upgrade_command: upgradeCmd,
+          release_url: '',
+          changelog_diff: '',
+          published_at: '',
+        }, null, 2));
+      } else {
+        console.log(`GBrain ${VERSION} (source install) is up to date with origin/master.`);
+      }
+      return;
+    }
+  }
 
   const release = await fetchLatestRelease();
 

@@ -1,6 +1,6 @@
 import { execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
+import { join, dirname } from 'path';
 import { VERSION } from '../version.ts';
 
 export async function runUpgrade(args: string[]) {
@@ -40,6 +40,23 @@ export async function runUpgrade(args: string[]) {
         upgraded = true;
       } catch {
         console.error('ClawHub upgrade failed. Try: clawhub update gbrain');
+      }
+      break;
+
+    case 'source':
+      console.log('Source install detected. Upgrading via git pull...');
+      try {
+        const arg1 = process.argv[1] ?? '';
+        let gitDir = dirname(realpathSync(arg1));
+        for (let i = 0; i < 5; i++) {
+          if (existsSync(join(gitDir, '.git'))) break;
+          gitDir = dirname(gitDir);
+        }
+        execSync('git pull origin master', { cwd: gitDir, stdio: 'inherit', timeout: 60_000 });
+        execSync('bun install', { cwd: gitDir, stdio: 'inherit', timeout: 120_000 });
+        upgraded = true;
+      } catch {
+        console.error('Source upgrade failed. Try manually: cd <repo> && git pull origin master && bun install');
       }
       break;
 
@@ -234,7 +251,7 @@ function isNewerThan(version: string, baseline: string): boolean {
   return false;
 }
 
-export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'unknown' {
+export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'source' | 'unknown' {
   const execPath = process.execPath || '';
 
   // Check if running from node_modules (bun/npm install)
@@ -254,6 +271,20 @@ export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'unknown' 
   } catch {
     // not available
   }
+
+  // Check if running from a git checkout (source-linked install)
+  try {
+    const arg1 = process.argv[1] ?? '';
+    if (arg1) {
+      let dir = dirname(realpathSync(arg1));
+      for (let i = 0; i < 5; i++) {
+        if (existsSync(join(dir, '.git'))) return 'source';
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+    }
+  } catch { /* ignore */ }
 
   return 'unknown';
 }

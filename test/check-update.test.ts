@@ -155,7 +155,7 @@ describe('check-update CLI', () => {
     expect(output).toHaveProperty('current_version');
     expect(output).toHaveProperty('update_available');
     expect(output).toHaveProperty('upgrade_command');
-    expect(output).toHaveProperty('current_source', 'package-json');
+    expect(['package-json', 'source']).toContain(output.current_source);
     expect(typeof output.update_available).toBe('boolean');
   });
 });
