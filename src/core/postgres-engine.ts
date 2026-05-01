@@ -235,13 +235,18 @@ export class PostgresEngine implements BrainEngine {
     }
 
     if (needsChunksBootstrap) {
-      // v26 (content_chunks_code_metadata) adds the full code-chunk metadata
-      // surface. The bootstrap only adds the two columns the schema blob's
-      // partial indexes reference (idx_chunks_symbol_name, idx_chunks_language).
-      // v26 runs later via runMigrations and adds the rest idempotently.
+      // v26 (content_chunks_code_metadata) and v27 (cathedral_ii_foundation)
+      // add the full code-chunk and chunk-grain FTS surfaces. The bootstrap
+      // only adds the columns the schema blob's indexes reference
+      // (idx_chunks_symbol_name, idx_chunks_language, idx_chunks_search_vector).
+      // v26 and v27 run later via runMigrations and add the rest idempotently.
       await conn.unsafe(`
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS language TEXT;
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS parent_symbol_path TEXT[];
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS doc_comment TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name_qualified TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
       `);
     }
   }
