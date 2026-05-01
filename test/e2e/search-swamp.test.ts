@@ -2,7 +2,7 @@
  * Search Swamp Resistance E2E
  *
  * Reproduces the v3-plan repro case: a curated article (originals/) competes
- * with two chat-log pages (wintermute/chat/) on similar ts_rank. With v0.21+
+ * with two chat-log pages (openclaw/chat/) on similar ts_rank. With v0.21+
  * source-aware ranking, the article must rank #0.
  *
  * Mirrors the structure of search-quality.test.ts. Uses PGLite in-memory.
@@ -47,7 +47,7 @@ beforeAll(async () => {
   ] satisfies ChunkInput[]);
 
   // Chat swamp #1 — long page, mentions the phrase repeatedly.
-  await engine.putPage('wintermute/chat/2026-04-15', {
+  await engine.putPage('openclaw/chat/2026-04-15', {
     type: 'note',
     title: '2026-04-15 chat',
     compiled_truth: '',
@@ -57,7 +57,7 @@ beforeAll(async () => {
       'The fat code thin harness pattern is something we keep returning to. ' +
       'fat code thin harness fat code thin harness fat code thin harness.',
   });
-  await engine.upsertChunks('wintermute/chat/2026-04-15', [
+  await engine.upsertChunks('openclaw/chat/2026-04-15', [
     {
       chunk_index: 0,
       chunk_text:
@@ -71,7 +71,7 @@ beforeAll(async () => {
   ] satisfies ChunkInput[]);
 
   // Chat swamp #2 — same shape.
-  await engine.putPage('wintermute/chat/2026-04-16', {
+  await engine.putPage('openclaw/chat/2026-04-16', {
     type: 'note',
     title: '2026-04-16 chat',
     compiled_truth: '',
@@ -79,7 +79,7 @@ beforeAll(async () => {
       'fat code thin harness once more. fat code thin harness fat code thin harness. ' +
       'still talking about fat code thin harness. fat code thin harness.',
   });
-  await engine.upsertChunks('wintermute/chat/2026-04-16', [
+  await engine.upsertChunks('openclaw/chat/2026-04-16', [
     {
       chunk_index: 0,
       chunk_text:
@@ -112,7 +112,7 @@ describe('searchKeyword swamp resistance', () => {
     expect(results.length).toBeGreaterThan(0);
     // Top result should be a chat page (more keyword density per chunk).
     const topSlugs = results.slice(0, 2).map(r => r.slug);
-    const anyChat = topSlugs.some(s => s.startsWith('wintermute/chat/'));
+    const anyChat = topSlugs.some(s => s.startsWith('openclaw/chat/'));
     expect(anyChat).toBe(true);
   });
 });

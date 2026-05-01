@@ -23,6 +23,13 @@ import { describe, test, expect } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 
+// Tier 3 opt-out: this file tests the cold init / bootstrap path explicitly.
+// If GBRAIN_PGLITE_SNAPSHOT is set (ci:local sets it for unit shards), every
+// PGlite would boot post-initSchema and these assertions ("0 tables on fresh
+// install", "bootstrap converts pre-v0.18 brain to LATEST") would fail
+// trivially. Unset for this file's process.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+
 describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
   test('no-op on fresh install (no pages or links table)', async () => {
     const engine = new PGLiteEngine();

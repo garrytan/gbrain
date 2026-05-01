@@ -575,7 +575,7 @@ async function handleCliOnly(command: string, args: string[]) {
       }
       case 'repos': {
         // v0.19.0: `gbrain repos ...` is an alias into the v0.18.0 sources
-        // subsystem. The repos abstraction (Wintermute's baseline) was
+        // subsystem. The repos abstraction (Garry's OpenClaw baseline) was
         // redundant with sources and carried per-user config state that
         // couldn't participate in federation / RLS / multi-tenancy. We
         // keep the alias so scripts like `gbrain repos add .` keep

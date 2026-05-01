@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseSynthesize } from '../../src/core/cycle/synthesize.ts';
+import { runPhaseSynthesize, renderPageToMarkdown } from '../../src/core/cycle/synthesize.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -206,6 +206,206 @@ describe('E2E synthesize — cooldown', () => {
       } finally {
         rmSync(adHoc, { force: true });
       }
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+});
+
+describe('E2E synthesize — round-trip self-consumption guard (v0.23.2)', () => {
+  /**
+   * Capture stderr writes during a single synthesize run, restoring the
+   * original writer afterward (even on throw). Returns the captured chunks.
+   */
+  async function captureStderr<T>(body: () => Promise<T>): Promise<{ result: T; stderr: string }> {
+    const chunks: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stderr as any).write = (chunk: any, ..._args: any[]): boolean => {
+      const s = typeof chunk === 'string' ? chunk : chunk.toString();
+      chunks.push(s);
+      return true;
+    };
+    try {
+      const result = await body();
+      return { result, stderr: chunks.join('') };
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stderr as any).write = original;
+    }
+  }
+
+  test('round-trip: synthesize-rendered dream output is skipped on the next run', async () => {
+    // Production-realistic recursion:
+    //   1. The synthesize phase wrote a reflection (DB + reverseWriteSlugs).
+    //   2. A workflow downstream moved that .md content into the corpus dir
+    //      as a .txt (or symlinked, or the dirs overlap, or someone copied
+    //      OpenClaw session output over the top of a brain page export).
+    //   3. The next overnight cycle reads the corpus dir.
+    //
+    // Without the guard, step 3 re-synthesizes the page, paying Sonnet costs
+    // and corrupting provenance. With the v0.23.2 guard, the file is detected
+    // by the `dream_generated: true` frontmatter marker and skipped silently
+    // (with a stderr log so the operator can debug).
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+
+      // 1. Insert a reflection page in the DB the way the subagent would.
+      const slug = 'wiki/personal/reflections/2026-04-30-test-roundtrip-abc123';
+      await rig.engine.putPage(slug, {
+        type: 'note',
+        title: 'Test reflection (E2E round-trip)',
+        compiled_truth: 'I noticed something. Cross-references to [Alice](people/alice).',
+        timeline: '',
+        frontmatter: {},
+      });
+
+      // 2. Reverse-render via the real synthesize-phase helper. This is the
+      //    code path that stamps `dream_generated: true` into frontmatter.
+      const page = await rig.engine.getPage(slug);
+      expect(page).not.toBeNull();
+      const md = renderPageToMarkdown(page!, ['dream-cycle']);
+      // Sanity: the marker must actually be in the rendered output.
+      expect(md).toMatch(/dream_generated:\s*true/);
+      expect(md.length).toBeGreaterThan(100);
+
+      // 3. Drop the rendered content into the corpus dir as a .txt file —
+      //    pad to clear the 2000-char minChars threshold so we don't get
+      //    short-circuited before the guard even runs.
+      writeFileSync(
+        join(rig.corpusDir, '2026-04-30-leaked-reflection.txt'),
+        md + '\n' + '\nfollow-up notes that the operator scribbled.\n'.repeat(50),
+      );
+
+      // 4. Run synthesize. Capture stderr so we can prove the guard logged
+      //    its skip line (no-more-silent-skips contract).
+      await withoutAnthropicKey(async () => {
+        const { result, stderr } = await captureStderr(() =>
+          runPhaseSynthesize(rig.engine, {
+            brainDir: rig.brainDir,
+            dryRun: false,
+          }),
+        );
+
+        expect(result.status).toBe('ok');
+        // Discovery skipped the file → the no-transcripts short-circuit fires.
+        expect(result.summary).toMatch(/no transcripts to process/);
+        expect((result.details as { transcripts_processed: number }).transcripts_processed).toBe(0);
+        expect((result.details as { pages_written: number }).pages_written).toBe(0);
+        // No verdicts entry: the file never made it past discovery, so the
+        // verdict cache stays untouched (this matters because a cached "false"
+        // would shadow a future legit edit of a real conversation transcript).
+        const verdicts = (result.details as { verdicts?: unknown[] }).verdicts;
+        expect(verdicts === undefined || (Array.isArray(verdicts) && verdicts.length === 0)).toBe(true);
+        // Stderr log fired — operator can see the skip when debugging.
+        expect(stderr).toMatch(/\[dream\] skipped 2026-04-30-leaked-reflection: dream_generated marker/);
+      });
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('round-trip: bypassDreamGuard=true re-enables ingestion of marked output', async () => {
+    // Power-user escape hatch (`gbrain dream --unsafe-bypass-dream-guard`).
+    // The same marked file that was skipped above now gets discovered when
+    // bypassDreamGuard is set at the phase entry. Proves the bypass plumbing
+    // reaches discoverTranscripts at phase scope, not just at the
+    // function-pair level the unit tests cover.
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+
+      const slug = 'wiki/personal/reflections/2026-04-30-bypass-test-def456';
+      await rig.engine.putPage(slug, {
+        type: 'note',
+        title: 'Bypass test',
+        compiled_truth: 'Some content. ' + 'x '.repeat(500),
+        timeline: '',
+        frontmatter: {},
+      });
+      const page = await rig.engine.getPage(slug);
+      const md = renderPageToMarkdown(page!, ['dream-cycle']);
+      writeFileSync(join(rig.corpusDir, '2026-04-30-bypass.txt'), md + '\n' + 'x '.repeat(500));
+
+      await withoutAnthropicKey(async () => {
+        const { result, stderr } = await captureStderr(() =>
+          runPhaseSynthesize(rig.engine, {
+            brainDir: rig.brainDir,
+            dryRun: false,
+            bypassDreamGuard: true,
+          }),
+        );
+
+        expect(result.status).toBe('ok');
+        // File was discovered — verdict array has the entry, even though
+        // the no-key path makes it worth=false.
+        const verdicts = (result.details as { verdicts: Array<{ worth: boolean; reasons: string[] }> }).verdicts;
+        expect(verdicts).toHaveLength(1);
+        expect(verdicts[0].reasons[0]).toMatch(/ANTHROPIC_API_KEY/);
+        // Loud warning fired at phase entry so the operator never wonders
+        // why the guard quietly let dream output through.
+        expect(stderr).toMatch(/\[dream\] WARNING: --unsafe-bypass-dream-guard set/);
+        // The standard "skipped" log must NOT have fired (the bypass kicks
+        // in inside isDreamOutput before the log path runs).
+        expect(stderr).not.toMatch(/\[dream\] skipped .*: dream_generated marker/);
+      });
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('round-trip: dream output + real transcript → only the real one is discovered', async () => {
+    // Mixed corpus: a leaked dream-output file alongside a legitimate
+    // conversation transcript. The guard must skip exactly the marked file
+    // and let the real one through.
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+
+      // Leaked reflection.
+      const slug = 'wiki/personal/reflections/2026-04-30-mixed-ghi789';
+      await rig.engine.putPage(slug, {
+        type: 'note',
+        title: 'Leaked',
+        compiled_truth: 'leaked body. ' + 'x '.repeat(500),
+        timeline: '',
+        frontmatter: {},
+      });
+      const md = renderPageToMarkdown((await rig.engine.getPage(slug))!, ['dream-cycle']);
+      writeFileSync(join(rig.corpusDir, '2026-04-30-leaked.txt'), md + '\n' + 'x '.repeat(500));
+
+      // Real conversation transcript (no frontmatter, plain prose).
+      writeFileSync(
+        join(rig.corpusDir, '2026-04-30-real-convo.txt'),
+        'User: today I want to think about wiki/personal/reflections/identity.\n' +
+        'Agent: ' + 'meaningful conversation '.repeat(200),
+      );
+
+      await withoutAnthropicKey(async () => {
+        const { result, stderr } = await captureStderr(() =>
+          runPhaseSynthesize(rig.engine, {
+            brainDir: rig.brainDir,
+            dryRun: false,
+          }),
+        );
+
+        expect(result.status).toBe('ok');
+        const verdicts = (result.details as { verdicts: Array<{ filePath: string; worth: boolean }> }).verdicts;
+        // Exactly one verdict — the real transcript. The leaked file was
+        // dropped at discovery before the verdict pass even started.
+        expect(verdicts).toHaveLength(1);
+        expect(verdicts[0].filePath).toMatch(/2026-04-30-real-convo\.txt$/);
+        // Stderr log fired for the leaked file specifically.
+        expect(stderr).toMatch(/\[dream\] skipped 2026-04-30-leaked: dream_generated marker/);
+        // ... and only the leaked file. A legitimate transcript that merely
+        // mentions a reflection slug (codex finding #1's headline false-positive)
+        // must not be skipped.
+        expect(stderr).not.toMatch(/\[dream\] skipped 2026-04-30-real-convo/);
+      });
     } finally {
       await rig.cleanup();
     }

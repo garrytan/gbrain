@@ -210,6 +210,83 @@ describe('planScaffold', () => {
     expect(plan.resolverAppend).toBeNull();
   });
 
+  it('detects bare-path resolver row (no backticks) → no duplicate append', () => {
+    // User hand-edited the resolver to drop backticks. The original
+    // backtick-only matcher missed this; broadened matcher catches it.
+    const { root, skillsDir } = scratchRepo();
+    const resolverPath = join(skillsDir, 'RESOLVER.md');
+    const before = readFileSync(resolverPath, 'utf-8');
+    writeFileSync(
+      resolverPath,
+      before +
+        '\n## Uncategorized\n\n| Trigger | Skill |\n|---------|-------|\n' +
+        '| "do thing" | skills/demo/SKILL.md |\n',
+    );
+    const plan = planScaffold({
+      skillsDir,
+      repoRoot: root,
+      vars: { name: 'demo', description: 'd', triggers: ['do thing'], writesTo: [], writesPages: false, mutating: false },
+    });
+    expect(plan.resolverAppend).toBeNull();
+  });
+
+  it('detects double-quoted resolver row → no duplicate append', () => {
+    const { root, skillsDir } = scratchRepo();
+    const resolverPath = join(skillsDir, 'RESOLVER.md');
+    const before = readFileSync(resolverPath, 'utf-8');
+    writeFileSync(
+      resolverPath,
+      before +
+        '\n## Uncategorized\n\n| Trigger | Skill |\n|---------|-------|\n' +
+        '| "do thing" | "skills/demo/SKILL.md" |\n',
+    );
+    const plan = planScaffold({
+      skillsDir,
+      repoRoot: root,
+      vars: { name: 'demo', description: 'd', triggers: ['do thing'], writesTo: [], writesPages: false, mutating: false },
+    });
+    expect(plan.resolverAppend).toBeNull();
+  });
+
+  it('detects single-quoted resolver row → no duplicate append', () => {
+    const { root, skillsDir } = scratchRepo();
+    const resolverPath = join(skillsDir, 'RESOLVER.md');
+    const before = readFileSync(resolverPath, 'utf-8');
+    writeFileSync(
+      resolverPath,
+      before +
+        "\n## Uncategorized\n\n| Trigger | Skill |\n|---------|-------|\n" +
+        "| \"do thing\" | 'skills/demo/SKILL.md' |\n",
+    );
+    const plan = planScaffold({
+      skillsDir,
+      repoRoot: root,
+      vars: { name: 'demo', description: 'd', triggers: ['do thing'], writesTo: [], writesPages: false, mutating: false },
+    });
+    expect(plan.resolverAppend).toBeNull();
+  });
+
+  it('does NOT false-match a longer skill name with a shared prefix', () => {
+    // If "demo" is the target but resolver only references
+    // "demo-extended", we MUST treat that as no existing row (different
+    // skill). Broadened matcher uses anchored boundaries to prevent this.
+    const { root, skillsDir } = scratchRepo();
+    const resolverPath = join(skillsDir, 'RESOLVER.md');
+    const before = readFileSync(resolverPath, 'utf-8');
+    writeFileSync(
+      resolverPath,
+      before +
+        '\n## Uncategorized\n\n| Trigger | Skill |\n|---------|-------|\n' +
+        '| "do extended" | `skills/demo-extended/SKILL.md` |\n',
+    );
+    const plan = planScaffold({
+      skillsDir,
+      repoRoot: root,
+      vars: { name: 'demo', description: 'd', triggers: ['do thing'], writesTo: [], writesPages: false, mutating: false },
+    });
+    expect(plan.resolverAppend).not.toBeNull();
+  });
+
   it('handles --triggers omitted by seeding TBD placeholder', () => {
     const { root, skillsDir } = scratchRepo();
     const plan = planScaffold({

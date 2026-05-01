@@ -948,7 +948,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   // local_path. Sources are the canonical v0.18.0 abstraction: per-source
   // last_commit, last_sync_at, config.federated flags. Per-source
   // bookmarks live in the sources table (not ~/.gbrain/config.json),
-  // which is why this path replaced Wintermute's `multi-repo.ts` shim.
+  // which is why this path replaced Garry's OpenClaw `multi-repo.ts` shim.
   //
   // Only sources with a non-null local_path participate. A GitHub-only
   // source (no checkout) has nothing for `sync` to pull. Sources with

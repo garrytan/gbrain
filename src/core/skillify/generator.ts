@@ -116,9 +116,16 @@ export function planScaffold(opts: ScaffoldOptions): ScaffoldPlan {
 }
 
 /**
- * Check whether the resolver already has a backtick-wrapped reference
- * to `skills/<name>/SKILL.md`. Idempotency contract (D-CX-7) — if
- * present, we never re-append a row for this skill, even with --force.
+ * Check whether the resolver already references `skills/<name>/SKILL.md`
+ * in ANY form: backticked (`skills/foo/SKILL.md`), single-quoted
+ * ('skills/foo/SKILL.md'), double-quoted ("skills/foo/SKILL.md"), or
+ * bare (skills/foo/SKILL.md surrounded by non-word chars).
+ *
+ * Idempotency contract — if any form is present, we never re-append a
+ * row for this skill, even with --force. This is broader than the
+ * original backtick-only match: users who hand-edit the resolver to
+ * normalize formatting (drop backticks, use quotes, etc.) should not
+ * cause duplicate rows on the next scaffold --force.
  */
 function detectExistingResolverRow(resolverFile: string, name: string): boolean {
   let content: string;
@@ -128,7 +135,15 @@ function detectExistingResolverRow(resolverFile: string, name: string): boolean 
     return false;
   }
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`\`skills\\/${escaped}\\/SKILL\\.md\``);
+  // Match the path with any common delimiter on either side: backtick,
+  // single quote, double quote, parenthesis, whitespace, start/end of
+  // line. The `(?:^|...)` and `(?:$|...)` anchors ensure we don't
+  // false-match on something like "skills/foo-bar/SKILL.md" when
+  // looking for "foo".
+  const re = new RegExp(
+    `(?:^|[\`'"\\s\\(\\[])skills\\/${escaped}\\/SKILL\\.md(?:[\`'"\\s\\)\\]]|$)`,
+    'm',
+  );
   return re.test(content);
 }
 

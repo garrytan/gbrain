@@ -73,7 +73,7 @@ hook resumes blocking malformed pages.
 
 ## For downstream agent forks
 
-If your fork (Wintermute, Hermes, OpenClaw) wraps gbrain in a host repo
+If your OpenClaw wraps gbrain in a host repo
 that's not the brain repo itself, you may want a separate hook strategy:
 
 - **Brain repo IS the host repo** (gbrain skills + brain pages in one repo):

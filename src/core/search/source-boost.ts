@@ -3,13 +3,13 @@
  *
  * Multiplies into ts_rank / vector cosine score at SQL build time so that
  * curated content (originals/, concepts/, writing/) outranks bulk content
- * (wintermute/chat/, daily/, media/x/) for non-temporal queries.
+ * (openclaw/chat/, daily/, media/x/) for non-temporal queries.
  *
  * Keyed by slug prefix. Longest-prefix-match wins (sorted at lookup time
  * inside sql-ranking.ts). Defaults grounded in the composition of the
  * canonical brain at ~/git/brain/.
  *
- * Override via env: GBRAIN_SOURCE_BOOST="originals/:1.8,wintermute/chat/:0.3"
+ * Override via env: GBRAIN_SOURCE_BOOST="originals/:1.8,openclaw/chat/:0.3"
  * Hard-exclude via env: GBRAIN_SEARCH_EXCLUDE="test/,scratch/"
  */
 
@@ -36,7 +36,7 @@ export const DEFAULT_SOURCE_BOOSTS: Record<string, number> = {
   'daily/': 0.8,
   'media/x/': 0.7,
   // Chat transcripts — massive, noisy, swamp keyword queries
-  'wintermute/chat/': 0.5,
+  'openclaw/chat/': 0.5,
 };
 
 /**
@@ -53,7 +53,7 @@ export const DEFAULT_HARD_EXCLUDES: string[] = [
 /**
  * Parse GBRAIN_SOURCE_BOOST env var.
  * Format: comma-separated prefix:factor pairs.
- * Example: "originals/:1.8,wintermute/chat/:0.3"
+ * Example: "originals/:1.8,openclaw/chat/:0.3"
  *
  * Malformed entries are skipped silently. Returns empty object if env is
  * unset or unparseable in its entirety.

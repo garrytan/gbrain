@@ -316,9 +316,11 @@ is what you spend time on. Everything else is boilerplate the CLI writes for you
 
 Drop a `routing-eval.jsonl` fixture next to any skill. Each line is `{intent, expected_skill,
 ambiguous_with?}`. `gbrain check-resolvable` runs the structural layer by default; `gbrain
-routing-eval --llm` runs an LLM tie-break layer for CI. False positives (wrong skill matched),
-missed routes (no skill matched), and tautological fixtures (intent copies trigger verbatim)
-all surface as specific advisories with the exact file:line to fix.
+routing-eval` runs the same structural layer as a dedicated CI verb. The `--llm` flag is
+accepted as a placeholder for a future LLM tie-break layer; in this release it emits a stderr
+notice and runs structural only. False positives (wrong skill matched), missed routes (no
+skill matched), and tautological fixtures (intent copies trigger verbatim) all surface as
+specific advisories with the exact file:line to fix.
 
 ### Works on your OpenClaw, not just gbrain's repo
 
@@ -355,6 +357,10 @@ gbrain skillpack diff brain-ops                # compare bundle vs your local co
 
 Re-running is safe. The managed-block markers in your AGENTS.md let `skillpack install`
 accumulate rows across separate single-skill installs instead of overwriting each other.
+A receipt comment inside the fence (`<!-- gbrain:skillpack:manifest cumulative-slugs="..." -->`)
+tracks what gbrain has installed across runs. `install --all` is the only path that prunes;
+per-skill install never deletes what it didn't install. If you hand-add a row inside the fence,
+gbrain preserves it on reinstall and emits a stderr notice telling your agent to investigate.
 
 **Skillify is the piece that makes the skills tree survive six months of compounding work.**
 Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist
@@ -736,7 +742,7 @@ The skills in this repo are those patterns, generalized. What took 11 days to bu
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Run `bun test` for unit tests. E2E tests: spin up Postgres with pgvector, run `bun run test:e2e`, tear down.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Run `bun test` for unit tests. For the full local CI gate (gitleaks + unit + all 29 E2E files in Docker, the same checks GH Actions runs), use `bun run ci:local` ... or `bun run ci:local:diff` for the diff-aware subset during fast iteration.
 
 PRs welcome for: new enrichment APIs, performance optimizations, additional engine backends, new skills following the conformance standard in `skills/skill-creator/SKILL.md`.
 

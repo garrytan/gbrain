@@ -29,6 +29,7 @@ import {
   buildManagedBlock,
   diffSkill,
   extractManagedSlugs,
+  parseReceipt,
   planInstall,
   updateManagedBlock,
   InstallError,
@@ -433,6 +434,182 @@ describe('planInstall + applyInstall', () => {
     expect(result.managedBlock.applied).toBe(true);
     const agents = readFileSync(join(workspace, 'AGENTS.md'), 'utf-8');
     expect(agents).toContain('`skills/alpha/SKILL.md`');
+  });
+});
+
+describe('managed-block receipt + cumulative semantics (v0.19)', () => {
+  /**
+   * Regression guard for cumulative-install semantics. The PR's CEO
+   * review originally proposed a "rebuild from current manifest" that
+   * would have deleted alpha's row when a user later ran `install beta`
+   * alone. Codex caught it. This test fails fast if anyone tries that
+   * design again.
+   */
+  it('install alpha, then install beta (separately) → both rows survive AND receipt lists both', () => {
+    const { gbrainRoot } = scratchGbrain();
+    const { workspace, skillsDir } = scratchTarget();
+
+    const alphaOpts = { gbrainRoot, targetWorkspace: workspace, targetSkillsDir: skillsDir, skillSlug: 'alpha' };
+    applyInstall(planInstall(alphaOpts), alphaOpts);
+
+    const betaOpts = { gbrainRoot, targetWorkspace: workspace, targetSkillsDir: skillsDir, skillSlug: 'beta' };
+    applyInstall(planInstall(betaOpts), betaOpts);
+
+    const resolver = readFileSync(join(skillsDir, 'RESOLVER.md'), 'utf-8');
+    expect(resolver).toContain('`skills/alpha/SKILL.md`');
+    expect(resolver).toContain('`skills/beta/SKILL.md`');
+
+    const receipt = parseReceipt(resolver);
+    expect(receipt).not.toBeNull();
+    expect(receipt!.cumulativeSlugs.sort()).toEqual(['alpha', 'beta']);
+  });
+
+  /**
+   * Full-bundle install IS the prune surface. Removing a slug from the
+   * bundle and running install --all silently drops the row.
+   */
+  it('install --all then remove a slug from bundle and re-install --all → removed slug pruned silently', () => {
+    const { gbrainRoot } = scratchGbrain();
+    const { workspace, skillsDir } = scratchTarget();
+
+    const allOpts = { gbrainRoot, targetWorkspace: workspace, targetSkillsDir: skillsDir, skillSlug: null };
+    applyInstall(planInstall(allOpts), allOpts);
+    let resolver = readFileSync(join(skillsDir, 'RESOLVER.md'), 'utf-8');
+    expect(resolver).toContain('`skills/alpha/SKILL.md`');
+    expect(resolver).toContain('`skills/beta/SKILL.md`');
+
+    // Simulate "alpha removed from bundle" by rewriting the manifest.
+    const pluginManifest = JSON.parse(
+      readFileSync(join(gbrainRoot, 'openclaw.plugin.json'), 'utf-8'),
+    );
+    pluginManifest.skills = ['skills/beta'];
+    writeFileSync(
+      join(gbrainRoot, 'openclaw.plugin.json'),
+      JSON.stringify(pluginManifest, null, 2),
+    );
+
+    // Capture stderr to verify NO unknown-row warning fires for the
+    // pruned slug (it's a known removal via prior receipt + bundle diff).
+    const stderrLines: string[] = [];
+    const origErr = console.error;
+    console.error = (...args: unknown[]) => {
+      stderrLines.push(args.map(String).join(' '));
+    };
+    try {
+      const allOpts2 = { gbrainRoot, targetWorkspace: workspace, targetSkillsDir: skillsDir, skillSlug: null };
+      applyInstall(planInstall(allOpts2), allOpts2);
+    } finally {
+      console.error = origErr;
+    }
+
+    resolver = readFileSync(join(skillsDir, 'RESOLVER.md'), 'utf-8');
+    expect(resolver).not.toContain('`skills/alpha/SKILL.md`');
+    expect(resolver).toContain('`skills/beta/SKILL.md`');
+    const receipt = parseReceipt(resolver);
+    expect(receipt!.cumulativeSlugs).toEqual(['beta']);
+    // Known prune ⇒ silent.
+    expect(stderrLines.some(l => l.includes('alpha'))).toBe(false);
+  });
+
+  /**
+   * User hand-adds a row inside the fence. Reinstall must not destroy
+   * it. Stderr emits the investigate warning so the operating agent
+   * notices.
+   */
+  it('user hand-adds an unknown row → preserved on reinstall AND stderr warning fires', () => {
+    const { gbrainRoot } = scratchGbrain();
+    const { workspace, skillsDir } = scratchTarget();
+
+    const allOpts = { gbrainRoot, targetWorkspace: workspace, targetSkillsDir: skillsDir, skillSlug: null };
+    applyInstall(planInstall(allOpts), allOpts);
+
+    // Inject a hand-added row inside the fence (between begin/end).
+    // We splice right before the fence end marker so the row is
+    // unambiguously within gbrain's managed block.
+    const path = join(skillsDir, 'RESOLVER.md');
+    const orig = readFileSync(path, 'utf-8');
+    const endMarker = '<!-- gbrain:skillpack:end -->';
+    const endIdx = orig.indexOf(endMarker);
+    expect(endIdx).toBeGreaterThan(-1);
+    const splice =
+      orig.slice(0, endIdx) +
+      '| "custom" | `skills/custom-skill/SKILL.md` |\n\n' +
+      orig.slice(endIdx);
+    writeFileSync(path, splice);
+
+    // Capture stderr.
+    const stderrLines: string[] = [];
+    const origErr = console.error;
+    console.error = (...args: unknown[]) => {
+      stderrLines.push(args.map(String).join(' '));
+    };
+    try {
+      const allOpts2 = { gbrainRoot, targetWorkspace: workspace, targetSkillsDir: skillsDir, skillSlug: null };
+      applyInstall(planInstall(allOpts2), allOpts2);
+    } finally {
+      console.error = origErr;
+    }
+
+    const resolver = readFileSync(path, 'utf-8');
+    // Hand-added row preserved.
+    expect(resolver).toContain('`skills/custom-skill/SKILL.md`');
+    // Stderr told the agent to investigate.
+    const warning = stderrLines.find(l => l.includes('custom-skill'));
+    expect(warning).toBeDefined();
+    expect(warning!).toContain('Investigate');
+  });
+
+  /**
+   * Pre-v0.19 fence (no receipt comment): the first install on it
+   * must not destroy data and must not fire warnings (rows were
+   * gbrain-written before the receipt feature existed). Receipt is
+   * present after the rebuild.
+   */
+  it('pre-v0.19 fence (no receipt) → clean rebuild, receipt now present, no warnings', () => {
+    const { gbrainRoot } = scratchGbrain();
+    const { workspace, skillsDir } = scratchTarget();
+
+    // Hand-write a v0.18-style fence with rows but NO receipt comment.
+    const path = join(skillsDir, 'RESOLVER.md');
+    writeFileSync(
+      path,
+      [
+        '# Target RESOLVER',
+        '',
+        '<!-- gbrain:skillpack:begin -->',
+        '',
+        '<!-- Installed by gbrain 0.18.2 — do not hand-edit between markers. -->',
+        '',
+        '| Trigger | Skill |',
+        '|---------|-------|',
+        '| "alpha" | `skills/alpha/SKILL.md` |',
+        '',
+        '<!-- gbrain:skillpack:end -->',
+        '',
+      ].join('\n'),
+    );
+    expect(parseReceipt(readFileSync(path, 'utf-8'))).toBeNull();
+
+    const stderrLines: string[] = [];
+    const origErr = console.error;
+    console.error = (...args: unknown[]) => {
+      stderrLines.push(args.map(String).join(' '));
+    };
+    try {
+      const opts = { gbrainRoot, targetWorkspace: workspace, targetSkillsDir: skillsDir, skillSlug: 'beta' };
+      applyInstall(planInstall(opts), opts);
+    } finally {
+      console.error = origErr;
+    }
+
+    const resolver = readFileSync(path, 'utf-8');
+    expect(resolver).toContain('`skills/alpha/SKILL.md`');
+    expect(resolver).toContain('`skills/beta/SKILL.md`');
+    const receipt = parseReceipt(resolver);
+    expect(receipt).not.toBeNull();
+    expect(receipt!.cumulativeSlugs.sort()).toEqual(['alpha', 'beta']);
+    // No warnings on this first upgrade.
+    expect(stderrLines.length).toBe(0);
   });
 });
 

@@ -1,5 +1,5 @@
 /**
- * gbrain skillpack <list|install|diff|check> — v0.17 W5 CLI namespace.
+ * gbrain skillpack <list|install|diff|check> — W5 CLI namespace.
  *
  * D-CX-2 pattern: unified subcommand namespace. The pre-existing
  * `skillpack-check` command keeps its top-level name for backwards

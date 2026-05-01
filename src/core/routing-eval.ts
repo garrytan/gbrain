@@ -15,8 +15,9 @@
  *     of skills this intent is allowed to also match).
  *
  *   Layer B (LLM tie-break, optional): only runs via `gbrain routing-eval
- *     --llm`. Not yet implemented in v0.17 core; the CLI stubs the flag
- *     so call sites are ready.
+ *     --llm`. Not yet implemented in this release; the CLI accepts the
+ *     flag (emits a stderr notice and runs Layer A only) so call sites
+ *     are ready. A future release will wire up the tie-break layer.
  *
  * Fixture linter (D-CX-6): we reject fixtures where the normalized
  * `intent` is a verbatim substring of any trigger phrase attached to
@@ -316,7 +317,7 @@ export function loadRoutingFixtures(skillsDir: string): LoadResult {
 // ---------------------------------------------------------------------------
 
 export interface RunRoutingEvalOptions {
-  /** Reserved for Layer B (LLM tie-break). Not implemented in v0.17. */
+  /** Reserved for Layer B (LLM tie-break). Not implemented in this release. */
   llm?: boolean;
 }
 

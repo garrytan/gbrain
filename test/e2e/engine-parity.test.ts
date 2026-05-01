@@ -52,7 +52,7 @@ const SEED_PAGES: SeedPage[] = [
     embeddingDim: 14,
   },
   {
-    slug: 'wintermute/chat/2026-04-15',
+    slug: 'openclaw/chat/2026-04-15',
     type: 'note',
     title: '2026-04-15 chat',
     body:
@@ -61,7 +61,7 @@ const SEED_PAGES: SeedPage[] = [
     embeddingDim: 8,
   },
   {
-    slug: 'wintermute/chat/2026-04-16',
+    slug: 'openclaw/chat/2026-04-16',
     type: 'note',
     title: '2026-04-16 chat',
     body:
@@ -215,8 +215,8 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     const pgliteHigh = await pgliteEngine.searchKeyword('fat code thin harness', { detail: 'high', limit: 5 });
 
     // Chat pages must be present in detail=high results on both engines.
-    expect(pgHigh.some((r: SearchResult) => r.slug.startsWith('wintermute/chat/'))).toBe(true);
-    expect(pgliteHigh.some((r: SearchResult) => r.slug.startsWith('wintermute/chat/'))).toBe(true);
+    expect(pgHigh.some((r: SearchResult) => r.slug.startsWith('openclaw/chat/'))).toBe(true);
+    expect(pgliteHigh.some((r: SearchResult) => r.slug.startsWith('openclaw/chat/'))).toBe(true);
 
     // The boost must be doing something — at least one engine's ordering
     // should change between default and detail=high.

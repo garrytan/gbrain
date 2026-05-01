@@ -15,7 +15,10 @@ import {
   discoverTranscripts,
   readSingleTranscript,
   compileExcludePatterns,
+  isDreamOutput,
+  DREAM_OUTPUT_MARKER_RE,
 } from '../src/core/cycle/transcript-discovery.ts';
+import { judgeSignificance, renderPageToMarkdown, type JudgeClient } from '../src/core/cycle/synthesize.ts';
 
 let tmpDir: string;
 
@@ -187,5 +190,139 @@ describe('readSingleTranscript', () => {
     const path = makeTranscript('random-basename.txt', 'a'.repeat(3000));
     const t = readSingleTranscript(path, { minChars: 1000 });
     expect(t!.inferredDate).toBeNull();
+  });
+});
+
+describe('self-consumption guard (v0.23.2 marker-based)', () => {
+  test('REGRESSION: catches actual reverseWriteSlugs output from a real Page', () => {
+    // Build a Page like the synthesize subagent would produce, run it through
+    // the same renderPageToMarkdown the orchestrator uses, and assert the guard
+    // fires. Codex finding #5: synthetic-string fixtures don't prove the guard
+    // catches what the synthesize phase actually produces.
+    const page = {
+      slug: 'wiki/personal/reflections/2026-04-30-test-abc123',
+      type: 'reflection' as const,
+      title: 'Test reflection',
+      compiled_truth: 'I learned something about [Alice](people/alice). No own-slug citation in body.',
+      timeline: '',
+      frontmatter: {},
+    };
+    const md = renderPageToMarkdown(page as any, ['dream-cycle']);
+    const path = makeTranscript('2026-04-30-output.txt', md + '\n' + 'x'.repeat(3000));
+    const result = readSingleTranscript(path, { minChars: 100 });
+    expect(result).toBeNull();
+  });
+
+  test('does NOT fire on real conversation transcript citing a brain slug', () => {
+    // The exact false-positive case codex finding #1 named: a user note that
+    // legitimately mentions a reflection slug in plain text. Must NOT be skipped.
+    const path = makeTranscript('convo.txt',
+      'User: tell me about wiki/personal/reflections/identity-foo and how it relates to my work.\n' +
+      'Agent: ' + 'x'.repeat(3000));
+    const result = readSingleTranscript(path, { minChars: 100 });
+    expect(result).not.toBeNull();
+  });
+
+  test('CRLF + BOM frontmatter still triggers guard', () => {
+    const content = '\uFEFF---\r\ndream_generated: true\r\n---\r\n# x\r\n' + 'x'.repeat(3000);
+    const path = makeTranscript('crlf.txt', content);
+    const result = readSingleTranscript(path, { minChars: 100 });
+    expect(result).toBeNull();
+  });
+
+  test('whitespace and case tolerance: matches dream_generated: true variants', () => {
+    const variants = [
+      '---\ndream_generated:true\n---\nbody' + 'x'.repeat(3000),
+      '---\ndream_generated:  true\n---\nbody' + 'x'.repeat(3000),
+      '---\ndream_generated: TRUE\n---\nbody' + 'x'.repeat(3000),
+      '---\ntitle: foo\ndream_generated: true\n---\nbody' + 'x'.repeat(3000),
+    ];
+    for (const variant of variants) {
+      expect(isDreamOutput(variant)).toBe(true);
+    }
+  });
+
+  test('does NOT fire when dream_generated is false or absent', () => {
+    expect(isDreamOutput('---\ntitle: foo\n---\nbody')).toBe(false);
+    expect(isDreamOutput('---\ndream_generated: false\n---\nbody')).toBe(false);
+    expect(isDreamOutput('plain text with no frontmatter')).toBe(false);
+    // dream_generatedfoo: true (no word boundary on the key) must NOT match
+    expect(isDreamOutput('---\ndream_generatedfoo: true\n---\nbody')).toBe(false);
+  });
+
+  test('marker buried past 2000 chars does NOT trigger guard (perf bound)', () => {
+    const padding = 'x'.repeat(2100);
+    const content = '---\ntitle: real\n---\n' + padding + '\ndream_generated: true\n' + 'x'.repeat(3000);
+    const path = makeTranscript('buried.txt', content);
+    const result = readSingleTranscript(path, { minChars: 100 });
+    expect(result).not.toBeNull();
+  });
+
+  test('bypassGuard=true overrides marker (--unsafe-bypass-dream-guard plumbing)', () => {
+    const md = '---\ndream_generated: true\n---\n# Page\n' + 'x'.repeat(3000);
+    const path = makeTranscript('marked.txt', md);
+    expect(readSingleTranscript(path, { minChars: 100 })).toBeNull();
+    expect(readSingleTranscript(path, { minChars: 100, bypassGuard: true })).not.toBeNull();
+  });
+
+  test('discoverTranscripts respects bypassGuard', () => {
+    const md = '---\ndream_generated: true\n---\n# Page\n' + 'x'.repeat(3000);
+    makeTranscript('2026-04-30-output.txt', md);
+    makeTranscript('2026-04-30-real.txt', 'real transcript ' + 'x'.repeat(3000));
+
+    const guarded = discoverTranscripts({ corpusDir: tmpDir, minChars: 100 });
+    expect(guarded).toHaveLength(1);
+    expect(guarded[0].basename).toBe('2026-04-30-real');
+
+    const bypassed = discoverTranscripts({ corpusDir: tmpDir, minChars: 100, bypassGuard: true });
+    expect(bypassed).toHaveLength(2);
+  });
+
+  test('DREAM_OUTPUT_MARKER_RE is anchored at file start (not mid-content)', () => {
+    // Frontmatter delimiter must be at byte 0; mid-content `---\n` does not count.
+    const content = 'preamble\n---\ndream_generated: true\n---\nbody' + 'x'.repeat(3000);
+    expect(DREAM_OUTPUT_MARKER_RE.test(content)).toBe(false);
+  });
+});
+
+describe('judgeSignificance', () => {
+  function makeTranscript(): import('../src/core/cycle/transcript-discovery.ts').DiscoveredTranscript {
+    return {
+      filePath: '/tmp/x.txt',
+      contentHash: 'abc123',
+      content: 'A short conversation about something interesting.',
+      basename: 'x',
+      inferredDate: null,
+    };
+  }
+
+  function mockClient(captured: { model?: string }): JudgeClient {
+    return {
+      create: async (p: any) => {
+        captured.model = p.model;
+        return { content: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["test"]}' }] } as any;
+      },
+    };
+  }
+
+  test('passes verdict_model override to client.create', async () => {
+    const captured: { model?: string } = {};
+    await judgeSignificance(mockClient(captured), makeTranscript(), 'claude-sonnet-4-6');
+    expect(captured.model).toBe('claude-sonnet-4-6');
+  });
+
+  test('defaults to claude-haiku-4-5-20251001 when model omitted', async () => {
+    const captured: { model?: string } = {};
+    await judgeSignificance(mockClient(captured), makeTranscript());
+    expect(captured.model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  test('returns worth_processing=false when judge returns unparseable text', async () => {
+    const client: JudgeClient = {
+      create: async () => ({ content: [{ type: 'text', text: 'no json here' }] } as any),
+    };
+    const r = await judgeSignificance(client, makeTranscript());
+    expect(r.worth_processing).toBe(false);
+    expect(r.reasons[0]).toContain('unparseable');
   });
 });

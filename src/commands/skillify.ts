@@ -1,5 +1,5 @@
 /**
- * gbrain skillify <scaffold|check> — v0.17 W4 CLI namespace.
+ * gbrain skillify <scaffold|check> — W4 CLI namespace.
  *
  * `scaffold`: creates 5 stub files for a new skill. Mechanical only.
  * `check`:    10-item audit of an existing skill. Promoted from
@@ -299,8 +299,9 @@ export async function runSkillifyScaffold(args: string[]): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // `gbrain skillify check` — delegates to scripts/skillify-check.ts via same
-// internal helpers. For v0.17 we shell out to the script (kept as single
-// source of truth); v0.18 may inline it further.
+// internal helpers. Current design shells out to the script (kept as the
+// single source of truth for the check logic); a future release may inline
+// it further.
 // ---------------------------------------------------------------------------
 
 async function runSkillifyCheck(args: string[]): Promise<void> {

@@ -1,5 +1,80 @@
 # TODOS
 
+## ci-local-mirror
+
+### CI-skip artifact + signature for stages 1+2 follow-up
+**Priority:** P0
+
+**What:** After a successful local CI run via `bun run ci:local`, write `.ci-cache/passed-<commit-sha>.json` containing `{commit, test_set_hash, bun_version, schema_hash, signature}`. Push to a `ci-cache` orphan branch (or GH Releases). CI's first step fetches the artifact for the current SHA and skips the test job if (a) signature matches Garry's GPG/SSH key, and (b) `test_set_hash` matches what CI would have run.
+
+**Why:** Stages 1+2 (shipped in this branch) give a strong local CI gate, but PR CI still re-runs every test on every push. Stage 3 closes the loop and trades ~10 min of CI wall-time for sub-second artifact verification on Garry's own pushes. External PRs are unaffected because the signature won't match — they hit the normal CI path.
+
+**Pros:**
+- ~10 min/PR saved on Garry's own pushes; the local gate becomes the source of truth.
+- External contributor PRs untouched (no security regression).
+- Forces a clear test-set-hash contract: any drift in what local-vs-CI run is caught at verification time.
+
+**Cons:**
+- Trust model needs careful design: signature scheme, key rotation, what happens when signature verification fails.
+- Cache invalidation is real — if env or service version drifts between local run and CI, a stale local pass could ship to master.
+- Adds a `ci-cache` branch / artifact storage surface to maintain.
+
+**Context:**
+- Discussed during the eng-review of the local CI mirror plan at `~/.claude/plans/lets-do-1-2-dockerfile-ci-zany-charm.md`.
+- Don't start until stages 1+2 have been used for ~2 weeks AND the `scripts/e2e-test-map.ts` has stabilized (so test_set_hash is a meaningful identity).
+- Initial trust-but-verify: run both local and CI in parallel for ~1 week before flipping the skip; alert on any disagreement.
+
+**Effort:** M (human ~2-3 days + ~1 week trust-but-verify period running both local + CI in parallel; CC ~1 day for the mechanics).
+
+**Depends on / blocked by:** Stages 1+2 (this PR) landing first.
+
+### test/e2e/multi-source.test.ts cascade test isn't isolated
+**Priority:** P1
+
+**What:** The "sources remove cascades to pages + chunks + timeline + links + files" test in `test/e2e/multi-source.test.ts:281` fails when the file runs after other E2E files in the sequential `bash scripts/run-e2e.sh` order, but passes 20/20 on a fresh Postgres volume. The failing assertion is `SELECT COUNT(*) FROM links WHERE from_page_id = aliceId` expecting 0, getting 1 — so a prior file's setup left a `links` row that references a page id the cascade test happens to reuse. The test's own `setupDB()` truncates but doesn't sweep all referencing rows back when ids collide.
+
+**Why:** Surfaced when `bun run ci:local` (this PR's local CI gate) ran the full sequential E2E. CI never catches it because `.github/workflows/e2e.yml:40` only runs `mechanical.test.ts + mcp.test.ts` on PRs and nightly Tier 1. So 27 of 29 E2E files including this one aren't actually exercised by CI today. The local gate is stronger and surfaces real cross-file isolation gaps.
+
+**Pros:**
+- Fixing isolation makes `bun run ci:local` (full E2E) reliably green.
+- Same fix likely to harden other E2E files that share id namespaces.
+- Lets us turn `bun run ci:local` into a real ship gate.
+
+**Cons:**
+- Could require a per-file "namespace your test ids" pattern, ~30 min per affected file across the suite.
+
+**Context:**
+- Repro: `bash scripts/run-e2e.sh test/e2e/multi-source.test.ts` against a stale DB after other E2E files have run → fails. Same against a fresh `docker compose down -v && up -d postgres` → passes 20/20.
+- The test inserts a hardcoded `cascadetest` source id and `aliceId` page id; collisions across runs are predictable.
+- Likely fix: use `mkdtemp`-style randomized source/page ids per test, OR have the test do a deeper reset (DELETE FROM all five tables in beforeEach) instead of relying on `setupDB`'s TRUNCATE behavior.
+
+**Effort:** S (CC ~30 min for the multi-source.test.ts fix; M if we audit all 29 E2E files for similar id-collision risk).
+
+**Depends on / blocked by:** Nothing.
+
+### scripts/run-e2e.sh:71 echo overflows on large-output failing tests
+**Priority:** P2
+
+**What:** When an E2E test fails AND prints lots of output (e.g., `multi-source.test.ts` floods postgres NOTICE objects), `scripts/run-e2e.sh:71` does `echo "$output"` against a multi-megabyte shell variable. The host pipe to docker-compose-run hits `EAGAIN` and fails with `echo: write error: Resource temporarily unavailable`. With `set -e`, the script aborts at that point, skipping the remaining E2E files and the final SUMMARY block.
+
+**Why:** When the local CI gate finds a real failure (per the multi-source.test.ts entry above), the user wants to see it AND see how the rest of the suite did. Currently the failure shadows the rest.
+
+**Pros:**
+- See all E2E failures from a single run instead of needing to bisect.
+- Quick win, ~5 lines.
+
+**Cons:**
+- None worth listing.
+
+**Context:**
+- Reproduced live during plan verification on 2026-04-29. Previous `multi-source.test.ts` failure killed the script before postgres-bootstrap, postgres-jsonb, etc. could run.
+- Likely fix: replace `echo "$output"` with `printf '%s\n' "$output"`, or write `$output` to a tmpfile and `cat` it (handles large blobs better than echo over pipes), or pipe through `stdbuf -o0`.
+- Don't suppress the postgres NOTICE flood at the test layer — that's separate; here we just want the script to not die when bun's stderr is verbose.
+
+**Effort:** S (human or CC: ~10 min).
+
+**Depends on / blocked by:** Nothing.
+
 ## claw-test E2E (v0.22.16 follow-ups)
 
 ### Hermes runner — `src/core/claw-test/runners/hermes.ts`
@@ -467,6 +542,18 @@ keeping both skills' triggers intact for chaining.
 **Effort:** L. Needs receiver-type inference; can ship per-language.
 
 **Depends on / blocked by:** Nothing — UNION-on-read path keeps unresolved edges surfaced even without this.
+
+## P3 — Dev experience: test suite parallelism on fast multi-core machines
+
+**Context:** `bun test` on M-series Macs spawns ~1 worker per core. `test/dream.test.ts` (5 describe blocks, 11 tests) and `test/orphans.test.ts` create a fresh PGLite engine in `beforeEach` that runs ~20 schema migrations per test. Under parallel load, WASM-instance contention causes ~18 `beforeEach` timeouts at 5–9s.
+
+**Evidence:** CI (ubuntu-latest, fewer cores) is green on every PR. Running the suspect files in isolation (`bun test test/dream.test.ts test/orphans.test.ts`) is also green. Reproduces only on fast multi-core local machines running the full 136-file parallel suite.
+
+**Fix:** move engine creation from `beforeEach` to `beforeAll` per describe block; add a data-reset helper (delete-all-rows-in-relevant-tables) between tests. ~80 LOC change across two test files.
+
+**Priority:** P3 because production CI is unaffected. Hits local dev iteration speed on fast Macs.
+
+**Found:** 2026-04-24 during v0.19.0 production-readiness review.
 
 ## Completed
 

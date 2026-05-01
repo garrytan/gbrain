@@ -177,6 +177,13 @@ export interface CycleOpts {
   synthFrom?: string;
   synthTo?: string;
   /**
+   * v0.23.2: explicit opt-in to disable the synthesize self-consumption guard.
+   * Wired from `gbrain dream --unsafe-bypass-dream-guard`. Never auto-applied
+   * for `--input` because that would let any caller silently re-trigger the
+   * loop bug (codex finding #3).
+   */
+  synthBypassDreamGuard?: boolean;
+  /**
    * AbortSignal from the Minions worker (v0.22.1, #403). When aborted
    * (timeout, cancel, lock-loss), runCycle bails between phases and
    * returns a 'failed' report instead of running the next phase. Without
@@ -821,6 +828,7 @@ export async function runCycle(
           date: opts.synthDate,
           from: opts.synthFrom,
           to: opts.synthTo,
+          bypassDreamGuard: opts.synthBypassDreamGuard,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

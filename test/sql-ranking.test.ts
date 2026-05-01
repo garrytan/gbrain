@@ -162,8 +162,8 @@ describe('buildHardExcludeClause', () => {
 
 describe('parseSourceBoostEnv', () => {
   test('parses comma-separated prefix:factor pairs', () => {
-    expect(parseSourceBoostEnv('originals/:1.8,wintermute/chat/:0.3'))
-      .toEqual({ 'originals/': 1.8, 'wintermute/chat/': 0.3 });
+    expect(parseSourceBoostEnv('originals/:1.8,openclaw/chat/:0.3'))
+      .toEqual({ 'originals/': 1.8, 'openclaw/chat/': 0.3 });
   });
 
   test('returns empty object for undefined or empty', () => {

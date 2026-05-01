@@ -43,9 +43,16 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 
 ## Before shipping
 
-Run `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin up the test
-Postgres container, run `bun run test:e2e`, tear it down). Ship via the `/ship` skill,
-not by hand.
+Easiest path: `bun run ci:local` runs the full CI gate inside Docker (gitleaks,
+unit tests with `DATABASE_URL` unset, then all 29 E2E files sequentially against a
+fresh pgvector container) and tears down. Use `bun run ci:local:diff` for the
+diff-aware subset during fast iteration on a focused branch. Requires Docker
+(Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
+
+Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
+up the test Postgres container, run `bun run test:e2e`, tear it down).
+
+Ship via the `/ship` skill, not by hand.
 
 ## Privacy
 

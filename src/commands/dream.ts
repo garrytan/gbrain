@@ -47,6 +47,12 @@ interface DreamArgs {
   from: string | null;
   /** v0.21: backfill range end (YYYY-MM-DD). */
   to: string | null;
+  /**
+   * v0.23.2: disable the synthesize phase's self-consumption guard.
+   * Long-form flag name to discourage casual use; loud stderr warning fires when set.
+   * Never auto-applied for --input (codex finding #3).
+   */
+  bypassDreamGuard: boolean;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -114,6 +120,7 @@ function parseArgs(args: string[]): DreamArgs {
     date,
     from,
     to,
+    bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
   };
 }
 
@@ -178,6 +185,12 @@ Options:
   --date YYYY-MM-DD   Synthesize transcripts dated for one specific day.
   --from YYYY-MM-DD   Backfill range start (use with --to).
   --to   YYYY-MM-DD   Backfill range end.
+
+  --unsafe-bypass-dream-guard
+                      Disable the self-consumption guard. Use only when you
+                      know the input file is NOT dream-cycle output but the
+                      guard is firing. Loud stderr warning + cost reminder
+                      fires every run.
 
   --help, -h          Show this help
 
@@ -271,6 +284,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthDate: opts.date ?? undefined,
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
+    synthBypassDreamGuard: opts.bypassDreamGuard,
   });
 
   if (opts.json) {
