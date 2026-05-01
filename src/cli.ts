@@ -649,7 +649,7 @@ PAGES
 
 SEARCH
   search <query>                     Keyword search (tsvector)
-  query <question> [--no-expand]     Hybrid search (RRF + expansion)
+  query <question> [--no-expand]     Hybrid search (RRF + expansion, falls back to keyword-only)
   ask <question> [--no-expand]       Alias for query
 
 IMPORT/EXPORT
