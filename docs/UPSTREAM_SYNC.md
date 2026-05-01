@@ -46,6 +46,62 @@ file explains upstream provenance when upstream code was considered.
 
 ---
 
+## Sync 2026-05-01 — source-aware search ranking only
+
+- **Project baseline before sync**: `8f24b92` (PR #80 — sync and release safety)
+- **Reference upstream HEAD**: `18f5ba5` (upstream after v0.23.0, revert of JSONB double-encoding fix)
+- **Prior classified upstream reference**: `b7e3005` (upstream v0.10.1, see 2026-04-17 entry)
+- **Feature branch**: `codex/upstream-source-ranking-20260501`
+
+Upstream changed heavily between `b7e3005..18f5ba5`: Minions, agent runtime,
+dream cycles, multi-source brains, Code Cathedral/code indexing, frontmatter
+guardrails, storage tiering, parallel sync, HTTP transport, and search ranking.
+`mbrain` has since diverged toward a local-first durable memory substrate with
+SQLite as the default and governed memory writes. This sync therefore adopts one
+small search-quality idea and records the rest as skipped or deferred, rather
+than treating upstream as a merge target.
+
+### Adopted
+
+| Upstream commit | What it does | How it landed in mbrain |
+|---|---|---|
+| `172b55b` (v0.22.0 source-aware search ranking) | Boosts high-signal curated sources so bulk/noisy notes do not swamp search results. | Reimplemented, not cherry-picked. Added `src/core/search/source-ranking.ts` with deterministic mbrain path factors (`originals/`, `concepts/`, `ideas/`, `systems/`, `projects/`, etc.) and applied it to `search` and `query` results. Did not import upstream SQL builders, env overrides, or hard-exclude behavior because mbrain's default engine is SQLite and ranking should stay engine-neutral. |
+
+### Skipped for this sync
+
+| Upstream area | Representative commits | Why not applied |
+|---|---|---|
+| Minions / jobs / agent runtime / plugin loader | `d861336`, `0e9f881`, `e3f7042`, `11abb24`, `ed900c8` | Product direction mismatch for now. `mbrain` is the durable memory layer under agents, not a competing agent runtime or job supervisor. |
+| Dream/autopilot orchestration | `55ca498`, `e2961c0`, `5d9dc43`, `527b87b` | `mbrain` has its own memory-inbox, scenario-routing, and dream-cycle maintenance design. Upstream's orchestration model depends on Minions and should not be copied directly. |
+| OpenClaw/native plugin/remote-first install flows | `314f961`, `d3b52ed`, `83e55ff` | Useful as reference for install friction, but the implementation is tied to upstream's public/OpenClaw distribution path. |
+| Storage tiering and Supabase-only content flows | `52f9581` and related storage commits | Conflicts with mbrain's local-first default unless redesigned around local filesystem semantics first. |
+| Code Cathedral/code indexing with bundled tree-sitter WASM | `f718c59` and related commits | Interesting, but too large for this sync and overlaps with mbrain's existing codemap/context-map workstreams. Needs a separate design if adopted. |
+
+### Deferred (revisit)
+
+| Upstream area | Representative commits | mbrain-shaped plan |
+|---|---|---|
+| Frontmatter guard / resolver warnings | `891c28b`, `17c3c43` | Fold the useful checks into existing `mbrain lint` and import validation instead of adding a separate upstream command surface. |
+| Structured sync failures and skip-failed summaries | `08746b0`, `1e73e93` | Keep mbrain's fail-closed checkpoint behavior. Add stable error codes only if they improve retry UX without allowing partial sync to silently advance. |
+| Parallel incremental sync | `e96f054` | Revisit after defining a local SQLite/PGLite writer-lock story. `mbrain import` already has staged workers; `sync` currently prioritizes correctness and checkpoint safety. |
+| Migration/schema verification hardening | `08b3698`, `6966623`, `be8fffa` | Evaluate per engine. mbrain already has independent JSONB and sync-safety hardening, so only targeted gaps should land. |
+| Source-aware ranking v2 | `172b55b` follow-ups | If ranking needs tuning, add data-driven evaluation against mbrain scenario fixtures before changing factors. |
+
+### Verification performed
+
+- `bun test test/source-ranking.test.ts test/hybrid-search.test.ts` — 8 pass, 0 fail.
+- `bun test test/dedup.test.ts test/source-ranking.test.ts test/hybrid-search.test.ts test/local-offline.test.ts` — 45 pass, 0 fail.
+- `bunx tsc --noEmit` — pass.
+- `bun test --timeout 20000` — 1589 pass, 149 skip, 0 fail.
+
+### How to continue from here
+
+1. Use this section, not the raw merge-base, as the classification checkpoint.
+2. Prefer reimplementation around mbrain invariants over cherry-picking upstream
+   files that assume Minions, GStackBrain, OpenClaw, or hosted storage.
+3. For the next sync, start with the deferred table above and require a focused
+   test-first patch for each adopted upstream idea.
+
 ## Sync 2026-04-17 — this entry
 
 - **Project baseline before sync**: `36eccd8` (PR #23 — technical link types in add_link)

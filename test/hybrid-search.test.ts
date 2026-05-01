@@ -23,6 +23,70 @@ afterEach(() => {
 });
 
 describe('hybridSearch', () => {
+  test('applies source-aware ranking to keyword-only fallback results', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: false,
+        mode: 'none',
+        implementation: 'none',
+        model: null,
+        dimensions: null,
+        reason: 'test provider disabled',
+      },
+      embedBatch: async () => {
+        throw new Error('test provider disabled');
+      },
+    });
+
+    const seenLimits: number[] = [];
+    const engine = {
+      searchKeyword: async (_query: string, opts?: { limit?: number }) => {
+        seenLimits.push(opts?.limit ?? 0);
+        return [
+          makeResult({ slug: 'daily/2026-04-29', score: 1, chunk_text: 'daily context note' }),
+          makeResult({ slug: 'daily/2026-04-30', score: 0.99, chunk_text: 'daily context note two' }),
+          makeResult({ slug: 'originals/context-compounding', score: 0.7, chunk_text: 'curated context thesis' }),
+        ].slice(0, opts?.limit);
+      },
+      searchVector: async () => [],
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+
+    const results = await hybridSearch(engine, 'context compounding', { limit: 1 });
+
+    expect(seenLimits).toEqual([50]);
+    expect(results.map((entry) => entry.slug)).toEqual([
+      'originals/context-compounding',
+    ]);
+  });
+
+  test('ranks before deduplication so curated duplicate text can survive', async () => {
+    setEmbeddingProviderForTests({
+      capability: {
+        available: false,
+        mode: 'none',
+        implementation: 'none',
+        model: null,
+        dimensions: null,
+        reason: 'test provider disabled',
+      },
+      embedBatch: async () => {
+        throw new Error('test provider disabled');
+      },
+    });
+
+    const engine = {
+      searchKeyword: async () => [
+        makeResult({ slug: 'daily/2026-04-29', score: 1, chunk_text: 'shared context note' }),
+        makeResult({ slug: 'originals/context-compounding', score: 0.82, chunk_text: 'shared context note' }),
+      ],
+      searchVector: async () => [],
+    } as Pick<BrainEngine, 'searchKeyword' | 'searchVector'> as BrainEngine;
+
+    const results = await hybridSearch(engine, 'context compounding', { limit: 5 });
+
+    expect(results.map((entry) => entry.slug)).toEqual(['originals/context-compounding']);
+  });
+
   test('deduplicates expanded query variants before embedding and vector search', async () => {
     const embeddedQueries: string[] = [];
     const vectorCalls: Float32Array[] = [];

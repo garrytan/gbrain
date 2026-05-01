@@ -20,17 +20,19 @@ export function dedupResults(
     cosineThreshold?: number;
     maxTypeRatio?: number;
     maxPerPage?: number;
+    score?: (result: SearchResult) => number;
   },
 ): SearchResult[] {
   const threshold = opts?.cosineThreshold ?? COSINE_DEDUP_THRESHOLD;
   const maxRatio = opts?.maxTypeRatio ?? MAX_TYPE_RATIO;
   const maxPerPage = opts?.maxPerPage ?? MAX_PER_PAGE;
+  const score = opts?.score ?? ((result: SearchResult) => result.score);
   const preDedup = results;
 
   let deduped = results;
 
   // Layer 1: By source (one chunk per page with highest score)
-  deduped = dedupBySource(deduped);
+  deduped = dedupBySource(deduped, score);
 
   // Layer 2: By cosine similarity text overlap
   // (We don't have embeddings for results here, so use text similarity as proxy)
@@ -42,15 +44,18 @@ export function dedupResults(
   // Layer 4: By page cap
   deduped = capPerPage(deduped, maxPerPage);
 
-  return guaranteeCompiledTruth(deduped, preDedup)
-    .sort((a, b) => b.score - a.score);
+  return guaranteeCompiledTruth(deduped, preDedup, score)
+    .sort((a, b) => score(b) - score(a));
 }
 
 /**
  * Layer 1: Keep top 3 chunks per page (not just 1).
  * Later layers (text similarity, cap per page) handle further reduction.
  */
-function dedupBySource(results: SearchResult[]): SearchResult[] {
+function dedupBySource(
+  results: SearchResult[],
+  score: (result: SearchResult) => number,
+): SearchResult[] {
   const byPage = new Map<string, SearchResult[]>();
 
   for (const r of results) {
@@ -61,11 +66,11 @@ function dedupBySource(results: SearchResult[]): SearchResult[] {
 
   const kept: SearchResult[] = [];
   for (const chunks of byPage.values()) {
-    chunks.sort((a, b) => b.score - a.score);
+    chunks.sort((a, b) => score(b) - score(a));
     kept.push(...chunks.slice(0, 3));
   }
 
-  return kept.sort((a, b) => b.score - a.score);
+  return kept.sort((a, b) => score(b) - score(a));
 }
 
 /**
@@ -136,7 +141,11 @@ function capPerPage(results: SearchResult[], maxPerPage: number): SearchResult[]
   return kept;
 }
 
-function guaranteeCompiledTruth(results: SearchResult[], preDedup: SearchResult[]): SearchResult[] {
+function guaranteeCompiledTruth(
+  results: SearchResult[],
+  preDedup: SearchResult[],
+  score: (result: SearchResult) => number,
+): SearchResult[] {
   const byPage = new Map<string, SearchResult[]>();
   for (const result of results) {
     const existing = byPage.get(result.slug) || [];
@@ -152,14 +161,14 @@ function guaranteeCompiledTruth(results: SearchResult[], preDedup: SearchResult[
 
     const candidate = preDedup
       .filter((result) => result.slug === slug && result.chunk_source === 'compiled_truth')
-      .sort((a, b) => b.score - a.score)[0];
+      .sort((a, b) => score(b) - score(a))[0];
 
     if (!candidate) continue;
 
     const lowestIdx = output.reduce((minIdx, result, idx) => {
       if (result.slug !== slug) return minIdx;
       if (minIdx === -1) return idx;
-      return result.score < output[minIdx].score ? idx : minIdx;
+      return score(result) < score(output[minIdx]) ? idx : minIdx;
     }, -1);
 
     if (lowestIdx !== -1) {

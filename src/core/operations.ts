@@ -14,6 +14,7 @@ import { slugifyPath } from './sync.ts';
 import { findSlugQualityIssues } from './slug-quality.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
+import { rankSearchResults, sourceRankCandidateLimit } from './search/source-ranking.ts';
 import {
   buildStructuralContextAtlasEntry,
   getStructuralContextAtlasEntry,
@@ -2167,7 +2168,11 @@ const search: Operation = {
     limit: { type: 'number', description: 'Max results (default 20)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.searchKeyword(p.query as string, { limit: (p.limit as number) ?? 20 });
+    const limit = (p.limit as number) ?? 20;
+    return rankSearchResults(
+      await ctx.engine.searchKeyword(p.query as string, { limit: sourceRankCandidateLimit(limit) }),
+      limit,
+    );
   },
   cliHints: { name: 'search', positional: ['query'] },
 };

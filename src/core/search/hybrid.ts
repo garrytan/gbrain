@@ -10,6 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
 import { embedQuery, getEmbeddingProvider } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
+import { rankSearchResults, sourceRankCandidateLimit, sourceRankedScore } from './source-ranking.ts';
 
 const RRF_K = 60;
 
@@ -24,7 +25,8 @@ export async function hybridSearch(
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
   const limit = opts?.limit || 20;
-  const keywordPromise = engine.searchKeyword(query, { ...opts, limit: limit * 2 });
+  const candidateLimit = sourceRankCandidateLimit(limit);
+  const keywordPromise = engine.searchKeyword(query, { ...opts, limit: candidateLimit });
 
   // Determine query variants (optionally with expansion)
   let queries = [query];
@@ -40,7 +42,7 @@ export async function hybridSearch(
   const keywordResults = await keywordPromise;
   const provider = getEmbeddingProvider();
   if (!provider.capability.available) {
-    return dedupResults(keywordResults).slice(0, limit);
+    return dedupAndRankSearchResults(keywordResults, limit);
   }
 
   const embeddingSettled = await Promise.allSettled(
@@ -51,18 +53,18 @@ export async function hybridSearch(
   ));
 
   if (embeddings.length === 0) {
-    return dedupResults(keywordResults).slice(0, limit);
+    return dedupAndRankSearchResults(keywordResults, limit);
   }
 
   const vectorSettled = await Promise.allSettled(
-    embeddings.map(emb => engine.searchVector(emb, { ...opts, limit: limit * 2 })),
+    embeddings.map(emb => engine.searchVector(emb, { ...opts, limit: candidateLimit })),
   );
   const vectorLists = vectorSettled.flatMap((result) => (
     result.status === 'fulfilled' ? [result.value] : []
   ));
 
   if (vectorLists.length === 0 || vectorLists.every(list => list.length === 0)) {
-    return dedupResults(keywordResults).slice(0, limit);
+    return dedupAndRankSearchResults(keywordResults, limit);
   }
 
   // Merge all result lists via RRF
@@ -70,9 +72,11 @@ export async function hybridSearch(
   const fused = rrfFusion(allLists);
 
   // Dedup
-  const deduped = dedupResults(fused);
+  return dedupAndRankSearchResults(fused, limit);
+}
 
-  return deduped.slice(0, limit);
+function dedupAndRankSearchResults(results: SearchResult[], limit: number): SearchResult[] {
+  return rankSearchResults(dedupResults(results, { score: sourceRankedScore }), limit);
 }
 
 function dedupeQueryVariants(queries: string[]): string[] {
