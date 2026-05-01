@@ -1,4 +1,14 @@
-// Routing eval fixtures for skills/book-mirror.
-{"intent":"please personalized version of this book for me now","expected_skill":"book-mirror"}
-{"intent":"please mirror this book for me now","expected_skill":"book-mirror"}
-{"intent":"please two-column book analysis for me now","expected_skill":"book-mirror"}
+// Routing eval fixtures for skills/book-mirror. Per D-CX-6, intents
+// must paraphrase the triggers, not copy them. The adversarial cases
+// at the bottom guard the media-ingest <-> book-mirror routing
+// regression flagged by R1 + R2 (IRON RULE: regression test mandatory).
+{"intent":"I just finished reading 'The Power Broker' and want a chapter-by-chapter analysis that maps each section to my own life","expected_skill":"book-mirror"}
+{"intent":"Take this EPUB and produce a two-column read where the left side is the book's argument and the right side is how it lands for me specifically","expected_skill":"book-mirror"}
+{"intent":"Can you make me a personalized read of 'How to Change Your Mind' that uses what you know about me from the brain","expected_skill":"book-mirror"}
+{"intent":"Build me a book mirror — left column the chapter, right column my actual life","expected_skill":"book-mirror"}
+{"intent":"I want a tailored chapter-by-chapter analysis of this book that pulls from my reflections and people pages","expected_skill":"book-mirror"}
+// Adversarial: phrasing that pattern-matches media-ingest's "process this book" trigger.
+// IRON RULE: book-mirror should NOT win on these — they're generic ingest, not personalization.
+{"intent":"Process this book and ingest it into my brain","expected_skill":"media-ingest","ambiguous_with":["book-mirror"]}
+{"intent":"Ingest this PDF book and extract the entities","expected_skill":"media-ingest","ambiguous_with":["book-mirror"]}
+{"intent":"Just summarize this book — I don't need it personalized to me","expected_skill":"media-ingest","ambiguous_with":["book-mirror"]}
