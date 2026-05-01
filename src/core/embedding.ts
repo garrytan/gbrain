@@ -2,7 +2,7 @@
  * Embedding Service
  * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * OpenAI text-embedding-3-large at the configured embedding dimension.
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
@@ -10,7 +10,7 @@
 import OpenAI from 'openai';
 
 const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const DIMENSIONS = Number(process.env.GBRAIN_EMBEDDING_DIMENSIONS || '384');
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;

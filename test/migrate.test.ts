@@ -202,6 +202,47 @@ describe('migrate — ordering guarantee (v15 must NOT be skipped by v16)', () =
   });
 });
 
+describe('migrate — embedding dimension 384 regression', () => {
+  const embeddingMigration = MIGRATIONS.find(m => m.name === 'embedding_dimension_384');
+
+  test('migration exists and migrates legacy vector(1536) brains to vector(384)', () => {
+    expect(embeddingMigration).toBeDefined();
+    expect(embeddingMigration!.version).toBeGreaterThan(30);
+    const pgliteSql = embeddingMigration!.sqlFor?.pglite || embeddingMigration!.sql;
+    expect(pgliteSql).toContain('ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(384)');
+    expect(pgliteSql).toContain("UPDATE config SET value = '384' WHERE key = 'embedding_dimensions'");
+    expect(pgliteSql).toContain('DROP INDEX IF EXISTS idx_chunks_embedding');
+    expect(pgliteSql).toContain('CREATE INDEX IF NOT EXISTS idx_chunks_embedding');
+  });
+
+  test('PGLite migration converts existing vector(1536) column to 384 and updates config', async () => {
+    const engine = new PGLiteEngine();
+    try {
+      await engine.connect({});
+      await engine.initSchema();
+      const db = (engine as any).db;
+
+      await db.exec(`DROP INDEX IF EXISTS idx_chunks_embedding`);
+      await db.exec(`ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(1536)`);
+      await db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops)`);
+      await engine.setConfig('embedding_dimensions', '1536');
+      await engine.setConfig('version', '30');
+
+      await runMigrations(engine);
+
+      const dimRows = (await db.query(`
+        SELECT atttypmod FROM pg_attribute
+        WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'
+      `)).rows as Array<{ atttypmod: number }>;
+      expect(dimRows[0].atttypmod).toBe(384);
+      expect(await engine.getConfig('embedding_dimensions')).toBe('384');
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+    } finally {
+      await engine.disconnect();
+    }
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // v0.18.1 RLS hardening — structural guard for migration v24
 // ─────────────────────────────────────────────────────────────────
