@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseSynthesize, renderPageToMarkdown } from '../../src/core/cycle/synthesize.ts';
+import { runPhaseSynthesize, renderPageToMarkdown, collectChildPutPageSlugs } from '../../src/core/cycle/synthesize.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -90,6 +90,40 @@ describe('E2E synthesize — disabled / not_configured', () => {
       });
       expect(result.status).toBe('skipped');
       expect((result.details as { reason?: string }).reason).toBe('not_configured');
+    } finally {
+      await rig.cleanup();
+    }
+  });
+});
+
+describe('E2E synthesize — slug provenance', () => {
+  test('collects put_page slugs from object JSON and legacy JSON-string tool rows', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.executeRaw(
+        `INSERT INTO minion_jobs (id, name, status, data)
+         VALUES (101, 'subagent', 'completed', '{}'), (102, 'subagent', 'completed', '{}')`,
+      );
+      await rig.engine.executeRaw(
+        `INSERT INTO subagent_tool_executions
+          (job_id, message_idx, tool_use_id, tool_name, input, output, status)
+         VALUES
+          (101, 1, 'tool-a', 'brain_put_page', $1::jsonb, '{}'::jsonb, 'complete'),
+          (102, 1, 'tool-b', 'brain_put_page', $2::jsonb, $3::jsonb, 'complete'),
+          (102, 1, 'tool-c', 'brain_search', $4::jsonb, '{}'::jsonb, 'complete')`,
+        [
+          JSON.stringify({ slug: 'wiki/personal/reflections/object-row' }),
+          JSON.stringify(JSON.stringify({ slug: 'wiki/originals/ideas/json-string-input' })),
+          JSON.stringify(JSON.stringify({ slug: 'wiki/originals/ideas/json-string-output' })),
+          JSON.stringify({ query: 'ignored' }),
+        ],
+      );
+
+      const slugs = await collectChildPutPageSlugs(rig.engine, [101, 102]);
+      expect(slugs).toEqual([
+        'wiki/originals/ideas/json-string-input',
+        'wiki/personal/reflections/object-row',
+      ]);
     } finally {
       await rig.cleanup();
     }
