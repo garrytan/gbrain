@@ -16,9 +16,9 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import type { PhaseResult } from '../cycle.ts';
 import { BudgetMeter } from './budget-meter.ts';
 import { resolveModel } from '../model-config.ts';
+import type { DreamPhaseResult } from './auto-think.ts';
 
 export interface DriftPhaseOpts {
   brainDir?: string;
@@ -100,20 +100,14 @@ async function findDriftCandidates(
     }));
 }
 
-function skipped(reason: string, detail: string): PhaseResult {
-  return {
-    name: 'drift',
-    status: 'skipped',
-    detail,
-    error: { class: reason, message: detail, code: reason },
-    duration_ms: 0,
-  } as unknown as PhaseResult;
+function skipped(_reason: string, detail: string): DreamPhaseResult {
+  return { name: 'drift', status: 'skipped', detail, duration_ms: 0 };
 }
 
 export async function runPhaseDrift(
   engine: BrainEngine,
   opts: DriftPhaseOpts,
-): Promise<PhaseResult> {
+): Promise<DreamPhaseResult> {
   const start = Date.now();
   const config = await loadDriftConfig(engine);
   if (!config.enabled) {
@@ -128,7 +122,7 @@ export async function runPhaseDrift(
       detail: 'no candidates: no soft-band takes with recent timeline evidence',
       totals: { candidates: 0 },
       duration_ms: Date.now() - start,
-    } as unknown as PhaseResult;
+    };
   }
 
   // Resolve model for the (future v0.29) LLM judge. For v0.28 we just
@@ -157,7 +151,7 @@ export async function runPhaseDrift(
       detail: `dry-run: ${candidates.length} candidates would be evaluated`,
       totals: { candidates: candidates.length },
       duration_ms: Date.now() - start,
-    } as unknown as PhaseResult;
+    };
   }
 
   return {
@@ -166,7 +160,7 @@ export async function runPhaseDrift(
     detail: `surfaced ${candidates.length} drift candidates (LLM judge: v0.29 follow-up). autoUpdate=${config.autoUpdate}`,
     totals: { candidates: candidates.length },
     duration_ms: Date.now() - start,
-  } as unknown as PhaseResult;
+  };
 }
 
 /** Test helper: expose findDriftCandidates without running the full phase. */

@@ -15,10 +15,24 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import type { PhaseResult } from '../cycle.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../think/index.ts';
 import { resolveModel } from '../model-config.ts';
 import { BudgetMeter } from './budget-meter.ts';
+
+/**
+ * Local phase-result type for auto-think/drift. These phases are not yet
+ * wired into cycle.ts's main dispatcher (deferred to v0.28.x); they ship
+ * standalone for now and are invoked via `gbrain dream --phase auto_think`
+ * once the dispatcher integration lands. Adopting cycle.ts's PhaseResult
+ * shape forces premature CyclePhase enum extension.
+ */
+export interface DreamPhaseResult {
+  name: 'auto_think' | 'drift';
+  status: 'complete' | 'partial' | 'failed' | 'skipped';
+  detail: string;
+  totals?: Record<string, number>;
+  duration_ms: number;
+}
 
 export interface AutoThinkPhaseOpts {
   brainDir?: string;
@@ -73,20 +87,14 @@ async function isCoolingDown(engine: BrainEngine, days: number): Promise<boolean
   return (Date.now() - lastMs) < days * 86_400_000;
 }
 
-function skipped(reason: string, detail: string): PhaseResult {
-  return {
-    name: 'auto_think',
-    status: 'skipped',
-    detail: detail,
-    error: { class: reason, message: detail, code: reason },
-    duration_ms: 0,
-  } as unknown as PhaseResult;
+function skipped(_reason: string, detail: string): DreamPhaseResult {
+  return { name: 'auto_think', status: 'skipped', detail, duration_ms: 0 };
 }
 
 export async function runPhaseAutoThink(
   engine: BrainEngine,
   opts: AutoThinkPhaseOpts,
-): Promise<PhaseResult> {
+): Promise<DreamPhaseResult> {
   const start = Date.now();
   const config = await loadConfig(engine);
 
@@ -180,5 +188,5 @@ export async function runPhaseAutoThink(
     detail,
     totals: { questions_run: results.length, synthesized: results.filter(r => r.status === 'complete').length },
     duration_ms: Date.now() - start,
-  } as unknown as PhaseResult;
+  };
 }
