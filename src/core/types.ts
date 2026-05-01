@@ -182,9 +182,11 @@ export interface SearchOpts {
    */
   walkDepth?: number;
   /**
-   * v0.20.0 Cathedral II: scope search to a specific source. When set,
-   * results are filtered by pages.source_id. Use '__all__' or leave
-   * undefined to search all sources.
+   * v0.20.0 Cathedral II: scope search to a specific source. When set to a
+   * concrete source id, results are filtered by pages.source_id. Use '__all__'
+   * to include isolated/non-federated sources. Leave undefined for default
+   * cross-source search, which includes only federated sources plus the default
+   * source for backward compatibility.
    */
   sourceId?: string;
 }
