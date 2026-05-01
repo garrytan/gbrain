@@ -12,6 +12,10 @@
  * Covers issues #366, #375, #378 — Postgres-side wedges where pre-v0.18
  * brains crashed on `column "source_id" does not exist`.
  *
+ * Also covers #561 — pre-v27 brains wedging on
+ * `column "search_vector" does not exist` after v0.22+ added the chunk-grain
+ * FTS forward-references without extending the bootstrap.
+ *
  * NOTE: snapshot-based historical state simulation is out of scope for this
  * wave (would require maintaining historical schema dumps). The test
  * mutates a fresh-LATEST brain to a pre-v0.18 shape; codex flagged this as
@@ -82,6 +86,62 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     // Verify the default source row was seeded.
     const srcCheck = await conn`SELECT id FROM sources WHERE id = 'default'`;
     expect(srcCheck).toHaveLength(1);
+  });
+
+  test('PostgresEngine.initSchema bootstraps v27 chunk-grain FTS columns on pre-v0.21 brain (issue #561)', async () => {
+    // Regression test for the v27 (cathedral_ii_foundation) wedge: a brain
+    // that pre-dates content_chunks.search_vector / symbol_name_qualified /
+    // doc_comment / parent_symbol_path used to crash on
+    // `CREATE INDEX idx_chunks_search_vector` and the
+    // chunk_search_vector_trigger because SCHEMA_SQL ran before runMigrations
+    // had a chance to apply v27.
+    //
+    // Bring DB to LATEST, then mutate to pre-v27 shape and re-init.
+    await engine.initSchema();
+
+    const conn = (engine as any).sql;
+    await conn.unsafe(`TRUNCATE pages, content_chunks, links, tags, raw_data, timeline_entries, page_versions, ingest_log RESTART IDENTITY CASCADE`);
+
+    // Drop the v27 dependents first, then the columns they reference.
+    await conn.unsafe(`
+      DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON content_chunks;
+      DROP FUNCTION IF EXISTS update_chunk_search_vector();
+      DROP INDEX IF EXISTS idx_chunks_search_vector;
+      DROP INDEX IF EXISTS idx_chunks_symbol_qualified;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS search_vector;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS symbol_name_qualified;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS doc_comment;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS parent_symbol_path;
+    `);
+    await engine.setConfig('version', '26');
+
+    // Path under test: bootstrap must add the four v27 columns BEFORE
+    // SCHEMA_SQL hits its CREATE INDEX / CREATE TRIGGER references.
+    await engine.initSchema();
+
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+
+    // Every v27 forward-reference target survives the upgrade.
+    const cols = await conn<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'content_chunks'
+        AND column_name IN ('search_vector', 'symbol_name_qualified', 'doc_comment', 'parent_symbol_path')
+    `;
+    const names = new Set(cols.map((r: { column_name: string }) => r.column_name));
+    expect(names.has('search_vector')).toBe(true);
+    expect(names.has('symbol_name_qualified')).toBe(true);
+    expect(names.has('doc_comment')).toBe(true);
+    expect(names.has('parent_symbol_path')).toBe(true);
+
+    // The chunk-grain FTS index is back too (this is what crashed pre-fix).
+    const idxCheck = await conn`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = current_schema()
+        AND tablename = 'content_chunks'
+        AND indexname = 'idx_chunks_search_vector'
+    `;
+    expect(idxCheck).toHaveLength(1);
   });
 
   test('PostgresEngine.initSchema is idempotent on a brain already at LATEST', async () => {

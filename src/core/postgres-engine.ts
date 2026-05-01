@@ -152,6 +152,12 @@ export class PostgresEngine implements BrainEngine {
    *   - `links.origin_page_id` column (indexed by `idx_links_origin`) — v0.13
    *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
    *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
+   *   - `content_chunks.search_vector` column (indexed by `idx_chunks_search_vector`,
+   *     written by `chunk_search_vector_trigger`) — v0.20 (v27)
+   *   - `content_chunks.symbol_name_qualified` column (indexed by
+   *     `idx_chunks_symbol_qualified`, fired-on by `chunk_search_vector_trigger`) — v0.20 (v27)
+   *   - `content_chunks.doc_comment` column (fired-on by `chunk_search_vector_trigger`) — v0.20 (v27)
+   *   - `content_chunks.parent_symbol_path` column — v0.20 (v27)
    *
    * Keep this in sync with the PGLite version; covered by
    * `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
@@ -172,6 +178,10 @@ export class PostgresEngine implements BrainEngine {
       chunks_exists: boolean;
       symbol_name_exists: boolean;
       language_exists: boolean;
+      search_vector_exists: boolean;
+      symbol_name_qualified_exists: boolean;
+      doc_comment_exists: boolean;
+      parent_symbol_path_exists: boolean;
     }[]>`
       SELECT
         EXISTS (SELECT 1 FROM information_schema.tables
@@ -189,7 +199,15 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'symbol_name') AS symbol_name_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'search_vector') AS search_vector_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'symbol_name_qualified') AS symbol_name_qualified_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'doc_comment') AS doc_comment_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'parent_symbol_path') AS parent_symbol_path_exists
     `;
     const probe = probeRows[0]!;
 
@@ -198,8 +216,13 @@ export class PostgresEngine implements BrainEngine {
       && (!probe.link_source_exists || !probe.origin_page_id_exists);
     const needsChunksBootstrap = probe.chunks_exists
       && (!probe.symbol_name_exists || !probe.language_exists);
+    const needsChunksFtsBootstrap = probe.chunks_exists
+      && (!probe.search_vector_exists
+          || !probe.symbol_name_qualified_exists
+          || !probe.doc_comment_exists
+          || !probe.parent_symbol_path_exists);
 
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap) return;
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsChunksFtsBootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -244,6 +267,29 @@ export class PostgresEngine implements BrainEngine {
       await conn.unsafe(`
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS language TEXT;
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name TEXT;
+      `);
+    }
+
+    if (needsChunksFtsBootstrap) {
+      // v27 (cathedral_ii_foundation) adds the chunk-grain FTS surface:
+      //   - search_vector / symbol_name_qualified / doc_comment / parent_symbol_path
+      // SCHEMA_SQL forward-references all four via:
+      //   - CREATE INDEX idx_chunks_search_vector ON content_chunks USING GIN(search_vector)
+      //   - CREATE INDEX idx_chunks_symbol_qualified ON content_chunks(symbol_name_qualified) WHERE ...
+      //   - update_chunk_search_vector() function body (writes search_vector,
+      //     reads doc_comment + symbol_name_qualified + chunk_text)
+      //   - chunk_search_vector_trigger BEFORE INSERT OR UPDATE OF
+      //     (chunk_text, doc_comment, symbol_name_qualified)
+      // Without this bootstrap, a pre-v27 brain wedges with
+      // `column "search_vector" does not exist` on the first init that hits
+      // a v0.22+ schema blob (issue #561).
+      // v27 runs later via runMigrations and is idempotent (`IF NOT EXISTS`
+      // / `ADD COLUMN IF NOT EXISTS` everywhere).
+      await conn.unsafe(`
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name_qualified TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS doc_comment TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS parent_symbol_path TEXT[];
       `);
     }
   }
