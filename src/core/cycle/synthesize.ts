@@ -57,6 +57,13 @@ export interface SynthesizePhaseOpts {
   date?: string;
   from?: string;
   to?: string;
+  /**
+   * Disable the self-consumption guard. Wired from the
+   * `--unsafe-bypass-dream-guard` CLI flag. NOT auto-applied for `--input`
+   * because that would allow any dream-generated page to silently re-enter
+   * the synthesize loop. Caller must opt in explicitly.
+   */
+  bypassDreamGuard?: boolean;
 }
 
 export async function runPhaseSynthesize(
@@ -87,9 +94,16 @@ export async function runPhaseSynthesize(
       }
     }
 
+    if (opts.bypassDreamGuard) {
+      process.stderr.write(
+        '[dream] WARNING: --unsafe-bypass-dream-guard set; self-consumption guard disabled. ' +
+        'Re-ingestion of dream output will incur Sonnet costs forever.\n',
+      );
+    }
+
     // Discover.
     const transcripts = opts.inputFile
-      ? loadAdHocTranscript(opts.inputFile, config.minChars, config.excludePatterns)
+      ? loadAdHocTranscript(opts.inputFile, config.minChars, config.excludePatterns, opts.bypassDreamGuard)
       : discoverTranscripts({
           corpusDir: config.corpusDir!,
           meetingTranscriptsDir: config.meetingTranscriptsDir ?? undefined,
@@ -98,6 +112,7 @@ export async function runPhaseSynthesize(
           date: opts.date,
           from: opts.from,
           to: opts.to,
+          bypassGuard: opts.bypassDreamGuard,
         });
 
     if (transcripts.length === 0) {
@@ -321,7 +336,7 @@ async function loadAllowedSlugPrefixes(): Promise<string[]> {
 
 // ── Significance judge (Haiku) ───────────────────────────────────────
 
-interface JudgeClient {
+export interface JudgeClient {
   create: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
 }
 
@@ -336,7 +351,7 @@ interface VerdictResult {
   reasons: string[];
 }
 
-async function judgeSignificance(
+export async function judgeSignificance(
   client: JudgeClient,
   t: DiscoveredTranscript,
   verdictModel = 'claude-haiku-4-5-20251001',
@@ -484,10 +499,20 @@ async function reverseWriteSlugs(
   return count;
 }
 
-function renderPageToMarkdown(page: Page, tags: string[]): string {
-  // serializeMarkdown's contract: takes (frontmatter, compiled_truth, timeline, meta)
-  // and emits frontmatter + body + (optional) timeline section.
-  const frontmatter = (page.frontmatter ?? {}) as Record<string, unknown>;
+/**
+ * Render a Page to markdown, stamping the dream-output identity marker into
+ * frontmatter. This stamp is the explicit identity surface checked by
+ * `isDreamOutput` in transcript-discovery.ts. Stamping at render time covers
+ * every reverse-write path (subagent reflections + originals + summary) with
+ * one funnel; the prior content-pattern guard could miss real output because
+ * `serializeMarkdown` does not embed the page slug in the body.
+ */
+export function renderPageToMarkdown(page: Page, tags: string[]): string {
+  const frontmatter: Record<string, unknown> = {
+    ...((page.frontmatter ?? {}) as Record<string, unknown>),
+    dream_generated: true,
+    dream_cycle_date: today(),
+  };
   return serializeMarkdown(
     frontmatter,
     page.compiled_truth ?? '',
@@ -529,8 +554,11 @@ async function writeSummaryPage(
   }
 
   const body = lines.join('\n');
+  // Stamp the dream-output identity marker into the summary's frontmatter.
+  // parseMarkdown below round-trips it into the DB-stored frontmatter, so the
+  // marker survives any later reverse-render of the summary page.
   const fullMarkdown = serializeMarkdown(
-    {} as Record<string, unknown>,
+    { dream_generated: true, dream_cycle_date: summaryDate } as Record<string, unknown>,
     body,
     '',
     { type: 'note' as PageType, title: `Dream cycle ${summaryDate}`, tags: ['dream-cycle'] },
@@ -568,9 +596,10 @@ function loadAdHocTranscript(
   filePath: string,
   minChars: number,
   excludePatterns: string[],
+  bypassGuard?: boolean,
 ): DiscoveredTranscript[] {
   const { readSingleTranscript } = require('./transcript-discovery.ts') as typeof import('./transcript-discovery.ts');
-  const t = readSingleTranscript(filePath, { minChars, excludePatterns });
+  const t = readSingleTranscript(filePath, { minChars, excludePatterns, bypassGuard });
   return t ? [t] : [];
 }
 

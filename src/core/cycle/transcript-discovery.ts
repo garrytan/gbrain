@@ -41,30 +41,39 @@ export interface DiscoverOpts {
   from?: string;
   /** Inclusive range end (YYYY-MM-DD). */
   to?: string;
+  /**
+   * Disable the self-consumption guard. Caller must opt in explicitly via
+   * `--unsafe-bypass-dream-guard`; never auto-applied for `--input` because
+   * that would let any caller silently re-trigger the loop bug.
+   */
+  bypassGuard?: boolean;
 }
 
 const DATE_RE = /^(\d{4}-\d{2}-\d{2})/;
 const WORD_BOUNDARY_HEURISTIC = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 /**
- * Built-in self-consumption guard: slug prefixes that indicate dream output.
- * If a transcript contains any of these paths, it's the dream cycle's own
- * output being fed back in — skip it to prevent infinite recursion.
- * This is a hard-coded safety net; user-configured exclude_patterns are
- * additive on top of this.
+ * Self-consumption guard: identity-marker check against `dream_generated: true`
+ * stamped by the synthesize phase's render paths.
+ *
+ * v0.23.1 used a body slug-prefix string match. Codex review of the v0.23.2
+ * plan caught two flaws: (1) `serializeMarkdown` does NOT embed the page slug
+ * into body content, so the prefix heuristic could miss real dream output, and
+ * (2) real conversation transcripts that legitimately cite a brain page would
+ * be silently dropped. v0.23.2 swaps content inference for explicit identity
+ * stamped at render time.
+ *
+ * Regex anchored at frontmatter open (`---\n`), tolerates optional BOM and CRLF,
+ * scans the first 2000 chars for `dream_generated: true` (any whitespace, case-
+ * insensitive value, word boundary on `true`).
  */
-const DREAM_OUTPUT_SLUGS = [
-  'wiki/personal/reflections/',
-  'wiki/originals/ideas/',
-  'wiki/personal/patterns/',
-  'dream-cycle-summaries/',
-];
+const DREAM_MARKER_REGEX_SRC =
+  '^\\uFEFF?-{3}\\r?\\n[\\s\\S]{0,2000}?dream_generated\\s*:\\s*true\\b';
+export const DREAM_OUTPUT_MARKER_RE = new RegExp(DREAM_MARKER_REGEX_SRC, 'i');
 
-function isDreamOutput(content: string): boolean {
-  // Check the first 2000 chars (frontmatter + opening) for dream output markers.
-  // Full-content scan is wasteful; dream output always self-identifies early.
-  const head = content.slice(0, 2000);
-  return DREAM_OUTPUT_SLUGS.some(slug => head.includes(slug));
+export function isDreamOutput(content: string, bypass = false): boolean {
+  if (bypass) return false;
+  return DREAM_OUTPUT_MARKER_RE.test(content);
 }
 
 /**
@@ -136,12 +145,14 @@ function listTextFiles(dir: string): string[] {
  *  - aren't `.txt`
  *  - have date-prefixed basenames outside the requested window
  *  - have content shorter than `minChars`
+ *  - carry the `dream_generated: true` self-consumption marker (unless `bypassGuard`)
  *  - match any compiled exclude pattern (case-insensitive word-boundary by default)
  *
  * Returns sorted by filePath so re-runs are deterministic.
  */
 export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] {
   const minChars = opts.minChars ?? 2000;
+  const bypass = opts.bypassGuard === true;
   const excludeRes = compileExcludePatterns(opts.excludePatterns);
   const dirs = [opts.corpusDir, opts.meetingTranscriptsDir].filter(
     (d): d is string => typeof d === 'string' && d.length > 0,
@@ -162,7 +173,10 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
         continue;
       }
       if (content.length < minChars) continue;
-      if (isDreamOutput(content)) continue;
+      if (isDreamOutput(content, bypass)) {
+        process.stderr.write(`[dream] skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
+        continue;
+      }
       if (matchesAnyExclude(content, excludeRes)) continue;
 
       results.push({
@@ -181,13 +195,15 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
 /**
  * Read a single ad-hoc transcript file (`gbrain dream --input <file>`).
  * Bypasses the corpus-dir scan and date filters but still applies
- * minChars + exclude_patterns when provided.
+ * minChars + exclude_patterns when provided. The self-consumption guard
+ * also still fires unless `bypassGuard` is set explicitly.
  */
 export function readSingleTranscript(
   filePath: string,
-  opts: { minChars?: number; excludePatterns?: string[] } = {},
+  opts: { minChars?: number; excludePatterns?: string[]; bypassGuard?: boolean } = {},
 ): DiscoveredTranscript | null {
   const minChars = opts.minChars ?? 2000;
+  const bypass = opts.bypassGuard === true;
   const excludeRes = compileExcludePatterns(opts.excludePatterns);
   let content: string;
   try {
@@ -197,7 +213,11 @@ export function readSingleTranscript(
     throw new Error(`could not read transcript at ${filePath}: ${msg}`);
   }
   if (content.length < minChars) return null;
-  if (isDreamOutput(content)) return null;
+  if (isDreamOutput(content, bypass)) {
+    const baseName = basename(filePath, '.txt');
+    process.stderr.write(`[dream] readSingleTranscript skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
+    return null;
+  }
   if (matchesAnyExclude(content, excludeRes)) return null;
   const baseName = basename(filePath, '.txt');
   const dateMatch = DATE_RE.exec(baseName);
