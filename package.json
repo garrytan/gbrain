@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -33,7 +33,7 @@
     "build:schema": "bash scripts/build-schema.sh",
     "build:llms": "bun run scripts/build-llms.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
-    "test": "scripts/check-privacy.sh && scripts/check-jsonb-pattern.sh && scripts/check-progress-to-stdout.sh && scripts/check-trailing-newline.sh && scripts/check-wasm-embedded.sh && bun run typecheck && bun test --timeout=60000",
+    "test": "scripts/check-privacy.sh && scripts/check-jsonb-pattern.sh && scripts/check-progress-to-stdout.sh && scripts/check-trailing-newline.sh && scripts/check-wasm-embedded.sh && scripts/check-exports-count.sh && bun run typecheck && bun test --timeout=60000",
     "check:wasm": "scripts/check-wasm-embedded.sh",
     "check:newlines": "scripts/check-trailing-newline.sh",
     "test:e2e": "bash scripts/run-e2e.sh",
@@ -46,6 +46,7 @@
     "check:jsonb": "scripts/check-jsonb-pattern.sh",
     "check:privacy": "scripts/check-privacy.sh",
     "check:progress": "scripts/check-progress-to-stdout.sh",
+    "check:exports-count": "scripts/check-exports-count.sh",
     "postinstall": "command -v gbrain >/dev/null 2>&1 && gbrain apply-migrations --yes --non-interactive || echo '[gbrain] postinstall skipped. If installed via bun install -g github:...: run `gbrain doctor` and `gbrain apply-migrations --yes` manually. See https://github.com/garrytan/gbrain/issues/218' 1>&2",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin"

@@ -830,6 +830,72 @@ describe('PR #356 — non-transactional DDL runs via reserved connection', () =>
   });
 });
 
+describe('migration v31 — eval_capture_tables', () => {
+  test('exists with the expected name and is engine-specific (sqlFor)', () => {
+    const v31 = MIGRATIONS.find(m => m.version === 31);
+    expect(v31).toBeDefined();
+    expect(v31?.name).toBe('eval_capture_tables');
+    expect(v31?.sqlFor?.postgres).toBeDefined();
+    expect(v31?.sqlFor?.pglite).toBeDefined();
+    expect(v31?.sql).toBe('');
+  });
+
+  test('creates both eval_candidates and eval_capture_failures on both engines', () => {
+    const v31 = MIGRATIONS.find(m => m.version === 31)!;
+    for (const variant of ['postgres', 'pglite'] as const) {
+      const sql = v31.sqlFor![variant]!;
+      expect(sql).toContain('CREATE TABLE IF NOT EXISTS eval_candidates');
+      expect(sql).toContain('CREATE TABLE IF NOT EXISTS eval_capture_failures');
+    }
+  });
+
+  test('enforces CHECK length(query) <= 51200', () => {
+    const v31 = MIGRATIONS.find(m => m.version === 31)!;
+    for (const variant of ['postgres', 'pglite'] as const) {
+      expect(v31.sqlFor![variant]!).toContain('CHECK (length(query) <= 51200)');
+    }
+  });
+
+  test('enforces tool_name enum + reason enum', () => {
+    const v31 = MIGRATIONS.find(m => m.version === 31)!;
+    for (const variant of ['postgres', 'pglite'] as const) {
+      const sql = v31.sqlFor![variant]!;
+      expect(sql).toContain(`tool_name IN ('query', 'search')`);
+      expect(sql).toContain(`reason IN ('db_down', 'rls_reject', 'check_violation', 'scrubber_exception', 'other')`);
+    }
+  });
+
+  test('creates DESC indexes on both tables', () => {
+    const v31 = MIGRATIONS.find(m => m.version === 31)!;
+    for (const variant of ['postgres', 'pglite'] as const) {
+      const sql = v31.sqlFor![variant]!;
+      expect(sql).toContain('idx_eval_candidates_created_at');
+      expect(sql).toContain('idx_eval_capture_failures_ts');
+      expect(sql).toContain('created_at DESC');
+      expect(sql).toContain('ts DESC');
+    }
+  });
+
+  test('Postgres variant gates RLS on BYPASSRLS and fails loudly', () => {
+    const pgSql = MIGRATIONS.find(m => m.version === 31)!.sqlFor!.postgres!;
+    expect(pgSql).toContain('rolbypassrls');
+    expect(pgSql).toMatch(/IF NOT has_bypass/);
+    expect(pgSql).toMatch(/RAISE EXCEPTION[^;]*BYPASSRLS/);
+    expect(pgSql).toContain('ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY');
+    expect(pgSql).toContain('ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY');
+  });
+
+  test('PGLite variant has no RLS / no BYPASSRLS gate', () => {
+    const pgliteSql = MIGRATIONS.find(m => m.version === 31)!.sqlFor!.pglite!;
+    expect(pgliteSql).not.toContain('rolbypassrls');
+    expect(pgliteSql).not.toContain('ENABLE ROW LEVEL SECURITY');
+  });
+
+  test('LATEST_VERSION caught up to 31', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(31);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // PR #363 regression guards — session timeouts via startup parameters
 // resolveSessionTimeouts — GBRAIN_*_TIMEOUT env overrides

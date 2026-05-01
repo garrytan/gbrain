@@ -2,6 +2,100 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.25.0] - 2026-04-26
+
+## **Contributors can now benchmark retrieval changes against real captured queries before merging.**
+## **`GBRAIN_CONTRIBUTOR_MODE=1` turns on capture; `gbrain eval replay` is the dev loop.**
+
+v0.20 (gbrain-evals extraction) and v0.21 (Cathedral II) gave gbrain its install surface back and turned code into a first-class graph. The remaining gap was data: `amara-life`, the fictional 418-item corpus over in gbrain-evals, is great for reproducibility but not for catching regressions against the queries your agents *actually* serve. v0.25 ships the substrate: with `GBRAIN_CONTRIBUTOR_MODE=1` set, every `query` and `search` call through MCP, CLI, or the subagent tool-bridge records into a new `eval_candidates` table. `gbrain eval export` streams the rows as NDJSON. `gbrain eval replay --against <ndjson>` re-runs each captured query against your current build and prints three numbers: mean Jaccard@k, top-1 stability, and latency Δ. Point gbrain-evals at the stream and you have BrainBench-Real on every release. Run replay locally and you have a regression gate on every retrieval PR.
+
+Capture is **off by default**. Production users get a quiet brain — no surprise data accumulation, no privacy footgun. Contributors flip it on with one shell rc line: `export GBRAIN_CONTRIBUTOR_MODE=1`. From that shell forward, every query/search lands in `eval_candidates`. PII is scrubbed at write time (emails, phones, SSN, Luhn-verified credit cards, JWTs, bearer tokens). Queries over 50KB get rejected. RLS matches the v0.18.1 / v0.21.0 posture ... new tables get enabled on Postgres, gated on BYPASSRLS so it never locks an operator out of their own data. `gbrain doctor` surfaces silent capture failures cross-process so if something stops working you see it in health checks, not three weeks later when the replay numbers look weird.
+
+Cathedral II (v0.21.0) callers are unaffected. `hybridSearch` still returns `Promise<SearchResult[]>` ... meta arrives via an optional `onMeta` callback in `HybridSearchOpts`, used only by the op-layer capture wrapper to record what hybridSearch *actually* did (vector ran or fell back, expansion fired or didn't, post-auto-detect detail).
+
+### The numbers that matter
+
+Measured on this branch's diff against v0.21.0:
+
+| Metric | v0.21.0 | v0.25.0 | Δ |
+|---|---|---|---|
+| Real-query capture | none | every MCP/CLI/subagent `query` + `search` | **the whole feature** |
+| PII classes redacted at write | 0 | 6 (email, phone, SSN, CC+Luhn, JWT, bearer) | ... |
+| Schema columns per captured row | ... | 16 (tool, query, slugs, chunks, source_ids, expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied, latency, remote, job_id, subagent_id, created_at, id) | ... |
+| `hybridSearch` return shape | `Promise<SearchResult[]>` | `Promise<SearchResult[]>` (unchanged) | 0 break |
+| `hybridSearch` opts surface | existing | + `onMeta?: (m: HybridSearchMeta) => void` | additive |
+| BrainEngine methods | shipped Cathedral II surface | +5 eval-capture | **BREAKING for custom engines** |
+| Public subpath exports | 17 | 17 (now contract-tested) | 0 drift |
+| Default capture posture | n/a | OFF for users, ON via `GBRAIN_CONTRIBUTOR_MODE=1` | privacy-positive default |
+| Dev-loop tooling for retrieval PRs | none in-tree | `gbrain eval replay --against <ndjson>` | the regression gate |
+| New tests | ... | 144 (14 engine round-trip + 17 scrubber + 27 capture module + 8 hybrid meta + 10 op-layer capture + 9 export + 5 prune + 30 public-exports + 16 replay + 8 v31-migrate) | ... |
+
+### What this means for you
+
+**Brain operators (the 99%):** run `gbrain upgrade`. Nothing changes — capture stays off, your brain stays quiet. The substrate is in place if you ever want to turn it on (e.g. to debug a retrieval issue), but you don't have to.
+
+**Contributors / maintainers:** add `export GBRAIN_CONTRIBUTOR_MODE=1` to your shell rc. Every `query`/`search` from then on writes to `eval_candidates`. After a week of dogfooding, snapshot with `gbrain eval export --since 7d > real.ndjson` and `gbrain eval replay --against real.ndjson` against your branch to gate retrieval changes. To opt out per-brain regardless of the env var: write `{"eval":{"capture":false}}` to `~/.gbrain/config.json`.
+
+**Anyone calling `hybridSearch` directly:** no change required. The return type is still `Promise<SearchResult[]>`. If you want the new meta side-channel, pass `onMeta: (m) => { ... }` in opts — otherwise leave it undefined and pay no cost.
+
+**Downstream TypeScript consumers implementing their own BrainEngine:** five new methods need implementations ... `logEvalCandidate`, `listEvalCandidates`, `deleteEvalCandidatesBefore`, `logEvalCaptureFailure`, `listEvalCaptureFailures`. Return types are in `src/core/types.ts`. This is why v0.25.0 is a minor bump.
+
+## To take advantage of v0.25.0
+
+**If you're a regular gbrain user:** `gbrain upgrade` is enough. Capture stays off, your brain stays quiet, nothing else changes. The substrate exists if you ever want to opt in (write `{"eval":{"capture":true}}` to `~/.gbrain/config.json`), but you don't have to.
+
+**If you're a contributor or maintainer working on retrieval:**
+
+1. **Apply the migration** (idempotent; `gbrain upgrade` does this automatically):
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+
+2. **Turn on capture** by adding one line to your `~/.zshrc` or `~/.bashrc`:
+   ```bash
+   export GBRAIN_CONTRIBUTOR_MODE=1
+   ```
+   Reload your shell (`source ~/.zshrc`) or open a new terminal.
+
+3. **Verify the tables exist + capture is healthy:**
+   ```bash
+   gbrain query "any test query" >/dev/null
+   psql $DATABASE_URL -c 'SELECT count(*) FROM eval_candidates'  # > 0 means capture is running
+   gbrain doctor   # should show "eval_capture: No capture failures in the last 24h"
+   ```
+
+4. **Dogfood for a week, then run the dev loop:**
+   ```bash
+   gbrain eval export --since 7d > baseline.ndjson
+   # ... make a retrieval change ...
+   gbrain eval replay --against baseline.ndjson  # mean Jaccard@k, top-1 stability, latency Δ
+   ```
+
+   See [`docs/eval-bench.md`](https://github.com/garrytan/gbrain/blob/master/docs/eval-bench.md) for the full guide and CI integration snippet.
+
+5. **If something looks wrong:** `gbrain doctor` names the `eval_capture_failures` breakdown by reason. File an issue with the breakdown + your config shape at https://github.com/garrytan/gbrain/issues.
+
+### Itemized changes
+
+- **`GBRAIN_CONTRIBUTOR_MODE=1` env var gates capture.** Default flipped from on-for-everyone to off-unless-opted-in. Resolution order: explicit `eval.capture` config wins both directions, then env var, then off. Production users get a quiet brain by default; contributors flip the env var in `.zshrc` and unlock the full export → replay loop. README + CONTRIBUTING document the flag prominently.
+- v31 migration: `eval_candidates` + `eval_capture_failures` on both Postgres + PGLite, RLS gated on BYPASSRLS, CHECK constraints + indexes
+- Op-layer capture wrapper in `src/core/operations.ts` (covers MCP + CLI + subagent tool-bridge from one site)
+- PII scrubber in `src/core/eval-capture-scrub.ts` (6 regex families, adversarial-input safe)
+- Cross-process audit via `eval_capture_failures` + `gbrain doctor` 24h breakdown
+- `gbrain eval export` (NDJSON, schema_version:1, EPIPE-safe) + `gbrain eval prune` (explicit retention)
+- `gbrain eval replay --against <ndjson>` — contributor-facing dev loop. Reads a captured snapshot, re-runs every `query` / `search` against the current brain, prints mean Jaccard@k between captured + current `retrieved_slugs`, top-1 stability rate, and latency Δ. JSON mode (`schema_version: 1`) for CI gating, top-regressions table for human eyeballs. Closes the gap between "data captured" and "data used to gate a PR."
+- `docs/eval-bench.md` — contributor guide that walks the 4-command loop (export → change → replay → diff), defines metrics (Jaccard@k, top-1 stability, latency Δ) with healthy ranges, lists the source paths that should trigger a re-run, and shows how to wire it into CI. Linked from CONTRIBUTING.md.
+- `CONTRIBUTING.md` adds a "Running real-world eval benchmarks (touching retrieval code)" section so PRs that change retrieval have an obvious replay path. Maintainer reviews can ask "did you run replay?" instead of writing a custom benchmark per PR.
+- `hybridSearch` adds `onMeta?: (m) => void` to opts (Cathedral II callers unaffected)
+- `BrainEngine` gains 5 methods (breaking-interface for custom engines, drives v0.25.0 minor bump)
+- `test/public-exports.test.ts` + `scripts/check-exports-count.sh` lock the 17-subpath public surface
+- Config gains `eval: {capture?, scrub_pii?}` (file-plane only); env var `GBRAIN_CONTRIBUTOR_MODE=1` is the contributor-facing toggle that doesn't require editing JSON
+- `listEvalCandidates` orders `created_at DESC, id DESC` (deterministic export windows)
+- `docs/eval-capture.md` — stable NDJSON schema reference for gbrain-evals
+- `gbrain doctor` `eval_capture` check now distinguishes pre-v31 missing-table (status: ok / skipped) from RLS-denied SELECT or transient DB error (status: warn) — the diagnostic that surfaces a misconfigured RLS role no longer goes silent
+- `hybridSearch.onMeta` callback wrapped in try/catch — a throwing user-supplied callback can't break the search hot path (defensive across the public `gbrain/search/hybrid` surface)
+- +144 unit tests across 9 new files (eval-candidates 14, eval-capture-scrub 17, eval-capture 27, eval-export 9, eval-prune 5, eval-replay 16, hybrid-meta 8, mcp-eval-capture 10, public-exports 30) plus 8 v31-shape checks added to `test/migrate.test.ts`. 0 regressions across the full suite (198 v0.25.0-related tests pass cleanly).
+
 ## [0.24.0] - 2026-04-26
 
 ## **The skillify loop stops lying. Privacy guard runs, `--llm` is honest, ghost rows go away.**

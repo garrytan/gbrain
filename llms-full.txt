@@ -50,6 +50,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.
 - **Migrate:** [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations`.
+- **Eval retrieval changes:** capture is off by default. To benchmark a
+  retrieval change against real captured queries, set
+  `GBRAIN_CONTRIBUTOR_MODE=1`, then `gbrain eval export --since 7d > base.ndjson`
+  and `gbrain eval replay --against base.ndjson`. Full guide:
+  [`docs/eval-bench.md`](./docs/eval-bench.md).
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.
@@ -135,7 +140,16 @@ strict behavior when unset.
 - `src/core/search/eval.ts` — Retrieval eval harness: P@k, R@k, MRR, nDCG@k metrics + runEval() orchestrator
 - `src/core/search/source-boost.ts` (v0.22.0) — Source-type boost map keyed by slug prefix. `DEFAULT_SOURCE_BOOSTS` (originals/ 1.5, concepts/ 1.3, writing/ 1.4, people/companies/deals/ 1.2, daily/ 0.8, media/x/ 0.7, wintermute/chat/ 0.5) and `DEFAULT_HARD_EXCLUDES` (test/, archive/, attachments/, .raw/). `parseSourceBoostEnv` / `parseHardExcludesEnv` parse comma-separated `prefix:factor` pairs from `GBRAIN_SOURCE_BOOST` / `GBRAIN_SEARCH_EXCLUDE` env vars. `resolveBoostMap` and `resolveHardExcludes` merge defaults + env + caller `SearchOpts.exclude_slug_prefixes`/`include_slug_prefixes`.
 - `src/core/search/sql-ranking.ts` (v0.22.0) — Pure SQL string builders. `buildSourceFactorCase(slugColumn, boostMap, detail)` emits a CASE expression with longest-prefix-match wins (returns literal `'1.0'` when `detail === 'high'` for temporal-bypass parity with COMPILED_TRUTH_BOOST). `buildHardExcludeClause(slugColumn, prefixes)` emits `NOT (col LIKE 'p1%' OR col LIKE 'p2%')` — OR-chain wrapped in NOT, NOT `NOT LIKE ALL/ANY` (those quantifiers don't express set-exclusion). LIKE meta-character escape covers all three of `%`, `_`, AND `\` (backslash matters because it's Postgres LIKE's default escape char). Single-quote doubling on SQL string literals so injection-style inputs are inert text.
-- `src/commands/eval.ts` — `gbrain eval` command: single-run table + A/B config comparison
+- `src/commands/eval.ts` — `gbrain eval` command: single-run table + A/B config comparison. v0.25.0 adds sub-subcommand dispatch on `args[0]` so `gbrain eval export` + `gbrain eval prune` + `gbrain eval replay` route into session-capture handlers; bare `gbrain eval --qrels …` fall-through preserves the legacy IR-metrics flow.
+- `src/commands/eval-export.ts` (v0.25.0) — streams `eval_candidates` rows as NDJSON to stdout with `schema_version: 1` prefix on every line. EPIPE-safe, progress heartbeats on stderr, stable id-desc tiebreaker so `--since` windows never dupe/miss rows.
+- `src/commands/eval-prune.ts` (v0.25.0) — explicit retention cleanup. Requires `--older-than DUR`. `--dry-run` reports would-delete count.
+- `src/commands/eval-replay.ts` (v0.25.0) — contributor-facing replay tool. Reads NDJSON from `gbrain eval export`, re-runs each captured `query` / `search` op against the current brain, computes set-Jaccard@k between captured + current `retrieved_slugs`, top-1 stability rate, and latency Δ. Stable JSON shape (`schema_version: 1`) for CI gating; human mode prints a regression table. Pure Bun, zero new deps. The dev-loop half of BrainBench-Real that closes the gap between "data captured" and "data used to gate a PR." See `docs/eval-bench.md` for the workflow.
+- `docs/eval-bench.md` (v0.25.0) — contributor guide for using captured data to benchmark retrieval changes before merging. Linked from CONTRIBUTING.md under "Running real-world eval benchmarks (touching retrieval code)".
+- `src/core/eval-capture.ts` (v0.25.0) — op-layer capture wrapper called from `src/core/operations.ts` `query` + `search` handlers. Catches MCP + CLI + subagent tool-bridge from one site. Fire-and-forget; failures route to `engine.logEvalCaptureFailure` so `gbrain doctor` sees drops cross-process. **Capture is off by default** — `isEvalCaptureEnabled` resolution: explicit `config.eval.capture` (true/false) wins, else `process.env.GBRAIN_CONTRIBUTOR_MODE === '1'`, else off. Production users get a quiet brain; contributors set `export GBRAIN_CONTRIBUTOR_MODE=1` in `.zshrc` to enable the dev loop. PII scrubber gate is independent and defaults to true regardless of CONTRIBUTOR_MODE.
+- `src/core/eval-capture-scrub.ts` (v0.25.0) — zero-deps PII scrubber: emails, phones, SSN, Luhn-verified credit cards, JWT-shaped tokens, bearer tokens.
+- `src/core/search/hybrid.ts` — Cathedral II `Promise<SearchResult[]>` return shape unchanged in v0.25.0. Adds `onMeta?: (m: HybridSearchMeta) => void` callback so op-layer capture can record what hybridSearch actually did. Existing callers leave it undefined.
+- `docs/eval-capture.md` (v0.25.0) — stable NDJSON schema reference for gbrain-evals consumers.
+- `test/public-exports.test.ts` (v0.25.0 / R2) — runtime contract test. Imports each of the 17 public subpaths via package name and pins a canary symbol per module. Paired with `scripts/check-exports-count.sh`.
 - `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff
 - `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects. v0.14.1: `CROSS_CUTTING_PATTERNS.conventions` is an array (notability gate accepts both `conventions/quality.md` and `_brain-filing-rules.md`). New `extractDelegationTargets()` parses `> **Convention:**`, `> **Filing rule:**`, and inline backtick references. DRY suppression is proximity-based via `DRY_PROXIMITY_LINES = 40`.
 - `src/core/repo-root.ts` — Shared `findRepoRoot(startDir?)` (v0.16.4): walks up from `startDir` (default `process.cwd()`) looking for `skills/RESOLVER.md`. Zero-dependency module imported by both `doctor.ts` and `check-resolvable.ts`. Parameterized `startDir` makes tests hermetic.
@@ -297,6 +311,14 @@ Key commands added for Minions (job queue):
 - `gbrain jobs stats` — job health dashboard
 - `gbrain jobs smoke [--sigkill-rescue]` — health smoke test. `--sigkill-rescue` is the v0.13.1 regression guard for #219: simulates a killed worker and asserts the stalled job is requeued instead of dead-lettered on first stall.
 - `gbrain jobs work [--queue Q] [--concurrency N]` — start worker daemon (Postgres only)
+
+Key commands added in v0.25.0:
+- `gbrain eval export [--since DUR] [--limit N] [--tool query|search]` — stream captured `eval_candidates` rows as NDJSON to stdout. Every line starts with `"schema_version": 1` per the stable contract in `docs/eval-capture.md`. EPIPE-safe, progress heartbeats on stderr, deterministic ordering. Primary consumer is the sibling `gbrain-evals` repo for BrainBench-Real replay.
+- `gbrain eval prune --older-than DUR [--dry-run]` — explicit retention cleanup for `eval_candidates`. Requires `--older-than` (never deletes without a window). Duration strings: 30d, 7d, 1h, 90m, 3600s.
+- `gbrain eval replay --against FILE.ndjson [--limit N] [--top-regressions K] [--json] [--verbose]` — contributor-facing dev loop. Reads a captured NDJSON snapshot, re-runs each `query` / `search` op against the current brain, computes mean set-Jaccard@k between captured + current `retrieved_slugs`, top-1 stability rate, and latency Δ. JSON mode (`schema_version: 1`) for CI gating; human mode prints a regression table sorted worst-first. Closes the gap between "data captured" and "data used to gate a PR." See `docs/eval-bench.md` for the workflow.
+- `gbrain doctor` gains an `eval_capture` check: reads `eval_capture_failures` for the last 24h, groups by reason, warns when non-zero. Cross-process visibility (doctor runs in a separate process from MCP). Pre-v31 brains get `Skipped (table unavailable)` — non-fatal.
+- Config addition: `eval: { capture?: boolean, scrub_pii?: boolean }` in `~/.gbrain/config.json`. **File-plane only** — `gbrain config set` writes the DB plane and does NOT control capture.
+- **`GBRAIN_CONTRIBUTOR_MODE=1` env var** is the contributor-facing toggle. Capture is **off by default** as of v0.25.0; production users get a quiet brain. Resolution order: explicit `eval.capture` config wins both directions, then env var, then off. Documented in README.md, CONTRIBUTING.md, and `docs/eval-bench.md`.
 
 Key commands added in v0.12.2:
 - `gbrain repair-jsonb [--dry-run] [--json]` — repair double-encoded JSONB rows left over from v0.12.0-and-earlier Postgres writes. Idempotent; PGLite no-ops. The `v0_12_2` migration runs this automatically on `gbrain upgrade`.
@@ -1382,6 +1404,8 @@ The brain wires itself. Every page write extracts entity references and creates 
 
 GBrain is those patterns, generalized. 29 skills. Install in 30 minutes. Your agent does the work. As Garry's personal agent gets smarter, so does yours.
 
+**New in v0.25.0 — BrainBench-Real (session capture, contributor opt-in):** with `GBRAIN_CONTRIBUTOR_MODE=1` set in your shell, every real `query` + `search` call through MCP, CLI, or the subagent tool-bridge gets captured (PII-scrubbed) into an `eval_candidates` table. Snapshot with `gbrain eval export`, replay against your code change with `gbrain eval replay`. Three numbers come back: mean Jaccard@k between captured and current retrieved slugs, top-1 stability, and latency Δ. **Off by default** for production users — no surprise data accumulation. Walkthrough: [docs/eval-bench.md](docs/eval-bench.md). NDJSON wire format: [docs/eval-capture.md](docs/eval-capture.md).
+
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
 > **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
@@ -2117,6 +2141,8 @@ The skills in this repo are those patterns, generalized. What took 11 days to bu
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Run `bun test` for unit tests. For the full local CI gate (gitleaks + unit + all 29 E2E files in Docker, the same checks GH Actions runs), use `bun run ci:local` ... or `bun run ci:local:diff` for the diff-aware subset during fast iteration.
+
+If you're working on retrieval or any of the search/embedding/ranking surface, set `GBRAIN_CONTRIBUTOR_MODE=1` in your shell rc and use `gbrain eval replay` to gate your changes against a snapshot of real captured queries — the dev loop is documented in [`docs/eval-bench.md`](docs/eval-bench.md). Capture is **off by default** for production users (no surprise data accumulation); the env var is the contributor opt-in.
 
 PRs welcome for: new enrichment APIs, performance optimizations, additional engine backends, new skills following the conformance standard in `skills/skill-creator/SKILL.md`.
 

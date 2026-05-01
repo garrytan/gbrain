@@ -719,6 +719,58 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     fmHb();
   }
 
+  // 11a-bis. Eval-capture health (v0.25.0). Capture is a fire-and-forget
+  // side-effect that logs failures to a persistent table so this check
+  // can see drops cross-process (the MCP server captures; `gbrain doctor`
+  // runs in a separate process). Counts failures in the last 24h and
+  // warns when non-zero. Pre-v31 brains: the table doesn't exist yet;
+  // swallow the error and report skipped.
+  progress.heartbeat('eval_capture');
+  try {
+    const since = new Date(Date.now() - 24 * 3600 * 1000);
+    const failures = await engine.listEvalCaptureFailures({ since });
+    if (failures.length === 0) {
+      checks.push({ name: 'eval_capture', status: 'ok', message: 'No capture failures in the last 24h' });
+    } else {
+      const byReason = new Map<string, number>();
+      for (const f of failures) {
+        byReason.set(f.reason, (byReason.get(f.reason) ?? 0) + 1);
+      }
+      const breakdown = [...byReason.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([r, n]) => `${n} ${r}`)
+        .join(', ');
+      checks.push({
+        name: 'eval_capture',
+        status: 'warn',
+        message: `${failures.length} capture failure(s) in the last 24h (${breakdown}). ` +
+          `If you care about replay fidelity, investigate. If not, set eval.capture: false ` +
+          `in ~/.gbrain/config.json to silence.`,
+      });
+    }
+  } catch (err) {
+    // Distinguish "table doesn't exist yet" (pre-v31, ok skip) from real
+    // problems like RLS denying SELECT — the latter masks the very condition
+    // this check is supposed to surface (capture INSERTs almost certainly
+    // also fail).
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01') {
+      checks.push({ name: 'eval_capture', status: 'ok', message: 'Skipped (eval_capture_failures table unavailable — apply migrations or upgrade)' });
+    } else if (code === '42501') {
+      checks.push({
+        name: 'eval_capture',
+        status: 'warn',
+        message: 'RLS denies SELECT on eval_capture_failures. Capture INSERTs are almost certainly failing too. Run as a role with BYPASSRLS or grant SELECT on this table.',
+      });
+    } else {
+      checks.push({
+        name: 'eval_capture',
+        status: 'warn',
+        message: `Could not read eval_capture_failures: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
   // 11b. Queue health (v0.19.1 queue-resilience wave).
   // Postgres-only because PGLite has no multi-process worker surface. Two
   // subchecks, both cheap (single SELECT each, status-index-covered):

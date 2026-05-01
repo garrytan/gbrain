@@ -15,6 +15,8 @@ import type {
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
+  EvalCandidate, EvalCandidateInput,
+  EvalCaptureFailure, EvalCaptureFailureReason,
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
@@ -1737,6 +1739,74 @@ export class PostgresEngine implements BrainEngine {
     return [...chunkRows, ...symbolRows].map(r => pgRowToCodeEdge(r as Record<string, unknown>));
   }
 
+  // Eval capture (v0.25.0). See BrainEngine interface docs.
+  async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
+    const sql = this.sql;
+    const rows = await sql`
+      INSERT INTO eval_candidates (
+        tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
+        expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
+        latency_ms, remote, job_id, subagent_id
+      ) VALUES (
+        ${input.tool_name}, ${input.query}, ${input.retrieved_slugs}, ${input.retrieved_chunk_ids}, ${input.source_ids},
+        ${input.expand_enabled}, ${input.detail}, ${input.detail_resolved}, ${input.vector_enabled}, ${input.expansion_applied},
+        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}
+      )
+      RETURNING id
+    `;
+    return rows[0]!.id as number;
+  }
+
+  async listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }): Promise<EvalCandidate[]> {
+    const sql = this.sql;
+    const raw = filter?.limit;
+    const limit = (raw === undefined || raw === null || !Number.isFinite(raw) || raw <= 0)
+      ? 1000
+      : Math.min(Math.floor(raw), 100000);
+    const since = filter?.since ?? new Date(0);
+    const tool = filter?.tool ?? null;
+    // id DESC tiebreaker so same-millisecond inserts return deterministically
+    // — without this, `gbrain eval export --since` could dupe or miss rows
+    // across non-overlapping windows.
+    const rows = tool
+      ? await sql`
+          SELECT * FROM eval_candidates
+          WHERE created_at >= ${since} AND tool_name = ${tool}
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${limit}
+        `
+      : await sql`
+          SELECT * FROM eval_candidates
+          WHERE created_at >= ${since}
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${limit}
+        `;
+    return rows as unknown as EvalCandidate[];
+  }
+
+  async deleteEvalCandidatesBefore(date: Date): Promise<number> {
+    const sql = this.sql;
+    const rows = await sql`
+      DELETE FROM eval_candidates WHERE created_at < ${date} RETURNING id
+    `;
+    return rows.length;
+  }
+
+  async logEvalCaptureFailure(reason: EvalCaptureFailureReason): Promise<void> {
+    const sql = this.sql;
+    await sql`INSERT INTO eval_capture_failures (reason) VALUES (${reason})`;
+  }
+
+  async listEvalCaptureFailures(filter?: { since?: Date }): Promise<EvalCaptureFailure[]> {
+    const sql = this.sql;
+    const since = filter?.since ?? new Date(0);
+    const rows = await sql`
+      SELECT * FROM eval_capture_failures
+      WHERE ts >= ${since}
+      ORDER BY ts DESC
+    `;
+    return rows as unknown as EvalCaptureFailure[];
+  }
 }
 
 function pgRowToCodeEdge(row: Record<string, unknown>): import('./types.ts').CodeEdgeResult {

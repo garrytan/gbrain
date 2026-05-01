@@ -21,6 +21,23 @@ import {
 } from '../core/search/eval.ts';
 
 export async function runEvalCommand(engine: BrainEngine, args: string[]): Promise<void> {
+  // v0.25.0 — sub-subcommand dispatch. Bare `gbrain eval --qrels ...`
+  // falls through to the legacy IR-metrics flow so existing callers
+  // don't break.
+  const sub = args[0];
+  if (sub === 'export') {
+    const { runEvalExport } = await import('./eval-export.ts');
+    return runEvalExport(engine, args.slice(1));
+  }
+  if (sub === 'prune') {
+    const { runEvalPrune } = await import('./eval-prune.ts');
+    return runEvalPrune(engine, args.slice(1));
+  }
+  if (sub === 'replay') {
+    const { runEvalReplay } = await import('./eval-replay.ts');
+    return runEvalReplay(engine, args.slice(1));
+  }
+
   const opts = parseArgs(args);
 
   if (opts.help) {

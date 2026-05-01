@@ -10,6 +10,8 @@ import type {
   IngestLogEntry, IngestLogInput,
   EngineConfig,
   CodeEdgeInput, CodeEdgeResult,
+  EvalCandidate, EvalCandidateInput,
+  EvalCaptureFailure, EvalCaptureFailureReason,
 } from './types.ts';
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -363,4 +365,20 @@ export interface BrainEngine {
    * prefer searchKeyword (external contract: page-grain best-chunk-per-page).
    */
   searchKeywordChunks(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
+
+  // Eval capture (v0.25.0 — BrainBench-Real substrate).
+  // Captured at the op-layer wrapper in src/core/operations.ts; reads via
+  // `gbrain eval export` (NDJSON) for sibling gbrain-evals consumption.
+  // Adding these to BrainEngine is a breaking-interface change for third-
+  // party engine implementers — this is why v0.25.0 is a minor bump.
+  /** Insert a captured candidate. Returns the new row id. Best-effort: callers swallow failures and route them through `logEvalCaptureFailure`. */
+  logEvalCandidate(input: EvalCandidateInput): Promise<number>;
+  /** Read candidates by time window / limit / tool filter. Used by `gbrain eval export`. */
+  listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }): Promise<EvalCandidate[]>;
+  /** Delete candidates created before `date`. Returns rows deleted. Used by `gbrain eval prune`. */
+  deleteEvalCandidatesBefore(date: Date): Promise<number>;
+  /** Log a capture failure so `gbrain doctor` can surface drops cross-process. Best-effort; symmetric with logEvalCandidate (failure-of-failure is lost). */
+  logEvalCaptureFailure(reason: EvalCaptureFailureReason): Promise<void>;
+  /** Read capture failures within an optional time window. Used by `gbrain doctor`. */
+  listEvalCaptureFailures(filter?: { since?: Date }): Promise<EvalCaptureFailure[]>;
 }
