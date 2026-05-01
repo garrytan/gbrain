@@ -15,6 +15,39 @@ test('personal-episode operations are registered with CLI hints', () => {
   expect(list?.cliHints?.name).toBe('personal-episode-list');
 });
 
+test('personal-episode record rejects writes without source provenance', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-personal-episode-source-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const record = operations.find((operation) => operation.name === 'record_personal_episode');
+
+  if (!record) {
+    throw new Error('personal-episode record operation is missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await expect(record.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      title: 'Morning reset',
+      summary: 'Re-established the daily routine after travel.',
+      source_kind: 'chat',
+      start_time: '2026-04-22T06:30:00.000Z',
+    })).rejects.toThrow('source_ref is required');
+
+    expect(await engine.listPersonalEpisodeEntries({ title: 'Morning reset' })).toEqual([]);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('personal-episode operations expose dry-run, direct get, and filtered list behavior', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-personal-episode-op-'));
   const databasePath = join(dir, 'brain.db');
@@ -41,6 +74,7 @@ test('personal-episode operations expose dry-run, direct get, and filtered list 
       summary: 'Re-established the daily routine after travel.',
       source_kind: 'chat',
       start_time: '2026-04-22T06:30:00.000Z',
+      source_ref: 'User, dry-run preview, 2026-04-22 9:04 AM KST',
     });
 
     expect((preview as any).dry_run).toBe(true);

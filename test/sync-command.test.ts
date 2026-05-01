@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, renameSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { performSync } from '../src/commands/sync.ts';
+import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 const tempDirs: string[] = [];
 
@@ -83,6 +84,19 @@ function makeSyncEngine(input: {
   });
 
   return { engine, config, setConfigCalls, deletedPages, ingestLogs };
+}
+
+async function withSqliteEngine<T>(fn: (engine: SQLiteEngine) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-sync-sqlite-'));
+  tempDirs.push(dir);
+  const engine = new SQLiteEngine();
+  await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+  await engine.initSchema();
+  try {
+    return await fn(engine);
+  } finally {
+    await engine.disconnect();
+  }
 }
 
 describe('performSync incremental safety', () => {
@@ -176,5 +190,45 @@ describe('performSync incremental safety', () => {
     expect(setConfigCalls).toContainEqual(['sync.last_commit', headCommit]);
     expect(setConfigCalls).toContainEqual(['sync.repo_path', repoPath]);
     expect(setConfigCalls).toContainEqual(['markdown.repo_path', repoPath]);
+  });
+
+  test('first sync dry-run does not import pages or advance sync metadata', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'concepts'), { recursive: true });
+    writeFileSync(join(repoPath, 'concepts', 'seed.md'), '# Seed\n');
+    const headCommit = commitAll(repoPath, 'seed');
+
+    await withSqliteEngine(async (engine) => {
+      const result = await performSync(engine, { repoPath, noPull: true, dryRun: true });
+
+      expect(result.status).toBe('dry_run');
+      expect(result.fromCommit).toBeNull();
+      expect(result.toCommit).toBe(headCommit);
+      expect(result.added).toBe(1);
+      expect(await engine.listPages({ limit: 10 })).toEqual([]);
+      expect(await engine.getConfig('sync.last_commit')).toBeNull();
+      expect(await engine.getConfig('markdown.repo_path')).toBeNull();
+    });
+  });
+
+  test('full sync rejects import errors instead of reporting first_sync success', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'concepts'), { recursive: true });
+    writeFileSync(join(repoPath, 'concepts', 'bad.md'), [
+      '---',
+      'slug: concepts/wrong',
+      'title: Bad Slug',
+      '---',
+      '',
+      'This file should not be accepted under concepts/bad.',
+    ].join('\n'));
+    commitAll(repoPath, 'bad slug');
+
+    await withSqliteEngine(async (engine) => {
+      await expect(performSync(engine, { repoPath, noPull: true }))
+        .rejects.toThrow(/Full sync failed for 1 file/);
+      expect(await engine.listPages({ limit: 10 })).toEqual([]);
+      expect(await engine.getConfig('sync.last_commit')).toBeNull();
+    });
   });
 });

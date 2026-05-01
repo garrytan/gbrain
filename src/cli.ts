@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { loadConfig } from './core/config.ts';
+import { createLocalConfigDefaults, loadConfig, saveConfig } from './core/config.ts';
 import { createConnectedEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
 import type { BrainEngine } from './core/engine.ts';
 import {
@@ -299,7 +299,7 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
-  const engine = await connectEngine();
+  const engine = await connectEngine({ bootstrapLocalIfMissing: command === 'serve' });
   try {
     const runCommand = await engineLoader();
     await runCommand(engine, normalizeCliOnlyArgs(command, args));
@@ -319,6 +319,12 @@ async function handleSyncCliExtension(args: string[]) {
 }
 
 async function handleDirectCommand(command: string, args: string[]): Promise<boolean> {
+  if (command === 'config' && args[0] === 'show') {
+    const { runConfigShow } = await import('./commands/config.ts');
+    runConfigShow();
+    return true;
+  }
+
   const noEngineLoader = DIRECT_NO_ENGINE_COMMANDS[command];
   if (noEngineLoader) {
     const runCommand = await noEngineLoader();
@@ -368,9 +374,17 @@ function normalizeCliOnlyArgs(command: string, args: string[]): string[] {
   return normalized;
 }
 
-async function connectEngine(): Promise<BrainEngine> {
+async function connectEngine(options: { bootstrapLocalIfMissing?: boolean } = {}): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
+    if (options.bootstrapLocalIfMissing) {
+      const localConfig = createLocalConfigDefaults();
+      const engine = await createConnectedEngine(localConfig);
+      await engine.initSchema();
+      saveConfig(localConfig);
+      console.error(`No brain config found; initialized local SQLite brain at ${localConfig.database_path}`);
+      return engine;
+    }
     console.error('No brain configured. Run: mbrain init or set MBRAIN_DATABASE_URL / DATABASE_URL.');
     process.exit(1);
   }

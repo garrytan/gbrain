@@ -4,6 +4,10 @@ import { join, relative } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
 import { formatResult as formatOperationResult } from '../core/operations.ts';
+import {
+  collectMarkdownFiles,
+  runImportService,
+} from '../core/services/import-service.ts';
 import { buildSyncManifest, isSyncable, pathToSlug } from '../core/sync.ts';
 import type { SyncManifest } from '../core/sync.ts';
 
@@ -26,10 +30,6 @@ export interface SyncOpts {
   noPull?: boolean;
   noEmbed?: boolean;
 }
-
-const runtimeImport = new Function('specifier', 'return import(specifier)') as (
-  specifier: string,
-) => Promise<any>;
 
 interface SyncFailure {
   path: string;
@@ -61,7 +61,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   }
 
   // Git pull (unless --no-pull)
-  if (!opts.noPull) {
+  if (!opts.noPull && !opts.dryRun) {
     try {
       git(repoPath, 'pull', '--ff-only');
     } catch (e: unknown) {
@@ -326,18 +326,57 @@ async function performFullSync(
   headCommit: string,
   opts: SyncOpts,
 ): Promise<SyncResult> {
+  if (opts.dryRun) {
+    const files = collectMarkdownFiles(repoPath);
+    const pagesAffected = files.map(file => pathToSlug(relative(repoPath, file).replace(/\\/g, '/')));
+    console.log(`Sync dry run: full import of ${repoPath} at ${headCommit.slice(0, 8)}`);
+    if (pagesAffected.length) console.log(`  Added: ${pagesAffected.join(', ')}`);
+    else console.log(`  No syncable files.`);
+    return {
+      status: 'dry_run',
+      fromCommit: null,
+      toCommit: headCommit,
+      added: pagesAffected.length,
+      modified: 0,
+      deleted: 0,
+      renamed: 0,
+      chunksCreated: 0,
+      pagesAffected,
+    };
+  }
+
   console.log(`Running full import of ${repoPath}...`);
-  const { runImport } = await runtimeImport('./import.ts');
-  const importArgs = [repoPath];
-  await runImport(engine, importArgs);
+  const summary = await runImportService(engine, {
+    rootDir: repoPath,
+    noEmbed: opts.noEmbed,
+    fresh: Boolean(opts.full),
+    workers: 1,
+  });
+
+  if (summary.errors > 0) {
+    throw new Error(
+      `Full sync failed for ${summary.errors} file(s). ` +
+      'Checkpoint not advanced; fix the files and rerun sync.',
+    );
+  }
+
+  await engine.logIngest({
+    source_type: 'git_sync',
+    source_ref: `${repoPath} @ ${headCommit.slice(0, 8)}`,
+    pages_updated: summary.importedSlugs,
+    summary: `Full sync: ${summary.imported} pages imported, ${summary.skipped} skipped, ${summary.chunksCreated} chunks`,
+  });
 
   return {
     status: 'first_sync',
     fromCommit: null,
     toCommit: headCommit,
-    added: 0, modified: 0, deleted: 0, renamed: 0,
-    chunksCreated: 0,
-    pagesAffected: [],
+    added: summary.imported,
+    modified: 0,
+    deleted: 0,
+    renamed: 0,
+    chunksCreated: summary.chunksCreated,
+    pagesAffected: summary.importedSlugs,
   };
 }
 

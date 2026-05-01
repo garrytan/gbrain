@@ -1,13 +1,13 @@
 {
   "name": "mbrain",
-  "version": "0.4.1",
-  "description": "Personal knowledge brain with Postgres + pgvector hybrid search",
+  "version": "0.10.2",
+  "description": "Local-first personal knowledge brain with SQLite/offline and optional Postgres managed search",
   "family": "bundle-plugin",
   "configSchema": {
     "database_url": {
       "type": "string",
-      "required": true,
-      "description": "PostgreSQL connection URL (Supabase recommended)",
+      "required": false,
+      "description": "Optional PostgreSQL connection URL for managed search (local SQLite is used by default)",
       "uiHints": { "sensitive": true }
     },
     "openai_api_key": {
@@ -19,8 +19,8 @@
   },
   "mcpServers": {
     "mbrain": {
-      "command": "./bin/mbrain",
-      "args": ["serve"]
+      "command": "bun",
+      "args": ["run", "src/cli.ts", "serve"]
     }
   },
   "skills": [

@@ -1,5 +1,5 @@
 import { writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve, sep } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { previewPersonalExport } from '../core/services/personal-export-visibility-service.ts';
@@ -71,8 +71,9 @@ async function runPersonalExport(engine: BrainEngine, outDir: string, query?: st
 
   console.log(`Exporting ${preview.profile_memory_entries.length} personal profile records to ${outDir}/`);
 
+  const profileMemoryDir = join(outDir, 'personal', 'profile-memory');
   for (const entry of preview.profile_memory_entries) {
-    const filePath = join(outDir, 'personal', 'profile-memory', `${entry.id}.md`);
+    const filePath = safeExportPath(profileMemoryDir, `${entry.id}.md`);
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, serializeProfileMemoryEntry(entry));
   }
@@ -86,6 +87,15 @@ function getFlagValue(args: string[], flag: string): string | undefined {
     return undefined;
   }
   return args[index + 1];
+}
+
+function safeExportPath(rootDir: string, fileName: string): string {
+  const root = resolve(rootDir);
+  const target = resolve(root, fileName);
+  if (target !== root && !target.startsWith(root + sep)) {
+    throw new Error(`Unsafe personal export path for id: ${fileName.replace(/\.md$/, '')}`);
+  }
+  return target;
 }
 
 function serializeProfileMemoryEntry(entry: Awaited<ReturnType<typeof previewPersonalExport>>['profile_memory_entries'][number]): string {

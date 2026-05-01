@@ -72,6 +72,12 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(source).not.toContain('npm upgrade');
   });
 
+  test('uses Bun global update command for Bun-installed CLI', () => {
+    expect(source).toContain("execSync('bun update -g mbrain'");
+    expect(source).toContain('Try running manually: bun update -g mbrain');
+    expect(source).not.toContain("execSync('bun update mbrain'");
+  });
+
   test('refreshes agent rules after a successful upgrade', () => {
     expect(source).toContain('mbrain setup-agent --skip-mcp');
     expect(source).not.toContain("execSync('mbrain setup-agent',");

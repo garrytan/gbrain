@@ -20,10 +20,10 @@ export async function runUpgrade(args: string[]) {
     case 'bun':
       console.log('Upgrading via bun...');
       try {
-        execSync('bun update mbrain', { stdio: 'inherit', timeout: 120_000 });
+        execSync('bun update -g mbrain', { stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
-        console.error('Upgrade failed. Try running manually: bun update mbrain');
+        console.error('Upgrade failed. Try running manually: bun update -g mbrain');
       }
       break;
 
@@ -46,7 +46,7 @@ export async function runUpgrade(args: string[]) {
     default:
       console.error('Could not detect installation method.');
       console.log('Try one of:');
-      console.log('  bun update mbrain');
+      console.log('  bun update -g mbrain');
       console.log('  clawhub update mbrain');
       console.log('  Download from https://github.com/meghendra6/mbrain/releases');
   }

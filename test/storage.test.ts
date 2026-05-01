@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { LocalStorage } from '../src/core/storage/local.ts';
@@ -73,6 +73,12 @@ describe('LocalStorage', () => {
     const url = await storage.getUrl('test/file.txt');
     expect(url.startsWith('file://')).toBe(true);
   });
+
+  test('getUrl returns file:// URL for a missing nested key', async () => {
+    const url = await storage.getUrl('missing/nested/file.txt');
+    expect(url).toContain('/missing/nested/file.txt');
+    expect(url.startsWith('file://')).toBe(true);
+  });
 });
 
 describe('LocalStorage path traversal', () => {
@@ -136,6 +142,40 @@ describe('LocalStorage path traversal', () => {
       expect(data.toString()).toBe('img');
     } finally {
       rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  test('blocks upload through symlinked directories inside the storage root', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'mbrain-traversal-'));
+    const outsideDir = mkdtempSync(join(tmpdir(), 'mbrain-traversal-outside-'));
+    try {
+      symlinkSync(outsideDir, join(tmpDir, 'alias'), 'dir');
+      const storage = new LocalStorage(tmpDir);
+
+      await expect(storage.upload('alias/escape.txt', Buffer.from('pwned')))
+        .rejects.toThrow('Path traversal blocked');
+      expect(existsSync(join(outsideDir, 'escape.txt'))).toBe(false);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test('blocks upload through symlinked file targets inside the storage root', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'mbrain-traversal-'));
+    const outsideDir = mkdtempSync(join(tmpdir(), 'mbrain-traversal-outside-'));
+    const outsideFile = join(outsideDir, 'target.txt');
+    try {
+      writeFileSync(outsideFile, 'original', 'utf-8');
+      symlinkSync(outsideFile, join(tmpDir, 'escape.txt'), 'file');
+      const storage = new LocalStorage(tmpDir);
+
+      await expect(storage.upload('escape.txt', Buffer.from('pwned')))
+        .rejects.toThrow('Path traversal blocked');
+      expect(readFileSync(outsideFile, 'utf-8')).toBe('original');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
     }
   });
 });

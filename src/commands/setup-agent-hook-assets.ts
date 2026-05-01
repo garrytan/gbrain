@@ -87,9 +87,21 @@ extract_session_id() {
   printf '%s' "$raw" | jq -r 'try .session_id // "unknown"' 2>/dev/null || printf 'unknown'
 }
 
+extract_stop_active() {
+  local raw="$1"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$raw" | jq -r 'try .stop_hook_active // false' 2>/dev/null && return 0
+  fi
+  if printf '%s' "$raw" | grep -Eq '"stop_hook_active"[[:space:]]*:[[:space:]]*true'; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
 RAW_INPUT="$(cat)"
 SESSION_ID="$(extract_session_id "$RAW_INPUT")"
-STOP_ACTIVE="$(printf '%s' "$RAW_INPUT" | jq -r 'try .stop_hook_active // false' 2>/dev/null || printf 'false')"
+STOP_ACTIVE="$(extract_stop_active "$RAW_INPUT")"
 
 if [ "$STOP_ACTIVE" = "true" ]; then
   log_line "reentry" "$SESSION_ID" "stop_hook_active=true"
@@ -107,7 +119,5 @@ REASON='MBrain memory check (not a crash): if durable knowledge emerged, write i
 
 log_line "block" "$SESSION_ID" "gate-passed"
 
-printf '%s' "$RAW_INPUT" | jq -c \
-  --arg reason "$REASON" \
-  '{decision: "block", reason: $reason}'
+printf '%s\n' '{"decision":"block","reason":"MBrain memory check (not a crash): if durable knowledge emerged, write it with sources/backlinks and sync; otherwise reply exactly MBRAIN-PASS: <short reason>."}'
 `;

@@ -2522,6 +2522,13 @@ const list_profile_memory_entries: Operation = {
   cliHints: { name: 'profile-memory-list', aliases: { n: 'limit' } },
 };
 
+function requirePersonalSourceRef(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new OperationError('invalid_params', 'source_ref is required for personal memory writes');
+  }
+  return value.trim();
+}
+
 const upsert_profile_memory_entry: Operation = {
   name: 'upsert_profile_memory_entry',
   description: 'Create or update one canonical personal profile-memory entry.',
@@ -2536,7 +2543,7 @@ const upsert_profile_memory_entry: Operation = {
     },
     subject: { type: 'string', required: true, description: 'Exact profile-memory subject' },
     content: { type: 'string', required: true, description: 'Canonical profile-memory content' },
-    source_ref: { type: 'string', description: 'Optional single provenance string' },
+    source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
     sensitivity: { type: 'string', description: 'Sensitivity classification', enum: ['public', 'personal', 'secret'] },
     export_status: { type: 'string', description: 'Export visibility status', enum: ['private_only', 'exportable'] },
     last_confirmed_at: { type: 'string', description: 'Optional ISO timestamp for last confirmation' },
@@ -2546,6 +2553,7 @@ const upsert_profile_memory_entry: Operation = {
   handler: async (ctx, p) => {
     const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
     const scopeId = String(p.scope_id ?? DEFAULT_PROFILE_MEMORY_SCOPE_ID);
+    const sourceRef = requirePersonalSourceRef(p.source_ref);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -2563,7 +2571,7 @@ const upsert_profile_memory_entry: Operation = {
       profile_type: String(p.profile_type) as any,
       subject: String(p.subject),
       content: String(p.content),
-      source_refs: typeof p.source_ref === 'string' ? [p.source_ref] : [],
+      source_refs: [sourceRef],
       sensitivity: String(p.sensitivity ?? 'personal') as any,
       export_status: String(p.export_status ?? 'private_only') as any,
       last_confirmed_at: typeof p.last_confirmed_at === 'string' ? p.last_confirmed_at : null,
@@ -2646,13 +2654,14 @@ const record_personal_episode: Operation = {
       enum: ['chat', 'note', 'import', 'meeting', 'reminder', 'other'],
     },
     summary: { type: 'string', required: true, description: 'Episode summary' },
-    source_ref: { type: 'string', description: 'Optional single provenance string' },
+    source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
     candidate_id: { type: 'string', description: 'Optional linked candidate or profile id' },
   },
   mutating: true,
   handler: async (ctx, p) => {
     const id = typeof p.id === 'string' ? p.id : crypto.randomUUID();
     const scopeId = String(p.scope_id ?? DEFAULT_PROFILE_MEMORY_SCOPE_ID);
+    const sourceRef = requirePersonalSourceRef(p.source_ref);
     if (ctx.dryRun) {
       return {
         dry_run: true,
@@ -2672,7 +2681,7 @@ const record_personal_episode: Operation = {
       end_time: typeof p.end_time === 'string' ? p.end_time : null,
       source_kind: String(p.source_kind) as any,
       summary: String(p.summary),
-      source_refs: typeof p.source_ref === 'string' ? [p.source_ref] : [],
+      source_refs: [sourceRef],
       candidate_ids: typeof p.candidate_id === 'string' ? [p.candidate_id] : [],
     });
   },
@@ -2732,7 +2741,7 @@ const write_profile_memory_entry: Operation = {
     content: { type: 'string', required: true, description: 'Canonical profile-memory content' },
     query: { type: 'string', description: 'Plain-text request used for personal write-target preflight' },
     requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: ['work', 'personal', 'mixed'] },
-    source_ref: { type: 'string', description: 'Optional single provenance string' },
+    source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
     sensitivity: { type: 'string', description: 'Sensitivity classification', enum: ['public', 'personal', 'secret'] },
     export_status: { type: 'string', description: 'Export visibility status', enum: ['private_only', 'exportable'] },
     last_confirmed_at: { type: 'string', description: 'Optional ISO timestamp for last confirmation' },
@@ -2740,6 +2749,7 @@ const write_profile_memory_entry: Operation = {
   },
   mutating: true,
   handler: async (ctx, p) => {
+    const sourceRef = requirePersonalSourceRef(p.source_ref);
     const preflight = await selectPersonalWriteTarget(ctx.engine, {
       target_kind: 'profile_memory',
       requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
@@ -2771,7 +2781,7 @@ const write_profile_memory_entry: Operation = {
       profile_type: String(p.profile_type) as any,
       subject: String(p.subject),
       content: String(p.content),
-      source_refs: typeof p.source_ref === 'string' ? [p.source_ref] : [],
+      source_refs: [sourceRef],
       sensitivity: String(p.sensitivity ?? 'personal') as any,
       export_status: String(p.export_status ?? 'private_only') as any,
       last_confirmed_at: typeof p.last_confirmed_at === 'string' ? p.last_confirmed_at : null,
@@ -2799,11 +2809,12 @@ const write_personal_episode_entry: Operation = {
     summary: { type: 'string', required: true, description: 'Episode summary' },
     query: { type: 'string', description: 'Plain-text request used for personal write-target preflight' },
     requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: ['work', 'personal', 'mixed'] },
-    source_ref: { type: 'string', description: 'Optional single provenance string' },
+    source_ref: { type: 'string', required: true, description: 'Required single provenance string' },
     candidate_id: { type: 'string', description: 'Optional linked candidate or profile id' },
   },
   mutating: true,
   handler: async (ctx, p) => {
+    const sourceRef = requirePersonalSourceRef(p.source_ref);
     const preflight = await selectPersonalWriteTarget(ctx.engine, {
       target_kind: 'personal_episode',
       requested_scope: typeof p.requested_scope === 'string' ? p.requested_scope as any : undefined,
@@ -2837,7 +2848,7 @@ const write_personal_episode_entry: Operation = {
       end_time: typeof p.end_time === 'string' ? p.end_time : null,
       source_kind: String(p.source_kind) as any,
       summary: String(p.summary),
-      source_refs: typeof p.source_ref === 'string' ? [p.source_ref] : [],
+      source_refs: [sourceRef],
       candidate_ids: typeof p.candidate_id === 'string' ? [p.candidate_id] : [],
     });
   },

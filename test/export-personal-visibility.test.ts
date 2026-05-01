@@ -79,3 +79,36 @@ test('export command keeps default page export separate from explicit personal e
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('personal export rejects profile ids that would escape the export directory', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-export-personal-traversal-'));
+  const databasePath = join(dir, 'brain.db');
+  const personalExportDir = join(dir, 'personal-out');
+  const escapedPath = join(dir, 'outside.md');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await engine.upsertProfileMemoryEntry({
+      id: '../../../outside',
+      scope_id: 'personal:default',
+      profile_type: 'stable_fact',
+      subject: 'unsafe export id',
+      content: 'This should not be written outside the export directory.',
+      source_refs: ['User, direct message, 2026-04-22 9:08 AM KST'],
+      sensitivity: 'personal',
+      export_status: 'exportable',
+      last_confirmed_at: null,
+      superseded_by: null,
+    });
+
+    await expect(runExport(engine, ['--dir', personalExportDir, '--personal-export']))
+      .rejects.toThrow('Unsafe personal export path');
+    expect(existsSync(escapedPath)).toBe(false);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

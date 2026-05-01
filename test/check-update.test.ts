@@ -129,6 +129,14 @@ describe('check-update CLI', () => {
     expect(source).toContain("'check-update'");
   });
 
+  test('check-update recommends Bun global update for Bun installs', async () => {
+    const source = await Bun.file(
+      new URL('../src/commands/check-update.ts', import.meta.url).pathname
+    ).text();
+    expect(source).toContain("case 'bun': return 'bun update -g mbrain'");
+    expect(source).not.toContain("case 'bun': return 'bun update mbrain'");
+  });
+
   test('--help prints usage and exits 0', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--help'], {
       cwd: new URL('..', import.meta.url).pathname,

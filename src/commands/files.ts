@@ -342,6 +342,7 @@ async function redirectFiles(args: string[]) {
 
   let redirected = 0;
   let skippedMissing = 0;
+  let skippedStale = 0;
   for (const filePath of files) {
     const relPath = relative(dir, filePath);
     const hash = fileHash(filePath);
@@ -352,6 +353,12 @@ async function redirectFiles(args: string[]) {
       if (!remoteExists) {
         console.error(`  Skipping ${relPath}: not found in remote storage (would lose data)`);
         skippedMissing++;
+        continue;
+      }
+      const remoteHash = createHash('sha256').update(await storage.download(relPath)).digest('hex');
+      if (remoteHash !== hash) {
+        console.error(`  Skipping ${relPath}: remote storage hash does not match local file (would lose data)`);
+        skippedStale++;
         continue;
       }
     }
@@ -368,9 +375,12 @@ async function redirectFiles(args: string[]) {
     redirected++;
   }
 
-  console.log(`Redirected ${redirected} files. Originals removed, breadcrumbs created.`);
+  console.log(`Redirected ${redirected} files. Breadcrumbs created for redirected files.`);
   if (skippedMissing > 0) {
     console.log(`Skipped ${skippedMissing} files (not found in remote storage — run 'mbrain files mirror' first).`);
+  }
+  if (skippedStale > 0) {
+    console.log(`Skipped ${skippedStale} files (remote storage was stale — run 'mbrain files mirror' first).`);
   }
   console.log('To undo: mbrain files restore <dir>');
 }

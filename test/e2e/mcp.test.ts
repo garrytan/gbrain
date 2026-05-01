@@ -9,6 +9,9 @@
 import { describe, test, expect } from 'bun:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { operations } from '../../src/core/operations.ts';
 import { operationToMcpTool } from '../../src/mcp/tool-schema.ts';
@@ -110,6 +113,49 @@ describe('E2E: MCP Tool Generation', () => {
     expect(typeof mod.startMcpServer).toBe('function');
     expect(typeof mod.handleToolCall).toBe('function');
   });
+
+  test('stdio MCP server bootstraps a local SQLite config when no database config exists', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'mbrain-mcp-fresh-'));
+    const homeDir = join(rootDir, 'home');
+    const configDir = join(homeDir, '.mbrain');
+    let client: Client | null = null;
+
+    try {
+      const transport = new StdioClientTransport({
+        command: 'bun',
+        args: ['run', 'src/cli.ts', 'serve'],
+        cwd: repoRoot,
+        env: {
+          PATH: process.env.PATH ?? '',
+          HOME: homeDir,
+          MBRAIN_CONFIG_DIR: configDir,
+          OPENAI_API_KEY: '',
+          ANTHROPIC_API_KEY: '',
+        },
+        stderr: 'pipe',
+      });
+      client = new Client(
+        { name: 'mbrain-fresh-e2e', version: '0.0.0' },
+        { capabilities: {} },
+      );
+
+      await client.connect(transport);
+      const tools = await client.listTools();
+      expect(tools.tools.map((tool) => tool.name)).toContain('get_page');
+
+      const configPath = join(configDir, 'config.json');
+      expect(existsSync(configPath)).toBe(true);
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(config.engine).toBe('sqlite');
+      expect(config.database_path).toBe(join(configDir, 'brain.db'));
+    } finally {
+      try {
+        if (client) await client.close();
+      } finally {
+        rmSync(rootDir, { recursive: true, force: true });
+      }
+    }
+  }, 30_000);
 
   test('stdio MCP server exposes and executes local SQLite memory lifecycle tools', async () => {
     const h = createSqliteCliHarness('mcp');

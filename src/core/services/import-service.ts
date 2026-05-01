@@ -415,14 +415,16 @@ export async function runImportService(
     relativePath: string,
     result: Awaited<ReturnType<typeof importFile>>,
   ) => {
-    recordCheckpointOutcome(fileIndex, true);
+    const hasError = Boolean(result.error && result.error !== 'unchanged');
+    recordCheckpointOutcome(fileIndex, !hasError);
     if (result.status === 'imported') {
       imported++;
       chunksCreated += result.chunks;
       importedSlugs.push(result.slug);
     } else {
       skipped++;
-      if (result.error && result.error !== 'unchanged') {
+      if (hasError) {
+        errors++;
         logger.error(`  Skipped ${relativePath}: ${result.error}`);
       }
     }

@@ -1,10 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, mkdirSync, rmSync, symlinkSync, mkdtempSync } from 'fs';
+import { existsSync, writeFileSync, mkdirSync, rmSync, symlinkSync, mkdtempSync } from 'fs';
 import { join, basename } from 'path';
 import { createHash } from 'crypto';
 import { extname } from 'path';
 import { tmpdir } from 'os';
-import { collectFiles } from '../src/commands/files.ts';
+import { collectFiles, runFiles } from '../src/commands/files.ts';
+import { LocalStorage } from '../src/core/storage/local.ts';
 
 const TMP = join(import.meta.dir, '.tmp-files-test');
 
@@ -194,6 +195,50 @@ describe('collectFiles (production import)', () => {
       expect(files.map(f => basename(f))).not.toContain('pkg.js');
     } finally {
       rmSync(tmpDir, { recursive: true });
+    }
+  });
+});
+
+describe('files redirect safety', () => {
+  test('keeps local originals when remote storage content is stale', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'mbrain-files-redirect-'));
+    const configDir = mkdtempSync(join(tmpdir(), 'mbrain-files-config-'));
+    const storageDir = mkdtempSync(join(tmpdir(), 'mbrain-files-storage-'));
+    const previousConfigDir = process.env.MBRAIN_CONFIG_DIR;
+
+    try {
+      process.env.MBRAIN_CONFIG_DIR = configDir;
+      writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+        engine: 'postgres',
+        database_url: 'postgres://user:pass@example.invalid:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+        storage: {
+          backend: 'local',
+          bucket: 'test',
+          localPath: storageDir,
+        },
+      }, null, 2));
+
+      writeFileSync(join(rootDir, '.supabase'), 'bucket: test\nprefix: files/\nfile_count: 1\n');
+      writeFileSync(join(rootDir, 'photo.jpg'), 'current local data');
+      const storage = new LocalStorage(storageDir);
+      await storage.upload('photo.jpg', Buffer.from('old remote data'));
+
+      await runFiles({} as any, ['redirect', rootDir]);
+
+      expect(existsSync(join(rootDir, 'photo.jpg'))).toBe(true);
+      expect(existsSync(join(rootDir, 'photo.jpg.redirect'))).toBe(false);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.MBRAIN_CONFIG_DIR;
+      } else {
+        process.env.MBRAIN_CONFIG_DIR = previousConfigDir;
+      }
+      rmSync(rootDir, { recursive: true, force: true });
+      rmSync(configDir, { recursive: true, force: true });
+      rmSync(storageDir, { recursive: true, force: true });
     }
   });
 });

@@ -15,20 +15,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
   const value = args[2];
 
   if (action === 'show') {
-    const config = loadConfig();
-    if (!config) {
-      console.error('No config found. Run: mbrain init');
-      process.exit(1);
-    }
-    console.log('MBrain config:');
-    for (const [k, v] of Object.entries(config)) {
-      const display = typeof v === 'string' && v.includes('postgresql://')
-        ? redactUrl(v)
-        : typeof v === 'string' && (k.includes('key') || k.includes('secret'))
-          ? '***'
-          : v;
-      console.log(`  ${k}: ${display}`);
-    }
+    runConfigShow();
     return;
   }
 
@@ -46,5 +33,22 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
   } else {
     console.error('Usage: mbrain config [show|get|set] <key> [value]');
     process.exit(1);
+  }
+}
+
+export function runConfigShow(): void {
+  const config = loadConfig();
+  if (!config) {
+    console.error('No config found. Run: mbrain init');
+    process.exit(1);
+  }
+  console.log('MBrain config:');
+  for (const [k, v] of Object.entries(config)) {
+    const display = typeof v === 'string' && v.includes('postgresql://')
+      ? redactUrl(v)
+      : typeof v === 'string' && (k.includes('key') || k.includes('secret'))
+        ? '***'
+        : v;
+    console.log(`  ${k}: ${display}`);
   }
 }

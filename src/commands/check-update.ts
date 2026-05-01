@@ -35,7 +35,7 @@ export function isMinorOrMajorBump(current: string, latest: string): boolean {
 
 function upgradeCommandForMethod(method: string): string {
   switch (method) {
-    case 'bun': return 'bun update mbrain';
+    case 'bun': return 'bun update -g mbrain';
     case 'clawhub': return 'clawhub update mbrain';
     case 'binary': return 'Download from https://github.com/meghendra6/mbrain/releases';
     default: return 'mbrain upgrade';

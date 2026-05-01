@@ -15,6 +15,38 @@ test('profile-memory operations are registered with CLI hints', () => {
   expect(list?.cliHints?.name).toBe('profile-memory-list');
 });
 
+test('profile-memory upsert rejects writes without source provenance', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-profile-memory-source-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+  const upsert = operations.find((operation) => operation.name === 'upsert_profile_memory_entry');
+
+  if (!upsert) {
+    throw new Error('profile-memory upsert operation is missing');
+  }
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await expect(upsert.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      subject: 'daily routine',
+      content: 'Wake at 7 AM, review priorities, then write.',
+      profile_type: 'routine',
+    })).rejects.toThrow('source_ref is required');
+
+    expect(await engine.listProfileMemoryEntries({ subject: 'daily routine' })).toEqual([]);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('profile-memory operations expose dry-run, direct get, and filtered list behavior', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-profile-memory-op-'));
   const databasePath = join(dir, 'brain.db');
@@ -40,6 +72,7 @@ test('profile-memory operations expose dry-run, direct get, and filtered list be
       subject: 'daily routine',
       content: 'Wake at 7 AM, review priorities, then write.',
       profile_type: 'routine',
+      source_ref: 'User, dry-run preview, 2026-04-22 9:04 AM KST',
     });
 
     expect((preview as any).dry_run).toBe(true);

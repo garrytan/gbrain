@@ -288,6 +288,40 @@ describe('setup-agent', () => {
     expect(hook.stdout).not.toContain('mbrain write check');
   });
 
+  test('installed Claude hook emits its block decision when jq is unavailable', async () => {
+    const result = await runSetupAgent(['--claude', '--skip-mcp']);
+    expect(result.exitCode).toBe(0);
+
+    const jqPath = join(tempBin, 'jq');
+    writeFileSync(jqPath, '#!/bin/sh\nexit 127\n', 'utf-8');
+    Bun.spawnSync(['chmod', '+x', jqPath]);
+
+    const hook = await runInstalledHook('{"session_id":"s1","stop_hook_active":false}');
+
+    expect(hook.exitCode).toBe(0);
+    expect(hook.stderr).toBe('');
+    expect(JSON.parse(hook.stdout)).toEqual({
+      decision: 'block',
+      reason: conciseStopHookReason,
+    });
+  });
+
+  test('installed Claude hook preserves the re-entry guard when jq is unavailable', async () => {
+    const result = await runSetupAgent(['--claude', '--skip-mcp']);
+    expect(result.exitCode).toBe(0);
+
+    const jqPath = join(tempBin, 'jq');
+    writeFileSync(jqPath, '#!/bin/sh\nexit 127\n', 'utf-8');
+    Bun.spawnSync(['chmod', '+x', jqPath]);
+
+    const payload = '{"session_id":"s1","stop_hook_active":true}';
+    const hook = await runInstalledHook(payload);
+
+    expect(hook.exitCode).toBe(0);
+    expect(hook.stderr).toBe('');
+    expect(hook.stdout).toBe(payload);
+  });
+
   test('installed Claude hook passes through when the mbrain stop hook kill switch is disabled', async () => {
     const result = await runSetupAgent(['--claude', '--skip-mcp']);
     expect(result.exitCode).toBe(0);

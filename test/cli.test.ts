@@ -242,6 +242,31 @@ describe('CLI dispatch integration', () => {
     expect(exitCode).toBe(1);
   });
 
+  test('config show does not require a live database connection', async () => {
+    writeUserConfig({
+      engine: 'postgres',
+      database_url: 'postgresql://user:pass@127.0.0.1:1/mbrain',
+      offline: false,
+      embedding_provider: 'none',
+      query_rewrite_provider: 'none',
+    });
+
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'config', 'show'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toContain('MBrain config:');
+    expect(stdout).toContain('database_url: postgresql://user:***@127.0.0.1:1/mbrain');
+  });
+
   test('per-command --help prints usage without DB connection', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'get', '--help'], {
       cwd: repoRoot,
