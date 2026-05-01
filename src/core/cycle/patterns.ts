@@ -27,6 +27,7 @@ import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+import { getLLMRuntimeConfig, hasLLMApiKey } from '../llm/factory.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
@@ -64,8 +65,9 @@ export async function runPhasePatterns(
     }
 
     // Submit one subagent for pattern detection.
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return skipped('no_api_key', 'ANTHROPIC_API_KEY unset; pattern detection skipped');
+    const runtime = getLLMRuntimeConfig();
+    if (!hasLLMApiKey(runtime.provider)) {
+      return skipped('no_api_key', `${runtime.provider} API key unset; pattern detection skipped`);
     }
 
     const allowedSlugPrefixes = await loadAllowedSlugPrefixes();
@@ -140,7 +142,8 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
   const enabled = enabledStr === null ? true : enabledStr === 'true';
   const lookbackStr = await engine.getConfig('dream.patterns.lookback_days');
   const minEvidenceStr = await engine.getConfig('dream.patterns.min_evidence');
-  const model = (await engine.getConfig('dream.patterns.model')) || 'claude-sonnet-4-6';
+  const runtime = getLLMRuntimeConfig();
+  const model = (await engine.getConfig('dream.patterns.model')) || runtime.model;
   return {
     enabled,
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,

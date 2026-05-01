@@ -31,6 +31,10 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  llm_provider?: 'anthropic' | 'openai';
+  llm_model?: string;
+  llm_verdict_model?: string;
+  openai_max_inflight?: number;
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
@@ -78,6 +82,11 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
+    ...(process.env.GBRAIN_LLM_PROVIDER ? { llm_provider: process.env.GBRAIN_LLM_PROVIDER as 'anthropic' | 'openai' } : {}),
+    ...(process.env.GBRAIN_LLM_MODEL ? { llm_model: process.env.GBRAIN_LLM_MODEL } : {}),
+    ...(process.env.GBRAIN_LLM_VERDICT_MODEL ? { llm_verdict_model: process.env.GBRAIN_LLM_VERDICT_MODEL } : {}),
+    ...(process.env.GBRAIN_OPENAI_MAX_INFLIGHT ? { openai_max_inflight: Number(process.env.GBRAIN_OPENAI_MAX_INFLIGHT) } : {}),
   };
   return merged as GBrainConfig;
 }

@@ -1,5 +1,5 @@
 /**
- * Subagent handler tests with a mocked Anthropic Messages client.
+ * Subagent handler tests with a mocked provider-neutral LLM client.
  *
  * Strategy: every test scripts a sequence of Messages API responses, hands
  * them to a FakeMessagesClient, and inspects (a) the SubagentResult the
@@ -21,7 +21,7 @@ import {
   type MessagesClient,
 } from '../src/core/minions/handlers/subagent.ts';
 import type { ToolDef, MinionJobContext } from '../src/core/minions/types.ts';
-import type Anthropic from '@anthropic-ai/sdk';
+import type { LLMMessageResponse } from '../src/core/llm/types.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -46,27 +46,23 @@ beforeEach(async () => {
 
 // ── FakeMessagesClient ──────────────────────────────────────
 
-type FakeResponse = Partial<Anthropic.Message> & { content: Anthropic.Message['content'] };
+type FakeResponse = Partial<LLMMessageResponse> & { content: LLMMessageResponse['content'] };
 
 class FakeMessagesClient implements MessagesClient {
-  public calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  readonly provider = 'anthropic' as const;
+  public calls: any[] = [];
   constructor(private responses: FakeResponse[]) {}
-  async create(
-    params: Anthropic.MessageCreateParamsNonStreaming,
-  ): Promise<Anthropic.Message> {
+  async createMessage(params: any): Promise<any> {
     this.calls.push(params);
     if (this.responses.length === 0) throw new Error('FakeMessagesClient: out of scripted responses');
     const r = this.responses.shift()!;
     return {
       id: `msg_${this.calls.length}`,
-      type: 'message',
-      role: 'assistant',
       model: params.model,
       stop_reason: 'end_turn',
-      stop_sequence: null,
       usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } as any,
       ...r,
-    } as Anthropic.Message;
+    };
   }
 }
 
@@ -422,51 +418,20 @@ describe('subagent handler input validation', () => {
 });
 
 describe('makeSubagentHandler default client construction', () => {
-  test('factory default wires sdk.messages through to the handler', async () => {
-    // Regression guard for the v0.16.0 shipped bug: makeSubagentHandler
-    // was casting `new Anthropic()` (top-level SDK class) to MessagesClient,
-    // but `.create()` lives at sdk.messages.create. Every subagent job in
-    // production died with "client.create is not a function" on first LLM
-    // call. This test exercises the default-client path (no `deps.client`
-    // injected) via the makeAnthropic dep-injection seam, so the exact
-    // default-branch construction is covered without a real API call.
-    const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
-    const fakeSdk = {
-      messages: {
-        async create(
-          params: Anthropic.MessageCreateParamsNonStreaming,
-        ): Promise<Anthropic.Message> {
-          calls.push(params);
-          return {
-            id: 'msg_regression',
-            type: 'message',
-            role: 'assistant',
-            model: params.model,
-            stop_reason: 'end_turn',
-            stop_sequence: null,
-            content: [{ type: 'text', text: 'ok' }],
-            usage: {
-              input_tokens: 1,
-              output_tokens: 1,
-              cache_read_input_tokens: 0,
-              cache_creation_input_tokens: 0,
-            },
-          } as unknown as Anthropic.Message;
-        },
-      },
-    } as unknown as Anthropic;
+  test('factory default wires configured LLM client through to the handler', async () => {
+    const fakeClient = new FakeMessagesClient([{ content: [{ type: 'text', text: 'ok' }] as any }]);
 
-    // Crucial: do NOT pass `client`. Only `makeAnthropic`. This forces the
-    // factory to hit the default-client branch (`deps.client ?? makeAnthropic().messages`).
+    // Crucial: do NOT pass `client`. Only `makeLLMClient`. This forces the
+    // factory to hit the default-client branch without a real API call.
     const handler = makeSubagentHandler({
       engine,
-      makeAnthropic: () => fakeSdk,
+      makeLLMClient: () => fakeClient,
       toolRegistry: [],
     });
     const ctx = await makeCtx({ prompt: 'hello' });
     const result = await handler(ctx);
 
-    expect(calls.length).toBe(1);
+    expect(fakeClient.calls.length).toBe(1);
     expect(result.stop_reason).toBe('end_turn');
     expect(result.result).toBe('ok');
   });

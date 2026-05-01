@@ -3,7 +3,7 @@
  *
  * Covers transcript-discovery branches (date filters, exclude regex,
  * minChars, multiple sources) and the compileExcludePatterns word-
- * boundary heuristic. Doesn't drive a real Anthropic call — full
+ * boundary heuristic. Doesn't drive a real provider call — full
  * cycle E2E lives in test/e2e/.
  */
 
@@ -19,6 +19,7 @@ import {
   DREAM_OUTPUT_MARKER_RE,
 } from '../src/core/cycle/transcript-discovery.ts';
 import { judgeSignificance, renderPageToMarkdown, type JudgeClient } from '../src/core/cycle/synthesize.ts';
+import { getLLMRuntimeConfig } from '../src/core/llm/factory.ts';
 
 let tmpDir: string;
 
@@ -298,28 +299,28 @@ describe('judgeSignificance', () => {
 
   function mockClient(captured: { model?: string }): JudgeClient {
     return {
-      create: async (p: any) => {
+      createMessage: async (p: any) => {
         captured.model = p.model;
         return { content: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["test"]}' }] } as any;
       },
     };
   }
 
-  test('passes verdict_model override to client.create', async () => {
+  test('passes verdict_model override to client.createMessage', async () => {
     const captured: { model?: string } = {};
     await judgeSignificance(mockClient(captured), makeTranscript(), 'claude-sonnet-4-6');
     expect(captured.model).toBe('claude-sonnet-4-6');
   });
 
-  test('defaults to claude-haiku-4-5-20251001 when model omitted', async () => {
+  test('defaults to configured verdict model when model omitted', async () => {
     const captured: { model?: string } = {};
     await judgeSignificance(mockClient(captured), makeTranscript());
-    expect(captured.model).toBe('claude-haiku-4-5-20251001');
+    expect(captured.model).toBe(getLLMRuntimeConfig().verdictModel);
   });
 
   test('returns worth_processing=false when judge returns unparseable text', async () => {
     const client: JudgeClient = {
-      create: async () => ({ content: [{ type: 'text', text: 'no json here' }] } as any),
+      createMessage: async () => ({ content: [{ type: 'text', text: 'no json here' }] } as any),
     };
     const r = await judgeSignificance(client, makeTranscript());
     expect(r.worth_processing).toBe(false);

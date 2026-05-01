@@ -26,7 +26,6 @@
  *   - Daily token budget cap (cooldown bounds spend at v1 scale).
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -37,6 +36,8 @@ import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+import { getLLMRuntimeConfig, hasLLMApiKey, makeLLMClient } from '../llm/factory.ts';
+import type { LLMClient, LLMCreateParams, LLMMessageResponse } from '../llm/types.ts';
 
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
@@ -122,7 +123,7 @@ export async function runPhaseSynthesize(
     // Significance verdicts (cached in dream_verdicts; Haiku on miss).
     const worthProcessing: DiscoveredTranscript[] = [];
     const verdicts: Array<{ filePath: string; worth: boolean; reasons: string[]; cached: boolean }> = [];
-    const haiku = makeHaikuClient(); // null if no API key
+    const judgeClient = makeJudgeClient(); // null if no API key
     for (const t of transcripts) {
       const cached = await engine.getDreamVerdict(t.filePath, t.contentHash);
       if (cached) {
@@ -130,12 +131,12 @@ export async function runPhaseSynthesize(
         if (cached.worth_processing) worthProcessing.push(t);
         continue;
       }
-      if (!haiku) {
+      if (!judgeClient) {
         // No API key — can't judge. Skip with explicit reason; don't crash phase.
-        verdicts.push({ filePath: t.filePath, worth: false, reasons: ['no ANTHROPIC_API_KEY for significance judge'], cached: false });
+        verdicts.push({ filePath: t.filePath, worth: false, reasons: ['no LLM API key for significance judge'], cached: false });
         continue;
       }
-      const verdict = await judgeSignificance(haiku, t, config.verdictModel);
+      const verdict = await judgeSignificance(judgeClient, t, config.verdictModel);
       await engine.putDreamVerdict(t.filePath, t.contentHash, verdict);
       verdicts.push({ filePath: t.filePath, worth: verdict.worth_processing, reasons: verdict.reasons, cached: false });
       if (verdict.worth_processing) worthProcessing.push(t);
@@ -273,8 +274,9 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const meetingTranscriptsDir = await engine.getConfig('dream.synthesize.meeting_transcripts_dir');
   const minCharsStr = await engine.getConfig('dream.synthesize.min_chars');
   const excludeStr = await engine.getConfig('dream.synthesize.exclude_patterns');
-  const model = (await engine.getConfig('dream.synthesize.model')) || 'claude-sonnet-4-6';
-  const verdictModel = (await engine.getConfig('dream.synthesize.verdict_model')) || 'claude-haiku-4-5-20251001';
+  const runtime = getLLMRuntimeConfig();
+  const model = (await engine.getConfig('dream.synthesize.model')) || runtime.model;
+  const verdictModel = (await engine.getConfig('dream.synthesize.verdict_model')) || runtime.verdictModel;
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');
 
   let excludePatterns: string[] = ['medical', 'therapy'];
@@ -337,13 +339,13 @@ async function loadAllowedSlugPrefixes(): Promise<string[]> {
 // ── Significance judge (Haiku) ───────────────────────────────────────
 
 export interface JudgeClient {
-  create: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
+  createMessage: (params: LLMCreateParams) => Promise<LLMMessageResponse>;
 }
 
-function makeHaikuClient(): JudgeClient | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  const client = new Anthropic();
-  return { create: client.messages.create.bind(client.messages) };
+function makeJudgeClient(): JudgeClient | null {
+  const runtime = getLLMRuntimeConfig();
+  if (!hasLLMApiKey(runtime.provider)) return null;
+  return makeLLMClient(runtime.provider);
 }
 
 interface VerdictResult {
@@ -354,7 +356,7 @@ interface VerdictResult {
 export async function judgeSignificance(
   client: JudgeClient,
   t: DiscoveredTranscript,
-  verdictModel = 'claude-haiku-4-5-20251001',
+  verdictModel = getLLMRuntimeConfig().verdictModel,
 ): Promise<VerdictResult> {
   // Truncate the transcript at 8K chars for cost control. Haiku's verdict
   // doesn't need the full body; the opening + closing sections are usually
@@ -380,7 +382,7 @@ NOT WORTH PROCESSING (return worth_processing=false):
 Respond as JSON: {"worth_processing": <bool>, "reasons": ["<short>", "<short>"]}.
 Two reasons max, one phrase each.`;
 
-  const msg = await client.create({
+  const msg = await client.createMessage({
     model: verdictModel,
     max_tokens: 200,
     system: sys,
@@ -388,7 +390,7 @@ Two reasons max, one phrase each.`;
   });
 
   for (const block of msg.content) {
-    if (block.type === 'text') {
+    if (block.type === 'text' && typeof block.text === 'string') {
       const text = block.text.trim();
       const m = /\{[\s\S]*\}/.exec(text);
       if (!m) continue;

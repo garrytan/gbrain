@@ -19,6 +19,7 @@ import { MinionQueue } from '../core/minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../core/minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData, AggregatorHandlerData } from '../core/minions/types.ts';
 import { runAgentLogs } from './agent-logs.ts';
+import { getLLMRuntimeConfig } from '../core/llm/factory.ts';
 
 // ── arg parsing helpers ────────────────────────────────────
 
@@ -66,7 +67,7 @@ USAGE
 SUBMITTING
   gbrain agent run <prompt>
     --subagent-def <name>        Named plugin subagent (from GBRAIN_PLUGIN_PATH)
-    --model <id>                 Anthropic model id (defaults to sonnet)
+    --model <id>                 Provider model id (defaults to configured LLM model)
     --max-turns <n>              Max assistant turns (default 20)
     --tools a,b,c                Subset of registered tool names (comma list)
     --timeout-ms <n>             Per-job wall-clock timeout
@@ -84,8 +85,8 @@ VIEWING
 
 NOTES
   Submitting subagent jobs is trusted-only; MCP submitters receive
-  permission_denied. The worker needs ANTHROPIC_API_KEY set, or the
-  first LLM turn of a claimed job fails.
+  permission_denied. The worker needs the configured provider API key
+  (ANTHROPIC_API_KEY or OPENAI_API_KEY), or the first LLM turn fails.
 `);
 }
 
@@ -149,9 +150,9 @@ export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<
     process.exit(2);
   }
 
-  const data: SubagentHandlerData = { prompt };
+  const llmConfig = getLLMRuntimeConfig();
+  const data: SubagentHandlerData = { prompt, provider: llmConfig.provider, model: flags.model ?? llmConfig.model };
   if (flags.subagentDef) data.subagent_def = flags.subagentDef;
-  if (flags.model) data.model = flags.model;
   if (flags.maxTurns) data.max_turns = flags.maxTurns;
   if (flags.tools && flags.tools.length > 0) data.allowed_tools = flags.tools;
 
@@ -196,11 +197,13 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
   // Short-circuit: 1 entry → single subagent, no aggregator.
   if (manifest.length === 1) {
     const entry = manifest[0]!;
+    const llmConfig = getLLMRuntimeConfig();
     const data: SubagentHandlerData = {
       prompt: entry.prompt ?? promptTemplate,
+      provider: llmConfig.provider,
+      model: flags.model ?? llmConfig.model,
       ...(entry.input_vars ? { input_vars: entry.input_vars } : {}),
       ...(flags.subagentDef ? { subagent_def: flags.subagentDef } : {}),
-      ...(flags.model ? { model: flags.model } : {}),
       ...(flags.maxTurns ? { max_turns: flags.maxTurns } : {}),
       ...(flags.tools && flags.tools.length > 0 ? { allowed_tools: flags.tools } : {}),
     };
@@ -227,11 +230,13 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
 
   const childIds: number[] = [];
   for (const entry of manifest) {
+    const llmConfig = getLLMRuntimeConfig();
     const data: SubagentHandlerData = {
       prompt: entry.prompt ?? promptTemplate,
+      provider: llmConfig.provider,
+      model: flags.model ?? llmConfig.model,
       ...(entry.input_vars ? { input_vars: entry.input_vars } : {}),
       ...(flags.subagentDef ? { subagent_def: flags.subagentDef } : {}),
-      ...(flags.model ? { model: flags.model } : {}),
       ...(flags.maxTurns ? { max_turns: flags.maxTurns } : {}),
       ...(flags.tools && flags.tools.length > 0 ? { allowed_tools: flags.tools } : {}),
     };

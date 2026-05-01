@@ -45,18 +45,23 @@ async function setupRig(): Promise<TestRig> {
 }
 
 /**
- * Run `body` with ANTHROPIC_API_KEY temporarily cleared, restoring the
- * prior value (set or unset) on return — even on throw — so this never
- * leaks state to sibling test files in the suite.
+ * Run `body` with provider API keys temporarily cleared, restoring prior
+ * values on return — even on throw — so this never leaks state to sibling
+ * test files in the suite. The default provider is OpenAI, so clearing only
+ * Anthropic would accidentally hit a real OpenAI key from the environment.
  */
-async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
-  const saved = process.env.ANTHROPIC_API_KEY;
+async function withoutLLMKeys<T>(body: () => Promise<T>): Promise<T> {
+  const savedAnthropic = process.env.ANTHROPIC_API_KEY;
+  const savedOpenAI = process.env.OPENAI_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.OPENAI_API_KEY;
   try {
     return await body();
   } finally {
-    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = saved;
+    if (savedAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = savedAnthropic;
+    if (savedOpenAI === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = savedOpenAI;
   }
 }
 
@@ -111,7 +116,7 @@ describe('E2E synthesize — empty corpus', () => {
 });
 
 describe('E2E synthesize — no API key skip path', () => {
-  test('without ANTHROPIC_API_KEY, every transcript verdict is "no key" and zero pages written', async () => {
+  test('without an LLM API key, every transcript verdict is "no key" and zero pages written', async () => {
     const rig = await setupRig();
     try {
       await rig.engine.setConfig('dream.synthesize.enabled', 'true');
@@ -120,7 +125,7 @@ describe('E2E synthesize — no API key skip path', () => {
         join(rig.corpusDir, '2026-04-25-session.txt'),
         'a meaningful conversation\n'.repeat(200),
       );
-      await withoutAnthropicKey(async () => {
+      await withoutLLMKeys(async () => {
         const result = await runPhaseSynthesize(rig.engine, {
           brainDir: rig.brainDir,
           dryRun: false,
@@ -131,7 +136,7 @@ describe('E2E synthesize — no API key skip path', () => {
         const verdicts = (result.details as { verdicts: Array<{ worth: boolean; reasons: string[] }> }).verdicts;
         expect(verdicts).toHaveLength(1);
         expect(verdicts[0].worth).toBe(false);
-        expect(verdicts[0].reasons[0]).toMatch(/ANTHROPIC_API_KEY/);
+        expect(verdicts[0].reasons[0]).toMatch(/LLM API key/);
       });
     } finally {
       await rig.cleanup();
@@ -149,7 +154,7 @@ describe('E2E synthesize — dry-run skips Sonnet (Codex finding #8)', () => {
         join(rig.corpusDir, '2026-04-25-session.txt'),
         'a meaningful conversation\n'.repeat(200),
       );
-      await withoutAnthropicKey(async () => {
+      await withoutLLMKeys(async () => {
         const result = await runPhaseSynthesize(rig.engine, {
           brainDir: rig.brainDir,
           dryRun: true,
@@ -194,7 +199,7 @@ describe('E2E synthesize — cooldown', () => {
       const adHoc = join(tmpdir(), `gbrain-synth-ad-hoc-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
       writeFileSync(adHoc, 'hello world '.repeat(300));
       try {
-        await withoutAnthropicKey(async () => {
+        await withoutLLMKeys(async () => {
           const result = await runPhaseSynthesize(rig.engine, {
             brainDir: rig.brainDir,
             dryRun: false,
@@ -281,7 +286,7 @@ describe('E2E synthesize — round-trip self-consumption guard (v0.23.2)', () =>
 
       // 4. Run synthesize. Capture stderr so we can prove the guard logged
       //    its skip line (no-more-silent-skips contract).
-      await withoutAnthropicKey(async () => {
+      await withoutLLMKeys(async () => {
         const { result, stderr } = await captureStderr(() =>
           runPhaseSynthesize(rig.engine, {
             brainDir: rig.brainDir,
@@ -330,7 +335,7 @@ describe('E2E synthesize — round-trip self-consumption guard (v0.23.2)', () =>
       const md = renderPageToMarkdown(page!, ['dream-cycle']);
       writeFileSync(join(rig.corpusDir, '2026-04-30-bypass.txt'), md + '\n' + 'x '.repeat(500));
 
-      await withoutAnthropicKey(async () => {
+      await withoutLLMKeys(async () => {
         const { result, stderr } = await captureStderr(() =>
           runPhaseSynthesize(rig.engine, {
             brainDir: rig.brainDir,
@@ -344,7 +349,7 @@ describe('E2E synthesize — round-trip self-consumption guard (v0.23.2)', () =>
         // the no-key path makes it worth=false.
         const verdicts = (result.details as { verdicts: Array<{ worth: boolean; reasons: string[] }> }).verdicts;
         expect(verdicts).toHaveLength(1);
-        expect(verdicts[0].reasons[0]).toMatch(/ANTHROPIC_API_KEY/);
+        expect(verdicts[0].reasons[0]).toMatch(/LLM API key/);
         // Loud warning fired at phase entry so the operator never wonders
         // why the guard quietly let dream output through.
         expect(stderr).toMatch(/\[dream\] WARNING: --unsafe-bypass-dream-guard set/);
@@ -385,7 +390,7 @@ describe('E2E synthesize — round-trip self-consumption guard (v0.23.2)', () =>
         'Agent: ' + 'meaningful conversation '.repeat(200),
       );
 
-      await withoutAnthropicKey(async () => {
+      await withoutLLMKeys(async () => {
         const { result, stderr } = await captureStderr(() =>
           runPhaseSynthesize(rig.engine, {
             brainDir: rig.brainDir,
@@ -422,7 +427,7 @@ describe('E2E synthesize — verdict cache (Q-2)', () => {
       const filePath = join(rig.corpusDir, '2026-04-25-session.txt');
       const body = 'a meaningful conversation\n'.repeat(200);
       writeFileSync(filePath, body);
-      await withoutAnthropicKey(async () => {
+      await withoutLLMKeys(async () => {
         await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
         const { createHash } = await import('node:crypto');
         const hash = createHash('sha256').update(body, 'utf8').digest('hex');

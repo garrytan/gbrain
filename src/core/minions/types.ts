@@ -399,15 +399,17 @@ export function rowToMinionJob(row: Record<string, unknown>): MinionJob {
 
 /**
  * Input payload for the 'subagent' handler. Shape is intentionally narrow —
- * tool registry and provider config resolve via handler-side defaults + env,
- * not per-job data, so restart/replay uses the same behavior.
+ * tool registry resolves handler-side. Provider/model are captured on submit
+ * when possible so queued jobs survive worker env/config differences.
  */
 export interface SubagentHandlerData {
   /** Top-level user turn kicking off the loop. */
   prompt: string;
   /** Optional subagent definition path (skills/subagents/*.md or plugin). */
   subagent_def?: string;
-  /** Anthropic model id. Defaults to sonnet at handler resolution time. */
+  /** LLM provider. Defaults to configured provider at handler resolution time. */
+  provider?: 'anthropic' | 'openai';
+  /** Provider model id. Defaults to configured LLM model at submit/handler resolution time. */
   model?: string;
   /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
   max_turns?: number;
@@ -468,10 +470,10 @@ export interface ToolCtx {
 }
 
 /**
- * A tool the subagent can call. Names match Anthropic's constraint
- * `^[a-zA-Z0-9_-]{1,64}$` — no dots. The input_schema is the JSONSchema
- * shipped to the Anthropic Messages API verbatim; ToolDef is the single
- * Anthropic-compatible envelope, not an MCP McpToolDef (those have a
+ * A tool the subagent can call. Names match the strictest supported provider
+ * constraint, `^[a-zA-Z0-9_-]{1,64}$` — no dots. The input_schema is the JSONSchema
+ * shipped to provider tool APIs verbatim; ToolDef is the single
+ * LLM-tool envelope, not an MCP McpToolDef (those have a
  * different shape — ".inputSchema" vs ".input_schema").
  *
  * `idempotent: true` is required for the two-phase replay path: on resume,
@@ -487,8 +489,9 @@ export interface ToolDef {
 }
 
 /**
- * Anthropic content-block subset we persist in subagent_messages.content_blocks.
- * This is structural — we don't gatekeep on unknown block types (future SDK
+ * Content-block subset we persist in subagent_messages.content_blocks.
+ * It intentionally preserves the existing Anthropic-shaped block format for
+ * compatibility across providers. This is structural — we don't gatekeep on unknown block types (future SDK
  * additions pass through). Use the string-literal discriminant on 'type'.
  */
 export type ContentBlock =
