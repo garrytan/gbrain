@@ -19,7 +19,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'recover-wal', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -265,6 +265,12 @@ async function handleCliOnly(command: string, args: string[]) {
     await runInit(args);
     return;
   }
+  if (command === 'recover-wal') {
+    // Must run before connectEngine() — the whole point is the brain won't open.
+    const { runRecoverWal } = await import('./commands/recover-wal.ts');
+    await runRecoverWal(args);
+    return;
+  }
   if (command === 'upgrade') {
     const { runUpgrade } = await import('./commands/upgrade.ts');
     await runUpgrade(args);
@@ -461,7 +467,7 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'serve': {
         const { runServe } = await import('./commands/serve.ts');
         await runServe(engine, args);
-        return; // serve doesn't disconnect
+        return; // serve disconnects via shutdown handlers (signals + stdin EOF)
       }
       case 'call': {
         const { runCall } = await import('./commands/call.ts');
@@ -603,6 +609,8 @@ async function connectEngine(): Promise<BrainEngine> {
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');
   await connectWithRetry(engine, toEngineConfig(config), { noRetry });
+  const { installShutdownHandlers } = await import('./core/shutdown.ts');
+  installShutdownHandlers(engine);
   return engine;
 }
 
@@ -639,6 +647,7 @@ SETUP
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   doctor [--json] [--fast]            Health check (resolver, skills, pgvector, RLS, embeddings)
+  recover-wal [--data-dir P]         Repair PGLite brain from WAL corruption (requires docker)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
 
 PAGES

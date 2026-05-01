@@ -2,6 +2,33 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.26.0] - 2026-05-01
+
+## **Your brain now survives crashes without WAL corruption.**
+## **And if it ever does land in a bad state, `gbrain recover-wal` brings it back without manual docker incantations.**
+
+For PGLite users, every gbrain command (especially `serve` — the long-lived MCP stdio server Claude Code spawns) now installs SIGTERM, SIGINT, SIGHUP, and stdin-EOF handlers that flush PGLite cleanly before exit. That last one is the critical one: when the MCP host closes its stdio pipe, that's the cleanest "host is done with us" signal we get, and gbrain treats it as a graceful disconnect. Until v0.26 the `serve` path explicitly returned without ever calling `engine.disconnect()` — so any kill (Ctrl-C, host restart, OOM) left PGLite mid-write and produced unrecoverable WAL state on the next open. The Postgres log says `PANIC: could not locate a valid checkpoint record`; PGLite WASM (which ships no recovery tools) just `abort()`s with no detail. We've now seen this happen twice in the wild. Both times it was hours of investigation and a manual `pg_resetwal` in a `pgvector/pgvector:pg17` docker container to recover. With shutdown handlers in place, the most common cause is gone.
+
+For the cases that remain (SIGKILL, OOM kill, power loss), the new **`gbrain recover-wal`** command automates the recovery. It snapshots your data dir, runs `pg_resetwal -f` inside the pgvector pg17 image against a copy, validates the result by opening it with PGLite and counting pages, then renames your original to `brain.pglite.corrupt.<ts>` and swaps the recovered dir into place. `--dry-run` recovers and validates without swapping. `--data-dir <path>` overrides the configured location. If docker isn't installed, the command prints the manual recipe instead of failing silently. The standard pgvector image is built **with** `USE_FLOAT8_BYVAL` while PGLite WASM is built **without** it — so we deliberately only run `pg_resetwal` in the container (it doesn't read float8-by-value catalog data) and let PGLite, which has matching float8 settings, open the WAL-reset dir directly. Recovery preserves everything written before the last clean checkpoint; you only lose in-flight transactions from the moment of the crash.
+
+The PGLite startup error message also now lists WAL corruption as one of the two top causes (alongside the macOS 26.3 WASM bug it previously called out alone) and points users at `gbrain recover-wal`. New regression test in `test/shutdown.test.ts` creates a real PGLite brain, writes a page, fires SIGTERM through the installed handlers, and verifies the brain re-opens with the page intact — guards the behavior the handlers exist to provide.
+
+Postgres-engine users get the shutdown handlers too (clean `sql.end()` on exit), which is mostly invisible there because Postgres is more tolerant of ungraceful client disconnects, but matches semantics across engines.
+
+### Files changed
+
+- `src/core/shutdown.ts` (new) — `installShutdownHandlers(engine)` helper. Idempotent. Test-only `_resetForTesting()` exported for the test suite.
+- `src/cli.ts` — `connectEngine()` calls `installShutdownHandlers(engine)` after connect; one new line + import. Adds `recover-wal` to `CLI_ONLY` and routes it before the connect path (the whole point is the brain can't be connected). Updates the misleading `serve doesn't disconnect` comment.
+- `src/commands/recover-wal.ts` (new) — the recovery automation.
+- `src/core/pglite-engine.ts` — `connect()` failure message lists WAL corruption + `gbrain recover-wal` alongside the macOS WASM bug.
+- `test/shutdown.test.ts` (new) — 7 tests covering signal handling, idempotence, multi-signal coalescing, disconnect-failure handling, and a real PGLite SIGTERM regression.
+
+### What this does NOT cover
+
+- **SIGKILL / `kill -9` / OOM kill** — uncatchable by definition. `gbrain recover-wal` is the cure.
+- **Power loss mid-write** — same. Needs filesystem fsync discipline from PGLite itself.
+- **Filesystem-level backups of an active PGLite** — rsync/cp during writes captures inconsistent WAL state. Use `gbrain export` for clean logical backups.
+
 ## [0.25.0] - 2026-04-26
 
 ## **Contributors can now benchmark retrieval changes against real captured queries before merging.**

@@ -145,15 +145,17 @@ export class PGLiteEngine implements BrainEngine {
         extensions: { vector, pg_trgm },
       });
     } catch (err) {
-      // v0.13.1: any PGLite.create() failure becomes actionable. Most commonly
-      // this is the macOS 26.3 WASM bug (#223). We deliberately do NOT suggest
-      // "missing migrations" as a cause — migrations run AFTER create(), so a
-      // create-time abort has nothing to do with them. Nest the original error
-      // message so debugging isn't erased.
+      // v0.13.1: any PGLite.create() failure becomes actionable. We deliberately
+      // do NOT suggest "missing migrations" as a cause — migrations run AFTER
+      // create(), so a create-time abort has nothing to do with them. Nest the
+      // original error message so debugging isn't erased.
       const original = err instanceof Error ? err.message : String(err);
       const wrapped = new Error(
         `PGLite failed to initialize its WASM runtime.\n` +
-        `  This is most commonly the macOS 26.3 WASM bug: https://github.com/garrytan/gbrain/issues/223\n` +
+        `  Two common causes:\n` +
+        `    1. WAL corruption from an ungraceful prior shutdown (Ctrl-C, OOM, MCP host kill).\n` +
+        `       Recover with: gbrain recover-wal\n` +
+        `    2. The macOS 26.3 WASM bug: https://github.com/garrytan/gbrain/issues/223\n` +
         `  Run \`gbrain doctor\` for a full diagnosis.\n` +
         `  Original error: ${original}`
       );
