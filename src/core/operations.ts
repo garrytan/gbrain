@@ -229,6 +229,20 @@ export interface OperationContext {
    * background work.
    */
   cliOpts?: { quiet: boolean; progressJson: boolean; progressInterval: number };
+  /**
+   * v0.28: per-token allow-list for the holder field on `takes`. Threaded
+   * by the MCP HTTP/stdio dispatch layer from `access_tokens.permissions.takes_holders`.
+   *
+   * When set (i.e., this OperationContext came from an MCP-bound token),
+   * `takes_list`, `takes_search`, and `query` (when it returns takes) MUST
+   * apply `WHERE holder = ANY($takesHoldersAllowList)`. This is the
+   * server-side filter that backs the v0.28 visibility model.
+   *
+   * Default behavior when unset: local CLI callers see all holders. v0.28
+   * MCP dispatch sets it to `['world']` for tokens with no permissions row
+   * (default-deny on private hunches).
+   */
+  takesHoldersAllowList?: string[];
 }
 
 export interface Operation {
@@ -668,6 +682,91 @@ const query: Operation = {
     });
   },
   cliHints: { name: 'query', positional: ['query'] },
+};
+
+// --- v0.28: Takes ---
+
+const takes_list: Operation = {
+  name: 'takes_list',
+  description: 'List takes (typed/weighted/attributed claims) filtered by holder/kind/active/etc.',
+  params: {
+    page_slug: { type: 'string', description: 'Filter to this page' },
+    holder: { type: 'string', description: 'Filter to this holder (world|garry|brain|<slug>)' },
+    kind: { type: 'string', description: 'Filter to this kind (fact|take|bet|hunch)' },
+    active: { type: 'boolean', description: 'Active rows only (default true)' },
+    resolved: { type: 'boolean', description: 'true → only resolved bets; false → only unresolved' },
+    sort_by: { type: 'string', description: 'weight | since_date | created_at (default created_at)' },
+    limit: { type: 'number', description: 'Max rows (default 100, cap 500)' },
+    offset: { type: 'number', description: 'Skip first N rows' },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.listTakes({
+      page_slug: p.page_slug as string | undefined,
+      holder: p.holder as string | undefined,
+      kind: p.kind as never,
+      active: p.active as boolean | undefined,
+      resolved: p.resolved as boolean | undefined,
+      sortBy: p.sort_by as never,
+      limit: p.limit as number | undefined,
+      offset: p.offset as number | undefined,
+      // Per-token allow-list — server-side filter for MCP-bound calls.
+      // Local CLI callers leave takesHoldersAllowList unset and see all holders.
+      takesHoldersAllowList: ctx.takesHoldersAllowList,
+    });
+  },
+  cliHints: { name: 'takes-list' },
+};
+
+const takes_search: Operation = {
+  name: 'takes_search',
+  description: 'Keyword search across takes (pg_trgm similarity over claim text)',
+  params: {
+    query: { type: 'string', required: true },
+    limit: { type: 'number', description: 'Max results (default 30, cap 100)' },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.searchTakes(p.query as string, {
+      limit: p.limit as number | undefined,
+      takesHoldersAllowList: ctx.takesHoldersAllowList,
+    });
+  },
+  cliHints: { name: 'takes-search', positional: ['query'] },
+};
+
+const think: Operation = {
+  name: 'think',
+  description: 'Multi-hop synthesis across pages + takes + graph (v0.28). Lane-D pipeline lands incrementally; v0.28.0 ships the op surface; full synthesis ships in v0.28.1+.',
+  params: {
+    question: { type: 'string', required: true, description: 'The question to think about' },
+    anchor: { type: 'string', description: 'Pull the entity subgraph around this slug' },
+    rounds: { type: 'number', description: 'Multi-pass: 1 (default), N, or "auto" (v0.29+)' },
+    save: { type: 'boolean', description: 'Persist a synthesis page (local-CLI only; ignored for MCP)' },
+    take: { type: 'boolean', description: 'Append a take row to the anchor page (requires --anchor)' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    // v0.28.0: surface the op so MCP/SDK callers can register against it.
+    // The Lane-D pipeline (gather → synthesize → cite) lands in src/core/think/
+    // and `gbrain think` CLI in src/commands/think.ts. Until then, this op
+    // returns a structured "not implemented yet" envelope so callers can
+    // detect the surface and degrade gracefully.
+    const remote = ctx.remote ?? true;
+    if (remote && (p.save || p.take)) {
+      // Codex P1 #7 + privacy: remote callers cannot persist; force read-only.
+      return {
+        status: 'not_implemented',
+        question: p.question,
+        message: 'gbrain think op surface registered; pipeline implementation lands in v0.28.x (Lane D). Local CLI use only for save/take.',
+      };
+    }
+    return {
+      status: 'not_implemented',
+      question: p.question,
+      anchor: p.anchor ?? null,
+      message: 'gbrain think op surface registered; pipeline implementation lands in v0.28.x (Lane D).',
+    };
+  },
+  cliHints: { name: 'think', positional: ['question'] },
 };
 
 // --- Tags ---
@@ -1401,6 +1500,8 @@ export const operations: Operation[] = [
   pause_job, resume_job, replay_job, send_job_message,
   // Orphans
   find_orphans,
+  // v0.28: Takes + think
+  takes_list, takes_search, think,
 ];
 
 export const operationsByName = Object.fromEntries(
