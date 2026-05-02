@@ -14,7 +14,7 @@ import {
   formatCodeBreakdown,
 } from '../core/sync.ts';
 import { estimateTokens, CHUNKER_VERSION } from '../core/chunkers/code.ts';
-import { EMBEDDING_MODEL, estimateEmbeddingCostUsd } from '../core/embedding.ts';
+import { estimateConfiguredEmbeddingCostUsd, getEmbeddingModel } from '../core/embedding.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import type { SyncManifest } from '../core/sync.ts';
 import { createProgress } from '../core/progress.ts';
@@ -975,14 +975,15 @@ export async function runSync(engine: BrainEngine, args: string[]) {
     // the cost and will run `embed --stale` later).
     if (!noEmbed) {
       const preview = estimateSyncAllCost(sources);
-      const costUsd = estimateEmbeddingCostUsd(preview.totalTokens);
+      const embeddingModel = getEmbeddingModel();
+      const costUsd = estimateConfiguredEmbeddingCostUsd(preview.totalTokens);
       const previewMsg =
         `sync --all preview: ${preview.totalFiles} files across ${preview.activeSources} source(s), ` +
-        `~${preview.totalTokens.toLocaleString()} tokens, est. $${costUsd.toFixed(2)} on ${EMBEDDING_MODEL}.`;
+        `~${preview.totalTokens.toLocaleString()} tokens, est. $${costUsd.toFixed(2)} on ${embeddingModel}.`;
 
       if (dryRun) {
         if (jsonOut) {
-          console.log(JSON.stringify({ status: 'dry_run', preview, costUsd, model: EMBEDDING_MODEL }));
+          console.log(JSON.stringify({ status: 'dry_run', preview, costUsd, model: embeddingModel }));
         } else {
           console.log(previewMsg);
           console.log('--dry-run: exit without syncing.');
@@ -1000,7 +1001,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
             message: previewMsg,
             hint: 'Pass --yes to proceed, or --dry-run to see the preview and exit 0.',
           }));
-          console.log(JSON.stringify({ error: envelope, preview, costUsd, model: EMBEDDING_MODEL }));
+          console.log(JSON.stringify({ error: envelope, preview, costUsd, model: embeddingModel }));
           process.exit(2);
         }
         // Interactive TTY path: prompt [y/N].

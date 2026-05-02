@@ -21,6 +21,13 @@ import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.
 // Mock embedBatch BEFORE importing runCycle so no real OpenAI calls happen
 // even when the full cycle's embed phase runs.
 mock.module('../../src/core/embedding.ts', () => ({
+  getEmbeddingModel: () => 'text-embedding-3-large',
+  isEmbeddingConfigured: () => true,
+  EMBEDDING_MODEL: 'text-embedding-3-large',
+  EMBEDDING_DIMENSIONS: 1536,
+  EMBEDDING_COST_PER_1K_TOKENS: 0.00013,
+  estimateEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
+  estimateConfiguredEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
   embedBatch: async (texts: string[]) => {
     // Deterministic fake vector for each chunk.
     return texts.map(() => new Float32Array(1536));

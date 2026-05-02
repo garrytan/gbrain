@@ -18,6 +18,13 @@ import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.
 
 // Mock embedBatch so embed phase doesn't call OpenAI.
 mock.module('../../src/core/embedding.ts', () => ({
+  getEmbeddingModel: () => 'text-embedding-3-large',
+  isEmbeddingConfigured: () => true,
+  EMBEDDING_MODEL: 'text-embedding-3-large',
+  EMBEDDING_DIMENSIONS: 1536,
+  EMBEDDING_COST_PER_1K_TOKENS: 0.00013,
+  estimateEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
+  estimateConfiguredEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
   embedBatch: async (texts: string[]) => texts.map(() => new Float32Array(1536)),
 }));
 

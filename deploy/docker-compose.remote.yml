@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gbrain_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your env file}
+      POSTGRES_DB: ${POSTGRES_DB:-gbrain}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15433}:5432"
+    volumes:
+      - gbrain-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gbrain_user} -d ${POSTGRES_DB:-gbrain}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  gbrain-postgres-data:

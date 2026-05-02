@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { embedBatch } from '../core/embedding.ts';
+import { embedBatch, getEmbeddingModel } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
@@ -195,6 +195,7 @@ async function embedPage(
   }
 
   const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+  const embeddingModel = getEmbeddingModel();
   const embeddingMap = new Map<number, Float32Array>();
   for (let j = 0; j < toEmbed.length; j++) {
     embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
@@ -204,6 +205,7 @@ async function embedPage(
     chunk_text: c.chunk_text,
     chunk_source: c.chunk_source,
     embedding: embeddingMap.get(c.chunk_index),
+    model: embeddingMap.has(c.chunk_index) ? embeddingModel : c.model,
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
@@ -274,6 +276,7 @@ async function embedAll(
 
     try {
       const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+      const embeddingModel = getEmbeddingModel();
       // Build a map of new embeddings by chunk_index
       const embeddingMap = new Map<number, Float32Array>();
       for (let j = 0; j < toEmbed.length; j++) {
@@ -285,6 +288,7 @@ async function embedAll(
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
+        model: embeddingMap.has(c.chunk_index) ? embeddingModel : c.model,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(page.slug, updated);
@@ -395,6 +399,7 @@ async function embedAllStale(
     const stale = bySlug.get(slug)!;
     try {
       const embeddings = await embedBatch(stale.map(c => c.chunk_text));
+      const embeddingModel = getEmbeddingModel();
       // CRITICAL: passing ONLY the stale indices to upsertChunks would
       // delete every non-stale chunk on the same page (the != ALL filter
       // wipes any chunk_index NOT in the input). To preserve them, we
@@ -413,6 +418,7 @@ async function embedAllStale(
         // For stale chunks: pass the new embedding.
         // For non-stale chunks: pass undefined → COALESCE preserves existing embedding.
         embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+        model: staleIdxToEmbedding.has(c.chunk_index) ? embeddingModel : c.model,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(slug, merged);

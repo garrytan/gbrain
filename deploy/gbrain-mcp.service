@@ -1,0 +1,21 @@
+[Unit]
+Description=GBrain HTTP MCP server
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=simple
+User=gbrain
+Group=gbrain
+WorkingDirectory=/var/lib/gbrain
+Environment=HOME=/var/lib/gbrain
+Environment=PATH=/var/lib/gbrain/.bun/bin:/usr/local/bin:/usr/bin:/bin
+Environment=GBRAIN_HTTP_PORT=8787
+Environment=GBRAIN_HTTP_TRUST_PROXY=1
+EnvironmentFile=-/etc/gbrain/gbrain-mcp.env
+ExecStart=/usr/bin/env gbrain serve --http --port ${GBRAIN_HTTP_PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
