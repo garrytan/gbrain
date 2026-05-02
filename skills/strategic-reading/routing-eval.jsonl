@@ -1,4 +1,7 @@
-// Routing eval fixtures for skills/strategic-reading.
-{"intent":"please strategic reading for me now","expected_skill":"strategic-reading"}
-{"intent":"please read this through the lens of for me now","expected_skill":"strategic-reading"}
-{"intent":"please apply this to my problem for me now","expected_skill":"strategic-reading"}
+// Routing eval fixtures for skills/strategic-reading. Per D-CX-6,
+// intents must paraphrase the triggers, not copy them.
+{"intent":"Read 'The Power Broker' against my current gatekeeper fight and give me tactics","expected_skill":"strategic-reading"}
+{"intent":"Take this case study and tell me how it applies to the situation I'm dealing with at work","expected_skill":"strategic-reading"}
+{"intent":"Extract a do/avoid/watch-for playbook from this book for my current product launch","expected_skill":"strategic-reading"}
+{"intent":"What can I learn from this article about handling the board meeting next week","expected_skill":"strategic-reading"}
+{"intent":"Give me short/medium/long-term recommendations from this source applied to my problem","expected_skill":"strategic-reading"}

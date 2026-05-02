@@ -1,4 +1,7 @@
-// Routing eval fixtures for skills/article-enrichment.
-{"intent":"please enrich this article for me now","expected_skill":"article-enrichment"}
-{"intent":"please enrich brain pages for me now","expected_skill":"article-enrichment"}
-{"intent":"please batch enrich for me now","expected_skill":"article-enrichment"}
+// Routing eval fixtures for skills/article-enrichment. Per D-CX-6,
+// intents must paraphrase the triggers, not copy them.
+{"intent":"This article page is a wall of raw HTML text — restructure it with quotes and insights","expected_skill":"article-enrichment"}
+{"intent":"Pull verbatim quotes out of this longread and turn it into a useful brain page","expected_skill":"article-enrichment"}
+{"intent":"Run the enrichment pass on the unstructured articles in my brain","expected_skill":"article-enrichment"}
+{"intent":"This brain page is useless — there's no exec summary and no quotable lines","expected_skill":"article-enrichment"}
+{"intent":"Convert this raw article dump into a structured page with executive summary and key insights","expected_skill":"article-enrichment"}

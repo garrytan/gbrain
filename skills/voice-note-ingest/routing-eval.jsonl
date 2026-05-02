@@ -1,4 +1,7 @@
-// Routing eval fixtures for skills/voice-note-ingest.
-{"intent":"please voice note for me now","expected_skill":"voice-note-ingest"}
-{"intent":"please ingest this voice memo for me now","expected_skill":"voice-note-ingest"}
-{"intent":"please transcribe and file for me now","expected_skill":"voice-note-ingest"}
+// Routing eval fixtures for skills/voice-note-ingest. Per D-CX-6,
+// intents must paraphrase the triggers, not copy them.
+{"intent":"I just sent you a voice memo — file it into my brain","expected_skill":"voice-note-ingest"}
+{"intent":"Transcribe this audio and route the content to the right brain directory","expected_skill":"voice-note-ingest"}
+{"intent":"Save this voice note as a brain page with the audio attached","expected_skill":"voice-note-ingest"}
+{"intent":"Capture what I just said verbatim and file it under originals if it's a new idea","expected_skill":"voice-note-ingest"}
+{"intent":"This audio message has a thought I want preserved word-for-word","expected_skill":"voice-note-ingest"}
