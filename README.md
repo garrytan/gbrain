@@ -46,6 +46,13 @@ gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
 ```
 
+For embeddings and hybrid/vector search, GBrain keeps the existing
+`OPENAI_API_KEY` behavior. If you run GBrain inside a broader agent harness and
+do not want that key in the parent process environment, set
+`OPENAI_API_KEY_FILE=/path/to/openai-key.env` instead. The file may contain
+either a raw key or an env-style `OPENAI_API_KEY=...` line; GBrain reads it
+internally without writing the key back to `process.env`.
+
 **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
 postinstall hook on global installs, so schema migrations never run and the CLI
 aborts with `Aborted()` the first time it opens PGLite. Use `git clone + bun install

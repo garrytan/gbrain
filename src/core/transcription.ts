@@ -8,6 +8,7 @@
 
 import { statSync, readFileSync } from 'fs';
 import { basename, extname } from 'path';
+import { resolveOpenAIApiKey } from './config.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -88,14 +89,14 @@ export async function transcribe(
 
 function detectProvider(): 'groq' | 'openai' {
   if (process.env.GROQ_API_KEY) return 'groq';
-  if (process.env.OPENAI_API_KEY) return 'openai';
+  if (resolveOpenAIApiKey()) return 'openai';
   return 'groq'; // default, will fail with clear error if no key
 }
 
 function getApiKey(provider: string): string | undefined {
   switch (provider) {
     case 'groq': return process.env.GROQ_API_KEY;
-    case 'openai': return process.env.OPENAI_API_KEY;
+    case 'openai': return resolveOpenAIApiKey();
     case 'deepgram': return process.env.DEEPGRAM_API_KEY;
     default: return undefined;
   }
