@@ -30,6 +30,12 @@ export interface ExpansionTouchpoint {
   price_last_verified?: string;
 }
 
+export interface AuthEnvConfig {
+  required: string[];
+  optional?: string[];
+  setup_url?: string;
+}
+
 export interface Recipe {
   /** Stable lowercase id used in `provider:model` strings. Unique across recipes. */
   id: string;
@@ -42,17 +48,33 @@ export interface Recipe {
   /** For openai-compatible tier: default base URL. May be overridden by env or wizard. */
   base_url_default?: string;
   /** Env var name(s) for auth; first is required, rest are optional. */
-  auth_env?: {
-    required: string[];
-    optional?: string[];
-    setup_url?: string;
-  };
+  auth_env?: AuthEnvConfig;
   touchpoints: {
     embedding?: EmbeddingTouchpoint;
     expansion?: ExpansionTouchpoint;
   };
   /** One-line description of setup (shown in wizard + env subcommand). */
   setup_hint?: string;
+}
+
+export type AuthSourceClass = 'env' | 'openclaw-codex' | 'openclaw-openai' | 'unauthenticated' | 'missing';
+
+export interface ProviderAuthConfig {
+  /** Default env auth remains highest-priority unless this explicitly selects another source. */
+  prefer?: Exclude<AuthSourceClass, 'env' | 'unauthenticated' | 'missing'>;
+  /** Optional profile name for OpenClaw-backed auth. */
+  profile?: string;
+  /** Optional auth store override for tests or nonstandard installs. */
+  openclawAuthPath?: string;
+}
+
+export interface AuthResolution {
+  source: AuthSourceClass;
+  credentialKey?: string;
+  value?: string;
+  isConfigured: boolean;
+  missingReason?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface AIGatewayConfig {
@@ -64,6 +86,8 @@ export interface AIGatewayConfig {
   expansion_model?: string;
   /** Optional per-provider base URL override (openai-compatible variants). */
   base_urls?: Record<string, string>;
+  /** Optional provider auth source overrides keyed by recipe id. */
+  provider_auth?: Record<string, ProviderAuthConfig>;
   /** Env snapshot read once at configuration time. Gateway never reads process.env at call time. */
   env: Record<string, string | undefined>;
 }

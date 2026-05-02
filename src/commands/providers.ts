@@ -5,12 +5,13 @@
  * users can verify provider setup before `gbrain init`.
  */
 
+import { resolveProviderAuth, redactAuthResolution } from '../core/ai/auth.ts';
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
 import { configureGateway, embedOne, isAvailable as gwIsAvailable } from '../core/ai/gateway.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
-import type { Recipe } from '../core/ai/types.ts';
+import type { AIGatewayConfig, AuthSourceClass, Recipe } from '../core/ai/types.ts';
 
 const SCHEMA_VERSION = 1;
 
@@ -22,26 +23,33 @@ interface ProviderOption {
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
   env_ready: boolean;
+  auth_source: AuthSourceClass;
   tier: 'native' | 'openai-compat';
   pros: string[];
   cons: string[];
 }
 
+let gatewayConfig: AIGatewayConfig;
+
 function configureFromEnv(): void {
   const config = loadConfig();
-  configureGateway({
+  gatewayConfig = {
     embedding_model: config?.embedding_model,
     embedding_dimensions: config?.embedding_dimensions,
     expansion_model: config?.expansion_model,
     base_urls: config?.provider_base_urls,
+    provider_auth: config?.provider_auth,
     env: { ...process.env },
-  });
+  };
+  configureGateway(gatewayConfig);
+}
+
+function authResolution(recipe: Recipe) {
+  return resolveProviderAuth(recipe, gatewayConfig);
 }
 
 function envReady(recipe: Recipe): boolean {
-  const required = recipe.auth_env?.required ?? [];
-  if (required.length === 0) return true; // e.g. local Ollama
-  return required.every(k => !!process.env[k]);
+  return authResolution(recipe).isConfigured;
 }
 
 export async function runProviders(subcommand: string | undefined, args: string[]): Promise<void> {
@@ -93,8 +101,11 @@ function runList(_args: string[]): void {
   for (const r of recipes) {
     const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
     const hasExpand = !!r.touchpoints.expansion;
-    const ready = envReady(r);
-    const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
+    const resolution = authResolution(r);
+    const ready = resolution.isConfigured;
+    const status = ready
+      ? `✓ ready (${resolution.source})`
+      : `✗ ${resolution.source === 'missing' ? resolution.missingReason ?? 'missing credentials' : resolution.source}`;
     rows.push(
       r.id.padEnd(14) +
       r.tier.padEnd(18) +
@@ -170,8 +181,9 @@ function runEnv(args: string[]): void {
   if (required.length > 0) {
     console.log('Required:');
     for (const k of required) {
-      const set = !!process.env[k];
-      console.log(`  ${k.padEnd(32)} ${set ? '✓ set' : '✗ not set'}`);
+      const resolution = authResolution(recipe);
+      const set = resolution.source === 'env' && resolution.credentialKey === k;
+      console.log(`  ${k.padEnd(32)} ${set ? '✓ selected' : process.env[k] ? '• available' : '✗ not set'}`);
     }
   } else {
     console.log('Required: (none)');
@@ -183,6 +195,10 @@ function runEnv(args: string[]): void {
       console.log(`  ${k.padEnd(32)} ${set ? '✓ set' : '✗ not set'}`);
     }
   }
+  const resolution = redactAuthResolution(authResolution(recipe));
+  console.log(`\nSelected auth source: ${String(resolution.source)}`);
+  if (resolution.credentialKey) console.log(`Credential key: ${String(resolution.credentialKey)}`);
+  if (resolution.missingReason) console.log(`Status: ${String(resolution.missingReason)}`);
   if (recipe.auth_env?.setup_url) {
     console.log(`\nSetup: ${recipe.auth_env.setup_url}`);
   }
@@ -217,6 +233,7 @@ async function runExplain(args: string[]): Promise<void> {
         cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
         price_last_verified: m.price_last_verified,
         env_ready: envReady(r) || (r.id === 'ollama' && ollama.models_endpoint_valid === true),
+        auth_source: authResolution(r).source,
         tier: r.tier,
         pros: prosFor(r, 'embedding'),
         cons: consFor(r),
@@ -231,6 +248,7 @@ async function runExplain(args: string[]): Promise<void> {
         cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
         price_last_verified: m.price_last_verified,
         env_ready: envReady(r),
+        auth_source: authResolution(r).source,
         tier: r.tier,
         pros: prosFor(r, 'expansion'),
         cons: consFor(r),
@@ -269,13 +287,13 @@ async function runExplain(args: string[]): Promise<void> {
   for (const o of options.filter(x => x.touchpoint === 'embedding')) {
     const cost = o.cost_per_1m_tokens_usd !== undefined ? `$${o.cost_per_1m_tokens_usd}/1M` : '—';
     const dims = o.dims ? `${o.dims}d` : '—';
-    console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${dims.padEnd(8)} ${cost.padEnd(10)} ${o.tier}`);
+    console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${dims.padEnd(8)} ${cost.padEnd(10)} ${o.tier} ${o.auth_source}`);
   }
   console.log('');
   console.log('Expansion options:');
   for (const o of options.filter(x => x.touchpoint === 'expansion')) {
     const cost = o.cost_per_1m_tokens_usd !== undefined ? `$${o.cost_per_1m_tokens_usd}/1M` : '—';
-    console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${cost.padEnd(10)} ${o.tier}`);
+    console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${cost.padEnd(10)} ${o.tier} ${o.auth_source}`);
   }
   console.log('');
   console.log(`Recommended: ${matrix.recommended}`);
