@@ -9,8 +9,17 @@ import type { EngineConfig } from './types.ts';
  * instead of the misleading "No database configured" when GBRAIN_DATABASE_URL
  * (or DATABASE_URL) is actually set.
  *
- * Precedence matches loadConfig(): env vars win over config-file URL. Returns
- * null only when NO source provides a URL at all.
+ * Precedence matches loadConfig():
+ *   1. GBRAIN_DATABASE_URL  (explicit gbrain-targeted override)
+ *   2. config-file          (~/.gbrain/config.json)
+ *   3. DATABASE_URL         (generic fallback — used only when no config exists)
+ *
+ * The generic DATABASE_URL ranks below the config file because bun auto-loads
+ * `.env` from cwd, so an unrelated project's DATABASE_URL would otherwise
+ * hijack the brain connection. GBRAIN_DATABASE_URL still wins for users who
+ * intentionally want to override.
+ *
+ * Returns null only when NO source provides a URL at all.
  */
 export type DbUrlSource =
   | 'env:GBRAIN_DATABASE_URL'
@@ -19,8 +28,10 @@ export type DbUrlSource =
   | 'config-file-path' // PGLite: config file present, no URL but database_path set
   | null;
 
-// Lazy-evaluated to avoid calling homedir() at module scope (breaks in serverless/bundled environments)
-function getConfigDir() { return join(homedir(), '.gbrain'); }
+// Lazy-evaluated to avoid calling homedir() at module scope (breaks in serverless/bundled environments).
+// Prefer process.env.HOME so tests and runtime overrides work — bun caches homedir() after first call.
+function home() { return process.env.HOME || homedir(); }
+function getConfigDir() { return join(home(), '.gbrain'); }
 function getConfigPath() { return join(getConfigDir(), 'config.json'); }
 
 export interface GBrainConfig {
@@ -39,7 +50,16 @@ export interface GBrainConfig {
 }
 
 /**
- * Load config with credential precedence: env vars > config file.
+ * Load config with credential precedence:
+ *   1. GBRAIN_DATABASE_URL   (explicit gbrain-targeted override)
+ *   2. ~/.gbrain/config.json (the brain's own config)
+ *   3. DATABASE_URL          (generic fallback, only if no config file URL)
+ *
+ * The generic DATABASE_URL is ranked below the config file because bun
+ * auto-loads `.env` from cwd, so running gbrain inside an unrelated project
+ * directory would otherwise let that project's DATABASE_URL hijack the brain
+ * connection. Users who want explicit override still have GBRAIN_DATABASE_URL.
+ *
  * Plugin config is handled by the plugin runtime injecting env vars.
  */
 export function loadConfig(): GBrainConfig | null {
@@ -49,8 +69,11 @@ export function loadConfig(): GBrainConfig | null {
     fileConfig = JSON.parse(raw) as GBrainConfig;
   } catch { /* no config file */ }
 
-  // Try env vars
-  const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  const explicitGbrainUrl = process.env.GBRAIN_DATABASE_URL;
+  const genericUrl = process.env.DATABASE_URL;
+  const fileUrl = fileConfig?.database_url;
+  // GBRAIN_DATABASE_URL > config file > DATABASE_URL.
+  const dbUrl = explicitGbrainUrl || fileUrl || genericUrl;
 
   if (!fileConfig && !dbUrl) return null;
 
@@ -58,7 +81,6 @@ export function loadConfig(): GBrainConfig | null {
   const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
     || (fileConfig?.database_path ? 'pglite' : 'postgres');
 
-  // Merge: env vars override config file
   const merged = {
     ...fileConfig,
     engine: inferredEngine,
@@ -87,29 +109,32 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
 }
 
 export function configDir(): string {
-  return join(homedir(), '.gbrain');
+  return getConfigDir();
 }
 
 export function configPath(): string {
-  return join(configDir(), 'config.json');
+  return getConfigPath();
 }
 
 /**
  * Introspect where the active DB URL would come from if we tried to connect.
- * Never throws, never connects. Env vars take precedence (matches loadConfig).
+ * Never throws, never connects. Matches loadConfig() precedence:
+ *   GBRAIN_DATABASE_URL > config file > DATABASE_URL.
  */
 export function getDbUrlSource(): DbUrlSource {
   if (process.env.GBRAIN_DATABASE_URL) return 'env:GBRAIN_DATABASE_URL';
-  if (process.env.DATABASE_URL) return 'env:DATABASE_URL';
-  if (!existsSync(configPath())) return null;
-  try {
-    const raw = readFileSync(configPath(), 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<GBrainConfig>;
-    if (parsed.database_url) return 'config-file';
-    if (parsed.database_path) return 'config-file-path';
-    return null;
-  } catch {
-    // Config file exists but is unreadable/malformed — treat as null source.
-    return null;
+
+  let parsed: Partial<GBrainConfig> | null = null;
+  if (existsSync(configPath())) {
+    try {
+      parsed = JSON.parse(readFileSync(configPath(), 'utf-8')) as Partial<GBrainConfig>;
+    } catch {
+      // Config file exists but is unreadable/malformed — fall through.
+    }
   }
+  if (parsed?.database_url) return 'config-file';
+
+  if (process.env.DATABASE_URL) return 'env:DATABASE_URL';
+  if (parsed?.database_path) return 'config-file-path';
+  return null;
 }

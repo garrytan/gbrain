@@ -46,11 +46,23 @@ describe('doctor command', () => {
 
   // Bug 7 — --fast should differentiate "no config anywhere" from "user
   // chose --fast with GBRAIN_DATABASE_URL / config-file URL present".
+  // GBRAIN_DATABASE_URL is the only env var that wins over a config file;
+  // generic DATABASE_URL is a last-resort fallback (see config.ts precedence).
   test('getDbUrlSource reflects GBRAIN_DATABASE_URL env var', async () => {
+    const { mkdtempSync, rmSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
     const { getDbUrlSource } = await import('../src/core/config.ts');
+
     const orig = process.env.GBRAIN_DATABASE_URL;
     const origAlt = process.env.DATABASE_URL;
+    const origHome = process.env.HOME;
+    // Isolate HOME so the user's real ~/.gbrain/config.json doesn't influence
+    // the assertion. Without this, the config-file URL beats DATABASE_URL.
+    const tmp = mkdtempSync(join(tmpdir(), 'gbrain-doctor-test-'));
+    process.env.HOME = tmp;
     try {
+      delete process.env.DATABASE_URL;
       process.env.GBRAIN_DATABASE_URL = 'postgresql://test@localhost/x';
       expect(getDbUrlSource()).toBe('env:GBRAIN_DATABASE_URL');
       delete process.env.GBRAIN_DATABASE_URL;
@@ -61,6 +73,9 @@ describe('doctor command', () => {
       else process.env.GBRAIN_DATABASE_URL = orig;
       if (origAlt === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = origAlt;
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
   });
 
