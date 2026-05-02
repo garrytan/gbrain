@@ -5,9 +5,16 @@
  * OpenAI text-embedding-3-large at 1536 dimensions.
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
+ *
+ * Azure OpenAI is supported via env vars (AZURE_OPENAI_ENDPOINT +
+ * AZURE_OPENAI_API_KEY); when set, an AzureOpenAI client is used instead
+ * of the public OpenAI client. The deployment name defaults to
+ * `text-embedding-3-large` and can be overridden by
+ * AZURE_OPENAI_EMBEDDING_DEPLOYMENT. API version defaults to
+ * `2024-02-15-preview` and can be overridden by OPENAI_API_VERSION.
  */
 
-import OpenAI from 'openai';
+import OpenAI, { AzureOpenAI } from 'openai';
 
 const MODEL = 'text-embedding-3-large';
 const DIMENSIONS = 1536;
@@ -17,11 +24,20 @@ const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
 const BATCH_SIZE = 100;
 
-let client: OpenAI | null = null;
+let client: OpenAI | AzureOpenAI | null = null;
 
-function getClient(): OpenAI {
+function getClient(): OpenAI | AzureOpenAI {
   if (!client) {
-    client = new OpenAI();
+    if (process.env.AZURE_OPENAI_ENDPOINT) {
+      client = new AzureOpenAI({
+        endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+        apiKey: process.env.AZURE_OPENAI_API_KEY,
+        apiVersion: process.env.OPENAI_API_VERSION || '2024-02-15-preview',
+        deployment: process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT || MODEL,
+      });
+    } else {
+      client = new OpenAI();
+    }
   }
   return client;
 }
