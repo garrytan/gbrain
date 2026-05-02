@@ -463,7 +463,7 @@ export class PostgresEngine implements BrainEngine {
       best_per_page AS (
         SELECT DISTINCT ON (slug) *
         FROM ranked_chunks
-        ORDER BY slug, score DESC
+        ORDER BY slug, (0.6 * score + 0.4 / (chunk_index + 1)) DESC
       )
       SELECT slug, page_id, title, type, source_id,
         chunk_id, chunk_index, chunk_text, chunk_source, score,
