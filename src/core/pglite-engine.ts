@@ -807,37 +807,48 @@ export class PGLiteEngine implements BrainEngine {
 
   async addLinksBatch(links: LinkBatchInput[]): Promise<number> {
     if (links.length === 0) return 0;
-    // unnest() pattern: 10 array-typed bound parameters regardless of batch
-    // size. Same shape as PostgresEngine (v0.18). Avoids the 65535-parameter
-    // cap.
+    // Individual parameterized INSERTs instead of unnest(::text[]).
     //
-    // v0.18.0: every JOIN composite-keys on (slug, source_id) so the batch
-    // can't fan out across sources when the same slug exists in multiple
-    // sources. Origin JOIN uses LEFT JOIN on a composite key — NULL
-    // origin_slug leaves origin_page_id NULL, same as pre-v0.18.
-    const fromSlugs = links.map(l => l.from_slug);
-    const toSlugs = links.map(l => l.to_slug);
-    const linkTypes = links.map(l => l.link_type || '');
-    const contexts = links.map(l => l.context || '');
-    const linkSources = links.map(l => l.link_source || 'markdown');
-    const originSlugs = links.map(l => l.origin_slug || null);
-    const originFields = links.map(l => l.origin_field || null);
-    const fromSourceIds = links.map(l => l.from_source_id || 'default');
-    const toSourceIds = links.map(l => l.to_source_id || 'default');
-    const originSourceIds = links.map(l => l.origin_source_id || 'default');
-    const result = await this.db.query(
-      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
-       SELECT f.id, t.id, v.link_type, v.context, v.link_source, o.id, v.origin_field
-       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[])
-         AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field, from_source_id, to_source_id, origin_source_id)
-       JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
-       JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
-       LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id
-       ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
-       RETURNING 1`,
-      [fromSlugs, toSlugs, linkTypes, contexts, linkSources, originSlugs, originFields, fromSourceIds, toSourceIds, originSourceIds]
-    );
-    return result.rows.length;
+    // The previous unnest() approach passed all slugs/contexts as text[] arrays.
+    // PostgreSQL parses text[] literals using `{}`, `"`, and `,` as array syntax
+    // delimiters. When page content contains these characters (common in CJK text,
+    // JSON snippets, quoted strings), the array literal is malformed and the
+    // entire batch INSERT silently produces zero rows — no error is raised because
+    // the unnest simply yields an empty set.
+    //
+    // Individual INSERTs use scalar $N parameters that are immune to array-syntax
+    // parsing. Each link is inserted independently; a missing page only skips
+    // that single row instead of aborting the whole batch.
+    let count = 0;
+    for (const l of links) {
+      const fromSlug = l.from_slug;
+      const toSlug = l.to_slug;
+      const linkType = l.link_type || '';
+      const context = l.context || '';
+      const linkSource = l.link_source || 'markdown';
+      const originSlug = l.origin_slug || null;
+      const originField = l.origin_field || null;
+      const fromSourceId = l.from_source_id || 'default';
+      const toSourceId = l.to_source_id || 'default';
+      const originSourceId = l.origin_source_id || 'default';
+      try {
+        const result = await this.db.query(
+          `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
+           SELECT f.id, t.id, $3, $4, $5, o.id, $7
+           FROM pages f
+           JOIN pages t ON t.slug = $2 AND t.source_id = $9
+           LEFT JOIN pages o ON o.slug = $6 AND o.source_id = $10
+           WHERE f.slug = $1 AND f.source_id = $8
+           ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
+           RETURNING 1`,
+          [fromSlug, toSlug, linkType, context, linkSource, originSlug, originField, fromSourceId, toSourceId, originSourceId]
+        );
+        count += result.rows.length;
+      } catch {
+        // Skip individual link if referenced pages don't exist
+      }
+    }
+    return count;
   }
 
   async removeLink(from: string, to: string, linkType?: string, linkSource?: string): Promise<void> {
