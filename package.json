@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.28.0",
+  "version": "0.28.1",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -78,5 +78,8 @@
   "trustedDependencies": [
     "@electric-sql/pglite"
   ],
+  "engines": {
+    "bun": ">=1.3.10"
+  },
   "license": "MIT"
 }

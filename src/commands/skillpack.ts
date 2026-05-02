@@ -18,8 +18,10 @@ import {
 import {
   planInstall,
   applyInstall,
+  applyUninstall,
   diffSkill,
   InstallError,
+  UninstallError,
 } from '../core/skillpack/installer.ts';
 import { autoDetectSkillsDir } from '../core/repo-root.ts';
 
@@ -30,6 +32,10 @@ Subcommands:
   install <name>   Copy one skill (or --all) into a target workspace.
                    Data-loss protected: per-file diff, --overwrite-local
                    escape hatch, lockfile + atomic AGENTS.md update.
+  uninstall <name> Inverse of install (v0.25.1). Removes one skill;
+                   refuses if slug isn't in cumulative-slugs receipt
+                   (D8) or if any file was hand-edited (D11). Symmetric
+                   to install's data-loss posture.
   diff <name>      Show per-file diff status between the bundle and
                    the target workspace for one skill.
   check            Run the skillpack health report (same as the
@@ -51,6 +57,10 @@ export async function runSkillpack(args: string[]): Promise<void> {
   }
   if (sub === 'install') {
     await runInstall(rest);
+    return;
+  }
+  if (sub === 'uninstall') {
+    await runUninstall(rest);
     return;
   }
   if (sub === 'diff') {
@@ -434,6 +444,207 @@ async function runDiff(args: string[]): Promise<void> {
         console.error(`skillpack diff: ${err.message}`);
       }
       process.exit(2);
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// uninstall (v0.25.1, D6 + D8 + D11)
+// ---------------------------------------------------------------------------
+
+interface UninstallFlags {
+  help: boolean;
+  json: boolean;
+  dryRun: boolean;
+  overwriteLocal: boolean;
+  forceUnlock: boolean;
+  skillName: string | null;
+  skillsDir: string | null;
+  workspace: string | null;
+}
+
+const HELP_UNINSTALL = `gbrain skillpack uninstall <name> [options]
+
+Remove one bundled skill from a target OpenClaw workspace. Inverse of
+install. Symmetric data-loss posture: refuses if the slug isn't in the
+managed-block's cumulative-slugs receipt (D8) or if any file diverges
+from the bundle (D11).
+
+Arguments:
+  <name>               Skill slug to uninstall.
+
+Options:
+  --dry-run            Preview removals + managed-block change; no writes.
+  --overwrite-local    Remove files even when they differ from the
+                       bundle (you've hand-edited them). Default is
+                       refuse-and-warn — symmetric to install.
+  --force-unlock       Acquire the skillpack lockfile even if a stale
+                       peer lock exists.
+  --skills-dir PATH    Override target skills directory.
+  --workspace PATH     Override target workspace (parent of skills/).
+  --json               Machine-readable envelope.
+  --help               Show this message.
+
+Exit codes:
+  0   success
+  1   refused due to local-modification protection (run with
+      --overwrite-local to commit, or hand-revert your edits first)
+  2   setup error (slug not in receipt, no workspace, lock held, etc.)
+`;
+
+function parseUninstallFlags(argv: string[]): UninstallFlags {
+  const f: UninstallFlags = {
+    help: false,
+    json: false,
+    dryRun: false,
+    overwriteLocal: false,
+    forceUnlock: false,
+    skillName: null,
+    skillsDir: null,
+    workspace: null,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') f.help = true;
+    else if (a === '--json') f.json = true;
+    else if (a === '--dry-run') f.dryRun = true;
+    else if (a === '--overwrite-local') f.overwriteLocal = true;
+    else if (a === '--force-unlock') f.forceUnlock = true;
+    else if (a === '--skills-dir') {
+      f.skillsDir = argv[i + 1] ?? null;
+      i++;
+    } else if (a?.startsWith('--skills-dir=')) {
+      f.skillsDir = a.slice('--skills-dir='.length) || null;
+    } else if (a === '--workspace') {
+      f.workspace = argv[i + 1] ?? null;
+      i++;
+    } else if (a?.startsWith('--workspace=')) {
+      f.workspace = a.slice('--workspace='.length) || null;
+    } else if (a && !a.startsWith('--') && !f.skillName) {
+      f.skillName = a;
+    }
+  }
+  return f;
+}
+
+async function runUninstall(args: string[]): Promise<void> {
+  const flags = parseUninstallFlags(args);
+  if (flags.help) {
+    console.log(HELP_UNINSTALL);
+    process.exit(0);
+  }
+  if (!flags.skillName) {
+    console.error('Error: pass a skill name to uninstall.\n');
+    console.error(HELP_UNINSTALL);
+    process.exit(2);
+  }
+  const gbrainRoot = findGbrainRoot();
+  if (!gbrainRoot) {
+    console.error('Error: could not find gbrain repo root.');
+    process.exit(2);
+  }
+
+  let targetWorkspace: string | null = flags.workspace
+    ? resolveAbs(flags.workspace)
+    : null;
+  let targetSkillsDir: string | null = flags.skillsDir
+    ? resolveAbs(flags.skillsDir)
+    : null;
+
+  if (!targetSkillsDir) {
+    const detected = autoDetectSkillsDir();
+    if (detected.dir) {
+      targetSkillsDir = detected.dir;
+      if (!targetWorkspace) {
+        targetWorkspace = resolvePath(targetSkillsDir, '..');
+      }
+    }
+  }
+  if (!targetSkillsDir) {
+    console.error(
+      'Error: could not find a target skills directory. Set $OPENCLAW_WORKSPACE or pass --skills-dir / --workspace.',
+    );
+    process.exit(2);
+  }
+  if (!targetWorkspace) {
+    targetWorkspace = resolvePath(targetSkillsDir, '..');
+  }
+
+  try {
+    const result = applyUninstall({
+      gbrainRoot,
+      targetWorkspace,
+      targetSkillsDir,
+      skillSlug: flags.skillName,
+      overwriteLocal: flags.overwriteLocal,
+      dryRun: flags.dryRun,
+      forceUnlock: flags.forceUnlock,
+    });
+
+    if (flags.json) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            dryRun: result.dryRun,
+            gbrainRoot,
+            targetWorkspace,
+            targetSkillsDir,
+            skill: flags.skillName,
+            summary: result.summary,
+            managedBlock: result.managedBlock,
+            files: result.files.map(f => ({
+              source: f.source,
+              target: f.target,
+              outcome: f.outcome,
+              sharedDep: f.sharedDep,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      const label = flags.dryRun
+        ? 'skillpack uninstall --dry-run'
+        : 'skillpack uninstall';
+      console.log(
+        `${label} ${flags.skillName}: ${result.summary.removed} removed, ${result.summary.absent} already absent, ${result.summary.keptLocallyModified} kept (local edits)`,
+      );
+      for (const f of result.files) {
+        if (f.outcome === 'absent') continue;
+        const tag = f.outcome.padEnd(25);
+        const dep = f.sharedDep ? ' [shared]' : '';
+        console.log(`  ${tag} ${f.target}${dep}`);
+      }
+      if (result.managedBlock.applied) {
+        console.log(
+          `  managed-block           ${result.managedBlock.resolverFile} (cumulative-slugs updated)`,
+        );
+      }
+    }
+
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof UninstallError || err instanceof BundleError) {
+      const code = (err as Error & { code?: string }).code ?? 'error';
+      if (flags.json) {
+        console.log(
+          JSON.stringify(
+            { ok: false, error: code, message: err.message },
+            null,
+            2,
+          ),
+        );
+      } else {
+        console.error(`skillpack uninstall: ${err.message}`);
+      }
+      // exit 1 only for the recoverable "you have local edits" case;
+      // every other UninstallError is a setup error.
+      const exit =
+        err instanceof UninstallError && code === 'locally_modified' ? 1 : 2;
+      process.exit(exit);
     }
     throw err;
   }

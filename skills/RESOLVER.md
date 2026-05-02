@@ -103,3 +103,25 @@ These apply to ALL brain-writing skills:
 - `skills/conventions/subagent-routing.md` — when to use Minions vs inline work
 - `skills/_brain-filing-rules.md` — where files go
 - `skills/_output-rules.md` — output quality standards
+
+## Uncategorized
+
+| Trigger | Skill |
+|---------|-------|
+| "personalized version of this book" | `skills/book-mirror/SKILL.md` |
+
+| "enrich this article" | `skills/article-enrichment/SKILL.md` |
+
+| "strategic reading" | `skills/strategic-reading/SKILL.md` |
+
+| "concept synthesis" | `skills/concept-synthesis/SKILL.md` |
+
+| "perplexity research" | `skills/perplexity-research/SKILL.md` |
+
+| "crawl my archive" | `skills/archive-crawler/SKILL.md` |
+
+| "verify this academic claim" | `skills/academic-verify/SKILL.md` |
+
+| "make pdf from brain" | `skills/brain-pdf/SKILL.md` |
+
+| "voice note" | `skills/voice-note-ingest/SKILL.md` |

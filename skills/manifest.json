@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.10.0",
+  "version": "0.25.1",
   "conformance_version": "1.0.0",
   "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
   "skills": [
@@ -153,6 +153,51 @@
       "name": "smoke-test",
       "path": "smoke-test/SKILL.md",
       "description": "Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments"
+    },
+    {
+      "name": "book-mirror",
+      "path": "book-mirror/SKILL.md",
+      "description": "Take any book (EPUB/PDF), produce a personalized chapter-by-chapter analysis with two-column tables: left = chapter summary, right = how it applies to you based on brain context. Output: brain page + PDF."
+    },
+    {
+      "name": "article-enrichment",
+      "path": "article-enrichment/SKILL.md",
+      "description": "Transform raw article text dumps in the brain into structured pages with executive summaries, verbatim quotes, key insights, why-it-matters, and cross-references."
+    },
+    {
+      "name": "strategic-reading",
+      "path": "strategic-reading/SKILL.md",
+      "description": "Read a book/article/case study through the lens of a specific strategic problem; produce an applied playbook (do/avoid/watch for) with short/medium/long-term recommendations."
+    },
+    {
+      "name": "concept-synthesis",
+      "path": "concept-synthesis/SKILL.md",
+      "description": "Deduplicate and synthesize raw concept stubs into a tiered intellectual map (T1 Canon to T4 Riff), tracing idea evolution across sources over time."
+    },
+    {
+      "name": "perplexity-research",
+      "path": "perplexity-research/SKILL.md",
+      "description": "Brain-augmented web research via Perplexity plus Opus; surfaces what is NEW vs already-known about a topic by cross-referencing against the brain first."
+    },
+    {
+      "name": "archive-crawler",
+      "path": "archive-crawler/SKILL.md",
+      "description": "Universal archivist for personal file archives (Dropbox/B2/email exports). Filters for high-value content within an explicit gbrain.yml allow-list scan_paths gate."
+    },
+    {
+      "name": "academic-verify",
+      "path": "academic-verify/SKILL.md",
+      "description": "Verify academic citations and research claims against current literature; routes through perplexity-research for the actual web search and formats results as a citation-checked brain page."
+    },
+    {
+      "name": "brain-pdf",
+      "path": "brain-pdf/SKILL.md",
+      "description": "Generate a publication-quality PDF from any brain page via the gstack make-pdf binary; strips frontmatter, sanitizes emoji, applies running headers."
+    },
+    {
+      "name": "voice-note-ingest",
+      "path": "voice-note-ingest/SKILL.md",
+      "description": "Ingest voice notes with exact-phrasing preservation (never paraphrased); routes content based on a decision tree across originals/concepts/people/companies/ideas/personal/voice-notes."
     }
   ],
   "dependencies": {
