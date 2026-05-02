@@ -49,7 +49,7 @@ import {
 
 // ── Defaults ────────────────────────────────────────────────
 
-const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const DEFAULT_MODEL = process.env.GBRAIN_ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 const DEFAULT_MAX_TURNS = 20;
 const DEFAULT_RATE_KEY = 'anthropic:messages';
 const DEFAULT_MAX_CONCURRENT = Number(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT ?? '8');

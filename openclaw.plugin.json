@@ -1,4 +1,5 @@
 {
+  "id": "gbrain",
   "name": "gbrain",
   "version": "0.25.1",
   "description": "Personal knowledge brain with Postgres + pgvector hybrid search",

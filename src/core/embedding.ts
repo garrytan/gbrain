@@ -9,13 +9,13 @@
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const MODEL = process.env.GBRAIN_OPENAI_MODEL || 'text-embedding-3-large';
+const DIMENSIONS = Number(process.env.GBRAIN_EMBEDDING_DIMENSIONS || '1536');
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 120000;
-const BATCH_SIZE = 100;
+const BATCH_SIZE = Number(process.env.GBRAIN_EMBED_BATCH_SIZE || '100');
 
 let client: OpenAI | null = null;
 
