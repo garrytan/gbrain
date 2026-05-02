@@ -13,7 +13,6 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import * as db from '../core/db.ts';
 
 // --- Types ---
 
@@ -98,11 +97,10 @@ export function deriveDomain(frontmatterDomain: string | null | undefined, slug:
 
 /**
  * Find pages with no inbound links.
- * Returns raw rows from the DB (all pages regardless of filter).
+ * Returns raw rows from the engine (all pages regardless of filter).
  */
-export async function queryOrphanPages(): Promise<{ slug: string; title: string; domain: string | null }[]> {
-  const sql = db.getConnection();
-  const rows = await sql`
+export async function queryOrphanPages(engine: BrainEngine): Promise<{ slug: string; title: string; domain: string | null }[]> {
+  return engine.executeRaw<{ slug: string; title: string; domain: string | null }>(`
     SELECT
       p.slug,
       COALESCE(p.title, p.slug) AS title,
@@ -112,22 +110,19 @@ export async function queryOrphanPages(): Promise<{ slug: string; title: string;
       SELECT 1 FROM links l WHERE l.to_page_id = p.id
     )
     ORDER BY p.slug
-  `;
-  return rows as { slug: string; title: string; domain: string | null }[];
+  `);
 }
 
 /**
  * Find orphan pages, with optional pseudo-page filtering.
  * Returns structured OrphanResult with totals.
  */
-export async function findOrphans(includePseudo: boolean = false): Promise<OrphanResult> {
-  const allOrphans = await queryOrphanPages();
-  const totalPages = allOrphans.length; // pages with no inbound links
+export async function findOrphans(engine: BrainEngine, includePseudo: boolean = false): Promise<OrphanResult> {
+  const allOrphans = await queryOrphanPages(engine);
 
   // Count total pages in DB for the summary line
-  const sql = db.getConnection();
-  const [{ count: totalPagesCount }] = await sql`SELECT count(*)::int AS count FROM pages`;
-  const total = Number(totalPagesCount);
+  const totalRows = await engine.executeRaw<{ count: number | string }>(`SELECT count(*)::int AS count FROM pages`);
+  const total = Number(totalRows[0]?.count ?? 0);
 
   const filtered = includePseudo
     ? allOrphans
@@ -189,7 +184,7 @@ export function formatOrphansText(result: OrphanResult): string {
 
 // --- CLI entry point ---
 
-export async function runOrphans(_engine: BrainEngine, args: string[]) {
+export async function runOrphans(engine: BrainEngine, args: string[]) {
   const json = args.includes('--json');
   const count = args.includes('--count');
   const includePseudo = args.includes('--include-pseudo');
@@ -211,7 +206,7 @@ Summary line: N orphans out of M linkable pages (K total; K-M excluded)
     return;
   }
 
-  const result = await findOrphans(includePseudo);
+  const result = await findOrphans(engine, includePseudo);
 
   if (count) {
     console.log(String(result.total_orphans));
