@@ -88,6 +88,107 @@ export interface ReservedConnection {
   executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 
+/**
+ * v0.28: Takes — typed/weighted/attributed claims, indexed in Postgres.
+ * Markdown is source of truth (fenced table on the page); this row is the
+ * derived index. Page-scoped via page_id (NOT slug — slug is unique only
+ * within a source). `(page_id, row_num)` is the natural unique key.
+ */
+export interface TakeKindLiteral { kind: 'fact' | 'take' | 'bet' | 'hunch' }
+export type TakeKind = TakeKindLiteral['kind'];
+
+/** Input row for addTakesBatch. */
+export interface TakeBatchInput {
+  page_id: number;
+  row_num: number;
+  claim: string;
+  kind: TakeKind;
+  holder: string;
+  weight?: number;          // 0..1, default 0.5; clamped server-side
+  since_date?: string;      // ISO date 'YYYY-MM-DD'
+  until_date?: string;
+  source?: string;
+  superseded_by?: number | null;
+  active?: boolean;         // default true
+}
+
+/** Take row as returned by listTakes / searchTakes. */
+export interface Take {
+  id: number;
+  page_id: number;
+  page_slug: string;        // joined from pages
+  row_num: number;
+  claim: string;
+  kind: TakeKind;
+  holder: string;
+  weight: number;
+  since_date: string | null;
+  until_date: string | null;
+  source: string | null;
+  superseded_by: number | null;
+  active: boolean;
+  resolved_at: string | null;
+  resolved_outcome: boolean | null;
+  resolved_value: number | null;
+  resolved_unit: string | null;
+  resolved_source: string | null;
+  resolved_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TakesListOpts {
+  page_id?: number;
+  page_slug?: string;       // resolved via JOIN
+  holder?: string;
+  kind?: TakeKind;
+  active?: boolean;         // default true (only active rows)
+  resolved?: boolean;       // true = only resolved; false = only unresolved; undefined = both
+  /** Per-token MCP allow-list. Server applies AND holder = ANY($takesHoldersAllowList) when set. */
+  takesHoldersAllowList?: string[];
+  sortBy?: 'weight' | 'since_date' | 'created_at';
+  limit?: number;
+  offset?: number;
+}
+
+/** Search result row from searchTakes / searchTakesVector. */
+export interface TakeHit {
+  take_id: number;
+  page_id: number;
+  page_slug: string;
+  row_num: number;
+  claim: string;
+  kind: TakeKind;
+  holder: string;
+  weight: number;
+  score: number;            // search rank score (ts_rank for keyword, 1-cos_dist for vector)
+}
+
+/** v0.28 stale-takes row (mirrors StaleChunkRow shape). Embedding column intentionally omitted. */
+export interface StaleTakeRow {
+  take_id: number;
+  page_slug: string;
+  row_num: number;
+  claim: string;
+}
+
+/** Resolution metadata for resolveTake. */
+export interface TakeResolution {
+  outcome: boolean;
+  value?: number;
+  unit?: string;       // 'usd' | 'pct' | 'count' | other
+  source?: string;
+  resolvedBy: string;  // slug or 'garry'
+}
+
+/** Synthesis evidence row input (provenance from think synthesis pages). */
+export interface SynthesisEvidenceInput {
+  synthesis_page_id: number;
+  take_page_id: number;
+  take_row_num: number;
+  citation_index: number;
+}
+
 /** Dream-cycle Haiku verdict on whether a transcript is worth processing. */
 export interface DreamVerdict {
   worth_processing: boolean;
@@ -272,6 +373,84 @@ export interface BrainEngine {
   // Raw data
   putRawData(slug: string, source: string, data: object): Promise<void>;
   getRawData(slug: string, source?: string): Promise<RawData[]>;
+
+  // ============================================================
+  // v0.28: Takes (typed/weighted/attributed claims) + synthesis evidence
+  // ============================================================
+  /**
+   * Bulk insert/upsert takes. Uses `unnest()` (Postgres) or manual `$N`
+   * placeholders (PGLite). Idempotency: ON CONFLICT (page_id, row_num) DO UPDATE
+   * — re-extract on a changed claim/weight updates the row in place.
+   * Returns the number of rows inserted OR updated.
+   *
+   * Weight outside [0, 1] is clamped server-side and surfaces a stderr
+   * warning per call (`TAKES_WEIGHT_CLAMPED`). Invalid `kind` values
+   * fail the whole batch via the CHECK constraint — caller is responsible
+   * for parser validation upstream.
+   */
+  addTakesBatch(rows: TakeBatchInput[]): Promise<number>;
+
+  /** List takes filtered by holder/kind/active/etc. Resolves page_slug via JOIN. */
+  listTakes(opts?: TakesListOpts): Promise<Take[]>;
+
+  /**
+   * Keyword search across active takes. Uses pg_trgm similarity over claim text.
+   * Honors `takesHoldersAllowList` via WHERE filter so MCP-bound calls cannot
+   * retrieve holders outside the token's allow-list.
+   */
+  searchTakes(query: string, opts?: SearchOpts & { takesHoldersAllowList?: string[] }): Promise<TakeHit[]>;
+
+  /**
+   * Vector search across active takes. Cosine distance against `embedding`.
+   * Skipped (returns []) when no embedding column has been populated yet.
+   */
+  searchTakesVector(
+    embedding: Float32Array,
+    opts?: SearchOpts & { takesHoldersAllowList?: string[] },
+  ): Promise<TakeHit[]>;
+
+  /** Look up embeddings by take id (mirrors getEmbeddingsByChunkIds). */
+  getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>>;
+
+  /** Pre-flight count for `gbrain embed --stale`. WHERE active AND embedding IS NULL. */
+  countStaleTakes(): Promise<number>;
+
+  /** List stale takes (no embedding column in payload — same pattern as listStaleChunks). */
+  listStaleTakes(): Promise<StaleTakeRow[]>;
+
+  /**
+   * Update a take's mutable fields. May NOT change claim/kind/holder per the
+   * supersession invariants — those route through supersedeTake. Throws
+   * `TAKE_ROW_NOT_FOUND` when (page_id, row_num) doesn't exist.
+   */
+  updateTake(
+    pageId: number,
+    rowNum: number,
+    fields: { weight?: number; since_date?: string; source?: string },
+  ): Promise<void>;
+
+  /**
+   * Supersede the take at (page_id, oldRow). Marks old row active=false +
+   * sets superseded_by; appends new row at the next row_num for the page;
+   * returns both row_nums. Atomic (transactional). Cycle prevention: if newRow
+   * sets superseded_by pointing to a chain that comes back to oldRow, throws
+   * `TAKES_SUPERSEDE_CYCLE`. Resolved bets (`resolved_at IS NOT NULL`) cannot
+   * be superseded — throws `TAKE_RESOLVED_IMMUTABLE`.
+   */
+  supersedeTake(
+    pageId: number,
+    oldRow: number,
+    newRow: Omit<TakeBatchInput, 'page_id' | 'row_num' | 'superseded_by'>,
+  ): Promise<{ oldRow: number; newRow: number }>;
+
+  /**
+   * Resolve a bet (or take). Sets resolved_* columns. Immutable: re-resolve
+   * attempts throw `TAKE_ALREADY_RESOLVED`. Use supersede to express a new bet.
+   */
+  resolveTake(pageId: number, rowNum: number, resolution: TakeResolution): Promise<void>;
+
+  /** Persist think provenance. ON CONFLICT DO NOTHING; returns rows inserted. */
+  addSynthesisEvidence(rows: SynthesisEvidenceInput[]): Promise<number>;
 
   // Dream-cycle significance verdict cache (v0.23).
   // Keyed by (file_path, content_hash). Distinct from raw_data, which is

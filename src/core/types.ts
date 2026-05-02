@@ -5,7 +5,7 @@
 // (e.g. "attended meetings" vs "received emails").
 // `code` (v0.19.0): tree-sitter-chunked source files; consumed by code-def /
 // code-refs / code-callers / code-callees + Cathedral II two-pass retrieval.
-export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media' | 'writing' | 'analysis' | 'guide' | 'hardware' | 'architecture' | 'meeting' | 'note' | 'email' | 'slack' | 'calendar-event' | 'code';
+export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media' | 'writing' | 'analysis' | 'guide' | 'hardware' | 'architecture' | 'meeting' | 'note' | 'email' | 'slack' | 'calendar-event' | 'code' | 'synthesis';
 
 export interface Page {
   id: number;

@@ -2,6 +2,158 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.28.0] - 2026-05-01
+
+**The brain finally captures what you BELIEVE, not just what's true.**
+**Takes ship: typed, weighted, attributed claims that diff in git.**
+
+v0.28 adds the largest structural surface gbrain has ever shipped: a takes
+layer that turns every page into a queryable belief surface. Four kinds
+(`fact | take | bet | hunch`), explicit attribution (`world | garry | brain
+| <slug>`), 0.0–1.0 weight, since/until dates, supersede chains, and bet
+resolution. Markdown is the source of truth (a fenced table on the page);
+Postgres is the derived index. Every weight change diffs in git. Every
+superseded take stays visible with strikethrough so belief evolution is
+preserved. `gbrain takes` CLI ships list, search, add, update, supersede,
+and resolve. Plus unified model config, per-token MCP visibility for the
+takes layer, three new MCP ops, and a re-chunk fix that closes a real
+privacy hole at the index layer.
+
+### The numbers that matter
+
+Real surface area added vs the v0.24 baseline. Numbers from `git diff
+master..HEAD --stat`:
+
+| Surface | Before | After | Δ |
+|---|---|---|---|
+| Engine methods on BrainEngine | 41 | 50 | +9 |
+| MCP operations | 41 | 44 | +3 (takes_list, takes_search, think) |
+| New SQL tables | — | 2 | takes + synthesis_evidence (HNSW partial index, FK CASCADE) |
+| Schema migrations | v31 | v33 | +v32 (takes), +v33 (access_tokens.permissions JSONB) |
+| New unit/integration tests | — | 75 | 36 takes + 10 page-lock + 11 model-config + 8 MCP allow-list + 5 extract + 5 fence parity |
+| New CLI commands | — | 1 family | `gbrain takes <list\|search\|add\|update\|supersede\|resolve>` + `gbrain auth permissions` |
+| Privacy holes closed | 1 P0 | 0 | takes content stripped from page chunks before indexing (Codex P0 #3) |
+
+**What this means for you**: every page becomes a queryable belief
+surface. `gbrain takes search "vertical AI"` returns ranked claims across
+the entire brain. Add a hunch after office hours; supersede it three
+months later when the data turns. The brain has been collecting facts for
+years; v0.28 starts collecting your reads on those facts.
+
+### What's coming in v0.28.x as follow-ups
+
+- `gbrain think` synthesis pipeline (op surface registered now; gather +
+  RRF + cite + synthesize land in v0.28.x)
+- `gbrain takes seed <slug>` — LLM extracts claims from page prose
+- Dream `auto_think` + `drift` phases (opt-in)
+
+The architecture is fully plumbed; the LLM-touching paths land
+incrementally so the contracts are stable for SDK callers from day one.
+
+## To take advantage of v0.28.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain
+doctor` warns about an incomplete migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Your agent reads `skills/migrations/v0.28.0.md` the next time you
+   interact with it.** The migration backfills takes from any pre-existing
+   fenced markdown tables; queues a re-chunk TODO so the chunker-strip
+   rule (Codex P0 fix — keeps takes content out of page chunks where the
+   per-token allow-list cannot reach) catches up on legacy pages.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   gbrain takes --help
+   ```
+4. **Migrate per-phase model keys** (optional, mechanical, deprecation
+   warning until v0.30):
+   ```bash
+   gbrain config set models.default sonnet
+   ```
+5. **Configure MCP token visibility** (security-relevant for tokens
+   bound to public/agent integrations):
+   ```bash
+   gbrain auth permissions <token-name> set-takes-holders world,garry,brain
+   ```
+   Default for tokens with no permissions row: `["world"]`. Hunches stay
+   private to local CLI callers unless you explicitly grant agent visibility.
+
+6. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+### Itemized changes
+
+#### Schema (migrations v32 + v33)
+
+- **takes table** — `(page_id, row_num)` natural unique key + `id BIGSERIAL`
+  PK; full claim metadata; resolution metadata (`resolved_at`,
+  `resolved_outcome`, `resolved_value`, `resolved_unit`, `resolved_source`,
+  `resolved_by`); HNSW partial index on `embedding` for active rows.
+- **synthesis_evidence table** — composite FK with `ON DELETE CASCADE`.
+- **access_tokens.permissions JSONB** — default `{"takes_holders":["world"]}`.
+  Backfill UPDATE handles pre-existing rows so old tokens default-deny.
+
+#### Engine + types
+
+- BrainEngine gains 9 new methods.
+- `Take`, `TakeBatchInput`, `TakeHit`, `StaleTakeRow`, `TakeKind`,
+  `TakesListOpts`, `TakeResolution`, `SynthesisEvidenceInput` types.
+- `OperationContext.takesHoldersAllowList` threaded through dispatch.
+
+#### Markdown surface
+
+- `src/core/takes-fence.ts` — pure parser/renderer/upserter for the
+  fenced table. Append-only semantics; row_num monotonic forever.
+- `src/core/page-lock.ts` — PID-liveness file lock per page.
+- `src/core/cycle/extract-takes.ts` — dual-path (fs + db) phase.
+- `src/core/chunkers/recursive.ts` — calls `stripTakesFence()` BEFORE
+  chunking (Codex P0 #3 privacy fix).
+
+#### Unified model config
+
+- `src/core/model-config.ts` — `resolveModel()` 6-tier resolver replaces
+  hardcoded model strings and per-phase config keys.
+- Aliases: `opus`, `sonnet`, `haiku`, `gemini`, `gpt`. Cycle-safe.
+- Migrated call sites: `synthesize.ts` (model + verdictModel), `patterns.ts`
+  (model). Deprecated keys still honored with stderr warning until v0.30.
+
+#### MCP + auth
+
+- New ops `takes_list`, `takes_search`, `think` (think op-surface only;
+  pipeline in v0.28.x).
+- HTTP transport reads `access_tokens.permissions.takes_holders` and
+  threads through dispatch → engine SQL filter.
+- Stdio defaults to `["world"]`.
+- `gbrain auth create --takes-holders` flag + `auth permissions <name>
+  set-takes-holders` subcommand.
+
+#### CLI
+
+- `gbrain takes <slug>` / `search` / `add` / `update` / `supersede` /
+  `resolve` — full lifecycle.
+
+#### Tests added
+
+75 new cases. All pass. Coverage: `test/takes-engine.test.ts` (16),
+`test/takes-fence.test.ts` (15), `test/extract-takes.test.ts` (5),
+`test/page-lock.test.ts` (10), `test/model-config.test.ts` (11),
+`test/takes-mcp-allowlist.test.ts` (8).
+
+#### Risks accepted
+
+- **Think pipeline ships incrementally**: op surface registered now,
+  pipeline lands in v0.28.x. SDK callers detect the surface and degrade
+  gracefully.
+- **Auto-think + drift phases deferred**: opt-in dream-cycle phases for
+  autonomous belief evolution. Land in v0.28.x; no schema migration needed.
 ## [0.25.0] - 2026-04-26
 
 ## **Contributors can now benchmark retrieval changes against real captured queries before merging.**

@@ -62,6 +62,8 @@ interface AuthResult {
   ok: boolean;
   tokenId?: string;
   tokenName?: string;
+  /** v0.28: per-token allow-list for takes.holder. Default ['world'] when permissions row absent. */
+  takesHoldersAllowList?: string[];
 }
 
 /** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
@@ -163,7 +165,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
     const hash = hashToken(token);
     try {
       const [row] = await sql`
-        SELECT id, name FROM access_tokens
+        SELECT id, name, permissions FROM access_tokens
         WHERE token_hash = ${hash} AND revoked_at IS NULL
       `;
       if (!row) return { ok: false };
@@ -174,7 +176,18 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           WHERE id = ${row.id}
             AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')`
         .catch(() => { /* fire-and-forget */ });
-      return { ok: true, tokenId: row.id, tokenName: row.name };
+      // v0.28: extract per-token takes-holder allow-list. Fail-safe default
+      // is ['world'] — a token with no permissions row sees public claims only.
+      const perms = (row as { permissions?: { takes_holders?: unknown } }).permissions;
+      const allowList = Array.isArray(perms?.takes_holders)
+        ? (perms!.takes_holders as unknown[]).filter(h => typeof h === 'string') as string[]
+        : ['world'];
+      return {
+        ok: true,
+        tokenId: row.id,
+        tokenName: row.name,
+        takesHoldersAllowList: allowList,
+      };
     } catch {
       return { ok: false };
     }
@@ -320,7 +333,12 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       if (method === 'tools/call') {
         const toolName: string = params?.name ?? 'unknown';
         const args: Record<string, unknown> = params?.arguments ?? {};
-        const result = await dispatchToolCall(engine, toolName, args, { remote: true });
+        // v0.28: thread per-token takes-holder allow-list so takes_list /
+        // takes_search / query (when it returns takes) can server-side filter.
+        const result = await dispatchToolCall(engine, toolName, args, {
+          remote: true,
+          takesHoldersAllowList: auth.takesHoldersAllowList,
+        });
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);
         return Response.json(

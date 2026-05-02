@@ -1,5 +1,12 @@
 import postgres from 'postgres';
-import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection, DreamVerdict, DreamVerdictInput } from './engine.ts';
+import type {
+  BrainEngine,
+  LinkBatchInput, TimelineBatchInput,
+  ReservedConnection,
+  DreamVerdict, DreamVerdictInput,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeResolution, SynthesisEvidenceInput,
+} from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
@@ -20,7 +27,7 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
@@ -1336,6 +1343,269 @@ export class PostgresEngine implements BrainEngine {
         reasons = EXCLUDED.reasons,
         judged_at = now()
     `;
+  }
+
+  // ============================================================
+  // v0.28: Takes (typed/weighted/attributed claims) + synthesis_evidence
+  // ============================================================
+
+  async addTakesBatch(rowsIn: TakeBatchInput[]): Promise<number> {
+    if (rowsIn.length === 0) return 0;
+    const sql = this.sql;
+    let weightClamped = 0;
+    const pageIds   = rowsIn.map(r => r.page_id);
+    const rowNums   = rowsIn.map(r => r.row_num);
+    const claims    = rowsIn.map(r => r.claim);
+    const kinds     = rowsIn.map(r => r.kind);
+    const holders   = rowsIn.map(r => r.holder);
+    const weights   = rowsIn.map(r => {
+      const w = r.weight ?? 0.5;
+      if (w < 0 || w > 1) { weightClamped++; return Math.max(0, Math.min(1, w)); }
+      return w;
+    });
+    const sinces    = rowsIn.map(r => r.since_date ?? null);
+    const untils    = rowsIn.map(r => r.until_date ?? null);
+    const sources   = rowsIn.map(r => r.source ?? null);
+    const supersededBys = rowsIn.map(r => r.superseded_by ?? null);
+    // postgres-js needs boolean arrays passed as text[] then SQL-cast to boolean[],
+    // otherwise the driver mis-detects element type. Same pattern as how the
+    // existing batch methods handle bools.
+    const actives   = rowsIn.map(r => (r.active ?? true) ? 'true' : 'false');
+    if (weightClamped > 0) {
+      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: ${weightClamped} row(s) had weight outside [0,1]; clamped\n`);
+    }
+    const result = await sql`
+      INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
+      SELECT v.page_id::int, v.row_num::int, v.claim, v.kind, v.holder, v.weight::real,
+             v.since_date::text, v.until_date::text, v.source, v.superseded_by::int, v.active::boolean
+      FROM unnest(
+        ${pageIds}::int[], ${rowNums}::int[], ${claims}::text[], ${kinds}::text[],
+        ${holders}::text[], ${weights}::real[], ${sinces}::text[], ${untils}::text[],
+        ${sources}::text[], ${supersededBys}::int[], ${actives}::text[]::boolean[]
+      ) AS v(page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
+      ON CONFLICT (page_id, row_num) DO UPDATE SET
+        claim         = EXCLUDED.claim,
+        kind          = EXCLUDED.kind,
+        holder        = EXCLUDED.holder,
+        weight        = EXCLUDED.weight,
+        since_date    = EXCLUDED.since_date,
+        until_date    = EXCLUDED.until_date,
+        source        = EXCLUDED.source,
+        superseded_by = EXCLUDED.superseded_by,
+        active        = EXCLUDED.active,
+        updated_at    = now()
+      RETURNING 1
+    `;
+    return result.length;
+  }
+
+  async listTakes(opts: TakesListOpts = {}): Promise<Take[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts.limit, 100, 500);
+    const offset = Math.max(0, Math.floor(opts.offset ?? 0));
+    const active = opts.active ?? true;
+    const rows = await sql`
+      SELECT t.*, p.slug AS page_slug
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE 1=1
+        AND (${opts.page_id ?? null}::int   IS NULL OR t.page_id = ${opts.page_id ?? null}::int)
+        AND (${opts.page_slug ?? null}::text IS NULL OR p.slug   = ${opts.page_slug ?? null}::text)
+        AND (${opts.holder ?? null}::text   IS NULL OR t.holder  = ${opts.holder ?? null}::text)
+        AND (${opts.kind ?? null}::text     IS NULL OR t.kind    = ${opts.kind ?? null}::text)
+        AND (${active}::boolean IS NULL OR t.active = ${active}::boolean)
+        AND (
+          ${opts.resolved === undefined ? null : opts.resolved}::boolean IS NULL
+          OR (${opts.resolved === undefined ? null : opts.resolved}::boolean = true  AND t.resolved_at IS NOT NULL)
+          OR (${opts.resolved === undefined ? null : opts.resolved}::boolean = false AND t.resolved_at IS NULL)
+        )
+        AND (
+          ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+          OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+        )
+      ORDER BY
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date'  THEN t.since_date END DESC NULLS LAST,
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'created_at'  THEN t.created_at END DESC NULLS LAST
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
+  }
+
+  async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[] } = {}): Promise<TakeHit[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts.limit, 30, 100);
+    const rows = await sql`
+      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
+             t.claim, t.kind, t.holder, t.weight,
+             similarity(t.claim, ${query})::real AS score
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE t.active
+        AND t.claim % ${query}
+        AND (
+          ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+          OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+        )
+      ORDER BY score DESC, t.weight DESC
+      LIMIT ${limit}
+    `;
+    return rows as unknown as TakeHit[];
+  }
+
+  async searchTakesVector(
+    embedding: Float32Array,
+    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
+  ): Promise<TakeHit[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts.limit, 30, 100);
+    const vec = `[${Array.from(embedding).join(',')}]`;
+    const rows = await sql`
+      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
+             t.claim, t.kind, t.holder, t.weight,
+             (1 - (t.embedding <=> ${vec}::vector))::real AS score
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE t.active
+        AND t.embedding IS NOT NULL
+        AND (
+          ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+          OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+        )
+      ORDER BY t.embedding <=> ${vec}::vector
+      LIMIT ${limit}
+    `;
+    return rows as unknown as TakeHit[];
+  }
+
+  async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
+    if (ids.length === 0) return new Map();
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, embedding FROM takes WHERE id = ANY(${ids}::bigint[]) AND embedding IS NOT NULL
+    `;
+    const out = new Map<number, Float32Array>();
+    for (const r of rows as unknown as Array<{ id: number; embedding: unknown }>) {
+      const parsed = tryParseEmbedding(r.embedding);
+      if (parsed) out.set(Number(r.id), parsed);
+    }
+    return out;
+  }
+
+  async countStaleTakes(): Promise<number> {
+    const sql = this.sql;
+    const [row] = await sql`
+      SELECT count(*)::int AS count FROM takes WHERE active AND embedding IS NULL
+    `;
+    return Number((row as { count?: number } | undefined)?.count ?? 0);
+  }
+
+  async listStaleTakes(): Promise<StaleTakeRow[]> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT t.id AS take_id, p.slug AS page_slug, t.row_num, t.claim
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE t.active AND t.embedding IS NULL
+      ORDER BY t.id
+      LIMIT 100000
+    `;
+    return rows as unknown as StaleTakeRow[];
+  }
+
+  async updateTake(
+    pageId: number,
+    rowNum: number,
+    fields: { weight?: number; since_date?: string; source?: string },
+  ): Promise<void> {
+    const sql = this.sql;
+    let weight = fields.weight;
+    if (weight !== undefined && (weight < 0 || weight > 1)) {
+      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → [0,1]\n`);
+      weight = Math.max(0, Math.min(1, weight));
+    }
+    const result = await sql`
+      UPDATE takes SET
+        weight     = COALESCE(${weight ?? null}::real, weight),
+        since_date = COALESCE(${fields.since_date ?? null}::text, since_date),
+        source     = COALESCE(${fields.source ?? null}::text, source),
+        updated_at = now()
+      WHERE page_id = ${pageId} AND row_num = ${rowNum}
+      RETURNING 1
+    `;
+    if (result.length === 0) {
+      throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${rowNum}`, 'list takes for this page with `gbrain takes <slug>` to see valid row numbers');
+    }
+  }
+
+  async supersedeTake(
+    pageId: number,
+    oldRow: number,
+    newRow: Omit<TakeBatchInput, 'page_id' | 'row_num' | 'superseded_by'>,
+  ): Promise<{ oldRow: number; newRow: number }> {
+    const conn = this._sql || db.getConnection();
+    return await conn.begin(async (tx) => {
+      const [existing] = await tx`
+        SELECT resolved_at FROM takes WHERE page_id = ${pageId} AND row_num = ${oldRow}
+      `;
+      if (!existing) throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${oldRow}`, 'list takes with `gbrain takes <slug>`');
+      if ((existing as { resolved_at?: unknown }).resolved_at) {
+        throw new GBrainError('TAKE_RESOLVED_IMMUTABLE', `take ${pageId}#${oldRow} is resolved`, 'resolved bets are immutable; add a new take instead');
+      }
+      const [maxRow] = await tx`SELECT COALESCE(MAX(row_num), 0) + 1 AS next FROM takes WHERE page_id = ${pageId}`;
+      const newRowNum = Number((maxRow as { next?: number })?.next ?? 1);
+      const wClamped = Math.max(0, Math.min(1, newRow.weight ?? 0.5));
+      await tx`
+        INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, active)
+        VALUES (${pageId}, ${newRowNum}, ${newRow.claim}, ${newRow.kind}, ${newRow.holder}, ${wClamped},
+                ${newRow.since_date ?? null}::text, ${newRow.until_date ?? null}::text,
+                ${newRow.source ?? null}, ${newRow.active ?? true})
+      `;
+      await tx`
+        UPDATE takes SET active = false, superseded_by = ${newRowNum}, updated_at = now()
+        WHERE page_id = ${pageId} AND row_num = ${oldRow}
+      `;
+      return { oldRow, newRow: newRowNum };
+    }) as { oldRow: number; newRow: number };
+  }
+
+  async resolveTake(pageId: number, rowNum: number, resolution: TakeResolution): Promise<void> {
+    const sql = this.sql;
+    const [existing] = await sql`SELECT resolved_at FROM takes WHERE page_id = ${pageId} AND row_num = ${rowNum}`;
+    if (!existing) throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${rowNum}`, 'list takes for this page with `gbrain takes <slug>` to see valid row numbers');
+    if ((existing as { resolved_at?: unknown }).resolved_at) {
+      throw new GBrainError('TAKE_ALREADY_RESOLVED', `take ${pageId}#${rowNum} already resolved`, 'resolution is immutable; add a new take to record a new outcome');
+    }
+    await sql`
+      UPDATE takes SET
+        resolved_at      = now(),
+        resolved_outcome = ${resolution.outcome},
+        resolved_value   = ${resolution.value ?? null}::real,
+        resolved_unit    = ${resolution.unit ?? null}::text,
+        resolved_source  = ${resolution.source ?? null}::text,
+        resolved_by      = ${resolution.resolvedBy},
+        updated_at       = now()
+      WHERE page_id = ${pageId} AND row_num = ${rowNum}
+    `;
+  }
+
+  async addSynthesisEvidence(rowsIn: SynthesisEvidenceInput[]): Promise<number> {
+    if (rowsIn.length === 0) return 0;
+    const sql = this.sql;
+    const synthesisIds = rowsIn.map(r => r.synthesis_page_id);
+    const takePageIds  = rowsIn.map(r => r.take_page_id);
+    const takeRowNums  = rowsIn.map(r => r.take_row_num);
+    const citationIxs  = rowsIn.map(r => r.citation_index);
+    const result = await sql`
+      INSERT INTO synthesis_evidence (synthesis_page_id, take_page_id, take_row_num, citation_index)
+      SELECT v.synthesis_page_id::int, v.take_page_id::int, v.take_row_num::int, v.citation_index::int
+      FROM unnest(
+        ${synthesisIds}::int[], ${takePageIds}::int[], ${takeRowNums}::int[], ${citationIxs}::int[]
+      ) AS v(synthesis_page_id, take_page_id, take_row_num, citation_index)
+      ON CONFLICT (synthesis_page_id, take_page_id, take_row_num) DO NOTHING
+      RETURNING 1
+    `;
+    return result.length;
   }
 
   // Versions

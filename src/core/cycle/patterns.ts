@@ -140,7 +140,13 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
   const enabled = enabledStr === null ? true : enabledStr === 'true';
   const lookbackStr = await engine.getConfig('dream.patterns.lookback_days');
   const minEvidenceStr = await engine.getConfig('dream.patterns.min_evidence');
-  const model = (await engine.getConfig('dream.patterns.model')) || 'claude-sonnet-4-6';
+  // v0.28: unified model resolution
+  const { resolveModel } = await import('../model-config.ts');
+  const model = await resolveModel(engine, {
+    configKey: 'models.dream.patterns',
+    deprecatedConfigKey: 'dream.patterns.model',
+    fallback: 'sonnet',
+  });
   return {
     enabled,
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,

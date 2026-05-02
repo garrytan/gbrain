@@ -1073,6 +1073,154 @@ export const MIGRATIONS: Migration[] = [
     },
     sql: '',
   },
+  // NOTE: v32 + v33 follow v31 (v0.25 eval_capture_tables) chronologically.
+  // Originally v31/v32 in the v0.28 branch, renumbered to v32/v33 after
+  // master shipped v0.25 (which claimed v31 first). Runtime sort by version
+  // ascending means source-order doesn't matter.
+  {
+    version: 32,
+    name: 'takes_and_synthesis_evidence',
+    // v0.28: typed/weighted/attributed claims ("takes") + synthesis provenance.
+    // Spec: docs/designs (CEO plan) + plan file. Schema decisions:
+    //   - page_id FK (not page_slug) — pages.slug is unique only within source
+    //   - (page_id, row_num) is the natural unique key (composite, append-only)
+    //   - synthesis_evidence FK ON DELETE CASCADE — when a source take is hard-deleted,
+    //     provenance rows go with it; synthesis renderer marks citations as removed
+    //   - HNSW index on embedding (pgvector 0.7+ supports both Postgres + PGLite)
+    //   - resolved_* columns ship now per CEO-review D4 + Codex P1 #13 (immutable)
+    sql: `
+      CREATE TABLE IF NOT EXISTS takes (
+        id               BIGSERIAL PRIMARY KEY,
+        page_id          INTEGER     NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        row_num          INTEGER     NOT NULL,
+        claim            TEXT        NOT NULL,
+        kind             TEXT        NOT NULL CHECK (kind IN ('fact','take','bet','hunch')),
+        holder           TEXT        NOT NULL,
+        weight           REAL        NOT NULL DEFAULT 0.5 CHECK (weight >= 0 AND weight <= 1),
+        since_date       TEXT,
+        until_date       TEXT,
+        source           TEXT,
+        superseded_by    INTEGER,
+        active           BOOLEAN     NOT NULL DEFAULT TRUE,
+        resolved_at      TIMESTAMPTZ,
+        resolved_outcome BOOLEAN,
+        resolved_value   REAL,
+        resolved_unit    TEXT,
+        resolved_source  TEXT,
+        resolved_by      TEXT,
+        embedding        VECTOR(1536),
+        embedded_at      TIMESTAMPTZ,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT takes_page_row_key UNIQUE (page_id, row_num)
+      );
+      CREATE INDEX IF NOT EXISTS idx_takes_page          ON takes(page_id);
+      CREATE INDEX IF NOT EXISTS idx_takes_kind_active   ON takes(kind)   WHERE active;
+      CREATE INDEX IF NOT EXISTS idx_takes_holder_active ON takes(holder) WHERE active;
+      CREATE INDEX IF NOT EXISTS idx_takes_weight_active ON takes(weight DESC) WHERE active;
+      CREATE INDEX IF NOT EXISTS idx_takes_resolved_at   ON takes(resolved_at) WHERE resolved_at IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_takes_embedding_hnsw ON takes
+        USING hnsw (embedding vector_cosine_ops)
+        WHERE active AND embedding IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS synthesis_evidence (
+        synthesis_page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        take_page_id      INTEGER NOT NULL,
+        take_row_num      INTEGER NOT NULL,
+        citation_index    INTEGER NOT NULL,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (synthesis_page_id, take_page_id, take_row_num),
+        FOREIGN KEY (take_page_id, take_row_num)
+          REFERENCES takes(page_id, row_num) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_synthesis_evidence_take
+        ON synthesis_evidence(take_page_id, take_row_num);
+
+      DO $$
+      DECLARE
+        has_bypass BOOLEAN;
+      BEGIN
+        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        IF has_bypass THEN
+          ALTER TABLE takes              ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE synthesis_evidence ENABLE ROW LEVEL SECURITY;
+        END IF;
+      END $$;
+    `,
+    sqlFor: {
+      // PGLite: same DDL minus the RLS DO-block (no rolbypassrls). Same HNSW
+      // index syntax — pgvector 0.7+ supports it. Same FK semantics.
+      pglite: `
+        CREATE TABLE IF NOT EXISTS takes (
+          id               BIGSERIAL PRIMARY KEY,
+          page_id          INTEGER     NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+          row_num          INTEGER     NOT NULL,
+          claim            TEXT        NOT NULL,
+          kind             TEXT        NOT NULL CHECK (kind IN ('fact','take','bet','hunch')),
+          holder           TEXT        NOT NULL,
+          weight           REAL        NOT NULL DEFAULT 0.5 CHECK (weight >= 0 AND weight <= 1),
+          since_date       TEXT,
+          until_date       TEXT,
+          source           TEXT,
+          superseded_by    INTEGER,
+          active           BOOLEAN     NOT NULL DEFAULT TRUE,
+          resolved_at      TIMESTAMPTZ,
+          resolved_outcome BOOLEAN,
+          resolved_value   REAL,
+          resolved_unit    TEXT,
+          resolved_source  TEXT,
+          resolved_by      TEXT,
+          embedding        VECTOR(1536),
+          embedded_at      TIMESTAMPTZ,
+          created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+          CONSTRAINT takes_page_row_key UNIQUE (page_id, row_num)
+        );
+        CREATE INDEX IF NOT EXISTS idx_takes_page          ON takes(page_id);
+        CREATE INDEX IF NOT EXISTS idx_takes_kind_active   ON takes(kind)   WHERE active;
+        CREATE INDEX IF NOT EXISTS idx_takes_holder_active ON takes(holder) WHERE active;
+        CREATE INDEX IF NOT EXISTS idx_takes_weight_active ON takes(weight DESC) WHERE active;
+        CREATE INDEX IF NOT EXISTS idx_takes_resolved_at   ON takes(resolved_at) WHERE resolved_at IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_takes_embedding_hnsw ON takes
+          USING hnsw (embedding vector_cosine_ops)
+          WHERE active AND embedding IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS synthesis_evidence (
+          synthesis_page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+          take_page_id      INTEGER NOT NULL,
+          take_row_num      INTEGER NOT NULL,
+          citation_index    INTEGER NOT NULL,
+          created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (synthesis_page_id, take_page_id, take_row_num),
+          FOREIGN KEY (take_page_id, take_row_num)
+            REFERENCES takes(page_id, row_num) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_synthesis_evidence_take
+          ON synthesis_evidence(take_page_id, take_row_num);
+      `,
+    },
+  },
+  {
+    version: 33,
+    name: 'access_tokens_permissions',
+    // v0.28: per-token allow-list for takes visibility (Codex P0 #3 partial fix).
+    // The complementary fix (chunker strips fenced takes content from page chunks
+    // so query results don't bypass the allow-list) lives in src/core/chunkers/takes-strip.ts.
+    // Default permissions = {takes_holders: ['world']} keeps non-world takes (hunches,
+    // private opinions) hidden from MCP-bound tokens until the operator explicitly
+    // grants access via `gbrain auth permissions <id> set-takes-holders`.
+    sql: `
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS permissions JSONB
+          NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb;
+
+      -- Backfill existing tokens to the default. NOT NULL DEFAULT covers new rows;
+      -- this UPDATE handles any pre-existing rows from before the column was added.
+      UPDATE access_tokens
+        SET permissions = '{"takes_holders":["world"]}'::jsonb
+        WHERE permissions IS NULL OR permissions = '{}'::jsonb;
+    `,
+  },
   {
     version: 30,
     name: 'dream_verdicts_table',
