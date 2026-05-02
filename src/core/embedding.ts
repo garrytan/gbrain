@@ -9,8 +9,9 @@
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const MODEL = process.env.GBRAIN_EMBEDDING_MODEL || 'text-embedding-3-large';
+const DIMENSIONS = parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS || '1536', 10);
+const OMIT_DIMENSIONS = process.env.GBRAIN_EMBEDDING_OMIT_DIMENSIONS === 'true';
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
@@ -65,12 +66,25 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
       const response = await getClient().embeddings.create({
         model: MODEL,
         input: texts,
-        dimensions: DIMENSIONS,
+        ...(OMIT_DIMENSIONS ? {} : { dimensions: DIMENSIONS }),
       });
 
       // Sort by index to maintain order
       const sorted = response.data.sort((a, b) => a.index - b.index);
-      return sorted.map(d => new Float32Array(d.embedding));
+      return sorted.map(d => {
+        // Servers that ignore the `dimensions` request param (or where we set
+        // OMIT_DIMENSIONS=true for non-Matryoshka models) may return more
+        // values than DIMENSIONS. For Matryoshka-trained models, slicing the
+        // first N dims and L2-renormalizing preserves cosine retrieval quality.
+        if (d.embedding.length > DIMENSIONS) {
+          const sliced = d.embedding.slice(0, DIMENSIONS);
+          let s = 0;
+          for (const x of sliced) s += x * x;
+          const norm = Math.sqrt(s) || 1;
+          return new Float32Array(sliced.map(x => x / norm));
+        }
+        return new Float32Array(d.embedding);
+      });
     } catch (e: unknown) {
       if (attempt === MAX_RETRIES - 1) throw e;
 
