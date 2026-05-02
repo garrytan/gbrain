@@ -49,17 +49,25 @@ For production deployments that need to run 24/7 without your machine:
 
 Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
 
+## Self-hosted VPS
+
+Use a VPS when you want to own the database, TLS, and process lifecycle. The
+self-hosted recipe uses Docker Postgres + pgvector, systemd, Nginx, and Let's
+Encrypt.
+
+See [SELF_HOSTED.md](SELF_HOSTED.md).
+
 ## Comparison
 
-| | ngrok | Tailscale | Fly.io/Railway |
-|--|---|---|---|
-| Cost | $8/mo (Hobby) | Free | $5-10/mo |
-| Fixed URL | Yes (Hobby) | Yes | Yes |
-| Works when laptop is off | No | No | Yes |
-| Cold start | None | None | None |
-| Timeout limits | None | None | None |
-| All 30 operations | Yes | Yes | Yes |
-| Setup time | 5 min | 10 min | 15 min |
+| | ngrok | Tailscale | Fly.io/Railway | Self-hosted VPS |
+|--|---|---|---|---|
+| Cost | $8/mo (Hobby) | Free | $5-10/mo | VPS cost |
+| Fixed URL | Yes (Hobby) | Yes | Yes | Yes |
+| Works when laptop is off | No | No | Yes | Yes |
+| Cold start | None | None | None | None |
+| Timeout limits | None | None | None | None |
+| All 30 operations | Yes | Yes | Yes | Yes |
+| Setup time | 5 min | 10 min | 15 min | 20 min |
 
 **Note:** `gbrain serve --http` is the built-in HTTP transport (v0.22.7+). Bearer auth
 against the `access_tokens` table, default-deny CORS, two-bucket rate limit, body cap,

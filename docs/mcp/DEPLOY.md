@@ -95,7 +95,8 @@ the user owns the machine.
 ## Deployment Options
 
 See [ALTERNATIVES.md](ALTERNATIVES.md) for a comparison of ngrok, Tailscale
-Funnel, and cloud hosts (Fly.io, Railway).
+Funnel, and cloud hosts (Fly.io, Railway). For a VPS deployment with Docker
+Postgres, systemd, Nginx, and Let's Encrypt, see [SELF_HOSTED.md](SELF_HOSTED.md).
 
 ## Troubleshooting
 
@@ -123,7 +124,6 @@ Remote servers must be added via Settings > Integrations, NOT
 | put_page | 100-500ms | Write + trigger search_vector update |
 | get_stats | < 100ms | Aggregate query |
 
-**Note:** `gbrain serve --http` (built-in HTTP transport) is planned but not yet
-implemented. Currently, remote MCP requires a custom HTTP wrapper. See the
-production deployment pattern in the [voice recipe](../../recipes/twilio-voice-brain.md)
-for a reference implementation.
+**Note:** `gbrain serve --http` is the built-in HTTP transport for remote MCP
+access. It requires a Postgres-backed brain because bearer tokens are stored in
+the `access_tokens` table.
