@@ -10,6 +10,7 @@ import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
+import { isEmbeddingConfigured } from './embedding.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
@@ -328,11 +329,11 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    // Skip embedding when no OpenAI key is configured. importFromContent's existing
-    // try/catch around embed only catches; without a key the OpenAI client would
-    // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
-    // giving up. Detect early.
-    const noEmbed = !process.env.OPENAI_API_KEY;
+    // Skip embedding when no provider is configured. importFromContent's
+    // existing try/catch around embed only catches; without this early gate the
+    // OpenAI path would retry before giving up. Local embeddings count as
+    // configured and avoid the external API entirely.
+    const noEmbed = !isEmbeddingConfigured();
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own

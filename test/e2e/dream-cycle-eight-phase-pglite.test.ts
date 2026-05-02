@@ -28,10 +28,13 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 mock.module('../../src/core/embedding.ts', () => ({
   embed: async () => new Float32Array(1536),
   embedBatch: async (texts: string[]) => texts.map(() => new Float32Array(1536)),
+  getEmbeddingModel: () => 'text-embedding-3-large',
+  isEmbeddingConfigured: () => true,
   EMBEDDING_MODEL: 'text-embedding-3-large',
   EMBEDDING_DIMENSIONS: 1536,
   EMBEDDING_COST_PER_1K_TOKENS: 0.00013,
   estimateEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
+  estimateConfiguredEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
 }));
 
 const { runCycle, ALL_PHASES } = await import('../../src/core/cycle.ts');

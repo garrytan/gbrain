@@ -9,6 +9,7 @@ let maxConcurrentEmbedCalls = 0;
 let totalEmbedCalls = 0;
 
 mock.module('../src/core/embedding.ts', () => ({
+  getEmbeddingModel: () => 'text-embedding-3-large',
   embedBatch: async (texts: string[]) => {
     activeEmbedCalls++;
     totalEmbedCalls++;
