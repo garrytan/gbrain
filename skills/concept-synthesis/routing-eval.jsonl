@@ -1,0 +1,7 @@
+// Routing eval fixtures for skills/concept-synthesis. Each intent
+// includes at least one trigger string as substring.
+{"intent":"Run concept synthesis on my brain — dedupe stubs and tier them","expected_skill":"concept-synthesis"}
+{"intent":"Synthesize my concepts into a tiered intellectual map","expected_skill":"concept-synthesis"}
+{"intent":"Find patterns across my notes and group them into clusters","expected_skill":"concept-synthesis"}
+{"intent":"Build my intellectual map — what's canon vs riff","expected_skill":"concept-synthesis"}
+{"intent":"Trace idea evolution across years of my reflections","expected_skill":"concept-synthesis"}

@@ -1,0 +1,7 @@
+// Routing eval fixtures for skills/perplexity-research. Each intent
+// includes at least one trigger string as substring.
+{"intent":"Run perplexity-research on Brex and surface NEW developments","expected_skill":"perplexity-research","ambiguous_with":["data-research"]}
+{"intent":"What's new about this company that the brain doesn't already cover","expected_skill":"perplexity-research"}
+{"intent":"Tell me the current state of the YC W26 batch announcements","expected_skill":"perplexity-research"}
+{"intent":"Do a web research pass on this person — focus on the delta","expected_skill":"perplexity-research"}
+{"intent":"What changed about this funding round since I last looked","expected_skill":"perplexity-research"}

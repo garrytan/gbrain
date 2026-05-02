@@ -115,6 +115,153 @@ React admin dashboard baked into the binary. Seven screens designed through Stev
 
 
 
+
+## [0.25.1] - 2026-05-01
+
+## **Your brain can now read books with you. Nine new skills land at once.**
+## **Plus: skillpack gets a real uninstall, the privacy guard learns new patterns.**
+
+`gbrain book-mirror` is the flagship. Hand it a book and a slug, and the agent fans out one read-only Opus subagent per chapter, assembles a personalized two-column analysis (left column preserves the chapter's actual content with stories and frameworks intact, right column maps every idea to your actual life using your words from the brain), and writes it as one operator-trust `put_page` to `media/books/<slug>-personalized.md`. Twenty-chapter book runs ~$6 at Opus. Subagents have read-only `allowed_tools: ['get_page', 'search']`, so untrusted EPUB content cannot prompt-inject any people page. The CLI prints a cost estimate and refuses to spend in non-TTY without `--yes`.
+
+Eight more skills ship alongside book-mirror: `article-enrichment` turns raw article dumps into structured pages with verbatim quotes; `strategic-reading` reads a book through one specific problem-lens with a do/avoid/watch-for playbook; `concept-synthesis` deduplicates thousands of concept stubs into a tiered intellectual map (T1 Canon to T4 Riff); `perplexity-research` does brain-augmented web research that focuses on the delta between what the brain knows and what's online now; `archive-crawler` mines personal file archives for high-value content within an explicit `gbrain.yml` allow-list; `academic-verify` traces a research claim through publication to raw data to replication; `brain-pdf` renders any brain page to publication-quality PDF; `voice-note-ingest` captures audio with exact-phrasing preservation and routes it to the right brain directory.
+
+`gbrain skillpack uninstall <name>` lands as a real CLI subcommand. Inverse of install, symmetric data-loss posture. Refuses if the slug isn't in the managed block's cumulative-slugs receipt (so it won't nuke a row you hand-added). Refuses if any installed file diverges from the bundle (you've edited it locally). `--overwrite-local` is the escape hatch, same as install. Atomic refusal — if any file would be blocked, the whole uninstall refuses before any unlink fires. No half-uninstalled state.
+
+Three existing skills got drift-backports from the maintainer's private fork: `citation-fixer` resolves broken tweet/post references to deterministic `x.com/handle/status/id` URLs via X API; `testing` splits into skill conformance + project test-suite health with regression-aware classification (REGRESSION / STALE / FLAKE / NEW / INFRA); `cross-modal-review` adds explicit gating ("when to invoke" vs "do NOT invoke") and a `/codex review` handoff for diff review.
+
+The privacy CI guard now also blocks `/data/brain/` and `/data/.openclaw/` literals. Seven historical files are allow-listed (frozen migration files, test fixtures, env-var fallback defaults).
+
+### The numbers that matter
+
+Counted against this branch's diff vs master and against the local test suite at the v0.25.1 cut:
+
+| Metric | BEFORE v0.25.1 | AFTER v0.25.1 | Δ |
+|---|---|---|---|
+| Skills shipped in `openclaw.plugin.json` | 25 | 34 | +9 |
+| New CLI commands | (existing) | `gbrain book-mirror`, `gbrain skillpack uninstall` | +2 |
+| Skills with drift-backport from upstream | 0 | 3 (citation-fixer, testing, cross-modal-review) | +3 |
+| Privacy CI guard banned-pattern coverage | 1 (fork-name literal) | 3 (+ `/data/brain/`, `/data/.openclaw/`) | +2 |
+| `gbrain skillpack` subcommands | 4 (list, install, diff, check) | 5 (+ uninstall) | +1 |
+| Skill-routing trust regression detector | 0 | media-ingest ↔ book-mirror routing-eval adversarial intents | +1 |
+| Filing-rule directories sanctioned | 12 | 16 (+ ideas, research, original, voice-note) | +4 |
+| Atomic-refusal contract on installer rollback | implicit (buggy on uninstall) | tested + enforced (`test/skillpack-uninstall.test.ts`) | locked |
+| Lines of new TypeScript src/ shipped | 0 | ~1,100 (book-mirror.ts + skillpack uninstall + archive-crawler-config + harness) | +1100 |
+| Tests added (unit + harness self-test) | (existing) | 62 (book-mirror, skillpack-uninstall, archive-crawler-config, cli-pty-runner) | +62 |
+
+Cross-model review trail: **Eng Review (R1 + R2)** + **Codex outside voice** with 15 user decisions captured (D1–D15), 0 unresolved. Codex caught the four highest-impact architectural mistakes the eng review missed: book-mirror's earlier `allowedSlugPrefixes: ['media/books/*', 'people/*']` design was a security regression; the fan-out runtime was missing infrastructure rather than the plan's assumed primitive; uninstall's content-hash guard was incomplete on user-modified files; archive-crawler's "trust the prompt" was not a control. All four were addressed before code landed.
+
+### What this means for builders
+
+Existing brains: no schema migration. `gbrain upgrade` does it.
+
+The flagship: `gbrain book-mirror --chapters-dir <path> --slug <slug>` once you've extracted the chapters (the skill walks you through EPUB and PDF extraction via BeautifulSoup4 / `pdftotext -layout`). The CLI is the trusted runtime; the skill is the orchestration prose.
+
+`gbrain skillpack uninstall <name>` if you ever want to remove a skill from your workspace. It refuses to do anything that would lose your edits.
+
+`archive-crawler` requires `archive-crawler.scan_paths:` set in `gbrain.yml` before it'll run. That's deliberate. Three-line allow-list, one-time pain, never wakes up at 3am wondering if the agent ingested your tax PDFs.
+
+The 9 new skills are all available immediately after `gbrain skillpack install <name>` (or `install --all`).
+
+## To take advantage of v0.25.1
+
+`gbrain upgrade` does this automatically. To verify:
+
+1. **Binary version:**
+   ```bash
+   gbrain --version   # expect: gbrain 0.25.1
+   ```
+2. **Book-mirror is registered:**
+   ```bash
+   gbrain book-mirror --help 2>&1 | grep "media/books/"
+   # expect: lines describing the trust contract
+   ```
+   (The CLI requires DB connection even for `--help` due to a pre-existing dispatch order; if you see "Cannot connect to database" your install is fine, the help text just needs DATABASE_URL set or a local PGLite brain.)
+3. **Skillpack uninstall is wired:**
+   ```bash
+   gbrain skillpack uninstall --help 2>&1 | grep "Inverse of install"
+   ```
+4. **Archive-crawler safety gate (only matters if you install it):**
+   ```bash
+   # Without gbrain.yml allow-list, the skill instructs the agent to refuse:
+   cat skills/archive-crawler/SKILL.md | grep "scan_paths"
+   ```
+5. **If anything fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and which step broke.
+
+No schema migration. Existing brains work unchanged.
+
+### Itemized changes
+
+#### Added (skills)
+
+- **`skills/book-mirror/`** — flagship. Two-column personalized chapter-by-chapter book analysis. SKILL.md ports the upstream original to pure gbrain idiom; CLI lives at `src/commands/book-mirror.ts`.
+- **`skills/article-enrichment/`** — transforms raw article dumps into structured pages with verbatim quotes, key insights, why-it-matters.
+- **`skills/strategic-reading/`** — reads a book / article / case study through one specific problem-lens; produces a do / avoid / watch-for playbook with short / medium / long-term recommendations.
+- **`skills/concept-synthesis/`** — 4-phase pipeline (dedup → tier → synthesize T1/T2 → cluster) over raw concept stubs; output is a curated intellectual fingerprint at `concepts/README.md`.
+- **`skills/perplexity-research/`** — sends brain context as part of the Perplexity prompt so the search focuses on what's NEW vs already-known. Output structure: Executive Summary + Key New Developments + Confirming Signals + Contradictions or Updates + Recommended Brain Updates + Citations.
+- **`skills/archive-crawler/`** — universal archivist for personal file archives (Dropbox / B2 / Gmail-takeout / local-mount / hard-drive-dump). REFUSES to run unless `archive-crawler.scan_paths:` is set in `gbrain.yml`.
+- **`skills/academic-verify/`** — verifies a research claim by tracing it through publication → methodology → raw data → independent replication. Routes through perplexity-research as the actual web-search engine; produces a verdict-shaped brain page (verified / partial / unverifiable / misattributed / retracted).
+- **`skills/brain-pdf/`** — generates publication-quality PDFs from any brain page via the gstack `make-pdf` binary. Strips frontmatter, sanitizes emoji, applies running headers + page numbers.
+- **`skills/voice-note-ingest/`** — ingests voice notes with exact-phrasing preservation (never paraphrased). 7-step decision tree routes to originals / concepts / people / companies / ideas / personal / voice-notes.
+
+#### Added (post-install advisory — v0.25.1 DX)
+
+- **`src/core/skillpack/post-install-advisory.ts`** (~209 lines). Every `gbrain init` and `gbrain post-upgrade` now ends by printing an agent-readable advisory listing the v0.25.1 recommended skills the workspace hasn't installed yet. The advisory tells the agent EXPLICITLY: ask the user before installing; print the exact `gbrain skillpack install --all` (or per-skill) command if they say yes. Renders to stderr so stdout stays clean for `--json` output. No-op when every recommended skill is already installed (no nag on repeated `gbrain upgrade` runs). Tests: `test/post-install-advisory.test.ts` (10 cases).
+  - Why this design instead of an interactive TTY prompt: gbrain users typically interact through their host agent, not the gbrain CLI directly. The agent reads command output. So the advisory is structured for agent consumption: `ACTION FOR THE AGENT` block, explicit `Ask the user explicitly`, exact commands, `Do NOT install without asking. The user owns this decision.`
+  - Wired into both `src/commands/init.ts` (PGLite + Postgres paths) and `src/commands/upgrade.ts` (`runPostUpgrade` after migrations apply).
+
+#### Added (CLI)
+
+- **`gbrain book-mirror`** — `src/commands/book-mirror.ts` (~540 lines). CLI submits N read-only subagent jobs per chapter, waits via `waitForCompletion`, reads each child's `job.result`, assembles markdown itself, writes one operator-trust `put_page` to `media/books/<slug>-personalized.md`. Cost-estimate prompt before launching; refuses to spend in non-TTY without `--yes`. Idempotency keys per chapter for retry-friendly re-runs. Partial-failure handling assembles the page with completed chapters and a `## Failed chapters` section listing retries needed.
+- **`gbrain skillpack uninstall <name>`** — `src/commands/skillpack.ts` + `src/core/skillpack/installer.ts:applyUninstall` (~250 lines). Symmetric to install. Atomic refusal: pre-scans all files for divergence; refuses BEFORE any unlink if anything is blocked. `--overwrite-local` escape hatch. Drops the slug from `cumulative-slugs` receipt; preserves other installed skills' rows + user-added unknown rows (with stderr warning).
+
+#### Added (filing-doctrine update)
+
+- **`skills/_brain-filing-rules.md`** — carved out `media/<format>/<slug>` as a sanctioned exception for sui-generis synthesized output (one-of-one to a single source like a personalized book mirror). The "file by primary subject, not by format" rule still applies to raw ingest.
+- **`skills/_brain-filing-rules.json`** — added 4 new directory kinds: `idea` (ideas/), `research` (research/), `original` (originals/), `voice-note` (voice-notes/). Plus 2 synthesis-output kinds for `media/books/` and `media/articles/`.
+- **`skills/media-ingest/SKILL.md`** — refined the format-based-filing anti-pattern callout to clarify that the anti-pattern is for raw ingest only; one-of-one synthesis output may use `media/<format>/`.
+
+#### Added (test infrastructure)
+
+- **`test/helpers/cli-pty-runner.ts`** — generic PTY harness ported from gstack (~470 lines). Used by the smoke test E2E; future-proofs interactive CLI commands.
+- **`test/cli-pty-runner.test.ts`** — 24 cases pinning the harness primitives.
+
+#### Added (CI guard)
+
+- **`scripts/check-privacy.sh`** extended with `BANNED_PATHS` for `/data/brain/` and `/data/.openclaw/`. 7 historical files allow-listed.
+
+#### Added (config schema)
+
+- **`src/core/archive-crawler-config.ts`** (~263 lines) + **`test/archive-crawler-config.test.ts`** (19 tests). `loadArchiveCrawlerConfig`, `normalizeAndValidateArchiveCrawlerConfig`, `isPathAllowed`. Mirrors the storage-config.ts parsing pattern.
+
+#### Drift backports (3 existing skills updated)
+
+- **`skills/citation-fixer/SKILL.md`** (1.0 → 1.1) — adds tweet/post URL resolution via X API. 5-step pipeline.
+- **`skills/testing/SKILL.md`** (1.0 → 1.1) — splits into skill conformance + project test-suite health with regression-aware classification.
+- **`skills/cross-modal-review/SKILL.md`** (1.0 → 1.1) — adds "When to invoke" gating and `/codex review` handoff.
+
+#### Bug fix (during testing)
+
+- **`applyUninstall` atomic refusal** — discovered while writing `test/skillpack-uninstall.test.ts`. The original implementation interleaved D11 hash check + unlink in the same loop, so a divergence on file 5/N would leave files 1..4 already gone. Now: pre-scan all files for divergence; refuse loudly BEFORE any filesystem mutation. The test was written with the contract in mind; the implementation lied about the contract; the lie surfaced immediately.
+
+#### Tests
+
+- **`test/book-mirror.test.ts`** — 9 cases.
+- **`test/skillpack-uninstall.test.ts`** — 10 cases.
+- **`test/archive-crawler-config.test.ts`** — 19 cases.
+- **`test/cli-pty-runner.test.ts`** — 24 cases.
+- 62 new tests total. All pass; existing 90+ skillpack-related tests continue to pass.
+
+#### Deferred to v0.26+
+
+- **`test/e2e/skill-smoke-openclaw.test.ts`** — full interactive openclaw drive via the PTY harness, opt-in via `EVALS=1 EVALS_TIER=skills`. Scaffolded but not landed.
+- **`gbrain skillpack uninstall --all`** — current shape is single-arg; multi-skill uninstall via `install --all` from a pruned bundle still works as the canonical path.
+- **Empty-parent-dir pruning on uninstall** — current behavior leaves empty `skills/<slug>/` directories. Cosmetic; deferred.
+- **LLM tie-break layer for routing-eval** — the routing-miss warnings on the new skills are real; the structural layer doesn't substring-match natural-paraphrased intents. The `--llm` flag stays a placeholder per v0.24.0.
+
+### Cross-model review credit
+
+This release ran two rounds of `/plan-eng-review` plus `/codex` outside voice, capturing 15 user decisions. Codex caught the four most consequential architectural mistakes the eng review missed (read the plan file's GSTACK REVIEW REPORT for the full audit trail). The atomic-refusal bug in applyUninstall was caught by the test for the contract — the test was written with the contract in mind, the implementation lied about the contract, and the lie surfaced immediately. That's the cross-model loop working.
+=======
 ## [0.25.0] - 2026-04-26
 
 ## **Contributors can now benchmark retrieval changes against real captured queries before merging.**

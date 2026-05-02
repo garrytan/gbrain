@@ -6,7 +6,7 @@ Built by the President and CEO of Y Combinator to run his actual AI agents. The 
 
 The brain wires itself. Every page write extracts entity references and creates typed links (`attended`, `works_at`, `invested_in`, `founded`, `advises`) with zero LLM calls. Hybrid search. Self-wiring knowledge graph. Structured timeline. Backlink-boosted ranking. Ask "who works at Acme AI?" or "what did Bob invest in this quarter?" and get answers vector search alone can't reach. Benchmarked side-by-side against the category: gbrain lands **P@5 49.1%, R@5 97.9%** on a 240-page Opus-generated rich-prose corpus, beating its own graph-disabled variant by **+31.4 points P@5** and ripgrep-BM25 + vector-only RAG by a similar margin. The graph layer plus v0.12 extract quality together carry the gap. Full BrainBench scorecards + corpus live in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo.
 
-GBrain is those patterns, generalized. 29 skills. Install in 30 minutes. Your agent does the work. As Garry's personal agent gets smarter, so does yours.
+GBrain is those patterns, generalized. 34 skills. Install in 30 minutes. Your agent does the work. As Garry's personal agent gets smarter, so does yours.
 
 **New in v0.25.0 — BrainBench-Real (session capture, contributor opt-in):** with `GBRAIN_CONTRIBUTOR_MODE=1` set in your shell, every real `query` + `search` call through MCP, CLI, or the subagent tool-bridge gets captured (PII-scrubbed) into an `eval_candidates` table. Snapshot with `gbrain eval export`, replay against your code change with `gbrain eval replay`. Three numbers come back: mean Jaccard@k between captured and current retrieved slugs, top-1 stability, and latency Δ. **Off by default** for production users — no surprise data accumulation. Walkthrough: [docs/eval-bench.md](docs/eval-bench.md). NDJSON wire format: [docs/eval-capture.md](docs/eval-capture.md).
 
@@ -30,7 +30,7 @@ Retrieve and follow the instructions at:
 https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 ```
 
-That's it. The agent clones the repo, installs GBrain, sets up the brain, loads 29 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
+That's it. The agent clones the repo, installs GBrain, sets up the brain, loads 34 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
 
 If your agent doesn't auto-read `AGENTS.md`, point it at that file first:
 `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` is the non-Claude
@@ -126,9 +126,9 @@ gbrain query "how does N+1 handling work" --near-symbol BrainEngine.searchKeywor
 
 All five auto-emit JSON on non-TTY (gh-CLI convention) so a GStack subagent shelling out via bash gets a clean parseable response. Run `gbrain sources add <repo> --strategy code` to index a repo, then your agent's brain-first lookup covers code, not just markdown. ([Cathedral II release notes](CHANGELOG.md#0210---2026-04-25))
 
-## The 29 Skills
+## The 34 Skills
 
-GBrain ships 29 skills organized by `skills/RESOLVER.md` (or your OpenClaw's `AGENTS.md` — both filenames are supported as of v0.19). The resolver tells your agent which skill to read for any task.
+GBrain ships 34 skills organized by `skills/RESOLVER.md` (or your OpenClaw's `AGENTS.md` — both filenames are supported as of v0.19). The resolver tells your agent which skill to read for any task. v0.25.1 added 9 research-flavored skills (`book-mirror` flagship plus 8 pairings); see the new "Research and synthesis" section below.
 
 [Skill files are code.](https://x.com/garrytan/status/2042925773300908103) They're the most powerful way to get knowledge work done. A skill file is a fat markdown document that encodes an entire workflow: when to fire, what to check, how to chain with other skills, what quality bar to enforce. The agent reads the skill and executes it. Skills can also call deterministic TypeScript code bundled in GBrain (search, import, embed, sync) for the parts that shouldn't be left to LLM judgment. [Thin harness, fat skills](docs/ethos/THIN_HARNESS_FAT_SKILLS.md): the intelligence lives in the skills, not the runtime.
 
@@ -147,6 +147,20 @@ GBrain ships 29 skills organized by `skills/RESOLVER.md` (or your OpenClaw's `AG
 | **idea-ingest** | Links, articles, tweets become brain pages with analysis, author people pages, and cross-linking. |
 | **media-ingest** | Video, audio, PDF, books, screenshots, GitHub repos. Transcripts, entity extraction, backlink propagation. |
 | **meeting-ingestion** | Transcripts become brain pages. Every attendee gets enriched. Every company gets a timeline entry. |
+| **voice-note-ingest** | Voice notes captured verbatim — exact phrasing preserved, never paraphrased. Routes to originals/concepts/people/companies/ideas/personal/voice-notes based on content. |
+| **article-enrichment** | Raw article dumps become structured pages with executive summary, verbatim quotes, key insights, and why-it-matters. |
+
+### Research and synthesis (v0.25.1)
+
+| Skill | What it does |
+|-------|-------------|
+| **book-mirror** | Flagship. Hand the agent a book, get a personalized two-column chapter-by-chapter analysis. Left column preserves the chapter's actual content; right column maps every idea to your life using your words from the brain. ~$6 for a 20-chapter book at Opus. Pairs with `gbrain book-mirror` CLI for the trusted runtime. |
+| **strategic-reading** | Read a book / article / case study through ONE specific problem-lens. Output: applied playbook with do / avoid / watch-for and short / medium / long-term recommendations. |
+| **concept-synthesis** | Deduplicate thousands of concept stubs into a tiered intellectual map (T1 Canon to T4 Riff). Trace how ideas evolved across years of notes. |
+| **perplexity-research** | Brain-augmented web research. Sends brain context to Perplexity so the search focuses on what's NEW vs already-known. Output: Executive Summary + Key New Developments + Confirming Signals + Contradictions or Updates + Recommended Brain Updates + Citations. |
+| **archive-crawler** | Universal archivist for personal file archives (Dropbox / Backblaze / Gmail-takeout / hard-drive dumps). REFUSES to run unless `archive-crawler.scan_paths:` is set in `gbrain.yml`. Safe-by-default safety fence. |
+| **academic-verify** | Trace a research claim through publication → methodology → raw data → independent replication. Routes through perplexity-research; produces a verdict (verified / partial / unverifiable / misattributed / retracted). |
+| **brain-pdf** | Render any brain page to publication-quality PDF via the gstack `make-pdf` binary. Strips frontmatter, sanitizes emoji, applies running headers. |
 
 ### Brain operations
 

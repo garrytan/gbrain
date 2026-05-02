@@ -86,5 +86,8 @@
   "trustedDependencies": [
     "@electric-sql/pglite"
   ],
+  "engines": {
+    "bun": ">=1.3.10"
+  },
   "license": "MIT"
 }
