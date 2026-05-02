@@ -227,6 +227,7 @@ export async function runPhaseSynthesize(
 
     // Dual-write: reverse-render each DB row → markdown file.
     const reverseWriteCount = await reverseWriteSlugs(engine, opts.brainDir, writtenSlugs);
+    const qualityIssues = await validateSynthesizedPages(engine, writtenSlugs);
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
@@ -236,19 +237,29 @@ export async function runPhaseSynthesize(
       await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes);
     }
 
-    // Write completion timestamp ON SUCCESS only.
-    await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
-
-    const ms = Date.now() - start;
-    return ok(`${worthProcessing.length} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s`, {
+    const details = {
       transcripts_discovered: transcripts.length,
       transcripts_processed: worthProcessing.length,
       pages_written: writtenSlugs.length,
       reverse_write_count: reverseWriteCount,
       child_outcomes: childOutcomes,
       summary_slug: summarySlug,
+      quality_issues: qualityIssues,
       verdicts,
-    });
+    };
+
+    if (qualityIssues.length > 0) {
+      return warn(
+        `${worthProcessing.length} transcript(s) synthesized, but ${qualityIssues.length} quality issue(s) require review`,
+        details,
+      );
+    }
+
+    // Write completion timestamp ON SUCCESS only.
+    await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+
+    const ms = Date.now() - start;
+    return ok(`${worthProcessing.length} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s`, details);
   } catch (e) {
     return failed(makeError('InternalError', 'SYNTH_PHASE_FAIL',
       e instanceof Error ? (e.message || 'synthesize phase threw') : String(e)));
@@ -423,9 +434,10 @@ CONTEXT
 
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Do not paraphrase memorable phrasings.
-2. Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., \`[ref](people/jane-doe)\` or \`[[people/jane-doe]]\`) to existing brain content. Use the search tool to find existing pages first.
-3. Do NOT write to any path outside the allow-list shown in the put_page schema.
-4. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated segments. NO underscores, NO file extensions.
+2. Preserve UTF-8 and non-English text exactly as written. If you cannot copy a quote exactly, omit that quote rather than approximating it.
+3. Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., \`[ref](people/jane-doe)\` or \`[[people/jane-doe]]\`) to existing brain content. Use the search tool to find existing pages first; if no exact entity exists, link to the closest relevant existing project/concept page.
+4. Do NOT write to any path outside the allow-list shown in the put_page schema.
+5. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated segments. NO underscores, NO file extensions.
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):
@@ -525,6 +537,37 @@ async function reverseWriteSlugs(
     }
   }
   return count;
+}
+
+
+interface SynthesisQualityIssue {
+  slug: string;
+  code: string;
+  message: string;
+}
+
+export async function validateSynthesizedPages(
+  engine: BrainEngine,
+  slugs: string[],
+): Promise<SynthesisQualityIssue[]> {
+  const issues: SynthesisQualityIssue[] = [];
+  for (const slug of slugs) {
+    const page = await engine.getPage(slug);
+    if (!page) {
+      issues.push({ slug, code: 'missing_page', message: 'put_page slug could not be loaded after child completion' });
+      continue;
+    }
+    const tags = await engine.getTags(slug);
+    const md = renderPageToMarkdown(page, tags);
+    if (!containsWikilink(md)) {
+      issues.push({ slug, code: 'missing_wikilink', message: 'synthesized page has no wikilink/cross-reference' });
+    }
+  }
+  return issues;
+}
+
+function containsWikilink(markdown: string): boolean {
+  return /\[\[[^\]\n]+\]\]/.test(markdown) || /\[[^\]\n]+\]\([^)\n]+\)/.test(markdown);
 }
 
 /**
@@ -637,6 +680,10 @@ function today(): string {
 
 function ok(summary: string, details: Record<string, unknown> = {}): PhaseResult {
   return { phase: 'synthesize', status: 'ok', duration_ms: 0, summary, details };
+}
+
+function warn(summary: string, details: Record<string, unknown> = {}): PhaseResult {
+  return { phase: 'synthesize', status: 'warn', duration_ms: 0, summary, details };
 }
 
 function skipped(reason: string, summary: string): PhaseResult {

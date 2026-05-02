@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseSynthesize, renderPageToMarkdown, collectChildPutPageSlugs } from '../../src/core/cycle/synthesize.ts';
+import { runPhaseSynthesize, renderPageToMarkdown, collectChildPutPageSlugs, validateSynthesizedPages } from '../../src/core/cycle/synthesize.ts';
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -123,6 +123,43 @@ describe('E2E synthesize — slug provenance', () => {
       expect(slugs).toEqual([
         'wiki/originals/ideas/json-string-input',
         'wiki/personal/reflections/object-row',
+      ]);
+    } finally {
+      await rig.cleanup();
+    }
+  });
+});
+
+describe('E2E synthesize — quality gate', () => {
+  test('flags synthesized pages that miss mandatory wikilinks', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.putPage('wiki/personal/reflections/with-link', {
+        type: 'note',
+        title: 'With link',
+        compiled_truth: 'Useful reflection linked to [[projects/gbrain]].',
+        timeline: '',
+        frontmatter: {},
+      });
+      await rig.engine.putPage('wiki/personal/reflections/no-link', {
+        type: 'note',
+        title: 'No link',
+        compiled_truth: 'Useful reflection without a cross-reference.',
+        timeline: '',
+        frontmatter: {},
+      });
+
+      const issues = await validateSynthesizedPages(rig.engine, [
+        'wiki/personal/reflections/with-link',
+        'wiki/personal/reflections/no-link',
+      ]);
+
+      expect(issues).toEqual([
+        {
+          slug: 'wiki/personal/reflections/no-link',
+          code: 'missing_wikilink',
+          message: 'synthesized page has no wikilink/cross-reference',
+        },
       ]);
     } finally {
       await rig.cleanup();
