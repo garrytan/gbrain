@@ -47,6 +47,25 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
+ * Check if a process is orphaned (parent is init/systemd, PPID=1).
+ * This is the signature of a gbrain serve process that was orphaned by
+ * a gateway restart — its stdin will be /dev/null and it will hold the
+ * PGLite lock indefinitely without doing any work.
+ */
+function isOrphanedProcess(pid: number): boolean {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf-8');
+    // Format: "pid (comm) state ppid ..."
+    // Extract PPID (3rd field, after the second space+paren)
+    const ppidMatch = stat.match(/^\d+\s+[^)]+\)\s+(\d+)/);
+    if (!ppidMatch) return false;
+    return ppidMatch[1] === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Attempt to acquire an exclusive lock on the PGLite data directory.
  * Returns { acquired: true } if the lock was obtained, { acquired: false } otherwise.
  * Stale locks (from dead processes) are automatically cleaned up.
@@ -82,6 +101,12 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
         } else if (Date.now() - lockTime > STALE_THRESHOLD_MS) {
           // Lock held for too long — assume stale (e.g., process hung)
           // Still alive but probably stuck — force remove
+          try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
+        } else if (isOrphanedProcess(lockPid)) {
+          // Orphaned process (PPID=1) — always stale regardless of hold time.
+          // This handles the gateway-restart case where a serve process gets
+          // orphaned with stdin=/dev/null but is still marked "alive" by kill(pid,0).
+          // It will not make progress and will hold the lock forever.
           try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* race condition */ }
         } else {
           // Lock is held by a live process — wait and retry
