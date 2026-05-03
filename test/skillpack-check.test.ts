@@ -19,6 +19,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
+import { gbrainSpawn } from '../src/commands/skillpack-check.ts';
 
 const CLI = join(__dirname, '..', 'src', 'cli.ts');
 
@@ -130,5 +131,57 @@ describe('gbrain skillpack-check', () => {
     const report = JSON.parse(result.stdout);
     expect(report.summary).toMatch(/\d+ action\(s\)/);
     expect(report.summary).toContain(report.actions[0]);
+  });
+});
+
+describe('gbrainSpawn — binary resolution', () => {
+  test('PATH which result wins when present', () => {
+    const result = gbrainSpawn({
+      argv: ['bun', '/$bunfs/root/gbrain'],
+      execPath: '/Users/me/.bun/install/global/node_modules/gbrain/src/cli.ts',
+      whichResolver: () => '/usr/local/bin/gbrain',
+    });
+    expect(result).toEqual({ cmd: '/usr/local/bin/gbrain', prefix: [] });
+  });
+
+  test('Bun --compile artifact (argv[1]=/$bunfs/...) without PATH falls back to execPath when /gbrain', () => {
+    // Regression: previously argv[1].endsWith('/gbrain') matched the
+    // in-bundle pseudo-path and skillpack-check tried to execFileSync
+    // '/$bunfs/root/gbrain', failing with ENOENT.
+    const result = gbrainSpawn({
+      argv: ['bun', '/$bunfs/root/gbrain'],
+      execPath: '/Users/me/.bun/bin/gbrain',
+      whichResolver: () => null,
+    });
+    expect(result).toEqual({ cmd: '/Users/me/.bun/bin/gbrain', prefix: [] });
+  });
+
+  test('Bun --compile artifact + non-/gbrain execPath + no PATH → falls through to bare gbrain', () => {
+    // Belt-and-suspenders: even when execPath is the .ts symlink target
+    // (the actual installed shape), we never try to spawn the bunfs path.
+    const result = gbrainSpawn({
+      argv: ['bun', '/$bunfs/root/gbrain'],
+      execPath: '/Users/me/.bun/install/global/node_modules/gbrain/src/cli.ts',
+      whichResolver: () => null,
+    });
+    expect(result).toEqual({ cmd: 'gbrain', prefix: [] });
+  });
+
+  test('compiled binary direct invocation (real argv[1] ends with /gbrain) without PATH', () => {
+    const result = gbrainSpawn({
+      argv: ['bun', '/usr/local/bin/gbrain'],
+      execPath: '/some/other/path',
+      whichResolver: () => null,
+    });
+    expect(result).toEqual({ cmd: '/usr/local/bin/gbrain', prefix: [] });
+  });
+
+  test('dev mode (.ts argv[1]) without PATH → bun run prefix', () => {
+    const result = gbrainSpawn({
+      argv: ['bun', '/Users/me/clones/gbrain/src/cli.ts'],
+      execPath: '/Users/me/.bun/bin/bun',
+      whichResolver: () => null,
+    });
+    expect(result).toEqual({ cmd: 'bun', prefix: ['run', '/Users/me/clones/gbrain/src/cli.ts'] });
   });
 });
