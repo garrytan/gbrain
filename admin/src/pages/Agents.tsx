@@ -80,8 +80,8 @@ export function AgentsPage() {
             </thead>
             <tbody>
               {agents.filter(a => !hideRevoked || a.status !== 'revoked').map(a => (
-                <tr key={a.id} onClick={() => a.auth_type === 'oauth' ? setSelectedAgent(a) : null}
-                    style={{ cursor: a.auth_type === 'oauth' ? 'pointer' : 'default' }}>
+                <tr key={a.id} onClick={() => setSelectedAgent(a)}
+                    style={{ cursor: 'pointer' }}>
                   <td style={{ fontWeight: 500 }}>{a.name || a.client_name}</td>
                   <td>
                     <span className={`badge ${a.auth_type === 'oauth' ? 'badge-read' : 'badge-write'}`} style={{ fontSize: 11 }}>
@@ -508,6 +508,7 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <span>{agent.token_ttl ? (agent.token_ttl >= 31536000 ? 'No expiry' : agent.token_ttl >= 86400 ? `${Math.floor(agent.token_ttl / 86400)}d` : agent.token_ttl >= 3600 ? `${Math.floor(agent.token_ttl / 3600)}h` : `${agent.token_ttl}s`) : '1h (default)'}</span>
         </div>
 
+        {isOAuth && (<>
         <div className="section-title">Config Export</div>
         <div className="tabs" style={{ flexWrap: 'wrap' }}>
           <div className={`tab ${tab === 'claude-code' ? 'active' : ''}`} onClick={() => setTab('claude-code')}>Claude Code</div>
@@ -521,6 +522,13 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{configSnippets[tab]}</pre>
           <button className="copy-btn" onClick={() => copy(configSnippets[tab])}>Copy</button>
         </div>
+        </>)}
+        {!isOAuth && (
+          <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 16 }}>
+            API keys use simple bearer token auth. The token was shown once at creation.<br/>
+            Use with: <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: 4 }}>Authorization: Bearer &lt;key&gt;</code>
+          </div>
+        )}
 
         <div style={{ marginTop: 32 }}>
           {agent.status === 'active' && (
