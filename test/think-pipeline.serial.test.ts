@@ -149,7 +149,7 @@ describe('runThink (with stub client)', () => {
         model: 'stub',
         stop_reason: 'end_turn',
         stop_sequence: null,
-        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null, cache_creation: null, inference_geo: null },
         content: [{
           type: 'text',
           text: JSON.stringify({
@@ -160,7 +160,10 @@ describe('runThink (with stub client)', () => {
             ],
             gaps: ['no info on funding history'],
           }),
+          citations: null,
         }],
+        container: null,
+        stop_details: null,
       }),
     };
 
@@ -186,12 +189,15 @@ describe('runThink (with stub client)', () => {
         model: 'stub',
         stop_reason: 'end_turn',
         stop_sequence: null,
-        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null, cache_creation: null, inference_geo: null },
         content: [{
           type: 'text',
           // No JSON wrapper — just inline citations in prose. Tests the fallback path.
           text: 'Alice [people/alice-example#1] is CEO. Strong [people/alice-example#2].',
+          citations: null,
         }],
+        container: null,
+        stop_details: null,
       }),
     };
 
@@ -227,7 +233,7 @@ describe('runThink (with stub client)', () => {
         model: 'stub',
         stop_reason: 'end_turn',
         stop_sequence: null,
-        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
+        usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null, cache_creation: null, inference_geo: null },
         content: [{
           type: 'text',
           text: JSON.stringify({
@@ -235,7 +241,10 @@ describe('runThink (with stub client)', () => {
             citations: [{ page_slug: 'people/alice-example', row_num: 2, citation_index: 1 }],
             gaps: [],
           }),
+          citations: null,
         }],
+        container: null,
+        stop_details: null,
       }),
     };
 
