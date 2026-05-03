@@ -399,7 +399,7 @@ CREATE INDEX IF NOT EXISTS idx_eval_capture_failures_ts ON eval_capture_failures
 -- access_tokens: legacy bearer tokens for remote MCP access
 -- ============================================================
 CREATE TABLE IF NOT EXISTS access_tokens (
-  id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name         TEXT NOT NULL,
   token_hash   TEXT NOT NULL UNIQUE,
   scopes       TEXT[],

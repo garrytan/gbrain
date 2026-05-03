@@ -35,6 +35,7 @@ ALLOWED=(
   "src/commands/files.ts"               # PR 1 refactors to accept engine
   "src/commands/repair-jsonb.ts"        # PR 1 refactors
   "src/commands/serve-http.ts"          # PR 1 threads engine through the OAuth dispatch path
+  "src/commands/integrity.ts"           # v0.22.8 batch-load fast path; PR 1 refactors to accept engine
   "src/core/operations.ts"              # 3 localOnly ops (file_list/upload/url) move to ctx.engine in PR 1
 )
 
