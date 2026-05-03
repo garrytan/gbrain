@@ -544,6 +544,20 @@ Query
 
 Keyword alone misses conceptual matches. Vector alone misses exact phrases. RRF gets both. Search quality is benchmarked and reproducible: `gbrain eval --qrels queries.json` measures P@k, Recall@k, MRR, and nDCG@k. A/B test config changes before deploying them.
 
+### Non-English brains (FTS language config)
+
+The Postgres full-text search tokenizer is configurable via `GBRAIN_FTS_LANGUAGE`. Defaults to `english`. Set it to any text-search configuration that exists in your Postgres instance:
+
+```bash
+export GBRAIN_FTS_LANGUAGE=portuguese     # uses built-in portuguese stemmer
+export GBRAIN_FTS_LANGUAGE=spanish        # built-in spanish stemmer
+export GBRAIN_FTS_LANGUAGE=pt_br          # custom config (e.g. unaccent + portuguese)
+```
+
+List available configs: `psql -c "SELECT cfgname FROM pg_ts_config"`. To create a custom accent-insensitive Portuguese config, see [docs/guides/multi-language-fts.md](docs/guides/multi-language-fts.md).
+
+This controls the **query side** only — the trigger that populates `content_chunks.search_vector` and `pages.search_vector` still uses the language baked into the schema at install time. To change indexing language on an existing brain, rerun the relevant migration (PR #2 in this series ships an idempotent recreate-triggers migration).
+
 ## Why it works: many strategies in concert
 
 The brain isn't one trick. Every retrieval question goes through ~20 deterministic
