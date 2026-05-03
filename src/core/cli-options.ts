@@ -15,12 +15,14 @@ export interface CliOptions {
   quiet: boolean;
   progressJson: boolean;
   progressInterval: number; // ms
+  json: boolean;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
   quiet: false,
   progressJson: false,
   progressInterval: 1000,
+  json: false,
 };
 
 /**
@@ -29,20 +31,40 @@ export const DEFAULT_CLI_OPTIONS: CliOptions = {
  *
  * Recognized:
  *   --quiet
+ *   --json
  *   --progress-json
  *   --progress-interval=<ms>
  *   --progress-interval <ms>   (space-separated form)
  *
  * Unknown flags are passed through unchanged — per-command parsers see them.
  */
-export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: string[] } {
+export interface ParseGlobalFlagsOptions {
+  /**
+   * Commands that own their own command-local `--json` parser. When `--json`
+   * appears after one of these command tokens, keep it in `rest` so the command
+   * can preserve its existing CLI contract. `--json` before the command remains
+   * a top-level global flag.
+   */
+  jsonPassThroughCommands?: ReadonlySet<string>;
+}
+
+export function parseGlobalFlags(argv: string[], options: ParseGlobalFlagsOptions = {}): { cliOpts: CliOptions; rest: string[] } {
   const cliOpts: CliOptions = { ...DEFAULT_CLI_OPTIONS };
   const rest: string[] = [];
+  let command: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--quiet') {
       cliOpts.quiet = true;
+      continue;
+    }
+    if (a === '--json') {
+      if (command && options.jsonPassThroughCommands?.has(command)) {
+        rest.push(a);
+      } else {
+        cliOpts.json = true;
+      }
       continue;
     }
     if (a === '--progress-json') {
@@ -58,6 +80,7 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
         continue;
       }
       // not a number — let per-command parser handle; pass through
+      if (!command && !a.startsWith('-')) command = a;
       rest.push(a);
       continue;
     }
@@ -71,6 +94,7 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
       rest.push(a);
       continue;
     }
+    if (!command && !a.startsWith('-')) command = a;
     rest.push(a);
   }
 
