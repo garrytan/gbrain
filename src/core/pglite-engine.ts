@@ -344,6 +344,20 @@ export class PGLiteEngine implements BrainEngine {
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
+    // Defensive coercion: PGlite's TEXT serializer rejects non-string values
+    // with "Invalid input for string type". When upstream parsers (e.g.
+    // frontmatter-inference) emit an unquoted `title: 2026-05-01`, gray-matter
+    // resolves it as a JS Date via YAML 1.1 implicit-type rules. Coerce here
+    // so a single bad title field can't poison sync for the whole file.
+    const rawTitle = page.title as unknown;
+    const safeTitle = typeof rawTitle === 'string'
+      ? rawTitle
+      : (rawTitle instanceof Date ? rawTitle.toISOString().slice(0, 10) : String(rawTitle ?? ''));
+    const rawCT = page.compiled_truth as unknown;
+    const safeCompiledTruth = typeof rawCT === 'string' ? rawCT : String(rawCT ?? '');
+    const rawTL = page.timeline as unknown;
+    const safeTimeline = typeof rawTL === 'string' ? rawTL : (rawTL ? String(rawTL) : '');
+
     // v0.18.0 Step 2: source_id relies on the schema DEFAULT 'default' so
     // existing callers still target the default source without threading
     // a parameter. ON CONFLICT target becomes (source_id, slug) since the
@@ -363,7 +377,7 @@ export class PGLiteEngine implements BrainEngine {
          content_hash = EXCLUDED.content_hash,
          updated_at = now()
        RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at`,
-      [slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash]
+      [slug, page.type, pageKind, safeTitle, safeCompiledTruth, safeTimeline, JSON.stringify(frontmatter), hash]
     );
     return rowToPage(rows[0] as Record<string, unknown>);
   }

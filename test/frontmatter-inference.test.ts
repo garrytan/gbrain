@@ -238,6 +238,37 @@ describe('serializeFrontmatter', () => {
     expect(fm).not.toContain('source');
     expect(fm).not.toContain('tags');
   });
+
+  // Regression: bare ISO-date titles (e.g. daily-log files like `2026-05-01.md`)
+  // were emitted unquoted, then YAML 1.1 implicit-type resolution turned them
+  // into JS Date objects in gray-matter, which crashed pglite/postgres TEXT
+  // serializers with "Invalid input for string type" during `gbrain sync`.
+  // Quote anything that would resolve to a non-string YAML scalar.
+  test('quotes ISO-date titles (regression: gray-matter Date coercion)', () => {
+    const fm = serializeFrontmatter({ title: '2026-05-01', type: 'note' });
+    expect(fm).toContain('title: "2026-05-01"');
+    expect(fm).not.toMatch(/^title: 2026-05-01$/m);
+  });
+
+  test('quotes ISO-datetime titles', () => {
+    const fm = serializeFrontmatter({ title: '2026-05-01T10:30:00', type: 'note' });
+    expect(fm).toContain('title: "2026-05-01T10:30:00"');
+  });
+
+  test('quotes numeric titles', () => {
+    const fm = serializeFrontmatter({ title: '42', type: 'note' });
+    expect(fm).toContain('title: "42"');
+  });
+
+  test('quotes boolean-like titles', () => {
+    const fm = serializeFrontmatter({ title: 'yes', type: 'note' });
+    expect(fm).toContain('title: "yes"');
+  });
+
+  test('quotes null-like titles', () => {
+    const fm = serializeFrontmatter({ title: 'null', type: 'note' });
+    expect(fm).toContain('title: "null"');
+  });
 });
 
 // ── Integration ──────────────────────────────────────────────────────

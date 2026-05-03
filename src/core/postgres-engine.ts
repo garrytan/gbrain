@@ -294,6 +294,18 @@ export class PostgresEngine implements BrainEngine {
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
+    // Defensive coercion (mirrors pglite-engine.ts): postgres also rejects
+    // non-string values for TEXT columns. YAML 1.1 implicit-type resolution
+    // can turn an unquoted ISO-date title into a JS Date in upstream parsers.
+    const rawTitle = page.title as unknown;
+    const safeTitle = typeof rawTitle === 'string'
+      ? rawTitle
+      : (rawTitle instanceof Date ? rawTitle.toISOString().slice(0, 10) : String(rawTitle ?? ''));
+    const rawCT = page.compiled_truth as unknown;
+    const safeCompiledTruth = typeof rawCT === 'string' ? rawCT : String(rawCT ?? '');
+    const rawTL = page.timeline as unknown;
+    const safeTimeline = typeof rawTL === 'string' ? rawTL : (rawTL ? String(rawTL) : '');
+
     // v0.18.0 Step 2: source_id relies on schema DEFAULT 'default'. ON
     // CONFLICT target becomes (source_id, slug) since global UNIQUE(slug)
     // was dropped in migration v17. See pglite-engine.ts for matching
@@ -301,7 +313,7 @@ export class PostgresEngine implements BrainEngine {
     const pageKind = page.page_kind || 'markdown';
     const rows = await sql`
       INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now())
+      VALUES (${slug}, ${page.type}, ${pageKind}, ${safeTitle}, ${safeCompiledTruth}, ${safeTimeline}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now())
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
