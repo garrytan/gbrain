@@ -18,6 +18,7 @@ interface Agent {
   last_used_at: string | null;
   total_requests: number;
   requests_today: number;
+  token_ttl: number | null;
 }
 
 interface ApiKey {
@@ -269,8 +270,18 @@ function RegisterModal({ onClose, onRegistered }: {
 }) {
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState({ read: true, write: false, admin: false });
+  const [ttl, setTtl] = useState('86400'); // 24h default
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const ttlOptions = [
+    { label: '1 hour', value: '3600' },
+    { label: '24 hours', value: '86400' },
+    { label: '7 days', value: '604800' },
+    { label: '30 days', value: '2592000' },
+    { label: '1 year', value: '31536000' },
+    { label: 'No expiry', value: '0' },
+  ];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -284,7 +295,7 @@ function RegisterModal({ onClose, onRegistered }: {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), scopes: selectedScopes }),
+        body: JSON.stringify({ name: name.trim(), scopes: selectedScopes, tokenTtl: ttl === '0' ? 315360000 : Number(ttl) }),
       });
       if (!res.ok) throw new Error('Registration failed');
       const data = await res.json();
@@ -304,7 +315,7 @@ function RegisterModal({ onClose, onRegistered }: {
           <label>Agent Name</label>
           <input placeholder="e.g. perplexity-production" value={name} onChange={e => setName(e.target.value)} autoFocus />
         </div>
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 16 }}>
           <label>Scopes</label>
           <div className="checkbox-group">
             {(['read', 'write', 'admin'] as const).map(s => (
@@ -314,6 +325,13 @@ function RegisterModal({ onClose, onRegistered }: {
               </label>
             ))}
           </div>
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label>Token Lifetime</label>
+          <select value={ttl} onChange={e => setTtl(e.target.value)}
+            style={{ width: '100%', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 14 }}>
+            {ttlOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
         </div>
         {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
@@ -417,6 +435,8 @@ function AgentDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) 
           ))}</span>
           <span style={{ color: 'var(--text-secondary)' }}>Registered</span>
           <span>{new Date(agent.created_at).toLocaleDateString()}</span>
+          <span style={{ color: 'var(--text-secondary)' }}>Token TTL</span>
+          <span>{agent.token_ttl ? (agent.token_ttl >= 31536000 ? 'No expiry' : agent.token_ttl >= 86400 ? `${Math.floor(agent.token_ttl / 86400)}d` : agent.token_ttl >= 3600 ? `${Math.floor(agent.token_ttl / 3600)}h` : `${agent.token_ttl}s`) : '1h (default)'}</span>
         </div>
 
         <div className="section-title">Config Export</div>

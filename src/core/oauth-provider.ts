@@ -366,8 +366,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const requestedScopes = requestedScope ? requestedScope.split(' ').filter(Boolean) : allowedScopes;
     const grantedScopes = requestedScopes.filter(s => allowedScopes.includes(s));
 
+    // Per-client TTL override (stored in oauth_clients.token_ttl)
+    const ttlRows = await this.sql`SELECT token_ttl FROM oauth_clients WHERE client_id = ${clientId}`;
+    const clientTtl = ttlRows.length > 0 && ttlRows[0].token_ttl ? Number(ttlRows[0].token_ttl) : undefined;
+
     // Client credentials: access token only, NO refresh token (RFC 6749 4.4.3)
-    return this.issueTokens(clientId, grantedScopes, undefined, false);
+    return this.issueTokens(clientId, grantedScopes, undefined, false, clientTtl);
   }
 
   // -------------------------------------------------------------------------
@@ -419,11 +423,13 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     scopes: string[],
     resource: URL | undefined,
     includeRefresh: boolean,
+    ttlOverride?: number,
   ): Promise<OAuthTokens> {
     const accessToken = generateToken('gbrain_at_');
     const accessHash = hashToken(accessToken);
     const now = Math.floor(Date.now() / 1000);
-    const accessExpiry = now + this.tokenTtl;
+    const effectiveTtl = ttlOverride || this.tokenTtl;
+    const accessExpiry = now + effectiveTtl;
 
     await this.sql`
       INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
@@ -434,7 +440,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const result: OAuthTokens = {
       access_token: accessToken,
       token_type: 'bearer',
-      expires_in: this.tokenTtl,
+      expires_in: effectiveTtl,
       scope: scopes.join(' '),
     };
 

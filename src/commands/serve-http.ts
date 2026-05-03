@@ -264,7 +264,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
       const agents = await sql`
-        SELECT c.client_id, c.client_name, c.grant_types, c.scope, c.created_at,
+        SELECT c.client_id, c.client_name, c.grant_types, c.scope, c.created_at, c.token_ttl,
           (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
@@ -388,14 +388,31 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes } = req.body;
+      const { name, scopes, tokenTtl } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
       const result = await oauthProvider.registerClientManual(
         name, ['client_credentials'], scopes || 'read', [],
       );
-      res.json(result);
+      // Set per-client TTL if specified
+      if (tokenTtl && Number(tokenTtl) > 0) {
+        await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
+      }
+      res.json({ ...result, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'Registration failed' });
+    }
+  });
+
+  // Update client TTL
+  app.post('/admin/api/update-client-ttl', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { clientId, tokenTtl } = req.body;
+      if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
+      const ttl = tokenTtl === null || tokenTtl === 0 ? null : Number(tokenTtl);
+      await sql`UPDATE oauth_clients SET token_ttl = ${ttl} WHERE client_id = ${clientId}`;
+      res.json({ updated: true, tokenTtl: ttl });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Update failed' });
     }
   });
 
