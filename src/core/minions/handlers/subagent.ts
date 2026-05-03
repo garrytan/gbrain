@@ -1,7 +1,7 @@
 /**
  * Subagent LLM-loop handler (v0.15).
  *
- * Runs one Anthropic Messages API conversation with tool use. The loop is
+ * Runs one provider-neutral LLM conversation with tool use. The loop is
  * crash-resumable: subagent_messages + subagent_tool_executions together
  * are the single source of truth about where the conversation is. On
  * resume after a worker kill, we load all committed rows, trust any tool
@@ -14,7 +14,7 @@
  *     renewable error so the worker re-claims.
  *   - dual-signal abort wiring (ctx.signal + ctx.shutdownSignal) drains
  *     the in-flight call and commits whatever turns are already persisted.
- *   - Anthropic prompt cache markers on system + tools blocks.
+ *   - Anthropic prompt cache markers on system + tools blocks when that provider is active.
  *   - token rollup via ctx.updateTokens per turn.
  *
  * NOT in v0.15: refusal detection, stop_reason=max_tokens partial
@@ -24,7 +24,6 @@
  * as P2 items in the plan file.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import type { MinionJobContext, MinionJob } from '../types.ts';
 import type {
   ContentBlock,
@@ -36,6 +35,14 @@ import type {
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { loadConfig } from '../../config.ts';
+import {
+  DEFAULT_ANTHROPIC_MODEL,
+  DEFAULT_OPENAI_MODEL,
+  getLLMRuntimeConfig,
+  makeLLMClient,
+  providerRateLeaseKey,
+} from '../../llm/factory.ts';
+import type { LLMClient, LLMCreateParams, LLMMessage, LLMMessageResponse } from '../../llm/types.ts';
 import { buildBrainTools, filterAllowedTools } from '../tools/brain-allowlist.ts';
 import {
   acquireLease,
@@ -49,40 +56,32 @@ import {
 
 // ── Defaults ────────────────────────────────────────────────
 
-const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_MAX_TURNS = 20;
-const DEFAULT_RATE_KEY = 'anthropic:messages';
-const DEFAULT_MAX_CONCURRENT = Number(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT ?? '8');
+const DEFAULT_ANTHROPIC_MAX_CONCURRENT = Number(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT ?? '8');
 const DEFAULT_LEASE_TTL_MS = 120_000;
 const DEFAULT_SYSTEM = 'You are a helpful assistant running as a gbrain subagent.';
 
 // ── Injectable surfaces (for tests) ─────────────────────────
 
 /**
- * Anthropic Messages client. The real Anthropic SDK implements this
- * structurally; tests can substitute a mock without the SDK import.
+ * Provider-neutral messages client. Tests can substitute a mock without an SDK import.
  */
 export interface MessagesClient {
-  create(params: Anthropic.MessageCreateParamsNonStreaming, opts?: { signal?: AbortSignal }): Promise<Anthropic.Message>;
+  createMessage(params: LLMCreateParams, opts?: { signal?: AbortSignal }): Promise<LLMMessageResponse>;
 }
 
 export interface SubagentDeps {
   /** Engine for DB-backed ops (tools + message persistence + rate leases). */
   engine: BrainEngine;
-  /** Anthropic client. Defaults to the SDK-constructed client. */
+  /** LLM client. Defaults to the configured provider client. */
   client?: MessagesClient;
-  /**
-   * Anthropic SDK constructor. Defaults to `() => new Anthropic()`.
-   * Overridable in tests so the factory default-client branch is
-   * exercisable without an ANTHROPIC_API_KEY or a real API call.
-   * When `deps.client` is provided, this is unused.
-   */
-  makeAnthropic?: () => Anthropic;
+  /** Provider-neutral client factory. Overridable in tests. */
+  makeLLMClient?: () => LLMClient;
   /** Config (MCP, brain, etc.). Defaults to loadConfig(). */
   config?: GBrainConfig;
-  /** Rate-lease key. Defaults to `anthropic:messages`. */
+  /** Rate-lease key. Defaults to configured provider key. */
   rateLeaseKey?: string;
-  /** Max concurrent inflight calls on that key. Defaults to GBRAIN_ANTHROPIC_MAX_INFLIGHT or 8. */
+  /** Max concurrent inflight calls on that key. Defaults to provider env cap or 8. */
   maxConcurrent?: number;
   /** Lease TTL. Defaults to 120s. */
   leaseTtlMs?: number;
@@ -121,21 +120,13 @@ interface PersistedToolExec {
 /**
  * Build a subagent handler bound to a specific engine. `registerBuiltin
  * Handlers` wires this up as `worker.register('subagent', handler)` at
- * worker startup. Always registered — `ANTHROPIC_API_KEY` is the natural
+ * worker startup. Always registered — provider API keys are the natural
  * cost gate and `PROTECTED_JOB_NAMES` gates submission.
  */
 export function makeSubagentHandler(deps: SubagentDeps) {
   const engine = deps.engine;
-  // sdk.messages IS the MessagesClient-shaped object. The v0.16.0 bug was
-  // casting new Anthropic() (top level) to MessagesClient, but .create()
-  // lives at sdk.messages.create. Assigning sdk.messages directly gets the
-  // right object; JS method-call semantics preserve `this` at the call
-  // site (subagent.ts invokes client.create(...) with client === sdk.messages).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
-  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
-  const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
-  const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+  const llmConfig = getLLMRuntimeConfig(config);
   const leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
 
   return async function subagentHandler(ctx: MinionJobContext): Promise<SubagentResult> {
@@ -144,7 +135,13 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       throw new Error('subagent job data.prompt is required (string)');
     }
 
-    const model = data.model ?? DEFAULT_MODEL;
+    const provider = data.provider ?? llmConfig.provider;
+    const model = data.model ?? (provider === llmConfig.provider
+      ? llmConfig.model
+      : provider === 'openai' ? DEFAULT_OPENAI_MODEL : DEFAULT_ANTHROPIC_MODEL);
+    const client: MessagesClient = deps.client ?? (deps.makeLLMClient ? deps.makeLLMClient() : makeLLMClient(provider, config));
+    const rateLeaseKey = deps.rateLeaseKey ?? providerRateLeaseKey(provider);
+    const maxConcurrent = deps.maxConcurrent ?? (provider === 'openai' ? llmConfig.openaiMaxInflight : DEFAULT_ANTHROPIC_MAX_CONCURRENT);
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
     const systemPrompt = data.system ?? DEFAULT_SYSTEM;
 
@@ -179,9 +176,9 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     const priorTools = await loadPriorTools(engine, ctx.id);
     const priorToolByUseId = new Map(priorTools.map(t => [t.tool_use_id, t]));
 
-    // Rebuild the Anthropic messages array from persisted rows.
-    const anthroMessages: Anthropic.MessageParam[] = priorMessages.length > 0
-      ? priorMessages.map(m => ({ role: m.role, content: m.content_blocks as any }))
+    // Rebuild the provider-neutral messages array from persisted rows.
+    const llmMessages: LLMMessage[] = priorMessages.length > 0
+      ? priorMessages.map(m => ({ role: m.role, content: m.content_blocks }))
       : [{ role: 'user', content: data.prompt }];
 
     // If we had no prior messages, persist the seed user message.
@@ -288,7 +285,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           content_blocks: synthesizedResults,
           tokens_in: null, tokens_out: null, tokens_cache_read: null, tokens_cache_create: null, model: null,
         });
-        anthroMessages.push({ role: 'user', content: synthesizedResults as any });
+        llmMessages.push({ role: 'user', content: synthesizedResults });
       }
     }
 
@@ -314,7 +311,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         throw new RateLeaseUnavailableError(rateLeaseKey, lease.activeCount, lease.maxConcurrent);
       }
 
-      let assistantMsg: Anthropic.Message;
+      let assistantMsg: LLMMessageResponse;
       const turnIdx = assistantTurns;
       const t0 = Date.now();
       logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_started', turn_idx: turnIdx });
@@ -323,13 +320,13 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // covers the whole request. A mid-call renewal loop would add
       // complexity; for v0.15 we lean on the 120s TTL + abort-on-signal.
       try {
-        const params: Anthropic.MessageCreateParamsNonStreaming = {
+        const params: LLMCreateParams = {
           model,
           max_tokens: 4096,
           system: [
             { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
           ] as any,
-          messages: anthroMessages,
+          messages: llmMessages,
           ...(toolDefs.length > 0
             ? {
                 tools: toolDefs.map((t, i) => {
@@ -348,7 +345,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         };
 
         const combinedSignal = mergeSignals(ctx.signal, ctx.shutdownSignal);
-        assistantMsg = await client.create(params, { signal: combinedSignal });
+        assistantMsg = await client.createMessage(params, { signal: combinedSignal });
       } catch (err) {
         // Release lease eagerly on error so we don't starve capacity.
         await releaseLease(engine, lease.leaseId!).catch(() => {});
@@ -400,7 +397,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         tokens_cache_create: cacheCreate,
         model,
       });
-      anthroMessages.push({ role: 'assistant', content: blocks as any });
+      llmMessages.push({ role: 'assistant', content: blocks });
       assistantTurns++;
 
       // 4. Collect tool_use blocks. If none, we're done.
@@ -535,7 +532,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         tokens_cache_create: null,
         model: null,
       });
-      anthroMessages.push({ role: 'user', content: toolResults as any });
+      llmMessages.push({ role: 'user', content: toolResults });
     }
 
     return {
@@ -713,5 +710,5 @@ export const __testing = {
   persistToolExecComplete,
   persistToolExecFailed,
   asStringIfNotObject,
-  DEFAULT_MODEL,
+  DEFAULT_ANTHROPIC_MODEL,
 };

@@ -306,7 +306,7 @@ gbrain agent run "analyze every page" \
 gbrain agent logs 1247 --follow --since 5m
 ```
 
-Durability is the point: every Anthropic turn commits to `subagent_messages`, every tool call to `subagent_tool_executions`. Worker kills, OpenClaw crashes, timeouts — all resumable. Host repos (your OpenClaw, etc.) ship their own subagent definitions via `GBRAIN_PLUGIN_PATH` + a `gbrain.plugin.json` manifest: see [`docs/guides/plugin-authors.md`](docs/guides/plugin-authors.md). Requires `ANTHROPIC_API_KEY` on the worker.
+Durability is the point: every LLM turn commits to `subagent_messages`, every tool call to `subagent_tool_executions`. Worker kills, OpenClaw crashes, timeouts — all resumable. Host repos (your OpenClaw, etc.) ship their own subagent definitions via `GBRAIN_PLUGIN_PATH` + a `gbrain.plugin.json` manifest: see [`docs/guides/plugin-authors.md`](docs/guides/plugin-authors.md). Defaults to OpenAI (`OPENAI_API_KEY`); set `GBRAIN_LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY` only when you intentionally want Anthropic.
 
 ## Skillify: say "skillify it!" and the bug becomes structurally impossible to repeat
 

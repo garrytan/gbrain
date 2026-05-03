@@ -1010,6 +1010,9 @@ function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals']): Cyc
     totals.backlinks_added > 0 ||
     totals.pages_synced > 0 ||
     totals.pages_extracted > 0 ||
-    totals.pages_embedded > 0;
+    totals.pages_embedded > 0 ||
+    totals.transcripts_processed > 0 ||
+    totals.synth_pages_written > 0 ||
+    totals.patterns_written > 0;
   return anyWork ? 'ok' : 'clean';
 }
