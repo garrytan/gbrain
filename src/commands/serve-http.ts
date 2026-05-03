@@ -337,7 +337,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       if (status && status !== 'all') { conditions.push(`status = '${status.replace(/'/g, "''")}'`); }
       const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-      const rows = await sql.unsafe(`SELECT id, token_name, operation, latency_ms, status, params, error_message, created_at FROM mcp_request_log ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`);
+      const rows = await sql.unsafe(`SELECT r.id, r.token_name, COALESCE(c.client_name, a.name, r.token_name) as agent_name, r.operation, r.latency_ms, r.status, r.params, r.error_message, r.created_at FROM mcp_request_log r LEFT JOIN oauth_clients c ON c.client_id = r.token_name LEFT JOIN access_tokens a ON a.token_hash = r.token_name ${where ? where.replace('token_name', 'r.token_name').replace('operation', 'r.operation').replace('status', 'r.status') : ''} ORDER BY r.created_at DESC LIMIT ${limit} OFFSET ${offset}`);
       const [countResult] = await sql.unsafe(`SELECT count(*)::int as total FROM mcp_request_log ${where}`);
       res.json({ rows, total: (countResult as any).total, page, pages: Math.ceil((countResult as any).total / limit) });
     } catch {

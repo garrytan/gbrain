@@ -4,6 +4,7 @@ import { api } from '../api';
 interface LogEntry {
   id: number;
   token_name: string;
+  agent_name: string;
   operation: string;
   latency_ms: number;
   status: string;
@@ -35,14 +36,7 @@ export function RequestLogPage() {
     return new Date(ts).toLocaleDateString();
   };
 
-  // Extract short agent name from client_id
-  const agentName = (clientId: string) => {
-    if (!clientId) return 'unknown';
-    // OAuth clients: gbrain_cl_xxx → look up name, fallback to truncated id
-    if (clientId.startsWith('gbrain_cl_')) return clientId.substring(10, 22) + '…';
-    // Legacy tokens use the name directly
-    return clientId;
-  };
+
 
   const formatParams = (params: Record<string, unknown> | null) => {
     if (!params) return null;
@@ -56,8 +50,9 @@ export function RequestLogPage() {
     return parts.join(' ');
   };
 
-  // Collect unique agents for filter
-  const agents = [...new Set(data.rows.map(r => r.token_name).filter(Boolean))];
+  // Collect unique agents for filter (use name for display, token_name for value)
+  const agentMap = new Map<string, string>();
+  data.rows.forEach(r => { if (r.token_name) agentMap.set(r.token_name, r.agent_name || r.token_name); });
 
   return (
     <>
@@ -66,7 +61,7 @@ export function RequestLogPage() {
         <select value={agentFilter} onChange={e => { setAgentFilter(e.target.value); setPage(1); }}
           style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', fontSize: 13 }}>
           <option value="all">All agents</option>
-          {agents.map(a => <option key={a} value={a}>{agentName(a)}</option>)}
+          {[...agentMap.entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
         </select>
       </div>
 
@@ -94,9 +89,9 @@ export function RequestLogPage() {
                       style={{ cursor: 'pointer' }}>
                     <td style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{timeAgo(r.created_at)}</td>
                     <td>
-                      <a className="mono" style={{ color: 'var(--text-link, #88aaff)', cursor: 'pointer', textDecoration: 'none' }}
+                      <a style={{ color: 'var(--text-link, #88aaff)', cursor: 'pointer', textDecoration: 'none', fontWeight: 500 }}
                          onClick={(e) => { e.stopPropagation(); setAgentFilter(r.token_name); setPage(1); }}>
-                        {agentName(r.token_name)}
+                        {r.agent_name || r.token_name}
                       </a>
                     </td>
                     <td className="mono">{r.operation}</td>
