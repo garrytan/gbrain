@@ -544,6 +544,31 @@ Query
 
 Keyword alone misses conceptual matches. Vector alone misses exact phrases. RRF gets both. Search quality is benchmarked and reproducible: `gbrain eval --qrels queries.json` measures P@k, Recall@k, MRR, and nDCG@k. A/B test config changes before deploying them.
 
+### Non-English brains (FTS language config)
+
+The Postgres full-text search tokenizer is configurable via `GBRAIN_FTS_LANGUAGE`. Defaults to `english`. Set it to any text-search configuration that exists in your Postgres instance:
+
+```bash
+export GBRAIN_FTS_LANGUAGE=portuguese     # uses built-in portuguese stemmer
+export GBRAIN_FTS_LANGUAGE=spanish        # built-in spanish stemmer
+export GBRAIN_FTS_LANGUAGE=pt_br          # custom config (e.g. unaccent + portuguese)
+```
+
+List available configs: `psql -c "SELECT cfgname FROM pg_ts_config"`. To create a custom accent-insensitive Portuguese config, see [docs/guides/multi-language-fts.md](docs/guides/multi-language-fts.md).
+
+Both the **query side** (`websearch_to_tsquery`) and the **write side** (the trigger functions that populate `pages.search_vector` and `content_chunks.search_vector`) honor `GBRAIN_FTS_LANGUAGE`. On first install, schema migration v33 reads the env var and creates trigger functions in the configured language; subsequent inserts/updates tokenize using that setting.
+
+To change language on a brain that has already run v33, the trigger functions need to be recreated. This is wired into the `gbrain reindex --search-vector` CLI command (PR #3 in this series). Until that ships, recreate manually:
+
+```bash
+export GBRAIN_FTS_LANGUAGE=portuguese
+psql $DATABASE_URL -c "DELETE FROM config WHERE key = 'version' AND value = '33'" \
+  -c "INSERT INTO config(key, value) VALUES ('version', '32') ON CONFLICT (key) DO UPDATE SET value = '32'"
+gbrain init --migrate-only      # re-runs v33 with the new language
+```
+
+For accent-insensitive Portuguese (`pt_br`), see [docs/guides/multi-language-fts.md](docs/guides/multi-language-fts.md) for the `unaccent` + portuguese stemmer recipe.
+
 ## Why it works: many strategies in concert
 
 The brain isn't one trick. Every retrieval question goes through ~20 deterministic
