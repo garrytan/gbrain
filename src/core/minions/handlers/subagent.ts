@@ -549,7 +549,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         cache_read: cacheRead,
       });
 
-      const blocks = assistantMsg.content as ContentBlock[];
+      const blocks = assistantMsg.content as unknown as ContentBlock[];
 
       // 3. Persist the assistant message BEFORE tool dispatch so replay
       //    sees a consistent state.
