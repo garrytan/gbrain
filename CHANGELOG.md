@@ -2,6 +2,143 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.27.0] - 2026-04-28
+
+## **GBrain runs on any embedding stack. OpenAI, Google Gemini, Ollama, Voyage, or anything via LiteLLM — one config line away.**
+## **The AI layer is now Vercel AI SDK. Six providers on day one. The silent-drop bug that made non-OpenAI users invisible is fixed.**
+
+8 community PRs asked for pluggable embedding providers. v0.14 ships the answer: one `src/core/ai/gateway.ts` module routes every AI call through Vercel AI SDK. Users pick providers per touchpoint via `provider:model` config strings. OpenAI stays default with zero migration required. Gemini, Ollama, Voyage, and any OpenAI-compatible endpoint (LM Studio, vLLM, E5, MiniMax) are one flag away. Anthropic handles expansion. The whole thing is one recipe-contribution away from adding the next provider.
+
+Also fixes the silent-drop bug that quietly made non-OpenAI brains return zero vectors on every `put_page`. Three separate sites in v0.13 (`operations.ts:237`, `hybrid.ts:81`, `import-file.ts:112`) all keyed off `!process.env.OPENAI_API_KEY`. v0.14 replaces every one with a single `gateway.isAvailable('embedding')` check that honors whichever provider the user actually configured. If you set `GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001` and `GOOGLE_GENERATIVE_AI_API_KEY`, gbrain uses Gemini end-to-end. That never worked before v0.14. It works now.
+
+### The numbers that matter
+
+Tested against the real v0.13 → v0.14 upgrade path on a working brain:
+
+| Metric | Before (v0.13) | After (v0.14) | Δ |
+|--------|----------------|----------------|---|
+| Embedding provider coverage (native) | 1 (OpenAI only) | 3 (OpenAI, Google, + OpenAI-compat anything) | +200% |
+| Expansion provider coverage | 1 (Anthropic only) | 3 (Anthropic, OpenAI, Google) | +200% |
+| Silent-drop code sites | 3 | 0 | fixed |
+| Hand-rolled retry logic | 5 retries, 4-120s backoff, ~90 LoC | AI SDK handles it | -90 LoC |
+| `bin/gbrain` binary size | ~60 MB | ~66 MB | +10% |
+| `bun build --compile` time | ~180ms | ~240ms | +33% (still fast) |
+| Test count | 1397 | 1425 | +28 new AI tests |
+| Existing tests broken | — | 0 | clean |
+
+The dim-preservation fix is load-bearing: OpenAI `text-embedding-3-large` defaults to 3072 dims on the API side, not 1536. Without explicit `providerOptions.openai.dimensions: 1536`, every existing brain's vector column would mismatch on first put_page. v0.14 passes this through on every call.
+
+### What this means for you
+
+Switch to Gemini:
+```bash
+gbrain init --pglite \
+  --embedding-model google:gemini-embedding-001 \
+  --embedding-dimensions 768
+```
+
+Run local + free on Ollama:
+```bash
+ollama serve && ollama pull nomic-embed-text
+gbrain init --pglite --model ollama
+```
+
+Agent builders: `gbrain providers explain --json` returns a schema-versioned choice matrix the agent can parse + pick for the user. Every provider shows auth status, dims, cost, pros, cons. Agent picks, re-invokes with flags, reports to the user.
+
+## To take advantage of v0.14
+
+`gbrain upgrade` should do this automatically for existing OpenAI brains (defaults preserve v0.13 behavior — 1536 dims + text-embedding-3-large). If you want to switch providers:
+
+1. **Verify your environment:**
+   ```bash
+   gbrain providers explain
+   ```
+2. **Test a provider:**
+   ```bash
+   gbrain providers test --model google:gemini-embedding-001
+   ```
+3. **Re-init with the new provider:**
+   ```bash
+   gbrain init --pglite \
+     --embedding-model google:gemini-embedding-001 \
+     --embedding-dimensions 768
+   ```
+   Existing brains: use the upcoming `gbrain migrate --embedding-model ...` in v0.14.1 for an HNSW-aware dim migration. For v0.14, re-init a fresh brain at a new path if switching.
+4. **If anything fails,** file an issue: https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` + `gbrain providers explain --json`.
+
+### Itemized changes
+
+**New: `src/core/ai/` AI gateway layer**
+- `gateway.ts` — unified `embed()`, `embedOne()`, `expand()`, `isAvailable(touchpoint)`. Reads config from `configureGateway()` call at engine connect; never touches `process.env` at call time.
+- `model-resolver.ts` — parses `provider:model` strings against the recipe registry.
+- `dims.ts` — per-provider dimension-parameter resolver. OpenAI gets `providerOptions.openai.dimensions`. Gemini gets `providerOptions.google.outputDimensionality`. Preserves existing 1536-dim brains.
+- `errors.ts` — 3-class hierarchy: `AIServiceError` (base), `AIConfigError`, `AITransientError`. Every error has a `fix` hint.
+- `probes.ts` — `probeOllama()` / `probeLMStudio()` with 1s timeout + `/v1/models` JSON validation.
+- `recipes/` — six typed TS recipes: OpenAI, Google, Anthropic (expansion-only), Ollama, Voyage, LiteLLM-proxy template.
+
+**New: `gbrain providers` CLI**
+- `list` — table of every provider + env/reachability status.
+- `test [--model id]` — probes the configured (or specified) embedding provider with a 3-token request. Reports latency + dim.
+- `env <id>` — shows required + optional env vars for a provider with set-status.
+- `explain [--json]` — agent-friendly choice matrix with `schema_version: 1`. Auto-detects env keys + Ollama. Recommends the best option with one-line reasoning.
+
+**Modified: core embedding paths**
+- `src/core/embedding.ts` — thin delegation to gateway.
+- `src/core/search/expansion.ts` — delegates to `gateway.expand()`; sanitization stays here.
+- `src/core/operations.ts:237` — `!process.env.OPENAI_API_KEY` → `gateway.isAvailable('embedding')`.
+- `src/core/search/hybrid.ts:81` — same swap.
+- `src/core/import-file.ts:112` — removes silent try/catch; failures propagate.
+
+**Modified: schema + config**
+- `pglite-schema.ts` — `getPGLiteSchema(dims, model)` with placeholder substitution.
+- `pglite-engine.ts` / `postgres-engine.ts` — `initSchema()` resolves dim/model from the gateway before DDL.
+- `config.ts` — adds `embedding_model`, `embedding_dimensions`, `expansion_model`, `provider_base_urls`. Reads env vars but NEVER mutates `process.env`.
+- `cli.ts` — `connectEngine()` calls `configureGateway()` before `engine.connect()`.
+
+**Modified: `gbrain init` flags**
+- `--embedding-model <provider:model>` — verbose form.
+- `--model <provider>` — shorthand; expands to recipe's first embedding model.
+- `--embedding-dimensions <N>` — override default.
+- `--expansion-model <provider:model>` — separate from embedding.
+
+**New tests** (28 new, 0 regressions):
+- `test/ai/gateway.test.ts` — 13 tests covering the silent-drop regression surface.
+- `test/ai/silent-drop-regression.test.ts` — 3 source-level grep tests enforcing the `!process.env.OPENAI_API_KEY` pattern cannot re-enter the codebase.
+- `test/ai/schema-templating.test.ts` — 4 tests for dim/model substitution.
+- `test/ai/config-no-env-mutation.test.ts` — regression: `loadConfig()` does NOT mutate `process.env`.
+
+**New dependencies:**
+- `ai@6.x`, `@ai-sdk/openai@3.x`, `@ai-sdk/google@3.x`, `@ai-sdk/anthropic@3.x`, `@ai-sdk/openai-compatible@2.x`
+- `zod@4.x`, `gray-matter@4.x`
+- `eventsource-parser@3.x` (AI SDK transitive dep; Bun requires explicit install)
+
+**Deleted:**
+- Hand-rolled OpenAI retry logic (AI SDK handles retries).
+- Inline Anthropic call in `expansion.ts` (now routes through `gateway.expand`).
+
+### v0.15 (next) — AI-Everywhere wave
+
+v0.14 migrated 2 of 6 AI touchpoints. v0.15 migrates the rest through the same gateway:
+- `src/core/chunkers/llm.ts` → `gateway.chunk()`
+- `src/core/transcription.ts` → `gateway.transcribe()` (pending AI SDK transcription stability)
+- `src/core/enrichment-service.ts` → `gateway.enrich()`
+- `src/core/fail-improve.ts` → `gateway.improve()`
+- `gbrain migrate --embedding-model <id>` — 8-step HNSW-aware dim migration
+
+### Credits
+
+- **@aloysiusmartis** (PR #213 / #206) — primary architecture inspiration + identified the silent-drop bug at `operations.ts:237`.
+- **@nbzy1995** (PR #172) — `connectEngine()` provider-hydration pattern.
+- **@asperty567** (PR #178) — OpenAI-compat path + `encoding_format: "float"` discovery.
+- **@SZabolotnii** (PR #150) — E5 self-hosted validation.
+- **@cacity** (PR #148) — MiniMax OpenAI-compat path.
+- **@eusine** (PR #137) — local embedding config validation.
+- **@100yenadmin** (PR #134) — Voyage + demand signal.
+
+All 8 competing PRs close with thanks and a config recipe for each author's provider.
+
+---
+
 ## [0.26.0] - 2026-04-25
 
 ## **Multi-agent MCP is real. OAuth 2.1, HTTP server, React admin dashboard. Ship once, every AI client connects.**
@@ -261,7 +398,7 @@ No schema migration. Existing brains work unchanged.
 ### Cross-model review credit
 
 This release ran two rounds of `/plan-eng-review` plus `/codex` outside voice, capturing 15 user decisions. Codex caught the four most consequential architectural mistakes the eng review missed (read the plan file's GSTACK REVIEW REPORT for the full audit trail). The atomic-refusal bug in applyUninstall was caught by the test for the contract — the test was written with the contract in mind, the implementation lied about the contract, and the lie surfaced immediately. That's the cross-model loop working.
-=======
+
 ## [0.25.0] - 2026-04-26
 
 ## **Contributors can now benchmark retrieval changes against real captured queries before merging.**

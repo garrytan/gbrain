@@ -16,7 +16,7 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
-export const PGLITE_SCHEMA_SQL = `
+const PGLITE_SCHEMA_SQL_TEMPLATE = `
 -- GBrain PGLite schema (local embedded Postgres)
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -77,8 +77,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  embedding     vector(__EMBEDDING_DIMS__),
+  model         TEXT    NOT NULL DEFAULT '__EMBEDDING_MODEL__',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -504,3 +504,16 @@ CREATE TRIGGER trg_pages_search_vector
 DROP TRIGGER IF EXISTS trg_timeline_search_vector ON timeline_entries;
 DROP FUNCTION IF EXISTS update_page_search_vector_from_timeline();
 `;
+
+/**
+ * Return the PGLite schema SQL with embedding vector dim + model name substituted.
+ * Defaults preserve v0.13 behavior (1536d + text-embedding-3-large).
+ */
+export function getPGLiteSchema(dims: number = 1536, model: string = 'text-embedding-3-large'): string {
+  return PGLITE_SCHEMA_SQL_TEMPLATE
+    .replace(/__EMBEDDING_DIMS__/g, String(dims))
+    .replace(/__EMBEDDING_MODEL__/g, model);
+}
+
+/** Back-compat: pre-computed default-1536 schema for existing callers. */
+export const PGLITE_SCHEMA_SQL = getPGLiteSchema();

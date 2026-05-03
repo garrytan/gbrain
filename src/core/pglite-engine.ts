@@ -5,7 +5,7 @@ import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection, DreamVerdict, DreamVerdictInput } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
+import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -185,16 +185,21 @@ export class PGLiteEngine implements BrainEngine {
       return;
     }
     // Pre-schema bootstrap: add forward-referenced state the embedded schema
-    // blob requires but that older brains don't have yet. Without this, a
-    // pre-v0.18 brain hits `CREATE INDEX idx_pages_source_id ON pages(source_id)`
-    // (issues #366/#375/#378/#396) or a pre-v0.13 brain hits
-    // `CREATE INDEX idx_links_source ON links(link_source)` (#266/#357), and
-    // initSchema crashes before runMigrations gets a chance to apply the
-    // missing column. Bootstrap is structurally idempotent and a no-op on
-    // fresh installs and modern brains.
+    // blob requires but that older brains don't have yet (issues #366/#375/
+    // #378/#396 + #266/#357). Bootstrap is idempotent and a no-op on fresh
+    // installs and modern brains.
     await this.applyForwardReferenceBootstrap();
 
-    await this.db.exec(PGLITE_SCHEMA_SQL);
+    // Resolve embedding dim/model from gateway (v0.14+). Defaults preserve v0.13.
+    let dims = 1536;
+    let model = 'text-embedding-3-large';
+    try {
+      const gw = await import('./ai/gateway.ts');
+      dims = gw.getEmbeddingDimensions();
+      model = gw.getEmbeddingModel().split(':').slice(1).join(':') || model;
+    } catch { /* gateway not configured — use defaults */ }
+
+    await this.db.exec(getPGLiteSchema(dims, model));
 
     const { applied } = await runMigrations(this);
     if (applied > 0) {

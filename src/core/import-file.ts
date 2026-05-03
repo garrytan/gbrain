@@ -242,26 +242,20 @@ export async function importFromContent(
   }
 
   // v0.20.0 Cathedral II Layer 8 D2 — extract fenced code blocks from
-  // compiled_truth as first-class code chunks. A markdown page like
-  // `docs/hybrid-search.md` with embedded TypeScript examples now ranks
-  // the TS fence directly in code-aware queries instead of burying it
-  // inside prose. Fences that carry an unrecognized lang tag (or no tag)
-  // fall through — the prose chunker above already chunked them as text.
+  // compiled_truth as first-class code chunks.
   if (parsed.compiled_truth.trim()) {
     const fenceChunks = await extractFencedChunks(parsed.compiled_truth, chunks.length);
     chunks.push(...fenceChunks);
   }
 
-  // Embed BEFORE the transaction (external API call)
+  // Embed BEFORE the transaction (external API call).
+  // v0.14+ (Codex C2): embedding failure PROPAGATES. Silent drop accumulates
+  // unembedded pages invisibly. Caller can pass opts.noEmbed=true to skip.
   if (!opts.noEmbed && chunks.length > 0) {
-    try {
-      const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
-      for (let i = 0; i < chunks.length; i++) {
-        chunks[i].embedding = embeddings[i];
-        chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
-      }
-    } catch (e: unknown) {
-      console.warn(`[gbrain] embedding failed for ${slug} (${chunks.length} chunks): ${e instanceof Error ? e.message : String(e)}`);
+    const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
+    for (let i = 0; i < chunks.length; i++) {
+      chunks[i].embedding = embeddings[i];
+      chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
     }
   }
 
