@@ -15,7 +15,7 @@ import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -192,15 +192,25 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Admin authentication (cookie-based)
   // ---------------------------------------------------------------------------
   // POST /admin/login — JSON body with token (for programmatic/UI login)
+  // Constant-time hex compare. Both inputs are sha256 hex (64 chars),
+  // so they're always equal length. timingSafeEqual throws on length
+  // mismatch — we already short-circuit on non-string above. Catches
+  // would-be timing oracles even though the inputs are pre-hashed
+  // (defense-in-depth on the hash bits).
+  function safeHexEqual(a: string, b: string): boolean {
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
+  }
+
   app.post('/admin/login', express.json(), (req, res) => {
     const token = req.body?.token;
-    if (!token) {
+    if (!token || typeof token !== 'string') {
       res.status(400).json({ error: 'Token required' });
       return;
     }
 
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    if (tokenHash !== bootstrapHash) {
+    if (!safeHexEqual(tokenHash, bootstrapHash)) {
       res.status(401).json({ error: 'Invalid token. Check your terminal output.' });
       return;
     }
@@ -224,7 +234,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.get('/admin/auth/:token', (req, res) => {
     const token = req.params.token;
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    if (tokenHash !== bootstrapHash) {
+    if (!safeHexEqual(tokenHash, bootstrapHash)) {
       res.status(401).send(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GBrain</title>
