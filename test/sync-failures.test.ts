@@ -105,6 +105,39 @@ describe('Bug 9 — sync-failures JSONL helpers', () => {
     expect(unacked[0].path).toBe('b.md');
   });
 
+  test('resolveSyncFailure removes entries by path and reports count', async () => {
+    const { recordSyncFailures, resolveSyncFailure, loadSyncFailures } = await import('../src/core/sync.ts');
+
+    recordSyncFailures([
+      { path: 'a.md', error: 'err1' },
+      { path: 'b.md', error: 'err2' },
+    ], 'commit1');
+    // Same path on a different commit — both entries should clear together.
+    recordSyncFailures([{ path: 'a.md', error: 'err1-redux' }], 'commit2');
+    expect(loadSyncFailures().length).toBe(3);
+
+    expect(resolveSyncFailure('a.md')).toBe(2);
+    const after = loadSyncFailures();
+    expect(after.length).toBe(1);
+    expect(after[0].path).toBe('b.md');
+
+    // No-op when the path isn't recorded.
+    expect(resolveSyncFailure('missing.md')).toBe(0);
+  });
+
+  test('resolveSyncFailure deletes the JSONL when the last entry clears', async () => {
+    const { recordSyncFailures, resolveSyncFailure, syncFailuresPath } = await import('../src/core/sync.ts');
+    recordSyncFailures([{ path: 'only.md', error: 'err' }], 'c1');
+    expect(existsSync(syncFailuresPath())).toBe(true);
+    expect(resolveSyncFailure('only.md')).toBe(1);
+    expect(existsSync(syncFailuresPath())).toBe(false);
+  });
+
+  test('resolveSyncFailure on a missing JSONL is a no-op (returns 0)', async () => {
+    const { resolveSyncFailure } = await import('../src/core/sync.ts');
+    expect(resolveSyncFailure('whatever.md')).toBe(0);
+  });
+
   test('loadSyncFailures returns [] when file is missing', async () => {
     const { loadSyncFailures } = await import('../src/core/sync.ts');
     expect(loadSyncFailures()).toEqual([]);
@@ -119,6 +152,145 @@ describe('Bug 9 — sync-failures JSONL helpers', () => {
     const out = loadSyncFailures();
     expect(out.length).toBe(1);
     expect(out[0].path).toBe('a.md');
+  });
+});
+
+describe('Bug 9 follow-up — performSync retry + reconcile', () => {
+  // These cases drive the actual sync flow against PGLite, not just helpers.
+  // They guard the three bugs exposed by Hermes' Apr-27 sync:
+  //   1. --retry-failed banner printed but did not actually re-run files
+  //      when last_commit==HEAD (diff empty).
+  //   2. Successful import did not reconcile sync-failures.jsonl, so files
+  //      already in the DB stayed listed as failed forever.
+  //   3. --skip-failed could not acknowledge stuck failures when the diff
+  //      was empty (early return skipped the ack call).
+
+  let repoPath: string;
+  let engine: any;
+
+  beforeEach(async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+
+    repoPath = mkdtempSync(join(tmpdir(), 'gbrain-retry-failed-'));
+    const { execSync } = await import('child_process');
+    execSync('git init', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: repoPath, stdio: 'pipe' });
+    writeFileSync(join(repoPath, 'good.md'), [
+      '---',
+      'type: concept',
+      'title: Good Page',
+      '---',
+      '',
+      'Body.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "initial"', { cwd: repoPath, stdio: 'pipe' });
+  });
+
+  afterEach(async () => {
+    try { await engine.disconnect(); } catch { /* ignore */ }
+    if (repoPath) try { rmSync(repoPath, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  test('--retry-failed re-injects unacked failures even when diff is empty', async () => {
+    const { recordSyncFailures, loadSyncFailures } = await import('../src/core/sync.ts');
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    // First sync — pulls good.md into the DB and bookmarks last_commit at HEAD.
+    const first = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    expect(first.status).toBe('first_sync');
+    expect(await engine.getPage('good')).not.toBeNull();
+    const headCommit = await engine.getConfig('sync.last_commit');
+    expect(headCommit).not.toBeNull();
+
+    // Now record a stale failure for good.md against the same commit.
+    // (Simulates the Hermes scenario: file already in DB, but jsonl carries
+    // a historical failure entry that --retry-failed should clear.)
+    recordSyncFailures([{ path: 'good.md', error: 'stale historical error' }], headCommit!);
+    expect(loadSyncFailures().length).toBe(1);
+
+    // Second sync with --retry-failed. Diff is empty (no new commits), but
+    // the retry path must still revisit good.md and clear the failure.
+    const second = await performSync(engine, {
+      repoPath, noPull: true, noEmbed: true, retryFailed: true,
+    });
+    // Re-injection turns the empty diff into one modified file.
+    expect(second.modified).toBeGreaterThanOrEqual(1);
+    // jsonl is now empty — successful import reconciled it.
+    expect(loadSyncFailures().length).toBe(0);
+  });
+
+  test('successful import reconciles JSONL even without --retry-failed', async () => {
+    const { recordSyncFailures, loadSyncFailures } = await import('../src/core/sync.ts');
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    // Seed a failure entry for good.md before any sync runs.
+    recordSyncFailures([{ path: 'good.md', error: 'old error' }], 'deadbeef');
+    expect(loadSyncFailures().length).toBe(1);
+
+    // Plain first sync — good.md imports normally; the jsonl entry should
+    // disappear because the file was reconciled by the import loop.
+    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    expect(result.status).toBe('first_sync');
+    expect(await engine.getPage('good')).not.toBeNull();
+    expect(loadSyncFailures().length).toBe(0);
+  });
+
+  test('successful rename clears stale failures under both old and new path', async () => {
+    const { recordSyncFailures, loadSyncFailures } = await import('../src/core/sync.ts');
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { execSync } = await import('child_process');
+
+    // First sync — bookmark HEAD with good.md.
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+
+    // Seed failures for both names. The from-side mirrors the case where a
+    // file that previously failed gets renamed to fix it.
+    recordSyncFailures([
+      { path: 'good.md', error: 'old name failure' },
+      { path: 'renamed.md', error: 'new name failure (somehow)' },
+    ], 'deadbeef');
+    expect(loadSyncFailures().length).toBe(2);
+
+    // git mv good.md → renamed.md and commit.
+    execSync('git mv good.md renamed.md', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git commit -m "rename"', { cwd: repoPath, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    // Whether git -M identifies this as rename (R) or delete+add depends on
+    // similarity heuristics; either way both jsonl entries should clear:
+    // - rename branch reconciles `from` and `to`
+    // - delete+add branches each reconcile their own path
+    const touched = result.renamed + result.deleted + result.added;
+    expect(touched).toBeGreaterThanOrEqual(1);
+    expect(loadSyncFailures().length).toBe(0);
+  });
+
+  test('--skip-failed acknowledges stuck failures when diff is empty', async () => {
+    const { recordSyncFailures, loadSyncFailures } = await import('../src/core/sync.ts');
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    // First sync to bookmark last_commit at HEAD.
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    const headCommit = await engine.getConfig('sync.last_commit');
+
+    // Record a failure that the user can't fix — they want to acknowledge it.
+    recordSyncFailures([{ path: 'unfixable.md', error: 'no longer relevant' }], headCommit!);
+    const before = loadSyncFailures();
+    expect(before.length).toBe(1);
+    expect(before[0].acknowledged).toBeUndefined();
+
+    // Second sync with --skip-failed. Diff is empty. Without the fix the ack
+    // call sat behind the early return and never ran.
+    await performSync(engine, {
+      repoPath, noPull: true, noEmbed: true, skipFailed: true,
+    });
+    const after = loadSyncFailures();
+    expect(after.length).toBe(1);
+    expect(after[0].acknowledged).toBe(true);
   });
 });
 

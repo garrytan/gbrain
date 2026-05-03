@@ -299,7 +299,7 @@ export function resolveSlugForPath(filePath: string, repoPrefix?: string): strin
 //   3. Let `gbrain sync --skip-failed` acknowledge a known-bad set so
 //      repos with many broken files aren't permanently stuck.
 
-import { existsSync as _existsSync, readFileSync as _readFileSync, appendFileSync as _appendFileSync, mkdirSync as _mkdirSync } from 'fs';
+import { existsSync as _existsSync, readFileSync as _readFileSync, appendFileSync as _appendFileSync, mkdirSync as _mkdirSync, writeFileSync as _writeFileSync, unlinkSync as _unlinkSync } from 'fs';
 import { join as _joinPath } from 'path';
 import { gbrainPath as _gbrainPath } from './config.ts';
 import { createHash as _createHash } from 'crypto';
@@ -498,8 +498,7 @@ export function acknowledgeSyncFailures(): AcknowledgeResult {
   });
   if (changed === 0) return { count: 0, summary: [] };
   _mkdirSync(_failuresDir(), { recursive: true });
-  const fd = require('fs').writeFileSync;
-  fd(syncFailuresPath(), updated.map(e => JSON.stringify(e)).join('\n') + '\n');
+  _writeFileSync(syncFailuresPath(), updated.map(e => JSON.stringify(e)).join('\n') + '\n');
   return {
     count: changed,
     summary: summarizeFailuresByCode(newlyAcked),
@@ -509,4 +508,34 @@ export function acknowledgeSyncFailures(): AcknowledgeResult {
 /** Return only unacknowledged failures. */
 export function unacknowledgedSyncFailures(): SyncFailure[] {
   return loadSyncFailures().filter(f => !f.acknowledged);
+}
+
+/**
+ * Drop every failure entry whose path matches. Called when a previously-failed
+ * file successfully imports through any code path (sync, put_page, autopilot)
+ * so the JSONL reconciles with reality instead of carrying ghost records
+ * forever. Returns the number of entries removed.
+ *
+ * Bug 9 follow-up: prior to this, the JSONL was append-only outside of
+ * `--skip-failed`, so a file could already be in the DB while still listed as
+ * failed.
+ *
+ * Concurrency caveat: read-modify-write is not atomic. If `gbrain sync` and the
+ * autopilot daemon race on the same JSONL, one writer's update can clobber the
+ * other. Same limitation applies to `acknowledgeSyncFailures`. Acceptable for
+ * now because failures are rare and both writers are idempotent on retry.
+ */
+export function resolveSyncFailure(path: string): number {
+  const entries = loadSyncFailures();
+  if (entries.length === 0) return 0;
+  const remaining = entries.filter(e => e.path !== path);
+  const removed = entries.length - remaining.length;
+  if (removed === 0) return 0;
+  const fp = syncFailuresPath();
+  if (remaining.length === 0) {
+    try { _unlinkSync(fp); } catch { /* already gone */ }
+  } else {
+    _writeFileSync(fp, remaining.map(e => JSON.stringify(e)).join('\n') + '\n');
+  }
+  return removed;
 }

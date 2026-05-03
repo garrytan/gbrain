@@ -12,6 +12,7 @@ import {
   unacknowledgedSyncFailures,
   acknowledgeSyncFailures,
   formatCodeBreakdown,
+  resolveSyncFailure,
 } from '../core/sync.ts';
 import { estimateTokens, CHUNKER_VERSION } from '../core/chunkers/code.ts';
 import { EMBEDDING_MODEL, estimateEmbeddingCostUsd } from '../core/embedding.ts';
@@ -388,15 +389,34 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   const versionNeverSet = storedVersion === null && opts.sourceId !== undefined;
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet) {
-    return {
-      status: 'up_to_date',
-      fromCommit: lastCommit,
-      toCommit: headCommit,
-      added: 0, modified: 0, deleted: 0, renamed: 0,
-      chunksCreated: 0,
-      embedded: 0,
-      pagesAffected: [],
-    };
+    // Bug 9 follow-up — empty diff is the common Hermes case where stuck
+    // failures used to be unrecoverable. --retry-failed must fall through to
+    // the import loop so the injection block below can surface failures into
+    // filtered.modified. --skip-failed must acknowledge before returning.
+    const stuckFailures = (opts.retryFailed || opts.skipFailed)
+      ? unacknowledgedSyncFailures()
+      : [];
+    const shouldFallThrough = opts.retryFailed && stuckFailures.length > 0;
+    if (!shouldFallThrough) {
+      if (opts.skipFailed && stuckFailures.length > 0) {
+        const acked = acknowledgeSyncFailures();
+        if (acked.count > 0) {
+          console.error(
+            `  Acknowledged ${acked.count} sync failure(s).\n` +
+            `${formatCodeBreakdown(acked.summary)}`,
+          );
+        }
+      }
+      return {
+        status: 'up_to_date',
+        fromCommit: lastCommit,
+        toCommit: headCommit,
+        added: 0, modified: 0, deleted: 0, renamed: 0,
+        chunksCreated: 0,
+        embedded: 0,
+        pagesAffected: [],
+      };
+    }
   }
 
   if ((versionMismatch || versionNeverSet) && lastCommit === headCommit) {
@@ -440,6 +460,31 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     } catch { /* ignore */ }
   }
 
+  // Bug 9 follow-up — `--retry-failed` must actually re-attempt the files
+  // listed in sync-failures.jsonl, not just print a banner. The original
+  // implementation relied on git diff revisiting them, but when
+  // sync.last_commit == HEAD (or the failure has already been bookmarked over
+  // some other way) the diff is empty and the failures stay stuck forever.
+  // Surface them into `filtered.modified` so the import loop picks them up.
+  if (opts.retryFailed) {
+    const failures = unacknowledgedSyncFailures();
+    if (failures.length > 0) {
+      const seen = new Set([...filtered.added, ...filtered.modified]);
+      let injected = 0;
+      for (const f of failures) {
+        if (seen.has(f.path)) continue;
+        if (!existsSync(join(repoPath, f.path))) continue;
+        if (!isSyncable(f.path, syncOpts)) continue;
+        filtered.modified.push(f.path);
+        seen.add(f.path);
+        injected++;
+      }
+      if (injected > 0) {
+        console.error(`  Re-injecting ${injected} previously-failed file(s) into the import set.`);
+      }
+    }
+  }
+
   const totalChanges = filtered.added.length + filtered.modified.length +
     filtered.deleted.length + filtered.renamed.length;
 
@@ -466,6 +511,19 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
 
   if (totalChanges === 0) {
+    // Bug 9 follow-up — `--skip-failed` must acknowledge stuck failures even
+    // when the diff is empty. Otherwise a user with last_commit==HEAD and
+    // residual failures has no way to clear them: the early-return below skips
+    // the regular ack path at line 554/682.
+    if (opts.skipFailed) {
+      const acked = acknowledgeSyncFailures();
+      if (acked.count > 0) {
+        console.error(
+          `  Acknowledged ${acked.count} sync failure(s).\n` +
+          `${formatCodeBreakdown(acked.summary)}`,
+        );
+      }
+    }
     // Update sync state even with no syncable changes (git advanced)
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
     await engine.setConfig('sync.last_run', new Date().toISOString());
@@ -502,6 +560,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       const slug = resolveSlugForPath(path);
       await engine.deletePage(slug);
       pagesAffected.push(slug);
+      // Bug 9 follow-up — a deleted file should not stay listed as failed.
+      resolveSyncFailure(path);
       progress.tick(1, slug);
     }
     progress.finish();
@@ -523,9 +583,27 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       }
       // Reimport at new path (picks up content changes)
       const filePath = join(repoPath, to);
+      let renameOK = false;
       if (existsSync(filePath)) {
         const result = await importFile(engine, filePath, to, { noEmbed });
-        if (result.status === 'imported') chunksCreated += result.chunks;
+        if (result.status === 'imported') {
+          chunksCreated += result.chunks;
+          renameOK = true;
+        } else if (result.status === 'skipped' && !(result as any).error) {
+          // Hash-identical content already in DB after updateSlug; rename succeeded.
+          renameOK = true;
+        }
+      } else {
+        // No file on disk to import, but updateSlug above already moved the
+        // page in DB. Treat the rename itself as success.
+        renameOK = true;
+      }
+      // Bug 9 follow-up — clear stale jsonl entries under both the old
+      // and new path. A file that previously failed under `from` and is
+      // now successfully present as `to` should not stay listed as failed.
+      if (renameOK) {
+        resolveSyncFailure(from);
+        resolveSyncFailure(to);
       }
       pagesAffected.push(newSlug);
       progress.tick(1, newSlug);
@@ -583,6 +661,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
+          // Bug 9 follow-up — reconcile JSONL with reality. A file that
+          // imports successfully should drop out of sync-failures even if it
+          // got there via a previous run.
+          resolveSyncFailure(path);
+        } else if (result.status === 'skipped' && !(result as any).error) {
+          // Hash-identical content is already in DB — same reconciliation.
+          resolveSyncFailure(path);
         } else if (result.status === 'skipped' && (result as any).error) {
           failedFiles.push({ path, error: String((result as any).error) });
         }
@@ -1046,17 +1131,16 @@ export async function runSync(engine: BrainEngine, args: string[]) {
 
   const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId, strategy: strategyArg, concurrency };
 
-  // Bug 9 — --retry-failed: before running normal sync, clear acknowledgment
-  // flags so the sync picks them up as fresh work. The actual re-attempt
-  // happens inside the regular incremental/full loop because once the commit
-  // pointer is behind the failures, the diff naturally revisits them.
+  // Bug 9 — --retry-failed: print a banner. The actual re-attempt is wired
+  // inside performSync, which surfaces unacknowledged failures into
+  // `filtered.modified` so the import loop revisits them even when the git
+  // diff would otherwise be empty (last_commit==HEAD).
   if (retryFailed) {
     const failures = unacknowledgedSyncFailures();
     if (failures.length === 0) {
       console.log('No unacknowledged sync failures to retry.');
     } else {
       console.log(`Retrying ${failures.length} previously-failed file(s)...`);
-      // Don't acknowledge them yet — they must succeed to clear.
     }
   }
 
