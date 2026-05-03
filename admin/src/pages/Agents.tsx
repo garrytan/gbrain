@@ -134,7 +134,7 @@ export function AgentsPage() {
       {showApiKeyCreate && (
         <ApiKeyCreateModal
           onClose={() => setShowApiKeyCreate(false)}
-          onCreated={(result) => { setShowApiKeyCreate(false); setShowApiKeyToken(result); loadApiKeys(); }}
+          onCreated={(result) => { setShowApiKeyCreate(false); setShowApiKeyToken(result); loadAgents(); }}
         />
       )}
 
