@@ -26,8 +26,11 @@ import type {
   EngineConfig,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
+  SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
+  EmotionalWeightInputRow, EmotionalWeightWriteRow,
 } from './types.ts';
-import { GBrainError } from './types.ts';
+import { GBrainError, PAGE_SORT_SQL } from './types.ts';
+import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
@@ -522,11 +525,16 @@ export class PostgresEngine implements BrainEngine {
       ? sql``
       : sql`AND p.deleted_at IS NULL`;
 
+    // v0.29: ORDER BY threading via PAGE_SORT_SQL whitelist (no SQL injection).
+    // postgres.js sql.unsafe lets us splice the literal fragment safely.
+    const sortKey = filters?.sort && PAGE_SORT_SQL[filters.sort] ? filters.sort : 'updated_desc';
+    const orderBy = sql.unsafe(PAGE_SORT_SQL[sortKey]);
+
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
       WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${deletedCondition}
-      ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
+      ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
     `;
 
     return rows.map(rowToPage);
@@ -2340,6 +2348,237 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY ts DESC
     `;
     return rows as unknown as EvalCaptureFailure[];
+  }
+
+  // ============================================================
+  // v0.29 — Salience + Anomaly Detection
+  // ============================================================
+
+  async batchLoadEmotionalInputs(slugs?: string[]): Promise<EmotionalWeightInputRow[]> {
+    const sql = this.sql;
+    // Two CTEs avoid the N×M cartesian product (codex C4#4): a page with N tags
+    // and M takes joined directly would emit N×M rows and corrupt aggregates.
+    // Per-table aggregation keeps each table's grouping correct.
+    const rows = slugs
+      ? await sql`
+          WITH page_tags AS (
+            SELECT page_id, array_agg(DISTINCT tag) AS tags
+              FROM tags GROUP BY page_id
+          ),
+          page_takes AS (
+            SELECT page_id, json_agg(json_build_object(
+                     'holder', holder, 'weight', weight, 'kind', kind, 'active', active
+                   )) AS takes
+              FROM takes WHERE active = TRUE GROUP BY page_id
+          )
+          SELECT p.slug, p.source_id,
+                 COALESCE(pt.tags, ARRAY[]::text[]) AS tags,
+                 COALESCE(pk.takes, '[]'::json) AS takes
+            FROM pages p
+            LEFT JOIN page_tags pt  ON pt.page_id = p.id
+            LEFT JOIN page_takes pk ON pk.page_id = p.id
+           WHERE p.slug = ANY(${slugs}::text[])
+        `
+      : await sql`
+          WITH page_tags AS (
+            SELECT page_id, array_agg(DISTINCT tag) AS tags
+              FROM tags GROUP BY page_id
+          ),
+          page_takes AS (
+            SELECT page_id, json_agg(json_build_object(
+                     'holder', holder, 'weight', weight, 'kind', kind, 'active', active
+                   )) AS takes
+              FROM takes WHERE active = TRUE GROUP BY page_id
+          )
+          SELECT p.slug, p.source_id,
+                 COALESCE(pt.tags, ARRAY[]::text[]) AS tags,
+                 COALESCE(pk.takes, '[]'::json) AS takes
+            FROM pages p
+            LEFT JOIN page_tags pt  ON pt.page_id = p.id
+            LEFT JOIN page_takes pk ON pk.page_id = p.id
+        `;
+    return rows.map((r: Record<string, unknown>) => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      tags: (r.tags as string[]) ?? [],
+      takes: (r.takes as EmotionalWeightInputRow['takes']) ?? [],
+    }));
+  }
+
+  async setEmotionalWeightBatch(rows: EmotionalWeightWriteRow[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    const sql = this.sql;
+    const slugs = rows.map(r => r.slug);
+    const sourceIds = rows.map(r => r.source_id);
+    const weights = rows.map(r => r.weight);
+    // Composite-keyed UPDATE FROM unnest (codex C4#3): pages.slug is unique
+    // only within a source, so a slug-only join would fan out across sources.
+    const result = await sql`
+      UPDATE pages
+         SET emotional_weight = u.weight
+        FROM unnest(${slugs}::text[], ${sourceIds}::text[], ${weights}::real[])
+          AS u(slug, source_id, weight)
+       WHERE pages.slug = u.slug AND pages.source_id = u.source_id
+      RETURNING 1
+    `;
+    return result.length;
+  }
+
+  async getRecentSalience(opts: SalienceOpts): Promise<SalienceResult[]> {
+    const sql = this.sql;
+    const days = Math.max(0, opts.days ?? 14);
+    const limit = clampSearchLimit(opts.limit, 20, 100);
+    const slugPrefix = opts.slugPrefix;
+    // Compute the boundary in JS so the SQL is identical across engines (eng review D5).
+    const boundaryIso = new Date(Date.now() - days * 86400000).toISOString();
+    // Escape LIKE meta for the optional prefix match.
+    const prefixCondition = slugPrefix
+      ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
+      : sql``;
+    const rows = await sql`
+      SELECT p.slug, p.source_id, p.title, p.type, p.updated_at, p.emotional_weight,
+             COUNT(DISTINCT t.id) AS take_count,
+             COALESCE(AVG(t.weight), 0) AS take_avg_weight,
+             (p.emotional_weight * 5)
+               + ln(1 + COUNT(DISTINCT t.id))
+               + (1.0 / (1 + EXTRACT(EPOCH FROM (now() - p.updated_at)) / 86400))
+               AS score
+        FROM pages p
+        LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
+       WHERE p.updated_at >= ${boundaryIso}::timestamptz
+         ${prefixCondition}
+       GROUP BY p.id
+       ORDER BY score DESC
+       LIMIT ${limit}
+    `;
+    return rows.map((r: Record<string, unknown>) => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      title: String(r.title ?? ''),
+      type: r.type as SalienceResult['type'],
+      updated_at: r.updated_at as Date,
+      emotional_weight: Number(r.emotional_weight ?? 0),
+      take_count: Number(r.take_count ?? 0),
+      take_avg_weight: Number(r.take_avg_weight ?? 0),
+      score: Number(r.score ?? 0),
+    }));
+  }
+
+  async findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]> {
+    const sql = this.sql;
+    const sigma = opts.sigma ?? 3.0;
+    const lookbackDays = Math.max(1, opts.lookback_days ?? 30);
+    // Boundaries: today's window is [since, since+1day); baseline is [since-lookback, since).
+    const sinceIso = (opts.since ?? new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
+    const sinceDate = new Date(sinceIso + 'T00:00:00Z');
+    const sinceEnd = new Date(sinceDate.getTime() + 86400000);
+    const baselineStart = new Date(sinceDate.getTime() - lookbackDays * 86400000);
+
+    // Tag cohort baseline with day densification + zero-fill (codex C4#6).
+    const tagBaseline = await sql`
+      WITH days AS (
+        SELECT day::date FROM generate_series(
+          ${baselineStart.toISOString()}::date,
+          ${sinceDate.toISOString()}::date - 1,
+          '1 day'::interval
+        ) AS day
+      ),
+      cohort_keys AS (
+        SELECT DISTINCT t.tag FROM tags t JOIN pages p ON p.id = t.page_id
+         WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
+           AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+      ),
+      touched AS (
+        SELECT t.tag,
+               date_trunc('day', p.updated_at)::date AS day,
+               COUNT(DISTINCT p.id) AS cnt
+          FROM tags t JOIN pages p ON p.id = t.page_id
+         WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
+           AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+         GROUP BY 1, 2
+      )
+      SELECT cd.tag AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
+        FROM cohort_keys cd CROSS JOIN days d
+        LEFT JOIN touched t ON t.tag = cd.tag AND t.day = d.day
+    `;
+
+    const typeBaseline = await sql`
+      WITH days AS (
+        SELECT day::date FROM generate_series(
+          ${baselineStart.toISOString()}::date,
+          ${sinceDate.toISOString()}::date - 1,
+          '1 day'::interval
+        ) AS day
+      ),
+      cohort_keys AS (
+        SELECT DISTINCT p.type FROM pages p
+         WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
+           AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+      ),
+      touched AS (
+        SELECT p.type,
+               date_trunc('day', p.updated_at)::date AS day,
+               COUNT(DISTINCT p.id) AS cnt
+          FROM pages p
+         WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
+           AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+         GROUP BY 1, 2
+      )
+      SELECT cd.type AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
+        FROM cohort_keys cd CROSS JOIN days d
+        LEFT JOIN touched t ON t.type = cd.type AND t.day = d.day
+    `;
+
+    // Today's window — current counts + slugs per cohort.
+    const tagToday = await sql`
+      SELECT t.tag AS cohort_value,
+             COUNT(DISTINCT p.id)::int AS count,
+             array_agg(DISTINCT p.slug) AS slugs
+        FROM tags t JOIN pages p ON p.id = t.page_id
+       WHERE p.updated_at >= ${sinceIso}::timestamptz
+         AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz
+       GROUP BY 1
+    `;
+    const typeToday = await sql`
+      SELECT p.type AS cohort_value,
+             COUNT(DISTINCT p.id)::int AS count,
+             array_agg(DISTINCT p.slug) AS slugs
+        FROM pages p
+       WHERE p.updated_at >= ${sinceIso}::timestamptz
+         AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz
+       GROUP BY 1
+    `;
+
+    const baseline = [
+      ...tagBaseline.map((r: Record<string, unknown>) => ({
+        cohort_kind: 'tag' as const,
+        cohort_value: String(r.cohort_value),
+        day: String(r.day),
+        count: Number(r.count),
+      })),
+      ...typeBaseline.map((r: Record<string, unknown>) => ({
+        cohort_kind: 'type' as const,
+        cohort_value: String(r.cohort_value),
+        day: String(r.day),
+        count: Number(r.count),
+      })),
+    ];
+    const today = [
+      ...tagToday.map((r: Record<string, unknown>) => ({
+        cohort_kind: 'tag' as const,
+        cohort_value: String(r.cohort_value),
+        count: Number(r.count),
+        page_slugs: (r.slugs as string[]) ?? [],
+      })),
+      ...typeToday.map((r: Record<string, unknown>) => ({
+        cohort_kind: 'type' as const,
+        cohort_value: String(r.cohort_value),
+        count: Number(r.count),
+        page_slugs: (r.slugs as string[]) ?? [],
+      })),
+    ];
+
+    return computeAnomaliesFromBuckets(baseline, today, sigma);
   }
 }
 

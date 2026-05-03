@@ -12,6 +12,8 @@ import type {
   CodeEdgeInput, CodeEdgeResult,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
+  SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
+  EmotionalWeightInputRow, EmotionalWeightWriteRow,
 } from './types.ts';
 
 /**
@@ -642,4 +644,59 @@ export interface BrainEngine {
   logEvalCaptureFailure(reason: EvalCaptureFailureReason): Promise<void>;
   /** Read capture failures within an optional time window. Used by `gbrain doctor`. */
   listEvalCaptureFailures(filter?: { since?: Date }): Promise<EvalCaptureFailure[]>;
+
+  // ============================================================
+  // v0.29 — Salience + Anomaly Detection
+  // ============================================================
+  // The brain surfaces what's unusual and emotionally charged without being
+  // asked. Cost: ~zero at query time (deterministic SQL), with backfill done
+  // during the new `recompute_emotional_weight` cycle phase.
+
+  /**
+   * Batch-load tag + take inputs for the emotional-weight formula. One CTE-shaped
+   * query: `pages` LEFT JOIN aggregated `tags` and aggregated `takes` (each
+   * pre-aggregated in its own CTE so the page × N tags × M takes cartesian
+   * product is avoided).
+   *
+   * If `slugs` is undefined, returns inputs for every page in the brain
+   * (full-mode backfill). If provided, returns only matching slugs (incremental
+   * recompute after sync / synthesize touched specific pages).
+   *
+   * Multi-source-aware: each row carries its `source_id` so the matching
+   * `setEmotionalWeightBatch` UPDATE can composite-key correctly.
+   */
+  batchLoadEmotionalInputs(slugs?: string[]): Promise<EmotionalWeightInputRow[]>;
+
+  /**
+   * Apply pre-computed emotional weights in a single UPDATE. Composite-keyed
+   * on `(slug, source_id)` because `pages.slug` is only unique within a
+   * source — a slug-only UPDATE would fan out across sources, the same bug
+   * that the v0.18.0 link batches fixed for cross-source edges.
+   *
+   * Returns the count of rows actually updated. Pages whose `(slug, source_id)`
+   * tuple doesn't exist (race with delete) are silently skipped.
+   */
+  setEmotionalWeightBatch(rows: EmotionalWeightWriteRow[]): Promise<number>;
+
+  /**
+   * Salience query: pages recently touched, ranked by a deterministic
+   * `(emotional_weight * 5) + ln(1 + take_count) + recency_decay` score.
+   *
+   * The handler computes the time boundary in JS (`now - days * 86400000`)
+   * and binds it as TIMESTAMPTZ so the SQL is identical across PGLite +
+   * Postgres (eng review D5 — avoids dialect drift on `interval` binding).
+   */
+  getRecentSalience(opts: SalienceOpts): Promise<SalienceResult[]>;
+
+  /**
+   * Anomaly detection: cohorts (tag, type) with unusually-high page activity
+   * on a target day vs baseline mean+stddev over the previous N days. Year
+   * cohort is deferred to v0.30 (slug-regex year extraction is fragile).
+   *
+   * Baseline densifies the day series via `generate_series` zero-fill so
+   * sparse-day rare cohorts don't look "normally active" — a sparse-day cohort
+   * with one touch in 30 days has a low baseline mean and high sigma at 7 touches,
+   * not a misleading mean of 1.
+   */
+  findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]>;
 }
