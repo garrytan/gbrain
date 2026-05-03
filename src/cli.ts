@@ -19,7 +19,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'history', 'revert', 'resurrect', 'purge', 'audit']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -249,9 +249,16 @@ function formatResult(opName: string, result: unknown): string {
     case 'get_versions': {
       const versions = result as any[];
       if (versions.length === 0) return 'No versions.\n';
-      return versions.map(v =>
-        `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${v.compiled_truth?.slice(0, 60) || ''}...`,
-      ).join('\n') + '\n';
+      return versions.map(v => {
+        const kind = v.kind ? ` [${v.kind}]` : '';
+        const prov = v.provenance?.source ? ` <${v.provenance.source}>` : '';
+        return `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}${kind}${prov}  ${v.compiled_truth?.slice(0, 60) || ''}...`;
+      }).join('\n') + '\n';
+    }
+    case 'revert_version': {
+      const r = result as { status?: string; hint?: string; slug?: string; version_id?: number };
+      if (r.hint) return `${r.status ?? 'ok'} ${r.slug ?? ''} #${r.version_id ?? ''}\n${r.hint}\n`;
+      return JSON.stringify(result, null, 2) + '\n';
     }
     default:
       return JSON.stringify(result, null, 2) + '\n';
@@ -590,6 +597,31 @@ async function handleCliOnly(command: string, args: string[]) {
         await runSources(engine, args);
         break;
       }
+      case 'history': {
+        const { runHistoryCmd } = await import('./commands/page-history.ts');
+        await runHistoryCmd(engine, args);
+        break;
+      }
+      case 'revert': {
+        const { runRevertCmd } = await import('./commands/page-history.ts');
+        await runRevertCmd(engine, args);
+        break;
+      }
+      case 'resurrect': {
+        const { runResurrectCmd } = await import('./commands/page-history.ts');
+        await runResurrectCmd(engine, args);
+        break;
+      }
+      case 'purge': {
+        const { runPurgeCmd } = await import('./commands/page-history.ts');
+        await runPurgeCmd(engine, args);
+        break;
+      }
+      case 'audit': {
+        const { runAudit } = await import('./commands/audit.ts');
+        await runAudit(engine, args);
+        break;
+      }
     }
   } finally {
     if (command !== 'serve') await engine.disconnect();
@@ -741,8 +773,11 @@ JOBS (Minions)
 ADMIN
   stats                              Brain statistics
   health                             Brain health dashboard
-  history <slug>                     Page version history
+  history <slug> [--diff|--prune ...] Page version history
   revert <slug> <version-id>         Revert to version
+  resurrect <slug>                   Undelete tombstoned page
+  purge <slug> [--yes]               Hard-delete page + history (local only)
+  audit reads|prune                  Read MCP audit (eval_candidates read tools)
   features [--json] [--auto-fix]     Scan usage + recommend unused features
   autopilot [--repo] [--interval N]  Self-maintaining brain daemon
   config [show|get|set] <key> [val]  Brain config

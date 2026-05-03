@@ -29,7 +29,10 @@ export function contentHash(page: PageInput): string {
 }
 
 export function rowToPage(row: Record<string, unknown>): Page {
-  return {
+  const dm = row.deleted_at as string | Date | null | undefined;
+  let deleted_at: Date | undefined;
+  if (dm != null) deleted_at = new Date(dm instanceof Date ? dm.toISOString() : (dm as string));
+  const out: Page = {
     id: row.id as number,
     slug: row.slug as string,
     type: row.type as PageType,
@@ -41,6 +44,8 @@ export function rowToPage(row: Record<string, unknown>): Page {
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
   };
+  if (deleted_at != null && !Number.isNaN(deleted_at.getTime())) out.deleted_at = deleted_at;
+  return out;
 }
 
 /**

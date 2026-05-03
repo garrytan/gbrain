@@ -38,39 +38,44 @@ import type { BrainEngine } from './engine.ts';
 import type {
   EvalCandidateInput,
   EvalCaptureFailureReason,
+  EvalCaptureToolName,
   HybridSearchMeta,
   SearchResult,
 } from './types.ts';
 import type { GBrainConfig } from './config.ts';
-import { scrubPii } from './eval-capture-scrub.ts';
+import { scrubPii, scrubPiiObject } from './eval-capture-scrub.ts';
 
 // HybridSearchMeta is canonical in src/core/types.ts and exported via the
 // public `gbrain/types` subpath. Surfaced from hybridSearch via the
 // optional onMeta callback in HybridSearchOpts (Lane 1C).
 export type { HybridSearchMeta };
 
-/** Context needed to build a capture row. Bundled so op handlers don't thread 8 args. */
 export interface CaptureContext {
-  /** 'query' or 'search'; captured only for these two ops. */
   tool_name: 'query' | 'search';
-  /** Pre-scrub query text. scrubPii runs INSIDE buildEvalCandidateInput when scrub_pii !== false. */
   query: string;
-  /** Result set from the op handler. */
   results: SearchResult[];
-  /** Side-channel metadata from hybridSearch. For 'search' ops, pass vector_enabled:false, others null/false. */
   meta: HybridSearchMeta;
-  /** How long the underlying op took, in milliseconds. */
   latency_ms: number;
-  /** OperationContext.remote — true for MCP callers, false for local CLI. */
   remote: boolean;
-  /** The `expand` flag as requested by the caller (query-only; null for search). */
   expand_enabled: boolean | null;
-  /** The `detail` flag as requested (query-only). */
   detail: 'low' | 'medium' | 'high' | null;
-  /** OperationContext.jobId if present. */
   job_id: number | null;
-  /** OperationContext.subagentId if present. */
   subagent_id: number | null;
+  mcp_token_name?: string | null;
+}
+
+export interface ReadAuditContext {
+  tool_name: Exclude<EvalCaptureToolName, 'query' | 'search'>;
+  query: string;
+  params: Record<string, unknown>;
+  retrieved_slugs: string[];
+  retrieved_chunk_ids?: number[];
+  source_ids?: string[];
+  latency_ms: number;
+  remote: boolean;
+  job_id: number | null;
+  subagent_id: number | null;
+  mcp_token_name?: string | null;
 }
 
 /**
@@ -104,6 +109,7 @@ export function buildEvalCandidateInput(
   return {
     tool_name: ctx.tool_name,
     query,
+    params_jsonb: {},
     retrieved_slugs: [...slugsSet],
     retrieved_chunk_ids: chunkIds,
     source_ids: [...sourceSet],
@@ -116,6 +122,38 @@ export function buildEvalCandidateInput(
     remote: ctx.remote,
     job_id: ctx.job_id,
     subagent_id: ctx.subagent_id,
+    mcp_token_name: ctx.mcp_token_name ?? null,
+  };
+}
+
+export function buildReadAuditInput(
+  ctx: ReadAuditContext,
+  opts: { scrub_pii?: boolean } = {},
+): EvalCandidateInput {
+  const shouldScrub = opts.scrub_pii !== false;
+  const query = shouldScrub ? scrubPii(ctx.query) : ctx.query;
+  const params = shouldScrub
+    ? (scrubPiiObject(ctx.params) as Record<string, unknown>)
+    : ctx.params;
+  const slugsSet = new Set<string>();
+  for (const s of ctx.retrieved_slugs) slugsSet.add(s);
+  return {
+    tool_name: ctx.tool_name,
+    query,
+    params_jsonb: params,
+    retrieved_slugs: [...slugsSet],
+    retrieved_chunk_ids: ctx.retrieved_chunk_ids ?? [],
+    source_ids: ctx.source_ids ?? [],
+    expand_enabled: null,
+    detail: null,
+    detail_resolved: null,
+    vector_enabled: false,
+    expansion_applied: false,
+    latency_ms: ctx.latency_ms,
+    remote: ctx.remote,
+    job_id: ctx.job_id,
+    subagent_id: ctx.subagent_id,
+    mcp_token_name: ctx.mcp_token_name ?? null,
   };
 }
 
@@ -162,8 +200,25 @@ export async function captureEvalCandidate(
     try {
       await engine.logEvalCaptureFailure(reason);
     } catch (failureErr) {
-      // Failure-of-failure: last-resort stderr. Doctor can't see this
-      // row, but we've exhausted the persistent path.
+      // eslint-disable-next-line no-console
+      console.warn('[eval-capture] secondary failure logging also failed:', failureErr);
+    }
+  }
+}
+
+export async function captureReadAudit(
+  engine: BrainEngine,
+  ctx: ReadAuditContext,
+  opts: { scrub_pii?: boolean } = {},
+): Promise<void> {
+  try {
+    const input = buildReadAuditInput(ctx, opts);
+    await engine.logEvalCandidate(input);
+  } catch (err) {
+    const reason = classifyCaptureFailure(err);
+    try {
+      await engine.logEvalCaptureFailure(reason);
+    } catch (failureErr) {
       // eslint-disable-next-line no-console
       console.warn('[eval-capture] secondary failure logging also failed:', failureErr);
     }
@@ -193,6 +248,14 @@ export function isEvalCaptureEnabled(config: GBrainConfig | null | undefined): b
   if (config?.eval?.capture === true) return true;
   if (config?.eval?.capture === false) return false;
   return process.env.GBRAIN_CONTRIBUTOR_MODE === '1';
+}
+
+export function isReadAuditEnabled(config: GBrainConfig | null | undefined): boolean {
+  if (config?.audit?.reads === true) return true;
+  if (config?.audit?.reads === false) return false;
+  if (process.env.GBRAIN_AUDIT_READS === '1') return true;
+  if (process.env.GBRAIN_AUDIT_READS === '0') return false;
+  return false;
 }
 
 /**

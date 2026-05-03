@@ -11,12 +11,13 @@ import type {
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
-  PageVersion,
+  PageVersion, PageVersionOpts, PageVersionDiff,
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
+  EvalCaptureToolName,
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
@@ -278,12 +279,20 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Pages CRUD
-  async getPage(slug: string): Promise<Page | null> {
+  async getPage(slug: string, opts?: { includeDeleted?: boolean }): Promise<Page | null> {
     const sql = this.sql;
-    const rows = await sql`
-      SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
-      FROM pages WHERE slug = ${slug}
-    `;
+    const inc = !!opts?.includeDeleted;
+    const rows = inc
+      ? await sql`
+        SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash,
+               deleted_at, created_at, updated_at
+        FROM pages WHERE slug = ${slug}
+      `
+      : await sql`
+        SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash,
+               deleted_at, created_at, updated_at
+        FROM pages WHERE slug = ${slug} AND deleted_at IS NULL
+      `;
     if (rows.length === 0) return null;
     return rowToPage(rows[0]);
   }
@@ -310,15 +319,47 @@ export class PostgresEngine implements BrainEngine {
         timeline = EXCLUDED.timeline,
         frontmatter = EXCLUDED.frontmatter,
         content_hash = EXCLUDED.content_hash,
+        deleted_at = NULL,
         updated_at = now()
-      RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
+      RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash,
+        deleted_at, created_at, updated_at
     `;
     return rowToPage(rows[0]);
   }
 
-  async deletePage(slug: string): Promise<void> {
+  async purgePage(slug: string): Promise<void> {
     const sql = this.sql;
+    await sql`DELETE FROM page_versions WHERE slug = ${slug}`;
     await sql`DELETE FROM pages WHERE slug = ${slug}`;
+  }
+
+  async softDeletePage(slug: string, opts?: PageVersionOpts): Promise<void> {
+    const sql = this.sql;
+    const row = await sql`
+      SELECT id FROM pages WHERE slug = ${slug} AND deleted_at IS NULL
+    `;
+    if (row.length === 0) throw new Error(`softDelete failed: active page "${slug}" not found`);
+    await this.createVersion(slug, { ...opts, kind: opts?.kind ?? 'update' });
+    await sql`UPDATE pages SET deleted_at = now(), updated_at = now() WHERE slug = ${slug} AND deleted_at IS NULL`;
+    const tombProv = opts?.provenance ?? { source: 'soft_delete' };
+    await sql`
+      INSERT INTO page_versions (page_id, source_id, slug, compiled_truth, frontmatter, tags, kind, provenance)
+      SELECT p.id, p.source_id, p.slug, p.compiled_truth, p.frontmatter,
+        COALESCE((
+          SELECT array_agg(tag ORDER BY tag) FROM tags t WHERE t.page_id = p.id
+        ), '{}'::text[]),
+        'delete',
+        ${sql.json(tombProv as Parameters<typeof sql.json>[0])}
+      FROM pages p WHERE p.slug = ${slug}
+    `;
+  }
+
+  async resurrectSoftDeletedPage(slug: string): Promise<void> {
+    const sql = this.sql;
+    await sql`
+      UPDATE pages SET deleted_at = NULL, updated_at = now()
+      WHERE slug = ${slug} AND deleted_at IS NOT NULL
+    `;
   }
 
   async listPages(filters?: PageFilters): Promise<Page[]> {
@@ -336,6 +377,7 @@ export class PostgresEngine implements BrainEngine {
     const tagJoin = filters?.tag ? sql`JOIN tags t ON t.page_id = p.id` : sql``;
     const tagCondition = filters?.tag ? sql`AND t.tag = ${filters.tag}` : sql``;
     const updatedCondition = updatedAfter ? sql`AND p.updated_at > ${updatedAfter}::timestamptz` : sql``;
+    const deletedCondition = filters?.includeDeleted ? sql`` : sql`AND p.deleted_at IS NULL`;
     // slugPrefix uses the (source_id, slug) UNIQUE btree index for range scans.
     // Escape LIKE metacharacters so the user prefix is treated as a literal.
     const slugPrefix = filters?.slugPrefix;
@@ -346,7 +388,7 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition}
+      WHERE 1=1 ${deletedCondition} ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition}
       ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
     `;
 
@@ -355,7 +397,7 @@ export class PostgresEngine implements BrainEngine {
 
   async getAllSlugs(): Promise<Set<string>> {
     const sql = this.sql;
-    const rows = await sql`SELECT slug FROM pages`;
+    const rows = await sql`SELECT slug FROM pages WHERE deleted_at IS NULL`;
     return new Set(rows.map((r) => r.slug as string));
   }
 
@@ -363,14 +405,14 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
 
     // Try exact match first
-    const exact = await sql`SELECT slug FROM pages WHERE slug = ${partial}`;
+    const exact = await sql`SELECT slug FROM pages WHERE slug = ${partial} AND deleted_at IS NULL`;
     if (exact.length > 0) return [exact[0].slug];
 
     // Fuzzy match via pg_trgm
     const fuzzy = await sql`
       SELECT slug, similarity(title, ${partial}) AS sim
       FROM pages
-      WHERE title % ${partial} OR slug ILIKE ${'%' + partial + '%'}
+      WHERE deleted_at IS NULL AND (title % ${partial} OR slug ILIKE ${'%' + partial + '%'})
       ORDER BY sim DESC
       LIMIT 5
     `;
@@ -451,6 +493,7 @@ export class PostgresEngine implements BrainEngine {
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1)
+          AND p.deleted_at IS NULL
           ${typeClause}
           ${excludeSlugsClause}
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
@@ -550,6 +593,7 @@ export class PostgresEngine implements BrainEngine {
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1)
+        AND p.deleted_at IS NULL
         ${typeClause}
         ${excludeSlugsClause}
         ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
@@ -635,6 +679,7 @@ export class PostgresEngine implements BrainEngine {
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE cc.embedding IS NOT NULL
+          AND p.deleted_at IS NULL
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${typeClause}
           ${excludeSlugsClause}
@@ -1137,7 +1182,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT p.slug as slug, COUNT(l.id)::int as cnt
       FROM pages p
       LEFT JOIN links l ON l.to_page_id = p.id
-      WHERE p.slug = ANY(${slugs}::text[])
+      WHERE p.deleted_at IS NULL AND p.slug = ANY(${slugs}::text[])
       GROUP BY p.slug
     `;
     for (const r of rows as unknown as { slug: string; cnt: number }[]) {
@@ -1154,7 +1199,8 @@ export class PostgresEngine implements BrainEngine {
         COALESCE(p.title, p.slug) AS title,
         p.frontmatter->>'domain' AS domain
       FROM pages p
-      WHERE NOT EXISTS (
+      WHERE p.deleted_at IS NULL
+        AND NOT EXISTS (
         SELECT 1 FROM links l WHERE l.to_page_id = p.id
       )
       ORDER BY p.slug
@@ -1339,39 +1385,152 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Versions
-  async createVersion(slug: string): Promise<PageVersion> {
+  async createVersion(slug: string, opts?: PageVersionOpts): Promise<PageVersion> {
     const sql = this.sql;
+    const kind = opts?.kind ?? 'update';
+    const provenance = opts?.provenance ?? { source: 'unknown' };
+    const delFrag = opts?.snapshotIncludeDeleted ? sql`` : sql`AND p.deleted_at IS NULL`;
     const rows = await sql`
-      INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
-      SELECT id, compiled_truth, frontmatter
-      FROM pages WHERE slug = ${slug}
+      INSERT INTO page_versions (
+        page_id, source_id, slug, compiled_truth, frontmatter, tags, kind, provenance
+      )
+      SELECT
+        p.id, p.source_id, p.slug, p.compiled_truth, p.frontmatter,
+        COALESCE((
+          SELECT array_agg(tag ORDER BY tag) FROM tags t WHERE t.page_id = p.id
+        ), '{}'::text[]),
+        ${kind},
+        ${sql.json(provenance as Parameters<typeof sql.json>[0])}
+      FROM pages p WHERE p.slug = ${slug} ${delFrag}
       RETURNING *
     `;
     if (rows.length === 0) throw new Error(`createVersion failed: page "${slug}" not found`);
-    return rows[0] as unknown as PageVersion;
+    return pgRowToPageVersion(rows[0]);
   }
 
-  async getVersions(slug: string): Promise<PageVersion[]> {
+  async getVersions(slug: string, opts?: { includeDeletedPage?: boolean }): Promise<PageVersion[]> {
     const sql = this.sql;
-    const rows = await sql`
-      SELECT pv.* FROM page_versions pv
-      JOIN pages p ON p.id = pv.page_id
-      WHERE p.slug = ${slug}
-      ORDER BY pv.snapshot_at DESC
-    `;
-    return rows as unknown as PageVersion[];
+    let rows;
+    if (opts?.includeDeletedPage) {
+      rows = await sql`
+        SELECT * FROM page_versions
+        WHERE slug = ${slug}
+        ORDER BY snapshot_at DESC, id DESC
+      `;
+    } else {
+      rows = await sql`
+        SELECT pv.* FROM page_versions pv
+        JOIN pages p ON p.id = pv.page_id AND p.deleted_at IS NULL
+        WHERE pv.slug = ${slug}
+        ORDER BY pv.snapshot_at DESC, pv.id DESC
+      `;
+    }
+    return rows.map(pgRowToPageVersion);
   }
 
-  async revertToVersion(slug: string, versionId: number): Promise<void> {
+  async getPageVersionById(versionId: number): Promise<PageVersion | null> {
     const sql = this.sql;
+    const rows = await sql`SELECT * FROM page_versions WHERE id = ${versionId}`;
+    if (rows.length === 0) return null;
+    return pgRowToPageVersion(rows[0]);
+  }
+
+  async revertToVersion(slug: string, versionId: number, opts?: PageVersionOpts): Promise<void> {
+    const sql = this.sql;
+    const tgt = await this.getPageVersionById(versionId);
+    if (!tgt || tgt.slug !== slug) throw new Error(`Version ${versionId} not found for slug "${slug}"`);
+
+    await this.createVersion(slug, {
+      kind: 'update',
+      provenance: { source: 'before_revert', ...opts?.provenance },
+      snapshotIncludeDeleted: true,
+    });
+
+    const fm = sql.json(tgt.frontmatter as Parameters<typeof sql.json>[0]);
+    if (tgt.kind === 'delete') {
+      await sql`
+        UPDATE pages SET
+          compiled_truth = ${tgt.compiled_truth},
+          frontmatter = ${fm},
+          updated_at = now(),
+          deleted_at = now()
+        WHERE slug = ${slug}
+      `;
+    } else {
+      await sql`
+        UPDATE pages SET
+          compiled_truth = ${tgt.compiled_truth},
+          frontmatter = ${fm},
+          updated_at = now(),
+          deleted_at = NULL
+        WHERE slug = ${slug}
+      `;
+    }
+
     await sql`
-      UPDATE pages SET
-        compiled_truth = pv.compiled_truth,
-        frontmatter = pv.frontmatter,
-        updated_at = now()
-      FROM page_versions pv
-      WHERE pages.slug = ${slug} AND pv.id = ${versionId} AND pv.page_id = pages.id
+      DELETE FROM tags
+      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
     `;
+    for (const tag of tgt.tags ?? []) {
+      await sql`
+        INSERT INTO tags (page_id, tag)
+        SELECT id, ${tag} FROM pages WHERE slug = ${slug}
+        ON CONFLICT (page_id, tag) DO NOTHING
+      `;
+    }
+  }
+
+  async diffPageVersions(slug: string, fromVersionId: number, toVersionId: number): Promise<PageVersionDiff> {
+    const a = await this.getPageVersionById(fromVersionId);
+    const b = await this.getPageVersionById(toVersionId);
+    if (!a || !b || a.slug !== slug || b.slug !== slug) {
+      throw new Error(`Versions not found or slug mismatch for "${slug}"`);
+    }
+    return {
+      compiled_truth: { from: a.compiled_truth, to: b.compiled_truth },
+      frontmatter: { from: a.frontmatter ?? {}, to: b.frontmatter ?? {} },
+      tags: { from: [...(a.tags ?? [])].sort(), to: [...(b.tags ?? [])].sort() },
+    };
+  }
+
+  async prunePageVersions(opts: { slug?: string; keepLast?: number; olderThan?: Date }): Promise<number> {
+    const sql = this.sql;
+    const keepLast = opts.keepLast !== undefined ? Math.max(0, Math.floor(opts.keepLast)) : null;
+    const olderThan = opts.olderThan ?? null;
+
+    if (opts.slug && keepLast != null && keepLast >= 0) {
+      const del = await sql`
+        DELETE FROM page_versions pv
+        WHERE pv.slug = ${opts.slug}
+          AND pv.id NOT IN (
+            SELECT id FROM page_versions
+            WHERE slug = ${opts.slug}
+            ORDER BY snapshot_at DESC, id DESC
+            LIMIT ${keepLast}
+          )
+        RETURNING id
+      `;
+      return del.length;
+    }
+
+    if (!opts.slug && olderThan) {
+      const del = await sql`
+        DELETE FROM page_versions WHERE snapshot_at < ${olderThan}
+        RETURNING id
+      `;
+      return del.length;
+    }
+
+    if (opts.slug && olderThan) {
+      const del = await sql`
+        DELETE FROM page_versions
+        WHERE slug = ${opts.slug} AND snapshot_at < ${olderThan}
+        RETURNING id
+      `;
+      return del.length;
+    }
+
+    return 0;
   }
 
   // Stats + health
@@ -1379,7 +1538,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const [stats] = await sql`
       SELECT
-        (SELECT count(*) FROM pages) as page_count,
+        (SELECT count(*) FROM pages WHERE deleted_at IS NULL) as page_count,
         (SELECT count(*) FROM content_chunks) as chunk_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL) as embedded_count,
         (SELECT count(*) FROM links) as link_count,
@@ -1388,7 +1547,7 @@ export class PostgresEngine implements BrainEngine {
     `;
 
     const types = await sql`
-      SELECT type, count(*)::int as count FROM pages GROUP BY type ORDER BY count DESC
+      SELECT type, count(*)::int as count FROM pages WHERE deleted_at IS NULL GROUP BY type ORDER BY count DESC
     `;
     const pages_by_type: Record<string, number> = {};
     for (const t of types) {
@@ -1742,50 +1901,121 @@ export class PostgresEngine implements BrainEngine {
   // Eval capture (v0.25.0). See BrainEngine interface docs.
   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
     const sql = this.sql;
+    const paramsJson = sql.json((input.params_jsonb ?? {}) as unknown as Parameters<typeof sql.json>[0]);
     const rows = await sql`
       INSERT INTO eval_candidates (
-        tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
+        tool_name, query, params_jsonb, retrieved_slugs, retrieved_chunk_ids, source_ids,
         expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
-        latency_ms, remote, job_id, subagent_id
+        latency_ms, remote, job_id, subagent_id, mcp_token_name
       ) VALUES (
-        ${input.tool_name}, ${input.query}, ${input.retrieved_slugs}, ${input.retrieved_chunk_ids}, ${input.source_ids},
+        ${input.tool_name}, ${input.query}, ${paramsJson}, ${input.retrieved_slugs}, ${input.retrieved_chunk_ids}, ${input.source_ids},
         ${input.expand_enabled}, ${input.detail}, ${input.detail_resolved}, ${input.vector_enabled}, ${input.expansion_applied},
-        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}
+        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}, ${input.mcp_token_name ?? null}
       )
       RETURNING id
     `;
     return rows[0]!.id as number;
   }
 
-  async listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }): Promise<EvalCandidate[]> {
+  async listEvalCandidates(filter?: {
+    since?: Date;
+    limit?: number;
+    tool?: EvalCaptureToolName;
+    slugHint?: string;
+    mcpTokenName?: string;
+  }): Promise<EvalCandidate[]> {
     const sql = this.sql;
     const raw = filter?.limit;
     const limit = (raw === undefined || raw === null || !Number.isFinite(raw) || raw <= 0)
       ? 1000
       : Math.min(Math.floor(raw), 100000);
     const since = filter?.since ?? new Date(0);
-    const tool = filter?.tool ?? null;
-    // id DESC tiebreaker so same-millisecond inserts return deterministically
-    // — without this, `gbrain eval export --since` could dupe or miss rows
-    // across non-overlapping windows.
-    const rows = tool
-      ? await sql`
+    const tool = filter?.tool;
+    const slugHint = filter?.slugHint?.trim();
+    const mcpTok = filter?.mcpTokenName;
+
+    let rows;
+
+    const escLike = (s: string) => s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+
+    if (slugHint) {
+      const like = `%${escLike(slugHint)}%`;
+      if (tool && mcpTok) {
+        rows = await sql`
           SELECT * FROM eval_candidates
-          WHERE created_at >= ${since} AND tool_name = ${tool}
-          ORDER BY created_at DESC, id DESC
-          LIMIT ${limit}
-        `
-      : await sql`
-          SELECT * FROM eval_candidates
-          WHERE created_at >= ${since}
+          WHERE created_at >= ${since} AND tool_name = ${tool} AND mcp_token_name = ${mcpTok}
+            AND (query ILIKE ${like} ESCAPE '\\' OR params_jsonb::text ILIKE ${like} ESCAPE '\\')
           ORDER BY created_at DESC, id DESC
           LIMIT ${limit}
         `;
+      } else if (tool) {
+        rows = await sql`
+          SELECT * FROM eval_candidates
+          WHERE created_at >= ${since} AND tool_name = ${tool}
+            AND (query ILIKE ${like} ESCAPE '\\' OR params_jsonb::text ILIKE ${like} ESCAPE '\\')
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${limit}
+        `;
+      } else if (mcpTok) {
+        rows = await sql`
+          SELECT * FROM eval_candidates
+          WHERE created_at >= ${since} AND mcp_token_name = ${mcpTok}
+            AND (query ILIKE ${like} ESCAPE '\\' OR params_jsonb::text ILIKE ${like} ESCAPE '\\')
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${limit}
+        `;
+      } else {
+        rows = await sql`
+          SELECT * FROM eval_candidates
+          WHERE created_at >= ${since}
+            AND (query ILIKE ${like} ESCAPE '\\' OR params_jsonb::text ILIKE ${like} ESCAPE '\\')
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${limit}
+        `;
+      }
+    } else if (tool && mcpTok) {
+      rows = await sql`
+        SELECT * FROM eval_candidates
+        WHERE created_at >= ${since} AND tool_name = ${tool} AND mcp_token_name = ${mcpTok}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limit}
+      `;
+    } else if (tool) {
+      rows = await sql`
+        SELECT * FROM eval_candidates
+        WHERE created_at >= ${since} AND tool_name = ${tool}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limit}
+      `;
+    } else if (mcpTok) {
+      rows = await sql`
+        SELECT * FROM eval_candidates
+        WHERE created_at >= ${since} AND mcp_token_name = ${mcpTok}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limit}
+      `;
+    } else {
+      rows = await sql`
+        SELECT * FROM eval_candidates
+        WHERE created_at >= ${since}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limit}
+      `;
+    }
+
     return rows as unknown as EvalCandidate[];
   }
 
-  async deleteEvalCandidatesBefore(date: Date): Promise<number> {
+  async deleteEvalCandidatesBefore(date: Date, opts?: { readToolsOnly?: boolean }): Promise<number> {
     const sql = this.sql;
+    if (opts?.readToolsOnly) {
+      const rows = await sql`
+        DELETE FROM eval_candidates WHERE created_at < ${date}
+          AND tool_name NOT IN ('query', 'search')
+        RETURNING id
+      `;
+      return rows.length;
+    }
     const rows = await sql`
       DELETE FROM eval_candidates WHERE created_at < ${date} RETURNING id
     `;
@@ -1807,6 +2037,33 @@ export class PostgresEngine implements BrainEngine {
     `;
     return rows as unknown as EvalCaptureFailure[];
   }
+}
+
+function pgRowToPageVersion(row: Record<string, unknown>): PageVersion {
+  const k = row.kind as string;
+  const kind: PageVersion['kind'] =
+    k === 'create' || k === 'delete' || k === 'update' ? k : 'update';
+  const tags = row.tags as string[] | null | undefined;
+  const fm = typeof row.frontmatter === 'string'
+    ? JSON.parse(row.frontmatter) as Record<string, unknown>
+    : (row.frontmatter as Record<string, unknown>) ?? {};
+  const prov = typeof row.provenance === 'string'
+    ? JSON.parse(row.provenance) as Record<string, unknown>
+    : (row.provenance as Record<string, unknown>) ?? {};
+  return {
+    id: row.id as number,
+    page_id: row.page_id == null ? null : (row.page_id as number),
+    source_id: (row.source_id as string) ?? 'default',
+    slug: (row.slug as string) ?? '',
+    compiled_truth: (row.compiled_truth as string) ?? '',
+    frontmatter: fm,
+    tags: Array.isArray(tags) ? [...tags] : [],
+    kind,
+    provenance: prov,
+    snapshot_at: row.snapshot_at instanceof Date
+      ? row.snapshot_at
+      : new Date(row.snapshot_at as string),
+  };
 }
 
 function pgRowToCodeEdge(row: Record<string, unknown>): import('./types.ts').CodeEdgeResult {

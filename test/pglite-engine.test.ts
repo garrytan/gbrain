@@ -76,9 +76,9 @@ describe('PGLiteEngine: Pages', () => {
     expect(result).toBeNull();
   });
 
-  test('deletePage removes page', async () => {
+  test('purgePage removes page', async () => {
     await engine.putPage('test/delete-me', testPage);
-    await engine.deletePage('test/delete-me');
+    await engine.purgePage('test/delete-me');
     const result = await engine.getPage('test/delete-me');
     expect(result).toBeNull();
   });
@@ -746,7 +746,7 @@ describe('PGLiteEngine: Cascade deletes', () => {
     ]);
     await engine.addTag('test/cascade', 'cascade-tag');
 
-    await engine.deletePage('test/cascade');
+    await engine.purgePage('test/cascade');
 
     const chunks = await engine.getChunks('test/cascade');
     expect(chunks.length).toBe(0);

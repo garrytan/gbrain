@@ -771,6 +771,58 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
+  progress.heartbeat('page_versions_health');
+  try {
+    const orphanRows = await engine.executeRaw<{ c: string | number }>(
+      `SELECT COUNT(*)::int AS c FROM page_versions pv
+       WHERE pv.page_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = pv.page_id)`,
+    );
+    const orphanPv = Number(orphanRows[0]?.c ?? 0);
+
+    const tombRows = await engine.executeRaw<{ c: string | number }>(
+      `SELECT COUNT(*)::int AS c FROM page_versions
+       WHERE kind = 'delete' AND snapshot_at < now() - interval '90 days'`,
+    );
+    const oldTomb = Number(tombRows[0]?.c ?? 0);
+
+    const cntRows = await engine.executeRaw<{ pv: string | number; pg: string | number }>(
+      `SELECT
+         (SELECT COUNT(*)::int FROM page_versions) AS pv,
+         (SELECT COUNT(*)::int FROM pages WHERE deleted_at IS NULL) AS pg`,
+    );
+    const pv = Number(cntRows[0]?.pv ?? 0);
+    const pg = Number(cntRows[0]?.pg ?? 0);
+    const ratio = pg > 0 ? pv / pg : 0;
+
+    const parts: string[] = [];
+    if (orphanPv > 0) parts.push(`${orphanPv} orphaned version row(s)`);
+    if (oldTomb > 0) parts.push(`${oldTomb} delete tombstone(s) older than 90d`);
+    if (pv > 100_000) parts.push(`page_versions=${pv}`);
+    else if (ratio > 500 && pg > 0) parts.push(`high version churn (versions/pages=${ratio.toFixed(0)})`);
+
+    if (parts.length === 0) {
+      checks.push({ name: 'page_versions_health', status: 'ok', message: 'No versioning growth concerns' });
+    } else {
+      checks.push({
+        name: 'page_versions_health',
+        status: 'warn',
+        message: `${parts.join('; ')}. Run \`gbrain history prune\` or investigate.`,
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01') {
+      checks.push({ name: 'page_versions_health', status: 'ok', message: 'Skipped (page_versions unavailable)' });
+    } else {
+      checks.push({
+        name: 'page_versions_health',
+        status: 'warn',
+        message: `Could not check page_versions: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
   // 11b. Queue health (v0.19.1 queue-resilience wave).
   // Postgres-only because PGLite has no multi-process worker surface. Two
   // subchecks, both cheap (single SELECT each, status-index-covered):

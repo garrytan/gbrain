@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS pages (
   timeline      TEXT    NOT NULL DEFAULT '',
   frontmatter   JSONB   NOT NULL DEFAULT '{}',
   content_hash  TEXT,
+  deleted_at    TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
@@ -283,13 +284,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup ON timeline_entries(page_id
 -- ============================================================
 CREATE TABLE IF NOT EXISTS page_versions (
   id             SERIAL PRIMARY KEY,
-  page_id        INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  page_id        INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+  source_id      TEXT    NOT NULL DEFAULT 'default',
+  slug           TEXT    NOT NULL,
   compiled_truth TEXT    NOT NULL,
   frontmatter    JSONB   NOT NULL DEFAULT '{}',
+  tags           TEXT[]  NOT NULL DEFAULT '{}',
+  kind           TEXT    NOT NULL DEFAULT 'update'
+                   CHECK (kind IN ('create', 'update', 'delete')),
+  provenance     JSONB   NOT NULL DEFAULT '{}'::jsonb,
   snapshot_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_versions_page ON page_versions(page_id);
+CREATE INDEX IF NOT EXISTS idx_page_versions_slug_snapshot ON page_versions(slug, snapshot_at DESC);
 
 -- ============================================================
 -- ingest_log
@@ -637,8 +645,12 @@ CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires
 -- CLI process boundaries).
 CREATE TABLE IF NOT EXISTS eval_candidates (
   id                    SERIAL PRIMARY KEY,
-  tool_name             TEXT         NOT NULL CHECK (tool_name IN ('query', 'search')),
+  tool_name             TEXT         NOT NULL CHECK (tool_name IN (
+    'query', 'search', 'get_page', 'list_pages', 'traverse_graph', 'get_links',
+    'get_backlinks', 'get_timeline', 'get_tags', 'find_orphans', 'resolve_slugs', 'get_chunks'
+  )),
   query                 TEXT         NOT NULL CHECK (length(query) <= 51200),
+  params_jsonb          JSONB        NOT NULL DEFAULT '{}'::jsonb,
   retrieved_slugs       TEXT[]       NOT NULL DEFAULT '{}',
   retrieved_chunk_ids   INTEGER[]    NOT NULL DEFAULT '{}',
   source_ids            TEXT[]       NOT NULL DEFAULT '{}',
@@ -651,9 +663,11 @@ CREATE TABLE IF NOT EXISTS eval_candidates (
   remote                BOOLEAN      NOT NULL,
   job_id                INTEGER,
   subagent_id           INTEGER,
+  mcp_token_name        TEXT,
   created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_eval_candidates_created_at ON eval_candidates(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_eval_candidates_tool_created ON eval_candidates(tool_name, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS eval_capture_failures (
   id      SERIAL       PRIMARY KEY,

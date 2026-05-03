@@ -5,13 +5,14 @@ import type {
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
   RawData,
-  PageVersion,
+  PageVersion, PageVersionOpts, PageVersionDiff,
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
   CodeEdgeInput, CodeEdgeResult,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
+  EvalCaptureToolName,
 } from './types.ts';
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -128,9 +129,14 @@ export interface BrainEngine {
   withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T>;
 
   // Pages CRUD
-  getPage(slug: string): Promise<Page | null>;
+  getPage(slug: string, opts?: { includeDeleted?: boolean }): Promise<Page | null>;
   putPage(slug: string, page: PageInput): Promise<Page>;
-  deletePage(slug: string): Promise<void>;
+  /** Hard delete page and dependent rows. Used by sync, migrate, gbrain purge. */
+  purgePage(slug: string): Promise<void>;
+  /** Soft-delete: sets deleted_at, preserves row. */
+  softDeletePage(slug: string, opts?: PageVersionOpts): Promise<void>;
+  /** Clear deleted_at for a slug (no-op if not soft-deleted). */
+  resurrectSoftDeletedPage(slug: string): Promise<void>;
   listPages(filters?: PageFilters): Promise<Page[]>;
   resolveSlugs(partial: string): Promise<string[]>;
   /**
@@ -280,9 +286,12 @@ export interface BrainEngine {
   putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void>;
 
   // Versions
-  createVersion(slug: string): Promise<PageVersion>;
-  getVersions(slug: string): Promise<PageVersion[]>;
-  revertToVersion(slug: string, versionId: number): Promise<void>;
+  createVersion(slug: string, opts?: PageVersionOpts): Promise<PageVersion>;
+  getVersions(slug: string, opts?: { includeDeletedPage?: boolean }): Promise<PageVersion[]>;
+  getPageVersionById(versionId: number): Promise<PageVersion | null>;
+  revertToVersion(slug: string, versionId: number, opts?: PageVersionOpts): Promise<void>;
+  diffPageVersions(slug: string, fromVersionId: number, toVersionId: number): Promise<PageVersionDiff>;
+  prunePageVersions(opts: { slug?: string; keepLast?: number; olderThan?: Date }): Promise<number>;
 
   // Stats + health
   getStats(): Promise<BrainStats>;
@@ -374,9 +383,9 @@ export interface BrainEngine {
   /** Insert a captured candidate. Returns the new row id. Best-effort: callers swallow failures and route them through `logEvalCaptureFailure`. */
   logEvalCandidate(input: EvalCandidateInput): Promise<number>;
   /** Read candidates by time window / limit / tool filter. Used by `gbrain eval export`. */
-  listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }): Promise<EvalCandidate[]>;
-  /** Delete candidates created before `date`. Returns rows deleted. Used by `gbrain eval prune`. */
-  deleteEvalCandidatesBefore(date: Date): Promise<number>;
+  listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: EvalCaptureToolName; slugHint?: string; mcpTokenName?: string }): Promise<EvalCandidate[]>;
+  /** Delete candidates created before `date`. Returns rows deleted. Used by `gbrain eval prune`. When `opts.readToolsOnly`, only rows whose tool_name is not `query` or `search`. */
+  deleteEvalCandidatesBefore(date: Date, opts?: { readToolsOnly?: boolean }): Promise<number>;
   /** Log a capture failure so `gbrain doctor` can surface drops cross-process. Best-effort; symmetric with logEvalCandidate (failure-of-failure is lost). */
   logEvalCaptureFailure(reason: EvalCaptureFailureReason): Promise<void>;
   /** Read capture failures within an optional time window. Used by `gbrain doctor`. */

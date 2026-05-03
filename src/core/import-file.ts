@@ -267,7 +267,7 @@ export async function importFromContent(
 
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
-    if (existing) await tx.createVersion(slug);
+    if (existing) await tx.createVersion(slug, { kind: 'update', provenance: { source: 'import_file' } });
 
     await tx.putPage(slug, {
       type: parsed.type,
@@ -277,6 +277,7 @@ export async function importFromContent(
       frontmatter: parsed.frontmatter,
       content_hash: hash,
     });
+    if (!existing) await tx.createVersion(slug, { kind: 'create', provenance: { source: 'import_file' } });
 
     // Tag reconciliation: remove stale, add current
     const existingTags = await tx.getTags(slug);
@@ -494,7 +495,7 @@ export async function importCodeFile(
 
   // Store
   await engine.transaction(async (tx) => {
-    if (existing) await tx.createVersion(slug);
+    if (existing) await tx.createVersion(slug, { kind: 'update', provenance: { source: 'import_code_file' } });
 
     await tx.putPage(slug, {
       type: 'code' as PageType,
@@ -505,6 +506,7 @@ export async function importCodeFile(
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
     });
+    if (!existing) await tx.createVersion(slug, { kind: 'create', provenance: { source: 'import_code_file' } });
 
     await tx.addTag(slug, 'code');
     await tx.addTag(slug, lang);

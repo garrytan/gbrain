@@ -21,6 +21,8 @@ export interface DispatchOpts {
   remote?: boolean;
   /** Override the default stderr logger (e.g. CLI uses console.* directly). */
   logger?: OperationContext['logger'];
+  /** Bearer token name used by the HTTP transport, propagated into audit rows. */
+  mcpTokenName?: string;
 }
 
 /** Validate required params exist and have the expected type. Returns null on success, error message on failure. */
@@ -59,6 +61,7 @@ export function buildOperationContext(
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
+    mcpTokenName: opts.mcpTokenName,
   };
 }
 

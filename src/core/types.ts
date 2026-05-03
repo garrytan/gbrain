@@ -18,6 +18,7 @@ export interface Page {
   content_hash?: string;
   created_at: Date;
   updated_at: Date;
+  deleted_at?: Date | null;
 }
 
 export type PageKind = 'markdown' | 'code';
@@ -53,7 +54,38 @@ export interface PageFilters {
    * queries to a tier directory without loading every page into memory.
    */
   slugPrefix?: string;
+  /** When true, include soft-deleted pages (deleted_at IS NOT NULL). */
+  includeDeleted?: boolean;
 }
+
+export type PageVersionKind = 'create' | 'update' | 'delete';
+
+export interface PageVersionOpts {
+  kind?: PageVersionKind;
+  provenance?: Record<string, unknown>;
+  /** Snapshot source row even when soft-deleted (revert precondition). */
+  snapshotIncludeDeleted?: boolean;
+}
+
+export interface PageVersionDiff {
+  compiled_truth: { from: string; to: string };
+  frontmatter: { from: Record<string, unknown>; to: Record<string, unknown> };
+  tags: { from: string[]; to: string[] };
+}
+
+export type EvalCaptureToolName =
+  | 'query'
+  | 'search'
+  | 'get_page'
+  | 'list_pages'
+  | 'traverse_graph'
+  | 'get_links'
+  | 'get_backlinks'
+  | 'get_timeline'
+  | 'get_tags'
+  | 'find_orphans'
+  | 'resolve_slugs'
+  | 'get_chunks';
 
 // Chunks
 export interface Chunk {
@@ -309,9 +341,14 @@ export interface RawData {
 // Versions
 export interface PageVersion {
   id: number;
-  page_id: number;
+  page_id: number | null;
+  source_id: string;
+  slug: string;
   compiled_truth: string;
   frontmatter: Record<string, unknown>;
+  tags: string[];
+  kind: PageVersionKind;
+  provenance: Record<string, unknown>;
   snapshot_at: Date;
 }
 
@@ -395,9 +432,10 @@ export interface IngestLogInput {
 // eval_capture_failures table records insert failures so gbrain doctor can
 // surface silent capture drops cross-process.
 export interface EvalCandidateInput {
-  tool_name: 'query' | 'search';
-  /** Already PII-scrubbed by captureEvalCandidate before this point. */
+  tool_name: EvalCaptureToolName;
+  /** Already PII-scrubbed by captureEvalCandidate before this point. Summary string for reads. */
   query: string;
+  params_jsonb?: Record<string, unknown>;
   retrieved_slugs: string[];
   retrieved_chunk_ids: number[];
   source_ids: string[];
@@ -416,6 +454,7 @@ export interface EvalCandidateInput {
   remote: boolean;
   job_id: number | null;
   subagent_id: number | null;
+  mcp_token_name?: string | null;
 }
 
 export interface EvalCandidate extends EvalCandidateInput {

@@ -13,7 +13,8 @@ import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
-import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
+import { captureEvalCandidate, captureReadAudit, isEvalCaptureEnabled, isEvalScrubEnabled, isReadAuditEnabled } from './eval-capture.ts';
+import type { EvalCaptureToolName } from './types.ts';
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
@@ -225,6 +226,12 @@ export interface OperationContext {
    */
   allowedSlugPrefixes?: string[];
   /**
+   * Bearer-token name used to authenticate the MCP HTTP request, if any.
+   * Threaded into eval_candidates / read-audit rows so reviewers can
+   * attribute reads to the originating credential.
+   */
+  mcpTokenName?: string;
+  /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers
    * may leave it undefined — consumers default to quiet/no-progress for
@@ -249,35 +256,69 @@ export interface Operation {
 
 // --- Page CRUD ---
 
+function maybeAuditRead(
+  ctx: OperationContext,
+  toolName: Exclude<EvalCaptureToolName, 'query' | 'search'>,
+  params: Record<string, unknown>,
+  retrievedSlugs: string[],
+  startedAt: number,
+  extras?: { retrieved_chunk_ids?: number[]; source_ids?: string[]; querySummary?: string },
+): void {
+  if (!isReadAuditEnabled(ctx.config)) return;
+  void captureReadAudit(
+    ctx.engine,
+    {
+      tool_name: toolName,
+      query: extras?.querySummary ?? toolName,
+      params,
+      retrieved_slugs: retrievedSlugs,
+      retrieved_chunk_ids: extras?.retrieved_chunk_ids,
+      source_ids: extras?.source_ids,
+      latency_ms: Date.now() - startedAt,
+      remote: ctx.remote ?? false,
+      job_id: ctx.jobId ?? null,
+      subagent_id: ctx.subagentId ?? null,
+      mcp_token_name: ctx.mcpTokenName ?? null,
+    },
+    { scrub_pii: isEvalScrubEnabled(ctx.config) },
+  );
+}
+
 const get_page: Operation = {
   name: 'get_page',
   description: 'Read a page by slug (supports optional fuzzy matching)',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
+    include_deleted: { type: 'boolean', description: 'Include soft-deleted pages (default: false)' },
   },
   handler: async (ctx, p) => {
+    const startedAt = Date.now();
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
+    const includeDeleted = (p.include_deleted as boolean) || false;
 
-    let page = await ctx.engine.getPage(slug);
+    let page = await ctx.engine.getPage(slug, { includeDeleted });
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
       const candidates = await ctx.engine.resolveSlugs(slug);
       if (candidates.length === 1) {
-        page = await ctx.engine.getPage(candidates[0]);
+        page = await ctx.engine.getPage(candidates[0], { includeDeleted });
         resolved_slug = candidates[0];
       } else if (candidates.length > 1) {
+        maybeAuditRead(ctx, 'get_page', { slug, fuzzy, include_deleted: includeDeleted }, [], startedAt);
         return { error: 'ambiguous_slug', candidates };
       }
     }
 
     if (!page) {
+      maybeAuditRead(ctx, 'get_page', { slug, fuzzy, include_deleted: includeDeleted }, [], startedAt);
       throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug or use fuzzy: true');
     }
 
     const tags = await ctx.engine.getTags(page.slug);
+    maybeAuditRead(ctx, 'get_page', { slug, fuzzy, include_deleted: includeDeleted, resolved_slug }, [page.slug], startedAt);
     return { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) };
   },
   cliHints: { name: 'get', positional: ['slug'] },
@@ -581,17 +622,95 @@ async function runAutoLink(
 
 const delete_page: Operation = {
   name: 'delete_page',
-  description: 'Delete a page',
+  description: 'Soft-delete a page (writes a tombstone version; page can be resurrected)',
   params: {
     slug: { type: 'string', required: true },
   },
   mutating: true,
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_page', slug: p.slug };
-    await ctx.engine.deletePage(p.slug as string);
-    return { status: 'deleted' };
+    const slug = p.slug as string;
+    if (ctx.dryRun) return { dry_run: true, action: 'delete_page', slug };
+    const provenance: Record<string, unknown> = {
+      source: ctx.viaSubagent ? 'subagent_delete' : (ctx.remote ? 'mcp_delete' : 'cli_delete'),
+    };
+    if (ctx.subagentId != null) provenance.subagent_id = ctx.subagentId;
+    if (ctx.jobId != null) provenance.job_id = ctx.jobId;
+    if (ctx.mcpTokenName) provenance.mcp_token_name = ctx.mcpTokenName;
+    await ctx.engine.softDeletePage(slug, { provenance, kind: 'update' });
+    return { status: 'soft_deleted', slug, hint: `Run \`gbrain resurrect ${slug}\` to undo.` };
   },
   cliHints: { name: 'delete', positional: ['slug'] },
+};
+
+const purge_page: Operation = {
+  name: 'purge_page',
+  description: 'Hard-delete a page and its history (CLI-only; agents cannot call).',
+  params: {
+    slug: { type: 'string', required: true },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    if (ctx.remote) {
+      throw new OperationError(
+        'permission_denied',
+        'purge_page is local-only',
+        'Run `gbrain purge <slug> --yes` from a terminal on the host machine.',
+      );
+    }
+    const slug = p.slug as string;
+    if (ctx.dryRun) return { dry_run: true, action: 'purge_page', slug };
+    await ctx.engine.purgePage(slug);
+    return { status: 'purged', slug };
+  },
+  cliHints: { name: 'purge', positional: ['slug'], hidden: true },
+};
+
+const resurrect_page: Operation = {
+  name: 'resurrect_page',
+  description: 'Clear deleted_at on a soft-deleted page.',
+  params: {
+    slug: { type: 'string', required: true },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    const slug = p.slug as string;
+    if (ctx.dryRun) return { dry_run: true, action: 'resurrect_page', slug };
+    const existing = await ctx.engine.getPage(slug, { includeDeleted: true });
+    if (!existing) {
+      throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug.');
+    }
+    if (!existing.deleted_at) {
+      return { status: 'already_active', slug };
+    }
+    await ctx.engine.resurrectSoftDeletedPage(slug);
+    const provenance: Record<string, unknown> = {
+      source: ctx.viaSubagent ? 'subagent_resurrect' : (ctx.remote ? 'mcp_resurrect' : 'cli_resurrect'),
+    };
+    if (ctx.subagentId != null) provenance.subagent_id = ctx.subagentId;
+    if (ctx.jobId != null) provenance.job_id = ctx.jobId;
+    if (ctx.mcpTokenName) provenance.mcp_token_name = ctx.mcpTokenName;
+    await ctx.engine.createVersion(slug, { kind: 'update', provenance });
+    return { status: 'resurrected', slug };
+  },
+  cliHints: { name: 'resurrect', positional: ['slug'], hidden: true },
+};
+
+const diff_page_versions: Operation = {
+  name: 'diff_page_versions',
+  description: 'Diff two versions of a page',
+  params: {
+    slug: { type: 'string', required: true },
+    from_version: { type: 'number', required: true },
+    to_version: { type: 'number', required: true },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.diffPageVersions(
+      p.slug as string,
+      p.from_version as number,
+      p.to_version as number,
+    );
+  },
+  cliHints: { name: 'page-diff', positional: ['slug', 'from_version', 'to_version'] },
 };
 
 const list_pages: Operation = {
@@ -601,19 +720,32 @@ const list_pages: Operation = {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
     limit: { type: 'number', description: 'Max results (default 50)' },
+    include_deleted: { type: 'boolean', description: 'Include soft-deleted pages (default: false)' },
   },
   handler: async (ctx, p) => {
+    const startedAt = Date.now();
+    const limit = clampSearchLimit(p.limit as number | undefined, 50, 100);
+    const includeDeleted = (p.include_deleted as boolean) || false;
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
-      limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      limit,
+      includeDeleted,
     });
-    return pages.map(pg => ({
+    const result = pages.map(pg => ({
       slug: pg.slug,
       type: pg.type,
       title: pg.title,
       updated_at: pg.updated_at,
     }));
+    maybeAuditRead(
+      ctx,
+      'list_pages',
+      { type: p.type ?? null, tag: p.tag ?? null, limit, include_deleted: includeDeleted },
+      result.map(r => r.slug),
+      startedAt,
+    );
+    return result;
   },
   cliHints: { name: 'list' },
 };
@@ -655,6 +787,7 @@ const search: Operation = {
           detail: null,
           job_id: ctx.jobId ?? null,
           subagent_id: ctx.subagentId ?? null,
+          mcp_token_name: ctx.mcpTokenName ?? null,
         },
         { scrub_pii: isEvalScrubEnabled(ctx.config) },
       );
@@ -726,6 +859,7 @@ const query: Operation = {
           detail: detail ?? null,
           job_id: ctx.jobId ?? null,
           subagent_id: ctx.subagentId ?? null,
+          mcp_token_name: ctx.mcpTokenName ?? null,
         },
         { scrub_pii: isEvalScrubEnabled(ctx.config) },
       );
@@ -777,7 +911,11 @@ const get_tags: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getTags(p.slug as string);
+    const startedAt = Date.now();
+    const slug = p.slug as string;
+    const result = await ctx.engine.getTags(slug);
+    maybeAuditRead(ctx, 'get_tags', { slug }, [slug], startedAt);
+    return result;
   },
   cliHints: { name: 'tags', positional: ['slug'] },
 };
@@ -828,7 +966,12 @@ const get_links: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getLinks(p.slug as string);
+    const startedAt = Date.now();
+    const slug = p.slug as string;
+    const links = await ctx.engine.getLinks(slug);
+    const targets = Array.from(new Set(links.map(l => (l as { to_slug?: string }).to_slug).filter((s): s is string => !!s)));
+    maybeAuditRead(ctx, 'get_links', { slug }, [slug, ...targets], startedAt);
+    return links;
   },
 };
 
@@ -839,7 +982,12 @@ const get_backlinks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getBacklinks(p.slug as string);
+    const startedAt = Date.now();
+    const slug = p.slug as string;
+    const links = await ctx.engine.getBacklinks(slug);
+    const sources = Array.from(new Set(links.map(l => (l as { from_slug?: string }).from_slug).filter((s): s is string => !!s)));
+    maybeAuditRead(ctx, 'get_backlinks', { slug }, [slug, ...sources], startedAt);
+    return links;
   },
   cliHints: { name: 'backlinks', positional: ['slug'] },
 };
@@ -872,12 +1020,29 @@ const traverse_graph: Operation = {
     const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     const linkType = p.link_type as string | undefined;
     const direction = p.direction as 'in' | 'out' | 'both' | undefined;
-    // Backward compat: when neither link_type nor direction is provided, return
-    // the legacy GraphNode[] shape. Once either is set, switch to GraphPath[].
+    const startedAt = Date.now();
+    let retrievedSlugs: string[];
+    let result: unknown;
     if (linkType === undefined && direction === undefined) {
-      return ctx.engine.traverseGraph(slug, depth);
+      const nodes = await ctx.engine.traverseGraph(slug, depth);
+      retrievedSlugs = nodes.map(n => (n as { slug?: string }).slug).filter((s): s is string => !!s);
+      result = nodes;
+    } else {
+      const paths = await ctx.engine.traversePaths(slug, { depth, linkType, direction });
+      const set = new Set<string>([slug]);
+      for (const p of paths) {
+        if ((p as { from_slug?: string }).from_slug) set.add((p as { from_slug?: string }).from_slug!);
+        if ((p as { to_slug?: string }).to_slug) set.add((p as { to_slug?: string }).to_slug!);
+      }
+      retrievedSlugs = [...set];
+      result = paths;
     }
-    return ctx.engine.traversePaths(slug, { depth, linkType, direction });
+    maybeAuditRead(
+      ctx, 'traverse_graph',
+      { slug, depth, link_type: linkType ?? null, direction: direction ?? null },
+      retrievedSlugs, startedAt,
+    );
+    return result;
   },
   cliHints: { name: 'graph', positional: ['slug'] },
 };
@@ -931,7 +1096,11 @@ const get_timeline: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getTimeline(p.slug as string);
+    const startedAt = Date.now();
+    const slug = p.slug as string;
+    const result = await ctx.engine.getTimeline(slug);
+    maybeAuditRead(ctx, 'get_timeline', { slug }, [slug], startedAt);
+    return result;
   },
   cliHints: { name: 'timeline', positional: ['slug'] },
 };
@@ -963,28 +1132,49 @@ const get_versions: Operation = {
   description: 'Page version history',
   params: {
     slug: { type: 'string', required: true },
+    include_orphan: {
+      type: 'boolean',
+      description: 'Include history for soft-deleted pages too (default: false).',
+    },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getVersions(p.slug as string);
+    return ctx.engine.getVersions(p.slug as string, {
+      includeDeletedPage: (p.include_orphan as boolean) || false,
+    });
   },
-  cliHints: { name: 'history', positional: ['slug'] },
+  cliHints: { name: 'history', positional: ['slug'], hidden: true },
 };
 
 const revert_version: Operation = {
   name: 'revert_version',
-  description: 'Revert page to a previous version',
+  description: 'Revert page to a previous version (snapshots current state first; restores compiled_truth + frontmatter + tags).',
   params: {
     slug: { type: 'string', required: true },
     version_id: { type: 'number', required: true },
   },
   mutating: true,
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'revert_version', slug: p.slug, version_id: p.version_id };
-    await ctx.engine.createVersion(p.slug as string);
-    await ctx.engine.revertToVersion(p.slug as string, p.version_id as number);
-    return { status: 'reverted' };
+    const slug = p.slug as string;
+    const versionId = p.version_id as number;
+    if (ctx.dryRun) {
+      return { dry_run: true, action: 'revert_version', slug, version_id: versionId };
+    }
+    const provenance: Record<string, unknown> = {
+      source: 'revert',
+      target_version_id: versionId,
+    };
+    if (ctx.subagentId != null) provenance.subagent_id = ctx.subagentId;
+    if (ctx.jobId != null) provenance.job_id = ctx.jobId;
+    if (ctx.mcpTokenName) provenance.mcp_token_name = ctx.mcpTokenName;
+    await ctx.engine.revertToVersion(slug, versionId, { provenance });
+    return {
+      status: 'reverted',
+      slug,
+      version_id: versionId,
+      hint: `Run \`gbrain extract --slugs ${slug} && gbrain embed --stale --slugs ${slug}\` to refresh derived state.`,
+    };
   },
-  cliHints: { name: 'revert', positional: ['slug', 'version_id'] },
+  cliHints: { name: 'revert', positional: ['slug', 'version_id'], hidden: true },
 };
 
 // --- Sync ---
@@ -1052,7 +1242,11 @@ const resolve_slugs: Operation = {
     partial: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.resolveSlugs(p.partial as string);
+    const startedAt = Date.now();
+    const partial = p.partial as string;
+    const slugs = await ctx.engine.resolveSlugs(partial);
+    maybeAuditRead(ctx, 'resolve_slugs', { partial }, slugs, startedAt);
+    return slugs;
   },
 };
 
@@ -1063,7 +1257,12 @@ const get_chunks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getChunks(p.slug as string);
+    const startedAt = Date.now();
+    const slug = p.slug as string;
+    const chunks = await ctx.engine.getChunks(slug);
+    const chunkIds = chunks.map(c => (c as { id?: number }).id).filter((n): n is number => typeof n === 'number');
+    maybeAuditRead(ctx, 'get_chunks', { slug }, [slug], startedAt, { retrieved_chunk_ids: chunkIds });
+    return chunks;
   },
 };
 
@@ -1431,8 +1630,15 @@ const find_orphans: Operation = {
     },
   },
   handler: async (ctx, p) => {
+    const startedAt = Date.now();
+    const includePseudo = (p.include_pseudo as boolean) || false;
     const { findOrphans } = await import('../commands/orphans.ts');
-    return findOrphans(ctx.engine, { includePseudo: (p.include_pseudo as boolean) || false });
+    const result = await findOrphans(ctx.engine, { includePseudo });
+    const slugs = Array.isArray(result)
+      ? result.map(r => (r as { slug?: string }).slug).filter((s): s is string => !!s)
+      : [];
+    maybeAuditRead(ctx, 'find_orphans', { include_pseudo: includePseudo }, slugs, startedAt);
+    return result;
   },
   cliHints: { name: 'orphans', hidden: true },
 };
@@ -1441,7 +1647,7 @@ const find_orphans: Operation = {
 
 export const operations: Operation[] = [
   // Page CRUD
-  get_page, put_page, delete_page, list_pages,
+  get_page, put_page, delete_page, purge_page, resurrect_page, diff_page_versions, list_pages,
   // Search
   search, query,
   // Tags
