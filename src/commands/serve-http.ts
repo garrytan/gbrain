@@ -110,6 +110,19 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again in 15 minutes.' },
   });
 
+  // Magic-link rate limiter: 10 requests/min/IP. The bootstrap token is
+  // 64-char hex (unguessable) so brute-forcing is computationally
+  // infeasible — but a misconfigured client looping on /admin/auth/:bad
+  // could DoS the server's CPU on sha256 + the inline HTML response.
+  // Defense-in-depth on the highest-privileged URL the server exposes.
+  const adminAuthRateLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many magic-link attempts. Wait a minute before trying again.',
+  });
+
   app.post('/token', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
     if (req.body?.grant_type !== 'client_credentials') {
       return next(); // Fall through to SDK's token handler
@@ -231,8 +244,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // GET /admin/auth/:token — magic link login (one-click from agent)
   // The agent generates: https://host:port/admin/auth/<bootstrapToken>
   // Browser hits it, sets cookie, redirects to dashboard.
-  app.get('/admin/auth/:token', (req, res) => {
-    const token = req.params.token;
+  // Rate-limited at 10/min/IP to harden against DoS via bad-token loops.
+  app.get('/admin/auth/:token', adminAuthRateLimiter, (req: Request, res: Response) => {
+    const token = String(req.params.token ?? '');
     const tokenHash = createHash('sha256').update(token).digest('hex');
     if (!safeHexEqual(tokenHash, bootstrapHash)) {
       res.status(401).send(`<!DOCTYPE html>
