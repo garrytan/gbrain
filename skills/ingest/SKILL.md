@@ -61,7 +61,7 @@ Every fact written to a brain page must carry an inline `[Source: ...]` citation
 2. **For each entity mentioned:**
    - Read the entity's page from gbrain to check if it exists
    - If exists: update compiled_truth (rewrite State section with new info, don't append)
-   - If new: check notability gate, then store the page in gbrain with the appropriate type and slug
+   - If new: check notability gate (see `skills/_brain-filing-rules.md`), then store the page in gbrain with the appropriate type and slug
 3. **Append to timeline.** Add a timeline entry in gbrain for each event, with date, summary, and source citation.
 4. **Create cross-reference links.** Link entities in gbrain for every entity pair mentioned together, using the appropriate relationship type.
 5. **Back-link all entities.** Update EVERY mentioned entity's page with a back-link to this page (Iron Law).
