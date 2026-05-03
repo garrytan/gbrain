@@ -185,6 +185,7 @@ Same content.
     // Hash now includes ALL fields (title, type, frontmatter, tags)
     const { createHash } = await import('crypto');
     const { parseMarkdown } = await import('../src/core/markdown.ts');
+    const { MARKDOWN_CHUNKER_VERSION } = await import('../src/core/chunkers/recursive.ts');
     const content = `---
 type: concept
 title: Unchanged
@@ -201,6 +202,7 @@ Same content.
         timeline: parsed.timeline,
         frontmatter: parsed.frontmatter,
         tags: parsed.tags.sort(),
+        markdown_chunker_version: MARKDOWN_CHUNKER_VERSION,
       }))
       .digest('hex');
 

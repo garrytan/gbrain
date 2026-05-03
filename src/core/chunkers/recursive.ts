@@ -21,9 +21,12 @@ const DELIMITERS: string[][] = [
   [],                                // L4: words (whitespace split)
 ];
 
+export const MARKDOWN_CHUNKER_VERSION = 2;
+
 export interface ChunkOptions {
   chunkSize?: number;    // target words per chunk (default 300)
   chunkOverlap?: number; // overlap words (default 50)
+  maxChars?: number;     // hard safety cap for CJK / no-whitespace text (default 6000)
 }
 
 export interface TextChunk {
@@ -39,6 +42,7 @@ import { stripTakesFence } from '../takes-fence.ts';
 export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
+  const maxChars = opts?.maxChars || 6000;
 
   if (!text || text.trim().length === 0) return [];
 
@@ -49,17 +53,37 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const stripped = stripTakesFence(text);
   if (!stripped || stripped.trim().length === 0) return [];
 
-  const wordCount = countWords(stripped);
+  const trimmed = stripped.trim();
+  const wordCount = countWords(trimmed);
   if (wordCount <= chunkSize) {
-    return [{ text: stripped.trim(), index: 0 }];
+    if (trimmed.length <= maxChars) return [{ text: trimmed, index: 0 }];
+    return splitByChars(trimmed, maxChars, Math.min(500, Math.floor(maxChars / 10)))
+      .map((t, i) => ({ text: t.trim(), index: i }));
   }
 
   // Recursively split, then greedily merge to target size
-  const pieces = recursiveSplit(stripped, 0, chunkSize);
+  const pieces = recursiveSplit(trimmed, 0, chunkSize);
   const merged = greedyMerge(pieces, chunkSize);
   const withOverlap = applyOverlap(merged, chunkOverlap);
 
-  return withOverlap.map((t, i) => ({ text: t.trim(), index: i }));
+  const capped = withOverlap.flatMap(chunk =>
+    chunk.length > maxChars
+      ? splitByChars(chunk, maxChars, Math.min(500, Math.floor(maxChars / 10)))
+      : [chunk],
+  );
+
+  return capped.map((t, i) => ({ text: t.trim(), index: i }));
+}
+
+function splitByChars(text: string, maxChars: number, overlapChars: number): string[] {
+  const chunks: string[] = [];
+  const stride = Math.max(1, maxChars - overlapChars);
+  for (let start = 0; start < text.length; start += stride) {
+    const slice = text.slice(start, start + maxChars);
+    if (slice.trim().length > 0) chunks.push(slice);
+    if (start + maxChars >= text.length) break;
+  }
+  return chunks;
 }
 
 function recursiveSplit(text: string, level: number, target: number): string[] {

@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { marked } from 'marked';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
-import { chunkText } from './chunkers/recursive.ts';
+import { chunkText, MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
@@ -227,6 +227,7 @@ export async function importFromContent(
       timeline: parsed.timeline,
       frontmatter: parsed.frontmatter,
       tags: parsed.tags.sort(),
+      markdown_chunker_version: MARKDOWN_CHUNKER_VERSION,
     }))
     .digest('hex');
 
