@@ -82,6 +82,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Express 5 app
   const app = express();
+  app.set('trust proxy', 'loopback'); // Caddy/Tailscale reverse proxy on localhost
 
   // ---------------------------------------------------------------------------
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
@@ -155,7 +156,25 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     };
   }
 
-  app.use(mcpAuthRouter(authRouterOptions));
+  const authRouter = mcpAuthRouter(authRouterOptions);
+
+  // Patch the SDK's OAuth metadata to include client_credentials grant type.
+  // The SDK hardcodes ['authorization_code', 'refresh_token'] — we intercept
+  // the response and add client_credentials before it reaches the client.
+  app.use((req, res, next) => {
+    if (req.path === '/.well-known/oauth-authorization-server' && req.method === 'GET') {
+      const origJson = res.json.bind(res);
+      (res as any).json = (body: any) => {
+        if (body?.grant_types_supported && !body.grant_types_supported.includes('client_credentials')) {
+          body.grant_types_supported.push('client_credentials');
+        }
+        return origJson(body);
+      };
+    }
+    next();
+  });
+
+  app.use(authRouter);
 
   // ---------------------------------------------------------------------------
   // Health check
@@ -326,7 +345,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   if (fs.existsSync(adminDistPath)) {
     app.use('/admin', express.static(adminDistPath));
     // SPA fallback: serve index.html for all unmatched /admin/* routes
-    app.get('/admin/*', (req: Request, res: Response, next: NextFunction) => {
+    app.get('/admin/{*path}', (req: Request, res: Response, next: NextFunction) => {
       // Skip API and events routes
       if (req.path.startsWith('/admin/api/') || req.path === '/admin/events' || req.path === '/admin/login') {
         return next();
