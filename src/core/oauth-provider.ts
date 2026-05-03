@@ -77,6 +77,34 @@ function validateRedirectUri(uri: string): void {
   );
 }
 
+/**
+ * Coerce an OAuth timestamp column (Unix epoch seconds, BIGINT) into a JS
+ * number, or undefined for SQL NULL.
+ *
+ * Why this exists: postgres.js with `prepare: false` (the auto-detected setting
+ * on Supabase PgBouncer / port 6543; see src/core/db.ts:resolvePrepare) returns
+ * BIGINT columns as strings. Two surfaces break on that: (1) the MCP SDK's
+ * bearerAuth middleware checks `typeof authInfo.expiresAt === 'number'` and
+ * rejects strings; (2) RFC 7591 §3.2.1 requires `client_id_issued_at` and
+ * `client_secret_expires_at` to be JSON numbers in DCR responses, not strings.
+ *
+ * Throws on non-finite (NaN/Infinity) so corrupt rows fail loud at the boundary
+ * instead of letting `expiresAt: NaN` flow through to the SDK as a fake-valid
+ * token. Returns undefined for SQL NULL so callers decide NULL semantics
+ * explicitly. For OAuth, the comparison sites treat NULL as "expired"
+ * (fail-closed); the DCR response sites preserve undefined per RFC 7591
+ * (the `client_secret_expires_at` field is optional, undefined means
+ * "did not expire").
+ */
+export function coerceTimestamp(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    throw new Error(`coerceTimestamp: non-finite timestamp value ${JSON.stringify(value)}`);
+  }
+  return n;
+}
+
 interface GBrainOAuthProviderOptions {
   sql: SqlQuery;
   /** Default token TTL in seconds (default: 3600 = 1 hour) */
@@ -109,8 +137,8 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       grant_types: (r.grant_types as string[]) || ['client_credentials'],
       scope: r.scope as string | undefined,
       token_endpoint_auth_method: r.token_endpoint_auth_method as string | undefined,
-      client_id_issued_at: r.client_id_issued_at as number | undefined,
-      client_secret_expires_at: r.client_secret_expires_at as number | undefined,
+      client_id_issued_at: coerceTimestamp(r.client_id_issued_at),
+      client_secret_expires_at: coerceTimestamp(r.client_secret_expires_at),
     };
   }
 
@@ -271,7 +299,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     const row = rows[0];
     if (row.client_id !== client.client_id) throw new Error('Client mismatch');
-    if ((row.expires_at as number) < now) throw new Error('Refresh token expired');
+    // NULL expires_at is treated as expired (fail-closed). Schema permits NULL
+    // even though issueTokens always sets it, so a corrupt or hand-modified row
+    // can't ride past validation.
+    const expiresAt = coerceTimestamp(row.expires_at);
+    if (expiresAt === undefined || expiresAt < now) throw new Error('Refresh token expired');
 
     const tokenScopes = scopes || (row.scopes as string[]) || [];
     return this.issueTokens(client.client_id, tokenScopes, resource, true);
@@ -293,14 +325,18 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     if (oauthRows.length > 0) {
       const row = oauthRows[0];
-      if ((row.expires_at as number) < now) {
+      // NULL expires_at is treated as expired (fail-closed). Schema permits NULL,
+      // and the SDK's bearerAuth requires `typeof expiresAt === 'number'` — we
+      // throw here rather than return an undefined-bearing AuthInfo.
+      const expiresAt = coerceTimestamp(row.expires_at);
+      if (expiresAt === undefined || expiresAt < now) {
         throw new Error('Token expired');
       }
       return {
         token,
         clientId: row.client_id as string,
         scopes: (row.scopes as string[]) || [],
-        expiresAt: Number(row.expires_at),
+        expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
       };
     }
