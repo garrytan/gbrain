@@ -531,6 +531,26 @@ Do not leave containers running after tests. Do not skip E2E tests.
 Never leave `gbrain-test-pg` running. If you find a stale one from a previous run,
 stop and remove it before starting a new one.
 
+#### HOME isolation contract (v0.23.1+)
+
+`scripts/run-e2e.sh` redirects `HOME` and `GBRAIN_HOME` to a `mktemp -d` tmpdir
+before bun starts, so config writes triggered by tests (e.g. `setupDB` calling
+`saveConfig` for the test container) land in the tmpdir instead of the user's
+real `~/.gbrain/config.json`. After the run, the wrapper md5-compares the user
+config against its pre-run snapshot.
+
+Two rules for agents:
+
+- **Always run E2E via `bun run test:e2e`,** never via direct `bun test test/e2e/*.test.ts`
+  invocations. The direct path skips the wrapper and re-opens the
+  config-clobber footgun.
+- **If the wrapper exits `2` with a `HOME isolation breach detected` banner,
+  STOP.** That exit code (distinct from `1`, which is test failure) means a
+  test still escaped isolation: a code path inside gbrain wrote to
+  `~/.gbrain/config.json` despite both env vars being redirected. Restoring
+  the user config from a backup and rerunning hides a real bug. File an
+  issue with the banner output instead.
+
 ## Skills
 
 Read the skill files in `skills/` before doing brain operations. GBrain ships 29 skills
