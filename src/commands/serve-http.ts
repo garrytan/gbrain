@@ -191,6 +191,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // Admin authentication (cookie-based)
   // ---------------------------------------------------------------------------
+  // POST /admin/login — JSON body with token (for programmatic/UI login)
   app.post('/admin/login', express.json(), (req, res) => {
     const token = req.body?.token;
     if (!token) {
@@ -217,6 +218,45 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.json({ status: 'authenticated' });
   });
 
+  // GET /admin/auth/:token — magic link login (one-click from agent)
+  // The agent generates: https://host:port/admin/auth/<bootstrapToken>
+  // Browser hits it, sets cookie, redirects to dashboard.
+  app.get('/admin/auth/:token', (req, res) => {
+    const token = req.params.token;
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    if (tokenHash !== bootstrapHash) {
+      res.status(401).send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GBrain</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.box{max-width:400px;padding:32px;text-align:left}
+.logo{font-size:28px;font-weight:600;margin-bottom:24px}
+.msg{color:#888;font-size:14px;line-height:1.6;margin-bottom:20px}
+.hint{background:rgba(136,170,255,0.08);border:1px solid rgba(136,170,255,0.2);border-radius:8px;padding:14px 16px;font-size:13px;line-height:1.5;color:#888}
+.hint b{color:#e0e0e0}
+.prompt{background:rgba(0,0,0,0.3);border-radius:6px;padding:8px 12px;margin-top:8px;font-family:monospace;font-size:12px;color:#88aaff}
+</style></head><body><div class="box">
+<div class="logo">GBrain</div>
+<div class="msg">⚠️ This admin link has expired or the server has restarted.</div>
+<div class="hint"><b>Get a fresh link from your AI agent:</b>
+<div class="prompt">&ldquo;Give me the GBrain admin login link&rdquo;</div>
+</div></div></body></html>`);
+      return;
+    }
+
+    const sessionId = randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days for magic link
+    adminSessions.set(sessionId, expiresAt);
+
+    res.cookie('gbrain_admin', sessionId, {
+      httpOnly: true,
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/admin',
+    });
+    res.redirect('/admin/');
+  });
+
   // Admin auth middleware
   function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
     const sessionId = (req.cookies as Record<string, string>)?.gbrain_admin;
@@ -238,11 +278,26 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const agents = await sql`
-        SELECT client_id, client_name, grant_types, scope, created_at
-        FROM oauth_clients ORDER BY created_at DESC
+      // Unified view: OAuth clients + legacy API keys
+      const oauthClients = await sql`
+        SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
+          c.grant_types, c.scope, c.created_at, c.token_ttl,
+          CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+          (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
+        FROM oauth_clients c ORDER BY c.created_at DESC
       `;
-      res.json(agents);
+      const legacyKeys = await sql`
+        SELECT a.id, a.name, 'api_key' as auth_type,
+          '{"bearer"}' as grant_types, 'read write admin' as scope, a.created_at, null as token_ttl,
+          CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+          a.last_used_at,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name AND created_at > now() - interval '24 hours') as requests_today
+        FROM access_tokens a ORDER BY a.created_at DESC
+      `;
+      res.json([...oauthClients, ...legacyKeys]);
     } catch (e) {
       res.status(503).json({ error: 'service_unavailable' });
     }
@@ -253,9 +308,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const [clients] = await sql`SELECT count(*)::int as count FROM oauth_clients`;
       const [tokens] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > ${Math.floor(Date.now() / 1000)}`;
       const [requests] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'`;
+      const [apiKeys] = await sql`SELECT count(*)::int as count FROM access_tokens WHERE revoked_at IS NULL`;
       res.json({
         connected_agents: (clients as any).count,
         active_tokens: (tokens as any).count,
+        active_api_keys: (apiKeys as any).count,
         requests_today: (requests as any).count,
       });
     } catch {
@@ -299,26 +356,105 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       query += ` ORDER BY created_at DESC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
       params.push(limit, offset);
 
-      // Use raw query for dynamic filtering
-      const rows = await sql`SELECT * FROM mcp_request_log ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
-      const [countResult] = await sql`SELECT count(*)::int as total FROM mcp_request_log`;
+      // Dynamic filtering
+      const conditions: string[] = [];
+      const values: unknown[] = [];
+      if (agent && agent !== 'all') { conditions.push(`token_name = '${agent.replace(/'/g, "''")}'`); }
+      if (operation && operation !== 'all') { conditions.push(`operation = '${operation.replace(/'/g, "''")}'`); }
+      if (status && status !== 'all') { conditions.push(`status = '${status.replace(/'/g, "''")}'`); }
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const rows = await sql.unsafe(`SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name, operation, latency_ms, status, params, error_message, created_at FROM mcp_request_log ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`);
+      const [countResult] = await sql.unsafe(`SELECT count(*)::int as total FROM mcp_request_log ${where}`);
       res.json({ rows, total: (countResult as any).total, page, pages: Math.ceil((countResult as any).total / limit) });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
     }
   });
 
+  // Legacy API keys (access_tokens table)
+  app.get('/admin/api/api-keys', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const keys = await sql`
+        SELECT id, name, created_at, last_used_at,
+          CASE WHEN revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status
+        FROM access_tokens ORDER BY created_at DESC
+      `;
+      res.json(keys);
+    } catch (e) {
+      res.status(503).json({ error: 'service_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/api-keys', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { name } = req.body;
+      if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      const { generateToken, hashToken } = await import('../core/utils.ts');
+      const token = generateToken('gbrain_');
+      const hash = hashToken(token);
+      const id = (await import('crypto')).randomUUID();
+      await sql`INSERT INTO access_tokens (id, name, token_hash) VALUES (${id}, ${name}, ${hash})`;
+      res.json({ name, token, id });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to create API key' });
+    }
+  });
+
+  app.post('/admin/api/api-keys/revoke', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { name } = req.body;
+      if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      await sql`UPDATE access_tokens SET revoked_at = now() WHERE name = ${name} AND revoked_at IS NULL`;
+      res.json({ revoked: true });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
+    }
+  });
+
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes } = req.body;
+      const { name, scopes, tokenTtl } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
       const result = await oauthProvider.registerClientManual(
         name, ['client_credentials'], scopes || 'read', [],
       );
-      res.json(result);
+      // Set per-client TTL if specified
+      if (tokenTtl && Number(tokenTtl) > 0) {
+        await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
+      }
+      res.json({ ...result, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'Registration failed' });
+    }
+  });
+
+  // Update client TTL
+  app.post('/admin/api/update-client-ttl', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { clientId, tokenTtl } = req.body;
+      if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
+      const ttl = tokenTtl === null || tokenTtl === 0 ? null : Number(tokenTtl);
+      await sql`UPDATE oauth_clients SET token_ttl = ${ttl} WHERE client_id = ${clientId}`;
+      res.json({ updated: true, tokenTtl: ttl });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Update failed' });
+    }
+  });
+
+  // Revoke OAuth client
+  app.post('/admin/api/revoke-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { clientId } = req.body;
+      if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
+      // Soft-delete the client
+      await sql`UPDATE oauth_clients SET deleted_at = now() WHERE client_id = ${clientId} AND deleted_at IS NULL`;
+      // Revoke all active tokens for this client
+      await sql`DELETE FROM oauth_tokens WHERE client_id = ${clientId}`;
+      res.json({ revoked: true });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
     }
   });
 
@@ -362,6 +498,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
+
+    // Resolve human-readable agent name for logging
+    let agentName = authInfo.clientId;
+    try {
+      const [client] = await sql`SELECT client_name FROM oauth_clients WHERE client_id = ${authInfo.clientId}`;
+      if (client) agentName = client.client_name as string;
+    } catch { /* best effort — falls back to clientId */ }
 
     // Create a fresh MCP server per request (stateless)
     const server = new Server(
@@ -428,14 +571,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         const latency = Date.now() - startTime;
 
         // Log request + broadcast to SSE
+        const logParams = params ? JSON.stringify(params) : null;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'success'})`;
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'success'}, ${logParams})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
-          agent: authInfo.clientId,
+          agent: agentName,
           operation: name,
+          params: params || {},
           scopes: authInfo.scopes.join(','),
           latency_ms: latency,
           status: 'success',
@@ -447,16 +592,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         const latency = Date.now() - startTime;
         const error = e instanceof OperationError ? e.toJSON() : { error: 'internal_error', message: e instanceof Error ? e.message : 'Unknown error' };
 
+        const errMsg = e instanceof Error ? e.message : 'Unknown error';
+        const logParams = params ? JSON.stringify(params) : null;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'error'})`;
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
-          agent: authInfo.clientId,
+          agent: agentName,
           operation: name,
+          params: params || {},
           latency_ms: latency,
           status: 'error',
+          error: errMsg,
           timestamp: new Date().toISOString(),
         });
 
