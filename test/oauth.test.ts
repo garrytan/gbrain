@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
-import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { GBrainOAuthProvider, coerceTimestamp } from '../src/core/oauth-provider.ts';
 import { hashToken, generateToken } from '../src/core/utils.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
 
@@ -59,6 +59,43 @@ describe('generateToken', () => {
     const a = generateToken('test_');
     const b = generateToken('test_');
     expect(a).not.toBe(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// coerceTimestamp — postgres BIGINT-as-string boundary helper
+// ---------------------------------------------------------------------------
+
+describe('coerceTimestamp', () => {
+  test('null returns undefined', () => {
+    expect(coerceTimestamp(null)).toBeUndefined();
+  });
+
+  test('undefined returns undefined', () => {
+    expect(coerceTimestamp(undefined)).toBeUndefined();
+  });
+
+  test('numeric string coerces to number', () => {
+    // The actual production path: postgres-js with prepare:false returns
+    // BIGINT columns as strings.
+    expect(coerceTimestamp('12345')).toBe(12345);
+    expect(coerceTimestamp('1735689600')).toBe(1735689600);
+  });
+
+  test('native number passes through', () => {
+    // Direct-PG users on prepare:true get native numbers.
+    expect(coerceTimestamp(12345)).toBe(12345);
+    expect(coerceTimestamp(0)).toBe(0);
+  });
+
+  test('non-finite input throws (fail-closed contract)', () => {
+    // The load-bearing change vs Number(): corrupt rows fail loud at the
+    // boundary instead of letting NaN flow through to the SDK as a
+    // fake-valid `expiresAt`.
+    expect(() => coerceTimestamp('not-a-number')).toThrow(/non-finite/);
+    expect(() => coerceTimestamp(NaN)).toThrow(/non-finite/);
+    expect(() => coerceTimestamp(Infinity)).toThrow(/non-finite/);
+    expect(() => coerceTimestamp(-Infinity)).toThrow(/non-finite/);
   });
 });
 
@@ -178,6 +215,34 @@ describe('verifyAccessToken', () => {
 
   test('unknown token is rejected', async () => {
     await expect(provider.verifyAccessToken('nonexistent-token')).rejects.toThrow('Invalid token');
+  });
+
+  test('NULL expires_at is treated as expired (fail-closed)', async () => {
+    // Schema declares oauth_tokens.expires_at as nullable BIGINT (schema.sql:372).
+    // Hand-modified or corrupt rows could land with NULL; verifyAccessToken must
+    // fail-closed, not return an undefined-bearing AuthInfo that the SDK accepts.
+    const nullExpiryToken = generateToken('gbrain_at_');
+    const hash = hashToken(nullExpiryToken);
+    const firstClient = (await sql`SELECT client_id FROM oauth_clients LIMIT 1`)[0];
+    await sql`
+      INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
+      VALUES (${hash}, ${'access'}, ${firstClient.client_id as string}, ${'{read}'}, ${null})
+    `;
+    await expect(provider.verifyAccessToken(nullExpiryToken)).rejects.toThrow('expired');
+  });
+
+  test('cascade-deleted client invalidates its tokens (Invalid token, not Expired)', async () => {
+    // revoke-client does DELETE FROM oauth_clients WHERE client_id = ...
+    // The schema-level FK cascade (schema.sql:370) wipes oauth_tokens too.
+    // verifyAccessToken on a previously-minted token from that client must
+    // fail with "Invalid token" (cascade purged the row) — distinct from
+    // "Token expired" so logs distinguish the failure modes.
+    const { clientId, clientSecret } = await provider.registerClientManual(
+      'cascade-test', ['client_credentials'], 'read',
+    );
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret, 'read');
+    await sql`DELETE FROM oauth_clients WHERE client_id = ${clientId}`;
+    await expect(provider.verifyAccessToken(tokens.access_token)).rejects.toThrow('Invalid token');
   });
 
   test('expiresAt is always a number (not string) — SDK bearerAuth compat', async () => {

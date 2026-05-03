@@ -25,18 +25,27 @@ if (skip) {
 const PORT = 19131; // Avoid collision with production 3131
 const BASE = `http://localhost:${PORT}`;
 
-describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
+describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2)', () => {
   let serverProcess: ReturnType<typeof import('child_process').spawn> | null = null;
-  let clientId: string;
-  let clientSecret: string;
+  let clientId: string | undefined;
+  let clientSecret: string | undefined;
+  // DCR-registered clients accumulate here so afterAll can revoke them too
+  // (one per test that posts to /register).
+  const dcrClientIds: string[] = [];
 
   beforeAll(async () => {
     const { execSync, spawn } = await import('child_process');
 
-    // Register a test OAuth client via CLI
+    // Register a test OAuth client via CLI.
+    // env: { ...process.env } is required: bun's execSync does NOT inherit
+    // env mutations done via `process.env.X = ...` (only OS-level env from
+    // before bun started). helpers.ts loads .env.testing and sets DATABASE_URL
+    // via process.env mutation, which is invisible to subprocesses unless we
+    // explicitly re-pass process.env. Same pattern applies to every execSync
+    // in this file.
     const regOutput = execSync(
       'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write"',
-      { cwd: process.cwd(), encoding: 'utf8' }
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
     );
     const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
     const secretMatch = regOutput.match(/Client Secret:\s+(gbrain_cs_\S+)/);
@@ -44,11 +53,13 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
     clientId = idMatch[1];
     clientSecret = secretMatch[1];
 
-    // Start the HTTP server
+    // Start the HTTP server. v0.26.2 adds --enable-dcr so the /register
+    // endpoint is reachable for the DCR response-shape test.
     serverProcess = spawn('bun', [
       'run', 'src/cli.ts', 'serve', '--http',
       '--port', String(PORT),
       '--public-url', `http://localhost:${PORT}`,
+      '--enable-dcr',
     ], {
       cwd: process.cwd(),
       env: process.env,
@@ -72,18 +83,28 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
   }, 30_000);
 
   afterAll(async () => {
-    // Kill server
+    // Kill server first so it can't issue more tokens during cleanup.
     if (serverProcess) {
       serverProcess.kill('SIGTERM');
       await new Promise(r => setTimeout(r, 1000));
       if (!serverProcess.killed) serverProcess.kill('SIGKILL');
     }
-    // Revoke test client
-    try {
-      const { execSync } = await import('child_process');
-      execSync(`bun run src/cli.ts auth revoke-client "${clientId}"`,
-        { cwd: process.cwd(), encoding: 'utf8', stdio: 'pipe' });
-    } catch {}
+    // v0.26.2 cleanup contract: only revoke if registration succeeded
+    // (clientId guard) and surface any cleanup failure to stderr without
+    // throwing — a real test failure is more interesting than the cleanup
+    // error that follows it. Same shape applies to DCR-registered clients
+    // tracked in dcrClientIds.
+    const { execSync } = await import('child_process');
+    const toRevoke = [...(clientId ? [clientId] : []), ...dcrClientIds];
+    for (const id of toRevoke) {
+      try {
+        execSync(`bun run src/cli.ts auth revoke-client "${id}"`,
+          { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } });
+      } catch (e: any) {
+        // eslint-disable-next-line no-console
+        console.error(`[afterAll] revoke-client cleanup failed for ${id}: ${e.message}`);
+      }
+    }
   });
 
   // Helper: mint a token with given scopes
@@ -259,7 +280,11 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
     const data = await res.json() as any;
     expect(data.status).toBe('ok');
     expect(data.version).toBeDefined();
-    expect(data.page_count).toBeGreaterThan(0);
+    // page_count: the endpoint must return a non-negative integer. The exact
+    // value depends on the deployment's brain state and is not what this test
+    // is checking — pre-v0.26.2 this asserted `> 0` and broke on fresh schemas.
+    expect(typeof data.page_count).toBe('number');
+    expect(data.page_count).toBeGreaterThanOrEqual(0);
   });
 
   // =========================================================================
@@ -288,4 +313,120 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
     const data = await res.json() as any;
     expect(data.error).toBe('invalid_grant');
   });
+
+  // =========================================================================
+  // v0.26.2: DCR /register response shape (RFC 7591 §3.2.1 number contract)
+  // =========================================================================
+  //
+  // The user-visible bug v0.26.2 protects against: postgres.js with
+  // `prepare: false` returns BIGINT columns as strings, and an RFC-strict
+  // DCR client (Claude Code, Cursor) parses the /register response as JSON
+  // and rejects timestamps that aren't numbers. This is the HTTP-level test;
+  // the internal-store shape test in test/oauth.test.ts is not enough on its
+  // own (Codex flagged it as the wrong seam).
+
+  test('DCR /register returns numeric client_id_issued_at (RFC 7591 §3.2.1)', async () => {
+    const res = await fetch(`${BASE}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'e2e-dcr-shape',
+        redirect_uris: ['https://example.com/cb'],
+        grant_types: ['authorization_code'],
+        token_endpoint_auth_method: 'client_secret_basic',
+        scope: 'read',
+      }),
+    });
+    expect(res.ok).toBe(true);
+    const body = await res.json() as any;
+
+    // Track for cleanup before any assertion that could throw.
+    if (body.client_id) dcrClientIds.push(body.client_id);
+
+    // The contract: client_id_issued_at is REQUIRED to be a JSON number per
+    // RFC 7591. Pre-v0.26.2 with prepare:false returned this as a string
+    // (e.g., "1735689600") and strict clients rejected the registration.
+    expect(typeof body.client_id_issued_at).toBe('number');
+    expect(Number.isFinite(body.client_id_issued_at)).toBe(true);
+    expect(body.client_id_issued_at).toBeGreaterThan(0);
+
+    // client_secret_expires_at is OPTIONAL. If present, it must also be a
+    // number. Undefined/missing means "does not expire" per the spec.
+    if (body.client_secret_expires_at !== undefined) {
+      expect(typeof body.client_secret_expires_at).toBe('number');
+      expect(Number.isFinite(body.client_secret_expires_at)).toBe(true);
+    }
+  }, 15_000);
+
+  // =========================================================================
+  // v0.26.2: revoke-client CLI subprocess test
+  // =========================================================================
+  //
+  // Validates the actual CLI router in src/commands/auth.ts, not just the
+  // database deletion semantics. Codex flagged that a unit test in
+  // test/oauth.test.ts proves DB DELETE works but does NOT prove the
+  // subcommand exists or routes correctly.
+
+  test('auth revoke-client (CLI) deletes client + cascades to tokens', async () => {
+    const { execSync } = await import('child_process');
+
+    // Step 1: register a throwaway client via CLI.
+    // env: { ...process.env } per the bun execSync inheritance fix above.
+    const regOutput = execSync(
+      'bun run src/cli.ts auth register-client e2e-revoke-cli --grant-types client_credentials --scopes read',
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
+    );
+    const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
+    const secretMatch = regOutput.match(/Client Secret:\s+(gbrain_cs_\S+)/);
+    expect(idMatch).not.toBeNull();
+    expect(secretMatch).not.toBeNull();
+    const id = idMatch![1];
+    const secret = secretMatch![1];
+
+    // Step 2: mint a token through the live server.
+    const tokenRes = await fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read`,
+    });
+    expect(tokenRes.ok).toBe(true);
+    const { access_token } = await tokenRes.json() as any;
+
+    // Sanity: the freshly-minted token works at /mcp.
+    const before = await mcpCall(access_token, 'tools/list');
+    expect(before.status).not.toBe(401);
+
+    // Step 3: revoke via the CLI subprocess.
+    const revokeOutput = execSync(
+      `bun run src/cli.ts auth revoke-client "${id}"`,
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
+    );
+    // The handler prints the human confirmation lines. No exit code != 0
+    // here since execSync would throw.
+    expect(revokeOutput).toMatch(/OAuth client revoked/);
+    expect(revokeOutput).toMatch(/cascade/i);
+
+    // Step 4: previously-minted token must now be rejected at /mcp. Cascade
+    // wiped the oauth_tokens row; verifyAccessToken throws "Invalid token".
+    // Match the existing pattern at line 156: SDK error mapping varies
+    // (401/403/500), so we assert non-success status + non-success body
+    // rather than a single status code.
+    const after = await mcpCall(access_token, 'tools/list');
+    expect(after.status).toBeGreaterThanOrEqual(400);
+    const afterBody = await after.text();
+    expect(afterBody).not.toContain('"tools":[');
+
+    // Step 5: re-running revoke-client on the now-deleted id must exit 1.
+    let secondRunFailed = false;
+    let secondRunStderr = '';
+    try {
+      execSync(`bun run src/cli.ts auth revoke-client "${id}"`,
+        { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } });
+    } catch (e: any) {
+      secondRunFailed = true;
+      secondRunStderr = (e.stderr || '').toString() + (e.stdout || '').toString();
+    }
+    expect(secondRunFailed).toBe(true);
+    expect(secondRunStderr).toMatch(/No client found/);
+  }, 30_000);
 });

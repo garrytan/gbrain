@@ -734,6 +734,8 @@ ADMIN
   gbrain auth register-client <name>    Register an OAuth 2.1 client
         --grant-types client_credentials,authorization_code
         --scopes "read write admin"
+  gbrain auth revoke-client <client_id> Revoke an OAuth 2.1 client (cascade purges
+                                        active tokens + auth codes via FK CASCADE)
   # OAuth 2.1 clients can also be registered from the /admin dashboard or
   # programmatically via oauthProvider.registerClientManual() for host-repo wrappers.
   gbrain integrations                   Integration recipe dashboard
