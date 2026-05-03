@@ -225,6 +225,34 @@ async function test(url: string, token: string) {
   console.log(`\n🧠 Your brain is live! (${elapsed}s)`);
 }
 
+async function revokeClient(clientId: string) {
+  if (!clientId) {
+    console.error('Usage: auth revoke-client <client_id>');
+    process.exit(1);
+  }
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    // Atomic single-statement delete: no race window between count + delete.
+    // Postgres cascades to oauth_tokens and oauth_codes (FK ON DELETE CASCADE
+    // declared in src/schema.sql:370,382) before the transaction commits.
+    const rows = await sql`
+      DELETE FROM oauth_clients WHERE client_id = ${clientId}
+      RETURNING client_id, client_name
+    `;
+    if (rows.length === 0) {
+      console.error(`No client found with id "${clientId}"`);
+      process.exit(1);
+    }
+    console.log(`OAuth client revoked: "${rows[0].client_name}" (${clientId})`);
+    console.log('Tokens and authorization codes purged via cascade.');
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  } finally {
+    await sql.end();
+  }
+}
+
 async function registerClient(name: string, args: string[]) {
   if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S]'); process.exit(1); }
   const grantsIdx = args.indexOf('--grant-types');
@@ -268,6 +296,7 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'list': await list(); return;
     case 'revoke': await revoke(rest[0]); return;
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
+    case 'revoke-client': await revokeClient(rest[0]); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');
       const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
@@ -285,6 +314,7 @@ Usage:
   gbrain auth register-client <name> [options]            Register an OAuth 2.1 client
      --grant-types <client_credentials,authorization_code> (default: client_credentials)
      --scopes "<read write admin>"                         (default: read)
+  gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);
   }

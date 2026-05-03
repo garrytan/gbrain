@@ -1,5 +1,45 @@
 # TODOS
 
+## test infra (v0.26.2 follow-up — pre-existing failures triage)
+
+### Fix 22 pre-existing test failures unrelated to OAuth
+**Priority:** P0
+
+**What:** A `bun test` run on top of master at v0.26.2 surfaces 22 pre-existing failures across these suites — none touch v0.26.2's diff (oauth-provider.ts, auth.ts, oauth tests). They reproduce on a clean checkout against master:
+
+- 12 cases in `test/e2e/sync.test.ts` (Git-to-DB Sync Pipeline) — `result.status === 'first_sync'` vs actual `'synced'` state-machine drift; same root cause across all 12.
+- 3 cases in `test/e2e/multi-source.test.ts` (cascade delete + 2 sync routing) — performSync sourceId/local_path resolution.
+- `test/e2e/sync-parallel.test.ts` (60-file Postgres concurrency=4) — connection-leak probe regression.
+- `test/e2e/sync.test.ts` `--skip-failed` structured summary loop (v0.22.12 #500).
+- `test/e2e/dream.test.ts` (no --dry-run syncs pages) — runCycle DB write path.
+- `test/e2e/cycle.test.ts` (live cycle + chunks + lock cleanup).
+- `test/e2e/doctor.test.ts` (gbrain doctor exits 0 on healthy DB) — possibly related to v0.26.2 schema changes since CHANGELOG mentions extension of doctor checks.
+- `test/brain-registry.test.ts` (empty/null/undefined id routes to host) — unrelated to OAuth surface.
+- `test/e2e/claw-test.test.ts` (fresh-install scripted scenario) — needs investigation; took 3.9s and reported "produces zero error/blocker friction" failure.
+
+**Why:** These failures pre-date v0.26.2 (CHANGELOG already documents "18 pre-existing master timeouts" from v0.26.0 merge). v0.26.2 brings the count to 22, suggesting a 4-test drift on master between v0.26.0 ship and now. Fixing inside v0.26.2 would balloon scope from a 6-file OAuth fix-wave to a 30+ file test-infra repair. The fix-wave deserves its own PR with focused triage.
+
+**Likely root causes worth investigating:**
+- **bun execSync env inheritance** (already discovered + fixed in test/e2e/serve-http-oauth.test.ts during v0.26.2): bun's `execSync` does NOT inherit env mutations done via `process.env.X = ...`, only OS-level env from before bun started. helpers.ts loads `.env.testing` and sets `DATABASE_URL` via `process.env` mutation, which is invisible to subprocesses unless `env: { ...process.env }` is passed explicitly. Several of the failing E2E tests (sync, cycle, dream, claw-test) spawn subprocesses via execSync — likely the same bug.
+- **Test ordering / DB state pollution**: full-suite runs in bun test happen in a deterministic order; isolated runs of these test files may pass while suite runs fail. Could indicate beforeAll/afterAll cleanup gaps.
+- **Schema drift**: doctor/multi-source tests may rely on specific schema state that v0.26 OAuth tables changed.
+
+**Pros:**
+- Separating from v0.26.2 keeps the OAuth ship focused and auditable; the 22 failures aren't blocking real-world OAuth functionality.
+- The execSync env-inheritance pattern is now documented in test/e2e/serve-http-oauth.test.ts as a reference fix for the next maintainer.
+- Unblocks v0.26.2 ship while preserving the failure inventory for the follow-up.
+
+**Cons:**
+- 22 failing tests on master is real test-infra debt.
+- Some may be load-bearing (sync pipeline failures could mask real regressions in `performSync`).
+- `bun run ci:local` (full E2E gate) won't pass cleanly until these are addressed.
+
+**Context:** Discovered during v0.26.2 ship audit. Reproduce with `bun test 2>&1 | grep "^(fail)"` after copying `.env.testing` from a sibling worktree (port 5435 test DB running). The 17/17 OAuth E2E suite passes in isolation AND in full-suite after the env-inheritance fix landed.
+
+**Effort:** L (human ~4-8h; CC ~30-60min once env-inheritance fix is applied across all tests).
+
+**Depends on / blocked by:** None — independent of v0.26.2.
+
 ## ci-local-mirror
 
 ### CI-skip artifact + signature for stages 1+2 follow-up
