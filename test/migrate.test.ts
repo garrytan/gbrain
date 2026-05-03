@@ -896,6 +896,23 @@ describe('migration v31 — eval_capture_tables', () => {
   });
 });
 
+describe('migration v32 — page_versions_read_audit_soft_delete', () => {
+  test('single shared sql bumps pages + page_versions + eval_candidates', () => {
+    const v32 = MIGRATIONS.find(m => m.version === 32);
+    expect(v32).toBeDefined();
+    expect(v32?.name).toBe('page_versions_read_audit_soft_delete');
+    expect(v32?.sql).toContain('pages ADD COLUMN IF NOT EXISTS deleted_at');
+    expect(v32?.sql).toContain('page_versions_kind_check');
+    expect(v32?.sql).toContain('params_jsonb');
+    expect(v32?.sql).toContain('mcp_token_name');
+    expect(v32?.sql).toContain("'get_chunks'");
+  });
+
+  test('LATEST_VERSION caught up to 32', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(32);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // PR #363 regression guards — session timeouts via startup parameters
 // resolveSessionTimeouts — GBRAIN_*_TIMEOUT env overrides

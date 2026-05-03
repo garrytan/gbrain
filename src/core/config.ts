@@ -50,6 +50,10 @@ export interface GBrainConfig {
     /** false disables PII scrubbing before insert. Defaults to true. */
     scrub_pii?: boolean;
   };
+  audit?: {
+    /** When true, log read-tool calls to eval_candidates (query/search unaffected by eval.capture off). File-plane ~/.gbrain/config.json only. */
+    reads?: boolean;
+  };
 }
 
 /**

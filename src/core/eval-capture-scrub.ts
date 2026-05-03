@@ -78,27 +78,28 @@ export function scrubPii(input: string): string {
   if (!input) return input;
   let out = input;
 
-  // 1. Emails
   out = out.replace(EMAIL_RE, REDACTED);
-
-  // 2. Phones (before SSN so +1-555-XX doesn't look like part of a dashes-only SSN)
   out = out.replace(PHONE_RE, REDACTED);
-
-  // 3. SSN (after phones)
   out = out.replace(SSN_RE, REDACTED);
-
-  // 4. JWT (distinctive prefix, safe to run anywhere in the pipeline)
   out = out.replace(JWT_RE, REDACTED);
-
-  // 5. Bearer tokens
   out = out.replace(BEARER_RE, `Bearer ${REDACTED}`);
-
-  // 6. Credit cards: every candidate must pass Luhn to be replaced.
   out = out.replace(CC_RE, (match) => {
     const digitsOnly = match.replace(/\D/g, '');
     if (digitsOnly.length < 13 || digitsOnly.length > 19) return match;
     return luhnOk(digitsOnly) ? REDACTED : match;
   });
 
+  return out;
+}
+
+export function scrubPiiObject(input: unknown): unknown {
+  if (input == null) return input;
+  if (typeof input === 'string') return scrubPii(input);
+  if (typeof input !== 'object') return input;
+  if (Array.isArray(input)) return input.map(scrubPiiObject);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    out[k] = scrubPiiObject(v);
+  }
   return out;
 }

@@ -31,7 +31,7 @@ beforeAll(async () => {
   disconnect(): Promise<void>;
   getPage(slug: string): Promise<{ slug: string; title: string; content: string } | null>;
   putPage(slug: string, page: { title: string; content: string }): Promise<void>;
-  deletePage(slug: string): Promise<void>;
+  purgePage(slug: string): Promise<void>;
   searchKeyword(query: string, opts?: { limit?: number }): Promise<Array<{ slug: string; score: number }>>;
   searchVector(embedding: Float32Array, opts?: { limit?: number }): Promise<Array<{ slug: string; score: number }>>;
   getChunks(slug: string): Promise<Array<{ chunk_text: string; embedding: Float32Array | null }>>;
@@ -68,7 +68,7 @@ export class PGLiteEngine implements BrainEngine {
     console.log('put', slug, page.title, page.content.length, 'chars');
   }
 
-  async deletePage(slug: string): Promise<void> {
+  async purgePage(slug: string): Promise<void> {
     if (!slug) throw new Error('slug required');
     console.log('delete', slug);
   }

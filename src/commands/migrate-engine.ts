@@ -120,7 +120,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // Delete all pages (cascades to chunks, links, tags, etc.)
     const pages = await targetEngine.listPages({ limit: 100000 });
     for (const p of pages) {
-      await targetEngine.deletePage(p.slug);
+      await targetEngine.purgePage(p.slug);
     }
   }
 
@@ -141,7 +141,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 
   // Get all source pages
   const sourceStats = await sourceEngine.getStats();
-  const allPages = await sourceEngine.listPages({ limit: 100000 });
+  const allPages = await sourceEngine.listPages({ limit: 100000, includeDeleted: true });
   const pagesToMigrate = allPages.filter(p => !completedSet.has(p.slug));
 
   console.log(`Migrating ${pagesToMigrate.length} pages (${allPages.length} total, ${completedSet.size} already done)...`);
@@ -160,6 +160,14 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       frontmatter: page.frontmatter,
       content_hash: page.content_hash,
     });
+
+    if (page.deleted_at) {
+      const d = page.deleted_at instanceof Date ? page.deleted_at.toISOString() : String(page.deleted_at);
+      await targetEngine.executeRaw(
+        `UPDATE pages SET deleted_at = $1::timestamptz WHERE slug = $2`,
+        [d, page.slug],
+      );
+    }
 
     // Copy chunks with embeddings
     const chunks = await sourceEngine.getChunksWithEmbeddings(page.slug);
@@ -197,10 +205,30 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       await targetEngine.putRawData(page.slug, rd.source, rd.data);
     }
 
-    // Copy versions
-    const versions = await sourceEngine.getVersions(page.slug);
-    // Versions are snapshots, we recreate them on the target
-    // (createVersion takes a snapshot of current state, which we just set)
+    const versionsSrc = await sourceEngine.getVersions(page.slug, { includeDeletedPage: true });
+    const targetRow = await targetEngine.getPage(page.slug, { includeDeleted: true });
+    if (targetRow && versionsSrc.length > 0) {
+      for (const v of versionsSrc) {
+        const fm = typeof v.frontmatter === 'object' ? JSON.stringify(v.frontmatter ?? {}) : String(v.frontmatter ?? '{}');
+        const prov = typeof v.provenance === 'object' ? JSON.stringify(v.provenance ?? {}) : String(v.provenance ?? '{}');
+        const snap = v.snapshot_at instanceof Date ? v.snapshot_at.toISOString() : String(v.snapshot_at);
+        await targetEngine.executeRaw(
+          `INSERT INTO page_versions (page_id, source_id, slug, compiled_truth, frontmatter, tags, kind, provenance, snapshot_at)
+           VALUES ($1::int, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9::timestamptz)`,
+          [
+            targetRow.id,
+            v.source_id,
+            v.slug,
+            v.compiled_truth,
+            fm,
+            v.tags,
+            v.kind,
+            prov,
+            snap,
+          ],
+        );
+      }
+    }
 
     // Track progress
     manifest!.completed_slugs.push(page.slug);

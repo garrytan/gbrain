@@ -1201,6 +1201,68 @@ export const MIGRATIONS: Migration[] = [
     },
     sql: '',
   },
+  {
+    version: 32,
+    name: 'page_versions_read_audit_soft_delete',
+    sql: `
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+      ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS source_id TEXT;
+      ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS slug TEXT;
+      ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS tags TEXT[];
+      ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS provenance JSONB;
+      ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS kind TEXT;
+
+      UPDATE page_versions SET source_id = 'default' WHERE source_id IS NULL;
+      ALTER TABLE page_versions ALTER COLUMN source_id SET DEFAULT 'default';
+
+      UPDATE page_versions SET slug = '_' WHERE slug IS NULL OR slug = '';
+      ALTER TABLE page_versions ALTER COLUMN slug SET DEFAULT '_';
+
+      UPDATE page_versions pv
+      SET slug = p.slug, source_id = p.source_id
+      FROM pages p
+      WHERE pv.page_id IS NOT NULL AND p.id = pv.page_id;
+
+      ALTER TABLE page_versions ALTER COLUMN source_id SET NOT NULL;
+      ALTER TABLE page_versions ALTER COLUMN slug SET NOT NULL;
+
+      UPDATE page_versions SET tags = '{}'::text[] WHERE tags IS NULL;
+      ALTER TABLE page_versions ALTER COLUMN tags SET DEFAULT '{}'::text[];
+      ALTER TABLE page_versions ALTER COLUMN tags SET NOT NULL;
+
+      UPDATE page_versions SET provenance = '{"source":"unknown"}'::jsonb WHERE provenance IS NULL;
+      ALTER TABLE page_versions ALTER COLUMN provenance SET DEFAULT '{}'::jsonb;
+      ALTER TABLE page_versions ALTER COLUMN provenance SET NOT NULL;
+
+      UPDATE page_versions SET kind = 'update' WHERE kind IS NULL;
+      ALTER TABLE page_versions ALTER COLUMN kind SET DEFAULT 'update';
+      ALTER TABLE page_versions ALTER COLUMN kind SET NOT NULL;
+      ALTER TABLE page_versions DROP CONSTRAINT IF EXISTS page_versions_kind_check;
+      ALTER TABLE page_versions ADD CONSTRAINT page_versions_kind_check
+        CHECK (kind IN ('create', 'update', 'delete'));
+
+      ALTER TABLE page_versions DROP CONSTRAINT IF EXISTS page_versions_page_id_fkey;
+      ALTER TABLE page_versions ALTER COLUMN page_id DROP NOT NULL;
+      ALTER TABLE page_versions ADD CONSTRAINT page_versions_page_id_fkey
+        FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_page_versions_slug_snapshot
+        ON page_versions(slug, snapshot_at DESC);
+
+      ALTER TABLE eval_candidates ADD COLUMN IF NOT EXISTS params_jsonb JSONB NOT NULL DEFAULT '{}'::jsonb;
+      ALTER TABLE eval_candidates ADD COLUMN IF NOT EXISTS mcp_token_name TEXT;
+      ALTER TABLE eval_candidates DROP CONSTRAINT IF EXISTS eval_candidates_tool_name_check;
+      ALTER TABLE eval_candidates ADD CONSTRAINT eval_candidates_tool_name_check CHECK (
+        tool_name IN (
+          'query', 'search', 'get_page', 'list_pages', 'traverse_graph', 'get_links',
+          'get_backlinks', 'get_timeline', 'get_tags', 'find_orphans', 'resolve_slugs', 'get_chunks'
+        )
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_candidates_tool_created
+        ON eval_candidates(tool_name, created_at DESC);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -434,7 +434,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     try {
       const existing = await engine.getPage(slug);
       if (existing) {
-        await engine.deletePage(slug);
+        await engine.purgePage(slug);
         console.log(`  Deleted un-syncable page: ${slug}`);
       }
     } catch { /* ignore */ }
@@ -500,7 +500,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     progress.start('sync.deletes', filtered.deleted.length);
     for (const path of filtered.deleted) {
       const slug = resolveSlugForPath(path);
-      await engine.deletePage(slug);
+      await engine.purgePage(slug);
       pagesAffected.push(slug);
       progress.tick(1, slug);
     }

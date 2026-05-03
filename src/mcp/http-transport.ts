@@ -320,7 +320,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       if (method === 'tools/call') {
         const toolName: string = params?.name ?? 'unknown';
         const args: Record<string, unknown> = params?.arguments ?? {};
-        const result = await dispatchToolCall(engine, toolName, args, { remote: true });
+        const result = await dispatchToolCall(engine, toolName, args, { remote: true, mcpTokenName: auth.tokenName! });
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);
         return Response.json(
