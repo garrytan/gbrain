@@ -7,6 +7,27 @@ async function apiFetch(path: string, options?: RequestInit) {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
   });
   if (res.status === 401) {
+    // Try auto-reauth with saved token before giving up
+    const saved = localStorage.getItem('gbrain_admin_token');
+    if (saved && !path.includes('/login')) {
+      try {
+        const reauth = await fetch(`${BASE}/admin/login`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: saved }),
+        });
+        if (reauth.ok) {
+          // Retry the original request
+          const retry = await fetch(`${BASE}${path}`, {
+            ...options, credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', ...options?.headers },
+          });
+          if (retry.ok) return retry.json();
+        }
+      } catch {}
+      // Reauth failed — token is stale
+      localStorage.removeItem('gbrain_admin_token');
+    }
     window.location.hash = '#login';
     throw new Error('Unauthorized');
   }
