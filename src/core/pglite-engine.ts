@@ -7,6 +7,7 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
+import { assertRealFilesystemPath } from './pglite-path-guard.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow,
@@ -116,6 +117,10 @@ export class PGLiteEngine implements BrainEngine {
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
     const dataDir = config.database_path || undefined; // undefined = in-memory
+
+    // Fail loud if we were handed a $bunfs path (issue #250) -- PGLite WASM
+    // cannot read Bun single-file-executable virtual paths.
+    assertRealFilesystemPath(dataDir);
 
     // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
     this._lock = await acquireLock(dataDir);
