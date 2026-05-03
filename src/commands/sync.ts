@@ -329,14 +329,23 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // Git pull (unless --no-pull)
   if (!opts.noPull) {
+    // Skip silently if repo has no upstream tracking branch (local-only vault).
+    let hasUpstream = true;
     try {
-      git(repoPath, 'pull', '--ff-only');
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('non-fast-forward') || msg.includes('diverged')) {
-        console.error(`Warning: git pull failed (remote diverged). Syncing from local state.`);
-      } else {
-        console.error(`Warning: git pull failed: ${msg.slice(0, 100)}`);
+      git(repoPath, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}');
+    } catch {
+      hasUpstream = false;
+    }
+    if (hasUpstream) {
+      try {
+        git(repoPath, 'pull', '--ff-only');
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('non-fast-forward') || msg.includes('diverged')) {
+          console.error(`Warning: git pull failed (remote diverged). Syncing from local state.`);
+        } else {
+          console.error(`Warning: git pull failed: ${msg.slice(0, 100)}`);
+        }
       }
     }
   }
