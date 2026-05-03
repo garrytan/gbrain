@@ -152,6 +152,10 @@ export class PostgresEngine implements BrainEngine {
    *   - `links.origin_page_id` column (indexed by `idx_links_origin`) — v0.13
    *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
    *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
+   *   - `files.source_id` + `files.page_id` columns (indexed by `idx_files_page_id`) — v0.18
+   *     (pre-v0.18 brains have a bare files table; migration v23 does the full
+   *     restructure but SCHEMA_SQL's CREATE INDEX idx_files_page_id crashes
+   *     before v23 gets a chance to run.)
    *
    * Keep this in sync with the PGLite version; covered by
    * `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
@@ -172,6 +176,9 @@ export class PostgresEngine implements BrainEngine {
       chunks_exists: boolean;
       symbol_name_exists: boolean;
       language_exists: boolean;
+      files_exists: boolean;
+      files_source_id_exists: boolean;
+      files_page_id_exists: boolean;
     }[]>`
       SELECT
         EXISTS (SELECT 1 FROM information_schema.tables
@@ -189,7 +196,13 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'symbol_name') AS symbol_name_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'files') AS files_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'files' AND column_name = 'source_id') AS files_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'files' AND column_name = 'page_id') AS files_page_id_exists
     `;
     const probe = probeRows[0]!;
 
@@ -198,8 +211,10 @@ export class PostgresEngine implements BrainEngine {
       && (!probe.link_source_exists || !probe.origin_page_id_exists);
     const needsChunksBootstrap = probe.chunks_exists
       && (!probe.symbol_name_exists || !probe.language_exists);
+    const needsFilesBootstrap = probe.files_exists
+      && (!probe.files_source_id_exists || !probe.files_page_id_exists);
 
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap) return;
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsFilesBootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -244,6 +259,21 @@ export class PostgresEngine implements BrainEngine {
       await conn.unsafe(`
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS language TEXT;
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name TEXT;
+      `);
+    }
+
+    if (needsFilesBootstrap) {
+      // v23 (files_source_id_page_id_ledger) handles the full restructure
+      // (source_id with FK default, page_id backfill from page_slug, file
+      // migration ledger). The bootstrap only adds enough state for
+      // SCHEMA_SQL's `CREATE INDEX idx_files_page_id ON files(page_id)` not
+      // to crash on pre-v0.18 brains that still have a bare files table.
+      // v23 runs later via runMigrations and adds the rest idempotently.
+      await conn.unsafe(`
+        ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id TEXT
+          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+        ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id INTEGER
+          REFERENCES pages(id) ON DELETE SET NULL;
       `);
     }
   }
@@ -719,7 +749,7 @@ export class PostgresEngine implements BrainEngine {
         rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now(), $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
         params.push(
           pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-          embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+          embeddingStr, chunk.model || 'qwen3-embedding:0.6b', chunk.token_count || null,
           chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
           chunk.start_line ?? null, chunk.end_line ?? null,
           parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
@@ -728,7 +758,7 @@ export class PostgresEngine implements BrainEngine {
         rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
         params.push(
           pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-          chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+          chunk.model || 'qwen3-embedding:0.6b', chunk.token_count || null,
           chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
           chunk.start_line ?? null, chunk.end_line ?? null,
           parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
