@@ -29,6 +29,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
   let serverProcess: ReturnType<typeof import('child_process').spawn> | null = null;
   let clientId: string;
   let clientSecret: string;
+  let adminToken: string;
 
   beforeAll(async () => {
     const { execSync, spawn } = await import('child_process');
@@ -55,9 +56,14 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    // Collect stderr for debugging failures
+    // Collect stderr for debugging failures + admin token extraction
     let stderr = '';
-    serverProcess.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    serverProcess.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString();
+      // Extract admin token from startup banner
+      const match = stderr.match(/Admin Token.*\n.*?([a-f0-9]{20,})\s/s);
+      if (match) adminToken = match[1].replace(/[^a-f0-9]/g, '');
+    });
 
     // Wait for server to be ready (up to 15s)
     let ready = false;
@@ -69,6 +75,18 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
       await new Promise(r => setTimeout(r, 500));
     }
     if (!ready) throw new Error('Server failed to start within 15s.\nstderr: ' + stderr.slice(-500));
+
+    // Extract admin token (may span two lines in the banner)
+    const tokenLines = stderr.match(/Admin Token.*\n.*?\n.*?([a-f0-9\s]+)\s*║/s);
+    if (tokenLines) {
+      // Token is split across two ║ lines, concatenate
+      const allHex = stderr.match(/║\s+([a-f0-9]+)\s+║/g);
+      if (allHex && allHex.length >= 2) {
+        adminToken = allHex.slice(-2).map(l => l.replace(/[^a-f0-9]/g, '')).join('');
+      }
+    }
+    if (!adminToken) throw new Error('Could not extract admin token from server output.\nstderr tail: ' + stderr.slice(-1000));
+    console.log('[e2e] Admin token extracted:', adminToken.substring(0, 12) + '...');
   }, 30_000);
 
   afterAll(async () => {
@@ -288,4 +306,96 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
     const data = await res.json() as any;
     expect(data.error).toBe('invalid_grant');
   });
+
+  // =========================================================================
+  // Revoke client
+  // =========================================================================
+
+  test('revoke client via admin API invalidates all tokens', async () => {
+    // Register a disposable client
+    const { execSync } = await import('child_process');
+    const regOutput = execSync(
+      'bun run src/cli.ts auth register-client e2e-revoke-test --grant-types client_credentials --scopes "read"',
+      { cwd: process.cwd(), encoding: 'utf8' }
+    );
+    const id = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
+    const secret = regOutput.match(/Client Secret:\s+(gbrain_cs_\S+)/)?.[1];
+    expect(id).toBeDefined();
+    expect(secret).toBeDefined();
+
+    // Mint a token — should work
+    const tokenRes = await fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read`,
+    });
+    expect(tokenRes.ok).toBe(true);
+    const { access_token } = await tokenRes.json() as any;
+
+    // Verify token works
+    const before = await mcpCall(access_token, 'tools/list');
+    expect(before.status).not.toBe(401);
+
+    // Use the magic link to get a session cookie
+    const authRes = await fetch(`${BASE}/admin/auth/${adminToken}`, { redirect: 'manual' });
+    const cookie = authRes.headers.get('set-cookie') || '';
+
+    const revokeRes = await fetch(`${BASE}/admin/api/revoke-client`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': cookie },
+      body: JSON.stringify({ clientId: id }),
+    });
+    if (!revokeRes.ok) {
+      const errBody = await revokeRes.text();
+      throw new Error(`Revoke failed ${revokeRes.status}: ${errBody}\ncookie: ${cookie.substring(0, 30)}`);
+    }
+    const revokeData = await revokeRes.json() as any;
+    expect(revokeData.revoked).toBe(true);
+
+    // Token should no longer work
+    const after = await mcpCall(access_token, 'tools/list');
+    const afterBody = await after.text();
+    expect(after.status >= 400 || afterBody.includes('invalid_token') || afterBody.includes('error')).toBe(true);
+
+    // Minting new tokens should fail
+    const mintAfter = await fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read`,
+    });
+    expect(mintAfter.ok).toBe(false);
+  }, 30_000);
+
+  test('revoke API key via admin API', async () => {
+    // Get admin session
+    const authRes = await fetch(`${BASE}/admin/auth/${adminToken}`, { redirect: 'manual' });
+    const cookie = authRes.headers.get('set-cookie') || '';
+
+    // Create key
+    const createRes = await fetch(`${BASE}/admin/api/api-keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': cookie },
+      body: JSON.stringify({ name: 'e2e-revoke-key-test' }),
+    });
+    expect(createRes.ok).toBe(true);
+    const { token } = await createRes.json() as any;
+    expect(token).toBeDefined();
+
+    // Token should work at /mcp
+    const before = await mcpCall(token, 'tools/list');
+    expect(before.status).not.toBe(401);
+
+    // Revoke it
+    const revokeRes = await fetch(`${BASE}/admin/api/api-keys/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': cookie },
+      body: JSON.stringify({ name: 'e2e-revoke-key-test' }),
+    });
+    expect(revokeRes.ok).toBe(true);
+
+    // Token should no longer work
+    const after = await mcpCall(token, 'tools/list');
+    const afterBody = await after.text();
+    expect(after.status >= 400 || afterBody.includes('invalid_token') || afterBody.includes('error')).toBe(true);
+  }, 30_000);
 });

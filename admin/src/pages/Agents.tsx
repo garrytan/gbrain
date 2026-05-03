@@ -124,7 +124,7 @@ export function AgentsPage() {
       )}
 
       {selectedAgent && (
-        <AgentDrawer agent={selectedAgent} onClose={() => setSelectedAgent(null)} />
+        <AgentDrawer agent={selectedAgent} onClose={() => setSelectedAgent(null)} onRevoked={loadAgents} />
       )}
 
       {showApiKeyCreate && (
@@ -356,7 +356,7 @@ function CredentialsModal({ credentials, onClose }: {
   );
 }
 
-function AgentDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () => void; onRevoked: () => void }) {
   const [tab, setTab] = useState<'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json'>('claude-code');
   const copy = (text: string) => navigator.clipboard.writeText(text);
   const serverUrl = window.location.origin;
@@ -415,7 +415,25 @@ function AgentDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) 
         </div>
 
         <div style={{ marginTop: 32 }}>
-          <button className="btn btn-danger">Revoke Agent</button>
+          {agent.status === 'active' && (
+            <button className="btn btn-danger" onClick={async () => {
+              if (!confirm(`Revoke ${agent.name || agent.client_name}? All active tokens will be invalidated.`)) return;
+              try {
+                if (agent.auth_type === 'oauth') {
+                  await api.revokeClient(agent.id || agent.client_id || '');
+                } else {
+                  await api.revokeApiKey(agent.name || '');
+                }
+                onRevoked();
+                onClose();
+              } catch (e) {
+                alert('Revoke failed: ' + (e instanceof Error ? e.message : 'unknown error'));
+              }
+            }}>Revoke Agent</button>
+          )}
+          {agent.status === 'revoked' && (
+            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>This agent has been revoked.</span>
+          )}
         </div>
       </div>
     </>

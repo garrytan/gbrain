@@ -321,6 +321,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: legacyRows[0].name as string,
         scopes: ['read', 'write', 'admin'],
+        expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
       };
     }
 
@@ -351,6 +352,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const client = await this._clientsStore.getClient(clientId);
     if (!client) throw new Error('Client not found');
 
+    // Check if client has been revoked (soft-deleted)
+    try {
+      const [revoked] = await this.sql`SELECT deleted_at FROM oauth_clients WHERE client_id = ${clientId} AND deleted_at IS NOT NULL`;
+      if (revoked) throw new Error('Client has been revoked');
+    } catch (e) {
+      // deleted_at column may not exist on PGLite/older schemas — skip check
+      if (e instanceof Error && e.message === 'Client has been revoked') throw e;
+    }
+
     // Check grant type first (before verifying secret)
     const grants = (client.grant_types as string[]) || [];
     if (!grants.includes('client_credentials')) {
@@ -367,8 +377,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const grantedScopes = requestedScopes.filter(s => allowedScopes.includes(s));
 
     // Per-client TTL override (stored in oauth_clients.token_ttl)
-    const ttlRows = await this.sql`SELECT token_ttl FROM oauth_clients WHERE client_id = ${clientId}`;
-    const clientTtl = ttlRows.length > 0 && ttlRows[0].token_ttl ? Number(ttlRows[0].token_ttl) : undefined;
+    // Column may not exist on PGLite/older schemas — graceful fallback
+    let clientTtl: number | undefined;
+    try {
+      const ttlRows = await this.sql`SELECT token_ttl FROM oauth_clients WHERE client_id = ${clientId}`;
+      if (ttlRows.length > 0 && ttlRows[0].token_ttl) clientTtl = Number(ttlRows[0].token_ttl);
+    } catch { /* token_ttl column doesn't exist — use server default */ }
 
     // Client credentials: access token only, NO refresh token (RFC 6749 4.4.3)
     return this.issueTokens(clientId, grantedScopes, undefined, false, clientTtl);

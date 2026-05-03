@@ -428,6 +428,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  // Revoke OAuth client
+  app.post('/admin/api/revoke-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { clientId } = req.body;
+      if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
+      // Soft-delete the client
+      await sql`UPDATE oauth_clients SET deleted_at = now() WHERE client_id = ${clientId} AND deleted_at IS NULL`;
+      // Revoke all active tokens for this client
+      await sql`DELETE FROM oauth_tokens WHERE client_id = ${clientId}`;
+      res.json({ revoked: true });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // SSE live activity feed
   // ---------------------------------------------------------------------------
