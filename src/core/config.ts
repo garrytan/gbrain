@@ -136,11 +136,16 @@ export function readOpenAIApiKeyFile(path: string | undefined): string | undefin
   return firstRawValue;
 }
 
-export function resolveOpenAIApiKey(config: GBrainConfig | null = loadConfig()): string | undefined {
-  return process.env.OPENAI_API_KEY
-    || readOpenAIApiKeyFile(process.env.OPENAI_API_KEY_FILE)
-    || config?.openai_api_key
-    || readOpenAIApiKeyFile(config?.openai_api_key_file);
+export function resolveOpenAIApiKey(config?: GBrainConfig | null): string | undefined {
+  const envKey = process.env.OPENAI_API_KEY;
+  if (envKey) return envKey;
+
+  const envFileKey = readOpenAIApiKeyFile(process.env.OPENAI_API_KEY_FILE);
+  if (envFileKey) return envFileKey;
+
+  const resolvedConfig = config === undefined ? loadConfig() : config;
+  return resolvedConfig?.openai_api_key
+    || readOpenAIApiKeyFile(resolvedConfig?.openai_api_key_file);
 }
 
 export function hasOpenAIApiKey(config?: GBrainConfig | null): boolean {

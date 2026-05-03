@@ -68,6 +68,24 @@ describe('OpenAI API key file support', () => {
     expect(resolveOpenAIApiKey()).toBe('sk-test-env');
   });
 
+  test('does not load config before returning OPENAI_API_KEY', () => {
+    process.env.OPENAI_API_KEY = 'sk-test-env';
+    process.env.GBRAIN_HOME = 'relative-path-would-throw-if-loaded';
+
+    expect(resolveOpenAIApiKey()).toBe('sk-test-env');
+  });
+
+  test('does not load config before returning OPENAI_API_KEY_FILE', () => {
+    const dir = makeTmpDir();
+    const keyFile = join(dir, 'openai-key.env');
+    writeFileSync(keyFile, 'OPENAI_API_KEY=sk-test-file\n');
+
+    process.env.OPENAI_API_KEY_FILE = keyFile;
+    process.env.GBRAIN_HOME = 'relative-path-would-throw-if-loaded';
+
+    expect(resolveOpenAIApiKey()).toBe('sk-test-file');
+  });
+
   test('uses config openai_api_key_file when env vars are absent', () => {
     const dir = makeTmpDir();
     const gbrainDir = join(dir, '.gbrain');
