@@ -16,6 +16,8 @@ export interface Page {
   timeline: string;
   frontmatter: Record<string, unknown>;
   content_hash?: string;
+  /** v0.29 — deterministic 0..1 score; populated by the recompute_emotional_weight cycle phase. */
+  emotional_weight?: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -53,6 +55,100 @@ export interface PageFilters {
    * queries to a tier directory without loading every page into memory.
    */
   slugPrefix?: string;
+  /**
+   * v0.29: ORDER BY enum. Default `updated_desc` matches pre-v0.29 behavior
+   * (engines hardcoded `ORDER BY updated_at DESC`). New options: `updated_asc`,
+   * `created_desc`, `slug` (alphabetical, useful for stable pagination).
+   * Whitelisted enum — no SQL-injection risk; engines map to literal SQL fragments.
+   */
+  sort?: 'updated_desc' | 'updated_asc' | 'created_desc' | 'slug';
+}
+
+/** v0.29: literal ORDER BY fragments for the PageFilters.sort enum. Whitelisted. */
+export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
+  updated_desc: 'p.updated_at DESC',
+  updated_asc:  'p.updated_at ASC',
+  created_desc: 'p.created_at DESC',
+  slug:         'p.slug ASC',
+};
+
+/**
+ * v0.29 — Salience: pages ranked by emotional + activity salience over a recency window.
+ * See `src/core/cycle/emotional-weight.ts` for the score formula and
+ * `engine.getRecentSalience` for the SQL.
+ */
+export interface SalienceOpts {
+  /** Window in days. Default 14. */
+  days?: number;
+  /** Max rows to return (clamped at 100). Default 20. */
+  limit?: number;
+  /** Optional slug-prefix filter (e.g., `personal`, `wiki/people`). */
+  slugPrefix?: string;
+}
+
+export interface SalienceResult {
+  slug: string;
+  source_id: string;
+  title: string;
+  type: PageType;
+  updated_at: Date;
+  emotional_weight: number;
+  take_count: number;
+  take_avg_weight: number;
+  score: number;
+}
+
+/**
+ * v0.29 — Anomaly detection: cohorts (tag, type) with unusually-high activity in a window.
+ * Cohort baseline is computed over `lookback_days` excluding `since`; current count is
+ * the number of distinct pages touched on `since`. A cohort is anomalous when its
+ * current count exceeds `mean + sigma * stddev`. Year cohort deferred to v0.30.
+ */
+export interface AnomaliesOpts {
+  /** ISO date (YYYY-MM-DD). Default = today (UTC). */
+  since?: string;
+  /** Days of history for the baseline. Default 30. */
+  lookback_days?: number;
+  /** Sigma threshold. Default 3.0. */
+  sigma?: number;
+}
+
+export interface AnomalyResult {
+  cohort_kind: 'tag' | 'type';
+  cohort_value: string;
+  count: number;
+  baseline_mean: number;
+  baseline_stddev: number;
+  sigma_observed: number;
+  page_slugs: string[];
+}
+
+/**
+ * v0.29 — Per-page tag + take inputs to the emotional-weight formula.
+ * Returned in batch by `engine.batchLoadEmotionalInputs` so the cycle phase
+ * computes weights for many pages with two SQL round-trips total.
+ */
+export interface EmotionalWeightInputRow {
+  slug: string;
+  source_id: string;
+  tags: string[];
+  takes: {
+    holder: string;
+    weight: number;
+    kind: string;
+    active: boolean;
+  }[];
+}
+
+/**
+ * v0.29 — Multi-source-safe write batch. Composite-keyed on `(slug, source_id)`
+ * because `pages.slug` is only unique within a source. Slug-only UPDATE would
+ * fan out across sources.
+ */
+export interface EmotionalWeightWriteRow {
+  slug: string;
+  source_id: string;
+  weight: number;
 }
 
 // Chunks

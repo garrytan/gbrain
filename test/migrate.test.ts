@@ -896,6 +896,36 @@ describe('migration v31 — eval_capture_tables', () => {
   });
 });
 
+describe('migration v34 — pages_emotional_weight (v0.29)', () => {
+  test('exists with the expected name', () => {
+    const v34 = MIGRATIONS.find(m => m.version === 34);
+    expect(v34).toBeDefined();
+    expect(v34?.name).toBe('pages_emotional_weight');
+  });
+
+  test('adds emotional_weight REAL NOT NULL DEFAULT 0.0 to pages', () => {
+    const v34 = MIGRATIONS.find(m => m.version === 34);
+    const sql = v34!.sql || '';
+    expect(sql).toContain('ALTER TABLE pages');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS emotional_weight');
+    expect(sql).toContain('REAL');
+    expect(sql).toContain('NOT NULL DEFAULT 0.0');
+  });
+
+  test('does NOT create an idx_pages_emotional_weight index (eng review D6)', () => {
+    // Salience query orders by computed score, not raw weight; the index
+    // would never be used. Adding it later requires a separate migration.
+    const v34 = MIGRATIONS.find(m => m.version === 34);
+    const sql = v34!.sql || '';
+    expect(sql).not.toContain('idx_pages_emotional_weight');
+    expect(sql).not.toContain('CREATE INDEX');
+  });
+
+  test('LATEST_VERSION caught up to 34', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(34);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // PR #363 regression guards — session timeouts via startup parameters
 // resolveSessionTimeouts — GBRAIN_*_TIMEOUT env overrides
