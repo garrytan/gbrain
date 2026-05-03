@@ -23,4 +23,7 @@ export const api = {
   health: () => apiFetch('/admin/api/health-indicators'),
   agents: () => apiFetch('/admin/api/agents'),
   requests: (page = 1) => apiFetch(`/admin/api/requests?page=${page}`),
+  apiKeys: () => apiFetch('/admin/api/api-keys'),
+  createApiKey: (name: string) => apiFetch('/admin/api/api-keys', { method: 'POST', body: JSON.stringify({ name }) }),
+  revokeApiKey: (name: string) => apiFetch('/admin/api/api-keys/revoke', { method: 'POST', body: JSON.stringify({ name }) }),
 };

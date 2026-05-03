@@ -253,9 +253,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const [clients] = await sql`SELECT count(*)::int as count FROM oauth_clients`;
       const [tokens] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > ${Math.floor(Date.now() / 1000)}`;
       const [requests] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'`;
+      const [apiKeys] = await sql`SELECT count(*)::int as count FROM access_tokens WHERE revoked_at IS NULL`;
       res.json({
         connected_agents: (clients as any).count,
         active_tokens: (tokens as any).count,
+        active_api_keys: (apiKeys as any).count,
         requests_today: (requests as any).count,
       });
     } catch {
@@ -305,6 +307,46 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.json({ rows, total: (countResult as any).total, page, pages: Math.ceil((countResult as any).total / limit) });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
+    }
+  });
+
+  // Legacy API keys (access_tokens table)
+  app.get('/admin/api/api-keys', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const keys = await sql`
+        SELECT id, name, created_at, last_used_at,
+          CASE WHEN revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status
+        FROM access_tokens ORDER BY created_at DESC
+      `;
+      res.json(keys);
+    } catch (e) {
+      res.status(503).json({ error: 'service_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/api-keys', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { name } = req.body;
+      if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      const { generateToken, hashToken } = await import('../core/utils.ts');
+      const token = generateToken('gbrain_');
+      const hash = hashToken(token);
+      const id = (await import('crypto')).randomUUID();
+      await sql`INSERT INTO access_tokens (id, name, token_hash) VALUES (${id}, ${name}, ${hash})`;
+      res.json({ name, token, id });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to create API key' });
+    }
+  });
+
+  app.post('/admin/api/api-keys/revoke', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { name } = req.body;
+      if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      await sql`UPDATE access_tokens SET revoked_at = now() WHERE name = ${name} AND revoked_at IS NULL`;
+      res.json({ revoked: true });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
     }
   });
 
