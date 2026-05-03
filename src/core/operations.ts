@@ -182,6 +182,15 @@ export interface Logger {
 export interface AuthInfo {
   token: string;
   clientId: string;
+  /**
+   * Human-readable agent name resolved at token-verification time.
+   * For OAuth clients this is `oauth_clients.client_name`; for legacy
+   * bearer tokens it is `access_tokens.name`. Threading this through
+   * AuthInfo eliminates a per-request DB roundtrip in the /mcp handler
+   * (was: SELECT client_name FROM oauth_clients WHERE client_id = ?
+   * on every request — see PR #586 review note D14=B).
+   */
+  clientName?: string;
   scopes: string[];
   expiresAt?: number;
 }

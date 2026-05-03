@@ -498,12 +498,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 
-    // Resolve human-readable agent name for logging
-    let agentName = authInfo.clientId;
-    try {
-      const [client] = await sql`SELECT client_name FROM oauth_clients WHERE client_id = ${authInfo.clientId}`;
-      if (client) agentName = client.client_name as string;
-    } catch { /* best effort — falls back to clientId */ }
+    // Human-readable agent name is now threaded through AuthInfo by
+    // verifyAccessToken (which JOINs oauth_clients in its existing token
+    // SELECT). No per-request DB roundtrip needed. Falls back to clientId
+    // for legacy tokens or when the JOIN row's client_name is NULL.
+    const agentName = authInfo.clientName ?? authInfo.clientId;
 
     // Create a fresh MCP server per request (stateless)
     const server = new Server(
