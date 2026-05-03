@@ -35,6 +35,7 @@ interface ApiKey {
 
 export function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [hideRevoked, setHideRevoked] = useState(true);
   const [showRegister, setShowRegister] = useState(false);
   const [showCredentials, setShowCredentials] = useState<{ clientId: string; clientSecret: string; name: string } | null>(null);
   const [showApiKeyCreate, setShowApiKeyCreate] = useState(false);
@@ -49,7 +50,10 @@ export function AgentsPage() {
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 className="page-title" style={{ marginBottom: 0 }}>Agents</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <label style={{ fontSize: 13, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={hideRevoked} onChange={e => setHideRevoked(e.target.checked)} /> Hide revoked
+          </label>
           <button className="btn btn-secondary" onClick={() => setShowApiKeyCreate(true)}>+ API Key</button>
           <button className="btn btn-primary" onClick={() => setShowRegister(true)}>+ OAuth Client</button>
         </div>
@@ -75,7 +79,7 @@ export function AgentsPage() {
               </tr>
             </thead>
             <tbody>
-              {agents.map(a => (
+              {agents.filter(a => !hideRevoked || a.status !== 'revoked').map(a => (
                 <tr key={a.id} onClick={() => a.auth_type === 'oauth' ? setSelectedAgent(a) : null}
                     style={{ cursor: a.auth_type === 'oauth' ? 'pointer' : 'default' }}>
                   <td style={{ fontWeight: 500 }}>{a.name || a.client_name}</td>
