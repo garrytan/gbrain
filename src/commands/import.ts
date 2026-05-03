@@ -4,6 +4,7 @@ import { join, relative } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
+import { resolveSyncFailure } from '../core/sync.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -110,12 +111,17 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
         imported++;
         chunksCreated += result.chunks;
         importedSlugs.push(result.slug);
+        // Bug 9 follow-up — reconcile sync-failures.jsonl with reality.
+        resolveSyncFailure(relativePath);
       } else {
         skipped++;
         if (result.error && result.error !== 'unchanged') {
           console.error(`  Skipped ${relativePath}: ${result.error}`);
           // Bug 9 — non-"unchanged" skips carry a real error reason.
           failures.push({ path: relativePath, error: result.error });
+        } else {
+          // Hash-identical content already in DB also clears stale failures.
+          resolveSyncFailure(relativePath);
         }
       }
     } catch (e: unknown) {
