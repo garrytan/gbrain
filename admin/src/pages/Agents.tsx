@@ -378,13 +378,25 @@ function CredentialsModal({ credentials, onClose }: {
 }
 
 function AgentDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) {
-  const [tab, setTab] = useState<'perplexity' | 'claude' | 'json'>('perplexity');
+  const [tab, setTab] = useState<'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json'>('claude-code');
   const copy = (text: string) => navigator.clipboard.writeText(text);
+  const serverUrl = window.location.origin;
 
   const configSnippets: Record<string, string> = {
-    perplexity: `URL: http://YOUR_SERVER/mcp\nClient ID: ${agent.client_id}\n\nPaste into Settings > Connectors`,
-    claude: `claude mcp add gbrain \\\n  -t http http://YOUR_SERVER/mcp \\\n  --client-id ${agent.client_id} \\\n  --client-secret YOUR_SECRET`,
-    json: JSON.stringify({ client_id: agent.client_id, client_name: agent.client_name, scope: agent.scope, grant_types: agent.grant_types }, null, 2),
+    'claude-code': `# Add to .mcp.json in your project root:\n{\n  "mcpServers": {\n    "gbrain": {\n      "type": "url",\n      "url": "${serverUrl}/mcp",\n      "headers": {\n        "Authorization": "Bearer <TOKEN>"\n      }\n    }\n  }\n}\n\n# Get a token:\ncurl -s -X POST ${serverUrl}/token \\\n  -d "grant_type=client_credentials\\\n&client_id=${agent.client_id}\\\n&client_secret=YOUR_SECRET\\\n&scope=${agent.scope || 'read write'}" | jq -r .access_token`,
+    'chatgpt': `1. Go to ChatGPT → Settings → Tools & Integrations → Add MCP\n2. Server URL: ${serverUrl}/mcp\n3. Authentication: OAuth 2.0\n   Token URL: ${serverUrl}/token\n   Client ID: ${agent.client_id}\n   Client Secret: YOUR_SECRET\n   Grant Type: client_credentials\n   Scope: ${agent.scope || 'read write'}\n\nChatGPT will auto-discover via:\n${serverUrl}/.well-known/oauth-authorization-server`,
+    'claude-cowork': `1. Open Claude.ai → Settings → Connected Apps → Add MCP Server\n2. Server URL: ${serverUrl}/mcp\n3. Auth: OAuth 2.0 (client_credentials)\n   Token endpoint: ${serverUrl}/token\n   Client ID: ${agent.client_id}\n   Client Secret: YOUR_SECRET\n   Scope: ${agent.scope || 'read write'}\n\nOr use the discovery URL:\n${serverUrl}/.well-known/oauth-authorization-server`,
+    perplexity: `1. Go to Settings → Connectors → Add MCP\n2. Server URL: ${serverUrl}/mcp\n3. Client ID: ${agent.client_id}\n4. Client Secret: YOUR_SECRET`,
+    cursor: `# Add to .cursor/mcp.json:\n{\n  "mcpServers": {\n    "gbrain": {\n      "url": "${serverUrl}/mcp",\n      "auth": {\n        "type": "oauth2",\n        "clientId": "${agent.client_id}",\n        "clientSecret": "YOUR_SECRET",\n        "tokenUrl": "${serverUrl}/token",\n        "grantType": "client_credentials",\n        "scope": "${agent.scope || 'read write'}"\n      }\n    }\n  }\n}`,
+    json: JSON.stringify({
+      server_url: `${serverUrl}/mcp`,
+      token_url: `${serverUrl}/token`,
+      discovery_url: `${serverUrl}/.well-known/oauth-authorization-server`,
+      client_id: agent.client_id,
+      client_name: agent.client_name,
+      scope: agent.scope,
+      grant_types: agent.grant_types,
+    }, null, 2),
   };
 
   return (
@@ -408,9 +420,12 @@ function AgentDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) 
         </div>
 
         <div className="section-title">Config Export</div>
-        <div className="tabs">
+        <div className="tabs" style={{ flexWrap: 'wrap' }}>
+          <div className={`tab ${tab === 'claude-code' ? 'active' : ''}`} onClick={() => setTab('claude-code')}>Claude Code</div>
+          <div className={`tab ${tab === 'chatgpt' ? 'active' : ''}`} onClick={() => setTab('chatgpt')}>ChatGPT</div>
+          <div className={`tab ${tab === 'claude-cowork' ? 'active' : ''}`} onClick={() => setTab('claude-cowork')}>Claude.ai</div>
+          <div className={`tab ${tab === 'cursor' ? 'active' : ''}`} onClick={() => setTab('cursor')}>Cursor</div>
           <div className={`tab ${tab === 'perplexity' ? 'active' : ''}`} onClick={() => setTab('perplexity')}>Perplexity</div>
-          <div className={`tab ${tab === 'claude' ? 'active' : ''}`} onClick={() => setTab('claude')}>Claude Code</div>
           <div className={`tab ${tab === 'json' ? 'active' : ''}`} onClick={() => setTab('json')}>JSON</div>
         </div>
         <div className="code-block">
