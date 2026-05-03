@@ -622,6 +622,11 @@ async function loadPriorTools(engine: BrainEngine, jobId: number): Promise<Persi
 }
 
 async function persistMessage(engine: BrainEngine, jobId: number, msg: PersistedMessage): Promise<void> {
+  // postgres.js v3's `unsafe` path double-wraps a JSON.stringify'd string when
+  // bound to a `::jsonb` cast (the wire layer treats the string as a JSONB
+  // string scalar, then the cast no-ops). Passing the raw value lets postgres.js
+  // and PGLite each apply their own correct jsonb encoding. Verified against
+  // both engines via test/e2e/postgres-jsonb.test.ts and PGLite parity tests.
   await engine.executeRaw(
     `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks,
         tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model)
@@ -631,7 +636,7 @@ async function persistMessage(engine: BrainEngine, jobId: number, msg: Persisted
       jobId,
       msg.message_idx,
       msg.role,
-      JSON.stringify(msg.content_blocks),
+      msg.content_blocks,
       msg.tokens_in,
       msg.tokens_out,
       msg.tokens_cache_read,
@@ -649,15 +654,14 @@ async function persistToolExecPending(
   toolName: string,
   input: unknown,
 ): Promise<void> {
-  // Serialize to JSON string for the ::jsonb cast. When `input` is already a
-  // string (e.g. pre-serialized), avoid double-encoding which produces a jsonb
-  // scalar string instead of a jsonb object — breaking `input->>'key'` lookups.
-  const jsonStr = typeof input === 'string' ? input : JSON.stringify(input);
+  // Pass raw value to ::jsonb — postgres.js v3 and PGLite each apply their own
+  // correct jsonb encoding. Pre-stringifying produces a jsonb scalar string
+  // instead of a jsonb object, breaking `input->>'key'` lookups.
   await engine.executeRaw(
     `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
      VALUES ($1, $2, $3, $4, $5::jsonb, 'pending')
      ON CONFLICT (job_id, tool_use_id) DO NOTHING`,
-    [jobId, messageIdx, toolUseId, toolName, jsonStr],
+    [jobId, messageIdx, toolUseId, toolName, input],
   );
 }
 
@@ -671,7 +675,7 @@ async function persistToolExecComplete(
     `UPDATE subagent_tool_executions
         SET status = 'complete', output = $3::jsonb, ended_at = now()
       WHERE job_id = $1 AND tool_use_id = $2`,
-    [jobId, toolUseId, typeof output === 'string' ? output : JSON.stringify(output)],
+    [jobId, toolUseId, output],
   );
 }
 
@@ -691,7 +695,7 @@ async function persistToolExecFailed(
      VALUES ($1, $2, $3, $4, $5::jsonb, 'failed', $6, now())
      ON CONFLICT (job_id, tool_use_id) DO UPDATE
        SET status = 'failed', error = EXCLUDED.error, ended_at = now()`,
-    [jobId, messageIdx, toolUseId, toolName, typeof input === 'string' ? input : JSON.stringify(input), error],
+    [jobId, messageIdx, toolUseId, toolName, input, error],
   );
 }
 

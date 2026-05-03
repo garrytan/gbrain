@@ -1307,16 +1307,28 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   try {
     const sql = db.getConnection();
     const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
-      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
-      { table: 'raw_data',      col: 'data',           expected: 'object' },
-      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
-      { table: 'files',         col: 'metadata',       expected: 'object' },
-      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+      { table: 'pages',                    col: 'frontmatter',    expected: 'object' },
+      { table: 'raw_data',                 col: 'data',           expected: 'object' },
+      { table: 'ingest_log',               col: 'pages_updated',  expected: 'array'  },
+      { table: 'files',                    col: 'metadata',       expected: 'object' },
+      { table: 'page_versions',            col: 'frontmatter',    expected: 'object' },
+      // v0.16.0+ subagent persistence — second double-encode site,
+      // surfaced by orchestrator slug-collection failures in dream synthesize.
+      { table: 'subagent_messages',        col: 'content_blocks', expected: 'array'  },
+      { table: 'subagent_tool_executions', col: 'input',          expected: 'object' },
+      { table: 'subagent_tool_executions', col: 'output',         expected: 'object' },
     ];
     let totalBad = 0;
     const breakdown: string[] = [];
     for (const { table, col } of targets) {
       progress.heartbeat(`jsonb_integrity.${table}.${col}`);
+      // Skip targets whose table doesn't exist on this brain (subagent_*
+      // tables are v0.15+; pre-v0.15 brains naturally lack them).
+      const existsRows = await sql.unsafe(
+        `SELECT to_regclass($1) IS NOT NULL AS exists`,
+        [table],
+      );
+      if (!(existsRows as any)[0]?.exists) continue;
       const rows = await sql.unsafe(
         `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
       );
