@@ -345,27 +345,26 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const operation = req.query.operation as string;
       const status = req.query.status as string;
 
-      let query = `SELECT * FROM mcp_request_log WHERE 1=1`;
-      const params: unknown[] = [];
-      let paramIdx = 1;
+      // Dynamic filtering via postgres.js tagged-template fragments.
+      // Each filter expands to either `AND col = $N` (parameterized) or
+      // an empty fragment. `WHERE 1=1` lets us always have a WHERE clause
+      // and unconditionally append AND-prefixed fragments — no string
+      // interpolation, no manual escaping, no sql.unsafe.
+      const agentFilter = agent && agent !== 'all' ? sql`AND token_name = ${agent}` : sql``;
+      const opFilter = operation && operation !== 'all' ? sql`AND operation = ${operation}` : sql``;
+      const statusFilter = status && status !== 'all' ? sql`AND status = ${status}` : sql``;
 
-      if (agent && agent !== 'all') { query += ` AND token_name = $${paramIdx++}`; params.push(agent); }
-      if (operation && operation !== 'all') { query += ` AND operation = $${paramIdx++}`; params.push(operation); }
-      if (status && status !== 'all') { query += ` AND status = $${paramIdx++}`; params.push(status); }
-
-      query += ` ORDER BY created_at DESC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
-      params.push(limit, offset);
-
-      // Dynamic filtering
-      const conditions: string[] = [];
-      const values: unknown[] = [];
-      if (agent && agent !== 'all') { conditions.push(`token_name = '${agent.replace(/'/g, "''")}'`); }
-      if (operation && operation !== 'all') { conditions.push(`operation = '${operation.replace(/'/g, "''")}'`); }
-      if (status && status !== 'all') { conditions.push(`status = '${status.replace(/'/g, "''")}'`); }
-      const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-      const rows = await sql.unsafe(`SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name, operation, latency_ms, status, params, error_message, created_at FROM mcp_request_log ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`);
-      const [countResult] = await sql.unsafe(`SELECT count(*)::int as total FROM mcp_request_log ${where}`);
+      const rows = await sql`
+        SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
+               operation, latency_ms, status, params, error_message, created_at
+        FROM mcp_request_log
+        WHERE 1=1 ${agentFilter} ${opFilter} ${statusFilter}
+        ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}
+      `;
+      const [countResult] = await sql`
+        SELECT count(*)::int as total FROM mcp_request_log
+        WHERE 1=1 ${agentFilter} ${opFilter} ${statusFilter}
+      `;
       res.json({ rows, total: (countResult as any).total, page, pages: Math.ceil((countResult as any).total / limit) });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
