@@ -365,20 +365,91 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
   const copy = (text: string) => navigator.clipboard.writeText(text);
   const serverUrl = window.location.origin;
 
+  const cid = agent.id || agent.client_id || '';
+  const isOAuth = agent.auth_type === 'oauth';
+
+  const claudeCode = isOAuth
+    ? `# Step 1: Mint a token (run in terminal)
+curl -s -X POST ${serverUrl}/token \\
+  -d "grant_type=client_credentials&client_id=${cid}&client_secret=YOUR_SECRET&scope=${agent.scope || 'read write'}" \\
+  | jq -r .access_token
+
+# Step 2: Add to .mcp.json (paste the token from step 1)
+{
+  "mcpServers": {
+    "gbrain": {
+      "type": "url",
+      "url": "${serverUrl}/mcp",
+      "headers": {
+        "Authorization": "Bearer <paste token from step 1>"
+      }
+    }
+  }
+}`
+    : `# Add to .mcp.json — this API key never expires
+{
+  "mcpServers": {
+    "gbrain": {
+      "type": "url",
+      "url": "${serverUrl}/mcp",
+      "headers": {
+        "Authorization": "Bearer <your API key from creation>"
+      }
+    }
+  }
+}`;
+
   const configSnippets: Record<string, string> = {
-    'claude-code': `# Add to .mcp.json in your project root:\n{\n  "mcpServers": {\n    "gbrain": {\n      "type": "url",\n      "url": "${serverUrl}/mcp",\n      "headers": {\n        "Authorization": "Bearer <TOKEN>"\n      }\n    }\n  }\n}\n\n# Get a token:\ncurl -s -X POST ${serverUrl}/token \\\n  -d "grant_type=client_credentials\\\n&client_id=${agent.id || agent.client_id}\\\n&client_secret=YOUR_SECRET\\\n&scope=${agent.scope || 'read write'}" | jq -r .access_token`,
-    'chatgpt': `1. Go to ChatGPT → Settings → Tools & Integrations → Add MCP\n2. Server URL: ${serverUrl}/mcp\n3. Authentication: OAuth 2.0\n   Token URL: ${serverUrl}/token\n   Client ID: ${agent.id || agent.client_id}\n   Client Secret: YOUR_SECRET\n   Grant Type: client_credentials\n   Scope: ${agent.scope || 'read write'}\n\nChatGPT will auto-discover via:\n${serverUrl}/.well-known/oauth-authorization-server`,
-    'claude-cowork': `1. Open Claude.ai → Settings → Connected Apps → Add MCP Server\n2. Server URL: ${serverUrl}/mcp\n3. Auth: OAuth 2.0 (client_credentials)\n   Token endpoint: ${serverUrl}/token\n   Client ID: ${agent.id || agent.client_id}\n   Client Secret: YOUR_SECRET\n   Scope: ${agent.scope || 'read write'}\n\nOr use the discovery URL:\n${serverUrl}/.well-known/oauth-authorization-server`,
-    perplexity: `1. Go to Settings → Connectors → Add MCP\n2. Server URL: ${serverUrl}/mcp\n3. Client ID: ${agent.id || agent.client_id}\n4. Client Secret: YOUR_SECRET`,
-    cursor: `# Add to .cursor/mcp.json:\n{\n  "mcpServers": {\n    "gbrain": {\n      "url": "${serverUrl}/mcp",\n      "auth": {\n        "type": "oauth2",\n        "clientId": "${agent.id || agent.client_id}",\n        "clientSecret": "YOUR_SECRET",\n        "tokenUrl": "${serverUrl}/token",\n        "grantType": "client_credentials",\n        "scope": "${agent.scope || 'read write'}"\n      }\n    }\n  }\n}`,
+    'claude-code': claudeCode,
+    'chatgpt': `1. Go to ChatGPT > Settings > Tools & Integrations > Add MCP
+2. Server URL: ${serverUrl}/mcp
+3. Authentication: OAuth 2.0
+   Token URL: ${serverUrl}/token
+   Client ID: ${cid}
+   Client Secret: YOUR_SECRET
+   Grant Type: client_credentials
+   Scope: ${agent.scope || 'read write'}
+
+Discovery URL (auto-configures everything):
+${serverUrl}/.well-known/oauth-authorization-server`,
+    'claude-cowork': `1. Open Claude.ai > Settings > Connected Apps > Add MCP Server
+2. Server URL: ${serverUrl}/mcp
+3. Authentication: OAuth 2.0
+   Token endpoint: ${serverUrl}/token
+   Client ID: ${cid}
+   Client Secret: YOUR_SECRET
+   Scope: ${agent.scope || 'read write'}
+
+Discovery URL:
+${serverUrl}/.well-known/oauth-authorization-server`,
+    cursor: `# Add to .cursor/mcp.json
+{
+  "mcpServers": {
+    "gbrain": {
+      "url": "${serverUrl}/mcp",
+      "auth": {
+        "type": "oauth2",
+        "clientId": "${cid}",
+        "clientSecret": "YOUR_SECRET",
+        "tokenUrl": "${serverUrl}/token",
+        "grantType": "client_credentials",
+        "scope": "${agent.scope || 'read write'}"
+      }
+    }
+  }
+}`,
+    perplexity: `1. Go to Settings > Connectors > Add MCP
+2. Server URL: ${serverUrl}/mcp
+3. Client ID: ${cid}
+4. Client Secret: YOUR_SECRET`,
     json: JSON.stringify({
-      server_url: `${serverUrl}/mcp`,
-      token_url: `${serverUrl}/token`,
-      discovery_url: `${serverUrl}/.well-known/oauth-authorization-server`,
-      client_id: agent.id || agent.client_id,
-      client_name: agent.client_name,
+      server_url: serverUrl + '/mcp',
+      token_url: serverUrl + '/token',
+      discovery_url: serverUrl + '/.well-known/oauth-authorization-server',
+      client_id: cid,
+      client_name: agent.name || agent.client_name,
+      auth_type: agent.auth_type,
       scope: agent.scope,
-      grant_types: agent.grant_types,
     }, null, 2),
   };
 
