@@ -2,6 +2,212 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.29.0] - 2026-05-03
+
+**The brain tells you what's hot without being asked.**
+**Salience + anomaly detection ship. Search rewards hypotheses; salience surfaces them.**
+
+Search rewards pre-formed hypotheses. To find the wedding cluster you
+already had to know to type "wedding". v0.29 inverts that: three new MCP
+ops surface what is unusual and emotionally charged in your brain without
+needing a search term. Ask "anything crazy happening lately?" and the
+agent reaches for `get_recent_salience` instead of running `query("crazy")`
+and missing the cluster of pages all sharing one tag.
+
+Three primitives. `get_recent_salience` ranks pages touched in the window
+by a deterministic emotional + activity score (no LLM call). `find_anomalies`
+detects cohort-level activity bursts vs a 30-day baseline densified with
+`generate_series` zero-fill (so rare cohorts stop looking "normally
+active"). `get_recent_transcripts` returns one-line summaries of the raw
+`.txt` transcripts from the dream-cycle corpus dirs, gated to local CLI
+only — MCP and HTTP cannot reach raw conversation text.
+
+Plus a new dream-cycle phase, `recompute_emotional_weight`, that batches
+weight computation in two SQL round-trips total — `WITH page_tags AS ...
+WITH page_takes AS ...` so the page × N tags × M takes cartesian product
+never happens; `UPDATE pages FROM unnest(...) USING (slug, source_id)` so
+multi-source brains can't accidentally fan out across sources. 1000 pages
+backfill in ~1.4s on PGLite; 50K pages should land under 60s on Postgres.
+
+### The numbers that matter
+
+Surface area added vs v0.28. Numbers from `git diff master..HEAD --stat`
+on this branch:
+
+| Surface | Before | After | Δ |
+|---|---|---|---|
+| Engine methods on BrainEngine | 50 | 54 | +4 (`batchLoadEmotionalInputs`, `setEmotionalWeightBatch`, `getRecentSalience`, `findAnomalies`) |
+| MCP operations | 44 | 47 | +3 (`get_recent_salience`, `find_anomalies`, `get_recent_transcripts`) |
+| Subagent tool allow-list | 11 | 13 | +2 (transcripts intentionally excluded — local-only via remote=false gate) |
+| Cycle phases | 8 | 9 | +`recompute_emotional_weight` between extract/synthesize and embed |
+| New SQL columns | — | 1 | `pages.emotional_weight REAL DEFAULT 0.0` (no index — score is computed) |
+| Schema migrations | v39 | v40 | +1 (column-only, ADD COLUMN IF NOT EXISTS, instant) |
+| `list_pages` params | 3 | 5 | +`updated_after`, +`sort` enum (engine ORDER BY threading; was hardcoded DESC) |
+| New unit + e2e tests | — | 75+ | 14 emotional-weight, 13 anomalies, 8 transcripts, 21 descriptions, 7 phase, 5 salience-pglite, 4 anomalies-pglite, 4 multi-source, 3 cycle e2e, 6 list_pages, 1 perf, +12 LLM routing eval (Tier 2) |
+
+**What this means for you:** ask "what's been going on with me?" and the
+agent finds the cluster on the first tool call instead of the fifth.
+A cluster of pages sharing a tag, all touched the same day, surface at the top of
+`gbrain salience --days 7`. A burst of 15 pages tagged `family` shows up
+in `gbrain anomalies` as a 3σ outlier vs a 0.3/day baseline. The brain
+stops being a search engine and starts being an aide who notices.
+
+## To take advantage of v0.29.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if
+`gbrain doctor` warns about an incomplete migration:
+
+1. **Run the migration** (mechanical schema-only ALTER TABLE):
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Backfill emotional_weight on every page** (one-time, deterministic;
+   ~1s per 1000 pages on PGLite, ~60s for 50K pages on Postgres):
+   ```bash
+   gbrain dream --phase recompute_emotional_weight
+   ```
+3. **Try the Garry test** to verify routing changed:
+   ```bash
+   gbrain salience --days 14
+   gbrain anomalies
+   gbrain transcripts recent --days 7
+   ```
+   The salience output should rank pages with high-emotion tags (family,
+   wedding, loss, mental-health) above pages with the same recency but
+   no emotional content.
+4. **(Optional) Tune the high-emotion tag list** if you keep a brain
+   that's mostly work-life. The default list is anglocentric +
+   personal-life-biased; override with the tags that drive *your*
+   emotional weight:
+   ```bash
+   gbrain config set emotional_weight.high_tags '["family","health","grief","custom-tag"]'
+   gbrain dream --phase recompute_emotional_weight
+   ```
+   Tag matching is case-insensitive. The override goes through the same
+   formula, just with your tag set.
+5. **If any step fails or salience returns nothing,** file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - output of `gbrain salience --json --days 30`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+
+### Itemized changes
+
+#### Schema (migration v40)
+
+- **`pages.emotional_weight REAL NOT NULL DEFAULT 0.0`** — column-only,
+  no index. Default 0.0 so freshly imported pages don't pollute salience
+  ranking before the cycle phase populates real values.
+- **No `idx_pages_emotional_weight`** — the salience query orders by a
+  computed score (`emotional_weight × 5 + ln(1+takes) + recency_decay`),
+  not raw weight. Adding the index later requires a separate migration.
+
+#### New cycle phase: `recompute_emotional_weight`
+
+- Runs **after** extract + synthesize, **before** embed/orphans. Sees fresh
+  tag + take state for every page touched in the cycle.
+- Two SQL round-trips total regardless of brain size:
+  1. CTE-shaped `batchLoadEmotionalInputs` with per-table aggregates that
+     avoid the page × N tags × M takes cartesian product.
+  2. `setEmotionalWeightBatch` with `UPDATE FROM unnest($1::text[],
+     $2::text[], $3::real[])` keyed on `(slug, source_id)` so multi-source
+     brains can't fan out.
+- Selectable via `gbrain dream --phase recompute_emotional_weight` for
+  targeted backfills (initial upgrade path).
+- Incremental mode in routine cycles: union of `syncPagesAffected` +
+  `synthesizeWrittenSlugs`, so only the pages touched this cycle get
+  recomputed. Full mode walks every page.
+
+#### New MCP ops + CLI
+
+- **`get_recent_salience`** / `gbrain salience [--days N] [--limit N]
+  [--kind PREFIX] [--json]` — Pages ranked by `(emotional_weight × 5) +
+  ln(1 + active_take_count) + recency_decay`. Time boundary computed in
+  JS and bound as TIMESTAMPTZ so the SQL is identical across PGLite +
+  Postgres.
+- **`find_anomalies`** / `gbrain anomalies [--since YYYY-MM-DD]
+  [--lookback-days N] [--sigma N] [--json]` — Cohort-level activity
+  outliers. Two cohort kinds in v1: tag, type. Year cohort deferred to
+  v0.30 pending proper frontmatter date detection. Baseline densified with
+  `generate_series` zero-fill so rare cohorts get correct `(mean, stddev)`
+  instead of biased upward by sparse-day omission. Zero-stddev fallback:
+  cohort fires when `count > mean + 1` (no NaN sigma).
+- **`get_recent_transcripts`** / `gbrain transcripts recent [--days N]
+  [--full] [--json]` — Reads `.txt` files from `dream.synthesize.session_corpus_dir`
+  + `dream.synthesize.meeting_transcripts_dir`. Skips dream-generated
+  outputs via `isDreamOutput` (v0.23.2 self-consumption guard). **Local-only:**
+  rejects `ctx.remote === true` callers with `permission_denied`. Not in
+  the subagent allow-list (subagent calls always run with `remote=true`,
+  so it would always reject — a footgun if visible).
+
+#### Tool description redirects (zero-cost routing nudges)
+
+- `query`, `search`, `list_pages` descriptions now redirect personal /
+  emotional / "what's recent" intents to the new ops. Descriptions
+  extracted to `src/core/operations-descriptions.ts` so they're pinnable
+  in tests.
+- `query` description warns the LLM not to assume words like "crazy",
+  "notable", or "big" mean impressive — they often mean difficult or
+  emotionally charged.
+- `list_pages` gains `updated_after` (string ISO) and `sort` enum
+  (`updated_desc | updated_asc | created_desc | slug`, default
+  `updated_desc`). Engines threaded — they previously hardcoded
+  `ORDER BY updated_at DESC`.
+
+#### Subagent allow-list
+
+- `get_recent_salience` + `find_anomalies` added (read-only, no
+  schema-shaping needed).
+- `get_recent_transcripts` deliberately excluded — see codex C3 finding
+  reflected in `BRAIN_TOOL_ALLOWLIST` comments.
+
+#### Tests
+
+- 14 unit tests for the formula (`test/emotional-weight.test.ts`).
+- 13 unit tests for the anomaly stats helpers + zero-stddev fallback
+  (`test/anomalies.test.ts`).
+- 21 unit tests pinning the description constants + allow-list invariants
+  (`test/operations-descriptions.test.ts`).
+- 7 unit tests for the cycle phase orchestration with a fake engine
+  (`test/recompute-emotional-weight.test.ts`).
+- 8 unit tests for `listRecentTranscripts` covering trust gate, mtime
+  window, summary truncation, dream-output skip, no corpus_dir
+  (`test/transcripts.test.ts`).
+- E2E PGLite (no DATABASE_URL needed):
+  - `salience-pglite.test.ts` (Garry test — 7 wedding pages outrank 100 random)
+  - `anomalies-pglite.test.ts` (cohort burst > 3σ vs zero baseline)
+  - `multi-source-emotional-weight-pglite.test.ts` (codex C4#3 regression
+    guard for `(slug, source_id)` composite key)
+  - `cycle-recompute-emotional-weight-pglite.test.ts` (phase wiring +
+    dry-run)
+  - `list-pages-regression.test.ts` (IRON RULE — old call shape still
+    works; new sort + updated_after threaded)
+  - `backfill-perf-pglite.test.ts` (1000-page fixture under 5s budget)
+- E2E Postgres-gated:
+  - `engine-parity-salience.test.ts` (PGLite ↔ Postgres top-result and
+    cohort parity)
+- Tier-2 LLM routing eval (`ANTHROPIC_API_KEY` gated):
+  - `salience-llm-routing.test.ts` — calls Claude with v0.29 tool
+    descriptions and 12 personal-query phrasings, asserts routing lands
+    in `{get_recent_salience, find_anomalies, get_recent_transcripts}`.
+    ~$0.10/CI run. **Tests the actual ship criterion** — replaces the
+    discarded substring-match routing-eval fixtures (codex correctly
+    flagged those as fake coverage).
+
+#### For contributors
+
+- v0.23 routing-eval framework (`routing-eval.ts`) is **not** the right
+  surface for testing MCP tool-description routing. It's a substring
+  matcher over `skills/<name>/triggers:` frontmatter — useful for skill
+  resolver coverage, not LLM tool selection. Use the Tier-2 LLM eval
+  pattern in `test/e2e/salience-llm-routing.test.ts` for any future
+  feature whose value prop depends on the LLM choosing the right tool.
+- All v0.29 SQL was reviewed for cross-engine parity. Where postgres.js
+  and PGLite handle parameter binding differently (e.g., `$1::interval`
+  vs computing the boundary in JS), v0.29 always picks the parity-safe
+  path. See engine-parity-salience.test.ts for the smoke.
+
+
 ## [0.28.12] - 2026-05-07
 
 **gbrain hits 97.60% retrieval recall on the public LongMemEval benchmark.
