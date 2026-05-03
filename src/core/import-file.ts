@@ -427,7 +427,21 @@ export async function importFromFile(
   // the path-derived slug, so a mismatch here means the frontmatter is trying
   // to rewrite a page whose filesystem location says something different.
   const expectedSlug = slugifyPath(relativePath);
-  if (parsed.slug !== expectedSlug) {
+
+  // Exception: root-level filenames composed only of non-Latin characters can
+  // slugify to "". In that case there is no usable path-derived authority, so
+  // allow an explicit frontmatter slug instead of forcing the user to rename or
+  // move the human-readable file on disk.
+  const effectiveSlug = expectedSlug || parsed.slug;
+  if (!expectedSlug && !parsed.slug) {
+    return {
+      slug: expectedSlug,
+      status: 'skipped',
+      chunks: 0,
+      error: `Invalid slug: "". Add a frontmatter "slug:" field or move the file (from ${relativePath}).`,
+    };
+  }
+  if (expectedSlug && parsed.slug !== expectedSlug) {
     return {
       slug: expectedSlug,
       status: 'skipped',
@@ -438,13 +452,13 @@ export async function importFromFile(
     };
   }
 
-  // Pass the path-derived slug explicitly so that any future change to
+  // Pass the authoritative slug explicitly so that any future change to
   // parseMarkdown's precedence rules cannot re-introduce this bug.
   // v0.29.1: thread the basename (without extension) for filename-date
   // precedence in computeEffectiveDate. e.g. `daily/2024-03-15.md` →
   // filename `2024-03-15`.
   const fileBasename = basename(relativePath, '.md');
-  return importFromContent(engine, expectedSlug, content, { ...opts, filename: fileBasename });
+  return importFromContent(engine, effectiveSlug, content, { ...opts, filename: fileBasename });
 }
 
 /**

@@ -111,6 +111,27 @@ Poisoned content that would overwrite people/elon.
     expect((engine as any)._calls.length).toBe(0);
   });
 
+  test('accepts frontmatter slug for un-sluggable root CJK filename', async () => {
+    const filePath = join(TMP, '小米.md');
+    writeFileSync(filePath, `---
+type: company
+title: 小米
+slug: companies/xiaomi
+---
+
+Chinese root filename with explicit durable slug.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, '小米.md', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('companies/xiaomi');
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[0]).toBe('companies/xiaomi');
+  });
+
   test('accepts frontmatter slug that matches the file path', async () => {
     // Sanity: a legitimate file whose frontmatter slug happens to equal the
     // path-derived slug must still import.
