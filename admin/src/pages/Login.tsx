@@ -1,26 +1,22 @@
 import React, { useState } from 'react';
 import { api } from '../api';
 
+// v0.26.3 trust model (D11 + D12):
+// - The bootstrap token is NEVER stored in browser JS state. No
+//   localStorage, no sessionStorage, no React state beyond the form
+//   submit cycle. After successful POST /admin/login the operator's
+//   token only lives in the HttpOnly cookie that the server set.
+// - Magic-link URLs use single-use server-issued nonces, not the
+//   bootstrap token itself (see /admin/api/issue-magic-link). The
+//   bootstrap token never appears in a URL.
+// - Closing the tab ends the session client-side. Reopening the
+//   dashboard 401s and shows this page again. Operator asks the agent
+//   for a fresh magic link or pastes the bootstrap token from the
+//   server's terminal scrollback.
 export function LoginPage({ onLogin }: { onLogin: () => void }) {
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [autoLogging, setAutoLogging] = useState(true);
-
-  // Auto-login with saved token on mount
-  React.useEffect(() => {
-    const saved = localStorage.getItem('gbrain_admin_token');
-    if (saved) {
-      api.login(saved).then(() => {
-        onLogin();
-      }).catch(() => {
-        localStorage.removeItem('gbrain_admin_token');
-        setAutoLogging(false);
-      });
-    } else {
-      setAutoLogging(false);
-    }
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +24,9 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
     setLoading(true);
     try {
       await api.login(token);
-      localStorage.setItem('gbrain_admin_token', token);
+      // Don't persist the token. The HttpOnly cookie is the only
+      // session credential after this point.
+      setToken('');
       onLogin();
     } catch (err) {
       setError('Invalid token.');
@@ -36,17 +34,6 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
       setLoading(false);
     }
   };
-
-  if (autoLogging) {
-    return (
-      <div className="login-page">
-        <div className="login-box" style={{ textAlign: 'center' }}>
-          <div className="login-logo">GBrain</div>
-          <div style={{ color: 'var(--text-secondary)' }}>Authenticating...</div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="login-page">
@@ -80,13 +67,13 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
             "Give me the GBrain admin login link"
           </div>
           <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-            Your agent will generate a secure one-click URL that logs you in automatically.
+            Each link is single-use. Your agent generates a fresh one each time.
           </div>
         </div>
 
         <details style={{ marginBottom: 16 }}>
           <summary style={{ cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)' }}>
-            Or paste token manually
+            Or paste bootstrap token manually
           </summary>
           <form onSubmit={handleSubmit} style={{ marginTop: 12 }}>
             <div style={{ marginBottom: 12 }}>

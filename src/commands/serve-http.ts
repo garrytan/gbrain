@@ -241,14 +241,77 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.json({ status: 'authenticated' });
   });
 
-  // GET /admin/auth/:token — magic link login (one-click from agent)
-  // The agent generates: https://host:port/admin/auth/<bootstrapToken>
-  // Browser hits it, sets cookie, redirects to dashboard.
+  // ---------------------------------------------------------------------------
+  // Magic-link nonce store (single-use) — D11 + D12
+  //
+  // Trust model (codex review pushback resolved this):
+  //   - Bootstrap token is the long-term server admin secret. Printed to
+  //     stderr at startup; lives in operator's terminal scrollback only.
+  //   - Magic-link URLs use one-time NONCES (not the bootstrap token).
+  //     Agent calls POST /admin/api/issue-magic-link with the bootstrap
+  //     token in Authorization: Bearer to mint a nonce. Nonce expires in
+  //     5 minutes if unredeemed; consumed on first redemption.
+  //   - Bootstrap token never appears in a URL → no leakage via browser
+  //     history, proxy access logs, or Referer headers.
+  //   - Cookie sessions are HttpOnly + SameSite=Strict, but the bootstrap
+  //     token itself is never client-side-readable JS state (no
+  //     localStorage/sessionStorage cache — D12).
+  //
+  // Memory bound: nonces auto-purged on expiry sweep + LRU cap of 1000
+  // entries (an attacker minting millions can't OOM the server).
+  // ---------------------------------------------------------------------------
+  const magicLinkNonces = new Map<string, number>(); // nonce → expiresAt
+  const consumedNonces = new Set<string>();
+  const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  const NONCE_LRU_CAP = 1000;
+
+  // Best-effort GC: remove expired entries on each issue/redeem call.
+  function pruneExpiredNonces() {
+    const now = Date.now();
+    for (const [nonce, expiresAt] of magicLinkNonces) {
+      if (expiresAt < now) magicLinkNonces.delete(nonce);
+    }
+    // Cap consumedNonces growth — drop oldest entries past the LRU cap.
+    if (consumedNonces.size > NONCE_LRU_CAP) {
+      const drop = consumedNonces.size - NONCE_LRU_CAP;
+      const it = consumedNonces.values();
+      for (let i = 0; i < drop; i++) consumedNonces.delete(it.next().value as string);
+    }
+  }
+
+  // POST /admin/api/issue-magic-link — agent-callable mint endpoint.
+  // Auth: Authorization: Bearer <bootstrapToken>. Returns one-time nonce.
+  app.post('/admin/api/issue-magic-link', express.json(), (req: Request, res: Response) => {
+    const auth = (req.headers.authorization || '') as string;
+    const m = auth.match(/^Bearer\s+(\S+)$/i);
+    if (!m) {
+      res.status(401).json({ error: 'Authorization: Bearer <bootstrap-token> required' });
+      return;
+    }
+    const tokenHash = createHash('sha256').update(m[1]).digest('hex');
+    if (!safeHexEqual(tokenHash, bootstrapHash)) {
+      res.status(401).json({ error: 'Invalid bootstrap token' });
+      return;
+    }
+    pruneExpiredNonces();
+    const nonce = randomBytes(32).toString('hex');
+    magicLinkNonces.set(nonce, Date.now() + NONCE_TTL_MS);
+    const baseUrl = publicUrl || `http://localhost:${port}`;
+    res.json({ url: `${baseUrl}/admin/auth/${nonce}`, expires_in: NONCE_TTL_MS / 1000 });
+  });
+
+  // GET /admin/auth/:nonce — single-use magic link redemption.
+  // Browser hits it, server validates the nonce (exists + unconsumed +
+  // unexpired), marks consumed, sets cookie, redirects to dashboard.
   // Rate-limited at 10/min/IP to harden against DoS via bad-token loops.
   app.get('/admin/auth/:token', adminAuthRateLimiter, (req: Request, res: Response) => {
-    const token = String(req.params.token ?? '');
-    const tokenHash = createHash('sha256').update(token).digest('hex');
-    if (!safeHexEqual(tokenHash, bootstrapHash)) {
+    const nonce = String(req.params.token ?? '');
+    pruneExpiredNonces();
+
+    const expiresAt = magicLinkNonces.get(nonce);
+    const isValid = !!nonce && !!expiresAt && expiresAt > Date.now() && !consumedNonces.has(nonce);
+
+    if (!isValid) {
       res.status(401).send(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GBrain</title>
@@ -261,16 +324,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 .prompt{background:rgba(0,0,0,0.3);border-radius:6px;padding:8px 12px;margin-top:8px;font-family:monospace;font-size:12px;color:#88aaff}
 </style></head><body><div class="box">
 <div class="logo">GBrain</div>
-<div class="msg">⚠️ This admin link has expired or the server has restarted.</div>
+<div class="msg">⚠️ This admin link has expired, was already used, or the server has restarted.</div>
 <div class="hint"><b>Get a fresh link from your AI agent:</b>
 <div class="prompt">&ldquo;Give me the GBrain admin login link&rdquo;</div>
 </div></div></body></html>`);
       return;
     }
 
+    // Consume the nonce — it's single-use, second click will fail.
+    magicLinkNonces.delete(nonce);
+    consumedNonces.add(nonce);
+
     const sessionId = randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days for magic link
-    adminSessions.set(sessionId, expiresAt);
+    const sessionExpiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days for magic link
+    adminSessions.set(sessionId, sessionExpiresAt);
 
     res.cookie('gbrain_admin', sessionId, {
       httpOnly: true,
@@ -300,6 +367,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // Admin API endpoints
   // ---------------------------------------------------------------------------
+
+  // Sign-out-everywhere: nuke ALL active admin sessions in-memory. Every
+  // browser/tab fails its next request, gets 401, redirects to login.
+  // The bootstrap token itself is unaffected (still valid for new
+  // magic-link mints) — this only revokes existing cookie sessions.
+  app.post('/admin/api/sign-out-everywhere', requireAdmin, (_req: Request, res: Response) => {
+    const count = adminSessions.size;
+    adminSessions.clear();
+    res.json({ revoked_sessions: count });
+  });
+
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
       // Unified view: OAuth clients + legacy API keys

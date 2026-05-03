@@ -1,5 +1,9 @@
 const BASE = '';
 
+// v0.26.3 trust model (D11 + D12): the admin UI does NOT cache the
+// bootstrap token in browser JS state. On 401, redirect to login —
+// no auto-reauth via saved token, no localStorage/sessionStorage read.
+// The HttpOnly cookie set by /admin/login is the only session credential.
 async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(`${BASE}${path}`, {
     ...options,
@@ -7,27 +11,7 @@ async function apiFetch(path: string, options?: RequestInit) {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
   });
   if (res.status === 401) {
-    // Try auto-reauth with saved token before giving up
-    const saved = localStorage.getItem('gbrain_admin_token');
-    if (saved && !path.includes('/login')) {
-      try {
-        const reauth = await fetch(`${BASE}/admin/login`, {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: saved }),
-        });
-        if (reauth.ok) {
-          // Retry the original request
-          const retry = await fetch(`${BASE}${path}`, {
-            ...options, credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json', ...options?.headers },
-          });
-          if (retry.ok) return retry.json();
-        }
-      } catch {}
-      // Reauth failed — token is stale
-      localStorage.removeItem('gbrain_admin_token');
-    }
+    // No token cache to retry from. Redirect to login.
     window.location.hash = '#login';
     throw new Error('Unauthorized');
   }
@@ -40,6 +24,7 @@ async function apiFetch(path: string, options?: RequestInit) {
 
 export const api = {
   login: (token: string) => apiFetch('/admin/login', { method: 'POST', body: JSON.stringify({ token }) }),
+  signOutEverywhere: () => apiFetch('/admin/api/sign-out-everywhere', { method: 'POST' }),
   stats: () => apiFetch('/admin/api/stats'),
   health: () => apiFetch('/admin/api/health-indicators'),
   agents: () => apiFetch('/admin/api/agents'),
