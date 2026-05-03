@@ -118,7 +118,19 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
     }
   }
 
-  return gaps;
+  // Dedup gaps by (sourcePage, targetPage). extractEntityRefs returns one
+  // ref per `[[entity]]` instance in the source content; without this dedup,
+  // a source mentioning the same target N times produces N gaps and (after
+  // fixBacklinkGaps writes) N duplicate timeline entries on the target.
+  // hasBacklink can't catch this because target.content is a snapshot — it
+  // doesn't update as we accumulate gaps in this loop.
+  const seen = new Set<string>();
+  return gaps.filter((g) => {
+    const key = `${g.sourcePage}\0${g.targetPage}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** Fix back-link gaps by appending timeline entries to target pages */

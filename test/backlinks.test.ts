@@ -1,9 +1,13 @@
 import { describe, test, expect } from 'bun:test';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   extractEntityRefs,
   extractPageTitle,
   hasBacklink,
   buildBacklinkEntry,
+  findBacklinkGaps,
 } from '../src/commands/backlinks.ts';
 
 describe('extractEntityRefs', () => {
@@ -76,5 +80,58 @@ describe('buildBacklinkEntry', () => {
   test('builds properly formatted entry', () => {
     const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md', '2026-04-11');
     expect(entry).toBe('- **2026-04-11** | Referenced in [Q1 Review](../../meetings/q1-review.md)');
+  });
+});
+
+describe('findBacklinkGaps', () => {
+  // Helper: build a hermetic brain dir for the test, return its path.
+  function buildBrain(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-test-'));
+    for (const [rel, content] of Object.entries(files)) {
+      const full = join(dir, rel);
+      mkdirSync(join(full, '..'), { recursive: true });
+      writeFileSync(full, content);
+    }
+    return dir;
+  }
+
+  test('dedups multiple references from the same source to the same target', () => {
+    // Source page mentions [Jane Doe] three times; without the dedup guard
+    // the function returns 3 gaps and fixBacklinkGaps writes 3 duplicate
+    // timeline entries on jane-doe.md. Regression guard for the dedup fix.
+    const brain = buildBrain({
+      'people/jane-doe.md':
+        '---\ntitle: Jane Doe\n---\n# Jane Doe\n\n## Timeline\n',
+      'meetings/q1-review.md':
+        '# Q1 Review\n\nDiscussed plans with [Jane Doe](../people/jane-doe.md). ' +
+        'Then [Jane Doe](../people/jane-doe.md) shared the deck. Finally [Jane Doe](../people/jane-doe.md) signed off.',
+    });
+    try {
+      const gaps = findBacklinkGaps(brain);
+      const janeGaps = gaps.filter((g) => g.targetPage === 'people/jane-doe.md');
+      expect(janeGaps).toHaveLength(1);
+      expect(janeGaps[0].sourcePage).toBe('meetings/q1-review.md');
+    } finally {
+      rmSync(brain, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps separate gaps for the same source referencing different targets', () => {
+    // Dedup must not collapse legitimately-distinct (source, target) pairs.
+    const brain = buildBrain({
+      'people/alice.md': '---\ntitle: Alice\n---\n# Alice\n',
+      'people/bob.md': '---\ntitle: Bob\n---\n# Bob\n',
+      'meetings/sync.md':
+        '# Sync\n\n[Alice](../people/alice.md) and [Bob](../people/bob.md) attended.',
+    });
+    try {
+      const gaps = findBacklinkGaps(brain);
+      const syncGaps = gaps.filter((g) => g.sourcePage === 'meetings/sync.md');
+      expect(syncGaps).toHaveLength(2);
+      const targets = syncGaps.map((g) => g.targetPage).sort();
+      expect(targets).toEqual(['people/alice.md', 'people/bob.md']);
+    } finally {
+      rmSync(brain, { recursive: true, force: true });
+    }
   });
 });

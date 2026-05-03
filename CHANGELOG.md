@@ -2,6 +2,20 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **`backlinks` no longer writes duplicate timeline entries when a source
+  page mentions the same target multiple times.** `findBacklinkGaps`
+  returned one gap per `[[entity]]` instance in source content, and
+  `hasBacklink` checked an on-disk snapshot of the target that didn't
+  update as gaps accumulated. Result: a source mentioning a target N
+  times produced N timeline entries on that target. `findBacklinkGaps`
+  now dedups its return value by `(sourcePage, targetPage)` before
+  returning. Two new tests in `test/backlinks.test.ts` cover the
+  regression and the legit-distinct-targets non-collapse case.
+
 ## [0.26.0] - 2026-04-25
 
 ## **Multi-agent MCP is real. OAuth 2.1, HTTP server, React admin dashboard. Ship once, every AI client connects.**
