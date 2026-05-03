@@ -34,6 +34,16 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
   beforeAll(async () => {
     const { execSync, spawn } = await import('child_process');
 
+    // Clean up orphans from any previous crashed test runs
+    try {
+      const postgres = (await import('postgres')).default;
+      const cleanSql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
+      await cleanSql`DELETE FROM oauth_tokens WHERE client_id IN (SELECT client_id FROM oauth_clients WHERE client_name LIKE 'e2e-%')`;
+      await cleanSql`DELETE FROM oauth_clients WHERE client_name LIKE 'e2e-%'`;
+      await cleanSql`DELETE FROM access_tokens WHERE name LIKE 'e2e-%'`;
+      await cleanSql.end();
+    } catch {}
+
     // Register a test OAuth client via CLI
     const regOutput = execSync(
       'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write"',
@@ -96,12 +106,19 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1)', () => {
       await new Promise(r => setTimeout(r, 1000));
       if (!serverProcess.killed) serverProcess.kill('SIGKILL');
     }
-    // Revoke test client
+    // Nuclear cleanup via direct SQL — CLI revoke is unreliable
     try {
-      const { execSync } = await import('child_process');
-      execSync(`bun run src/cli.ts auth revoke-client "${clientId}"`,
-        { cwd: process.cwd(), encoding: 'utf8', stdio: 'pipe' });
-    } catch {}
+      const postgres = (await import('postgres')).default;
+      const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
+      await sql`DELETE FROM oauth_tokens WHERE client_id IN (SELECT client_id FROM oauth_clients WHERE client_name LIKE 'e2e-%')`;
+      await sql`DELETE FROM mcp_request_log WHERE token_name IN (SELECT client_id FROM oauth_clients WHERE client_name LIKE 'e2e-%')`;
+      await sql`DELETE FROM oauth_clients WHERE client_name LIKE 'e2e-%'`;
+      await sql`DELETE FROM mcp_request_log WHERE agent_name LIKE 'e2e-%'`;
+      await sql`DELETE FROM access_tokens WHERE name LIKE 'e2e-%'`;
+      await sql.end();
+    } catch (e) {
+      console.error('[e2e] Cleanup failed:', e instanceof Error ? e.message : e);
+    }
   });
 
   // Helper: mint a token with given scopes
