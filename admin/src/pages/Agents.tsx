@@ -367,87 +367,120 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
 
   const cid = agent.id || agent.client_id || '';
   const isOAuth = agent.auth_type === 'oauth';
+  const agentName = agent.name || agent.client_name || 'unknown';
 
-  const claudeCode = isOAuth
-    ? `# Step 1: Mint a token (run in terminal)
-curl -s -X POST ${serverUrl}/token \\
-  -d "grant_type=client_credentials&client_id=${cid}&client_secret=YOUR_SECRET&scope=${agent.scope || 'read write'}" \\
-  | jq -r .access_token
-
-# Step 2: Add to .mcp.json (paste the token from step 1)
-{
-  "mcpServers": {
-    "gbrain": {
-      "type": "url",
-      "url": "${serverUrl}/mcp",
-      "headers": {
-        "Authorization": "Bearer <paste token from step 1>"
-      }
-    }
-  }
-}`
-    : `# Add to .mcp.json — this API key never expires
-{
-  "mcpServers": {
-    "gbrain": {
-      "type": "url",
-      "url": "${serverUrl}/mcp",
-      "headers": {
-        "Authorization": "Bearer <your API key from creation>"
-      }
-    }
-  }
-}`;
+  // For API keys, we can't show the actual token (it was shown once at creation).
+  // For OAuth, we show the client_id and tell them to use their secret.
 
   const configSnippets: Record<string, string> = {
-    'claude-code': claudeCode,
-    'chatgpt': `1. Go to ChatGPT > Settings > Tools & Integrations > Add MCP
-2. Server URL: ${serverUrl}/mcp
-3. Authentication: OAuth 2.0
-   Token URL: ${serverUrl}/token
-   Client ID: ${cid}
-   Client Secret: YOUR_SECRET
-   Grant Type: client_credentials
-   Scope: ${agent.scope || 'read write'}
+    'claude-code': isOAuth
+      ? [
+        `The user wants to connect GBrain MCP to your context. Here's how.`,
+        ``,
+        `Run this command in terminal to register GBrain:`,
+        ``,
+        `claude mcp add --transport http gbrain ${serverUrl}/mcp \\`,
+        `  --header "Authorization: Bearer $(curl -s -X POST ${serverUrl}/token -d 'grant_type=client_credentials&client_id=${cid}&client_secret=PASTE_YOUR_CLIENT_SECRET_HERE&scope=${agent.scope || 'read write'}' | jq -r .access_token)"`,
+        ``,
+        `Replace PASTE_YOUR_CLIENT_SECRET_HERE with the secret shown when this agent was registered.`,
+        `The token will last ${agent.token_ttl ? (agent.token_ttl >= 86400 ? Math.floor(agent.token_ttl / 86400) + ' days' : Math.floor(agent.token_ttl / 3600) + ' hours') : '1 hour (default)'}.`,
+      ].join('\n')
+      : [
+        `The user wants to connect GBrain MCP to your context. Here's how.`,
+        ``,
+        `Run this command in terminal to register GBrain:`,
+        ``,
+        `claude mcp add --transport http gbrain ${serverUrl}/mcp \\`,
+        `  --header "Authorization: Bearer PASTE_YOUR_API_KEY_HERE"`,
+        ``,
+        `Replace PASTE_YOUR_API_KEY_HERE with the API key shown when "${agentName}" was created.`,
+        `API keys never expire.`,
+      ].join('\n'),
 
-Discovery URL (auto-configures everything):
-${serverUrl}/.well-known/oauth-authorization-server`,
-    'claude-cowork': `1. Open Claude.ai > Settings > Connected Apps > Add MCP Server
-2. Server URL: ${serverUrl}/mcp
-3. Authentication: OAuth 2.0
-   Token endpoint: ${serverUrl}/token
-   Client ID: ${cid}
-   Client Secret: YOUR_SECRET
-   Scope: ${agent.scope || 'read write'}
+    'chatgpt': [
+      `The user wants to connect GBrain MCP to ChatGPT.`,
+      ``,
+      `1. Open ChatGPT > Settings > Tools & Integrations > Add MCP Server`,
+      `2. Enter this URL — ChatGPT will auto-discover the OAuth configuration:`,
+      ``,
+      `   ${serverUrl}/.well-known/oauth-authorization-server`,
+      ``,
+      `3. When prompted for credentials:`,
+      `   Client ID: ${cid}`,
+      `   Client Secret: (the secret from agent registration)`,
+      `   Grant Type: client_credentials`,
+      `   Scope: ${agent.scope || 'read write'}`,
+    ].join('\n'),
 
-Discovery URL:
-${serverUrl}/.well-known/oauth-authorization-server`,
-    cursor: `# Add to .cursor/mcp.json
-{
-  "mcpServers": {
-    "gbrain": {
-      "url": "${serverUrl}/mcp",
-      "auth": {
-        "type": "oauth2",
-        "clientId": "${cid}",
-        "clientSecret": "YOUR_SECRET",
-        "tokenUrl": "${serverUrl}/token",
-        "grantType": "client_credentials",
-        "scope": "${agent.scope || 'read write'}"
-      }
-    }
-  }
-}`,
-    perplexity: `1. Go to Settings > Connectors > Add MCP
-2. Server URL: ${serverUrl}/mcp
-3. Client ID: ${cid}
-4. Client Secret: YOUR_SECRET`,
+    'claude-cowork': [
+      `The user wants to connect GBrain MCP to Claude.ai.`,
+      ``,
+      `1. Open claude.ai > Settings > Connected Apps > Add MCP Server`,
+      `2. Server URL: ${serverUrl}/mcp`,
+      `3. When prompted for auth:`,
+      `   Token endpoint: ${serverUrl}/token`,
+      `   Client ID: ${cid}`,
+      `   Client Secret: (the secret from agent registration)`,
+      `   Scope: ${agent.scope || 'read write'}`,
+      ``,
+      `Discovery URL: ${serverUrl}/.well-known/oauth-authorization-server`,
+    ].join('\n'),
+
+    cursor: isOAuth
+      ? [
+        `The user wants to connect GBrain MCP to Cursor.`,
+        ``,
+        `Cursor supports OAuth for remote MCP. Add to .cursor/mcp.json:`,
+        ``,
+        `{`,
+        `  "mcpServers": {`,
+        `    "gbrain": {`,
+        `      "url": "${serverUrl}/mcp",`,
+        `      "transport": "sse"`,
+        `    }`,
+        `  }`,
+        `}`,
+        ``,
+        `Cursor will auto-discover OAuth via:`,
+        `${serverUrl}/.well-known/oauth-authorization-server`,
+        ``,
+        `When prompted: Client ID ${cid}, use the secret from registration.`,
+      ].join('\n')
+      : [
+        `The user wants to connect GBrain MCP to Cursor.`,
+        ``,
+        `Add to .cursor/mcp.json:`,
+        ``,
+        `{`,
+        `  "mcpServers": {`,
+        `    "gbrain": {`,
+        `      "url": "${serverUrl}/mcp",`,
+        `      "transport": "sse",`,
+        `      "headers": {`,
+        `        "Authorization": "Bearer PASTE_YOUR_API_KEY_HERE"`,
+        `      }`,
+        `    }`,
+        `  }`,
+        `}`,
+        ``,
+        `Replace PASTE_YOUR_API_KEY_HERE with the API key shown when "${agentName}" was created.`,
+      ].join('\n'),
+
+    perplexity: [
+      `The user wants to connect GBrain MCP to Perplexity.`,
+      ``,
+      `1. Go to Settings > Connectors > Add MCP`,
+      `2. Server URL: ${serverUrl}/mcp`,
+      `3. Client ID: ${cid}`,
+      `4. Client Secret: (the secret from agent registration)`,
+    ].join('\n'),
+
     json: JSON.stringify({
       server_url: serverUrl + '/mcp',
       token_url: serverUrl + '/token',
       discovery_url: serverUrl + '/.well-known/oauth-authorization-server',
       client_id: cid,
-      client_name: agent.name || agent.client_name,
+      client_name: agentName,
       auth_type: agent.auth_type,
       scope: agent.scope,
     }, null, 2),
