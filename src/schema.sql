@@ -340,12 +340,15 @@ CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) 
 -- mcp_request_log: usage logging for remote MCP requests
 -- ============================================================
 CREATE TABLE IF NOT EXISTS mcp_request_log (
-  id         SERIAL PRIMARY KEY,
-  token_name TEXT,
-  operation  TEXT NOT NULL,
-  latency_ms INTEGER,
-  status     TEXT NOT NULL DEFAULT 'success',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id            SERIAL PRIMARY KEY,
+  token_name    TEXT,
+  agent_name    TEXT,
+  operation     TEXT NOT NULL,
+  latency_ms    INTEGER,
+  status        TEXT NOT NULL DEFAULT 'success',
+  params        JSONB,
+  error_message TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ============================================================
@@ -361,6 +364,8 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   token_endpoint_auth_method TEXT,
   client_id_issued_at     BIGINT,
   client_secret_expires_at BIGINT,
+  token_ttl               INTEGER,
+  deleted_at              TIMESTAMPTZ,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -390,8 +395,9 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Composite index for admin dashboard request log queries
+-- Composite indexes for admin dashboard request log queries
 CREATE INDEX IF NOT EXISTS idx_mcp_log_time_agent ON mcp_request_log(created_at, token_name);
+CREATE INDEX IF NOT EXISTS idx_mcp_log_agent_time ON mcp_request_log(agent_name, created_at DESC);
 
 -- ============================================================
 -- files: binary attachments stored in Supabase Storage
