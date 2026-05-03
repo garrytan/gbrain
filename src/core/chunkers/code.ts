@@ -106,7 +106,12 @@ import G_ZIG from '../../assets/wasm/grammars/tree-sitter-zig.wasm' with { type:
 // chunks get the new columns populated. Without this, the v28 backfill
 // gives every existing chunk a search_vector but subsequent Layer 5 AST
 // work would silently no-op.
-export const CHUNKER_VERSION = 4;
+//
+// v5 (v0.20.1 Cathedral II A4): doc_comment extraction. Preceding JSDoc /
+// Python docstrings / language-native comments are extracted and stored in
+// content_chunks.doc_comment, which the FTS trigger weights 'A'. Existing
+// brains re-chunk on next sync to populate the column.
+export const CHUNKER_VERSION = 5;
 
 // Lazy-loaded tree-sitter module (v0.22.x API: Parser is default export)
 let Parser: typeof import('web-tree-sitter') | null = null;
@@ -150,6 +155,13 @@ export interface CodeChunkMetadata {
    * Null when symbolName is missing (merged chunks, module-level fallback).
    */
   symbolNameQualified?: string | null;
+  /**
+   * v0.20.1 Cathedral II A4: extracted doc comment for this symbol (JSDoc,
+   * Python docstring, Go comment, etc.). Stored in content_chunks.doc_comment
+   * which the FTS trigger weights at 'A' — above chunk_text at 'B'. Null when
+   * no doc comment precedes the declaration.
+   */
+  docComment?: string | null;
 }
 
 export interface CodeChunk {
@@ -548,6 +560,9 @@ export async function chunkCodeTextFull(
         if (chunks.length > before) continue;
       }
 
+      // v0.20.1 Cathedral II A4: extract doc comment for this node.
+      const docComment = extractDocComment(nestableNode ?? node, source, language);
+
       if (estimateTokens(nodeText) <= largeThreshold) {
         chunks.push(buildChunk({
           body: nodeText, filePath, language, symbolName, symbolType,
@@ -555,11 +570,14 @@ export async function chunkCodeTextFull(
           endLine: node.endPosition.row + 1,
           index: chunks.length,
           parentSymbolPath: [],
+          docComment,
         }));
         continue;
       }
 
-      // Split very large nodes at nested block boundaries
+      // Split very large nodes at nested block boundaries. Only the first
+      // sub-range inherits the doc comment — the comment belongs to the
+      // declaration, not to the split continuation chunks.
       const subRanges = splitLargeNode(node, source, chunkTarget);
       if (subRanges.length === 0) {
         chunks.push(buildChunk({
@@ -568,11 +586,13 @@ export async function chunkCodeTextFull(
           endLine: node.endPosition.row + 1,
           index: chunks.length,
           parentSymbolPath: [],
+          docComment,
         }));
         continue;
       }
 
-      for (const range of subRanges) {
+      for (let ri = 0; ri < subRanges.length; ri++) {
+        const range = subRanges[ri]!;
         const body = source.slice(range.startIndex, range.endIndex).trim();
         if (!body) continue;
         chunks.push(buildChunk({
@@ -580,6 +600,7 @@ export async function chunkCodeTextFull(
           startLine: range.startLine, endLine: range.endLine,
           index: chunks.length,
           parentSymbolPath: [],
+          docComment: ri === 0 ? docComment : null,
         }));
       }
     }
@@ -703,6 +724,63 @@ function buildMergedChunk(group: CodeChunk[], index: number): CodeChunk {
   };
 }
 
+// ---------- Doc comment extraction (Cathedral II A4) ----------
+
+// AST node types that represent comments in each language.
+// Most languages use 'comment'; Rust and Java have dedicated doc_comment nodes.
+const COMMENT_NODE_TYPES = new Set([
+  'comment',           // TS/JS/Go/C/C++/C#/PHP/Swift/Lua/Ruby/Elixir/Bash
+  'line_comment',      // Rust, Kotlin
+  'block_comment',     // Rust, Kotlin
+  'doc_comment',       // Rust, Java
+  'multiline_comment', // Swift, Kotlin
+]);
+
+/**
+ * Extract the doc comment for an AST node.
+ *
+ * Python: reads the first expression_statement in the body (docstring).
+ * All others: walks previousNamedSibling looking for adjacent comment nodes.
+ *
+ * Returns null when no doc comment is found or on any error — doc comment
+ * extraction is best-effort and must never break chunking.
+ */
+function extractDocComment(node: any, source: string, language: SupportedCodeLanguage): string | null {
+  try {
+    if (language === 'python') return extractPythonDocstring(node, source);
+    return extractPrecedingComment(node, source);
+  } catch {
+    return null;
+  }
+}
+
+function extractPrecedingComment(node: any, source: string): string | null {
+  const parts: string[] = [];
+  let cursor = node.previousNamedSibling;
+  while (cursor && COMMENT_NODE_TYPES.has(cursor.type)) {
+    // Only grab comments that are adjacent — allow at most one blank line between
+    // the comment end and the next node's start so unrelated module-level comments
+    // don't get attributed to a function below them.
+    const gapLines = node.startPosition.row - cursor.endPosition.row;
+    if (gapLines > 2) break;
+    parts.unshift(source.slice(cursor.startIndex, cursor.endIndex).trim());
+    cursor = cursor.previousNamedSibling;
+  }
+  return parts.length > 0 ? parts.join('\n') : null;
+}
+
+function extractPythonDocstring(node: any, source: string): string | null {
+  // Python docstrings live as the first expression_statement inside the body.
+  const body = node.childForFieldName('body') ??
+    node.namedChildren.find((c: any) => c.type === 'block');
+  if (!body) return null;
+  const first = body.namedChildren[0];
+  if (!first || first.type !== 'expression_statement') return null;
+  const expr = first.namedChildren[0];
+  if (!expr || (expr.type !== 'string' && expr.type !== 'concatenated_string')) return null;
+  return source.slice(expr.startIndex, expr.endIndex).trim();
+}
+
 // ---------- Internals ----------
 
 function fallbackChunks(
@@ -734,6 +812,8 @@ function buildChunk(input: {
   index: number;
   /** v0.20.0 Cathedral II Layer 6: non-empty when nested inside a parent. */
   parentSymbolPath?: string[];
+  /** v0.20.1 Cathedral II A4: extracted doc comment (JSDoc, docstring, etc.). */
+  docComment?: string | null;
 }): CodeChunk {
   const symbol = input.symbolName ? `${input.symbolType} ${input.symbolName}` : input.symbolType;
   const parentPath = input.parentSymbolPath && input.parentSymbolPath.length > 0
@@ -760,6 +840,7 @@ function buildChunk(input: {
       endLine: input.endLine,
       parentSymbolPath: input.parentSymbolPath ?? [],
       symbolNameQualified: qualified,
+      docComment: input.docComment ?? null,
     },
   };
 }
@@ -844,6 +925,7 @@ function emitNestedScoped(
     endLine: node.endPosition.row + 1,
     index: chunks.length,
     parentSymbolPath: [...parentPath],
+    docComment: extractDocComment(node, source, language),
   }));
 
   const newParentPath = [...parentPath, name];
@@ -866,6 +948,7 @@ function emitNestedScoped(
       endLine: leaf.endPosition.row + 1,
       index: chunks.length,
       parentSymbolPath: newParentPath,
+      docComment: extractDocComment(leaf, source, language),
     }));
   }
 }
