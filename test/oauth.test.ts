@@ -180,6 +180,21 @@ describe('verifyAccessToken', () => {
     await expect(provider.verifyAccessToken('nonexistent-token')).rejects.toThrow('Invalid token');
   });
 
+  test('expiresAt is always a number (not string) — SDK bearerAuth compat', async () => {
+    // Regression: postgres driver with prepare:false returns integers as strings.
+    // MCP SDK's bearerAuth middleware checks typeof === 'number' and rejects strings.
+    // verifyAccessToken must cast to Number() before returning.
+    const { clientId, clientSecret } = await provider.registerClientManual(
+      'typeof-test', ['client_credentials'], 'read',
+    );
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret, 'read');
+    const authInfo = await provider.verifyAccessToken(tokens.access_token);
+
+    expect(typeof authInfo.expiresAt).toBe('number');
+    expect(Number.isNaN(authInfo.expiresAt)).toBe(false);
+    expect(authInfo.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
   test('legacy access_tokens fallback works', async () => {
     // Insert a legacy bearer token
     const legacyToken = generateToken('gbrain_');

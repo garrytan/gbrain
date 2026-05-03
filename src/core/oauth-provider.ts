@@ -300,7 +300,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         scopes: (row.scopes as string[]) || [],
-        expiresAt: row.expires_at as number,
+        expiresAt: Number(row.expires_at),
         resource: row.resource ? new URL(row.resource as string) : undefined,
       };
     }
