@@ -523,7 +523,20 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <span>{agent.token_ttl ? (agent.token_ttl >= 31536000 ? 'No expiry' : agent.token_ttl >= 86400 ? `${Math.floor(agent.token_ttl / 86400)}d` : agent.token_ttl >= 3600 ? `${Math.floor(agent.token_ttl / 3600)}h` : `${agent.token_ttl}s`) : '1h (default)'}</span>
         </div>
 
-        {isOAuth && (<>
+        {/*
+          Config Export visible for both auth_type=oauth AND auth_type=api_key.
+          Claude Code + Cursor + JSON tabs render real snippets regardless
+          (commit 15's snippets are auth-type-aware for those two clients;
+          JSON is just structured metadata). ChatGPT, Claude.ai, and
+          Perplexity tabs render an "OAuth client required" message on
+          api_key agents — those MCP clients only speak OAuth 2.0
+          client_credentials, not raw bearer tokens.
+
+          Pre-fix (Wintermute commit 16): the entire Config Export
+          section was hidden for api_key agents, dropping the working
+          Claude Code + Cursor snippets along with the broken ones.
+          (D5=C in the eng review.)
+        */}
         <div className="section-title">Config Export</div>
         <div className="tabs" style={{ flexWrap: 'wrap' }}>
           <div className={`tab ${tab === 'claude-code' ? 'active' : ''}`} onClick={() => setTab('claude-code')}>Claude Code</div>
@@ -533,17 +546,35 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <div className={`tab ${tab === 'perplexity' ? 'active' : ''}`} onClick={() => setTab('perplexity')}>Perplexity</div>
           <div className={`tab ${tab === 'json' ? 'active' : ''}`} onClick={() => setTab('json')}>JSON</div>
         </div>
-        <div className="code-block">
-          <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{configSnippets[tab]}</pre>
-          <button className="copy-btn" onClick={() => copy(configSnippets[tab])}>Copy</button>
-        </div>
-        </>)}
-        {!isOAuth && (
-          <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 16 }}>
-            API keys use simple bearer token auth. The token was shown once at creation.<br/>
-            Use with: <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: 4 }}>Authorization: Bearer &lt;key&gt;</code>
-          </div>
-        )}
+        {(() => {
+          const oauthOnlyTabs = new Set(['chatgpt', 'claude-cowork', 'perplexity']);
+          if (!isOAuth && oauthOnlyTabs.has(tab)) {
+            const clientName = { chatgpt: 'ChatGPT', 'claude-cowork': 'Claude.ai', perplexity: 'Perplexity' }[tab] || tab;
+            return (
+              <div style={{
+                background: 'rgba(255, 200, 100, 0.08)',
+                border: '1px solid rgba(255, 200, 100, 0.2)',
+                borderRadius: 8,
+                padding: '14px 16px',
+                marginTop: 12,
+                fontSize: 13,
+                lineHeight: 1.6,
+                color: 'var(--text-secondary)',
+              }}>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
+                  {clientName} requires an OAuth client
+                </div>
+                {clientName} only supports OAuth 2.0 (client_credentials). API keys use raw bearer tokens, which {clientName} does not accept. Register a separate OAuth client and use that to connect this AI.
+              </div>
+            );
+          }
+          return (
+            <div className="code-block">
+              <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{configSnippets[tab]}</pre>
+              <button className="copy-btn" onClick={() => copy(configSnippets[tab])}>Copy</button>
+            </div>
+          );
+        })()}
 
         <div style={{ marginTop: 32 }}>
           {agent.status === 'active' && (
