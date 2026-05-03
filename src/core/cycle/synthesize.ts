@@ -243,6 +243,10 @@ export async function runPhaseSynthesize(
       transcripts_discovered: transcripts.length,
       transcripts_processed: worthProcessing.length,
       pages_written: writtenSlugs.length,
+      // v0.29: emit the slug list so the recompute_emotional_weight phase can
+      // union with sync's pagesAffected and recompute weights for every page
+      // synthesize wrote in this cycle.
+      written_slugs: writtenSlugs,
       reverse_write_count: reverseWriteCount,
       child_outcomes: childOutcomes,
       summary_slug: summarySlug,

@@ -27,9 +27,12 @@ import type {
   EngineConfig,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
+  SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
+  EmotionalWeightInputRow, EmotionalWeightWriteRow,
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, takeRowToTake } from './utils.ts';
-import { GBrainError } from './types.ts';
+import { GBrainError, PAGE_SORT_SQL } from './types.ts';
+import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
 
@@ -412,9 +415,13 @@ export class PGLiteEngine implements BrainEngine {
     params.push(limit, offset);
     const limitSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
 
+    // v0.29: ORDER BY threading via PAGE_SORT_SQL whitelist (no SQL injection).
+    const sortKey = filters?.sort && PAGE_SORT_SQL[filters.sort] ? filters.sort : 'updated_desc';
+    const orderBy = PAGE_SORT_SQL[sortKey];
+
     const { rows } = await this.db.query(
       `SELECT p.* FROM pages p ${tagJoin} ${whereSql}
-       ORDER BY p.updated_at DESC ${limitSql}`,
+       ORDER BY ${orderBy} ${limitSql}`,
       params
     );
 
@@ -2052,6 +2059,213 @@ export class PGLiteEngine implements BrainEngine {
       [since]
     );
     return rows as unknown as EvalCaptureFailure[];
+  }
+
+  // ============================================================
+  // v0.29 — Salience + Anomaly Detection
+  // ============================================================
+
+  async batchLoadEmotionalInputs(slugs?: string[]): Promise<EmotionalWeightInputRow[]> {
+    // Two CTEs avoid the N×M cartesian product (codex C4#4).
+    const baseSql = `
+      WITH page_tags AS (
+        SELECT page_id, array_agg(DISTINCT tag) AS tags
+          FROM tags GROUP BY page_id
+      ),
+      page_takes AS (
+        SELECT page_id, json_agg(json_build_object(
+                 'holder', holder, 'weight', weight, 'kind', kind, 'active', active
+               )) AS takes
+          FROM takes WHERE active = TRUE GROUP BY page_id
+      )
+      SELECT p.slug, p.source_id,
+             COALESCE(pt.tags, ARRAY[]::text[]) AS tags,
+             COALESCE(pk.takes, '[]'::json) AS takes
+        FROM pages p
+        LEFT JOIN page_tags pt  ON pt.page_id = p.id
+        LEFT JOIN page_takes pk ON pk.page_id = p.id
+    `;
+    const { rows } = slugs
+      ? await this.db.query(`${baseSql} WHERE p.slug = ANY($1::text[])`, [slugs])
+      : await this.db.query(baseSql);
+    return (rows as Record<string, unknown>[]).map(r => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      tags: (r.tags as string[]) ?? [],
+      takes: (r.takes as EmotionalWeightInputRow['takes']) ?? [],
+    }));
+  }
+
+  async setEmotionalWeightBatch(rows: EmotionalWeightWriteRow[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    const slugs = rows.map(r => r.slug);
+    const sourceIds = rows.map(r => r.source_id);
+    const weights = rows.map(r => r.weight);
+    // Composite-keyed UPDATE FROM unnest (codex C4#3).
+    const result = await this.db.query(
+      `UPDATE pages
+          SET emotional_weight = u.weight
+         FROM unnest($1::text[], $2::text[], $3::real[])
+           AS u(slug, source_id, weight)
+        WHERE pages.slug = u.slug AND pages.source_id = u.source_id
+        RETURNING 1`,
+      [slugs, sourceIds, weights]
+    );
+    return result.rows.length;
+  }
+
+  async getRecentSalience(opts: SalienceOpts): Promise<SalienceResult[]> {
+    const days = Math.max(0, opts.days ?? 14);
+    const limit = clampSearchLimit(opts.limit, 20, 100);
+    const slugPrefix = opts.slugPrefix;
+    const boundaryIso = new Date(Date.now() - days * 86400000).toISOString();
+
+    const params: unknown[] = [boundaryIso];
+    let prefixCondition = '';
+    if (slugPrefix) {
+      const escaped = slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+      params.push(escaped);
+      prefixCondition = `AND p.slug LIKE $${params.length} ESCAPE '\\'`;
+    }
+    params.push(limit);
+    const limitParam = `$${params.length}`;
+
+    const { rows } = await this.db.query(
+      `SELECT p.slug, p.source_id, p.title, p.type, p.updated_at, p.emotional_weight,
+              COUNT(DISTINCT t.id) AS take_count,
+              COALESCE(AVG(t.weight), 0) AS take_avg_weight,
+              (p.emotional_weight * 5)
+                + ln(1 + COUNT(DISTINCT t.id))
+                + (1.0 / (1 + EXTRACT(EPOCH FROM (now() - p.updated_at)) / 86400))
+                AS score
+         FROM pages p
+         LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
+        WHERE p.updated_at >= $1::timestamptz
+          ${prefixCondition}
+        GROUP BY p.id
+        ORDER BY score DESC
+        LIMIT ${limitParam}`,
+      params
+    );
+    return (rows as Record<string, unknown>[]).map(r => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      title: String(r.title ?? ''),
+      type: r.type as SalienceResult['type'],
+      updated_at: r.updated_at as Date,
+      emotional_weight: Number(r.emotional_weight ?? 0),
+      take_count: Number(r.take_count ?? 0),
+      take_avg_weight: Number(r.take_avg_weight ?? 0),
+      score: Number(r.score ?? 0),
+    }));
+  }
+
+  async findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]> {
+    const sigma = opts.sigma ?? 3.0;
+    const lookbackDays = Math.max(1, opts.lookback_days ?? 30);
+    const sinceIso = (opts.since ?? new Date().toISOString().slice(0, 10));
+    const sinceDate = new Date(sinceIso + 'T00:00:00Z');
+    const sinceEnd = new Date(sinceDate.getTime() + 86400000);
+    const baselineStart = new Date(sinceDate.getTime() - lookbackDays * 86400000);
+
+    const tagBaselineRes = await this.db.query(
+      `WITH days AS (
+         SELECT day::date FROM generate_series(
+           $1::date, $2::date - 1, '1 day'::interval
+         ) AS day
+       ),
+       cohort_keys AS (
+         SELECT DISTINCT t.tag FROM tags t JOIN pages p ON p.id = t.page_id
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+       ),
+       touched AS (
+         SELECT t.tag,
+                date_trunc('day', p.updated_at)::date AS day,
+                COUNT(DISTINCT p.id) AS cnt
+           FROM tags t JOIN pages p ON p.id = t.page_id
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+          GROUP BY 1, 2
+       )
+       SELECT cd.tag AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
+         FROM cohort_keys cd CROSS JOIN days d
+         LEFT JOIN touched t ON t.tag = cd.tag AND t.day = d.day`,
+      [baselineStart.toISOString(), sinceDate.toISOString()]
+    );
+
+    const typeBaselineRes = await this.db.query(
+      `WITH days AS (
+         SELECT day::date FROM generate_series(
+           $1::date, $2::date - 1, '1 day'::interval
+         ) AS day
+       ),
+       cohort_keys AS (
+         SELECT DISTINCT p.type FROM pages p
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+       ),
+       touched AS (
+         SELECT p.type,
+                date_trunc('day', p.updated_at)::date AS day,
+                COUNT(DISTINCT p.id) AS cnt
+           FROM pages p
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+          GROUP BY 1, 2
+       )
+       SELECT cd.type AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
+         FROM cohort_keys cd CROSS JOIN days d
+         LEFT JOIN touched t ON t.type = cd.type AND t.day = d.day`,
+      [baselineStart.toISOString(), sinceDate.toISOString()]
+    );
+
+    const tagTodayRes = await this.db.query(
+      `SELECT t.tag AS cohort_value,
+              COUNT(DISTINCT p.id)::int AS count,
+              array_agg(DISTINCT p.slug) AS slugs
+         FROM tags t JOIN pages p ON p.id = t.page_id
+        WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+        GROUP BY 1`,
+      [sinceIso, sinceEnd.toISOString()]
+    );
+
+    const typeTodayRes = await this.db.query(
+      `SELECT p.type AS cohort_value,
+              COUNT(DISTINCT p.id)::int AS count,
+              array_agg(DISTINCT p.slug) AS slugs
+         FROM pages p
+        WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+        GROUP BY 1`,
+      [sinceIso, sinceEnd.toISOString()]
+    );
+
+    const baseline = [
+      ...(tagBaselineRes.rows as Record<string, unknown>[]).map(r => ({
+        cohort_kind: 'tag' as const,
+        cohort_value: String(r.cohort_value),
+        day: String(r.day),
+        count: Number(r.count),
+      })),
+      ...(typeBaselineRes.rows as Record<string, unknown>[]).map(r => ({
+        cohort_kind: 'type' as const,
+        cohort_value: String(r.cohort_value),
+        day: String(r.day),
+        count: Number(r.count),
+      })),
+    ];
+    const today = [
+      ...(tagTodayRes.rows as Record<string, unknown>[]).map(r => ({
+        cohort_kind: 'tag' as const,
+        cohort_value: String(r.cohort_value),
+        count: Number(r.count),
+        page_slugs: (r.slugs as string[]) ?? [],
+      })),
+      ...(typeTodayRes.rows as Record<string, unknown>[]).map(r => ({
+        cohort_kind: 'type' as const,
+        cohort_value: String(r.cohort_value),
+        count: Number(r.count),
+        page_slugs: (r.slugs as string[]) ?? [],
+      })),
+    ];
+
+    return computeAnomaliesFromBuckets(baseline, today, sigma);
   }
 }
 

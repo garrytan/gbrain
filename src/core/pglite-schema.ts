@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS pages (
   timeline      TEXT    NOT NULL DEFAULT '',
   frontmatter   JSONB   NOT NULL DEFAULT '{}',
   content_hash  TEXT,
+  -- v0.29: deterministic 0..1 score (tag emotion + take density + user-as-holder ratio).
+  -- Populated by the recompute_emotional_weight cycle phase.
+  emotional_weight REAL NOT NULL DEFAULT 0.0,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)

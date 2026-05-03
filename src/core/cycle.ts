@@ -22,8 +22,9 @@
  *   │ Phase 6: patterns           (v0.23: cross-session themes; │
  *   │                              MUST be after extract so     │
  *   │                              graph state is fresh)        │
- *   │ Phase 7: embed --stale      (DB writes)                   │
- *   │ Phase 8: orphans            (DB read, report only)        │
+ *   │ Phase 7: recompute_emotional_weight (v0.29: DB writes)    │
+ *   │ Phase 8: embed --stale      (DB writes)                   │
+ *   │ Phase 9: orphans            (DB read, report only)        │
  *   └───────────────────────────────────────────────────────────┘
  *
  * COORDINATION:
@@ -52,7 +53,7 @@ import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
-export type CyclePhase = 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'patterns' | 'embed' | 'orphans';
+export type CyclePhase = 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'patterns' | 'recompute_emotional_weight' | 'embed' | 'orphans';
 
 export const ALL_PHASES: CyclePhase[] = [
   'lint',
@@ -61,6 +62,9 @@ export const ALL_PHASES: CyclePhase[] = [
   'synthesize',
   'extract',
   'patterns',
+  // v0.29 — runs AFTER extract + synthesize so it sees the union of
+  // sync-touched + synthesize-written pages with fresh tag + take state.
+  'recompute_emotional_weight',
   'embed',
   'orphans',
 ];
@@ -78,6 +82,8 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'synthesize',
   'extract',
   'patterns',
+  // v0.29 — writes pages.emotional_weight column.
+  'recompute_emotional_weight',
   'embed',
 ]);
 
@@ -138,6 +144,8 @@ export interface CycleReport {
     synth_pages_written: number;
     /** v0.23: number of pattern pages written/updated by patterns phase. */
     patterns_written: number;
+    /** v0.29: number of pages whose emotional_weight was (re)computed. */
+    pages_emotional_weight_recomputed: number;
   };
 }
 
@@ -783,8 +791,11 @@ export async function runCycle(
     }
 
     // ── Phase 3: sync ───────────────────────────────────────────
-    // Track which slugs sync touched so extract can run incrementally.
+    // Track which slugs sync touched so extract can run incrementally,
+    // and which slugs synthesize wrote so recompute_emotional_weight can
+    // pick up the union of (sync ∪ synthesize) for v0.29 incremental mode.
     let syncPagesAffected: string[] | undefined;
+    let synthesizeWrittenSlugs: string[] | undefined;
     if (phases.includes('sync')) {
       checkAborted(opts.signal);
       if (!engine) {
@@ -832,6 +843,11 @@ export async function runCycle(
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
+        // v0.29: capture synthesize-written slugs so the recompute_emotional_weight
+        // phase can union them with sync's pagesAffected for incremental mode.
+        if (result.details && Array.isArray(result.details.written_slugs)) {
+          synthesizeWrittenSlugs = result.details.written_slugs as string[];
+        }
         progress.finish();
       }
       await safeYield(opts.yieldBetweenPhases);
@@ -890,7 +906,47 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
-    // ── Phase 7: embed ──────────────────────────────────────────
+    // ── Phase 7: recompute_emotional_weight (v0.29) ─────────────
+    // Runs AFTER extract + synthesize so it sees fresh tags + takes for
+    // every page touched in this cycle. Incremental mode uses union(sync,
+    // synthesize); full mode walks every page in the brain.
+    if (phases.includes('recompute_emotional_weight')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'recompute_emotional_weight',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.recompute_emotional_weight');
+        const { runPhaseRecomputeEmotionalWeight } = await import('./cycle/recompute-emotional-weight.ts');
+        // Determine incremental vs full mode. If sync OR synthesize ran in this
+        // cycle, do incremental over their union. If neither phase ran (e.g.,
+        // user passed `--phase recompute_emotional_weight`), do full walk.
+        const incremental: string[] | undefined =
+          (syncPagesAffected || synthesizeWrittenSlugs)
+            ? Array.from(new Set([
+                ...(syncPagesAffected ?? []),
+                ...(synthesizeWrittenSlugs ?? []),
+              ]))
+            : undefined;
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseRecomputeEmotionalWeight(engine, {
+            dryRun,
+            affectedSlugs: incremental,
+          }),
+        );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── Phase 8: embed ──────────────────────────────────────────
     if (phases.includes('embed')) {
       checkAborted(opts.signal);
       if (!engine) {
@@ -911,7 +967,7 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
-    // ── Phase 8: orphans ────────────────────────────────────────
+    // ── Phase 9: orphans ────────────────────────────────────────
     if (phases.includes('orphans')) {
       checkAborted(opts.signal);
       if (!engine) {
@@ -965,6 +1021,7 @@ function emptyTotals(): CycleReport['totals'] {
     transcripts_processed: 0,
     synth_pages_written: 0,
     patterns_written: 0,
+    pages_emotional_weight_recomputed: 0,
   };
 }
 
@@ -992,6 +1049,8 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
       t.synth_pages_written = Number(p.details.pages_written ?? 0);
     } else if (p.phase === 'patterns' && p.details) {
       t.patterns_written = Number(p.details.patterns_written ?? 0);
+    } else if (p.phase === 'recompute_emotional_weight' && p.details) {
+      t.pages_emotional_weight_recomputed = Number(p.details.pages_recomputed ?? 0);
     }
   }
   return t;
@@ -1010,6 +1069,7 @@ function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals']): Cyc
     totals.backlinks_added > 0 ||
     totals.pages_synced > 0 ||
     totals.pages_extracted > 0 ||
-    totals.pages_embedded > 0;
+    totals.pages_embedded > 0 ||
+    totals.pages_emotional_weight_recomputed > 0;
   return anyWork ? 'ok' : 'clean';
 }

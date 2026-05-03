@@ -17,6 +17,14 @@ import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
+import {
+  GET_RECENT_SALIENCE_DESCRIPTION,
+  FIND_ANOMALIES_DESCRIPTION,
+  GET_RECENT_TRANSCRIPTS_DESCRIPTION,
+  LIST_PAGES_DESCRIPTION,
+  QUERY_DESCRIPTION,
+  SEARCH_DESCRIPTION,
+} from './operations-descriptions.ts';
 
 // --- Types ---
 
@@ -608,19 +616,41 @@ const delete_page: Operation = {
   cliHints: { name: 'delete', positional: ['slug'] },
 };
 
+const LIST_PAGES_SORT_VALUES = ['updated_desc', 'updated_asc', 'created_desc', 'slug'] as const;
+type ListPagesSort = typeof LIST_PAGES_SORT_VALUES[number];
+
 const list_pages: Operation = {
   name: 'list_pages',
-  description: 'List pages with optional filters',
+  description: LIST_PAGES_DESCRIPTION,
   params: {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
     limit: { type: 'number', description: 'Max results (default 50)' },
+    // v0.29 — surface filter that already exists on PageFilters.
+    updated_after: {
+      type: 'string',
+      description: 'ISO date (YYYY-MM-DD) or full timestamp. Returns pages with updated_at > value.',
+    },
+    sort: {
+      type: 'string',
+      enum: [...LIST_PAGES_SORT_VALUES],
+      description: 'Sort order. Default updated_desc (matches pre-v0.29). Options: updated_desc, updated_asc, created_desc, slug.',
+    },
   },
   handler: async (ctx, p) => {
+    // Whitelist the sort enum at the handler before passing to the engine.
+    // Engines also whitelist via PAGE_SORT_SQL but defending here keeps
+    // unsupported strings from reaching the SQL layer.
+    const rawSort = p.sort as string | undefined;
+    const sort = rawSort && (LIST_PAGES_SORT_VALUES as readonly string[]).includes(rawSort)
+      ? (rawSort as ListPagesSort)
+      : undefined;
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
       limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
+      sort,
     });
     return pages.map(pg => ({
       slug: pg.slug,
@@ -636,7 +666,7 @@ const list_pages: Operation = {
 
 const search: Operation = {
   name: 'search',
-  description: 'Keyword search using full-text search',
+  description: SEARCH_DESCRIPTION,
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
@@ -681,7 +711,7 @@ const search: Operation = {
 
 const query: Operation = {
   name: 'query',
-  description: 'Hybrid search with vector + keyword + multi-query expansion',
+  description: QUERY_DESCRIPTION,
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
@@ -1552,6 +1582,89 @@ const find_orphans: Operation = {
   cliHints: { name: 'orphans', hidden: true },
 };
 
+// --- v0.29: Salience + Anomaly Detection ---
+
+const get_recent_salience: Operation = {
+  name: 'get_recent_salience',
+  description: GET_RECENT_SALIENCE_DESCRIPTION,
+  params: {
+    days: { type: 'number', description: 'Window in days. Default 14.' },
+    limit: { type: 'number', description: 'Max results (default 20, capped at 100).' },
+    slugPrefix: {
+      type: 'string',
+      description: "Optional slug-prefix filter, e.g. 'personal' or 'wiki/people'.",
+    },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.getRecentSalience({
+      days: typeof p.days === 'number' ? p.days : undefined,
+      limit: typeof p.limit === 'number' ? p.limit : undefined,
+      slugPrefix: typeof p.slugPrefix === 'string' ? p.slugPrefix : undefined,
+    });
+  },
+  cliHints: { name: 'salience' },
+};
+
+const find_anomalies: Operation = {
+  name: 'find_anomalies',
+  description: FIND_ANOMALIES_DESCRIPTION,
+  params: {
+    since: {
+      type: 'string',
+      description: 'ISO date YYYY-MM-DD. Default = today (UTC).',
+    },
+    lookback_days: {
+      type: 'number',
+      description: 'Days of history for the baseline. Default 30.',
+    },
+    sigma: {
+      type: 'number',
+      description: 'Sigma threshold. Default 3.0.',
+    },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.findAnomalies({
+      since: typeof p.since === 'string' ? p.since : undefined,
+      lookback_days: typeof p.lookback_days === 'number' ? p.lookback_days : undefined,
+      sigma: typeof p.sigma === 'number' ? p.sigma : undefined,
+    });
+  },
+  cliHints: { name: 'anomalies' },
+};
+
+const get_recent_transcripts: Operation = {
+  name: 'get_recent_transcripts',
+  description: GET_RECENT_TRANSCRIPTS_DESCRIPTION,
+  params: {
+    days: { type: 'number', description: 'Window in days. Default 7.' },
+    summary: {
+      type: 'boolean',
+      description: 'When true (default), return first ~300 chars per transcript. When false, full content (capped at 100 KB per file).',
+    },
+    limit: { type: 'number', description: 'Max transcripts (default 50).' },
+  },
+  handler: async (ctx, p) => {
+    // Trust gate (eng review D2 + codex C3): MCP / HTTP callers (`remote=true`)
+    // are blocked. Local CLI callers (`remote=false`) and the trusted-workspace
+    // dream cycle pass through. This op is intentionally NOT in the subagent
+    // allow-list (subagents always run with remote=true; they would always be
+    // rejected, which is a footgun if the op is visible).
+    if (ctx.remote === true) {
+      throw new OperationError(
+        'permission_denied',
+        'get_recent_transcripts is local-only — call via the gbrain CLI.',
+      );
+    }
+    const { listRecentTranscripts } = await import('./transcripts.ts');
+    return listRecentTranscripts(ctx.engine, {
+      days: typeof p.days === 'number' ? p.days : undefined,
+      summary: typeof p.summary === 'boolean' ? p.summary : undefined,
+      limit: typeof p.limit === 'number' ? p.limit : undefined,
+    });
+  },
+  cliHints: { name: 'transcripts', hidden: true },
+};
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -1584,6 +1697,8 @@ export const operations: Operation[] = [
   find_orphans,
   // v0.28: Takes + think
   takes_list, takes_search, think,
+  // v0.29: Salience + anomalies + recent transcripts
+  get_recent_salience, find_anomalies, get_recent_transcripts,
 ];
 
 export const operationsByName = Object.fromEntries(
