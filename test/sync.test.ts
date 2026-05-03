@@ -98,6 +98,25 @@ describe('isSyncable', () => {
     expect(isSyncable('ops/deploy-log.md')).toBe(false);
     expect(isSyncable('ops/config.md')).toBe(false);
   });
+
+  test('rejects dependency/build/vendor directories at any depth', () => {
+    expect(isSyncable('node_modules/foo/readme.md')).toBe(false);
+    expect(isSyncable('integrations/node_modules/uuid/license.md')).toBe(false);
+    expect(isSyncable('app/vendor/lib/notes.md')).toBe(false);
+    expect(isSyncable('dist/bundle.md')).toBe(false);
+    expect(isSyncable('build/output.md')).toBe(false);
+    expect(isSyncable('out/page.md')).toBe(false);
+    expect(isSyncable('target/report.md')).toBe(false);
+    expect(isSyncable('web/.next/cache.md')).toBe(false);
+    expect(isSyncable('coverage/report.md')).toBe(false);
+    expect(isSyncable('py/__pycache__/x.md')).toBe(false);
+    expect(isSyncable('py/.venv/lib/x.md')).toBe(false);
+  });
+
+  test('still accepts regular pages', () => {
+    expect(isSyncable('projects/perpflow.md')).toBe(true);
+    expect(isSyncable('integrations/discord-ingest.md')).toBe(true);
+  });
 });
 
 describe('pathToSlug', () => {

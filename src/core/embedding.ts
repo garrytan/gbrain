@@ -9,8 +9,9 @@
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
+const MODEL = process.env.GBRAIN_EMBEDDING_MODEL || 'text-embedding-3-large';
 const DIMENSIONS = 1536;
+const SUPPORTS_DIMENSIONS = (process.env.GBRAIN_EMBEDDING_SUPPORTS_DIMENSIONS ?? 'true').toLowerCase() !== 'false';
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
@@ -65,7 +66,7 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
       const response = await getClient().embeddings.create({
         model: MODEL,
         input: texts,
-        dimensions: DIMENSIONS,
+        ...(SUPPORTS_DIMENSIONS ? { dimensions: DIMENSIONS } : {}),
       });
 
       // Sort by index to maintain order
