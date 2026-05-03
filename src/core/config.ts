@@ -82,6 +82,27 @@ export function loadConfig(): GBrainConfig | null {
   return merged as GBrainConfig;
 }
 
+/**
+ * Resolve OpenAI API key from env (highest precedence) or config file.
+ * Independent of engine config — works even when no DB is configured.
+ * Returns undefined if neither source provides a key.
+ *
+ * Centralized so embed/query/auto-embed paths use the same precedence and
+ * file-fallback semantics. Without this helper, those paths would only see
+ * env vars, forcing users to shell-export the key (a real UX/security gap on
+ * systems where keys deliberately don't live in interactive shell env).
+ */
+export function getOpenAIKey(): string | undefined {
+  if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
+  try {
+    const raw = readFileSync(getConfigPath(), 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<GBrainConfig>;
+    return parsed.openai_api_key;
+  } catch {
+    return undefined;
+  }
+}
+
 export function saveConfig(config: GBrainConfig): void {
   mkdirSync(getConfigDir(), { recursive: true });
   writeFileSync(getConfigPath(), JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
