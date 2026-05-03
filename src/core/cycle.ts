@@ -206,6 +206,46 @@ interface LockHandle {
 }
 
 /**
+ * Check if a PID is a zombie (defunct) process on Linux.
+ * Returns true if the PID exists but its /proc/<pid>/status shows
+ * State: Z (zombie). On non-Linux or if /proc is unavailable, returns false.
+ */
+function isZombiePid(pid: number): boolean {
+  try {
+    const status = readFileSync(`/proc/${pid}/status`, 'utf-8');
+    // Match the State line: "State:  Z (zombie)" or "State:\tZ ..."
+    return /^State:\s+Z/m.test(status);
+  } catch {
+    // /proc not available (macOS, Windows) or PID doesn't exist.
+    return false;
+  }
+}
+
+/**
+ * If the current holder of lock `lockId` is on the same host as us and is
+ * a zombie PID, delete the lock row. Returns true if a zombie was cleared.
+ */
+async function clearZombieHolderIfSameHost(
+  sql: any,
+  lockId: string,
+  _ourPid: number,
+  ourHost: string,
+): Promise<boolean> {
+  const existing: Array<{ holder_pid: number; holder_host: string }> = await sql`
+    SELECT holder_pid, holder_host FROM gbrain_cycle_locks WHERE id = ${lockId}
+  `;
+  if (existing.length === 0) return false;
+  const { holder_pid, holder_host } = existing[0];
+  // Only check PIDs on the same host — we can't inspect /proc on remote hosts.
+  if (holder_host !== ourHost) return false;
+  if (!isZombiePid(holder_pid)) return false;
+  // Zombie confirmed — clear the lock.
+  await sql`DELETE FROM gbrain_cycle_locks WHERE id = ${lockId} AND holder_pid = ${holder_pid}`;
+  process.stderr.write(`[cycle] cleared zombie lock holder PID ${holder_pid} for ${lockId}\n`);
+  return true;
+}
+
+/**
  * Acquire the Postgres-backed cycle lock.
  * Returns a LockHandle on success, or null if another live holder has it.
  *
@@ -213,6 +253,12 @@ interface LockHandle {
  * RETURNING *. An empty RETURNING means the existing row is still live.
  * Crashed holders auto-release: when their TTL expires, the next
  * acquirer's UPDATE branch fires and takes over.
+ *
+ * v0.23.1: also checks if the holder PID is a zombie (defunct) process.
+ * Zombie PIDs pass kill(pid, 0) liveness checks because they technically
+ * exist in the process table, but they can never release the lock or
+ * refresh the TTL. Without this check, a zombie holder blocks all
+ * cycle runs until the 30-min TTL expires.
  */
 async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | null> {
   const pid = process.pid;
@@ -236,7 +282,25 @@ async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | nu
         WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
       RETURNING id
     `;
-    if (rows.length === 0) return null; // live holder
+    if (rows.length === 0) {
+      // TTL not expired — but check if holder is a zombie.
+      // Zombies pass kill(pid, 0) but have state 'Z' in /proc.
+      const cleared = await clearZombieHolderIfSameHost(sql, CYCLE_LOCK_ID, pid, host);
+      if (!cleared) return null; // live, non-zombie holder
+      // Zombie cleared — retry acquisition.
+      const retryRows: Array<{ id: string }> = await sql`
+        INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
+        VALUES (${CYCLE_LOCK_ID}, ${pid}, ${host}, NOW(), NOW() + INTERVAL '30 minutes')
+        ON CONFLICT (id) DO UPDATE
+          SET holder_pid = ${pid},
+              holder_host = ${host},
+              acquired_at = NOW(),
+              ttl_expires_at = NOW() + INTERVAL '30 minutes'
+          WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
+        RETURNING id
+      `;
+      if (retryRows.length === 0) return null;
+    }
     return {
       refresh: async () => {
         await sql`
@@ -318,11 +382,14 @@ function acquireFileLock(lockPath = getLockFilePathDefault()): LockHandle | null
       //   - error EPERM     → process exists but caller can't signal it
       //                       (e.g., PID 1/init on unix) → still alive
       // Any error code OTHER than ESRCH means the PID is alive.
+      //
+      // v0.23.1: also check for zombie PIDs via /proc/<pid>/status.
+      // Zombies pass kill(pid, 0) but can never release the lock.
       let pidAlive = false;
       if (existingPid > 0 && existingPid !== pid) {
         try {
           process.kill(existingPid, 0);
-          pidAlive = true;
+          pidAlive = !isZombiePid(existingPid); // zombie = not alive
         } catch (e) {
           const code = (e as NodeJS.ErrnoException).code;
           pidAlive = code !== 'ESRCH';

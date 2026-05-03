@@ -620,11 +620,14 @@ async function persistToolExecPending(
   toolName: string,
   input: unknown,
 ): Promise<void> {
+  // Pass input as-is (object) so postgres driver serialises to jsonb
+  // object, not a jsonb string. JSON.stringify() + ::jsonb double-encodes.
+  const jsonbInput = (input != null && typeof input === 'object') ? input : { _raw: String(input ?? '') };
   await engine.executeRaw(
     `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
      VALUES ($1, $2, $3, $4, $5::jsonb, 'pending')
      ON CONFLICT (job_id, tool_use_id) DO NOTHING`,
-    [jobId, messageIdx, toolUseId, toolName, JSON.stringify(input)],
+    [jobId, messageIdx, toolUseId, toolName, jsonbInput],
   );
 }
 
@@ -634,11 +637,13 @@ async function persistToolExecComplete(
   toolUseId: string,
   output: unknown,
 ): Promise<void> {
+  // Pass output as-is (object) — see persistToolExecPending comment.
+  const jsonbOutput = (output != null && typeof output === 'object') ? output : { _raw: String(output ?? '') };
   await engine.executeRaw(
     `UPDATE subagent_tool_executions
         SET status = 'complete', output = $3::jsonb, ended_at = now()
       WHERE job_id = $1 AND tool_use_id = $2`,
-    [jobId, toolUseId, JSON.stringify(output)],
+    [jobId, toolUseId, jsonbOutput],
   );
 }
 
@@ -658,7 +663,9 @@ async function persistToolExecFailed(
      VALUES ($1, $2, $3, $4, $5::jsonb, 'failed', $6, now())
      ON CONFLICT (job_id, tool_use_id) DO UPDATE
        SET status = 'failed', error = EXCLUDED.error, ended_at = now()`,
-    [jobId, messageIdx, toolUseId, toolName, JSON.stringify(input), error],
+    [jobId, messageIdx, toolUseId, toolName,
+     (input != null && typeof input === 'object') ? input : { _raw: String(input ?? '') },
+     error],
   );
 }
 
