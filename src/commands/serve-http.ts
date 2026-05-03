@@ -191,6 +191,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // Admin authentication (cookie-based)
   // ---------------------------------------------------------------------------
+  // POST /admin/login — JSON body with token (for programmatic/UI login)
   app.post('/admin/login', express.json(), (req, res) => {
     const token = req.body?.token;
     if (!token) {
@@ -215,6 +216,30 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       path: '/admin',
     });
     res.json({ status: 'authenticated' });
+  });
+
+  // GET /admin/auth/:token — magic link login (one-click from agent)
+  // The agent generates: https://host:port/admin/auth/<bootstrapToken>
+  // Browser hits it, sets cookie, redirects to dashboard.
+  app.get('/admin/auth/:token', (req, res) => {
+    const token = req.params.token;
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    if (tokenHash !== bootstrapHash) {
+      res.status(401).send('Invalid admin link. Ask your agent for a fresh one.');
+      return;
+    }
+
+    const sessionId = randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days for magic link
+    adminSessions.set(sessionId, expiresAt);
+
+    res.cookie('gbrain_admin', sessionId, {
+      httpOnly: true,
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/admin',
+    });
+    res.redirect('/admin/');
   });
 
   // Admin auth middleware

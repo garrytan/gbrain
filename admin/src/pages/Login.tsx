@@ -14,7 +14,6 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
       api.login(saved).then(() => {
         onLogin();
       }).catch(() => {
-        // Saved token expired or server restarted with new token
         localStorage.removeItem('gbrain_admin_token');
         setAutoLogging(false);
       });
@@ -32,7 +31,7 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
       localStorage.setItem('gbrain_admin_token', token);
       onLogin();
     } catch (err) {
-      setError('Invalid token. Check your terminal output.');
+      setError('Invalid token.');
     } finally {
       setLoading(false);
     }
@@ -51,23 +50,60 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
 
   return (
     <div className="login-page">
-      <form className="login-box" onSubmit={handleSubmit}>
+      <div className="login-box">
         <div className="login-logo">GBrain</div>
-        <div style={{ marginBottom: 16 }}>
-          <input
-            type="password"
-            placeholder="Admin Token"
-            value={token}
-            onChange={e => setToken(e.target.value)}
-            autoFocus
-          />
+
+        <div style={{
+          background: 'rgba(136, 170, 255, 0.08)',
+          border: '1px solid rgba(136, 170, 255, 0.2)',
+          borderRadius: 8,
+          padding: '14px 16px',
+          marginBottom: 20,
+          fontSize: 13,
+          lineHeight: 1.5,
+          color: 'var(--text-secondary)',
+        }}>
+          <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
+            🔒 This is a protected dashboard
+          </div>
+          Ask your AI agent for the admin login link:
+          <div style={{
+            background: 'rgba(0,0,0,0.3)',
+            borderRadius: 6,
+            padding: '8px 12px',
+            marginTop: 8,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+            color: '#88aaff',
+            wordBreak: 'break-all',
+          }}>
+            "Give me the GBrain admin login link"
+          </div>
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+            Your agent will generate a secure one-click URL that logs you in automatically.
+          </div>
         </div>
-        <button className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-          {loading ? 'Authenticating...' : 'Submit'}
-        </button>
-        {error && <div className="login-error">{error}</div>}
-        <div className="login-hint">Find this token in your terminal output.</div>
-      </form>
+
+        <details style={{ marginBottom: 16 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)' }}>
+            Or paste token manually
+          </summary>
+          <form onSubmit={handleSubmit} style={{ marginTop: 12 }}>
+            <div style={{ marginBottom: 12 }}>
+              <input
+                type="password"
+                placeholder="Admin Token"
+                value={token}
+                onChange={e => setToken(e.target.value)}
+              />
+            </div>
+            <button className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
+              {loading ? 'Authenticating...' : 'Submit'}
+            </button>
+            {error && <div className="login-error">{error}</div>}
+          </form>
+        </details>
+      </div>
     </div>
   );
 }
