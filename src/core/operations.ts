@@ -1181,10 +1181,16 @@ const file_list: Operation = {
   handler: async (_ctx, p) => {
     const sql = db.getConnection();
     const slug = p.slug as string | undefined;
-    if (slug) {
-      return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`;
-    }
-    return sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT ${FILE_LIST_LIMIT}`;
+    const rows = slug
+      ? await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`
+      : await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT ${FILE_LIST_LIMIT}`;
+    // Postgres returns size_bytes (BIGINT) as native BigInt — JSON.stringify
+    // throws on those, breaking MCP callers. PGLite returns Number already.
+    // 9 PB ceiling (2^53 bytes) is far above any plausible file size.
+    return rows.map((r: Record<string, unknown>) => ({
+      ...r,
+      size_bytes: r.size_bytes == null ? null : Number(r.size_bytes),
+    }));
   },
 };
 
