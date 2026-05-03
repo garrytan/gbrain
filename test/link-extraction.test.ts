@@ -326,6 +326,77 @@ describe('inferLinkType', () => {
     const perEdgeContext = 'Jane has worked with Acme.';
     expect(inferLinkType('person', perEdgeContext, globalContext, 'companies/acme')).toBe('invested_in');
   });
+
+  // ─── Chinese relationship patterns ────────────────────────────
+
+  test('zh: 创立了 -> founded', () => {
+    expect(inferLinkType('person', '张三创立了字节跳动')).toBe('founded');
+  });
+
+  test('zh: 联合创立 -> founded', () => {
+    expect(inferLinkType('person', 'Garry Tan联合创立了Initialized Capital')).toBe('founded');
+  });
+
+  test('zh: 创办了公司 -> founded', () => {
+    expect(inferLinkType('person', '她创办了一家AI公司')).toBe('founded');
+  });
+
+  test('zh: 担任CEO -> works_at', () => {
+    expect(inferLinkType('person', '他在公司担任CEO')).toBe('works_at');
+  });
+
+  test('zh: 担任总监 -> works_at', () => {
+    expect(inferLinkType('person', '她担任产品总监')).toBe('works_at');
+  });
+
+  test('zh: 就职于 -> works_at', () => {
+    expect(inferLinkType('person', '他目前就职于腾讯')).toBe('works_at');
+  });
+
+  test('zh: 现任总裁 -> works_at', () => {
+    expect(inferLinkType('person', '现任总裁')).toBe('works_at');
+  });
+
+  test('zh: 投资了 -> invested_in', () => {
+    expect(inferLinkType('person', '红杉投资了蚂蚁金服')).toBe('invested_in');
+  });
+
+  test('zh: 领投A轮 -> invested_in', () => {
+    expect(inferLinkType('person', '获得红杉中国领投的A轮融资')).toBe('invested_in');
+  });
+
+  test('zh: 天使投资 -> invested_in', () => {
+    expect(inferLinkType('person', '他做了天使投资')).toBe('invested_in');
+  });
+
+  test('zh: 注资 -> invested_in', () => {
+    expect(inferLinkType('person', '腾讯注资了拼多多')).toBe('invested_in');
+  });
+
+  test('zh: 担任顾问 -> advises', () => {
+    expect(inferLinkType('person', '她担任技术顾问')).toBe('advises');
+  });
+
+  test('zh: 战略顾问 -> advises', () => {
+    expect(inferLinkType('person', '他是公司的战略顾问')).toBe('advises');
+  });
+
+  test('zh: 参加了 -> attended', () => {
+    expect(inferLinkType('person', '他参加了2024年世界人工智能大会')).toBe('attended');
+  });
+
+  test('zh: 出席了会议 -> attended', () => {
+    expect(inferLinkType('person', '她出席了AI峰会')).toBe('attended');
+  });
+
+  test('zh: no relationship verb -> mentions', () => {
+    expect(inferLinkType('person', '今天天气很好')).toBe('mentions');
+    expect(inferLinkType('person', '产品功能更新了')).toBe('mentions');
+  });
+
+  test('zh: precedence founded over works_at', () => {
+    expect(inferLinkType('person', '他创立了公司并担任CEO')).toBe('founded');
+  });
 });
 
 // ─── parseTimelineEntries ──────────────────────────────────────

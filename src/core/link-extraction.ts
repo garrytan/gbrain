@@ -14,6 +14,17 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+import zhPatterns from './relationships-zh.json' with { type: 'json' };
+
+// ─── Chinese relationship patterns (corpus-driven) ─────────────
+// Compiled from relationships-zh.json, mined from Chinese knowledge-base text.
+// No \b anchors (CJK has no word boundaries); patterns use contextual matching.
+
+const ZH_FOUNDED_RE = new RegExp(zhPatterns.founded.join('|'));
+const ZH_WORKS_AT_RE = new RegExp(zhPatterns.works_at.join('|'));
+const ZH_INVESTED_RE = new RegExp(zhPatterns.invested_in.join('|'));
+const ZH_ADVISES_RE = new RegExp(zhPatterns.advises.join('|'));
+const ZH_ATTENDED_RE = new RegExp(zhPatterns.attended.join('|'));
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -482,11 +493,17 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
     return 'mentions';
   }
   if ((pageType as string) === 'meeting') return 'attended';
-  // Per-edge verb rules.
+  // Per-edge verb rules (English).
   if (FOUNDED_RE.test(context)) return 'founded';
   if (INVESTED_RE.test(context)) return 'invested_in';
   if (ADVISES_RE.test(context)) return 'advises';
   if (WORKS_AT_RE.test(context)) return 'works_at';
+  // Per-edge verb rules (Chinese).
+  if (ZH_FOUNDED_RE.test(context)) return 'founded';
+  if (ZH_INVESTED_RE.test(context)) return 'invested_in';
+  if (ZH_ADVISES_RE.test(context)) return 'advises';
+  if (ZH_WORKS_AT_RE.test(context)) return 'works_at';
+  if (ZH_ATTENDED_RE.test(context)) return 'attended';
   // Page-role prior: only fires for person -> company links. Concept pages
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning

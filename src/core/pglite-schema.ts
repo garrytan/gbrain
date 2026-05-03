@@ -77,8 +77,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  embedding     vector(1024),
+  model         TEXT    NOT NULL DEFAULT 'embo-01',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -203,8 +203,8 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
   ('engine', 'pglite'),
-  ('embedding_model', 'text-embedding-3-large'),
-  ('embedding_dimensions', '1536'),
+  ('embedding_model', 'embo-01'),
+  ('embedding_dimensions', '1024'),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
 
@@ -483,10 +483,10 @@ BEGIN
   WHERE page_id = NEW.id;
 
   NEW.search_vector :=
-    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(NEW.compiled_truth, '')), 'B') ||
-    setweight(to_tsvector('english', coalesce(NEW.timeline, '')), 'C') ||
-    setweight(to_tsvector('english', coalesce(timeline_text, '')), 'C');
+    setweight(to_tsvector('simple', coalesce(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(NEW.compiled_truth, '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(NEW.timeline, '')), 'C') ||
+    setweight(to_tsvector('simple', coalesce(timeline_text, '')), 'C');
 
   RETURN NEW;
 END;
