@@ -219,11 +219,20 @@ function collectValidationErrors(
   // 5. NESTED_QUOTES — common breakage pattern: `title: "Name "Nick" Last"`.
   //    Detect any frontmatter `key: ...` line whose value contains 3 or more
   //    unescaped double-quote characters. A clean quoted value has 2.
+  //
+  //    Skip flow-sequence arrays of quoted strings (`key: ["A", "B", ...]`)
+  //    and quoted-wikilink arrays (`key: ["[[A]]", "[[B]]"]`) — these are
+  //    legitimate YAML and parse correctly. The genuine "nested quote"
+  //    pattern is a SINGLE value containing inner unescaped quotes, not a
+  //    flow-array of independently-quoted items. Closes #529.
   for (let i = firstNonEmpty + 1; i < closeLine; i++) {
     const line = lines[i];
     const m = line.match(/^\s*[A-Za-z_][\w-]*\s*:\s*(.*)$/);
     if (!m) continue;
-    const value = m[1];
+    const value = m[1].trim();
+    // Skip flow-sequence arrays: `[...]`. Items inside are independently
+    // quoted; per-line quote-counting is the wrong primitive for flow-arrays.
+    if (value.startsWith('[') && value.endsWith(']')) continue;
     let count = 0;
     for (let j = 0; j < value.length; j++) {
       if (value[j] === '"' && (j === 0 || value[j - 1] !== '\\')) count++;
