@@ -16,16 +16,26 @@
  * (it never wrote string-typed JSONB).
  *
  * Affected columns (audit of src/schema.sql):
- *   - pages.frontmatter           (postgres-engine.ts:107 putPage)
- *   - raw_data.data               (postgres-engine.ts:668 putRawData)
- *   - ingest_log.pages_updated    (postgres-engine.ts:846 logIngest)
- *   - files.metadata              (commands/files.ts:254 file upload)
- *   - page_versions.frontmatter   (downstream of pages.frontmatter via
- *                                  INSERT...SELECT FROM pages)
+ *   - pages.frontmatter                    (postgres-engine.ts:107 putPage)
+ *   - raw_data.data                        (postgres-engine.ts:668 putRawData)
+ *   - ingest_log.pages_updated             (postgres-engine.ts:846 logIngest)
+ *   - files.metadata                       (commands/files.ts:254 file upload)
+ *   - page_versions.frontmatter            (downstream of pages.frontmatter via
+ *                                           INSERT...SELECT FROM pages)
+ *   - subagent_messages.content_blocks     (subagent.ts:599 persistMessage —
+ *                                           v0.16.0+, fixed in vCURRENT)
+ *   - subagent_tool_executions.input       (subagent.ts:625/660 persistToolExec
+ *                                           Pending/Failed — same wave)
+ *   - subagent_tool_executions.output      (subagent.ts:639 persistToolExecComplete
+ *                                           — same wave)
  *
- * Other JSONB columns (minion_jobs.{data,result,progress,stacktrace},
- * minion_inbox.payload) were always written via parameterized form ($N::jsonb
- * with a string parameter, not interpolation) so they were never affected.
+ * The subagent_* writes were broken via a slightly different shape than the
+ * v0.12.0 wave: they used `engine.executeRaw` (postgres.js `unsafe`) with
+ * `JSON.stringify(value)` + `$N::jsonb` cast. postgres.js's unsafe path
+ * binds the resulting string as text, then the `::jsonb` cast wraps it as
+ * a jsonb string scalar instead of parsing it. queue.ts and other
+ * `executeRaw` callers were not affected because they pass raw objects
+ * (postgres.js v3 auto-encodes objects to jsonb).
  */
 
 import { loadConfig, toEngineConfig } from '../core/config.ts';
@@ -42,11 +52,14 @@ interface RepairTarget {
 }
 
 const TARGETS: RepairTarget[] = [
-  { table: 'pages',          column: 'frontmatter',    keyCol: 'slug' },
-  { table: 'raw_data',       column: 'data',           keyCol: 'source' },
-  { table: 'ingest_log',     column: 'pages_updated',  keyCol: 'source_ref' },
-  { table: 'files',          column: 'metadata',       keyCol: 'storage_path' },
-  { table: 'page_versions',  column: 'frontmatter',    keyCol: 'snapshot_at' },
+  { table: 'pages',                     column: 'frontmatter',     keyCol: 'slug' },
+  { table: 'raw_data',                  column: 'data',            keyCol: 'source' },
+  { table: 'ingest_log',                column: 'pages_updated',   keyCol: 'source_ref' },
+  { table: 'files',                     column: 'metadata',        keyCol: 'storage_path' },
+  { table: 'page_versions',             column: 'frontmatter',     keyCol: 'snapshot_at' },
+  { table: 'subagent_messages',         column: 'content_blocks',  keyCol: 'job_id' },
+  { table: 'subagent_tool_executions',  column: 'input',           keyCol: 'tool_use_id' },
+  { table: 'subagent_tool_executions',  column: 'output',          keyCol: 'tool_use_id' },
 ];
 
 export interface RepairResult {
@@ -113,6 +126,19 @@ export async function repairJsonb(opts: RepairOpts = { dryRun: false }): Promise
     let repaired = 0;
 
     try {
+      // Skip targets whose table doesn't exist yet — relevant for the
+      // v0_12_2 migration on pre-v0.15 brains (subagent_* tables hadn't
+      // been added yet) and any future schema additions to TARGETS.
+      const existsRows = await sql.unsafe(
+        `SELECT to_regclass($1) IS NOT NULL AS exists`,
+        [t.table],
+      ) as Array<{ exists: boolean }>;
+      if (!existsRows[0]?.exists) {
+        progress.tick(1, `${t.table}.${t.column}=skipped(no-table)`);
+        result.per_target.push({ table: t.table, column: t.column, rows_repaired: 0 });
+        continue;
+      }
+
       if (opts.dryRun) {
         const rows = await sql.unsafe(
           `SELECT count(*)::int AS n FROM ${t.table} WHERE jsonb_typeof(${t.column}) = 'string'`,
