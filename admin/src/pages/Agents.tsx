@@ -59,13 +59,27 @@ export function AgentsPage() {
         </div>
       </div>
 
-      {
-
-      agents.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
-          No agents registered. Register your first agent to get started.
-        </div>
-      ) : (
+      {(() => {
+        // Filter once and reuse, so the empty-state guard sees the same
+        // rows the table renders. Pre-fix: agents.length === 0 used the
+        // unfiltered array, so an all-revoked dataset with hideRevoked=on
+        // showed a header-only table with no placeholder.
+        const visibleAgents = agents.filter(a => !hideRevoked || a.status !== 'revoked');
+        if (agents.length === 0) {
+          return (
+            <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
+              No agents registered. Register your first agent to get started.
+            </div>
+          );
+        }
+        if (visibleAgents.length === 0) {
+          return (
+            <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
+              All agents are revoked. Uncheck "Hide revoked" to view them.
+            </div>
+          );
+        }
+        return (
         <>
           <table>
             <thead>
@@ -79,7 +93,7 @@ export function AgentsPage() {
               </tr>
             </thead>
             <tbody>
-              {agents.filter(a => !hideRevoked || a.status !== 'revoked').map(a => (
+              {visibleAgents.map(a => (
                 <tr key={a.id} onClick={() => setSelectedAgent(a)}
                     style={{ cursor: 'pointer' }}>
                   <td style={{ fontWeight: 500 }}>{a.name || a.client_name}</td>
@@ -111,7 +125,8 @@ export function AgentsPage() {
             {agents.filter(a => a.status === 'active').length} active / {agents.length} total
           </div>
         </>
-      )}
+        );
+      })()}
 
       {showRegister && (
         <RegisterModal
