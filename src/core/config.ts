@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join, resolve } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig } from './types.ts';
 
@@ -30,6 +30,7 @@ export interface GBrainConfig {
   database_url?: string;
   database_path?: string;
   openai_api_key?: string;
+  openai_api_key_file?: string;
   anthropic_api_key?: string;
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
@@ -78,8 +79,77 @@ export function loadConfig(): GBrainConfig | null {
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.OPENAI_API_KEY_FILE ? { openai_api_key_file: process.env.OPENAI_API_KEY_FILE } : {}),
   };
   return merged as GBrainConfig;
+}
+
+function expandUserPath(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function resolveKeyFilePath(path: string): string {
+  const expanded = expandUserPath(path.trim());
+  return isAbsolute(expanded) ? expanded : resolve(expanded);
+}
+
+function unquoteEnvValue(value: string): string {
+  const trimmed = value.trim();
+  if (
+    trimmed.length >= 2
+    && ((trimmed.startsWith('"') && trimmed.endsWith('"'))
+      || (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+export function readOpenAIApiKeyFile(path: string | undefined): string | undefined {
+  if (!path || !path.trim()) return undefined;
+
+  let raw: string;
+  try {
+    raw = readFileSync(resolveKeyFilePath(path), 'utf-8');
+  } catch {
+    return undefined;
+  }
+
+  let firstRawValue: string | undefined;
+  for (const originalLine of raw.split(/\r?\n/)) {
+    const trimmed = originalLine.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const line = trimmed.startsWith('export ') ? trimmed.slice('export '.length).trim() : trimmed;
+    const eq = line.indexOf('=');
+    if (eq > 0) {
+      const key = line.slice(0, eq).trim();
+      const value = unquoteEnvValue(line.slice(eq + 1));
+      if (key === 'OPENAI_API_KEY' && value) return value;
+    } else if (!firstRawValue) {
+      firstRawValue = unquoteEnvValue(trimmed);
+    }
+  }
+
+  return firstRawValue;
+}
+
+export function resolveOpenAIApiKey(config?: GBrainConfig | null): string | undefined {
+  const envKey = process.env.OPENAI_API_KEY;
+  if (envKey) return envKey;
+
+  const envFileKey = readOpenAIApiKeyFile(process.env.OPENAI_API_KEY_FILE);
+  if (envFileKey) return envFileKey;
+
+  const resolvedConfig = config === undefined ? loadConfig() : config;
+  return resolvedConfig?.openai_api_key
+    || readOpenAIApiKeyFile(resolvedConfig?.openai_api_key_file);
+}
+
+export function hasOpenAIApiKey(config?: GBrainConfig | null): boolean {
+  return !!resolveOpenAIApiKey(config);
 }
 
 export function saveConfig(config: GBrainConfig): void {

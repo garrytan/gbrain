@@ -24,9 +24,11 @@ import type { PageInput } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
 const savedKey = process.env.OPENAI_API_KEY;
+const savedKeyFile = process.env.OPENAI_API_KEY_FILE;
 
 beforeAll(async () => {
   delete process.env.OPENAI_API_KEY; // force keyword-only path so tests don't need live credentials
+  delete process.env.OPENAI_API_KEY_FILE;
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -41,6 +43,8 @@ beforeAll(async () => {
 afterAll(async () => {
   if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
   else process.env.OPENAI_API_KEY = savedKey;
+  if (savedKeyFile === undefined) delete process.env.OPENAI_API_KEY_FILE;
+  else process.env.OPENAI_API_KEY_FILE = savedKeyFile;
   await engine.disconnect();
 });
 

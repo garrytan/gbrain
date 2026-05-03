@@ -35,8 +35,10 @@ describe('transcription', () => {
     const { transcribe } = await import('../src/core/transcription.ts');
     const groq = process.env.GROQ_API_KEY;
     const openai = process.env.OPENAI_API_KEY;
+    const openaiFile = process.env.OPENAI_API_KEY_FILE;
     delete process.env.GROQ_API_KEY;
     delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY_FILE;
 
     try {
       await transcribe(TMP_MP3, {});
@@ -47,6 +49,7 @@ describe('transcription', () => {
     } finally {
       if (groq) process.env.GROQ_API_KEY = groq;
       if (openai) process.env.OPENAI_API_KEY = openai;
+      if (openaiFile) process.env.OPENAI_API_KEY_FILE = openaiFile;
     }
   });
 
