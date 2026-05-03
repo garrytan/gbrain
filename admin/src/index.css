@@ -339,7 +339,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
   min-height: 100vh;
   background: var(--bg-primary);
 }
-.login-box { text-align: center; width: 340px; }
+.login-box { text-align: left; width: 340px; }
 .login-logo { font-size: 32px; font-weight: 600; margin-bottom: 32px; }
 .login-hint { color: var(--text-muted); font-size: 12px; margin-top: 12px; }
 .login-error { color: var(--error); font-size: 13px; margin-top: 8px; }
