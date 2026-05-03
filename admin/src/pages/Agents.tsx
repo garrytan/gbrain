@@ -10,8 +10,11 @@ function timeAgo(date: Date): string {
 }
 
 interface Agent {
-  client_id: string;
-  client_name: string;
+  id: string;
+  name: string;
+  auth_type: 'oauth' | 'api_key';
+  client_id?: string;  // compat
+  client_name?: string; // compat
   grant_types: string[];
   scope: string;
   created_at: string;
@@ -19,6 +22,7 @@ interface Agent {
   total_requests: number;
   requests_today: number;
   token_ttl: number | null;
+  status: 'active' | 'revoked';
 }
 
 interface ApiKey {
@@ -30,78 +34,30 @@ interface ApiKey {
 }
 
 export function AgentsPage() {
-  const [tab, setTab] = useState<'oauth' | 'apikeys'>('oauth');
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [showRegister, setShowRegister] = useState(false);
   const [showCredentials, setShowCredentials] = useState<{ clientId: string; clientSecret: string; name: string } | null>(null);
   const [showApiKeyCreate, setShowApiKeyCreate] = useState(false);
   const [showApiKeyToken, setShowApiKeyToken] = useState<{ name: string; token: string } | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
 
-  useEffect(() => { loadAgents(); loadApiKeys(); }, []);
+  useEffect(() => { loadAgents(); }, []);
 
   const loadAgents = () => { api.agents().then(setAgents).catch(() => {}); };
-  const loadApiKeys = () => { api.apiKeys().then(setApiKeys).catch(() => {}); };
 
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 className="page-title" style={{ marginBottom: 0 }}>Agents</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          {tab === 'oauth' && <button className="btn btn-primary" onClick={() => setShowRegister(true)}>+ Register Agent</button>}
-          {tab === 'apikeys' && <button className="btn btn-primary" onClick={() => setShowApiKeyCreate(true)}>+ Create API Key</button>}
+          <button className="btn btn-secondary" onClick={() => setShowApiKeyCreate(true)}>+ API Key</button>
+          <button className="btn btn-primary" onClick={() => setShowRegister(true)}>+ OAuth Client</button>
         </div>
       </div>
 
-      <div className="tabs" style={{ marginBottom: 20 }}>
-        <div className={`tab ${tab === 'oauth' ? 'active' : ''}`} onClick={() => setTab('oauth')}>OAuth Clients</div>
-        <div className={`tab ${tab === 'apikeys' ? 'active' : ''}`} onClick={() => setTab('apikeys')}>
-          API Keys {apiKeys.filter(k => k.status === 'active').length > 0 && <span className="badge badge-read" style={{ marginLeft: 6 }}>{apiKeys.filter(k => k.status === 'active').length}</span>}
-        </div>
-      </div>
+      {
 
-      {tab === 'apikeys' && (
-        <>
-          {apiKeys.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
-              No API keys. Create one for simple bearer token auth.
-            </div>
-          ) : (
-            <>
-              <table>
-                <thead>
-                  <tr><th>Name</th><th>Status</th><th>Created</th><th>Last Used</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {apiKeys.map(k => (
-                    <tr key={k.id}>
-                      <td style={{ fontWeight: 500 }}>{k.name}</td>
-                      <td><span className={`badge ${k.status === 'active' ? 'badge-success' : 'badge-danger'}`}>{k.status}</span></td>
-                      <td style={{ color: 'var(--text-secondary)' }}>{new Date(k.created_at).toLocaleDateString()}</td>
-                      <td style={{ color: 'var(--text-secondary)' }}>{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : 'Never'}</td>
-                      <td>
-                        {k.status === 'active' && (
-                          <button className="btn btn-danger" style={{ fontSize: 12, padding: '2px 8px' }}
-                            onClick={async () => { await api.revokeApiKey(k.name); loadApiKeys(); }}>Revoke</button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 12 }}>
-                API keys grant read+write+admin access. Use OAuth clients for scoped access.
-              </div>
-            </>
-          )}
-        </>
-      )}
-
-      {tab === 'oauth' && (
-      <>
-
-      {agents.length === 0 ? (
+      agents.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
           No agents registered. Register your first agent to get started.
         </div>
@@ -111,42 +67,47 @@ export function AgentsPage() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Type</th>
                 <th>Scopes</th>
+                <th>Status</th>
                 <th>Requests</th>
                 <th>Last Used</th>
-                <th>Created</th>
               </tr>
             </thead>
             <tbody>
               {agents.map(a => (
-                <tr key={a.client_id} onClick={() => setSelectedAgent(a)} style={{ cursor: 'pointer' }}>
-                  <td style={{ fontWeight: 500 }}>{a.client_name}</td>
+                <tr key={a.id} onClick={() => a.auth_type === 'oauth' ? setSelectedAgent(a) : null}
+                    style={{ cursor: a.auth_type === 'oauth' ? 'pointer' : 'default' }}>
+                  <td style={{ fontWeight: 500 }}>{a.name || a.client_name}</td>
+                  <td>
+                    <span className={`badge ${a.auth_type === 'oauth' ? 'badge-read' : 'badge-write'}`} style={{ fontSize: 11 }}>
+                      {a.auth_type === 'oauth' ? 'OAuth' : 'API Key'}
+                    </span>
+                  </td>
                   <td>
                     {(a.scope || '').split(' ').filter(Boolean).map(s => (
                       <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>
                     ))}
                   </td>
                   <td>
+                    <span className={`badge ${a.status === 'active' ? 'badge-success' : 'badge-danger'}`}>{a.status}</span>
+                  </td>
+                  <td>
                     <span style={{ fontWeight: 500 }}>{a.requests_today || 0}</span>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> today / {a.total_requests || 0} total</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> / {a.total_requests || 0}</span>
                   </td>
                   <td style={{ color: 'var(--text-secondary)' }}>
                     {a.last_used_at ? timeAgo(new Date(a.last_used_at)) : 'Never'}
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)' }}>
-                    {new Date(a.created_at).toLocaleDateString()}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
           <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 12 }}>
-            {agents.length} agent{agents.length !== 1 ? 's' : ''} registered
+            {agents.filter(a => a.status === 'active').length} active / {agents.length} total
           </div>
         </>
       )}
-
-      </>)}
 
       {showRegister && (
         <RegisterModal
@@ -401,16 +362,16 @@ function AgentDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) 
   const serverUrl = window.location.origin;
 
   const configSnippets: Record<string, string> = {
-    'claude-code': `# Add to .mcp.json in your project root:\n{\n  "mcpServers": {\n    "gbrain": {\n      "type": "url",\n      "url": "${serverUrl}/mcp",\n      "headers": {\n        "Authorization": "Bearer <TOKEN>"\n      }\n    }\n  }\n}\n\n# Get a token:\ncurl -s -X POST ${serverUrl}/token \\\n  -d "grant_type=client_credentials\\\n&client_id=${agent.client_id}\\\n&client_secret=YOUR_SECRET\\\n&scope=${agent.scope || 'read write'}" | jq -r .access_token`,
-    'chatgpt': `1. Go to ChatGPT → Settings → Tools & Integrations → Add MCP\n2. Server URL: ${serverUrl}/mcp\n3. Authentication: OAuth 2.0\n   Token URL: ${serverUrl}/token\n   Client ID: ${agent.client_id}\n   Client Secret: YOUR_SECRET\n   Grant Type: client_credentials\n   Scope: ${agent.scope || 'read write'}\n\nChatGPT will auto-discover via:\n${serverUrl}/.well-known/oauth-authorization-server`,
-    'claude-cowork': `1. Open Claude.ai → Settings → Connected Apps → Add MCP Server\n2. Server URL: ${serverUrl}/mcp\n3. Auth: OAuth 2.0 (client_credentials)\n   Token endpoint: ${serverUrl}/token\n   Client ID: ${agent.client_id}\n   Client Secret: YOUR_SECRET\n   Scope: ${agent.scope || 'read write'}\n\nOr use the discovery URL:\n${serverUrl}/.well-known/oauth-authorization-server`,
-    perplexity: `1. Go to Settings → Connectors → Add MCP\n2. Server URL: ${serverUrl}/mcp\n3. Client ID: ${agent.client_id}\n4. Client Secret: YOUR_SECRET`,
-    cursor: `# Add to .cursor/mcp.json:\n{\n  "mcpServers": {\n    "gbrain": {\n      "url": "${serverUrl}/mcp",\n      "auth": {\n        "type": "oauth2",\n        "clientId": "${agent.client_id}",\n        "clientSecret": "YOUR_SECRET",\n        "tokenUrl": "${serverUrl}/token",\n        "grantType": "client_credentials",\n        "scope": "${agent.scope || 'read write'}"\n      }\n    }\n  }\n}`,
+    'claude-code': `# Add to .mcp.json in your project root:\n{\n  "mcpServers": {\n    "gbrain": {\n      "type": "url",\n      "url": "${serverUrl}/mcp",\n      "headers": {\n        "Authorization": "Bearer <TOKEN>"\n      }\n    }\n  }\n}\n\n# Get a token:\ncurl -s -X POST ${serverUrl}/token \\\n  -d "grant_type=client_credentials\\\n&client_id=${agent.id || agent.client_id}\\\n&client_secret=YOUR_SECRET\\\n&scope=${agent.scope || 'read write'}" | jq -r .access_token`,
+    'chatgpt': `1. Go to ChatGPT → Settings → Tools & Integrations → Add MCP\n2. Server URL: ${serverUrl}/mcp\n3. Authentication: OAuth 2.0\n   Token URL: ${serverUrl}/token\n   Client ID: ${agent.id || agent.client_id}\n   Client Secret: YOUR_SECRET\n   Grant Type: client_credentials\n   Scope: ${agent.scope || 'read write'}\n\nChatGPT will auto-discover via:\n${serverUrl}/.well-known/oauth-authorization-server`,
+    'claude-cowork': `1. Open Claude.ai → Settings → Connected Apps → Add MCP Server\n2. Server URL: ${serverUrl}/mcp\n3. Auth: OAuth 2.0 (client_credentials)\n   Token endpoint: ${serverUrl}/token\n   Client ID: ${agent.id || agent.client_id}\n   Client Secret: YOUR_SECRET\n   Scope: ${agent.scope || 'read write'}\n\nOr use the discovery URL:\n${serverUrl}/.well-known/oauth-authorization-server`,
+    perplexity: `1. Go to Settings → Connectors → Add MCP\n2. Server URL: ${serverUrl}/mcp\n3. Client ID: ${agent.id || agent.client_id}\n4. Client Secret: YOUR_SECRET`,
+    cursor: `# Add to .cursor/mcp.json:\n{\n  "mcpServers": {\n    "gbrain": {\n      "url": "${serverUrl}/mcp",\n      "auth": {\n        "type": "oauth2",\n        "clientId": "${agent.id || agent.client_id}",\n        "clientSecret": "YOUR_SECRET",\n        "tokenUrl": "${serverUrl}/token",\n        "grantType": "client_credentials",\n        "scope": "${agent.scope || 'read write'}"\n      }\n    }\n  }\n}`,
     json: JSON.stringify({
       server_url: `${serverUrl}/mcp`,
       token_url: `${serverUrl}/token`,
       discovery_url: `${serverUrl}/.well-known/oauth-authorization-server`,
-      client_id: agent.client_id,
+      client_id: agent.id || agent.client_id,
       client_name: agent.client_name,
       scope: agent.scope,
       grant_types: agent.grant_types,
@@ -422,13 +383,13 @@ function AgentDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) 
       <div className="drawer-overlay" onClick={onClose} />
       <div className="drawer">
         <button className="drawer-close" onClick={onClose}>&#10005;</button>
-        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>{agent.client_name}</div>
-        <span className="badge badge-success">Active</span>
+        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>{agent.name || agent.client_name}</div>
+        <span className={`badge ${agent.status === 'active' ? 'badge-success' : 'badge-danger'}`}>{agent.status}</span>
 
         <div className="section-title">Details</div>
         <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '6px 12px', fontSize: 13 }}>
           <span style={{ color: 'var(--text-secondary)' }}>Client ID</span>
-          <span className="mono">{agent.client_id.substring(0, 24)}...</span>
+          <span className="mono">{(agent.id || agent.id || agent.client_id || '').substring(0, 24)}...</span>
           <span style={{ color: 'var(--text-secondary)' }}>Scopes</span>
           <span>{(agent.scope || '').split(' ').filter(Boolean).map(s => (
             <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>

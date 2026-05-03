@@ -263,14 +263,26 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const agents = await sql`
-        SELECT c.client_id, c.client_name, c.grant_types, c.scope, c.created_at, c.token_ttl,
+      // Unified view: OAuth clients + legacy API keys
+      const oauthClients = await sql`
+        SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
+          c.grant_types, c.scope, c.created_at, c.token_ttl,
+          CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
         FROM oauth_clients c ORDER BY c.created_at DESC
       `;
-      res.json(agents);
+      const legacyKeys = await sql`
+        SELECT a.id, a.name, 'api_key' as auth_type,
+          '{"bearer"}' as grant_types, 'read write admin' as scope, a.created_at, null as token_ttl,
+          CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+          a.last_used_at,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name AND created_at > now() - interval '24 hours') as requests_today
+        FROM access_tokens a ORDER BY a.created_at DESC
+      `;
+      res.json([...oauthClients, ...legacyKeys]);
     } catch (e) {
       res.status(503).json({ error: 'service_unavailable' });
     }
@@ -337,7 +349,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       if (status && status !== 'all') { conditions.push(`status = '${status.replace(/'/g, "''")}'`); }
       const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-      const rows = await sql.unsafe(`SELECT r.id, r.token_name, COALESCE(c.client_name, a.name, r.token_name) as agent_name, r.operation, r.latency_ms, r.status, r.params, r.error_message, r.created_at FROM mcp_request_log r LEFT JOIN oauth_clients c ON c.client_id = r.token_name LEFT JOIN access_tokens a ON a.token_hash = r.token_name ${where ? where.replace('token_name', 'r.token_name').replace('operation', 'r.operation').replace('status', 'r.status') : ''} ORDER BY r.created_at DESC LIMIT ${limit} OFFSET ${offset}`);
+      const rows = await sql.unsafe(`SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name, operation, latency_ms, status, params, error_message, created_at FROM mcp_request_log ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`);
       const [countResult] = await sql.unsafe(`SELECT count(*)::int as total FROM mcp_request_log ${where}`);
       res.json({ rows, total: (countResult as any).total, page, pages: Math.ceil((countResult as any).total / limit) });
     } catch {
@@ -457,6 +469,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 
+    // Resolve human-readable agent name for logging
+    let agentName = authInfo.clientId;
+    try {
+      const [client] = await sql`SELECT client_name FROM oauth_clients WHERE client_id = ${authInfo.clientId}`;
+      if (client) agentName = client.client_name as string;
+    } catch { /* best effort — falls back to clientId */ }
+
     // Create a fresh MCP server per request (stateless)
     const server = new Server(
       { name: 'gbrain', version: VERSION },
@@ -524,12 +543,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // Log request + broadcast to SSE
         const logParams = params ? JSON.stringify(params) : null;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, params)
-                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'success'}, ${logParams})`;
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'success'}, ${logParams})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
-          agent: authInfo.clientId,
+          agent: agentName,
           operation: name,
           params: params || {},
           scopes: authInfo.scopes.join(','),
@@ -546,12 +565,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         const errMsg = e instanceof Error ? e.message : 'Unknown error';
         const logParams = params ? JSON.stringify(params) : null;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, params, error_message)
-                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
-          agent: authInfo.clientId,
+          agent: agentName,
           operation: name,
           params: params || {},
           latency_ms: latency,
