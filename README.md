@@ -649,6 +649,54 @@ embedded PG 17.5
 
 PGLite: embedded Postgres, no server, zero config. When your brain outgrows local (1000+ files, multi-device), `gbrain migrate --to supabase` moves everything.
 
+## Local models (Ollama, LM Studio, vLLM, Together)
+
+By default GBrain embeds via OpenAI `text-embedding-3-large` at 1536 dims. Every knob is configurable through `GBRAIN_EMBED_*` env vars so you can point the embedding service at any OpenAI-compatible endpoint — local or remote, paid or free.
+
+```bash
+# Ollama (local, free)
+export GBRAIN_EMBED_URL=http://localhost:11434/v1
+export GBRAIN_EMBED_MODEL=nomic-embed-text
+export GBRAIN_EMBED_DIMENSIONS=768
+export GBRAIN_EMBED_KEY=ollama        # any non-empty value
+export GBRAIN_EMBED_COST_PER_1K=0     # local = $0
+
+# LM Studio (local, free)
+export GBRAIN_EMBED_URL=http://localhost:1234/v1
+export GBRAIN_EMBED_MODEL=text-embedding-bge-m3
+export GBRAIN_EMBED_DIMENSIONS=1024
+
+# Together AI (cheap remote)
+export GBRAIN_EMBED_URL=https://api.together.xyz/v1
+export GBRAIN_EMBED_MODEL=BAAI/bge-large-en-v1.5
+export GBRAIN_EMBED_DIMENSIONS=1024
+export GBRAIN_EMBED_KEY=$TOGETHER_API_KEY
+export GBRAIN_EMBED_COST_PER_1K=0.00001
+```
+
+Full env reference:
+
+| Var | Default | Notes |
+|---|---|---|
+| `GBRAIN_EMBED_MODEL` | `text-embedding-3-large` | Model id sent to the API |
+| `GBRAIN_EMBED_DIMENSIONS` | `1536` | Must match the model's actual dim |
+| `GBRAIN_EMBED_URL` | (OpenAI default) | Base URL for OpenAI-compatible servers |
+| `GBRAIN_EMBED_KEY` | (`OPENAI_API_KEY`) | API key override (any non-empty value works for Ollama) |
+| `GBRAIN_EMBED_COST_PER_1K` | `0.00013` | USD; set to `0` for local |
+| `GBRAIN_EMBED_BATCH` | `100` | Batch size for bulk embed |
+| `GBRAIN_EMBED_MAX_CHARS` | `8000` | Per-input character truncation |
+
+**Changing dimensions on an existing brain:** schema migration v33 resizes the `content_chunks.embedding` column when `GBRAIN_EMBED_DIMENSIONS` differs from the current value, but only if no embeddings exist yet (pgvector can't cast between dims). To migrate a populated brain:
+
+```bash
+psql $DATABASE_URL -c "UPDATE content_chunks SET embedding = NULL"
+export GBRAIN_EMBED_DIMENSIONS=768
+gbrain init --migrate-only      # v33 resizes the column
+gbrain embed --all              # re-embed everything at the new dim
+```
+
+Validation: model names, dims, URLs, and costs are all validated before use. Invalid values fall back to defaults with a warning so a typo can't silently corrupt the brain.
+
 ## File Storage
 
 Brain repos accumulate binaries. GBrain has a three-stage migration:

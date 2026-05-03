@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
+import { getEmbeddingConfig, EMBEDDING_DEFAULTS } from './embedding-config.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -1262,6 +1263,84 @@ export const MIGRATIONS: Migration[] = [
         END IF;
       END $$;
     `,
+  },
+  {
+    version: 33,
+    name: 'configurable_embedding_dimensions',
+    // When GBRAIN_EMBED_DIMENSIONS differs from the schema default (1536),
+    // resize the content_chunks.embedding column AND update the
+    // embedding_dimensions config row so search and ingestion stay in sync.
+    //
+    // Safety: refuses to resize when chunks already have non-NULL embeddings,
+    // because pgvector cannot cast between dimensions — every existing vector
+    // would be invalid at the new size. The error message points users at
+    // the documented re-embed flow (drop embeddings + reindex).
+    //
+    // When configured dim equals schema default: no-op.
+    // When configured dim differs but no embeddings exist: ALTER TYPE +
+    //   recreate the HNSW index at the new dim + update config row.
+    // When configured dim differs AND embeddings exist: raise with guidance.
+    sql: '',
+    handler: async (engine) => {
+      const cfg = getEmbeddingConfig();
+      const targetDim = cfg.dimensions;
+      const defaultDim = EMBEDDING_DEFAULTS.dimensions;
+
+      if (targetDim === defaultDim) {
+        return;
+      }
+
+      // Inventory: do we have any embeddings written? If yes, we can't
+      // resize without dropping them.
+      const counts = await engine.executeRaw<{ embedded: number }>(
+        `SELECT COUNT(*)::int AS embedded FROM content_chunks WHERE embedding IS NOT NULL`,
+      );
+      const embedded = counts[0]?.embedded ?? 0;
+
+      if (embedded > 0) {
+        throw new Error(
+          `v33 configurable_embedding_dimensions: GBRAIN_EMBED_DIMENSIONS=${targetDim} ` +
+          `differs from current schema dim ${defaultDim}, but ${embedded} chunk(s) already have embeddings. ` +
+          `pgvector cannot cast between dimensions. To resize: ` +
+          `\n  1. UPDATE content_chunks SET embedding = NULL;` +
+          `\n  2. Re-run apply-migrations (this migration will then resize the column).` +
+          `\n  3. gbrain embed --all  (re-embed everything at the new dim).` +
+          `\nSee docs/guides/local-models.md for the full procedure.`,
+        );
+      }
+
+      // Safe to resize: column has no embeddings yet, so the dim change
+      // is structural only. Drop the HNSW index first (it's tied to the
+      // old dim), ALTER, recreate index at new dim.
+      await engine.executeRaw(`DROP INDEX IF EXISTS idx_chunks_embedding`);
+      await engine.executeRaw(
+        `ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${targetDim})`,
+      );
+      await engine.executeRaw(
+        `CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops)`,
+      );
+
+      // Keep the config row in sync so anything reading 'embedding_dimensions'
+      // from the config table sees the active value.
+      await engine.executeRaw(
+        `INSERT INTO config (key, value) VALUES ('embedding_dimensions', $1) ` +
+        `ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [String(targetDim)],
+      );
+
+      // Also update the embedding_model row when the model env is set.
+      if (cfg.model !== EMBEDDING_DEFAULTS.model) {
+        await engine.executeRaw(
+          `INSERT INTO config (key, value) VALUES ('embedding_model', $1) ` +
+          `ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+          [cfg.model],
+        );
+      }
+
+      console.log(
+        `  v33: resized content_chunks.embedding to vector(${targetDim}) and updated config rows`,
+      );
+    },
   },
 ];
 
