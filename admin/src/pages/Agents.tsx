@@ -1,12 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 
+function timeAgo(date: Date): string {
+  const s = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
 interface Agent {
   client_id: string;
   client_name: string;
   grant_types: string[];
   scope: string;
   created_at: string;
+  last_used_at: string | null;
+  total_requests: number;
+  requests_today: number;
 }
 
 interface ApiKey {
@@ -99,9 +110,9 @@ export function AgentsPage() {
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Client ID</th>
                 <th>Scopes</th>
-                <th>Grant Types</th>
+                <th>Requests</th>
+                <th>Last Used</th>
                 <th>Created</th>
               </tr>
             </thead>
@@ -109,14 +120,17 @@ export function AgentsPage() {
               {agents.map(a => (
                 <tr key={a.client_id} onClick={() => setSelectedAgent(a)} style={{ cursor: 'pointer' }}>
                   <td style={{ fontWeight: 500 }}>{a.client_name}</td>
-                  <td className="mono" style={{ color: 'var(--text-secondary)' }}>{a.client_id.substring(0, 20)}...</td>
                   <td>
                     {(a.scope || '').split(' ').filter(Boolean).map(s => (
                       <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>
                     ))}
                   </td>
-                  <td className="mono" style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                    {(a.grant_types || []).join(', ')}
+                  <td>
+                    <span style={{ fontWeight: 500 }}>{a.requests_today || 0}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> today / {a.total_requests || 0} total</span>
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)' }}>
+                    {a.last_used_at ? timeAgo(new Date(a.last_used_at)) : 'Never'}
                   </td>
                   <td style={{ color: 'var(--text-secondary)' }}>
                     {new Date(a.created_at).toLocaleDateString()}

@@ -239,8 +239,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
       const agents = await sql`
-        SELECT client_id, client_name, grant_types, scope, created_at
-        FROM oauth_clients ORDER BY created_at DESC
+        SELECT c.client_id, c.client_name, c.grant_types, c.scope, c.created_at,
+          (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
+        FROM oauth_clients c ORDER BY c.created_at DESC
       `;
       res.json(agents);
     } catch (e) {
@@ -301,9 +304,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       query += ` ORDER BY created_at DESC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
       params.push(limit, offset);
 
-      // Use raw query for dynamic filtering
-      const rows = await sql`SELECT * FROM mcp_request_log ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
-      const [countResult] = await sql`SELECT count(*)::int as total FROM mcp_request_log`;
+      // Dynamic filtering
+      const conditions: string[] = [];
+      const values: unknown[] = [];
+      if (agent && agent !== 'all') { conditions.push(`token_name = '${agent.replace(/'/g, "''")}'`); }
+      if (operation && operation !== 'all') { conditions.push(`operation = '${operation.replace(/'/g, "''")}'`); }
+      if (status && status !== 'all') { conditions.push(`status = '${status.replace(/'/g, "''")}'`); }
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const rows = await sql.unsafe(`SELECT id, token_name, operation, latency_ms, status, params, error_message, created_at FROM mcp_request_log ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`);
+      const [countResult] = await sql.unsafe(`SELECT count(*)::int as total FROM mcp_request_log ${where}`);
       res.json({ rows, total: (countResult as any).total, page, pages: Math.ceil((countResult as any).total / limit) });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
@@ -470,14 +480,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         const latency = Date.now() - startTime;
 
         // Log request + broadcast to SSE
+        const logParams = params ? JSON.stringify(params) : null;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'success'})`;
+          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, params)
+                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'success'}, ${logParams})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
           agent: authInfo.clientId,
           operation: name,
+          params: params || {},
           scopes: authInfo.scopes.join(','),
           latency_ms: latency,
           status: 'success',
@@ -489,16 +501,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         const latency = Date.now() - startTime;
         const error = e instanceof OperationError ? e.toJSON() : { error: 'internal_error', message: e instanceof Error ? e.message : 'Unknown error' };
 
+        const errMsg = e instanceof Error ? e.message : 'Unknown error';
+        const logParams = params ? JSON.stringify(params) : null;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'error'})`;
+          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
           agent: authInfo.clientId,
           operation: name,
+          params: params || {},
           latency_ms: latency,
           status: 'error',
+          error: errMsg,
           timestamp: new Date().toISOString(),
         });
 
