@@ -1,11 +1,11 @@
 import { execSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { VERSION } from '../version.ts';
 
 export async function runUpgrade(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain upgrade\n\nSelf-update the CLI.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.');
+    console.log('Usage: gbrain upgrade\n\nSelf-update the CLI.\n\nDetects install method (bun, binary, clawhub, source) and runs the appropriate update.\n"source" = the README\'s "Standalone CLI" install (git clone + bun link); upgrades via git pull --ff-only + bun install.\nAfter upgrading, shows what\'s new and offers to set up new features.');
     return;
   }
 
@@ -43,11 +43,30 @@ export async function runUpgrade(args: string[]) {
       }
       break;
 
+    case 'source': {
+      // README "Standalone CLI" install: git clone + bun install + bun link.
+      // Upgrade = fast-forward pull on the clone (bun-link symlink chain
+      // means PATH binary updates in place). Then re-run bun install in
+      // case package.json/bun.lock changed; cheap when nothing did.
+      const repoRoot = dirname(dirname(resolve(process.argv[1] || '')));
+      console.log(`Upgrading via git pull in ${repoRoot}...`);
+      try {
+        execSync(`git -C "${repoRoot}" pull --ff-only`, { stdio: 'inherit', timeout: 120_000 });
+        execSync('bun install --silent', { stdio: 'inherit', cwd: repoRoot, timeout: 120_000 });
+        upgraded = true;
+      } catch {
+        console.error('Upgrade failed. Try running manually:');
+        console.error(`  cd "${repoRoot}" && git pull --ff-only && bun install`);
+      }
+      break;
+    }
+
     default:
       console.error('Could not detect installation method.');
       console.log('Try one of:');
       console.log('  bun update gbrain');
       console.log('  clawhub update gbrain');
+      console.log('  cd <gbrain-clone> && git pull && bun install   # if installed via README "Standalone CLI" steps');
       console.log('  Download from https://github.com/garrytan/gbrain/releases');
   }
 
@@ -244,12 +263,32 @@ function isNewerThan(version: string, baseline: string): boolean {
   return false;
 }
 
-export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'unknown' {
+export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'source' | 'unknown' {
   const execPath = process.execPath || '';
+  const argv1 = process.argv[1] || '';
 
   // Check if running from node_modules (bun/npm install)
-  if (execPath.includes('node_modules') || process.argv[1]?.includes('node_modules')) {
+  if (execPath.includes('node_modules') || argv1.includes('node_modules')) {
     return 'bun';
+  }
+
+  // Check if running directly from a git clone — the README's "Standalone CLI"
+  // install path: `git clone … && cd gbrain && bun install && bun link`.
+  // Bun resolves the bun-link symlink chain to the clone's realpath, so a
+  // PATH-installed gbrain sees argv[1] = /Users/x/gbrain/src/cli.ts (no
+  // node_modules in it). Resolve to absolute first so this still fires when
+  // the script is invoked as `bun src/cli.ts` from a relative cwd.
+  // Distinguishes from a compiled binary (next case) by checking for the
+  // .ts entry path, and from arbitrary scripts by requiring a sibling .git.
+  if (argv1) {
+    const argv1Abs = resolve(argv1);
+    const isCliEntry = argv1Abs.endsWith('/src/cli.ts') || argv1Abs.endsWith('\\src\\cli.ts');
+    if (isCliEntry) {
+      const repoRoot = dirname(dirname(argv1Abs));
+      if (existsSync(join(repoRoot, '.git'))) {
+        return 'source';
+      }
+    }
   }
 
   // Check if running as compiled binary

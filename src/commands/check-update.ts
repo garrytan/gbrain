@@ -36,6 +36,7 @@ function upgradeCommandForMethod(method: string): string {
     case 'bun': return 'bun update gbrain';
     case 'clawhub': return 'clawhub update gbrain';
     case 'binary': return 'Download from https://github.com/garrytan/gbrain/releases';
+    case 'source': return 'gbrain upgrade';
     default: return 'gbrain upgrade';
   }
 }

@@ -38,16 +38,48 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     'utf-8',
   );
 
-  test('checks node_modules before binary', () => {
+  test('checks node_modules before source', () => {
+    // Order matters: globally-installed copies live in node_modules and must
+    // be detected as 'bun' before the source-clone heuristic gets a shot.
     const nodeModulesIdx = source.indexOf('node_modules');
+    const sourceIdx = source.indexOf("return 'source'");
+    expect(nodeModulesIdx).toBeLessThan(sourceIdx);
+  });
+
+  test('checks source before binary', () => {
+    // A bun-linked clone has argv[1] ending in /src/cli.ts; a compiled binary
+    // has execPath ending in /gbrain. They are distinguishable, but ordering
+    // source first keeps the README "Standalone CLI" cohort on the fast path.
+    const sourceIdx = source.indexOf("return 'source'");
     const binaryIdx = source.indexOf("endsWith('/gbrain')");
-    expect(nodeModulesIdx).toBeLessThan(binaryIdx);
+    expect(sourceIdx).toBeLessThan(binaryIdx);
   });
 
   test('checks binary before clawhub', () => {
     const binaryIdx = source.indexOf("endsWith('/gbrain')");
     const clawhubIdx = source.indexOf("clawhub --version");
     expect(binaryIdx).toBeLessThan(clawhubIdx);
+  });
+
+  test('source detection requires both /src/cli.ts entry path and a .git sibling', () => {
+    // Defends against false positives — global installs have argv[1] in
+    // node_modules (caught earlier), and ad-hoc bun scripts that happen to
+    // be named src/cli.ts shouldn't be misdetected without a .git sibling.
+    expect(source).toContain(".endsWith('/src/cli.ts')");
+    expect(source).toMatch(/existsSync\(join\(repoRoot, '\.git'\)\)/);
+  });
+
+  test('source detection resolves argv[1] to absolute path', () => {
+    // Without resolve(), invoking `bun src/cli.ts` from inside the clone
+    // leaves argv[1] = "src/cli.ts" (relative) and endsWith('/src/cli.ts')
+    // returns false. resolve() makes detection robust to cwd.
+    expect(source).toContain("resolve(argv1)");
+  });
+
+  test('source upgrade runs git pull --ff-only and bun install', () => {
+    expect(source).toContain('git -C');
+    expect(source).toContain('--ff-only');
+    expect(source).toContain('bun install');
   });
 
   test('uses clawhub --version, not which clawhub', () => {
@@ -61,8 +93,8 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(timeoutMatches.length).toBeGreaterThanOrEqual(2); // bun + clawhub detection at minimum
   });
 
-  test('return type is bun | binary | clawhub | unknown', () => {
-    expect(source).toContain("'bun' | 'binary' | 'clawhub' | 'unknown'");
+  test('return type is bun | binary | clawhub | source | unknown', () => {
+    expect(source).toContain("'bun' | 'binary' | 'clawhub' | 'source' | 'unknown'");
   });
 
   test('does not reference npm in case labels or messages', () => {
