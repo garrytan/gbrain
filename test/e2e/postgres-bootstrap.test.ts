@@ -41,7 +41,7 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     await engine.disconnect();
   });
 
-  test('PostgresEngine.initSchema applies bootstrap → SCHEMA_SQL → migrations on pre-v0.18 brain', async () => {
+  test('PostgresEngine.initSchema applies bootstrap → SCHEMA_SQL → migrations on downgraded pre-v0.18 / pre-v33 shape', async () => {
     // First call: bring the test DB to LATEST shape so we have something to mutate.
     await engine.initSchema();
 
@@ -52,17 +52,23 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     const conn = (engine as any).sql;
     await conn.unsafe(`TRUNCATE pages, content_chunks, links, tags, raw_data, timeline_entries, page_versions, ingest_log RESTART IDENTITY CASCADE`);
 
-    // Mutate to pre-v0.18 shape: drop source_id and the sources table.
-    // The advisory lock is released between initSchema calls, so this
-    // direct DDL won't deadlock.
+    // Mutate to an older shape: drop source_id / sources and also strip the
+    // v0.26.3 request-log columns that the newer embedded schema now indexes.
+    // The advisory lock is released between initSchema calls, so this direct
+    // DDL won't deadlock.
     await conn.unsafe(`
       ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
       ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
       DROP INDEX IF EXISTS idx_pages_source_id;
       ALTER TABLE pages DROP COLUMN IF EXISTS source_id CASCADE;
       DROP TABLE IF EXISTS sources CASCADE;
+
+      DROP INDEX IF EXISTS idx_mcp_log_agent_time;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS agent_name;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS params;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS error_message;
     `);
-    await engine.setConfig('version', '20');
+    await engine.setConfig('version', '29');
 
     // The path under test: full PostgresEngine.initSchema() including the
     // bootstrap call, SCHEMA_SQL replay, and runMigrations chain.
@@ -82,6 +88,15 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     // Verify the default source row was seeded.
     const srcCheck = await conn`SELECT id FROM sources WHERE id = 'default'`;
     expect(srcCheck).toHaveLength(1);
+
+    // Verify the v0.26.3 request-log columns exist after upgrade.
+    const logCols = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'mcp_request_log'
+        AND column_name IN ('agent_name', 'params', 'error_message')
+    `;
+    expect(logCols).toHaveLength(3);
   });
 
   test('PostgresEngine.initSchema is idempotent on a brain already at LATEST', async () => {

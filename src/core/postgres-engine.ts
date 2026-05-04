@@ -174,6 +174,10 @@ export class PostgresEngine implements BrainEngine {
       chunks_exists: boolean;
       symbol_name_exists: boolean;
       language_exists: boolean;
+      mcp_log_exists: boolean;
+      mcp_agent_name_exists: boolean;
+      mcp_params_exists: boolean;
+      mcp_error_message_exists: boolean;
     }[]>`
       SELECT
         EXISTS (SELECT 1 FROM information_schema.tables
@@ -193,7 +197,15 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'symbol_name') AS symbol_name_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log') AS mcp_log_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log' AND column_name = 'agent_name') AS mcp_agent_name_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log' AND column_name = 'params') AS mcp_params_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log' AND column_name = 'error_message') AS mcp_error_message_exists
     `;
     const probe = probeRows[0]!;
 
@@ -205,8 +217,10 @@ export class PostgresEngine implements BrainEngine {
     // v0.26.5: pages_deleted_at_purge_idx in SCHEMA_SQL crashes if the column
     // doesn't exist yet. Migration v34 also adds it, but bootstrap runs first.
     const needsPagesDeletedAt = probe.pages_exists && !probe.deleted_at_exists;
+    const needsMcpLogBootstrap = probe.mcp_log_exists
+      && (!probe.mcp_agent_name_exists || !probe.mcp_params_exists || !probe.mcp_error_message_exists);
 
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt) return;
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt && !needsMcpLogBootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -261,6 +275,20 @@ export class PostgresEngine implements BrainEngine {
       // not to crash. v34 runs later via runMigrations and is idempotent.
       await conn.unsafe(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsMcpLogBootstrap) {
+      // v0.26.3/v33 introduced `mcp_request_log.agent_name`, `params`, and
+      // `error_message`, and the embedded schema now creates an index on
+      // `agent_name`. Older brains can have the table without those columns,
+      // which wedges initSchema before numbered migrations get a chance to add
+      // them. Bootstrap only adds the forward-referenced columns; v33 remains
+      // responsible for the semantic backfill/index work.
+      await conn.unsafe(`
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS agent_name TEXT;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS params JSONB;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_message TEXT;
       `);
     }
   }
