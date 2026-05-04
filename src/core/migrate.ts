@@ -1394,6 +1394,47 @@ export const MIGRATIONS: Migration[] = [
     // this flag, so the index DDL runs in whatever wrapper applies.
     transaction: false,
   },
+  {
+    version: 35,
+    name: 'auto_rls_event_trigger',
+    // v0.26.7 — Postgres event trigger that auto-enables RLS on every new table.
+    //
+    // Problem: tables created outside gbrain migrations (e.g. Baku's face_detections,
+    // manual SQL, other apps sharing the same Supabase project) don't get RLS.
+    // gbrain doctor catches it after the fact, but the table is unprotected until then.
+    //
+    // Fix: DDL event trigger fires on every CREATE TABLE and runs
+    // ALTER TABLE ... ENABLE ROW LEVEL SECURITY + FORCE ROW LEVEL SECURITY.
+    // This is the Supabase-recommended approach (no dashboard toggle exists).
+    //
+    // PGLite: no-op — PGLite has no RLS engine and is single-tenant by definition.
+    // Event triggers are also unsupported on PGLite.
+    sqlFor: {
+      postgres: `
+        CREATE OR REPLACE FUNCTION auto_enable_rls()
+        RETURNS event_trigger AS $$
+        DECLARE
+          obj record;
+        BEGIN
+          FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands()
+            WHERE command_tag = 'CREATE TABLE'
+            AND object_type = 'table'
+          LOOP
+            EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity);
+            EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', obj.object_identity);
+          END LOOP;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table;
+        CREATE EVENT TRIGGER auto_rls_on_create_table
+          ON ddl_command_end
+          WHEN TAG IN ('CREATE TABLE')
+          EXECUTE FUNCTION auto_enable_rls();
+      `,
+      pglite: '', // PGLite has no RLS and no event trigger support
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
