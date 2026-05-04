@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   buildSourceFactorCase,
   buildHardExcludeClause,
+  buildVisibilityClause,
   __test__,
 } from '../src/core/search/sql-ranking.ts';
 import {
@@ -251,5 +252,42 @@ describe('resolveHardExcludes', () => {
   test('include subtracts from env-supplied excludes too', () => {
     const r = resolveHardExcludes(undefined, ['envdir/'], 'envdir/');
     expect(r).not.toContain('envdir/');
+  });
+});
+
+// v0.26.5 — visibility clause for soft-deleted pages and archived sources.
+describe('buildVisibilityClause (v0.26.5)', () => {
+  test('emits both predicates joined by AND with a leading AND', () => {
+    const clause = buildVisibilityClause('p', 's');
+    // Leading AND so callers can splice unconditionally.
+    expect(clause.startsWith('AND ')).toBe(true);
+    // Both predicates present: page-level deleted_at IS NULL + source-level NOT archived.
+    expect(clause).toContain('p.deleted_at IS NULL');
+    expect(clause).toContain('NOT s.archived');
+  });
+
+  test('uses the supplied aliases verbatim', () => {
+    expect(buildVisibilityClause('pp', 'src')).toBe('AND pp.deleted_at IS NULL AND NOT src.archived');
+  });
+
+  test('does NOT bypass on detail level — visibility is a contract, not a temporal preference', () => {
+    // Distinct from buildSourceFactorCase: there's no detail-gated short-circuit.
+    // Soft-deleted content stays hidden regardless of caller's detail level.
+    // Function signature has no detail param at all; this test pins that contract.
+    expect(buildVisibilityClause.length).toBe(2);
+  });
+
+  test('emits a stable string regardless of call order (idempotent for snapshot tests)', () => {
+    const a = buildVisibilityClause('p', 's');
+    const b = buildVisibilityClause('p', 's');
+    expect(a).toBe(b);
+  });
+
+  test('produces no JSONB containment in the output (column-based, not @>)', () => {
+    // Issue 5 contract: archived was promoted from JSONB key to real column.
+    // The visibility clause must not regress to JSONB containment.
+    const clause = buildVisibilityClause('p', 's');
+    expect(clause).not.toContain('@>');
+    expect(clause).not.toContain('config');
   });
 });

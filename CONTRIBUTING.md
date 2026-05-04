@@ -52,14 +52,22 @@ docs/                     Architecture docs
 ## Running tests
 
 ```bash
-# Recommended: full CI guard chain + tests (matches what CI runs)
-bun run test                      # privacy + jsonb + progress + wasm + typecheck + bun test
-
-# Just the test runner (skips CI guards)
-bun test                          # all tests (unit + E2E skipped without DB)
+# Inner edit loop (~85s on a Mac dev box, 3700+ unit tests)
+bun run test                      # parallel 8-shard fan-out + serial post-pass
 bun test test/markdown.test.ts    # specific unit test
 
-# E2E tests (requires Postgres with pgvector)
+# Pre-push gate (matches what CI runs on shard 1 + typecheck)
+bun run verify                    # privacy + jsonb + progress + test-isolation + wasm + admin-build + typecheck
+
+# Pre-merge sanity (everything CI runs)
+bun run test:full                 # verify + parallel unit + slow + smart e2e
+
+# Slow / serial / e2e in isolation
+bun run test:slow                 # *.slow.test.ts only (cold-path correctness)
+bun run test:serial               # *.serial.test.ts only (--max-concurrency=1)
+bun run test:e2e                  # real-Postgres E2E (requires DATABASE_URL)
+
+# E2E setup (Postgres with pgvector)
 docker compose -f docker-compose.test.yml up -d
 DATABASE_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test bun run test:e2e
 
@@ -67,12 +75,72 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test bun run t
 DATABASE_URL=postgresql://... bun run test:e2e
 ```
 
-Use `bun run test` before pushing. The guard chain catches: banned fork-name leaks
-(`scripts/check-privacy.sh`), `JSON.stringify(x)::jsonb` interpolation patterns
-(`scripts/check-jsonb-pattern.sh`), `\r` progress bleed to stdout
-(`scripts/check-progress-to-stdout.sh`), trailing-newline drift across tracked
-files (`scripts/check-trailing-newline.sh`), and silent fallback to recursive
-chunking in the compiled binary (`scripts/check-wasm-embedded.sh`).
+Use `bun run verify` before pushing. The guard chain catches: banned fork-name
+leaks (`scripts/check-privacy.sh`), `JSON.stringify(x)::jsonb` interpolation
+patterns (`scripts/check-jsonb-pattern.sh`), `\r` progress bleed to stdout
+(`scripts/check-progress-to-stdout.sh`), test-isolation rule violations
+(`scripts/check-test-isolation.sh` — see "Writing tests that survive the parallel
+loop" below), silent fallback to recursive chunking in the compiled binary
+(`scripts/check-wasm-embedded.sh`), and stale admin-dashboard build artifacts
+(`scripts/check-admin-build.sh`). `bun run check:all` runs the full historical
+sweep including the trailing-newline and exports-count checks.
+
+### Writing tests that survive the parallel loop
+
+`bun run test` shards 92+ unit-test files across 8 worker processes. Files in the
+same shard share a process, so process-global state leaks between them. Four
+lint rules (`scripts/check-test-isolation.sh`, R1-R4) enforce isolation:
+
+| Rule | What it bans | Fix |
+|---|---|---|
+| **R1** | Direct `process.env.X = ...` mutation | Use `withEnv()` from `test/helpers/with-env.ts`, or rename to `*.serial.test.ts` |
+| **R2** | `mock.module(...)` anywhere in the file | Rename to `*.serial.test.ts` |
+| **R3** | `new PGLiteEngine(` outside ~50 lines after `beforeAll(` | Use the canonical PGLite block (see below) |
+| **R4** | `new PGLiteEngine(` without paired `afterAll(disconnect)` | Add the `afterAll(() => engine.disconnect())` |
+
+Canonical PGLite block (R3 + R4 compliant — paste this verbatim):
+
+```ts
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
+
+let engine: PGLiteEngine;
+
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+});
+afterAll(async () => { await engine.disconnect(); });
+beforeEach(async () => { await resetPgliteState(engine); });
+```
+
+Env-touching tests:
+
+```ts
+import { withEnv } from './helpers/with-env.ts';
+
+test('reads OPENAI_API_KEY', async () => {
+  await withEnv({ OPENAI_API_KEY: 'sk-test' }, async () => {
+    expect(loadConfig().openai_key).toBe('sk-test');
+  });
+});
+```
+
+`withEnv` saves and restores keys via try/finally including when the callback
+throws. Cross-test safe; **NOT** intra-file concurrent-safe (`process.env` is
+process-global). Files using `withEnv` stay outside the future
+`test.concurrent()` codemod's eligibility filter.
+
+When to quarantine instead of fix: rename to `*.serial.test.ts` if the file
+uses `mock.module(...)`, is genuinely env-coupled (module-load env readers +
+ESM caching defeat dynamic-import-after-env tricks), or intentionally shares
+state across `it()` boundaries. Quarantine count cap: 10 (informational).
+
+Files that violated these rules at the v0.26.7 baseline are listed in
+`scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over
+time** ... never add new entries. v0.26.8 (env sweep) and v0.26.9 (PGLite sweep
++ codemod) remove entries as files get fixed.
 
 ### Local CI gate (recommended before pushing, v0.23.1+)
 

@@ -217,6 +217,16 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     console.error(`\napply-migrations failed: ${msg}`);
     console.error('Run `gbrain apply-migrations --yes` manually to retry.');
   }
+
+  // v0.25.1: agent-readable advisory listing recommended skills the
+  // workspace hasn't installed yet. No-op when everything is installed.
+  try {
+    const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
+    const { VERSION } = await import('../version.ts');
+    printAdvisoryIfRecommended({ version: VERSION, context: 'upgrade' });
+  } catch {
+    // Best-effort cosmetic surface; never block post-upgrade.
+  }
 }
 
 // findMigrationsDir + extractFeaturePitch removed in v0.11.1: migration data

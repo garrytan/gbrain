@@ -82,6 +82,60 @@ describe('migrate v20 — sources_table_additive', () => {
 // ─────────────────────────────────────────────────────────────────
 // v0.18.0 — v17 pages_source_id_composite_unique (Step 2, Lane B)
 // ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
+// v0.26.3 — v33 admin_dashboard_columns_v0_26_3
+// ─────────────────────────────────────────────────────────────────
+// SQL-shape guard: PR #586 referenced 5 columns + a new index that didn't
+// exist in any prior migration. Without v33, /admin/api/agents 503s and
+// the request-log INSERT silently swallows column-doesn't-exist errors.
+// This test pins the column set so a future refactor can't silently drop
+// part of the migration without the test failing.
+describe('migrate v33 — admin_dashboard_columns_v0_26_3', () => {
+  const v33 = MIGRATIONS.find(m => m.version === 33);
+
+  test('v33 exists with the expected name', () => {
+    expect(v33).toBeDefined();
+    expect(v33!.name).toBe('admin_dashboard_columns_v0_26_3');
+  });
+
+  test('v33 adds all 5 columns referenced by serve-http.ts and oauth-provider.ts', () => {
+    const sql = v33!.sql;
+    expect(sql).toContain('ALTER TABLE oauth_clients');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS token_ttl INTEGER');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
+    expect(sql).toContain('ALTER TABLE mcp_request_log');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS agent_name TEXT');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS params JSONB');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS error_message TEXT');
+  });
+
+  test('v33 backfills mcp_request_log.agent_name from oauth_clients + access_tokens', () => {
+    const sql = v33!.sql;
+    expect(sql).toContain('UPDATE mcp_request_log');
+    expect(sql).toContain('SET agent_name = COALESCE(');
+    expect(sql).toContain('FROM oauth_clients WHERE client_id = m.token_name');
+    expect(sql).toContain('FROM access_tokens WHERE name = m.token_name');
+    expect(sql).toContain('WHERE agent_name IS NULL');
+  });
+
+  test('v33 creates idx_mcp_log_agent_time for the new agent filter', () => {
+    expect(v33!.sql).toContain('idx_mcp_log_agent_time');
+    expect(v33!.sql).toContain('mcp_request_log(agent_name, created_at DESC)');
+  });
+
+  test('v33 uses ADD COLUMN IF NOT EXISTS so re-runs are idempotent', () => {
+    // All ALTER lines must be IF NOT EXISTS — re-running migrations on a
+    // brain that already has v33 columns must be a no-op, not a duplicate
+    // column error.
+    const sql = v33!.sql;
+    const addColumnLines = sql.match(/ADD COLUMN[^,;]+/gi) || [];
+    expect(addColumnLines.length).toBeGreaterThanOrEqual(5);
+    for (const line of addColumnLines) {
+      expect(line).toContain('IF NOT EXISTS');
+    }
+  });
+});
+
 describe('migrate v21 — pages_source_id_composite_unique', () => {
   const v21 = MIGRATIONS.find(m => m.version === 21);
 

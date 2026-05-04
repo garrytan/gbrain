@@ -26,6 +26,17 @@
 import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
+import {
+  assessDestructiveImpact,
+  checkDestructiveConfirmation,
+  softDeleteSource,
+  restoreSource,
+  listArchivedSources,
+  purgeExpiredSources,
+  formatImpact,
+  formatSoftDelete,
+  SOFT_DELETE_TTL_HOURS,
+} from '../core/destructive-guard.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -188,10 +199,10 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   console.log('SOURCES');
   console.log('───────');
   for (const e of entries) {
-    const fedMark = e.federated ? 'federated' : 'isolated';
+    const fedMark = e.federated ? 'federated' : (e as any).archived ? '⚠ archived' : 'isolated';
     const pathStr = e.local_path ?? '(no local path)';
     const sync = e.last_sync_at ? `last sync ${e.last_sync_at}` : 'never synced';
-    console.log(`  ${e.id.padEnd(20)}  ${fedMark.padEnd(10)}  ${String(e.page_count).padStart(6)} pages  ${sync}`);
+    console.log(`  ${e.id.padEnd(20)}  ${fedMark.padEnd(12)}  ${String(e.page_count).padStart(6)} pages  ${sync}`);
     if (e.local_path) console.log(`  ${' '.repeat(22)}${pathStr}`);
   }
   if (entries.length === 0) console.log('  (no sources registered)');
@@ -202,13 +213,12 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
 async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]');
+    console.error('Usage: gbrain sources remove <id> [--yes] [--confirm-destructive] [--dry-run] [--keep-storage]');
     process.exit(2);
   }
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
-  // NOTE: --keep-storage is accepted for forward compatibility but has no
-  // effect until Step 7 wires in explicit storage object deletion.
+  const confirmDestructive = args.includes('--confirm-destructive');
   const _keepStorage = args.includes('--keep-storage');
   void _keepStorage;
 
@@ -223,21 +233,141 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
     process.exit(4);
   }
 
-  const pageCount = await countPages(engine, id);
-  console.log(`Source "${id}" → ${pageCount} pages will be deleted (cascade).`);
+  // v0.26.5: Impact preview + destructive guard
+  const impact = await assessDestructiveImpact(engine, id);
+  if (impact) {
+    console.log(formatImpact(impact));
 
-  if (dryRun) {
-    console.log(`(dry-run; no side effects)`);
-    return;
-  }
+    if (dryRun) {
+      console.log('(dry-run; no side effects)');
+      return;
+    }
 
-  if (!yes) {
-    console.error(`Refusing to remove without --yes. Pass --yes to confirm.`);
-    process.exit(5);
+    const blockMsg = checkDestructiveConfirmation(impact, { yes, confirmDestructive, dryRun });
+    if (blockMsg) {
+      console.error(blockMsg);
+      process.exit(5);
+    }
+  } else {
+    if (dryRun) { console.log('(dry-run; source not found)'); return; }
+    if (!yes && !confirmDestructive) {
+      console.error('Refusing to remove without --yes or --confirm-destructive.');
+      process.exit(5);
+    }
   }
 
   await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+  const pageCount = impact?.pageCount ?? 0;
   console.log(`Removed source "${id}" (${pageCount} pages + dependent rows cascaded).`);
+}
+
+// ── Subcommand: archive (soft-delete) ───────────────────────
+
+async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error('Usage: gbrain sources archive <id>');
+    process.exit(2);
+  }
+
+  if (id === 'default') {
+    console.error('Error: cannot archive the "default" source.');
+    process.exit(3);
+  }
+
+  // Show impact preview
+  const impact = await assessDestructiveImpact(engine, id);
+  if (!impact) {
+    console.error(`Source "${id}" not found.`);
+    process.exit(4);
+  }
+
+  const result = await softDeleteSource(engine, id);
+  if (!result) {
+    console.error(`Failed to archive source "${id}".`);
+    process.exit(4);
+  }
+
+  console.log(formatSoftDelete(result));
+}
+
+// ── Subcommand: restore ─────────────────────────────────────
+
+async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  const noFederate = args.includes('--no-federate');
+  if (!id) {
+    console.error('Usage: gbrain sources restore <id> [--no-federate]');
+    process.exit(2);
+  }
+
+  const restored = await restoreSource(engine, id, !noFederate);
+  if (!restored) {
+    console.error(`Source "${id}" not found or not archived.`);
+    process.exit(4);
+  }
+
+  console.log(`Source "${id}" restored. ${noFederate ? 'Not re-federated.' : 'Re-federated.'}`);
+  console.log(`All pages, chunks, and embeddings are intact.`);
+}
+
+// ── Subcommand: purge ───────────────────────────────────────
+
+async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  const confirmDestructive = args.includes('--confirm-destructive');
+
+  if (id) {
+    // Purge a specific source (must be archived)
+    const impact = await assessDestructiveImpact(engine, id);
+    if (!impact) {
+      console.error(`Source "${id}" not found.`);
+      process.exit(4);
+    }
+
+    console.log(formatImpact(impact));
+
+    if (!confirmDestructive) {
+      console.error(`Pass --confirm-destructive to permanently delete source "${id}".`);
+      process.exit(5);
+    }
+
+    await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+    console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);
+    return;
+  }
+
+  // No id: purge all expired archives
+  const purged = await purgeExpiredSources(engine);
+  if (purged.length === 0) {
+    console.log('No expired archives to purge.');
+  } else {
+    console.log(`Purged ${purged.length} expired archive(s): ${purged.join(', ')}`);
+  }
+}
+
+// ── Subcommand: archived ────────────────────────────────────
+
+async function runListArchived(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = args.includes('--json');
+  const archived = await listArchivedSources(engine);
+
+  if (json) {
+    console.log(JSON.stringify({ archived }, null, 2));
+    return;
+  }
+
+  if (archived.length === 0) {
+    console.log('No archived sources.');
+    return;
+  }
+
+  console.log('ARCHIVED SOURCES (soft-deleted)');
+  console.log('───────────────────────────────');
+  for (const a of archived) {
+    const hours = Math.max(0, Math.round((a.expiresAt.getTime() - Date.now()) / (1000 * 60 * 60)));
+    console.log(`  ${a.id.padEnd(20)}  ${String(a.pageCount).padStart(6)} pages  expires in ${hours}h  (restore: gbrain sources restore ${a.id})`);
+  }
 }
 
 // ── Subcommand: rename ──────────────────────────────────────
@@ -340,6 +470,10 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'detach':     runDetach(); return;
     case 'federate':   return runFederate(engine, rest, true);
     case 'unfederate': return runFederate(engine, rest, false);
+    case 'archive':    return runArchive(engine, rest);
+    case 'restore':    return runRestore(engine, rest);
+    case 'purge':      return runPurge(engine, rest);
+    case 'archived':   return runListArchived(engine, rest);
     case undefined:
     case '--help':
     case '-h':
@@ -353,13 +487,23 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
 }
 
 function printHelp(): void {
-  console.log(`gbrain sources — manage multi-source brain configuration (v0.18.0)
+  console.log(`gbrain sources — manage multi-source brain configuration (v0.26.5)
 
 Subcommands:
   add <id> --path <p> [--name <n>] [--federated|--no-federated]
                                     Register a new source.
   list [--json]                     List registered sources with page counts.
-  remove <id> [--yes] [--dry-run]   Cascade-delete a source and its pages.
+  remove <id> [--confirm-destructive] [--dry-run]
+                                    Permanently delete a source and all its data.
+                                    Shows impact preview. Requires --confirm-destructive
+                                    when the source has data (pages/chunks/embeddings).
+  archive <id>                      Soft-delete: hide from search, preserve data for ${SOFT_DELETE_TTL_HOURS}h.
+  restore <id> [--no-federate]      Un-archive a soft-deleted source.
+  archived [--json]                 List soft-deleted sources and their expiry.
+  purge [<id>] [--confirm-destructive]
+                                    Permanently delete archived sources.
+                                    Without <id>: purge all expired archives.
+                                    With <id>: force-purge (requires --confirm-destructive).
   rename <id> <new-name>            Rename display name (id is immutable).
   default <id>                      Set the brain-level default source.
   attach <id>                       Write .gbrain-source in CWD (like kubectl context).
@@ -368,5 +512,9 @@ Subcommands:
   unfederate <id>                   Isolate source from default search.
 
 Source id: [a-z0-9-]{1,32}. Immutable citation key.
+
+Destructive operations (remove, purge) show an impact preview before acting.
+Pass --dry-run to preview without side effects.
+Use 'archive' instead of 'remove' for a safe ${SOFT_DELETE_TTL_HOURS}h grace period.
 `);
 }

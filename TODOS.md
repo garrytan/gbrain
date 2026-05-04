@@ -1,5 +1,150 @@
 # TODOS
 
+## destructive-guard (v0.26.5 follow-up)
+
+### Adjacent 2 — Storage objects orphan on hard purge
+**Priority:** P2
+
+**What:** When `purgeExpiredSources` (sources cascade) or `purgeDeletedPages` (page-level) deletes rows, the underlying object-storage payloads referenced by `files.storage_uri` (S3 / Supabase Storage) are NOT torn down. The cascade FK on `files.source_id` removes the DB row that points at the object; the object itself stays.
+
+**Why:** Bound today by most brains carrying `Files: 0` (operator preview boxes confirm this in the wild). The leak compounds the moment attachments / images / audio start landing — every soft-delete + 72h TTL purge silently abandons object-storage bytes.
+
+**Pros:** Closes a real data-leak path. Operators stop paying for orphaned bytes. Aligns sources/pages purge with the file lifecycle.
+**Cons:** Storage backend code is non-trivial (S3 vs Supabase vs local-fs paths each have different cleanup APIs). Single-flight delete + retries on 5xx; needs an audit log.
+**Context:** Plan calls this out explicitly in v0.26.5 CEO review (`~/.claude/plans/take-a-look-and-gentle-pine.md` Adjacent 2). Targets: `src/core/storage.ts` for the object-storage interface, `src/core/destructive-guard.ts` `purgeExpiredSources` for the call site, plus a new sweep in the cycle's purge phase. v0.26.6 candidate.
+**Depends on:** Schema is fine (already has `files.storage_uri`). Just needs the storage delete plumbing.
+
+### Adjacent 3 — sources remove + sources purge race against gbrain sync
+**Priority:** P3
+
+**What:** `gbrain sources remove <id>` and the new `gbrain sources purge <id>` paths don't acquire `SYNC_LOCK_ID` (the `gbrain-sync` writer lock from PR #490). If `gbrain sync` is mid-import for the same source, the parent row can DELETE while sync is INSERTing children, surfacing as a loud FK violation.
+
+**Why:** Failure mode is loud (FK violation, not data corruption), and the race window is narrow. Worth closing while the destructive surface is touched, not before.
+
+**Pros:** Single line at the top of `runRemove` and `runPurge`. Reuses `tryAcquireDbLock(engine, SYNC_LOCK_ID, 5)`. No design surface.
+**Cons:** Adds an extra "couldn't acquire lock" exit path the operator has to recognize and retry.
+**Context:** Plan calls this out in CEO review Adjacent 3. Targets: `src/commands/sources.ts` `runRemove` and `runPurge`. v0.26.6 candidate. Pattern: `try { await fn() } finally { await release() }` mirrors the cycle.ts use of the same primitive.
+**Depends on:** Nothing.
+
+### Auth revoke-client gets the destructive-guard pattern
+**Priority:** P3
+
+**What:** `gbrain auth revoke-client <client_id>` (v0.26.2) lands without an impact preview or `--confirm-destructive` gate. CASCADE-purges every active token + auth code in one transaction; one stray client_id wipes a production integration.
+
+**Why:** Lower urgency than sources/pages because operators run this explicitly with a known client_id, not reflexively. But if the v0.26.5 posture is "every destructive surface gets the same gate," this surface should adopt it.
+
+**Pros:** Posture consistency — every destructive verb in the gbrain CLI follows one pattern. Operators get the impact preview before nuking a production OAuth client.
+**Cons:** Marginal — single-row delete with cascade. The CASCADE is the blast radius, not the verb itself.
+**Context:** Plan flags this in CEO review. Targets: `src/commands/auth.ts` `runRevokeClient` (current shape: atomic DELETE...RETURNING with CASCADE on `oauth_tokens` + `oauth_codes`). Add an impact preview that counts `oauth_tokens` and `oauth_codes` for the client, then gate behind `--confirm-destructive`.
+**Depends on:** Nothing.
+
+## test infra (v0.26.4 follow-up — intra-file parallelism)
+
+### Sweep cross-file shared-state contention; enable `bun test --concurrent` for another 2-3x speedup
+**Priority:** P0
+**Status:** v0.26.7 shipped foundation slice (helpers + lint + mock.module quarantine). v0.26.8 (env sweep) and v0.26.9 (PGLite sweep + codemod + measurement) carry the rest.
+
+**What:** v0.26.4 shipped file-level parallel fan-out (8 shards) and got `bun run test` from 18 minutes to ~85s — a 12x speedup. The next layer is **intra-file** parallelism via Bun's `--concurrent` flag (or per-test `test.concurrent()` markers). This requires every test file to be safe under concurrent execution within the same `bun test` process.
+
+The constraint: when multiple test files load into the same bun process (which is what `bun test foo.test.ts bar.test.ts ...` does inside a shard), they share module-level state. Three contention surfaces today:
+
+- **~58 PGLiteEngine instantiations** across `test/` (per codex's grep). Many use module-level `let engine: PGLiteEngine` patterns. Race when multiple test files load and each invokes `new PGLiteEngine().connect({})`. **(carrying to v0.26.9)**
+- **~40 process.env mutations** without restore. `process.env.X = '...'` not paired with `afterEach` cleanup leaks across files in the same process. **(carrying to v0.26.8 — `withEnv` helper shipped in v0.26.7)**
+- ~~**2 top-level `mock.module(...)` calls** in `test/core/cycle.test.ts:26` and `test/embed.test.ts`. Top-level mocks affect every other test file in the same process.~~ **(quarantined as `*.serial.test.ts` in v0.26.7)**
+
+The repo already has the right helper: `test/helpers/reset-pglite.ts` exports `resetPgliteState(engine)` which is "two orders of magnitude faster" than fresh-engine-per-test (per the helper's own comment). Sweep all PGLite sites to use one shared engine + this reset in `beforeEach`. Do NOT introduce a `freshPglite()` allocator — codex correctly flagged that the repo already rejected that direction.
+
+Two flakes already known and quarantined as `*.serial.test.ts` (run after parallel pass at `--max-concurrency=1`):
+- `test/brain-registry.serial.test.ts` (was `brain-registry.test.ts`)
+- `test/reconcile-links.serial.test.ts` (was `reconcile-links.test.ts`)
+
+After the sweep, both should be fixable and renameable back to plain `*.test.ts`.
+
+**Why:**
+- 2-3x additional speedup on top of v0.26.4's 12x. Target: `bun run test` < 30s on a Mac dev box.
+- Forces the test architecture to be principled (no shared mutable state across files in the same process).
+- The empirical proof point: when `bun run test` was first measured at v0.26.4, two flakes surfaced under cross-file pressure that pass cleanly in isolation. That same pattern WILL surface more flakes if the suite grows. Better to sweep proactively than to keep growing the `*.serial.test.ts` quarantine.
+
+**Pros:**
+- Real architectural win, not just speed: tests become composable.
+- Existing helper (`test/helpers/reset-pglite.ts`) already validates the pattern.
+- Quarantined flakes auto-resolve: rename back to `*.test.ts` after the sweep.
+
+**Cons:**
+- 1-2 weeks of careful refactoring across ~100 test files.
+- Some tests genuinely need shared file-wide state (top-level mocks for module-replacement tests). Those stay quarantined as `*.serial.test.ts` permanently — but the count should shrink to a known small set, not grow.
+
+**Context:** v0.26.4 plan considered doing this in scope (Codex Tension #2 = C). After empirical measurement showed `--max-concurrency=4` does nothing on tests not marked `test.concurrent()`, the user chose to ship v0.26.4 as file-level-only and file this as the v0.27+ project. Plan file: `~/.claude/plans/system-instruction-you-are-working-tranquil-ladybug.md`. Codex critical findings #2, #3, #6 are all relevant.
+
+**Acceptance criteria:**
+1. All ~58 PGLiteEngine sites use shared-engine + `resetPgliteState()` in `beforeEach`. **(v0.26.9)**
+2. All ~40 `process.env` mutations use a `withEnv(...)` helper that saves + restores. **(v0.26.8 — helper shipped v0.26.7)**
+3. ~~The 2 top-level `mock.module()` calls scoped to `beforeEach`/`afterEach`, OR the file moves to `*.serial.test.ts`.~~ **DONE in v0.26.7 (quarantined)**
+4. Wrapper passes `--concurrent` (or every test marked `.concurrent()`). **(v0.26.9 — codemod with `find` recursive per Codex F3)**
+5. `bun run test` runs 5 times consecutively without flakes. **(v0.26.9)**
+6. Quarantine count `≤10` after the sweep (raised from 5 per D15; v0.26.7 added 2, currently 4: brain-registry, reconcile-links, cycle, embed).
+7. Wallclock target: `bun run test` ≤60s informational (per D9, dropped from <30s after Codex F1: marking only ~92 cheap files concurrent doesn't unblock the heavy 56 PGLite + 49 env files). Pinned config: SHARDS=8, MAX_CONCURRENCY=4, document Mac model. **(v0.26.9)**
+
+**Decisions ledger (v0.26.7 plan):** D1 reversed→D16 sliced, D5 quarantine, D6 no helper wrapper, D7 grep+quarantine, D9 ≤60s informational, D10 ESM-cache claim dropped, D11 codemod uses `find` recursive, D12 lint wired into `verify` not `test`, D13 unquarantine attempt dropped, D14 extended grep patterns, D15 cap raised to 10.
+
+**Estimated effort:** 1-2 weeks of one engineer's focused work. Could parallelize by sub-area (env-mutation sweep is independent of PGLite sweep).
+
+### Speed up E2E via Postgres template databases
+**Priority:** P1
+
+**What:** E2E tests (`bun run test:e2e`) currently run sequentially in one shared Postgres container, each test file calling `initSchema()` from scratch (~5-20s each on cold init). Speed-up: build the schema ONCE into a template DB (`gbrain_template`), then have each test file `CREATE DATABASE foo TEMPLATE gbrain_template` (~50ms per clone). With per-shard `DATABASE_URL` overrides, E2E can fan out to N parallel shards too.
+
+**Why:** Current E2E wallclock is ~5-10 min in CI. Template DB clones could bring that to ~1-2 min. Critical for the inner loop on E2E-bearing PRs (currently a real friction point per `/ship` workflow).
+
+**Sketch:**
+1. Build template DB once via `initSchema()` against `gbrain_template`.
+2. Per-test-file: `CREATE DATABASE gbrain_test_clone_<n> TEMPLATE gbrain_template` (50ms vs 5-20s).
+3. Per-shard isolation via `DATABASE_URL` env override.
+4. Schema-version stamp on the template so it invalidates when `migrate.ts` changes.
+5. Cleanup via `DROP DATABASE` in afterAll.
+
+**Estimated effort:** 1-2 days. Filed during v0.26.4 plan as a deferred follow-up (D4 = B).
+
+## test infra (v0.26.2 follow-up — pre-existing failures triage)
+
+### Fix 22 pre-existing test failures unrelated to OAuth
+**Priority:** P0
+
+**What:** A `bun test` run on top of master at v0.26.2 surfaces 22 pre-existing failures across these suites — none touch v0.26.2's diff (oauth-provider.ts, auth.ts, oauth tests). They reproduce on a clean checkout against master:
+
+- 12 cases in `test/e2e/sync.test.ts` (Git-to-DB Sync Pipeline) — `result.status === 'first_sync'` vs actual `'synced'` state-machine drift; same root cause across all 12.
+- 3 cases in `test/e2e/multi-source.test.ts` (cascade delete + 2 sync routing) — performSync sourceId/local_path resolution.
+- `test/e2e/sync-parallel.test.ts` (60-file Postgres concurrency=4) — connection-leak probe regression.
+- `test/e2e/sync.test.ts` `--skip-failed` structured summary loop (v0.22.12 #500).
+- `test/e2e/dream.test.ts` (no --dry-run syncs pages) — runCycle DB write path.
+- `test/e2e/cycle.test.ts` (live cycle + chunks + lock cleanup).
+- `test/e2e/doctor.test.ts` (gbrain doctor exits 0 on healthy DB) — possibly related to v0.26.2 schema changes since CHANGELOG mentions extension of doctor checks.
+- `test/brain-registry.test.ts` (empty/null/undefined id routes to host) — unrelated to OAuth surface.
+- `test/e2e/claw-test.test.ts` (fresh-install scripted scenario) — needs investigation; took 3.9s and reported "produces zero error/blocker friction" failure.
+
+**Why:** These failures pre-date v0.26.2 (CHANGELOG already documents "18 pre-existing master timeouts" from v0.26.0 merge). v0.26.2 brings the count to 22, suggesting a 4-test drift on master between v0.26.0 ship and now. Fixing inside v0.26.2 would balloon scope from a 6-file OAuth fix-wave to a 30+ file test-infra repair. The fix-wave deserves its own PR with focused triage.
+
+**Likely root causes worth investigating:**
+- **bun execSync env inheritance** (already discovered + fixed in test/e2e/serve-http-oauth.test.ts during v0.26.2): bun's `execSync` does NOT inherit env mutations done via `process.env.X = ...`, only OS-level env from before bun started. helpers.ts loads `.env.testing` and sets `DATABASE_URL` via `process.env` mutation, which is invisible to subprocesses unless `env: { ...process.env }` is passed explicitly. Several of the failing E2E tests (sync, cycle, dream, claw-test) spawn subprocesses via execSync — likely the same bug.
+- **Test ordering / DB state pollution**: full-suite runs in bun test happen in a deterministic order; isolated runs of these test files may pass while suite runs fail. Could indicate beforeAll/afterAll cleanup gaps.
+- **Schema drift**: doctor/multi-source tests may rely on specific schema state that v0.26 OAuth tables changed.
+
+**Pros:**
+- Separating from v0.26.2 keeps the OAuth ship focused and auditable; the 22 failures aren't blocking real-world OAuth functionality.
+- The execSync env-inheritance pattern is now documented in test/e2e/serve-http-oauth.test.ts as a reference fix for the next maintainer.
+- Unblocks v0.26.2 ship while preserving the failure inventory for the follow-up.
+
+**Cons:**
+- 22 failing tests on master is real test-infra debt.
+- Some may be load-bearing (sync pipeline failures could mask real regressions in `performSync`).
+- `bun run ci:local` (full E2E gate) won't pass cleanly until these are addressed.
+
+**Context:** Discovered during v0.26.2 ship audit. Reproduce with `bun test 2>&1 | grep "^(fail)"` after copying `.env.testing` from a sibling worktree (port 5435 test DB running). The 17/17 OAuth E2E suite passes in isolation AND in full-suite after the env-inheritance fix landed.
+
+**Effort:** L (human ~4-8h; CC ~30-60min once env-inheritance fix is applied across all tests).
+
+**Depends on / blocked by:** None — independent of v0.26.2.
+
 ## ci-local-mirror
 
 ### CI-skip artifact + signature for stages 1+2 follow-up
@@ -715,19 +860,6 @@ iteration's residuals.
 
 **Depends on:** PGLite engine shipping (to have a real use case for the PR).
 
-### ChatGPT MCP support (OAuth 2.1)
-**What:** Add OAuth 2.1 with Dynamic Client Registration to the self-hosted MCP server so ChatGPT can connect.
-
-**Why:** ChatGPT requires OAuth 2.1 for MCP connectors. Bearer token auth is NOT supported. This is the only major AI client that can't use GBrain remotely.
-
-**Pros:** Completes the "every AI client" promise. ChatGPT has the largest user base.
-
-**Cons:** OAuth 2.1 is a significant implementation: authorization endpoint, token endpoint, PKCE flow, dynamic client registration. Estimated CC: ~3-4 hours.
-
-**Context:** Discovered during DX review (2026-04-10). All other clients (Claude Desktop/Code/Cowork, Perplexity) work with bearer tokens. The Edge Function deployment was removed in v0.8.0. OAuth needs to be added to the self-hosted HTTP MCP server (or `gbrain serve --http` when implemented).
-
-**Depends on:** `gbrain serve --http` (not yet implemented).
-
 ### Runtime MCP access control
 **What:** Add sender identity checking to MCP operations. Brain ops return filtered data based on access tier (Full/Work/Family/None).
 
@@ -765,6 +897,22 @@ iteration's residuals.
 
 ### ~~Constrained health_check DSL for third-party recipes~~
 **Completed:** v0.9.3 (2026-04-12). Typed DSL with 4 check types (`http`, `env_exists`, `command`, `any_of`). All 7 first-party recipes migrated. String health checks accepted with deprecation warning + metachar validation for non-embedded recipes.
+
+## P1 (new from v0.18.0 — test flakiness)
+
+### beforeAll hook timeouts under parallel test runner
+**What:** 17 tests across 9 files (dream, orphans, brain-allowlist, extract-db, multi-source-integration, core/cycle, migrations-v0_12_2, migrations-v0_13_1, oauth) fail with `beforeEach/afterEach hook timed out for this test` at the 7-10 second threshold when run via `bun run test` (parallel). Every test passes in isolation (`bun test path/to/file.test.ts` → 0 fail). Root cause is PGLite schema init racing under concurrent test files.
+
+**Why:** `bun run test` is the pre-ship gate and reports these as failures, forcing manual triage on every /ship. The tests themselves are correct — the runner is stressing PGLite boot. Bumping the hook timeout or running E2E-like tests with `--bail` or serial execution would clear the 18 false positives.
+
+**Fix options:**
+1. Bump per-test hook timeout to 30s in `bunfig.toml` (quick fix, low risk)
+2. Move PGLite-init-heavy tests to `test/e2e/` so they run serially via `scripts/run-e2e.sh` (follows existing pattern)
+3. Share a module-scoped PGLite instance across describe blocks within a file (biggest win — most fixture setup is identical)
+
+**Effort:** 30 min for option 1, ~2 hours for option 3.
+
+**Context:** Noticed during /ship merge wave on `garrytan/mcp-key-mgmt` (2026-04-16 branch merge of v0.18.0). Failure set stayed exactly 17-18 tests across multiple /ship runs, confirming deterministic flakes rather than real regressions. Blocking workaround: run the specific test file to verify after any suite change.
 
 ## P1 (new from v0.11.0 — Minions)
 
@@ -995,6 +1143,9 @@ iteration's residuals.
 **Depends on:** Nothing.
 
 ## Completed
+
+### ChatGPT MCP support (OAuth 2.1)
+**Completed:** v0.26.0 (2026-04-25) — `gbrain serve --http` ships full OAuth 2.1 via MCP SDK's `mcpAuthRouter` + `OAuthServerProvider`. Authorization code flow with PKCE unblocks ChatGPT. Client credentials flow unblocks Perplexity/Claude. Dynamic Client Registration available behind `--enable-dcr` flag (off by default). See `docs/mcp/CHATGPT.md` for connector setup. Closed the P0 that had been blocking the "every AI client" promise since v0.6.
 
 ### Implement AWS Signature V4 for S3 storage backend
 **Completed:** v0.6.0 (2026-04-10) — replaced with @aws-sdk/client-s3 for proper SigV4 signing.

@@ -271,7 +271,8 @@ describeE2E('v0.18.0 multi-source — cascade delete covers every dependent row'
     expect((await conn.unsafe(`SELECT COUNT(*)::int AS n FROM files WHERE source_id = 'cascadetest'`))[0].n).toBe(1);
 
     // Remove the source.
-    await runSources(engine as unknown as Parameters<typeof runSources>[0], ['remove', 'cascadetest', '--yes']);
+    // v0.26.5: populated sources require --confirm-destructive; --yes alone is rejected.
+    await runSources(engine as unknown as Parameters<typeof runSources>[0], ['remove', 'cascadetest', '--confirm-destructive']);
 
     // Everything for that source is gone.
     expect((await conn.unsafe(`SELECT COUNT(*)::int AS n FROM pages WHERE source_id = 'cascadetest'`))[0].n).toBe(0);

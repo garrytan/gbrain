@@ -100,14 +100,38 @@ When multiple skills could match:
 These apply to ALL brain-writing skills:
 - `skills/conventions/quality.md` — citations, back-links, notability gate
 - `skills/conventions/brain-first.md` — check brain before external APIs
+- `skills/conventions/brain-routing.md` — which brain (DB) and which source (repo) to target; cross-brain federation is latent-space only
 - `skills/conventions/subagent-routing.md` — when to use Minions vs inline work
 - `skills/_brain-filing-rules.md` — where files go
 - `skills/_output-rules.md` — output quality standards
 
+## Uncategorized
+
+| Trigger | Skill |
+|---------|-------|
+| "personalized version of this book" | `skills/book-mirror/SKILL.md` |
+
+| "enrich this article" | `skills/article-enrichment/SKILL.md` |
+
+| "strategic reading" | `skills/strategic-reading/SKILL.md` |
+
+| "concept synthesis" | `skills/concept-synthesis/SKILL.md` |
+
+| "perplexity research" | `skills/perplexity-research/SKILL.md` |
+
+| "crawl my archive" | `skills/archive-crawler/SKILL.md` |
+
+| "verify this academic claim" | `skills/academic-verify/SKILL.md` |
+
+| "make pdf from brain" | `skills/brain-pdf/SKILL.md` |
+
+| "voice note" | `skills/voice-note-ingest/SKILL.md` |
+
 ## KOS-Jarvis extensions (fork-only, append-only)
 
 Lucien's KOS-flavored quality pack. See `skills/kos-jarvis/README.md`
-for boundary and upgrade policy.
+for boundary and upgrade policy. Triggers must not collide with
+upstream sections above; KOS extensions are append-only by policy.
 
 | Trigger | Skill |
 |---------|-------|

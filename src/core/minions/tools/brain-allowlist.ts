@@ -134,6 +134,21 @@ export interface BuildBrainToolsOpts {
   /** Optional filter: only include names in this set. */
   allowedNames?: ReadonlySet<string>;
   /**
+   * Connected-gbrains brain id (v0.19+, PR 0 plumbing only).
+   *
+   * CURRENT BEHAVIOR: `brainId` is stamped onto each tool-call's
+   * `OperationContext.brainId` for audit / logging, but `ctx.engine` is
+   * still the engine passed in here (the parent job's engine). Ops
+   * targeting mounted brains via brainId WITHOUT a registry lookup will
+   * silently run against the parent engine.
+   *
+   * FUTURE (PR 1): `buildOpContext` will call `BrainRegistry.getBrain
+   * (brainId).engine` to select the right engine per dispatch. Once
+   * wired, `opCtx.engine` will match `opCtx.brainId`. Until then, treat
+   * brainId as metadata only.
+   */
+  brainId?: string;
+  /**
    * Trusted-workspace allow-list (v0.23). When set, put_page is bounded
    * to slugs matching these prefix globs instead of the legacy
    * `wiki/agents/<id>/...` namespace. Trust comes from PROTECTED_JOB_NAMES
@@ -149,6 +164,7 @@ interface OpContextDeps {
   subagentId: number;
   jobId: number;
   signal?: AbortSignal;
+  brainId?: string;
   allowedSlugPrefixes?: readonly string[];
 }
 
@@ -166,6 +182,7 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
+    brainId: deps.brainId,
     allowedSlugPrefixes: deps.allowedSlugPrefixes
       ? [...deps.allowedSlugPrefixes]
       : undefined,
@@ -209,6 +226,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           subagentId: opts.subagentId,
           jobId: ctx.jobId,
           signal: ctx.signal,
+          brainId: opts.brainId,
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
         });
         const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};

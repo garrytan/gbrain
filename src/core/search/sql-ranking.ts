@@ -101,5 +101,33 @@ export function buildHardExcludeClause(slugColumn: string, prefixes: string[]): 
   return `AND NOT (${likes})`;
 }
 
+/**
+ * v0.26.5 — Build the soft-delete + archived-source visibility filter.
+ *
+ * Two filters in one fragment:
+ *  - Page-level soft-delete: `<pageAlias>.deleted_at IS NULL` hides pages that
+ *    `delete_page` flipped via `softDeletePage`.
+ *  - Source-level archive: `NOT <sourceAlias>.archived` hides every page
+ *    belonging to a source that `gbrain sources archive` soft-deleted.
+ *
+ * Unlike `buildSourceFactorCase`, this clause is NOT bypassed by `detail=high`.
+ * Soft-deleted content stays hidden regardless of query detail level — the
+ * recovery window is for explicit `include_deleted: true` callers, not for
+ * temporal queries.
+ *
+ * Returns a fragment with leading `AND` so callers can splice it into a WHERE
+ * unconditionally. Both column references are engine-supplied (never user
+ * input), so no escape is required on the alias names themselves.
+ *
+ * @param pageAlias   — page table alias (e.g. `'p'`)
+ * @param sourceAlias — source table alias (e.g. `'s'`); the caller is
+ *                      responsible for joining `sources` so this alias resolves.
+ *
+ * @returns raw SQL fragment, e.g. `AND p.deleted_at IS NULL AND NOT s.archived`
+ */
+export function buildVisibilityClause(pageAlias: string, sourceAlias: string): string {
+  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived`;
+}
+
 // Exported for unit tests
 export const __test__ = { escapeLikePattern, escapeSqlLiteral, buildLikePrefixLiteral };

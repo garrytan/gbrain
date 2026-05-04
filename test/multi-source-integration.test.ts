@@ -27,10 +27,10 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({ type: 'pglite' } as never);
   await engine.initSchema();
-}, 60_000);
+}, 60_000); // OAuth v25 + full migration chain needs breathing room
 
 afterAll(async () => {
-  await engine.disconnect();
+  if (engine) await engine.disconnect();
 }, 60_000);
 
 describe('v0.18.0 — sources table seeded with default row on fresh PGLite', () => {
@@ -181,7 +181,8 @@ describe('v0.18.0 — sources remove cascades to pages', () => {
     );
     expect(before[0].n).toBeGreaterThan(0);
 
-    await runSources(engine, ['remove', 'testsrc', '--yes']);
+    // v0.26.5: populated sources require --confirm-destructive; --yes alone is rejected.
+    await runSources(engine, ['remove', 'testsrc', '--confirm-destructive']);
 
     const after = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = 'testsrc'`,
