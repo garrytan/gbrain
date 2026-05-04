@@ -37,6 +37,6 @@ jobs:
       - run: bun install
       - name: Pre-test gates (shard 1 only — they're not test files)
         if: matrix.shard == 1
-        run: scripts/check-jsonb-pattern.sh && scripts/check-progress-to-stdout.sh && scripts/check-wasm-embedded.sh && bun run typecheck
+        run: bun run verify
       - name: Run test shard ${{ matrix.shard }}/4
         run: scripts/test-shard.sh ${{ matrix.shard }} 4

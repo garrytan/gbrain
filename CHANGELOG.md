@@ -156,6 +156,200 @@ incrementally so the contracts are stable for SDK callers from day one.
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain
 doctor` warns about an incomplete migration:
+## [0.26.5] - 2026-05-03
+
+## **Destructive operation guard, end to end. Sources AND pages now have a 72h recovery window.**
+## **The MCP `delete_page` op stops being a footgun: it soft-deletes by default and restores in one call.**
+
+The motivating incident: an agent removed a federated source instead of clarifying intent and the data was unrecoverable. The cherry-picked PR #595 closed half that footgun (the CLI source-remove path). v0.26.5 closes the other half — every destructive surface gbrain ships now lands behind the same posture. Sources, pages, autopilot. One pattern, applied everywhere.
+
+What changes for operators: `gbrain sources remove --yes` against a populated source refuses without `--confirm-destructive`. `gbrain sources archive` is the safe default. What changes for agents: the MCP `delete_page` op no longer hard-deletes — it sets `deleted_at`, the page disappears from search and from `get_page`/`list_pages`, and an agent that notices the mistake can call `restore_page` within 72h. The autopilot cycle's new `purge` phase hard-deletes what's truly past the recovery window. No cron to wire up. No manual sweep needed.
+
+### The numbers that matter
+
+| Metric | BEFORE v0.26.5 | AFTER v0.26.5 | Δ |
+|---|---|---|---|
+| `sources remove --yes` shows blast radius | hidden | boxed preview (pages, chunks, embeddings, files) | visible upfront |
+| Flag required to delete a populated source | `--yes` | `--confirm-destructive` (additionally) | explicit intent |
+| Source recovery window after accidental remove | 0s | 72h soft-delete TTL | restorable |
+| MCP `delete_page` blast radius | hard-delete, immediate cascade | soft-delete, 72h recovery, then autopilot purge | bounded |
+| `restore_page` op | doesn't exist | new `scope: 'write'` op | symmetric undo |
+| Soft-delete TTL enforcement | n/a | autopilot `purge` phase + manual `gbrain sources purge` / `gbrain pages purge-deleted` | automated + escape hatch |
+| `get_page` / `list_pages` for soft-deleted | would return the row | returns null/excludes by default; `include_deleted: true` opts in | matches search filter contract |
+
+### What this means for operators
+
+`gbrain upgrade` runs the schema migration that adds `pages.deleted_at` and promotes the source archive metadata to real columns (`sources.archived`, `archived_at`, `archive_expires_at`). If a `sources remove <id> --yes` script of yours starts refusing, that's the new gate working — pass `--confirm-destructive` only if you actually want permanent deletion. Otherwise switch to `gbrain sources archive`, verify nothing breaks, then either run `gbrain sources purge` or let the 72h TTL do it for you. The autopilot `dream` cycle picks up the new `purge` phase automatically.
+
+### What this means for agent integrators
+
+The MCP `delete_page` description string now says "soft-delete; recoverable via `restore_page` within 72h." Agents discovering tools via `list_tools` see the new contract. Behavior shift: an agent that calls `delete_page` followed by `get_page` with the same slug now gets `null` (the page is hidden by default) — pass `include_deleted: true` to surface it with `deleted_at` populated. If you had agent code that asserted hard-delete via this signal, the new contract is `get_page(slug)` returns null and `get_page(slug, {include_deleted: true})` returns the row. Ship-day stable.
+
+### What this means for OAuth scope
+
+`restore_page` is `scope: 'write'` — agents can self-correct mistakes within the recovery window without needing admin access. `purge_deleted_pages` is `scope: 'admin'` AND `localOnly: true` — operators only, never reachable over `gbrain serve --http`. The autopilot phase calls the same library function under the cycle lock.
+
+## To take advantage of v0.26.5
+
+`gbrain upgrade` runs the v34 schema migration (`destructive_guard_columns`) automatically. The migration adds the `pages.deleted_at` column + partial purge index, promotes archive state to real columns on `sources`, and backfills any pre-v0.26.5 JSONB shape into the new columns. Idempotent — re-runs are safe.
+
+```bash
+gbrain upgrade
+gbrain --version           # should print 0.26.5
+gbrain doctor --json       # schema_version should be 34
+gbrain sources --help      # archive / restore / archived / purge / remove
+gbrain pages --help        # purge-deleted (manual escape hatch)
+```
+
+If `gbrain doctor` warns about a partial migration:
+
+1. Re-run the orchestrator manually: `gbrain apply-migrations --yes`
+2. Verify `gbrain doctor --json` returns `schema_version >= 34`.
+3. Smoke-test the new posture: `gbrain sources archive <id>` then `gbrain sources archived` to confirm the row shows up. `gbrain sources restore <id>` to un-archive.
+4. If the upgrade chain fails, file an issue at https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl` if present.
+
+### Itemized changes
+
+#### Schema migration (v34: `destructive_guard_columns`)
+- New column `pages.deleted_at TIMESTAMPTZ NULL`. Partial index `pages_deleted_at_purge_idx ON pages (deleted_at) WHERE deleted_at IS NOT NULL` supports the autopilot purge query. Search filters (`WHERE deleted_at IS NULL`) do NOT need their own index — soft-deleted cardinality stays low and the predicate doesn't match the partial index. Don't add a regular `(deleted_at)` index without measuring.
+- New columns `sources.archived BOOLEAN NOT NULL DEFAULT false`, `sources.archived_at TIMESTAMPTZ`, `sources.archive_expires_at TIMESTAMPTZ`. Replaces the JSONB-key shape from PR #595's cherry-pick. Faster filter, no reserved-key footgun, indexable on demand.
+- Backfill: any row with the legacy `config @> '{"archived":true}'::jsonb` shape gets migrated into the new columns and the keys are stripped from JSONB. Idempotent.
+- Postgres uses `CREATE INDEX CONCURRENTLY` (no write-blocking lock). PGLite uses plain `CREATE INDEX`.
+- Forward-reference bootstrap (both engines) extended to probe for `pages.deleted_at` so the embedded schema's `pages_deleted_at_purge_idx` doesn't crash on pre-v0.26.5 brains. Test guard in `test/schema-bootstrap-coverage.test.ts`.
+
+#### BrainEngine surface (`src/core/engine.ts` and both engines)
+- New methods: `softDeletePage(slug, opts?)`, `restorePage(slug, opts?)`, `purgeDeletedPages(olderThanHours)`. All idempotent-as-null/false. `purgeDeletedPages` clamps the hours arg to a non-negative integer and cascades through existing FKs.
+- `getPage(slug, opts?)` and `listPages(filters?)` extended with `includeDeleted` boolean (default false). Default behavior matches the search visibility filter — soft-deleted pages are hidden everywhere agents look, until they explicitly opt in.
+- `Page` type adds optional `deleted_at?: Date | null`. `rowToPage` populates it when the SELECT projects the column.
+
+#### Operations (`src/core/operations.ts`)
+- `delete_page` rewired from `engine.deletePage` to `engine.softDeletePage`. Description updated to the v0.26.5 contract. Returns `{ status: 'soft_deleted', recoverable_until: 'now + 72h via restore_page' }` on success and `{ status: 'already_soft_deleted', deleted_at }` for idempotent re-calls.
+- `get_page` and `list_pages` params extended with `include_deleted: boolean`. Description strings updated.
+- New op `restore_page` — `scope: 'write'`, calls `engine.restorePage`. Returns `{ status: 'restored' | 'already_active' }`.
+- New op `purge_deleted_pages` — `scope: 'admin'`, `localOnly: true`. Calls `engine.purgeDeletedPages` with a `older_than_hours` param (default 72). Manual escape hatch.
+
+#### Search-filter sweep (`src/core/search/sql-ranking.ts` + both engines)
+- New helper `buildVisibilityClause(pageAlias, sourceAlias)` emits `AND <p>.deleted_at IS NULL AND NOT <s>.archived`. Pure SQL string builder; column-based so the predicate compiles to index lookups, not JSONB containment.
+- Applied in `searchKeyword`, `searchKeywordChunks`, and `searchVector` for both Postgres and PGLite. Postgres `searchVector` two-stage CTE applies the filter in the inner CTE so HNSW stays usable. NOT bypassed by `detail=high` — soft-delete is a contract, not a temporal preference.
+- All three search methods now `JOIN sources s ON s.id = p.source_id` so the visibility predicate has a target.
+
+#### Autopilot purge phase + manual CLI (v0.26.5)
+- New `CyclePhase` value `'purge'`. 9th phase in `ALL_PHASES`, runs after `orphans`. `runPhasePurge` calls `purgeExpiredSources(engine)` (sources past `archive_expires_at`) AND `engine.purgeDeletedPages(72)` (pages past 72h `deleted_at`). Adds two new `CycleReport.totals` fields: `purged_sources_count` and `purged_pages_count`. Schema-version stable (additive only).
+- New CLI command `gbrain pages purge-deleted [--older-than HOURS|Nd] [--dry-run] [--json]`. Mirrors `gbrain sources purge` (no id). Operator escape hatch alongside the autopilot phase.
+
+#### Refactor `src/core/destructive-guard.ts`
+- `softDeleteSource`, `restoreSource`, `listArchivedSources`, `purgeExpiredSources` now read/write the new column shape (atomic UPDATE...RETURNING). The `federated:false` JSONB key still flips on archive (federation has its own toggle path).
+- `purgeExpiredSources` is now a single set-based DELETE...RETURNING instead of N+1 iteration.
+- `assessDestructiveImpact`, `checkDestructiveConfirmation`, `formatImpact`, `formatSoftDelete` unchanged (don't read `config`).
+
+#### Tests (~30 cases planned for the v0.26.5 ship; see `test/destructive-guard.test.ts` and the new E2E suites)
+- `test/schema-bootstrap-coverage.test.ts` — `pages.deleted_at` added to `REQUIRED_BOOTSTRAP_COVERAGE` and to the drop-and-rebuild fixture. Coverage contract test fails loud if the bootstrap drifts behind PGLITE_SCHEMA_SQL.
+- The plan calls for full unit + E2E suites for the new module; ship-day E2E coverage is the contract gate at `test/e2e/sources-archive.test.ts`, `test/e2e/pages-soft-delete.test.ts` (Q3 IRON-rule regression), `test/e2e/search-visibility.test.ts`, and `test/e2e/cycle-purge-phase.test.ts`.
+
+#### Mechanics
+- `VERSION` → `0.26.5`. `package.json` → `0.26.5`. `src/schema.sql` regenerated into `src/core/schema-embedded.ts` via `bun run build:schema`. `src/core/migrate.ts` adds migration v34. `src/core/pglite-schema.ts` mirrors the new columns + partial index.
+
+## [0.26.4] - 2026-05-03
+
+## **`bun run test` finishes in 85 seconds. Was 18 minutes.**
+## **A failing test now writes a dedicated failure log with file paths, stack traces, and a loud terminal banner. No more burying failures in 4000 lines of output.**
+
+The inner test loop is unblocked. `bun run test` was running ~4000 tests sequentially in a single `bun test` process, taking 18 minutes wallclock and frequently hitting timeout limits before producing output. Now it spawns 8 parallel shards via the new `scripts/run-unit-parallel.sh` wrapper, captures per-shard logs, and aggregates failures into `.context/test-failures.log` with `--- shard N: <test name> ---` prefixes. 12x speedup on a Mac dev box. Failure-first design throughout: when something fails, you see WHAT failed, WHERE it failed, and the full stack trace in a stderr banner that survives `| head` and `| tail` mangling.
+
+The plan started as "ship ASAP in hours," grew to "1 week with proactive contention sweep" after Codex review, then snapped back to "ship today" once empirical measurement showed Bun's `--max-concurrency` does nothing on tests not marked `test.concurrent()`. The 12x speedup comes purely from file-level shard fan-out. Two specific tests flake under cross-file contention and are quarantined as `*.serial.test.ts` (run after the parallel pass at `--max-concurrency=1`). The proper intra-file parallelism project (sweep ~58 PGLite singletons + ~40 env mutations + add `--concurrent` flag) is filed as a P0 TODO for a follow-up release.
+
+### The numbers that matter
+
+Measured on a 10-core Apple Silicon Mac running the full unit-test suite (`bun run test`, 240 test files, ~3650 tests). Fresh checkout, no cache effects.
+
+| Metric | BEFORE v0.26.4 | AFTER v0.26.4 | Δ |
+|---|---|---|---|
+| `bun run test` wallclock | ~18 min sequential | **85s parallel** | **12x faster** |
+| Pre-test gates blocking the loop | ~15s (privacy + jsonb + progress + no-legacy + trailing-newline + wasm-compile + exports-count + typecheck) | 0s (moved to `bun run verify`) | -15s |
+| Time-to-first-failure visibility | Buried in 4000-line scrollback | `.context/test-failures.log` + stderr banner | live-loggable |
+| Shards running in parallel | 1 (single bun process) | 8 (auto: `min(8, cpu_count)`) | 8x |
+| Failure output preserved across pipes | No (bun's per-test details get truncated by `tail`) | Yes (banner is stderr; failure log is its own file) | survives `| tail` |
+
+Per-shard balance after warmup: shards run between 35-90s. The slowest shard (PGLite-heavy) gates the wallclock — that's where the v0.27+ intra-file work pays.
+
+### What this means for you
+
+If you're editing gbrain code, your inner test loop just got 12x faster. `bun run test` is now the fast loop — no pre-checks, no typecheck, just the unit tests with parallel fan-out and failure-first output. Pre-checks moved to `bun run verify` (run that before pushing). `bun run test:full` is the local equivalent of "everything CI runs" (verify + parallel + slow + smart e2e). When something fails, look at `.context/test-failures.log` first — it has the full failure block with file paths and stack traces, never truncated.
+
+If you encounter a test that passes alone but fails under shard fan-out, the cross-file contention quarantine path is to rename `foo.test.ts` → `foo.serial.test.ts`. It then runs in the serial pass after the parallel pass completes, at `--max-concurrency=1`. Hard cap is 5 quarantines; if more surface, file an issue rather than just renaming — that signals architectural shared-state cleanup is overdue.
+
+## To take advantage of v0.26.4
+
+`gbrain upgrade` is sufficient for the binary. The test infra changes are repo-local and apply to any contributor who pulls master.
+
+```bash
+gbrain upgrade
+gbrain --version  # should print 0.26.4
+```
+
+If you're a contributor:
+
+1. Pull master (or the v0.26.4 branch).
+2. Run `bun run test` — should finish in ~90s on a Mac with 8+ cores.
+3. Read CLAUDE.md's updated Testing section for the new tier breakdown (`test` / `verify` / `test:full` / `test:slow` / `test:serial` / `test:e2e` / `check:all`).
+4. If you hit a flake under shard fan-out: file an issue, then quarantine via rename to `*.serial.test.ts` while the issue is open.
+
+### Itemized changes
+
+#### New scripts
+- **`scripts/run-unit-parallel.sh`** — fan-out wrapper. Spawns N shards (default `min(8, cpu_count)`; override via `--shards N` or `SHARDS=N`) running `scripts/run-unit-shard.sh` in parallel. Per-shard wallclock cap (`GBRAIN_TEST_SHARD_TIMEOUT`, default 600s) via `gtimeout`/`timeout`/bg-pid fallback chain. Captures each shard to `.context/test-shards/shard-N.log` + `.exit` + optional `.wedged` sentinel. Single-writer post-shard failure aggregation (no concurrent writes, no interleaving). Loud stderr banner with absolute failure-log path on any failure. 10s heartbeat to stderr proving the wrapper isn't wedged.
+- **`scripts/run-serial-tests.sh`** — runs `*.serial.test.ts` files at `--max-concurrency=1`. Invoked by the parallel wrapper after the parallel pass completes.
+
+#### Script extensions
+- **`scripts/run-unit-shard.sh`** — accepts `--max-concurrency=N` flag (forwarded to `bun test`). Excludes `*.serial.test.ts` in addition to `*.slow.test.ts`. `--dry-run-list` moved into argv parsing alongside, used by the regression tests.
+
+#### `package.json` script tier split
+- **`bun run test`** is now the fast parallel loop (was: full pipeline of 7 pre-checks + typecheck + sequential `bun test`).
+- **`bun run verify`** is CI's authoritative gate set: `check:privacy + check:jsonb + check:progress + check:wasm + typecheck`. The 4 pre-checks not in `verify` (no-legacy-getconnection, trailing-newline, exports-count) move to `bun run check:all` for opt-in local sweeps.
+- **`bun run test:full`** = `verify && parallel-test && slow-test && [smart e2e]`. Smart e2e gates on `DATABASE_URL` and prints a loud skip notice when missing.
+- **`bun run test:serial`** = run only `*.serial.test.ts`.
+- The privacy gate (`scripts/check-privacy.sh`) was previously only in the now-removed `bun run test` chain. It now runs via `bun run verify` and CI's `.github/workflows/test.yml` calls `bun run verify` directly — single source of truth for "what's the ship gate."
+
+#### CI tightening
+- **`.github/workflows/test.yml`** now runs `bun run verify` (was: 4 specific scripts inlined). Privacy check now actually fires on every CI run; previously it ran only when somebody manually invoked `bun run test`. The pre-existing `Wintermute` references in `src/core/mounts-cache.ts:6` and `:324` (introduced in earlier commits and surviving every CI green) were caught by the now-firing gate and replaced with `your OpenClaw` per the privacy rule.
+
+#### Failure-first logging
+- **`.context/test-failures.log`** — extracted failure blocks per shard, prefixed with `--- shard N: <test name> ---`. Cleared at the start of every wrapper run. Falls back to `/tmp/gbrain-test-failures.log` if `.context/` is unwritable.
+- **`.context/test-summary.txt`** — one-line-per-shard `pass=X fail=Y skip=Z rc=W` for at-a-glance status.
+- **Stderr banner** on any failure: absolute log path + last 30 lines inlined. Goes to stderr so it survives output pipes and agent-side log truncation.
+- **`.gitignore`** — added `.context/` so the failure log + summary + per-shard logs never accidentally commit.
+
+#### Quarantine
+- **`test/brain-registry.test.ts` → `test/brain-registry.serial.test.ts`** — 28 tests pass alone in 41ms; one ("empty/null/undefined id routes to host") fails under cross-file contention.
+- **`test/reconcile-links.test.ts` → `test/reconcile-links.serial.test.ts`** — 6 tests pass alone in 1s; a `beforeEach` hook times out (~896s) under cross-file contention.
+
+Both pass cleanly when run via `bun run test:serial`. The proper fix (sweep the shared-state contention sites) is filed as a P0 TODO.
+
+#### Regression tests (4 new files, 13 cases)
+- **`test/scripts/run-unit-parallel.test.ts`** (6 cases) — exit-code propagation: any failing shard → wrapper exits non-zero; failure-log contract: log written with `--- shard N:` prefix on failure, cleared on success; summary file format pinned. Uses a tempdir with 4 fixture tests so it runs in ~500ms instead of spawning the wrapper against the real suite.
+- **`test/scripts/run-unit-shard.test.ts`** (4 cases) — exclusion symmetry: unit-shard `--dry-run-list` excludes every `*.slow.test.ts`, every `*.serial.test.ts`, and the entire `test/e2e/` subtree.
+- **`test/scripts/serial-files.test.ts`** (3 cases) — every checked-in `*.serial.test.ts` is discovered by `run-serial-tests.sh`; the script invokes `bun test --max-concurrency=1`; serial set is disjoint from unit-shard set.
+- **`test/privacy-script-wired.test.ts`** updated — regression guard now asserts `verify` chains `check:privacy` AND that `.github/workflows/test.yml` calls `bun run verify`. Together those guarantee the privacy gate runs before any merge.
+
+#### `bunfig.toml`
+- Trimmed stale comment about typecheck-chained timeout. The 60s ceiling stands.
+
+### What did NOT ship in v0.26.4 (filed as P0 TODO for v0.27+)
+
+- **Intra-file parallelism via `--concurrent`** — sweeping ~58 PGLiteEngine sites + ~40 `process.env` mutations + 2 top-level `mock.module()` calls + per-test PGLite isolation via the existing `test/helpers/reset-pglite.ts`. After the sweep, every test can be marked `test.concurrent()` (or the runner can pass `--concurrent` globally). Empirical measurement on this branch suggests another 2-3x speedup on top of the file-level fan-out, but it's at least 1-2 weeks of careful refactoring across the test suite — well beyond v0.26.4's scope.
+- **E2E parallelism via Postgres template databases** — `CREATE DATABASE foo TEMPLATE gbrain_template` per test file. Filed as v0.27+ project. E2E tests still run sequentially.
+
+### Process
+
+The plan went through a multi-section eng review followed by Codex outside-voice review. Codex flagged 4 critical structural issues; user resolved all 4 via interactive AskUserQuestion. Three resolutions adopted Codex's view (parity test impossible, `freshPglite()` contradicts existing `resetPglite()` helper, `verify` was redefining the ship gate). One overrode Codex (keep the contention sweep in scope per original plan). After empirical measurement showed `--max-concurrency` doesn't do what the plan assumed, we surfaced the finding via AskUserQuestion and the user chose to ship the file-level win as v0.26.4 with the intra-file project as a P0 TODO. Total: 5 atomic bisect-friendly commits.
+
+### For contributors
+
+- The new wrapper is portable to macOS bash 3.2 (uses `while-read` instead of `mapfile`).
+- Heartbeat output is read-only — never writes to the failure log.
+- Failure-log extraction is single-writer (the wrapper itself, after `wait` returns) — no concurrent shard children racing on the same file.
+- If `.context/` is unwritable (read-only mount, hostile CI), the wrapper falls back to `/tmp/` and prints the absolute path in the banner.
+
 ## [0.26.3] - 2026-05-03
 
 ## **Admin dashboard you can trust. Magic-link login, single-use URLs, per-client token TTLs, observable everything.**
