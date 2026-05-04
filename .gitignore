@@ -24,6 +24,12 @@ test/.cache/
 .claude/
 export/
 
+# Conductor workspace-local agent artifacts: plans, todos, run-unit-parallel
+# failure logs and per-shard test output. v0.26.4 (run-unit-parallel.sh)
+# writes .context/test-failures.log + .context/test-summary.txt +
+# .context/test-shards/. Workspace-local by design — never committed.
+.context/
+
 # Tier 3 PGLite snapshot fixture (built on demand by build:pglite-snapshot)
 test/fixtures/pglite-snapshot.tar
 test/fixtures/pglite-snapshot.version

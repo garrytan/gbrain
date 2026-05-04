@@ -1,5 +1,109 @@
 # TODOS
 
+
+## test infra (v0.26.4 follow-up — intra-file parallelism)
+
+### Sweep cross-file shared-state contention; enable `bun test --concurrent` for another 2-3x speedup
+**Priority:** P0
+
+**What:** v0.26.4 shipped file-level parallel fan-out (8 shards) and got `bun run test` from 18 minutes to ~85s — a 12x speedup. The next layer is **intra-file** parallelism via Bun's `--concurrent` flag (or per-test `test.concurrent()` markers). This requires every test file to be safe under concurrent execution within the same `bun test` process.
+
+The constraint: when multiple test files load into the same bun process (which is what `bun test foo.test.ts bar.test.ts ...` does inside a shard), they share module-level state. Three contention surfaces today:
+
+- **~58 PGLiteEngine instantiations** across `test/` (per codex's grep). Many use module-level `let engine: PGLiteEngine` patterns. Race when multiple test files load and each invokes `new PGLiteEngine().connect({})`.
+- **~40 process.env mutations** without restore. `process.env.X = '...'` not paired with `afterEach` cleanup leaks across files in the same process.
+- **2 top-level `mock.module(...)` calls** in `test/core/cycle.test.ts:26` and `test/embed.test.ts`. Top-level mocks affect every other test file in the same process.
+
+The repo already has the right helper: `test/helpers/reset-pglite.ts` exports `resetPgliteState(engine)` which is "two orders of magnitude faster" than fresh-engine-per-test (per the helper's own comment). Sweep all PGLite sites to use one shared engine + this reset in `beforeEach`. Do NOT introduce a `freshPglite()` allocator — codex correctly flagged that the repo already rejected that direction.
+
+Two flakes already known and quarantined as `*.serial.test.ts` (run after parallel pass at `--max-concurrency=1`):
+- `test/brain-registry.serial.test.ts` (was `brain-registry.test.ts`)
+- `test/reconcile-links.serial.test.ts` (was `reconcile-links.test.ts`)
+
+After the sweep, both should be fixable and renameable back to plain `*.test.ts`.
+
+**Why:**
+- 2-3x additional speedup on top of v0.26.4's 12x. Target: `bun run test` < 30s on a Mac dev box.
+- Forces the test architecture to be principled (no shared mutable state across files in the same process).
+- The empirical proof point: when `bun run test` was first measured at v0.26.4, two flakes surfaced under cross-file pressure that pass cleanly in isolation. That same pattern WILL surface more flakes if the suite grows. Better to sweep proactively than to keep growing the `*.serial.test.ts` quarantine.
+
+**Pros:**
+- Real architectural win, not just speed: tests become composable.
+- Existing helper (`test/helpers/reset-pglite.ts`) already validates the pattern.
+- Quarantined flakes auto-resolve: rename back to `*.test.ts` after the sweep.
+
+**Cons:**
+- 1-2 weeks of careful refactoring across ~100 test files.
+- Some tests genuinely need shared file-wide state (top-level mocks for module-replacement tests). Those stay quarantined as `*.serial.test.ts` permanently — but the count should shrink to a known small set, not grow.
+
+**Context:** v0.26.4 plan considered doing this in scope (Codex Tension #2 = C). After empirical measurement showed `--max-concurrency=4` does nothing on tests not marked `test.concurrent()`, the user chose to ship v0.26.4 as file-level-only and file this as the v0.27+ project. Plan file: `~/.claude/plans/system-instruction-you-are-working-tranquil-ladybug.md`. Codex critical findings #2, #3, #6 are all relevant.
+
+**Acceptance criteria:**
+1. All ~58 PGLiteEngine sites use shared-engine + `resetPgliteState()` in `beforeEach`.
+2. All ~40 `process.env` mutations use a `withEnv(...)` helper that saves + restores.
+3. The 2 top-level `mock.module()` calls scoped to `beforeEach`/`afterEach`, OR the file moves to `*.serial.test.ts`.
+4. Wrapper passes `--concurrent` (or every test marked `.concurrent()`).
+5. `bun run test` runs 5 times consecutively without flakes.
+6. Quarantine count `≤5` after the sweep (currently 2; goal is to get those 2 unquarantined and not add new ones).
+7. Wallclock target: `bun run test` < 30s.
+
+**Estimated effort:** 1-2 weeks of one engineer's focused work. Could parallelize by sub-area (env-mutation sweep is independent of PGLite sweep).
+
+### Speed up E2E via Postgres template databases
+**Priority:** P1
+
+**What:** E2E tests (`bun run test:e2e`) currently run sequentially in one shared Postgres container, each test file calling `initSchema()` from scratch (~5-20s each on cold init). Speed-up: build the schema ONCE into a template DB (`gbrain_template`), then have each test file `CREATE DATABASE foo TEMPLATE gbrain_template` (~50ms per clone). With per-shard `DATABASE_URL` overrides, E2E can fan out to N parallel shards too.
+
+**Why:** Current E2E wallclock is ~5-10 min in CI. Template DB clones could bring that to ~1-2 min. Critical for the inner loop on E2E-bearing PRs (currently a real friction point per `/ship` workflow).
+
+**Sketch:**
+1. Build template DB once via `initSchema()` against `gbrain_template`.
+2. Per-test-file: `CREATE DATABASE gbrain_test_clone_<n> TEMPLATE gbrain_template` (50ms vs 5-20s).
+3. Per-shard isolation via `DATABASE_URL` env override.
+4. Schema-version stamp on the template so it invalidates when `migrate.ts` changes.
+5. Cleanup via `DROP DATABASE` in afterAll.
+
+**Estimated effort:** 1-2 days. Filed during v0.26.4 plan as a deferred follow-up (D4 = B).
+
+## test infra (v0.26.2 follow-up — pre-existing failures triage)
+
+### Fix 22 pre-existing test failures unrelated to OAuth
+**Priority:** P0
+
+**What:** A `bun test` run on top of master at v0.26.2 surfaces 22 pre-existing failures across these suites — none touch v0.26.2's diff (oauth-provider.ts, auth.ts, oauth tests). They reproduce on a clean checkout against master:
+
+- 12 cases in `test/e2e/sync.test.ts` (Git-to-DB Sync Pipeline) — `result.status === 'first_sync'` vs actual `'synced'` state-machine drift; same root cause across all 12.
+- 3 cases in `test/e2e/multi-source.test.ts` (cascade delete + 2 sync routing) — performSync sourceId/local_path resolution.
+- `test/e2e/sync-parallel.test.ts` (60-file Postgres concurrency=4) — connection-leak probe regression.
+- `test/e2e/sync.test.ts` `--skip-failed` structured summary loop (v0.22.12 #500).
+- `test/e2e/dream.test.ts` (no --dry-run syncs pages) — runCycle DB write path.
+- `test/e2e/cycle.test.ts` (live cycle + chunks + lock cleanup).
+- `test/e2e/doctor.test.ts` (gbrain doctor exits 0 on healthy DB) — possibly related to v0.26.2 schema changes since CHANGELOG mentions extension of doctor checks.
+- `test/brain-registry.test.ts` (empty/null/undefined id routes to host) — unrelated to OAuth surface.
+- `test/e2e/claw-test.test.ts` (fresh-install scripted scenario) — needs investigation; took 3.9s and reported "produces zero error/blocker friction" failure.
+
+**Why:** These failures pre-date v0.26.2 (CHANGELOG already documents "18 pre-existing master timeouts" from v0.26.0 merge). v0.26.2 brings the count to 22, suggesting a 4-test drift on master between v0.26.0 ship and now. Fixing inside v0.26.2 would balloon scope from a 6-file OAuth fix-wave to a 30+ file test-infra repair. The fix-wave deserves its own PR with focused triage.
+
+**Likely root causes worth investigating:**
+- **bun execSync env inheritance** (already discovered + fixed in test/e2e/serve-http-oauth.test.ts during v0.26.2): bun's `execSync` does NOT inherit env mutations done via `process.env.X = ...`, only OS-level env from before bun started. helpers.ts loads `.env.testing` and sets `DATABASE_URL` via `process.env` mutation, which is invisible to subprocesses unless `env: { ...process.env }` is passed explicitly. Several of the failing E2E tests (sync, cycle, dream, claw-test) spawn subprocesses via execSync — likely the same bug.
+- **Test ordering / DB state pollution**: full-suite runs in bun test happen in a deterministic order; isolated runs of these test files may pass while suite runs fail. Could indicate beforeAll/afterAll cleanup gaps.
+- **Schema drift**: doctor/multi-source tests may rely on specific schema state that v0.26 OAuth tables changed.
+
+**Pros:**
+- Separating from v0.26.2 keeps the OAuth ship focused and auditable; the 22 failures aren't blocking real-world OAuth functionality.
+- The execSync env-inheritance pattern is now documented in test/e2e/serve-http-oauth.test.ts as a reference fix for the next maintainer.
+- Unblocks v0.26.2 ship while preserving the failure inventory for the follow-up.
+
+**Cons:**
+- 22 failing tests on master is real test-infra debt.
+- Some may be load-bearing (sync pipeline failures could mask real regressions in `performSync`).
+- `bun run ci:local` (full E2E gate) won't pass cleanly until these are addressed.
+
+**Context:** Discovered during v0.26.2 ship audit. Reproduce with `bun test 2>&1 | grep "^(fail)"` after copying `.env.testing` from a sibling worktree (port 5435 test DB running). The 17/17 OAuth E2E suite passes in isolation AND in full-suite after the env-inheritance fix landed.
+
+**Effort:** L (human ~4-8h; CC ~30-60min once env-inheritance fix is applied across all tests).
+
+**Depends on / blocked by:** None — independent of v0.26.2.
 ## ci-local-mirror
 
 ### CI-skip artifact + signature for stages 1+2 follow-up
