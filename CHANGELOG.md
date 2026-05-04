@@ -151,8 +151,7 @@ Both run at `--max-concurrency=1` after the parallel pass, same as the existing 
 Wallclock observed: 74s on a Mac dev box (running `bun run test` with the new quarantines). Already at the v0.26.9 informational target. The full intra-file marker flip (with codemod + per-file `test.concurrent()`) lands in v0.26.9 and aims for the same ≤60s with pinned config.
 
 To take advantage of v0.26.7
-=====================
-`gbrain upgrade` does nothing functional in this release — it ships test infrastructure, not user-facing code. But if you contribute tests:
+==============`gbrain upgrade` does nothing functional in this release — it ships test infrastructure, not user-facing code. But if you contribute tests:
 
 1. **Run `bun run verify` before pushing.** The new `check-test-isolation.sh` runs alongside the privacy + jsonb + progress checks. Catches new env-mutation, mock.module, and PGLite-pattern violations before CI does.
 
@@ -261,6 +260,7 @@ If you maintain a fork or downstream consumer:
 
 Closes #588.
 
+=======
 ## [0.26.5] - 2026-05-03
 
 ## **Destructive operation guard, end to end. Sources AND pages now have a 72h recovery window.**
@@ -353,6 +353,7 @@ If `gbrain doctor` warns about a partial migration:
 
 #### Mechanics
 - `VERSION` → `0.26.5`. `package.json` → `0.26.5`. `src/schema.sql` regenerated into `src/core/schema-embedded.ts` via `bun run build:schema`. `src/core/migrate.ts` adds migration v34. `src/core/pglite-schema.ts` mirrors the new columns + partial index.
+
 ## [0.26.4] - 2026-05-03
 
 ## **`bun run test` finishes in 85 seconds. Was 18 minutes.**

@@ -196,6 +196,8 @@ strict behavior when unset.
 - `src/commands/backlinks.ts` — Back-link checker and fixer (enforces Iron Law)
 - `src/commands/lint.ts` — Page quality linter (catches LLM artifacts, placeholder dates)
 - `src/commands/report.ts` — Structured report saver (audit trail for maintenance/enrichment)
+- `src/core/destructive-guard.ts` (v0.26.5) — three-layer protection against accidental data loss in gbrain. `assessDestructiveImpact(engine, sourceId)` counts pages/chunks/embeddings/files for a source. `checkDestructiveConfirmation(impact, opts)` is the fail-closed gate (`--confirm-destructive` required when data is present; `--yes` alone is rejected). `softDeleteSource` / `restoreSource` / `listArchivedSources` / `purgeExpiredSources` drive the source-level archive lifecycle via the column shape introduced in migration v34 (`sources.archived BOOLEAN`, `archived_at TIMESTAMPTZ`, `archive_expires_at TIMESTAMPTZ`). v0.26.5 added the page-level analog through `BrainEngine.softDeletePage` / `restorePage` / `purgeDeletedPages` plus `pages.deleted_at TIMESTAMPTZ` and a partial purge index. The MCP `delete_page` op rewires to `softDeletePage`; new ops `restore_page` (`scope: write`) and `purge_deleted_pages` (`scope: admin`, `localOnly: true`) round out the surface. Search visibility (`buildVisibilityClause` in `src/core/search/sql-ranking.ts`) hides soft-deleted pages and archived sources from `searchKeyword` / `searchKeywordChunks` / `searchVector` in both engines. The autopilot cycle's new 9th `purge` phase calls `purgeExpiredSources` + `engine.purgeDeletedPages(72)` so the 72h TTL is real, not honor-system.
+- `src/commands/pages.ts` (v0.26.5) — `gbrain pages purge-deleted [--older-than HOURS|Nd] [--dry-run] [--json]` operator escape hatch. Mirror of `gbrain sources purge` for the page-level lifecycle. Hard-deletes pages whose `deleted_at` is older than the cutoff; cascades to content_chunks/page_links/chunk_relations.
 - `openclaw.plugin.json` — ClawHub bundle plugin manifest
 
 ### BrainBench — in a sibling repo (v0.20+)
@@ -230,6 +232,19 @@ Key commands added for Minions (job queue):
 - `gbrain jobs stats` — job health dashboard
 - `gbrain jobs smoke [--sigkill-rescue]` — health smoke test. `--sigkill-rescue` is the v0.13.1 regression guard for #219: simulates a killed worker and asserts the stalled job is requeued instead of dead-lettered on first stall.
 - `gbrain jobs work [--queue Q] [--concurrency N]` — start worker daemon (Postgres only)
+
+Key commands added in v0.26.5 (destructive-guard, end-to-end):
+- `gbrain sources archive <id>` — soft-delete a source. Hides from search via the new `sources.archived` column + cascading visibility filter. Preserves data for 72h. (PR #595 cherry-pick.)
+- `gbrain sources restore <id> [--no-federate]` — un-archive a soft-deleted source. Re-federates by default.
+- `gbrain sources archived [--json]` — list soft-deleted sources with their TTL.
+- `gbrain sources purge [<id>] [--confirm-destructive]` — permanent delete; with no id, purges all sources whose TTL expired.
+- `gbrain sources remove <id> [--confirm-destructive] [--dry-run]` — `--yes` alone no longer enough on populated sources. Boxed impact preview before destruction.
+- `gbrain pages purge-deleted [--older-than HOURS|Nd] [--dry-run] [--json]` — operator escape hatch for page-level soft-delete cleanup. Mirror of `gbrain sources purge`. The autopilot cycle's new `purge` phase calls the same library function automatically every run.
+- MCP `delete_page` op semantically shifts from hard-delete to soft-delete. New ops: `restore_page` (`scope: write`), `purge_deleted_pages` (`scope: admin`, `localOnly: true`).
+- `get_page` and `list_pages` extended with `include_deleted: boolean` (default false).
+- New autopilot cycle phase `purge` (9th, runs after `orphans`). `gbrain dream --phase purge` runs only the purge sweep.
+- Index strategy note: the partial index `pages_deleted_at_purge_idx ON pages (deleted_at) WHERE deleted_at IS NOT NULL` supports the autopilot purge query. Search filters (`WHERE deleted_at IS NULL`) do NOT need their own index — soft-deleted cardinality stays low and Postgres won't use the partial index for the negative predicate. Don't add a regular `(deleted_at)` index without measuring.
+- Schema migration v34 (`destructive_guard_columns`) adds `pages.deleted_at` + the partial purge index; promotes `archived` from `sources.config` JSONB to real columns; backfills any pre-v0.26.5 JSONB shape.
 
 Key commands added in v0.25.0:
 - `gbrain eval export [--since DUR] [--limit N] [--tool query|search]` — stream captured `eval_candidates` rows as NDJSON to stdout. Every line starts with `"schema_version": 1` per the stable contract in `docs/eval-capture.md`. EPIPE-safe, progress heartbeats on stderr, deterministic ordering. Primary consumer is the sibling `gbrain-evals` repo for BrainBench-Real replay.
