@@ -18,7 +18,13 @@ start here.
 1. `./AGENTS.md` (this file) — install + operating protocol.
 2. [`./CLAUDE.md`](./CLAUDE.md) — architecture reference, key files, trust boundaries,
    test layout.
-3. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+3. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
+   — the two-axis mental model (brain = which DB, source = which repo in the DB). Every
+   query routes on both axes. Read before writing anything that touches brain ops.
+4. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
+   agent-facing decision table: when to switch brain, when to switch source, how
+   cross-brain federation works (latent-space only; the agent decides).
+5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
 
 ## Trust boundary (critical)
 

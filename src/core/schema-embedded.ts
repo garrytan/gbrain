@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS sources (
   -- bypassing the git-HEAD up_to_date early-return so CHUNKER_VERSION bumps
   -- actually trigger re-chunking on upgrade.
   chunker_version TEXT,
+  -- v0.26.5: soft-delete + recovery window. \`archive\` flips archived=true and
+  -- sets archive_expires_at = now() + 72h. The autopilot purge phase
+  -- hard-deletes rows where archive_expires_at <= now(). Promoted from a
+  -- JSONB key to real columns to avoid reserved-key footguns and to make the
+  -- search visibility filter (\`NOT s.archived\`) a column lookup.
+  archived            BOOLEAN NOT NULL DEFAULT false,
+  archived_at         TIMESTAMPTZ,
+  archive_expires_at  TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -75,6 +83,11 @@ CREATE TABLE IF NOT EXISTS pages (
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.26.5: soft-delete + recovery window. \`delete_page\` sets deleted_at = now()
+  -- instead of issuing DELETE. The autopilot purge phase hard-deletes pages
+  -- where deleted_at < now() - 72h. Search and \`get_page\` filter
+  -- \`WHERE deleted_at IS NULL\` by default; \`include_deleted: true\` opts in.
+  deleted_at    TIMESTAMPTZ,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -85,6 +98,13 @@ CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops)
 CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
 -- v0.18.0: source-scoped scans (per /plan-eng-review Section 4).
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+-- v0.26.5: partial index supports the autopilot purge sweep
+-- (\`WHERE deleted_at IS NOT NULL AND deleted_at < now() - INTERVAL '72 hours'\`).
+-- Search filters (\`WHERE deleted_at IS NULL\`) do not benefit from this index
+-- (predicate doesn't match) and don't need their own — soft-deleted cardinality
+-- stays low. Don't add a regular \`(deleted_at)\` index without measuring.
+CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
+  ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -344,13 +364,64 @@ CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) 
 -- mcp_request_log: usage logging for remote MCP requests
 -- ============================================================
 CREATE TABLE IF NOT EXISTS mcp_request_log (
-  id         SERIAL PRIMARY KEY,
-  token_name TEXT,
-  operation  TEXT NOT NULL,
-  latency_ms INTEGER,
-  status     TEXT NOT NULL DEFAULT 'success',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id            SERIAL PRIMARY KEY,
+  token_name    TEXT,
+  agent_name    TEXT,
+  operation     TEXT NOT NULL,
+  latency_ms    INTEGER,
+  status        TEXT NOT NULL DEFAULT 'success',
+  params        JSONB,
+  error_message TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ============================================================
+-- OAuth 2.1: clients, tokens, authorization codes
+-- ============================================================
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id               TEXT PRIMARY KEY,
+  client_secret_hash      TEXT,
+  client_name             TEXT NOT NULL,
+  redirect_uris           TEXT[],
+  grant_types             TEXT[] DEFAULT '{"client_credentials"}',
+  scope                   TEXT,
+  token_endpoint_auth_method TEXT,
+  client_id_issued_at     BIGINT,
+  client_secret_expires_at BIGINT,
+  token_ttl               INTEGER,
+  deleted_at              TIMESTAMPTZ,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  token_hash   TEXT PRIMARY KEY,
+  token_type   TEXT NOT NULL,
+  client_id    TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  scopes       TEXT[],
+  expires_at   BIGINT,
+  resource     TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expiry ON oauth_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_tokens(client_id);
+
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash              TEXT PRIMARY KEY,
+  client_id              TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  scopes                 TEXT[],
+  code_challenge         TEXT NOT NULL,
+  code_challenge_method  TEXT NOT NULL DEFAULT 'S256',
+  redirect_uri           TEXT NOT NULL,
+  state                  TEXT,
+  resource               TEXT,
+  expires_at             BIGINT NOT NULL,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Composite indexes for admin dashboard request log queries
+CREATE INDEX IF NOT EXISTS idx_mcp_log_time_agent ON mcp_request_log(created_at, token_name);
+CREATE INDEX IF NOT EXISTS idx_mcp_log_agent_time ON mcp_request_log(agent_name, created_at DESC);
 
 -- ============================================================
 -- files: binary attachments stored in Supabase Storage
@@ -718,6 +789,10 @@ BEGIN
     ALTER TABLE dream_verdicts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY;
+    -- v0.26 OAuth 2.1 tables
+    ALTER TABLE oauth_clients ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE oauth_codes ENABLE ROW LEVEL SECURITY;
     RAISE NOTICE 'RLS enabled on all tables (role % has BYPASSRLS)', current_user;
   ELSE
     RAISE WARNING 'Skipping RLS: role % does not have BYPASSRLS privilege. Run as postgres role to enable.', current_user;

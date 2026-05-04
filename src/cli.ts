@@ -19,7 +19,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -265,6 +265,11 @@ async function handleCliOnly(command: string, args: string[]) {
     await runInit(args);
     return;
   }
+  if (command === 'auth') {
+    const { runAuth } = await import('./commands/auth.ts');
+    await runAuth(args);
+    return;
+  }
   if (command === 'upgrade') {
     const { runUpgrade } = await import('./commands/upgrade.ts');
     await runUpgrade(args);
@@ -323,6 +328,13 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'check-resolvable') {
     const { runCheckResolvable } = await import('./commands/check-resolvable.ts');
     await runCheckResolvable(args);
+    return;
+  }
+  if (command === 'mounts') {
+    // No DB needed: mounts.json is a local config file. Registry will
+    // connect mount engines lazily on first use by op dispatch.
+    const { runMounts } = await import('./commands/mounts.ts');
+    await runMounts(args);
     return;
   }
   if (command === 'routing-eval') {
@@ -494,6 +506,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runAgent(engine, args);
         break;
       }
+      case 'book-mirror': {
+        const { runBookMirrorCmd } = await import('./commands/book-mirror.ts');
+        await runBookMirrorCmd(engine, args);
+        break;
+      }
       case 'sync': {
         const { runSync } = await import('./commands/sync.ts');
         await runSync(engine, args);
@@ -536,6 +553,12 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'sources': {
         const { runSources } = await import('./commands/sources.ts');
         await runSources(engine, args);
+        break;
+      }
+      case 'pages': {
+        // v0.26.5: page-level operator commands (purge-deleted escape hatch).
+        const { runPages } = await import('./commands/pages.ts');
+        await runPages(engine, args);
         break;
       }
       case 'storage': {
@@ -744,6 +767,10 @@ ADMIN
   storage status [--repo <path>]     Storage tier status and health
         [--json]                     (git-tracked vs supabase-only)
   serve                              MCP server (stdio)
+  serve --http [--port N]            HTTP MCP server with OAuth 2.1
+    --token-ttl N                    Access token TTL in seconds (default: 3600)
+    --enable-dcr                     Enable Dynamic Client Registration
+    --public-url URL                 Public issuer URL (required behind proxy/tunnel)
   call <tool> '<json>'               Raw tool invocation
   version                            Version info
   --tools-json                       Tool discovery (JSON)

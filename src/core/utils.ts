@@ -1,5 +1,19 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult } from './types.ts';
+
+/**
+ * SHA-256 hash a token/secret for storage. Never store plaintext tokens.
+ */
+export function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+/**
+ * Generate a cryptographically random token with a prefix.
+ */
+export function generateToken(prefix: string): string {
+  return `${prefix}${randomBytes(32).toString('hex')}`;
+}
 
 /**
  * Validate and normalize a slug. Slugs are lowercased repo-relative paths.
@@ -29,6 +43,12 @@ export function contentHash(page: PageInput): string {
 }
 
 export function rowToPage(row: Record<string, unknown>): Page {
+  // v0.26.5: deleted_at is optional in the SELECT projection. When the column
+  // isn't selected (legacy callers), keep the field absent on the returned object.
+  const deletedAtRaw = row.deleted_at;
+  const deletedAt = deletedAtRaw == null
+    ? (deletedAtRaw === null ? null : undefined)
+    : new Date(deletedAtRaw as string);
   return {
     id: row.id as number,
     slug: row.slug as string,
@@ -40,6 +60,7 @@ export function rowToPage(row: Record<string, unknown>): Page {
     content_hash: row.content_hash as string | undefined,
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
+    ...(deletedAt !== undefined && { deleted_at: deletedAt }),
   };
 }
 

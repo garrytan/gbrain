@@ -26,6 +26,14 @@
 set -euo pipefail
 
 BANNED_NAME='wintermute'
+# v0.25.1 (codex T7): additional patterns from wintermute-specific filesystem
+# layouts that would leak private fork context if they slipped through a port.
+# `wintermute_only` already matches via the case-insensitive `wintermute` regex
+# above; this list is for orthogonal patterns.
+BANNED_PATHS=(
+  '/data/brain/'
+  '/data/.openclaw/'
+)
 
 usage() {
   cat <<EOF
@@ -92,6 +100,27 @@ ALLOW_LIST=(
   'llms-full.txt'
   'docs/UPGRADING_DOWNSTREAM_AGENTS.md'
   'test/integrations.test.ts'
+  # v0.25.1 (codex T7) BANNED_PATHS allow-list:
+  # Historical docs, frozen migration files, test fixtures, and env-var
+  # fallbacks where /data/brain/ or /data/.openclaw/ appears legitimately.
+  # New skills/, src/, and tests must NOT slip onto this list — extend the
+  # banned check above instead.
+  'docs/GBRAIN_RECOMMENDED_SCHEMA.md'
+  'docs/GBRAIN_V0.md'
+  'docs/guides/minions-shell-jobs.md'
+  'scripts/smoke-test.sh'
+  'skills/migrations/v0.9.0.md'
+  'skills/migrations/v0.14.0.md'
+  'test/storage-status.test.ts'
+  # CHANGELOG.md documents the rule (the v0.25.1 entry references the
+  # banned literals in describing what's banned). Same exception status
+  # as CLAUDE.md and this script itself: meta-documentation needs to
+  # name the patterns it forbids.
+  'CHANGELOG.md'
+  # skills/migrations/v0.25.1.md is the agent-readable upgrade
+  # walkthrough; it explains the privacy-guard extension to the
+  # operating agent and references the banned literals while doing so.
+  'skills/migrations/v0.25.1.md'
 )
 
 is_allowed() {
@@ -119,6 +148,14 @@ while IFS= read -r file; do
         grep -in "$BANNED_NAME" "$file" | sed 's|^|  |' >&2
         FOUND=1
       fi
+      # Banned wintermute-specific filesystem paths (codex T7).
+      for path in "${BANNED_PATHS[@]}"; do
+        if grep -nF "$path" "$file" >/dev/null 2>&1; then
+          echo "[check-privacy] BANNED PATH '$path' in $file:" >&2
+          grep -nF "$path" "$file" | sed 's|^|  |' >&2
+          FOUND=1
+        fi
+      done
       ;;
   esac
 done <<< "$FILES"

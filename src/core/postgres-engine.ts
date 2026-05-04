@@ -22,7 +22,7 @@ import { GBrainError } from './types.ts';
 import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause } from './search/sql-ranking.ts';
 
 // CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
 // executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
@@ -152,6 +152,7 @@ export class PostgresEngine implements BrainEngine {
    *   - `links.origin_page_id` column (indexed by `idx_links_origin`) — v0.13
    *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
    *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
+   *   - `pages.deleted_at` column (indexed by `pages_deleted_at_purge_idx`) — v0.26.5
    *
    * Keep this in sync with the PGLite version; covered by
    * `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
@@ -166,6 +167,7 @@ export class PostgresEngine implements BrainEngine {
     const probeRows = await conn<{
       pages_exists: boolean;
       source_id_exists: boolean;
+      deleted_at_exists: boolean;
       links_exists: boolean;
       link_source_exists: boolean;
       origin_page_id_exists: boolean;
@@ -178,6 +180,8 @@ export class PostgresEngine implements BrainEngine {
                 WHERE table_schema = current_schema() AND table_name = 'pages') AS pages_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'source_id') AS source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'deleted_at') AS deleted_at_exists,
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'links') AS links_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
@@ -198,8 +202,11 @@ export class PostgresEngine implements BrainEngine {
       && (!probe.link_source_exists || !probe.origin_page_id_exists);
     const needsChunksBootstrap = probe.chunks_exists
       && (!probe.symbol_name_exists || !probe.language_exists);
+    // v0.26.5: pages_deleted_at_purge_idx in SCHEMA_SQL crashes if the column
+    // doesn't exist yet. Migration v34 also adds it, but bootstrap runs first.
+    const needsPagesDeletedAt = probe.pages_exists && !probe.deleted_at_exists;
 
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap) return;
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -246,6 +253,16 @@ export class PostgresEngine implements BrainEngine {
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name TEXT;
       `);
     }
+
+    if (needsPagesDeletedAt) {
+      // v34 (destructive_guard_columns) adds the column + sources columns +
+      // partial purge index. Bootstrap only adds enough for SCHEMA_SQL's
+      // `CREATE INDEX pages_deleted_at_purge_idx ... WHERE deleted_at IS NOT NULL`
+      // not to crash. v34 runs later via runMigrations and is idempotent.
+      await conn.unsafe(`
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      `);
+    }
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
@@ -278,11 +295,19 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Pages CRUD
-  async getPage(slug: string): Promise<Page | null> {
+  async getPage(slug: string, opts?: { sourceId?: string; includeDeleted?: boolean }): Promise<Page | null> {
     const sql = this.sql;
+    const includeDeleted = opts?.includeDeleted === true;
+    const sourceId = opts?.sourceId;
+    // v0.26.5: default hides soft-deleted rows. Compose with optional sourceId
+    // filter via fragment chaining (postgres.js supports sql`` composition).
+    const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
+    const deletedCondition = includeDeleted ? sql`` : sql`AND deleted_at IS NULL`;
     const rows = await sql`
-      SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
-      FROM pages WHERE slug = ${slug}
+      SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at
+      FROM pages
+      WHERE slug = ${slug} ${sourceCondition} ${deletedCondition}
+      LIMIT 1
     `;
     if (rows.length === 0) return null;
     return rowToPage(rows[0]);
@@ -321,6 +346,48 @@ export class PostgresEngine implements BrainEngine {
     await sql`DELETE FROM pages WHERE slug = ${slug}`;
   }
 
+  async softDeletePage(slug: string, opts?: { sourceId?: string }): Promise<{ slug: string } | null> {
+    const sql = this.sql;
+    const sourceId = opts?.sourceId;
+    // Idempotent-as-null contract: only flip rows that are currently active.
+    // RETURNING projects the slug so we can tell hit-vs-miss without a probe.
+    const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
+    const rows = await sql`
+      UPDATE pages SET deleted_at = now()
+      WHERE slug = ${slug} AND deleted_at IS NULL ${sourceCondition}
+      RETURNING slug
+    `;
+    if (rows.length === 0) return null;
+    return { slug: rows[0].slug as string };
+  }
+
+  async restorePage(slug: string, opts?: { sourceId?: string }): Promise<boolean> {
+    const sql = this.sql;
+    const sourceId = opts?.sourceId;
+    const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
+    const rows = await sql`
+      UPDATE pages SET deleted_at = NULL
+      WHERE slug = ${slug} AND deleted_at IS NOT NULL ${sourceCondition}
+      RETURNING slug
+    `;
+    return rows.length > 0;
+  }
+
+  async purgeDeletedPages(olderThanHours: number): Promise<{ slugs: string[]; count: number }> {
+    const sql = this.sql;
+    // Clamp to non-negative integer; runaway purge protection. The DELETE
+    // cascades through content_chunks, page_links, chunk_relations via FKs.
+    const hours = Math.max(0, Math.floor(olderThanHours));
+    const rows = await sql`
+      DELETE FROM pages
+      WHERE deleted_at IS NOT NULL
+        AND deleted_at < now() - (${hours} || ' hours')::interval
+      RETURNING slug
+    `;
+    const slugs = rows.map((r) => r.slug as string);
+    return { slugs, count: slugs.length };
+  }
+
   async listPages(filters?: PageFilters): Promise<Page[]> {
     const sql = this.sql;
     const limit = filters?.limit || 100;
@@ -342,11 +409,15 @@ export class PostgresEngine implements BrainEngine {
     const slugCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sql``;
+    // v0.26.5: hide soft-deleted by default; opt in via filters.includeDeleted.
+    const deletedCondition = filters?.includeDeleted === true
+      ? sql``
+      : sql`AND p.deleted_at IS NULL`;
 
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition}
+      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${deletedCondition}
       ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
     `;
 
@@ -442,6 +513,12 @@ export class PostgresEngine implements BrainEngine {
     params.push(offset);
     const offsetParam = `$${params.length}`;
 
+    // v0.26.5: visibility filter hides soft-deleted pages and pages from
+    // archived sources. Joined `sources s` lets the predicate compile to a
+    // column lookup. NOT bypassed by detail=high — soft-delete is a contract,
+    // not a temporal preference.
+    const visibilityClause = buildVisibilityClause('p', 's');
+
     const rawQuery = `
       WITH ranked_chunks AS (
         SELECT
@@ -450,6 +527,7 @@ export class PostgresEngine implements BrainEngine {
           ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
+        JOIN sources s ON s.id = p.source_id
         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1)
           ${typeClause}
           ${excludeSlugsClause}
@@ -457,6 +535,7 @@ export class PostgresEngine implements BrainEngine {
           ${languageClause}
           ${symbolKindClause}
           ${hardExcludeClause}
+          ${visibilityClause}
         ORDER BY score DESC
         LIMIT ${innerLimitParam}
       ),
@@ -541,6 +620,9 @@ export class PostgresEngine implements BrainEngine {
     params.push(offset);
     const offsetParam = `$${params.length}`;
 
+    // v0.26.5: visibility filter for searchKeywordChunks (anchor primitive).
+    const visibilityClause = buildVisibilityClause('p', 's');
+
     const rawQuery = `
       SELECT
         p.slug, p.id as page_id, p.title, p.type, p.source_id,
@@ -549,6 +631,7 @@ export class PostgresEngine implements BrainEngine {
         false AS stale
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
+      JOIN sources s ON s.id = p.source_id
       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1)
         ${typeClause}
         ${excludeSlugsClause}
@@ -556,6 +639,7 @@ export class PostgresEngine implements BrainEngine {
         ${languageClause}
         ${symbolKindClause}
         ${hardExcludeClause}
+        ${visibilityClause}
       ORDER BY score DESC
       LIMIT ${limitParam}
       OFFSET ${offsetParam}
@@ -626,6 +710,12 @@ export class PostgresEngine implements BrainEngine {
     params.push(offset);
     const offsetParam = `$${params.length}`;
 
+    // v0.26.5: visibility filter applied in the inner CTE so the HNSW index
+    // sees the same row count it always did. Pulling the predicate to the
+    // outer SELECT would force the HNSW scan to over-fetch and post-filter,
+    // wasting candidate slots on hidden rows.
+    const visibilityClause = buildVisibilityClause('p', 's');
+
     const rawQuery = `
       WITH hnsw_candidates AS (
         SELECT
@@ -634,6 +724,7 @@ export class PostgresEngine implements BrainEngine {
           1 - (cc.embedding <=> $1::vector) AS raw_score
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
+        JOIN sources s ON s.id = p.source_id
         WHERE cc.embedding IS NOT NULL
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${typeClause}
@@ -641,6 +732,7 @@ export class PostgresEngine implements BrainEngine {
           ${languageClause}
           ${symbolKindClause}
           ${hardExcludeClause}
+          ${visibilityClause}
         ORDER BY cc.embedding <=> $1::vector
         LIMIT ${innerLimitParam}
       )
@@ -1379,7 +1471,11 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const [stats] = await sql`
       SELECT
-        (SELECT count(*) FROM pages) as page_count,
+        -- v0.26.5: exclude soft-deleted from page_count. Same posture as the
+        -- search filter and getPage default — soft-deleted is hidden everywhere
+        -- the user looks. Chunks/links stay raw because they still occupy
+        -- storage until the autopilot purge phase runs.
+        (SELECT count(*) FROM pages WHERE deleted_at IS NULL) as page_count,
         (SELECT count(*) FROM content_chunks) as chunk_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL) as embedded_count,
         (SELECT count(*) FROM links) as link_count,

@@ -23,6 +23,24 @@ not the source, not the skill that's running.
 | Reusable framework/thesis -> `sources/` | -> `concepts/` | It's a mental model |
 | Tweet thread about policy -> `media/` | -> `civic/` or `concepts/` | media/ is for content ops |
 
+## Sanctioned exception: synthesis output is sui generis
+
+The "file by primary subject" rule is for raw ingest. Synthesized output that
+is one-of-one to a single source AND a specific reader (a personalized book
+mirror, a strategic-reading playbook tied to one problem) does not fit any
+subject directory cleanly: filing by topic loses the "this is the book"
+dimension; filing by author muddles authorship pages with synthesis pages.
+
+Format-prefixed paths under `media/<format>/<slug>` are the sanctioned
+exception:
+
+- `media/books/<slug>-personalized.md` (book-mirror output)
+- `media/articles/<slug>-personalized.md` (long-form article personalization)
+
+If you find yourself wanting `media/<format>/` for raw ingest, that is still
+the anti-pattern in the table above. The exception is narrow: synthesized,
+one-of-one, sui generis to a single source.
+
 ## What `sources/` Is Actually For
 
 `sources/` is ONLY for:

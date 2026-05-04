@@ -82,10 +82,46 @@
       "description": "Personal-life content — kept separate from work."
     },
     {
+      "kind": "idea",
+      "directory": "ideas/",
+      "examples": ["product ideas", "essay seeds", "back-of-envelope concepts"],
+      "description": "Generative ideas the user might build, write, or expand later. Stub-shaped pages that mature over time. voice-note-ingest, archive-crawler, and similar capture-flavored skills file here when content is something to potentially act on."
+    },
+    {
+      "kind": "research",
+      "directory": "research/",
+      "examples": ["web-research deltas", "freshness checks", "citation-verified claims"],
+      "description": "Web-research output: what is NEW vs already-known about a topic, citation-checked claims, freshness deltas. perplexity-research and academic-verify file here."
+    },
+    {
+      "kind": "original",
+      "directory": "originals/",
+      "examples": ["the user's own theses", "frameworks the user generated", "novel observations the user expressed"],
+      "description": "Pages where the user is the primary author of the idea — original thinking, not summarizations of someone else's work. voice-note-ingest, archive-crawler, signal-detector route content here when the user is the originator."
+    },
+    {
+      "kind": "voice-note",
+      "directory": "voice-notes/",
+      "examples": ["raw transcripts", "audio capture pages"],
+      "description": "Voice-note transcript holders, especially when the content is a random thought that doesn't cleanly fit originals/, concepts/, or another subject directory. voice-note-ingest is the primary writer."
+    },
+    {
       "kind": "openclaw",
       "directory": "openclaw/",
       "examples": ["agent-state notes"],
       "description": "Notes about the host OpenClaw agent itself, not the underlying entities."
+    },
+    {
+      "kind": "synthesis-output",
+      "directory": "media/books/",
+      "examples": ["personalized book mirrors", "two-column chapter analyses"],
+      "description": "Sanctioned exception to 'file by primary subject' for sui generis synthesized output that is one-of-one to a single book and a specific reader. Format-prefixed under media/<format>/ is allowed for synthesis output only, never for raw ingest. See _brain-filing-rules.md."
+    },
+    {
+      "kind": "synthesis-output",
+      "directory": "media/articles/",
+      "examples": ["personalized article reads", "long-form content tailored to reader"],
+      "description": "Same sanctioned exception as media/books/. One-of-one synthesis output of an article personalized for the reader. Distinct from raw article ingest, which goes to the article's primary-subject directory."
     }
   ],
   "sources_dir": {

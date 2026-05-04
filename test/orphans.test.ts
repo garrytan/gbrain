@@ -216,10 +216,10 @@ describe('findOrphans (engine-injected)', () => {
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
-  }, 60_000);
+  }, 60_000); // OAuth v25 + full migration chain needs breathing room
 
   afterEach(async () => {
-    await engine.disconnect();
+    if (engine) await engine.disconnect();
   }, 60_000);
 
   test('returns pages with no inbound links, excluding pseudo-pages', async () => {
