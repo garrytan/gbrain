@@ -208,6 +208,12 @@ export interface SearchOpts {
    * undefined to search all sources.
    */
   sourceId?: string;
+  /** v0.27.0: filter results to pages updated/created after this date. ISO-8601 string. */
+  afterDate?: string;
+  /** v0.27.0: filter results to pages updated/created before this date. ISO-8601 string. */
+  beforeDate?: string;
+  /** v0.27.0: recency boost strength. 0 = off, 1 = moderate, 2 = aggressive. Default: auto-detected from intent. */
+  recencyBoost?: 0 | 1 | 2;
 }
 
 /**

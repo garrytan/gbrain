@@ -1193,6 +1193,16 @@ export class PGLiteEngine implements BrainEngine {
     return result;
   }
 
+  async getPageTimestamps(slugs: string[]): Promise<Map<string, Date>> {
+    if (slugs.length === 0) return new Map();
+    const { rows } = await this.db.query(
+      `SELECT slug, COALESCE(updated_at, created_at) as ts
+       FROM pages WHERE slug = ANY($1::text[])`,
+      [slugs]
+    );
+    return new Map(rows.map((r: any) => [r.slug as string, new Date(r.ts as string)]));
+  }
+
   async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
     const { rows } = await this.db.query(
       `SELECT

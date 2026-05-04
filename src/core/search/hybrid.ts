@@ -16,6 +16,7 @@ import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 import { autoDetectDetail } from './intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
+import { applyRecencyBoost } from './recency.ts';
 
 const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -228,6 +229,23 @@ export async function hybridSearch(
     } catch {
       // Expansion is best-effort — missing edge tables or a transient
       // DB error must not break base hybrid retrieval.
+    }
+  }
+
+  // v0.27.0: recency boost — applied after backlink boost, before dedup.
+  // Auto-enabled when intent is temporal/event (detail='high'), or when
+  // opts.recencyBoost is explicitly set. Strength 1 = moderate (30-day
+  // halflife), 2 = aggressive (7-day halflife). Connection to intent.ts:
+  // temporal/event queries → detail='high' → recencyStrength=1 here.
+  const recencyStrength = opts?.recencyBoost ?? (detail === 'high' ? 1 : 0);
+  if (recencyStrength > 0 && fused.length > 0) {
+    try {
+      const recencySlugs = Array.from(new Set(fused.map(r => r.slug)));
+      const timestamps = await engine.getPageTimestamps(recencySlugs);
+      applyRecencyBoost(fused, timestamps, recencyStrength as 1 | 2);
+      fused.sort((a, b) => b.score - a.score);
+    } catch {
+      // Recency boost failure is non-fatal: keep existing ranking.
     }
   }
 

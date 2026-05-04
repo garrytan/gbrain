@@ -275,6 +275,12 @@ export interface BrainEngine {
    */
   getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
   /**
+   * v0.27.0: for a list of slugs, return their updated_at timestamps (or created_at fallback).
+   * Used by hybrid search recency boost. Single SQL query, not N+1.
+   * Slugs with no timestamp get no entry in the map.
+   */
+  getPageTimestamps(slugs: string[]): Promise<Map<string, Date>>;
+  /**
    * Return every page with no inbound links (from any source).
    * Domain comes from the frontmatter `domain` field (null if unset).
    * The caller filters pseudo-pages + derives display domain.
