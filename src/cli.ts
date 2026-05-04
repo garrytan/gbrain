@@ -133,12 +133,13 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   }
 
   // Read stdin for content params.
-  // Cross-platform: read from fd 0 (works on Windows; '/dev/stdin' as a path
-  // resolves to C:\dev\stdin and ENOENTs there). Use fstatSync(0) instead of
-  // !isTTY because process.stdin.isTTY is `undefined` on Windows pipes which
-  // happens to coerce correctly today, but a stricter check also avoids
-  // blocking when fd 0 is detached (e.g. systemd service) by only consuming
-  // stdin when it's actually a pipe/file/socket.
+  // Cross-platform: read from fd 0. Reading stdin via the path /dev/stdin
+  // (POSIX-only) resolves to C:\dev\stdin on Windows and ENOENTs there.
+  // Use fstatSync(0) instead of !isTTY because process.stdin.isTTY is
+  // `undefined` on Windows pipes which happens to coerce correctly today,
+  // but a stricter check also avoids blocking when fd 0 is detached (e.g.
+  // systemd service) by only consuming stdin when it's actually a
+  // pipe/file/socket.
   if (op.cliHints?.stdin && !params[op.cliHints.stdin]) {
     let hasReadableStdin = false;
     try {

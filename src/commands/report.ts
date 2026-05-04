@@ -10,7 +10,7 @@
  *   gbrain report --type enrichment-sweep --dir /path/to/brain
  */
 
-import { writeFileSync, mkdirSync, readFileSync } from 'fs';
+import { writeFileSync, mkdirSync, readFileSync, fstatSync } from 'fs';
 import { join } from 'path';
 
 export async function runReport(args: string[]) {
@@ -38,10 +38,23 @@ export async function runReport(args: string[]) {
     process.exit(1);
   }
 
-  // Read content from --content arg or stdin
+  // Read content from --content arg or stdin.
+  // Cross-platform stdin: fd 0 + fstatSync guard. See parseOpArgs in cli.ts
+  // for the same pattern. Reading stdin via the POSIX path /dev/stdin
+  // resolves to C:\dev\stdin on Windows (ENOENT), and !process.stdin.isTTY
+  // is unreliable across detached fd 0 setups (systemd services etc.).
   let content = contentIdx >= 0 ? args[contentIdx + 1] : null;
-  if (!content && !process.stdin.isTTY) {
-    content = readFileSync('/dev/stdin', 'utf-8');
+  if (!content) {
+    let hasReadableStdin = false;
+    try {
+      const st = fstatSync(0);
+      hasReadableStdin = st.isFIFO() || st.isFile() || st.isSocket();
+    } catch {
+      // fd 0 not statable; skip stdin read.
+    }
+    if (hasReadableStdin) {
+      content = readFileSync(0, 'utf-8');
+    }
   }
 
   if (!content?.trim()) {
