@@ -2,6 +2,85 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.26.7] - 2026-05-04
+
+## **Test isolation foundation. Lint guard + helper + quarantine renames before the env and PGLite sweeps.**
+## **`scripts/check-test-isolation.sh` fails CI when test files mutate `process.env`, call `mock.module(...)`, or leak PGLite engines across files.**
+
+v0.26.4 shipped file-level parallel test fan-out (8 shards, 18min → ~85s). The next layer — intra-file parallelism via `test.concurrent()` — needs every test file to be safe under shared-process execution. The original v0.26.7 plan tried to bundle the whole sweep (~92 files) into one PR. Codex review caught it: the wallclock target wasn't derivable from that approach, the codemod glob didn't recurse, and the lint script wiring claimed `bun run test` includes the pre-check chain (it doesn't — that's `verify`). The plan was re-sliced into three PRs. This is the foundation slice.
+
+Four lint rules on every non-serial unit test file:
+- **R1:** no `process.env.X = ...`, bracket assignment, `delete process.env.X`, `Object.assign(process.env, ...)`, `Reflect.set(process.env, ...)` — use `withEnv()` from `test/helpers/with-env.ts`, or rename to `*.serial.test.ts`
+- **R2:** no `mock.module(...)` anywhere — top-level module mocks affect every other file in the same shard process
+- **R3:** `new PGLiteEngine(` only allowed within ~50 lines after a `beforeAll(`
+- **R4:** every `beforeAll(create)` must pair with `afterAll(disconnect)` — without it, engines leak across files in the same shard process
+
+Wired into `bun run verify` and `bun run check:all` (NOT `bun run test`, which is the parallel runner script with no pre-check chain). 51 baseline violators captured in `scripts/check-test-isolation.allowlist` — list MUST shrink over time. Future v0.26.8 (env sweep) and v0.26.9 (PGLite sweep) remove entries as files get fixed.
+
+`test/helpers/with-env.ts` save+restores `process.env` keys via try/finally (sync + async, handles delete via `undefined` overrides, nested calls compose). Cross-test safe; explicitly NOT intra-file concurrent-safe (`process.env` is process-global). Files using it stay outside the future codemod's eligibility filter.
+
+Two existing `mock.module()` files quarantined as `*.serial.test.ts`:
+- `test/core/cycle.test.ts` → `test/core/cycle.serial.test.ts`
+- `test/embed.test.ts` → `test/embed.serial.test.ts`
+
+Both run at `--max-concurrency=1` after the parallel pass, same as the existing `*.serial.test.ts` quarantine pattern shipped in v0.26.4.
+
+Wallclock observed: 74s on a Mac dev box (running `bun run test` with the new quarantines). Already at the v0.26.9 informational target. The full intra-file marker flip (with codemod + per-file `test.concurrent()`) lands in v0.26.9 and aims for the same ≤60s with pinned config.
+
+To take advantage of v0.26.7
+============================
+
+`gbrain upgrade` does nothing functional in this release — it ships test infrastructure, not user-facing code. But if you contribute tests:
+
+1. **Run `bun run verify` before pushing.** The new `check-test-isolation.sh` runs alongside the privacy + jsonb + progress checks. Catches new env-mutation, mock.module, and PGLite-pattern violations before CI does.
+
+2. **For env-touching tests, use `withEnv`:**
+
+   ```ts
+   import { withEnv } from './helpers/with-env.ts';
+
+   test('reads OPENAI_API_KEY', async () => {
+     await withEnv({ OPENAI_API_KEY: 'sk-test' }, async () => {
+       expect(loadConfig().openai_key).toBe('sk-test');
+     });
+   });
+   ```
+
+3. **For new PGLite-using tests, use the canonical 4-line block** (documented in `test/helpers/reset-pglite.ts` JSDoc and `CLAUDE.md`):
+
+   ```ts
+   beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); });
+   afterAll(async () => { await engine.disconnect(); });
+   beforeEach(async () => { await resetPgliteState(engine); });
+   ```
+
+4. **For tests with file-wide shared state** (mock.module, intentional cross-test ordering), rename to `*.serial.test.ts`. The runner already routes those to a serial post-pass at `--max-concurrency=1`.
+
+If you hit the lint and your file is genuinely un-fixable, add it to `scripts/check-test-isolation.allowlist` with a TODO naming the sweep PR that will remove it. The allow-list is informational at cap 10; beyond that, redesign.
+
+### Itemized changes
+
+#### Added
+- `test/helpers/with-env.ts` + `test/helpers/with-env.test.ts` — env save/restore helper with 7 unit cases (sync, async, delete, restore-on-throw, nested compose, multi-key, prior-undefined)
+- `scripts/check-test-isolation.sh` — grep-based lint enforcing R1-R4 with allow-list escape hatch
+- `scripts/check-test-isolation.allowlist` — 51 baseline violators (pre-sweep)
+- `test/scripts/check-test-isolation.test.ts` — 16 fixture-driven cases for the lint
+- `bun run check:test-isolation` script entry; wired into `bun run verify` and `bun run check:all`
+
+#### Changed
+- `test/helpers/reset-pglite.ts` — JSDoc extended with the canonical 4-line PGLite block
+- `CLAUDE.md` `## Testing` section — added R1-R4 lint rules table, canonical PGLite block, withEnv pattern, when-to-quarantine guidance
+
+#### Renamed (mock.module quarantine)
+- `test/core/cycle.test.ts` → `test/core/cycle.serial.test.ts`
+- `test/embed.test.ts` → `test/embed.serial.test.ts`
+
+#### Test counts
+- Before: 3720 unit tests
+- After: 3738 unit tests (+18 new from with-env + check-test-isolation cases)
+- Coverage: 96% on new production files (1 trivial gap on empty-overrides invocation)
+- Wallclock on Mac dev box: 74s (under the v0.26.9 ≤60s informational target already)
+
 ## [0.26.6] - 2026-05-03
 
 ## **PGLite ↔ Postgres schema parity is now a CI gate. Adding a column to one side without the other fails the PR before merge.**
