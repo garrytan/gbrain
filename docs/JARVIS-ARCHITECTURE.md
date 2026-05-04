@@ -2051,6 +2051,217 @@ psql $DATABASE_URL -c 'DROP TABLE IF EXISTS eval_candidates, eval_capture_failur
 
 ---
 
+## 6.21 Upstream v0.26.7 sync (2026-05-04)
+
+8 releases in one merge: `master..upstream/master` = 25 commits across
+v0.25.1, v0.26.0, v0.26.1, v0.26.2, v0.26.3, v0.26.4, v0.26.5, v0.26.6,
+v0.26.7. Branch `sync-v0.26.7`, merge commit `a2e5e5b`. All conflicts
+resolved in one session, ~2 h end-to-end including evaluation.
+
+### Headline upstream features adopted
+
+- **v0.25.1** — `book-mirror` flagship + 8 research skills: `article-enrichment`,
+  `strategic-reading`, `concept-synthesis`, `perplexity-research`,
+  `archive-crawler`, `academic-verify`, `brain-pdf`, `voice-note-ingest`.
+  Plus `gbrain skillpack uninstall` symmetric to install.
+- **v0.26.0** — MCP Keys OAuth 2.1 + HTTP server + admin React dashboard
+  (`admin/dist/` ~6 MB committed; new deps: `cookie-parser`, `cors`,
+  `express`, `express-rate-limit`). `Operation.scope` (`'read' | 'write'
+  | 'admin'`) and `Operation.localOnly` first-class on every op;
+  `admin + localOnly` ops (`sync_brain`, `file_upload`, `file_list`,
+  `file_url`) reject over HTTP.
+- **v0.26.1/2/3** — OAuth `client_credentials` fix, bun execSync env
+  inheritance fix, admin per-agent config + auth hardening.
+- **v0.26.4** — parallel unit-test loop (8 shards, ~12x speedup on
+  upstream's CI; fork doesn't run the matrix yet).
+- **v0.26.5** — destructive operation guard end-to-end. Sources +
+  pages soft-delete with 72h TTL; new schema column `pages.deleted_at`
+  + related sources columns.
+- **v0.26.6** — PGLite ↔ Postgres parity gate (closes #588). Validates
+  that schemas + behavior match across both engines.
+- **v0.26.7** — test isolation foundation. `test/helpers/with-env.ts`
+  + `scripts/check-test-isolation.sh` lint guard + serial quarantine
+  renames before the wider sweep.
+
+### Conflict resolution summary (31 conflicts in one merge)
+
+- **19 src/ + test/ files** (cycle.ts, migrate.ts, subagent.ts, types.ts,
+  schema.sql, schema-embedded.ts, postgres-engine.ts, pglite-schema.ts,
+  cli.ts, etc.) — all sync side-effect (fork did not modify these
+  post-base; conflicts are upstream restructuring on top of v0.25.0
+  baseline). **Resolution: `git checkout --theirs`** for the entire
+  batch.
+- **`src/core/pglite-engine.ts`** — fork-local WAL durability patch
+  (`SELECT pg_switch_wal()` before close, commit `ecc6195`). Take
+  upstream as base, then **manually re-apply** the 14-line try/catch
+  block in `disconnect()`. Only fork-local src patch in this sync.
+- **`@electric-sql/pglite` version pin** — fork wants `0.4.4`,
+  upstream wants `0.4.3`. Kept `0.4.4` in `package.json`. Fork-local
+  override originally landed in commit `aceb838` (v0.17 sync) for
+  macOS 26.3 WASM bug class.
+- **`skills/RESOLVER.md` / `skills/manifest.json`** — structural merge.
+  Fork's KOS-Jarvis extensions section moved to file end (v0.25.1
+  added an Uncategorized section in front of where it used to live);
+  manifest.json has 49 skills now (30 prior upstream + 9 new v0.25.1
+  skills + 10 fork kos-jarvis skills).
+- **`.gitignore`** — explicit merge: fork section preserved (.omc/,
+  kos-patrol/enrich-sweep/notion-poller stdout logs) + upstream's
+  new `.context/` (run-unit-parallel artifacts).
+- **CHANGELOG.md / TODOS.md** — fork HEAD blocks were empty (fork
+  doesn't write its own release notes; runs as a cherry-pick consumer).
+  Took upstream's full v0.26.x entries verbatim. CHANGELOG.md required
+  manual fix because git's diff3 output had a malformed marker shape
+  (extra `=======` mid-block); patched with two `StrReplace` calls.
+- **CLAUDE.md / CONTRIBUTING.md / README.md / llms-full.txt** — used a
+  small Python helper (`/tmp/take-theirs-blocks.py`) to take the
+  `theirs` side of every conflict block while preserving fork prelude
+  outside markers. Fork prelude (lines 1-58 of CLAUDE.md, lines 1-30
+  of README.md) stays intact.
+
+### Validation
+
+- `bun install` → 98 packages, no integrity errors
+- `bun run typecheck` → clean (~3 s)
+- `bun build --compile --outfile bin/gbrain src/cli.ts` → 1220 modules
+  bundled, compiled successfully
+- `gbrain --version` → `0.26.7`
+- `gbrain doctor --json` → schema_version=2, but **`connection: fail
+  "column deleted_at does not exist"`** — v0.26.5's `destructive_guard_columns`
+  migration (production DB still at schema v31) needs to run. **Filed
+  P0 in [`skills/kos-jarvis/TODO.md`](../skills/kos-jarvis/TODO.md)
+  for next session.**
+- `skill_conformance: 49/49 ok`
+- `resolver_health: warn 37 routing_miss` — entirely from upstream's
+  9 new v0.25.1 skills (`book-mirror`, `archive-crawler`, etc.); their
+  `routing-eval.jsonl` fixtures use phrasings narrower than the
+  trigger words in `RESOLVER.md`. **Upstream gap, not fork
+  responsibility.**
+
+### Review: what v0.25.1 → v0.26.7 means for fork-local skill consolidation
+
+Four new overlap surfaces opened that didn't exist at the v0.25.0
+baseline. Each adds an M2 candidate to
+[`docs/KOS-JARVIS-CONSOLIDATION-PLAN.md`](KOS-JARVIS-CONSOLIDATION-PLAN.md):
+
+#### M2-A — `concept-synthesis` ↔ `dikw-compile` + `confidence-score`
+
+Upstream `skills/concept-synthesis/SKILL.md` (v0.25.1) does T1-T4 tier
+classification + LLM synthesis on `concepts/` pages. Fork
+`skills/kos-jarvis/dikw-compile/` does A/B/C/F grade + strong-link
+compilation across all kinds; `confidence-score/` is its scoring
+helper. Overlap is partial: `concept-synthesis` is concepts-only,
+fork is cross-kind; both are LLM-driven page-level rewrites with
+quality tiers.
+
+Decision tree:
+- If `dikw-compile` **was never wired** in production (M1 wire-status
+  check still pending), retire all three (`dikw-compile`,
+  `evidence-gate`, `confidence-score`); the unwired-design story dies
+  with the fork code.
+- If `dikw-compile` **was wired** but only on `concepts/` (likely
+  given the fork README claims `idea-ingest / media-ingest /
+  meeting-ingestion` post-hooks), `concept-synthesis` replaces it on
+  that subset; fork retains `dikw-compile` on non-concepts kinds.
+- Worst case `dikw-compile` is wired everywhere: keep both, document
+  the boundary.
+
+#### M2-B — `kos-compat-api` ↔ `gbrain serve --http` + thin translator
+
+v0.26.0's `gbrain serve --http` lands what we built `kos-compat-api`
+for two years ago. The contracts differ:
+
+- Upstream HTTP serves MCP JSON-RPC (`tools/call`, `resources/list`),
+  bearer-auth, scope-aware, admin dashboard at `/admin`.
+- Fork HTTP serves KOS v1 contract (`/query`, `/ingest`, `/digest`,
+  `/status`, `/health`), simpler JSON bodies, hard-coded by Notion
+  Knowledge Agent and OpenClaw feishu cron.
+
+Cannot directly retire `kos-compat-api` — `kos.chenge.ink` is the
+external boundary, governed by external systems we don't control.
+But the upstream foundation opens **two paths**:
+
+- (a) Keep `kos-compat-api` on `:7225` as the KOS-v1 contract layer,
+  internally proxy to `gbrain serve --http :7226` via a translator
+  layer that maps `/query` → `tools/call({"name":"query"})` etc.
+  Reduces ~500 LOC fork code at the cost of one process hop and a
+  scope-mapping subtlety (KOS_API_TOKEN → admin scope).
+- (b) Migrate external systems to the MCP client SDK directly. High
+  cost, not in our control.
+- (c) Status quo. Re-evaluate next sync.
+
+#### M2-C — Phase 4-5 (calendar/email import) → upstream `archive-crawler`
+
+`docs/JARVIS-NEXT-STEPS.md` had Phase 4 = calendar import, Phase 5 =
+email import as fork-local builds. v0.25.1's `archive-crawler` is
+exactly that domain: universal archivist for personal file archives
+(Dropbox/B2/Gmail-takeout/local-mount/hard-drive-dump), refuses to
+run without explicit `gbrain.yml archive-crawler.scan_paths` allow-list.
+
+If `archive-crawler` covers Lucien's source formats (Apple Calendar
+.ics, IMAP mbox export), Phase 4-5 collapse from "build fork-local
+skill" to "configure upstream skill". This is the single biggest
+fork-shrink opportunity in v0.26.7 — saves ~400-600 LOC of code we
+haven't written yet.
+
+#### M2-D — `Operation.scope` + `.localOnly` ↔ fork `OperationContext.remote`
+
+v0.26.0 makes operation-level trust a first-class field on every
+Operation: `scope: 'read' | 'write' | 'admin'` + `localOnly?: boolean`.
+HTTP transport rejects `admin + localOnly` ops (`sync_brain`,
+`file_upload`, `file_list`, `file_url`).
+
+Fork's `OperationContext.remote` boolean is now a strict subset of
+upstream's scope system. M2-D migrates fork-local consumers
+(`server/kos-compat-api.ts`, `workers/notion-poller/run.ts`,
+`skills/kos-jarvis/_lib/`) from `ctx.remote` to `op.scope` checks.
+~1 h work. Lets fork stop maintaining the parallel concept.
+
+### Net target update
+
+M1's "16 active fork skill dirs → 11 active + 2 archived + 1 retired"
+target stands. M2 (this sync) adds:
+
+- `dikw-compile` → likely scope-narrowed or fully retired (M2-A)
+- `confidence-score` → likely retired (M2-A)
+- `evidence-gate` → wire-status dependent
+- Phase 4-5 fork builds → replaced by upstream config (M2-C)
+
+Net target post-M2: **11 active → 7-8 active by next sync (v0.27.x window)**.
+The fork README's "扩展应随时间自愿退场,而非永久膨胀"
+(`skills/kos-jarvis/README.md:84`) is operationalizing as designed.
+
+### Production follow-up (NOT in this commit)
+
+- [ ] **P0**: `gbrain apply-migrations --yes` on production Postgres
+  to land v0.26.0 `oauth_infrastructure`, v0.26.3
+  `admin_dashboard_columns`, v0.26.5 `destructive_guard_columns`. Schema
+  v31 → v34. Without this `gbrain doctor` and `kos-compat-api /status`
+  will surface DB errors on read/write paths involving the new columns.
+- [ ] Restart `kos-compat-api` + `gemini-embed-shim` to load v0.26.7
+  src via the `gbrain → src/cli.ts` shim (same ritual as v0.25.0
+  sync §6.20).
+- [ ] Verify `kos.chenge.ink/status` shows `total_pages=2425+` after
+  restart.
+- [ ] Spot-check launchd cron logs next morning (kos-patrol,
+  dream-cycle, notion-poller, enrich-sweep, kos-deep-lint) — new deps
+  loaded clean, no missing module errors.
+
+### Rollback
+
+```bash
+# Reset master to pre-merge:
+git reset --hard a13acf9     # parent of a2e5e5b
+# Or revert just the merge:
+git revert -m 1 a2e5e5b
+```
+
+The merge is reversible at git level. Production has not been touched
+by this commit — all changes are in the repo. If something breaks at
+the apply-migrations step on production, scripts/jarvis-pg-backup.sh's
+nightly pg_dump (03:33) gives a rollback point.
+
+---
+
 ## 7. Known gaps (see `skills/kos-jarvis/TODO.md` for live tracker)
 
 - **P0 resolved 2026-04-22**: notion-poller PGLite deadlock — Path B landed in v0.17 sync (see §6.7). `scripts/minions-wrap/notion-poller.sh` deleted; plist now direct-bun invocation of `workers/notion-poller/run.ts`. First live cycle: 78 s / 9 pages ingested / 0 lock timeouts.

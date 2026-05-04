@@ -1,12 +1,13 @@
-# KOS-Jarvis ↔ GBrain v0.25.0 Consolidation Plan
+# KOS-Jarvis ↔ GBrain Consolidation Plan
 
 > **Owner**: Lucien
 > **Created**: 2026-05-02 (post v0.25.0 sync)
+> **Last reviewed**: 2026-05-04 (post v0.26.7 sync — 4 new M2 candidates)
 > **Cadence**: Re-evaluate after every upstream sync that lands a feature
-> potentially overlapping a fork skill (next checkpoint: v0.26.0)
+> potentially overlapping a fork skill (next checkpoint: v0.27.x)
 > **Companion docs**: [`skills/kos-jarvis/README.md`](../skills/kos-jarvis/README.md)
-> (fork-local boundary), [`JARVIS-ARCHITECTURE.md §6.20`](JARVIS-ARCHITECTURE.md#620-upstream-v0250-sync-2026-05-01)
-> (v0.25.0 sync story)
+> (fork-local boundary), [`JARVIS-ARCHITECTURE.md §6.21`](JARVIS-ARCHITECTURE.md#621-upstream-v0267-sync-2026-05-04)
+> (v0.26.7 sync story; §6.20 = v0.25.0 baseline)
 
 ## 1. Why this exists
 
@@ -213,15 +214,100 @@ the upstream sync landing cleanly first (no rush).
 Total fresh effort: ~6 h research + 30 min cleanup. Spread over 1-2
 sessions.
 
-### Milestone M2 — next upstream sync (v0.26.x window, est 2-3 weeks)
+### Milestone M2 — v0.26.7 baseline (this sync, 2026-05-04)
 
-- [ ] Re-evaluate any KEEP-partial that gained upstream coverage in
-  the new release
+**This milestone activated by**: v0.26.7 upstream sync (commit `a2e5e5b`)
+landed 25 commits / 8 releases / 9 new upstream skills + admin HTTP
+boundary + destructive guard + Operation.scope. Four overlap surfaces
+opened that didn't exist at M1.
+
+#### M2-A: `concept-synthesis` ↔ KOS quality triad evaluation
+
+- [ ] Run `concept-synthesis` (dry-run + `--limit 50`) on `concepts/`,
+  inspect T1/T2/T3/T4 distribution
+- [ ] If fork `dikw-compile` historical reports exist, diff T1+T2 vs
+  A+B grade buckets — semantic equivalence test
+- [ ] Decision matrix (recorded to `~/brain/.agent/reports/concept-synthesis-pilot.md`):
+  - `concept-synthesis` replaces `dikw-compile` on `concepts/` only:
+    `dikw-compile/SKILL.md` scope-narrowed to non-`concepts/` kinds
+  - Full retire of `dikw-compile` if upstream covers all kinds (likely
+    NO; concept-synthesis is concepts-specific by design)
+  - Retire `confidence-score` if T1-T4 → high/med/low/none equivalence
+    holds
+- [ ] Estimated 3 h pilot + decision
+- **Depends on / blocks**: M1 wire-status check. If wire-check finds
+  `dikw-compile` was never wired in production, M2-A folds into a
+  full retire decision (no migration needed; nothing was producing
+  output to migrate from).
+
+#### M2-B: `kos-compat-api` ↔ `gbrain serve --http` + thin translator
+
+- [ ] Read `src/commands/serve-http.ts` (v0.26.0 upstream) + admin
+  dashboard surface
+- [ ] Pilot script: spawn `gbrain serve --http --port 7226`, bridge
+  one KOS-v1 endpoint (`/query`) → MCP `tools/call`, measure latency
+  + token-passthrough fidelity
+- [ ] Decision:
+  - **(a) internal MCP-over-HTTP delegation**: `kos-compat-api` keeps
+    KOS-v1 contract on `:7225`, internally proxies to upstream HTTP on
+    `:7226` via translator layer. Reduces ~500 LOC fork code at the
+    cost of 1 process hop.
+  - **(b) external migration to MCP-over-HTTP**: Notion Knowledge
+    Agent + OpenClaw feishu cron migrate to MCP client SDK. High
+    cost; not in our control schedule.
+  - **(c) status quo**: keep `kos-compat-api` as-is, observe upstream
+    HTTP capabilities, re-evaluate on next sync.
+- [ ] If (a) chosen, file P1 implementation (4-6 h)
+- [ ] Acceptance: decision recorded; `docs/JARVIS-ARCHITECTURE.md`
+  §6.21 (this sync) appends the decision
+- **Risk**: scope/auth contracts diverge. Upstream `Operation.scope`
+  encodes finer-grained permissions than fork's binary `remote` flag.
+  Translator layer must map KOS-v1 `Authorization: Bearer <KOS_API_TOKEN>`
+  → admin scope (since `/ingest` writes pages = `scope: 'write'`).
+
+#### M2-C: Phase 4-5 calendar/email import → upstream `archive-crawler`
+
+- [ ] Read `skills/archive-crawler/SKILL.md` v0.25.1 — confirm scan
+  format support (Gmail takeout / .ics / mbox / Dropbox / B2)
+- [ ] Compare against original Phase 4-5 plan in `docs/JARVIS-NEXT-STEPS.md`
+- [ ] Decision:
+  - **(a) full replacement**: Phase 4-5 deleted, replaced by
+    `archive-crawler.scan_paths:` config + minimal fork preprocessor
+    (e.g., IMAP → mbox export script) — saves all the build cost on
+    Phase 4-5 fork-local code
+  - **(b) hybrid**: archive-crawler handles ingestion; fork handles
+    source-specific extraction (e.g., Apple Calendar export)
+  - **(c) fork continues**: archive-crawler doesn't fit Lucien's
+    sources, build fork-local skill anyway
+- [ ] If (a)/(b), rewrite `docs/JARVIS-NEXT-STEPS.md` Phase 4-5
+  section as upstream-driven configuration
+- [ ] Acceptance: decision recorded; Phase 4-5 plan updated
+- **Estimated 1.5 h evaluation** (implementation NOT in M2 scope)
+
+#### M2-D: `Operation.scope` + `.localOnly` migration
+
+- [ ] Audit fork-local code for `OperationContext.remote` consumers:
+  `git grep "ctx\.remote\|context\.remote" server/ workers/ skills/kos-jarvis/_lib/`
+- [ ] Migrate each call site to `op.scope` + `op.localOnly` checks
+- [ ] Acceptance: `git grep` returns zero hits in fork-local code
+- [ ] Estimated 1 h total (audit + migration)
+
+#### M2 carry-over from M1
+
 - [ ] If `kos-lint` pilot passed at M1, retire it; cron rewire
 - [ ] If `dikw-compile`/`evidence-gate` chose "advisory only" path:
   remove cron-mention from kos-patrol Phase 2; document opt-in CLI
   invocation
 - [ ] Audit M2 deltas vs this plan; update §4 matrix
+
+**Net target after M2**: 11 active skill dirs → 7-8 active. Concrete
+candidates for retirement / consolidation by end of M2:
+- `dikw-compile` → scope-narrowed or fully retired (M2-A)
+- `confidence-score` → likely retired (M2-A)
+- `kos-lint` → retired (M1 pilot, M2 cron rewire)
+- `frontmatter-ref-fix` + `slug-normalize` → archived (M1)
+- `notion-ingest-delta` → SKILL.md → 5-line redirect (M1)
+- Phase 4-5 (not yet built) → replaced by upstream `archive-crawler` config (M2-C)
 
 ### Milestone M3 — provider abstraction probe (no fixed date)
 
