@@ -1,20 +1,25 @@
 # GBrain
 
-Your AI agent is smart but forgetful. GBrain gives it a brain.
+### Model-Agnostic Agent Runtime
 
-Built by the President and CEO of Y Combinator to run his actual AI agents. The production brain powering his OpenClaw and Hermes deployments: **17,888 pages, 4,383 people, 723 companies**, 21 cron jobs running autonomously, built in 12 days. The agent ingests meetings, emails, tweets, voice calls, and original ideas while you sleep. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight. You wake up and the brain is smarter than when you went to bed.
+**Bring any model. Keep the same brain.**
+
+GBrain is the durable knowledge layer for any AI agent that can read markdown and call tools.
+Not a Claude Code plugin. Not a Codex extension. A portable brain.
+
+- **Any harness, one brain.** Claude Code, Codex-style coding agents, OpenClaw, Cursor, Windsurf, ChatGPT, Perplexity, or your custom agent. Same knowledge graph, same API.
+- **Durable by design.** Postgres-native storage, hybrid search, self-wiring knowledge graph, structured timeline, and a job queue that survives restarts.
+- **Portable & open.** 34 markdown skills, MCP or CLI, OpenAI-compatible embeddings, PGLite or Supabase. Self-host in 30 minutes.
+
+Built by the President and CEO of Y Combinator to run his actual AI agents. The production brain powering his OpenClaw and Hermes deployments: **17,888 pages, 4,383 people, 723 companies**, 21 cron jobs running autonomously, built in 12 days. Now generalized for yours.
 
 The brain wires itself. Every page write extracts entity references and creates typed links (`attended`, `works_at`, `invested_in`, `founded`, `advises`) with zero LLM calls. Hybrid search. Self-wiring knowledge graph. Structured timeline. Backlink-boosted ranking. Ask "who works at Acme AI?" or "what did Bob invest in this quarter?" and get answers vector search alone can't reach. Benchmarked side-by-side against the category: gbrain lands **P@5 49.1%, R@5 97.9%** on a 240-page Opus-generated rich-prose corpus, beating its own graph-disabled variant by **+31.4 points P@5** and ripgrep-BM25 + vector-only RAG by a similar margin. The graph layer plus v0.12 extract quality together carry the gap. Full BrainBench scorecards + corpus live in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo.
-
-GBrain is those patterns, generalized. 34 skills. Install in 30 minutes. Your agent does the work. As Garry's personal agent gets smarter, so does yours.
 
 **New in v0.25.0 — BrainBench-Real (session capture, contributor opt-in):** with `GBRAIN_CONTRIBUTOR_MODE=1` set in your shell, every real `query` + `search` call through MCP, CLI, or the subagent tool-bridge gets captured (PII-scrubbed) into an `eval_candidates` table. Snapshot with `gbrain eval export`, replay against your code change with `gbrain eval replay`. Three numbers come back: mean Jaccard@k between captured and current retrieved slugs, top-1 stability, and latency Δ. **Off by default** for production users — no surprise data accumulation. Walkthrough: [docs/eval-bench.md](docs/eval-bench.md). NDJSON wire format: [docs/eval-capture.md](docs/eval-capture.md).
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
-
-> **Model-agnostic:** GBrain is a durable brain for any capable AI agent — Claude Code, Codex-style coding agents, OpenClaw, Cursor, Windsurf, ChatGPT, Perplexity, or your own harness. The model is replaceable; the brain is the stateful layer. See [Model-Agnostic Agent Runtime](docs/guides/model-agnostic-agents.md).
 >
-> **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
+> **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code). See [Model-Agnostic Agent Runtime](docs/guides/model-agnostic-agents.md) for the portability contract.
 
 ## Install
 
