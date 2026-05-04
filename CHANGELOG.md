@@ -722,7 +722,7 @@ PR #577 shipped its three fixes but did not bump `VERSION`, `package.json`, or `
 
 ### Credits
 
-Co-authored by Wintermute. Found in production. Three bugs, 22 lines, real fix.
+Co-authored by your OpenClaw. Found in production. Three bugs, 22 lines, real fix.
 
 ## [0.26.0] - 2026-04-25
 

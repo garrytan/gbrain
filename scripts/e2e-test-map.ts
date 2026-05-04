@@ -41,12 +41,18 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/postgres-jsonb.test.ts",
     "test/e2e/jsonb-roundtrip.test.ts",
     "test/e2e/engine-parity.test.ts",
+    "test/e2e/schema-drift.test.ts",
   ],
   // PGLite bootstrap path + parity guard.
   "src/core/pglite-engine.ts": [
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/engine-parity.test.ts",
+    "test/e2e/schema-drift.test.ts",
   ],
+  // Schema source of truth: any change must pass the cross-engine drift gate.
+  "src/schema.sql": ["test/e2e/schema-drift.test.ts"],
+  "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts"],
+  "src/core/migrate.ts": ["test/e2e/schema-drift.test.ts", "test/e2e/migrate-chain.test.ts"],
   // MCP stdio + HTTP transports share dispatch.
   "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts"],
   // Integrity batch-load fast path.
