@@ -7,6 +7,7 @@ import { operations, OperationError } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
+import { installEngineSignalShutdown } from './core/signal-shutdown.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -78,6 +79,7 @@ async function main() {
   }
 
   const engine = await connectEngine();
+  const uninstallSignalShutdown = installEngineSignalShutdown(engine);
   try {
     const params = parseOpArgs(op, subArgs);
 
@@ -105,6 +107,7 @@ async function main() {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   } finally {
+    uninstallSignalShutdown();
     await engine.disconnect();
   }
 }
@@ -399,10 +402,16 @@ async function handleCliOnly(command: string, args: string[]) {
       // "user chose --fast while config is present".
       await runDoctor(null, args, getDbUrlSource());
     } else {
+      let uninstallSignalShutdown: (() => void) | null = null;
       try {
         const eng = await connectEngine();
-        await runDoctor(eng, args);
-        await eng.disconnect();
+        uninstallSignalShutdown = installEngineSignalShutdown(eng);
+        try {
+          await runDoctor(eng, args);
+        } finally {
+          uninstallSignalShutdown();
+          await eng.disconnect();
+        }
       } catch {
         // DB unavailable — still run filesystem checks
         await runDoctor(null, args, getDbUrlSource());
@@ -433,14 +442,17 @@ async function handleCliOnly(command: string, args: string[]) {
     // reports DB phases as skipped when engine is null.
     const { runDream } = await import('./commands/dream.ts');
     let eng: BrainEngine | null = null;
+    let uninstallSignalShutdown: (() => void) | null = null;
     try {
       eng = await connectEngine();
+      uninstallSignalShutdown = installEngineSignalShutdown(eng);
     } catch {
       // DB unavailable — lint + backlinks still run against the brain dir.
     }
     try {
       await runDream(eng, args);
     } finally {
+      uninstallSignalShutdown?.();
       if (eng) await eng.disconnect();
     }
     return;
@@ -448,6 +460,7 @@ async function handleCliOnly(command: string, args: string[]) {
 
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
+  const uninstallSignalShutdown = installEngineSignalShutdown(engine);
   try {
     switch (command) {
       case 'import': {
@@ -610,6 +623,7 @@ async function handleCliOnly(command: string, args: string[]) {
       }
     }
   } finally {
+    uninstallSignalShutdown();
     if (command !== 'serve') await engine.disconnect();
   }
 }
