@@ -3,11 +3,16 @@
 Read this entire file, then follow the steps. Ask the user for API keys when needed.
 Target: ~30 minutes to a fully working brain.
 
-## Step 0: If you are not Claude Code
+## Step 0: Start with the model-agnostic protocol
 
-Read `AGENTS.md` at the repo root first. It's the non-Claude-agent operating
-protocol (install, read order, trust boundary, common tasks). Claude Code reads
-`CLAUDE.md` automatically and can skip ahead.
+Read `AGENTS.md` at the repo root first. It is the canonical protocol for every
+agent runtime: Claude Code, Codex-style coding agents, OpenClaw, Cursor, Windsurf,
+Continue, Aider, ChatGPT/Perplexity over HTTP MCP, or a custom internal harness.
+`CLAUDE.md` is a Claude Code compatibility overlay, not the source of truth.
+
+For the portability model, read `docs/guides/model-agnostic-agents.md`: the agent
+only needs to read markdown instructions, call MCP or CLI tools, respect the trust
+boundary, and persist work outside the chat transcript.
 
 If you fetched this file by URL without cloning yet, the companion files live at:
 - `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
@@ -36,12 +41,25 @@ restart the shell or add the PATH export to the shell profile.
 Ask the user for these:
 
 ```bash
-export OPENAI_API_KEY=sk-...          # required for vector search
+export OPENAI_API_KEY=sk-...          # required for vector search by default
 export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
 ```
 
 Save to shell profile or `.env`. Without OpenAI, keyword search still works.
 Without Anthropic, search works but skips query expansion.
+
+OpenAI-compatible embedding providers are supported without code changes:
+
+```bash
+export GBRAIN_EMBEDDING_API_KEY=...
+export GBRAIN_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+export GBRAIN_EMBEDDING_MODEL=text-embedding-v4
+export GBRAIN_EMBEDDING_TARGET_DIMENSIONS=1024
+```
+
+`OPENAI_BASE_URL`, `OPENAI_EMBEDDING_MODEL`, and `OPENAI_EMBEDDING_DIMENSIONS` work too.
+This is how Qwen/DashScope, self-hosted OpenAI-compatible gateways, or future providers
+slot in while the agent protocol stays unchanged.
 
 ## Step 3: Create the Brain
 
