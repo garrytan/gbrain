@@ -803,6 +803,7 @@ const query: Operation = {
 const takes_list: Operation = {
   name: 'takes_list',
   description: 'List takes (typed/weighted/attributed claims) filtered by holder/kind/active/etc.',
+  scope: 'read',
   params: {
     page_slug: { type: 'string', description: 'Filter to this page' },
     holder: { type: 'string', description: 'Filter to this holder (world|garry|brain|<slug>)' },
@@ -834,6 +835,7 @@ const takes_list: Operation = {
 const takes_search: Operation = {
   name: 'takes_search',
   description: 'Keyword search across takes (pg_trgm similarity over claim text)',
+  scope: 'read',
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 30, cap 100)' },
@@ -850,6 +852,7 @@ const takes_search: Operation = {
 const think: Operation = {
   name: 'think',
   description: 'Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis.',
+  scope: 'write',
   params: {
     question: { type: 'string', required: true, description: 'The question to think about' },
     anchor: { type: 'string', description: 'Pull the entity subgraph around this slug' },
