@@ -3,6 +3,235 @@
 All notable changes to GBrain will be documented in this file.
 
 ## [0.28.0] - 2026-05-01
+## [0.26.7] - 2026-05-04
+
+## **Test isolation foundation. Lint guard + helper + quarantine renames before the env and PGLite sweeps.**
+## **`scripts/check-test-isolation.sh` fails CI when test files mutate `process.env`, call `mock.module(...)`, or leak PGLite engines across files.**
+
+v0.26.4 shipped file-level parallel test fan-out (8 shards, 18min → ~85s). The next layer — intra-file parallelism via `test.concurrent()` — needs every test file to be safe under shared-process execution. The original v0.26.7 plan tried to bundle the whole sweep (~92 files) into one PR. Codex review caught it: the wallclock target wasn't derivable from that approach, the codemod glob didn't recurse, and the lint script wiring claimed `bun run test` includes the pre-check chain (it doesn't — that's `verify`). The plan was re-sliced into three PRs. This is the foundation slice.
+
+Four lint rules on every non-serial unit test file:
+- **R1:** no `process.env.X = ...`, bracket assignment, `delete process.env.X`, `Object.assign(process.env, ...)`, `Reflect.set(process.env, ...)` — use `withEnv()` from `test/helpers/with-env.ts`, or rename to `*.serial.test.ts`
+- **R2:** no `mock.module(...)` anywhere — top-level module mocks affect every other file in the same shard process
+- **R3:** `new PGLiteEngine(` only allowed within ~50 lines after a `beforeAll(`
+- **R4:** every `beforeAll(create)` must pair with `afterAll(disconnect)` — without it, engines leak across files in the same shard process
+
+Wired into `bun run verify` and `bun run check:all` (NOT `bun run test`, which is the parallel runner script with no pre-check chain). 51 baseline violators captured in `scripts/check-test-isolation.allowlist` — list MUST shrink over time. Future v0.26.8 (env sweep) and v0.26.9 (PGLite sweep) remove entries as files get fixed.
+
+`test/helpers/with-env.ts` save+restores `process.env` keys via try/finally (sync + async, handles delete via `undefined` overrides, nested calls compose). Cross-test safe; explicitly NOT intra-file concurrent-safe (`process.env` is process-global). Files using it stay outside the future codemod's eligibility filter.
+
+Two existing `mock.module()` files quarantined as `*.serial.test.ts`:
+- `test/core/cycle.test.ts` → `test/core/cycle.serial.test.ts`
+- `test/embed.test.ts` → `test/embed.serial.test.ts`
+
+Both run at `--max-concurrency=1` after the parallel pass, same as the existing `*.serial.test.ts` quarantine pattern shipped in v0.26.4.
+
+Wallclock observed: 74s on a Mac dev box (running `bun run test` with the new quarantines). Already at the v0.26.9 informational target. The full intra-file marker flip (with codemod + per-file `test.concurrent()`) lands in v0.26.9 and aims for the same ≤60s with pinned config.
+
+To take advantage of v0.26.7
+============================
+
+`gbrain upgrade` does nothing functional in this release — it ships test infrastructure, not user-facing code. But if you contribute tests:
+
+1. **Run `bun run verify` before pushing.** The new `check-test-isolation.sh` runs alongside the privacy + jsonb + progress checks. Catches new env-mutation, mock.module, and PGLite-pattern violations before CI does.
+
+2. **For env-touching tests, use `withEnv`:**
+
+   ```ts
+   import { withEnv } from './helpers/with-env.ts';
+
+   test('reads OPENAI_API_KEY', async () => {
+     await withEnv({ OPENAI_API_KEY: 'sk-test' }, async () => {
+       expect(loadConfig().openai_key).toBe('sk-test');
+     });
+   });
+   ```
+
+3. **For new PGLite-using tests, use the canonical 4-line block** (documented in `test/helpers/reset-pglite.ts` JSDoc and `CLAUDE.md`):
+
+   ```ts
+   beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); });
+   afterAll(async () => { await engine.disconnect(); });
+   beforeEach(async () => { await resetPgliteState(engine); });
+   ```
+
+4. **For tests with file-wide shared state** (mock.module, intentional cross-test ordering), rename to `*.serial.test.ts`. The runner already routes those to a serial post-pass at `--max-concurrency=1`.
+
+If you hit the lint and your file is genuinely un-fixable, add it to `scripts/check-test-isolation.allowlist` with a TODO naming the sweep PR that will remove it. The allow-list is informational at cap 10; beyond that, redesign.
+
+### Itemized changes
+
+#### Added
+- `test/helpers/with-env.ts` + `test/helpers/with-env.test.ts` — env save/restore helper with 7 unit cases (sync, async, delete, restore-on-throw, nested compose, multi-key, prior-undefined)
+- `scripts/check-test-isolation.sh` — grep-based lint enforcing R1-R4 with allow-list escape hatch
+- `scripts/check-test-isolation.allowlist` — 51 baseline violators (pre-sweep)
+- `test/scripts/check-test-isolation.test.ts` — 16 fixture-driven cases for the lint
+- `bun run check:test-isolation` script entry; wired into `bun run verify` and `bun run check:all`
+
+#### Changed
+- `test/helpers/reset-pglite.ts` — JSDoc extended with the canonical 4-line PGLite block
+- `CLAUDE.md` `## Testing` section — added R1-R4 lint rules table, canonical PGLite block, withEnv pattern, when-to-quarantine guidance
+
+#### Renamed (mock.module quarantine)
+- `test/core/cycle.test.ts` → `test/core/cycle.serial.test.ts`
+- `test/embed.test.ts` → `test/embed.serial.test.ts`
+
+#### Test counts
+- Before: 3720 unit tests
+- After: 3738 unit tests (+18 new from with-env + check-test-isolation cases)
+- Coverage: 96% on new production files (1 trivial gap on empty-overrides invocation)
+- Wallclock on Mac dev box: 74s (under the v0.26.9 ≤60s informational target already)
+
+## [0.26.6] - 2026-05-03
+
+## **PGLite ↔ Postgres schema parity is now a CI gate. Adding a column to one side without the other fails the PR before merge.**
+## **`bun run ci:local` runs both engines through `initSchema()` and diffs `information_schema` ... no more silent drift.**
+
+The v0.26.1 hotfix wrapped each new-column query in try/catch because production Postgres got `ALTER TABLE`s the embedded PGLite schema never received. That works but rots: every new column becomes a try/catch decision and the next drift slips the same way. v0.26.6 makes drift a build error.
+
+`test/e2e/schema-drift.test.ts` spins up a fresh PGLite and a fresh Postgres database, runs each engine's canonical `initSchema()` (bootstrap + schema replay + migrations), then snapshots `information_schema.columns` from both and diffs the four-tuple `(data_type, udt_name, is_nullable, column_default)` per column. Tables in `src/schema.sql` but absent from PGLite must be on a 2-table allowlist (`files`, `file_migration_ledger`) — narrow by design so the next "Postgres-only" addition has to be defended. Sentinels for `oauth_clients`, `mcp_request_log`, `access_tokens`, `eval_candidates` give tighter blame messages when one specific table drifts.
+
+Codex review caught a real drift the gate flagged on its first run: `access_tokens.id` was `UUID` on Postgres and `TEXT` on PGLite. v0.26.6 reconciles to `UUID DEFAULT gen_random_uuid()` on both sides. Existing PGLite brains keep TEXT (the v4 migration ran earlier on those); fresh installs converge on UUID.
+
+### The numbers that matter
+
+17 unit cases for the pure diff function (run in <100ms, no database needed) plus 6 E2E cases (PGLite + Postgres, ~1.5s with the test container). The D3 negative test feeds the diff a synthetic `oauth_clients` schema missing `token_ttl` + `deleted_at` and asserts the failure names both columns by hand — this is what would have caught v0.26.1 if the gate had existed at the time.
+
+| Metric | BEFORE v0.26.6 | AFTER v0.26.6 | Δ |
+|---|---|---|---|
+| Cross-engine drift detection | manual review | E2E gate on every PR | structural |
+| `access_tokens.id` type parity | UUID vs TEXT (drift) | UUID on both | reconciled |
+| Tables in the parity contract | 0 | 27 of 29 (2 allowlisted) | new |
+| Failure messages | "column does not exist" at runtime | named column + paste-ready hint at PR time | move-left |
+| Allowed Postgres-only tables | implicit | 2 explicit + reasoned | bounded |
+
+### What this means for contributors
+
+You add a column to `src/schema.sql` and forget the migration's `sqlFor.pglite` branch. The drift gate fails with `oauth_clients.your_new_col … add to src/core/pglite-schema.ts` and the CI job blocks the merge. Same flow when the type drifts (`udt_name` mismatch), nullability flips, or default changes. Run the gate locally before push: `bun run ci:local` or `DATABASE_URL=… bun test test/e2e/schema-drift.test.ts`.
+
+## To take advantage of v0.26.6
+
+No user action required. The gate runs at PR time on every push and locally via `bun run ci:local`.
+
+If you maintain a fork or downstream consumer:
+1. **Check your PR CI** — confirm `test/e2e/schema-drift.test.ts` runs against your test Postgres container. The `scripts/e2e-test-map.ts` wiring triggers it on changes to `src/schema.sql`, `src/core/pglite-schema.ts`, or `src/core/migrate.ts`.
+2. **First run may flag drift** — if your fork has its own schema additions, the gate will name every divergence with a paste-ready hint. Fix or extend the allowlist (with a reason).
+3. **If something fails**, please file an issue at https://github.com/garrytan/gbrain/issues with the failure output ... that's the direct fix target.
+
+### Itemized changes
+
+**Drift gate (new):**
+- `test/e2e/schema-drift.test.ts` ... gated on `DATABASE_URL`. Spins up fresh PGLite + Postgres, calls `engine.initSchema()` on each, snapshots `information_schema.columns`, calls `diffSnapshots`. 6 test cases including 4 sentinels (`oauth_clients`, `mcp_request_log`, `access_tokens`, `eval_candidates`) for tighter blame.
+- `test/helpers/schema-diff.ts` ... pure diff functions (snapshotSchema, diffSnapshots, formatDiffForFailure, isCleanDiff). Engine-agnostic ... takes a query callback so PGLite (`db.query`) and postgres.js (`sql.unsafe`) both fit. Type comparison uses `udt_name` as identity (catches array element types like `_text` vs `_int4`, vector dimensions). Default normalisation strips trailing type casts (`'x'::text` ↔ `'x'`) and collapses whitespace.
+- `test/helpers/schema-diff.test.ts` ... 17 unit cases for the pure functions: happy path, missing-in-PGLite, missing-in-Postgres, udt mismatch, nullable mismatch, default mismatch, allowlist behaviour, normalisation, multi-table issue rollup, and the D3 negative test that proves the gate would have caught the v0.26.1 `oauth_clients.token_ttl` + `deleted_at` regression.
+
+**Drift fixes (D6):**
+- `src/core/pglite-schema.ts:402` ... `access_tokens.id` changed from `TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text` to `UUID PRIMARY KEY DEFAULT gen_random_uuid()` to match `src/schema.sql:328` and migration v4. PGLite supports `UUID` natively (PGLite is Postgres 17 in WASM); the historical `::text` cast was unnecessary and produced a real type-identity divergence the new gate flagged on its first run.
+
+**CI wiring:**
+- `scripts/e2e-test-map.ts` ... new entries for `src/schema.sql`, `src/core/pglite-schema.ts`, `src/core/migrate.ts` so the diff-aware E2E selector triggers `test/e2e/schema-drift.test.ts` on schema-relevant changes.
+- `test/e2e/schema-drift.test.ts` is picked up automatically by `scripts/run-e2e.sh`'s default glob and by `bun run ci:local`'s pgvector container.
+
+### What's NOT in this release (filed for v0.26.7)
+
+- **Manual `ALTER TABLE` on production Postgres** that never made it into source files (the actual v0.26.1 trigger). Catching this requires comparing prod's `information_schema` against `src/schema.sql` ... a `gbrain doctor --schema-audit` mechanism, separate from the CI parity gate.
+- **Index parity.** Issue #588 lists this as a goal; v0.26.6 covers columns. The `diffSnapshots` shape is extensible to indexes via a sibling `information_schema.statistics` query.
+- **Versioning hardening.** HEAD's VERSION + package.json said `0.26.0` even though the most recent commit message read `v0.26.1 fix(oauth)`. v0.26.6 ships the next user-visible release; a `scripts/check-version-sync.sh` pre-push guard is on deck for v0.26.7.
+
+Closes #588.
+
+## [0.26.5] - 2026-05-03
+
+## **Destructive operation guard, end to end. Sources AND pages now have a 72h recovery window.**
+## **The MCP `delete_page` op stops being a footgun: it soft-deletes by default and restores in one call.**
+
+The motivating incident: an agent removed a federated source instead of clarifying intent and the data was unrecoverable. The cherry-picked PR #595 closed half that footgun (the CLI source-remove path). v0.26.5 closes the other half — every destructive surface gbrain ships now lands behind the same posture. Sources, pages, autopilot. One pattern, applied everywhere.
+
+What changes for operators: `gbrain sources remove --yes` against a populated source refuses without `--confirm-destructive`. `gbrain sources archive` is the safe default. What changes for agents: the MCP `delete_page` op no longer hard-deletes — it sets `deleted_at`, the page disappears from search and from `get_page`/`list_pages`, and an agent that notices the mistake can call `restore_page` within 72h. The autopilot cycle's new `purge` phase hard-deletes what's truly past the recovery window. No cron to wire up. No manual sweep needed.
+
+### The numbers that matter
+
+| Metric | BEFORE v0.26.5 | AFTER v0.26.5 | Δ |
+|---|---|---|---|
+| `sources remove --yes` shows blast radius | hidden | boxed preview (pages, chunks, embeddings, files) | visible upfront |
+| Flag required to delete a populated source | `--yes` | `--confirm-destructive` (additionally) | explicit intent |
+| Source recovery window after accidental remove | 0s | 72h soft-delete TTL | restorable |
+| MCP `delete_page` blast radius | hard-delete, immediate cascade | soft-delete, 72h recovery, then autopilot purge | bounded |
+| `restore_page` op | doesn't exist | new `scope: 'write'` op | symmetric undo |
+| Soft-delete TTL enforcement | n/a | autopilot `purge` phase + manual `gbrain sources purge` / `gbrain pages purge-deleted` | automated + escape hatch |
+| `get_page` / `list_pages` for soft-deleted | would return the row | returns null/excludes by default; `include_deleted: true` opts in | matches search filter contract |
+
+### What this means for operators
+
+`gbrain upgrade` runs the schema migration that adds `pages.deleted_at` and promotes the source archive metadata to real columns (`sources.archived`, `archived_at`, `archive_expires_at`). If a `sources remove <id> --yes` script of yours starts refusing, that's the new gate working — pass `--confirm-destructive` only if you actually want permanent deletion. Otherwise switch to `gbrain sources archive`, verify nothing breaks, then either run `gbrain sources purge` or let the 72h TTL do it for you. The autopilot `dream` cycle picks up the new `purge` phase automatically.
+
+### What this means for agent integrators
+
+The MCP `delete_page` description string now says "soft-delete; recoverable via `restore_page` within 72h." Agents discovering tools via `list_tools` see the new contract. Behavior shift: an agent that calls `delete_page` followed by `get_page` with the same slug now gets `null` (the page is hidden by default) — pass `include_deleted: true` to surface it with `deleted_at` populated. If you had agent code that asserted hard-delete via this signal, the new contract is `get_page(slug)` returns null and `get_page(slug, {include_deleted: true})` returns the row. Ship-day stable.
+
+### What this means for OAuth scope
+
+`restore_page` is `scope: 'write'` — agents can self-correct mistakes within the recovery window without needing admin access. `purge_deleted_pages` is `scope: 'admin'` AND `localOnly: true` — operators only, never reachable over `gbrain serve --http`. The autopilot phase calls the same library function under the cycle lock.
+
+## To take advantage of v0.26.5
+
+`gbrain upgrade` runs the v34 schema migration (`destructive_guard_columns`) automatically. The migration adds the `pages.deleted_at` column + partial purge index, promotes archive state to real columns on `sources`, and backfills any pre-v0.26.5 JSONB shape into the new columns. Idempotent — re-runs are safe.
+
+```bash
+gbrain upgrade
+gbrain --version           # should print 0.26.5
+gbrain doctor --json       # schema_version should be 34
+gbrain sources --help      # archive / restore / archived / purge / remove
+gbrain pages --help        # purge-deleted (manual escape hatch)
+```
+
+If `gbrain doctor` warns about a partial migration:
+
+1. Re-run the orchestrator manually: `gbrain apply-migrations --yes`
+2. Verify `gbrain doctor --json` returns `schema_version >= 34`.
+3. Smoke-test the new posture: `gbrain sources archive <id>` then `gbrain sources archived` to confirm the row shows up. `gbrain sources restore <id>` to un-archive.
+4. If the upgrade chain fails, file an issue at https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl` if present.
+
+### Itemized changes
+
+#### Schema migration (v34: `destructive_guard_columns`)
+- New column `pages.deleted_at TIMESTAMPTZ NULL`. Partial index `pages_deleted_at_purge_idx ON pages (deleted_at) WHERE deleted_at IS NOT NULL` supports the autopilot purge query. Search filters (`WHERE deleted_at IS NULL`) do NOT need their own index — soft-deleted cardinality stays low and the predicate doesn't match the partial index. Don't add a regular `(deleted_at)` index without measuring.
+- New columns `sources.archived BOOLEAN NOT NULL DEFAULT false`, `sources.archived_at TIMESTAMPTZ`, `sources.archive_expires_at TIMESTAMPTZ`. Replaces the JSONB-key shape from PR #595's cherry-pick. Faster filter, no reserved-key footgun, indexable on demand.
+- Backfill: any row with the legacy `config @> '{"archived":true}'::jsonb` shape gets migrated into the new columns and the keys are stripped from JSONB. Idempotent.
+- Postgres uses `CREATE INDEX CONCURRENTLY` (no write-blocking lock). PGLite uses plain `CREATE INDEX`.
+- Forward-reference bootstrap (both engines) extended to probe for `pages.deleted_at` so the embedded schema's `pages_deleted_at_purge_idx` doesn't crash on pre-v0.26.5 brains. Test guard in `test/schema-bootstrap-coverage.test.ts`.
+
+#### BrainEngine surface (`src/core/engine.ts` and both engines)
+- New methods: `softDeletePage(slug, opts?)`, `restorePage(slug, opts?)`, `purgeDeletedPages(olderThanHours)`. All idempotent-as-null/false. `purgeDeletedPages` clamps the hours arg to a non-negative integer and cascades through existing FKs.
+- `getPage(slug, opts?)` and `listPages(filters?)` extended with `includeDeleted` boolean (default false). Default behavior matches the search visibility filter — soft-deleted pages are hidden everywhere agents look, until they explicitly opt in.
+- `Page` type adds optional `deleted_at?: Date | null`. `rowToPage` populates it when the SELECT projects the column.
+
+#### Operations (`src/core/operations.ts`)
+- `delete_page` rewired from `engine.deletePage` to `engine.softDeletePage`. Description updated to the v0.26.5 contract. Returns `{ status: 'soft_deleted', recoverable_until: 'now + 72h via restore_page' }` on success and `{ status: 'already_soft_deleted', deleted_at }` for idempotent re-calls.
+- `get_page` and `list_pages` params extended with `include_deleted: boolean`. Description strings updated.
+- New op `restore_page` — `scope: 'write'`, calls `engine.restorePage`. Returns `{ status: 'restored' | 'already_active' }`.
+- New op `purge_deleted_pages` — `scope: 'admin'`, `localOnly: true`. Calls `engine.purgeDeletedPages` with a `older_than_hours` param (default 72). Manual escape hatch.
+
+#### Search-filter sweep (`src/core/search/sql-ranking.ts` + both engines)
+- New helper `buildVisibilityClause(pageAlias, sourceAlias)` emits `AND <p>.deleted_at IS NULL AND NOT <s>.archived`. Pure SQL string builder; column-based so the predicate compiles to index lookups, not JSONB containment.
+- Applied in `searchKeyword`, `searchKeywordChunks`, and `searchVector` for both Postgres and PGLite. Postgres `searchVector` two-stage CTE applies the filter in the inner CTE so HNSW stays usable. NOT bypassed by `detail=high` — soft-delete is a contract, not a temporal preference.
+- All three search methods now `JOIN sources s ON s.id = p.source_id` so the visibility predicate has a target.
+
+#### Autopilot purge phase + manual CLI (v0.26.5)
+- New `CyclePhase` value `'purge'`. 9th phase in `ALL_PHASES`, runs after `orphans`. `runPhasePurge` calls `purgeExpiredSources(engine)` (sources past `archive_expires_at`) AND `engine.purgeDeletedPages(72)` (pages past 72h `deleted_at`). Adds two new `CycleReport.totals` fields: `purged_sources_count` and `purged_pages_count`. Schema-version stable (additive only).
+- New CLI command `gbrain pages purge-deleted [--older-than HOURS|Nd] [--dry-run] [--json]`. Mirrors `gbrain sources purge` (no id). Operator escape hatch alongside the autopilot phase.
+
+#### Refactor `src/core/destructive-guard.ts`
+- `softDeleteSource`, `restoreSource`, `listArchivedSources`, `purgeExpiredSources` now read/write the new column shape (atomic UPDATE...RETURNING). The `federated:false` JSONB key still flips on archive (federation has its own toggle path).
+- `purgeExpiredSources` is now a single set-based DELETE...RETURNING instead of N+1 iteration.
+- `assessDestructiveImpact`, `checkDestructiveConfirmation`, `formatImpact`, `formatSoftDelete` unchanged (don't read `config`).
+
+#### Tests (~30 cases planned for the v0.26.5 ship; see `test/destructive-guard.test.ts` and the new E2E suites)
+- `test/schema-bootstrap-coverage.test.ts` — `pages.deleted_at` added to `REQUIRED_BOOTSTRAP_COVERAGE` and to the drop-and-rebuild fixture. Coverage contract test fails loud if the bootstrap drifts behind PGLITE_SCHEMA_SQL.
+- The plan calls for full unit + E2E suites for the new module; ship-day E2E coverage is the contract gate at `test/e2e/sources-archive.test.ts`, `test/e2e/pages-soft-delete.test.ts` (Q3 IRON-rule regression), `test/e2e/search-visibility.test.ts`, and `test/e2e/cycle-purge-phase.test.ts`.
+
+#### Mechanics
+- `VERSION` → `0.26.5`. `package.json` → `0.26.5`. `src/schema.sql` regenerated into `src/core/schema-embedded.ts` via `bun run build:schema`. `src/core/migrate.ts` adds migration v34. `src/core/pglite-schema.ts` mirrors the new columns + partial index.
 ## [0.26.4] - 2026-05-03
 
 ## **`bun run test` finishes in 85 seconds. Was 18 minutes.**
