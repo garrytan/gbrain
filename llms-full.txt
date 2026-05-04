@@ -13,9 +13,10 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md
 
 # Agents working on GBrain
 
-This is your install + operating protocol. Claude Code reads `./CLAUDE.md` automatically.
-Everyone else (Codex, Cursor, OpenClaw, Aider, Continue, or an LLM fetching via URL):
-start here.
+This is the install + operating protocol for every agent runtime. Claude Code reads
+`./CLAUDE.md` automatically, but `AGENTS.md` is the canonical model-agnostic entrypoint.
+Codex-style coding agents, Cursor, OpenClaw, Windsurf, Aider, Continue, ChatGPT/Perplexity
+over HTTP MCP, or an LLM fetching via URL: start here.
 
 ## Install (5 min)
 
@@ -31,13 +32,15 @@ start here.
 1. `./AGENTS.md` (this file) — install + operating protocol.
 2. [`./CLAUDE.md`](./CLAUDE.md) — architecture reference, key files, trust boundaries,
    test layout.
-3. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
+3. [`./docs/guides/model-agnostic-agents.md`](./docs/guides/model-agnostic-agents.md)
+   — why GBrain works across models and harnesses, not just Claude Code or Codex.
+4. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
    — the two-axis mental model (brain = which DB, source = which repo in the DB). Every
    query routes on both axes. Read before writing anything that touches brain ops.
-4. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
+5. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
    agent-facing decision table: when to switch brain, when to switch source, how
    cross-brain federation works (latent-space only; the agent decides).
-5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+6. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
 
 ## Trust boundary (critical)
 
@@ -1163,11 +1166,16 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGE
 Read this entire file, then follow the steps. Ask the user for API keys when needed.
 Target: ~30 minutes to a fully working brain.
 
-## Step 0: If you are not Claude Code
+## Step 0: Start with the model-agnostic protocol
 
-Read `AGENTS.md` at the repo root first. It's the non-Claude-agent operating
-protocol (install, read order, trust boundary, common tasks). Claude Code reads
-`CLAUDE.md` automatically and can skip ahead.
+Read `AGENTS.md` at the repo root first. It is the canonical protocol for every
+agent runtime: Claude Code, Codex-style coding agents, OpenClaw, Cursor, Windsurf,
+Continue, Aider, ChatGPT/Perplexity over HTTP MCP, or a custom internal harness.
+`CLAUDE.md` is a Claude Code compatibility overlay, not the source of truth.
+
+For the portability model, read `docs/guides/model-agnostic-agents.md`: the agent
+only needs to read markdown instructions, call MCP or CLI tools, respect the trust
+boundary, and persist work outside the chat transcript.
 
 If you fetched this file by URL without cloning yet, the companion files live at:
 - `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
@@ -1196,12 +1204,25 @@ restart the shell or add the PATH export to the shell profile.
 Ask the user for these:
 
 ```bash
-export OPENAI_API_KEY=sk-...          # required for vector search
+export OPENAI_API_KEY=sk-...          # required for vector search by default
 export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
 ```
 
 Save to shell profile or `.env`. Without OpenAI, keyword search still works.
 Without Anthropic, search works but skips query expansion.
+
+OpenAI-compatible embedding providers are supported without code changes:
+
+```bash
+export GBRAIN_EMBEDDING_API_KEY=...
+export GBRAIN_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+export GBRAIN_EMBEDDING_MODEL=text-embedding-v4
+export GBRAIN_EMBEDDING_TARGET_DIMENSIONS=1024
+```
+
+`OPENAI_BASE_URL`, `OPENAI_EMBEDDING_MODEL`, and `OPENAI_EMBEDDING_DIMENSIONS` work too.
+This is how Qwen/DashScope, self-hosted OpenAI-compatible gateways, or future providers
+slot in while the agent protocol stays unchanged.
 
 ## Step 3: Create the Brain
 
@@ -1485,6 +1506,8 @@ GBrain is those patterns, generalized. 34 skills. Install in 30 minutes. Your ag
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
+> **Model-agnostic:** GBrain is a durable brain for any capable AI agent — Claude Code, Codex-style coding agents, OpenClaw, Cursor, Windsurf, ChatGPT, Perplexity, or your own harness. The model is replaceable; the brain is the stateful layer. See [Model-Agnostic Agent Runtime](docs/guides/model-agnostic-agents.md).
+>
 > **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
 
 ## Install
@@ -1506,9 +1529,10 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 That's it. The agent clones the repo, installs GBrain, sets up the brain, loads 34 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
 
 If your agent doesn't auto-read `AGENTS.md`, point it at that file first:
-`https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` is the non-Claude
-agent operating protocol (install, read order, trust boundary, common tasks). For
-the full doc map, use `llms.txt` at the same URL root.
+`https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` is the model-agnostic
+agent operating protocol (install, read order, trust boundary, common tasks). `CLAUDE.md`
+is only a Claude Code compatibility overlay. For the full doc map, use `llms.txt` at the
+same URL root, or send the agent the [model-agnostic guide](docs/guides/model-agnostic-agents.md).
 
 ### Standalone CLI (no agent)
 
@@ -1538,7 +1562,7 @@ aborts with `Aborted()` the first time it opens PGLite. Use `git clone + bun ins
    The YC motto. Connected to 12 other brain pages.
 ```
 
-### MCP server (Claude Code, Cursor, Windsurf)
+### Local MCP server (Claude Code, Cursor, Windsurf, OpenClaw, and other MCP clients)
 
 GBrain exposes 30+ MCP tools via stdio:
 
@@ -1550,7 +1574,7 @@ GBrain exposes 30+ MCP tools via stdio:
 }
 ```
 
-Add to `~/.claude/server.json` (Claude Code), Settings > MCP Servers (Cursor), or your client's MCP config.
+Add to `~/.claude/server.json` (Claude Code), Settings > MCP Servers (Cursor), or your client's MCP config. If the agent does not support MCP yet, use the same runtime through the CLI (`gbrain query`, `gbrain get`, `gbrain sync`).
 
 ### Remote MCP with OAuth 2.1 (ChatGPT, Claude Desktop, Cowork, Perplexity)
 

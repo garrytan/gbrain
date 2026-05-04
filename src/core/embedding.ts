@@ -2,15 +2,34 @@
  * Embedding Service
  * Ported from production Ruby implementation (embedding_service.rb, 190 LOC)
  *
- * OpenAI text-embedding-3-large at 1536 dimensions.
+ * OpenAI-compatible embeddings.
+ *
+ * Defaults to OpenAI text-embedding-v4 at 1536 dimensions, but can run
+ * against any OpenAI-compatible embedding endpoint by setting:
+ *   - GBRAIN_EMBEDDING_API_KEY or OPENAI_API_KEY
+ *   - GBRAIN_EMBEDDING_BASE_URL or OPENAI_BASE_URL
+ *   - GBRAIN_EMBEDDING_MODEL or OPENAI_EMBEDDING_MODEL
+ *   - GBRAIN_EMBEDDING_TARGET_DIMENSIONS or OPENAI_EMBEDDING_DIMENSIONS
+ *
+ * Example: DashScope/Qwen's OpenAI-compatible endpoint works by setting
+ * GBRAIN_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+ * and GBRAIN_EMBEDDING_MODEL=text-embedding-v4.
  * Retry with exponential backoff (4s base, 120s cap, 5 retries).
  * 8000 character input truncation.
  */
 
 import OpenAI from 'openai';
 
-const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const DEFAULT_MODEL = 'text-embedding-v4';
+const DEFAULT_DIMENSIONS = 1024;
+const MODEL = firstEnv('GBRAIN_EMBEDDING_MODEL', 'OPENAI_EMBEDDING_MODEL') ?? DEFAULT_MODEL;
+const DIMENSIONS = parseDimensions(
+  firstEnv(
+    'GBRAIN_EMBEDDING_TARGET_DIMENSIONS',
+    'GBRAIN_EMBEDDING_DIMENSIONS',
+    'OPENAI_EMBEDDING_DIMENSIONS',
+  ),
+) ?? DEFAULT_DIMENSIONS;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;
@@ -19,9 +38,40 @@ const BATCH_SIZE = 100;
 
 let client: OpenAI | null = null;
 
+function firstEnv(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function parseDimensions(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeOpenAIBaseURL(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.replace(/\/+$/, '');
+  // DashScope documents its OpenAI-compatible base as /compatible-mode/v1.
+  // Users commonly paste /compatible-mode; normalize that footgun here so
+  // adapters do not have to special-case provider quirks.
+  if (trimmed.endsWith('/compatible-mode')) return `${trimmed}/v1`;
+  return trimmed;
+}
+
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI();
+    const apiKey = firstEnv('OPENAI_API_KEY', 'GBRAIN_EMBEDDING_API_KEY');
+    const baseURL = normalizeOpenAIBaseURL(
+      firstEnv('OPENAI_BASE_URL', 'GBRAIN_EMBEDDING_BASE_URL'),
+    );
+    client = new OpenAI({
+      ...(apiKey ? { apiKey } : {}),
+      ...(baseURL ? { baseURL } : {}),
+    });
   }
   return client;
 }
@@ -108,13 +158,13 @@ export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };
 
 /**
  * v0.20.0 Cathedral II Layer 8 (D1): USD cost per 1k tokens for
- * text-embedding-3-large. Used by `gbrain sync --all` cost preview and
+ * the default OpenAI embedding model. Used by `gbrain sync --all` cost preview and
  * the reindex-code backfill command to surface expected spend before
  * the agent/user accepts an expensive operation.
  *
- * Value: $0.00013 / 1k tokens as of 2026. Update when OpenAI changes
- * pricing. Single source of truth — every cost-preview surface reads
- * this constant, so a pricing change is a one-line edit.
+ * Value: $0.00013 / 1k tokens as of 2026. Custom OpenAI-compatible providers
+ * may price differently; treat previews as OpenAI-default estimates unless the
+ * caller overrides pricing in a future provider config.
  */
 export const EMBEDDING_COST_PER_1K_TOKENS = 0.00013;
 

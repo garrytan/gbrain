@@ -1,8 +1,9 @@
 # Agents working on GBrain
 
-This is your install + operating protocol. Claude Code reads `./CLAUDE.md` automatically.
-Everyone else (Codex, Cursor, OpenClaw, Aider, Continue, or an LLM fetching via URL):
-start here.
+This is the install + operating protocol for every agent runtime. Claude Code reads
+`./CLAUDE.md` automatically, but `AGENTS.md` is the canonical model-agnostic entrypoint.
+Codex-style coding agents, Cursor, OpenClaw, Windsurf, Aider, Continue, ChatGPT/Perplexity
+over HTTP MCP, or an LLM fetching via URL: start here.
 
 ## Install (5 min)
 
@@ -18,13 +19,15 @@ start here.
 1. `./AGENTS.md` (this file) — install + operating protocol.
 2. [`./CLAUDE.md`](./CLAUDE.md) — architecture reference, key files, trust boundaries,
    test layout.
-3. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
+3. [`./docs/guides/model-agnostic-agents.md`](./docs/guides/model-agnostic-agents.md)
+   — why GBrain works across models and harnesses, not just Claude Code or Codex.
+4. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
    — the two-axis mental model (brain = which DB, source = which repo in the DB). Every
    query routes on both axes. Read before writing anything that touches brain ops.
-4. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
+5. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
    agent-facing decision table: when to switch brain, when to switch source, how
    cross-brain federation works (latent-space only; the agent decides).
-5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+6. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
 
 ## Trust boundary (critical)
 
