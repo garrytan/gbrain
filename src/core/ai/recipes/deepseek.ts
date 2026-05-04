@@ -2,8 +2,9 @@ import type { Recipe } from '../types.ts';
 
 /**
  * DeepSeek exposes an OpenAI-compatible /v1/chat/completions endpoint.
- * Powers Wintermute's refusal-fallback chain and cheap-research delegation.
- * 25-40x cheaper than Anthropic on equivalent reasoning workloads.
+ * Useful as the second hop in a refusal-fallback chain and for cheap-
+ * research delegation: 25-40x cheaper than Anthropic on equivalent
+ * reasoning workloads.
  */
 export const deepseek: Recipe = {
   id: 'deepseek',
