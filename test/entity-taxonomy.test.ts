@@ -67,7 +67,7 @@ describe('entity-taxonomy (contract)', () => {
         key: 'concept',
         singular: 'concept',
         plural: 'concepts',
-        dirs: ['concepts'],
+        dirs: ['concepts', 'topics'],
         pageType: 'concept',
         customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
@@ -76,8 +76,17 @@ describe('entity-taxonomy (contract)', () => {
         key: 'deal',
         singular: 'deal',
         plural: 'deals',
-        dirs: ['deal'],
+        dirs: ['deal', 'deals'],
         pageType: 'deal',
+        customBehavior: { backlinks: false, healthMetrics: false },
+        enrichment: undefined,
+      },
+      {
+        key: 'fund',
+        singular: 'fund',
+        plural: 'funds',
+        dirs: ['funds', 'fund'],
+        pageType: undefined,
         customBehavior: { backlinks: false, healthMetrics: false },
         enrichment: undefined,
       },
@@ -180,7 +189,11 @@ describe('entity-taxonomy (contract)', () => {
       'companies',
       'meetings',
       'concepts',
+      'topics',
       'deal',
+      'deals',
+      'funds',
+      'fund',
       'civic',
       'project',
       'projects',
@@ -250,13 +263,15 @@ describe('entity-taxonomy (contract)', () => {
   test('DIR_PATTERN is the canonical alternation exported for link extraction', () => {
     expect(DIR_PATTERN).toBe(buildEntityDirRegexFragment());
     expect(DIR_PATTERN).toBe(
-      '(?:companies|concepts|entities|meetings|openclaw|personal|projects|finance|project|people|source|civic|media|deal|tech|yc)',
+      '(?:companies|concepts|entities|meetings|openclaw|personal|projects|finance|project|people|source|topics|civic|deals|funds|media|deal|fund|tech|yc)',
     );
   });
 
   test('dir membership helpers are consistent', () => {
     expect(isEntityReferenceDir('people')).toBe(true);
-    expect(isEntityReferenceDir('funds')).toBe(false);
+    expect(isEntityReferenceDir('funds')).toBe(true);
+    expect(isEntityReferenceDir('topics')).toBe(true);
+    expect(isEntityReferenceDir('deals')).toBe(true);
 
     expect(isBacklinkEntityDir('people')).toBe(true);
     expect(isBacklinkEntityDir('companies')).toBe(true);
@@ -291,6 +306,8 @@ describe('entity-taxonomy (contract)', () => {
     ['company/acme.md', 'company'],
     ['deals/acme-seed.md', 'deal'],
     ['deal/acme-seed.md', 'deal'],
+    ['topics/ml-safety.md', 'concept'],
+    ['topic/ml-safety.md', 'concept'],
     ['yc/fund-a.md', 'yc'],
     ['civic/city.md', 'civic'],
     ['projects/foo.md', 'project'],

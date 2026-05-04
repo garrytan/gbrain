@@ -24,6 +24,7 @@ import {
   enrichmentDisplayLabelForPageType,
   enrichmentSlugPrefixForEntityType,
   isEnrichmentReferenceDir,
+  RELATIONSHIP,
   type EnrichmentRequestType,
 } from './entity-taxonomy.ts';
 
@@ -134,7 +135,12 @@ export async function enrichEntity(
   // 5. Add backlink from entity to source
   let backlinkCreated = false;
   try {
-    await engine.addLink(slug, request.sourceSlug, `Entity mention from ${request.sourceSlug}`);
+    await engine.addLink(
+      slug,
+      request.sourceSlug,
+      `Entity mention from ${request.sourceSlug}`,
+      RELATIONSHIP.MENTIONS,
+    );
     backlinkCreated = true;
   } catch {
     // Link might already exist

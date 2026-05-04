@@ -103,7 +103,7 @@ describe('enrichment-service', () => {
       const existing = new Set(opts?.existingSlugs ?? []);
       const putCalls: Array<{ slug: string; page: unknown }> = [];
       const timelineCalls: Array<{ slug: string; entry: unknown }> = [];
-      const linkCalls: Array<{ from: string; to: string; context: string }> = [];
+      const linkCalls: Array<{ from: string; to: string; context: string; linkType?: string }> = [];
 
       const engine = {
         async searchKeyword() {
@@ -121,8 +121,8 @@ describe('enrichment-service', () => {
           timelineCalls.push({ slug, entry });
           if (opts?.failTimeline) throw new Error('timeline failed');
         },
-        async addLink(from: string, to: string, context: string) {
-          linkCalls.push({ from, to, context });
+        async addLink(from: string, to: string, context: string, linkType?: string) {
+          linkCalls.push({ from, to, context, linkType });
           if (opts?.failLink) throw new Error('link failed');
         },
       } as any;
@@ -163,6 +163,7 @@ describe('enrichment-service', () => {
       expect(putCalls).toHaveLength(1);
       expect(timelineCalls).toHaveLength(1);
       expect(linkCalls).toHaveLength(1);
+      expect(linkCalls[0]?.linkType).toBe('mentions');
       const page = putCalls[0]?.page as { compiled_truth?: string };
       expect(page?.compiled_truth).toContain('**Type:** Person');
     });
