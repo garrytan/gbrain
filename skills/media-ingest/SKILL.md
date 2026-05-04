@@ -11,6 +11,7 @@ triggers:
   - "ingest this PDF"
   - "save this podcast"
   - "process this book"
+  - "summarize this book"
   - "what's in this screenshot"
   - "check out this repo"
 tools:
