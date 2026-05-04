@@ -49,6 +49,14 @@ describe('extractLinksFromFile', () => {
     expect(links).toHaveLength(0);
   });
 
+  it('normalizes filesystem-style relpaths to imported slugs', async () => {
+    const content = 'See [TaskPilot](../03 Projects/TaskPilot/TaskPilot.md) and [Team](Team.md).';
+    const allSlugs = new Set(['01-maps/home', '01-maps/team', '03-projects/taskpilot/taskpilot']);
+    const links = await extractLinksFromFile(content, '01 Maps/Home.md', allSlugs);
+    expect(links.map(l => l.from_slug)).toEqual(['01-maps/home', '01-maps/home']);
+    expect(links.map(l => l.to_slug)).toEqual(['03-projects/taskpilot/taskpilot', '01-maps/team']);
+  });
+
   it('extracts frontmatter company links (v0.13, includeFrontmatter opt-in)', async () => {
     const content = '---\ncompany: brex\ntype: person\n---\nContent.';
     // v0.13 canonical: person page with company: X → person → company works_at (outgoing).
