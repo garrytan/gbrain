@@ -2,6 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
+import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { GBrainOAuthProvider, coerceTimestamp } from '../src/core/oauth-provider.ts';
 import { hashToken, generateToken } from '../src/core/utils.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
@@ -210,11 +211,11 @@ describe('verifyAccessToken', () => {
       INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
       VALUES (${hash}, ${'access'}, ${firstClient.client_id as string}, ${'{read}'}, ${Math.floor(Date.now() / 1000) - 100})
     `;
-    await expect(provider.verifyAccessToken(expiredToken)).rejects.toThrow('expired');
+    await expect(provider.verifyAccessToken(expiredToken)).rejects.toThrow(InvalidTokenError);
   });
 
   test('unknown token is rejected', async () => {
-    await expect(provider.verifyAccessToken('nonexistent-token')).rejects.toThrow('Invalid token');
+    await expect(provider.verifyAccessToken('nonexistent-token')).rejects.toThrow(InvalidTokenError);
   });
 
   test('NULL expires_at is treated as expired (fail-closed)', async () => {
@@ -228,7 +229,7 @@ describe('verifyAccessToken', () => {
       INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
       VALUES (${hash}, ${'access'}, ${firstClient.client_id as string}, ${'{read}'}, ${null})
     `;
-    await expect(provider.verifyAccessToken(nullExpiryToken)).rejects.toThrow('expired');
+    await expect(provider.verifyAccessToken(nullExpiryToken)).rejects.toThrow(InvalidTokenError);
   });
 
   test('cascade-deleted client invalidates its tokens (Invalid token, not Expired)', async () => {
