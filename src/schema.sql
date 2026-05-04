@@ -35,6 +35,14 @@ CREATE TABLE IF NOT EXISTS sources (
   -- bypassing the git-HEAD up_to_date early-return so CHUNKER_VERSION bumps
   -- actually trigger re-chunking on upgrade.
   chunker_version TEXT,
+  -- v0.26.5: soft-delete + recovery window. `archive` flips archived=true and
+  -- sets archive_expires_at = now() + 72h. The autopilot purge phase
+  -- hard-deletes rows where archive_expires_at <= now(). Promoted from a
+  -- JSONB key to real columns to avoid reserved-key footguns and to make the
+  -- search visibility filter (`NOT s.archived`) a column lookup.
+  archived            BOOLEAN NOT NULL DEFAULT false,
+  archived_at         TIMESTAMPTZ,
+  archive_expires_at  TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -71,6 +79,11 @@ CREATE TABLE IF NOT EXISTS pages (
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.26.5: soft-delete + recovery window. `delete_page` sets deleted_at = now()
+  -- instead of issuing DELETE. The autopilot purge phase hard-deletes pages
+  -- where deleted_at < now() - 72h. Search and `get_page` filter
+  -- `WHERE deleted_at IS NULL` by default; `include_deleted: true` opts in.
+  deleted_at    TIMESTAMPTZ,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -81,6 +94,13 @@ CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops)
 CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
 -- v0.18.0: source-scoped scans (per /plan-eng-review Section 4).
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+-- v0.26.5: partial index supports the autopilot purge sweep
+-- (`WHERE deleted_at IS NOT NULL AND deleted_at < now() - INTERVAL '72 hours'`).
+-- Search filters (`WHERE deleted_at IS NULL`) do not benefit from this index
+-- (predicate doesn't match) and don't need their own — soft-deleted cardinality
+-- stays low. Don't add a regular `(deleted_at)` index without measuring.
+CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
+  ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings

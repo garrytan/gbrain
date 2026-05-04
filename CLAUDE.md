@@ -209,6 +209,8 @@ strict behavior when unset.
 - `src/commands/backlinks.ts` — Back-link checker and fixer (enforces Iron Law)
 - `src/commands/lint.ts` — Page quality linter (catches LLM artifacts, placeholder dates)
 - `src/commands/report.ts` — Structured report saver (audit trail for maintenance/enrichment)
+- `src/core/destructive-guard.ts` (v0.26.5) — three-layer protection against accidental data loss in gbrain. `assessDestructiveImpact(engine, sourceId)` counts pages/chunks/embeddings/files for a source. `checkDestructiveConfirmation(impact, opts)` is the fail-closed gate (`--confirm-destructive` required when data is present; `--yes` alone is rejected). `softDeleteSource` / `restoreSource` / `listArchivedSources` / `purgeExpiredSources` drive the source-level archive lifecycle via the column shape introduced in migration v34 (`sources.archived BOOLEAN`, `archived_at TIMESTAMPTZ`, `archive_expires_at TIMESTAMPTZ`). v0.26.5 added the page-level analog through `BrainEngine.softDeletePage` / `restorePage` / `purgeDeletedPages` plus `pages.deleted_at TIMESTAMPTZ` and a partial purge index. The MCP `delete_page` op rewires to `softDeletePage`; new ops `restore_page` (`scope: write`) and `purge_deleted_pages` (`scope: admin`, `localOnly: true`) round out the surface. Search visibility (`buildVisibilityClause` in `src/core/search/sql-ranking.ts`) hides soft-deleted pages and archived sources from `searchKeyword` / `searchKeywordChunks` / `searchVector` in both engines. The autopilot cycle's new 9th `purge` phase calls `purgeExpiredSources` + `engine.purgeDeletedPages(72)` so the 72h TTL is real, not honor-system.
+- `src/commands/pages.ts` (v0.26.5) — `gbrain pages purge-deleted [--older-than HOURS|Nd] [--dry-run] [--json]` operator escape hatch. Mirror of `gbrain sources purge` for the page-level lifecycle. Hard-deletes pages whose `deleted_at` is older than the cutoff; cascades to content_chunks/page_links/chunk_relations.
 - `openclaw.plugin.json` — ClawHub bundle plugin manifest
 
 ### BrainBench — in a sibling repo (v0.20+)
@@ -243,6 +245,19 @@ Key commands added for Minions (job queue):
 - `gbrain jobs stats` — job health dashboard
 - `gbrain jobs smoke [--sigkill-rescue]` — health smoke test. `--sigkill-rescue` is the v0.13.1 regression guard for #219: simulates a killed worker and asserts the stalled job is requeued instead of dead-lettered on first stall.
 - `gbrain jobs work [--queue Q] [--concurrency N]` — start worker daemon (Postgres only)
+
+Key commands added in v0.26.5 (destructive-guard, end-to-end):
+- `gbrain sources archive <id>` — soft-delete a source. Hides from search via the new `sources.archived` column + cascading visibility filter. Preserves data for 72h. (PR #595 cherry-pick.)
+- `gbrain sources restore <id> [--no-federate]` — un-archive a soft-deleted source. Re-federates by default.
+- `gbrain sources archived [--json]` — list soft-deleted sources with their TTL.
+- `gbrain sources purge [<id>] [--confirm-destructive]` — permanent delete; with no id, purges all sources whose TTL expired.
+- `gbrain sources remove <id> [--confirm-destructive] [--dry-run]` — `--yes` alone no longer enough on populated sources. Boxed impact preview before destruction.
+- `gbrain pages purge-deleted [--older-than HOURS|Nd] [--dry-run] [--json]` — operator escape hatch for page-level soft-delete cleanup. Mirror of `gbrain sources purge`. The autopilot cycle's new `purge` phase calls the same library function automatically every run.
+- MCP `delete_page` op semantically shifts from hard-delete to soft-delete. New ops: `restore_page` (`scope: write`), `purge_deleted_pages` (`scope: admin`, `localOnly: true`).
+- `get_page` and `list_pages` extended with `include_deleted: boolean` (default false).
+- New autopilot cycle phase `purge` (9th, runs after `orphans`). `gbrain dream --phase purge` runs only the purge sweep.
+- Index strategy note: the partial index `pages_deleted_at_purge_idx ON pages (deleted_at) WHERE deleted_at IS NOT NULL` supports the autopilot purge query. Search filters (`WHERE deleted_at IS NULL`) do NOT need their own index — soft-deleted cardinality stays low and Postgres won't use the partial index for the negative predicate. Don't add a regular `(deleted_at)` index without measuring.
+- Schema migration v34 (`destructive_guard_columns`) adds `pages.deleted_at` + the partial purge index; promotes `archived` from `sources.config` JSONB to real columns; backfills any pre-v0.26.5 JSONB shape.
 
 Key commands added in v0.25.0:
 - `gbrain eval export [--since DUR] [--limit N] [--tool query|search]` — stream captured `eval_candidates` rows as NDJSON to stdout. Every line starts with `"schema_version": 1` per the stable contract in `docs/eval-capture.md`. EPIPE-safe, progress heartbeats on stderr, deterministic ordering. Primary consumer is the sibling `gbrain-evals` repo for BrainBench-Real replay.
@@ -297,6 +312,49 @@ Key commands added in v0.22.16 (claw-test friction loop):
 
 ## Testing
 
+### Test command tiers (v0.26.4 — parallel fast loop)
+
+Five tiers of test commands, each with a clear scope:
+
+| Command | What it runs | Wallclock | When to use |
+|---|---|---|---|
+| `bun run test` | Parallel unit-test fast loop. 8-shard fan-out via `scripts/run-unit-parallel.sh`, then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. | ~85s on a Mac dev box (3650+ tests) | Inner edit loop. Default. |
+| `bun run verify` | CI's authoritative pre-test gate set: `check:privacy && check:jsonb && check:progress && check:wasm && bun run typecheck`. The 4 checks `.github/workflows/test.yml` runs on shard 1 + typecheck. Single source of truth — CI literally calls `bun run verify`. | ~12s (wasm-compile dominates) | Before pushing; before `/ship`. |
+| `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. The local equivalent of "everything CI runs." Smart e2e: runs e2e only when `DATABASE_URL` is set; else loud skip notice to stderr. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
+| `bun run test:slow` | Just the `*.slow.test.ts` set (intentional cold-path correctness checks). | seconds-to-minutes | When touching slow-path code. |
+| `bun run test:serial` | Just the `*.serial.test.ts` set (cross-file-contention quarantine; runs at `--max-concurrency=1`). | ~1s per quarantined file | Debugging a specific quarantined file. |
+| `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential (template-DB parallelization is a v0.27+ TODO). | ~5-10min | Pre-ship; nightly. |
+| `bun run check:all` | All 7 historical pre-checks (privacy + jsonb + progress + no-legacy-getconnection + trailing-newline + wasm + exports-count). Superset of `verify`. | ~10s | Local-only sweep. The 4 not in `verify` are nice-to-haves. |
+
+### CI vs local: intentionally divergent file sets
+
+- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` 4-way, which uses FNV-1a hash bucketing and INCLUDES `*.slow.test.ts`. CI is the ground truth for "did everything pass."
+- **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses round-robin-by-index sharding and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Local trades coverage for inner-loop speed; CI catches what local skips.
+
+This divergence is intentional. Don't try to make them equal — the two scripts deliberately solve different problems. The regression test at `test/scripts/run-unit-shard.test.ts` pins what the local fast loop should and shouldn't include.
+
+### Failure-first logging
+
+When `bun run test` finds any failure, the wrapper:
+
+1. Writes failure blocks (each prefixed with `--- shard N: <test name> ---`) to `.context/test-failures.log` (workspace-local, gitignored). On systems without a writable `.context/`, falls back to `/tmp/gbrain-test-failures.log`.
+2. Prints a loud stderr banner with the absolute log path, plus the last 30 lines of the failure log inlined. Banner survives `| head` / `| tail` / agent-side log truncation.
+3. Writes a one-line-per-shard summary to `.context/test-summary.txt` (`shard N/M: pass=X fail=Y skip=Z rc=W`).
+4. Exits non-zero. Empty failure log + non-zero exit = infrastructure problem (wedged shard, killed child); the banner says so.
+
+If a shard wedges (per-shard `GBRAIN_TEST_SHARD_TIMEOUT` cap, default 600s), the wrapper writes `--- shard N: WEDGED after ${SHARD_TIMEOUT}s ---` to the failure log, includes the last 50 lines of the shard log, and proceeds with other shards' results.
+
+### File taxonomy
+
+- `*.test.ts` → fast loop (parallel 8-shard fan-out).
+- `*.slow.test.ts` → run via `bun run test:slow` only (intentional cold-path tests; would dominate the fast loop's wallclock).
+- `*.serial.test.ts` → run via `bun run test:serial` after the parallel pass completes; uses `--max-concurrency=1`. Quarantine for tests that share file-wide state and race when run alongside other files in the same `bun test` process. Currently: `test/brain-registry.serial.test.ts`, `test/reconcile-links.serial.test.ts`. **Do not put the parallelism back on a serial file unless you've fixed the contention root cause** (it just re-introduces the flake).
+- `test/e2e/*.test.ts` → real-Postgres E2E. Skipped when `DATABASE_URL` is unset.
+
+The intra-file parallelism project (turn `bun test` into `bun test --concurrent` after sweeping shared-state contention sites — ~58 PGLite + ~40 env-mutation + ~2 mock.module sites) is filed as a P0 TODO for a follow-up release. v0.26.4 ships file-level parallelism only.
+
+### Inventory (legacy)
+
 `bun test` runs all tests. After the v0.12.1 release: ~75 unit test files + 8 E2E test files (1412 unit pass, 119 E2E when `DATABASE_URL` is set — skip gracefully otherwise). Unit tests run
 without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
 
@@ -309,6 +367,7 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/import-resume.test.ts` (import checkpoints), `test/migrate.test.ts` (migration; v8/v9 helper-btree-index SQL structural assertions + 1000-row wall-clock fixtures that guard the O(n²)→O(n log n) fix + v0.13.1 assertions on v12/v13 SQL shape, `sqlFor` + `transaction:false` runner semantics, the `max_stalled DEFAULT 1` regression guard, and v0.22.6.1 v24 `sqlFor.pglite: ''` no-op assertion),
 `test/bootstrap.test.ts` (v0.22.6.1 — bootstrap contract: no-op on fresh install, idempotent across two `initSchema()` calls, no-op on modern brain that already has every probed column, full bootstrap path on simulated pre-v0.18 brain, fresh-install regression guard, pre-v0.13 `links` shape coverage),
 `test/schema-bootstrap-coverage.test.ts` (v0.22.6.1 CI guard — `REQUIRED_BOOTSTRAP_COVERAGE` lists every forward reference in PGLITE_SCHEMA_SQL; the test fails loudly if `applyForwardReferenceBootstrap` skips one. When you add a column-with-index to the embedded schema blob, you extend both arrays or this guard fails. The pattern that broke gbrain ten times in two years is now structurally prevented.),
+`test/helpers/schema-diff.ts` + `test/helpers/schema-diff.test.ts` + `test/e2e/schema-drift.test.ts` (v0.26.6 #588 — cross-engine schema parity gate. Helper exports pure `snapshotSchema(query)` / `diffSnapshots(pg, pglite, opts)` / `formatDiffForFailure(diff)` / `isCleanDiff(diff)` over a four-tuple per column (`data_type`, `udt_name`, `is_nullable`, `column_default`). E2E test spins up fresh PGLite + Postgres, runs `engine.initSchema()` on each (bootstrap + schema replay + migrations), snapshots `information_schema.columns`, then diffs. 2-table allowlist (`files`, `file_migration_ledger`) — every other Postgres table must reach PGLite via PGLITE_SCHEMA_SQL or a migration's `sqlFor.pglite` branch. Sentinels for `oauth_clients`, `mcp_request_log`, `access_tokens`, `eval_candidates` give tighter blame messages. Skip-gracefully without `DATABASE_URL`. Wired into `scripts/e2e-test-map.ts` so changes to `src/schema.sql`, `src/core/pglite-schema.ts`, or `src/core/migrate.ts` trigger it. The failure message names every drift with a paste-ready hint pointing at `src/core/pglite-schema.ts`.),
 `test/setup-branching.test.ts` (setup flow), `test/slug-validation.test.ts` (slug validation),
 `test/storage.test.ts` (storage backends), `test/supabase-admin.test.ts` (Supabase admin),
 `test/yaml-lite.test.ts` (YAML parsing), `test/check-update.test.ts` (version check + update CLI),

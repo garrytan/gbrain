@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS sources (
   last_commit   TEXT,
   last_sync_at  TIMESTAMPTZ,
   config        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- v0.26.5: soft-delete + recovery window (mirrors src/schema.sql).
+  archived            BOOLEAN NOT NULL DEFAULT false,
+  archived_at         TIMESTAMPTZ,
+  archive_expires_at  TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -60,6 +64,8 @@ CREATE TABLE IF NOT EXISTS pages (
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.26.5: soft-delete + recovery window (mirrors src/schema.sql).
+  deleted_at    TIMESTAMPTZ,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -67,6 +73,9 @@ CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+-- v0.26.5: partial index supports the autopilot purge sweep (mirrors src/schema.sql).
+CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
+  ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -399,7 +408,7 @@ CREATE INDEX IF NOT EXISTS idx_eval_capture_failures_ts ON eval_capture_failures
 -- access_tokens: legacy bearer tokens for remote MCP access
 -- ============================================================
 CREATE TABLE IF NOT EXISTS access_tokens (
-  id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name         TEXT NOT NULL,
   token_hash   TEXT NOT NULL UNIQUE,
   scopes       TEXT[],

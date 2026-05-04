@@ -5,7 +5,7 @@
  * configuration resolver, and a per-token MCP allow-list for take visibility.
  *
  * Phases (all idempotent, additive):
- *   A. Schema     — verify migrations v34 + v35 already applied (the schema
+ *   A. Schema     — verify migrations v35 + v36 already applied (the schema
  *                   runner in src/core/migrate.ts does the actual DDL during
  *                   `gbrain upgrade`/initSchema). This phase asserts post-condition.
  *   B. Backfill   — submit `gbrain extract takes` as a Minion job so any
@@ -62,11 +62,11 @@ async function phaseASchema(
   try {
     const versionStr = await engine.getConfig('version');
     const v = parseInt(versionStr || '0', 10);
-    if (v < 35) {
+    if (v < 36) {
       return {
         name: 'schema',
         status: 'failed',
-        detail: `expected schema version >= 35 (takes + access_tokens.permissions); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
+        detail: `expected schema version >= 36 (takes + access_tokens.permissions); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
       };
     }
     // Quick post-condition: takes + synthesis_evidence tables exist
@@ -80,7 +80,7 @@ async function phaseASchema(
         detail: `expected tables takes + synthesis_evidence; found ${rows.map(r => r.tablename).join(', ') || 'none'}`,
       };
     }
-    return { name: 'schema', status: 'complete', detail: 'schema v35 applied; takes + synthesis_evidence present' };
+    return { name: 'schema', status: 'complete', detail: 'schema v36 applied; takes + synthesis_evidence present' };
   } catch (e) {
     return { name: 'schema', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
   }
