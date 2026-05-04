@@ -24,7 +24,8 @@
     "./backoff": "./src/core/backoff.ts",
     "./search/hybrid": "./src/core/search/hybrid.ts",
     "./search/expansion": "./src/core/search/expansion.ts",
-    "./extract": "./src/commands/extract.ts"
+    "./extract": "./src/commands/extract.ts",
+    "./mcp/tool-defs": "./src/mcp/tool-defs.ts"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
