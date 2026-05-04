@@ -1,0 +1,73 @@
+# v0.26.7 baseline allow-list for scripts/check-test-isolation.sh.
+#
+# Files here violate one or more of the lint rules (env mutation,
+# mock.module, PGLite outside beforeAll, missing afterAll{disconnect}).
+# The lint ships in v0.26.7 and v0.26.8 (env sweep) + v0.26.9 (PGLite
+# sweep) remove entries from this file as each sweep makes the file
+# clean.
+#
+# RULES:
+#  - This list MUST shrink over time. Never add new entries — adding a
+#    new file means accepting cross-file flake risk for that file.
+#  - When you fix a file (apply withEnv, add the canonical PGLite
+#    block, etc.), remove its entry here.
+#  - When you cannot fix a file cleanly (genuinely env-coupled,
+#    or shares state intentionally), rename it to *.serial.test.ts
+#    instead of leaving it allow-listed.
+#
+# Permanent exemption: the test of the lint itself. Its fixture strings
+# (passed verbatim into subprocesses) legitimately match the lint
+# patterns it is testing detection of. The file does NOT mutate
+# process.env at runtime. Permanent — do not remove.
+test/scripts/check-test-isolation.test.ts
+test/autopilot-install.test.ts
+test/bootstrap.test.ts
+test/brain-resolver.test.ts
+test/check-resolvable-cli.test.ts
+test/claw-test-cli.test.ts
+test/code-def-refs.test.ts
+test/core/cycle.test.ts
+test/destructive-guard.test.ts
+test/doctor-minions-check.test.ts
+test/doctor.test.ts
+test/dream.test.ts
+test/embed.test.ts
+test/eval-capture.test.ts
+test/friction-cli.test.ts
+test/friction.test.ts
+test/gbrain-home-isolation.test.ts
+test/helpers/with-env.test.ts
+test/http-transport.test.ts
+test/hybrid-meta.test.ts
+test/init-migrate-only.test.ts
+test/integrations.test.ts
+test/mcp-eval-capture.test.ts
+test/migrate.test.ts
+test/migration-resume.test.ts
+test/migrations-v0_11_0.test.ts
+test/migrations-v0_13_1.test.ts
+test/migrations-v0_14_0.test.ts
+test/migrations-v0_19_0.test.ts
+test/migrations-v0_22_4.test.ts
+test/minions-shell.test.ts
+test/minions.test.ts
+test/mounts-cli.test.ts
+test/multi-source-integration.test.ts
+test/orphans.test.ts
+test/pages-soft-delete.test.ts
+test/preferences.test.ts
+test/reindex-code.test.ts
+test/resolve-prepare.test.ts
+test/resolvers.test.ts
+test/scenarios.test.ts
+test/schema-bootstrap-coverage.test.ts
+test/search-limit.test.ts
+test/seed-pglite.test.ts
+test/skillpack-check.test.ts
+test/source-resolver.test.ts
+test/storage-sync.test.ts
+test/subagent-audit.test.ts
+test/supervisor.test.ts
+test/sync-failures.test.ts
+test/sync-parallel.test.ts
+test/transcription.test.ts
