@@ -293,22 +293,24 @@ export interface Operation {
 
 const get_page: Operation = {
   name: 'get_page',
-  description: 'Read a page by slug (supports optional fuzzy matching)',
+  description: 'Read a page by slug (supports optional fuzzy matching). Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
+    include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
+    const includeDeleted = (p.include_deleted as boolean) === true;
 
-    let page = await ctx.engine.getPage(slug);
+    let page = await ctx.engine.getPage(slug, { includeDeleted });
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
       const candidates = await ctx.engine.resolveSlugs(slug);
       if (candidates.length === 1) {
-        page = await ctx.engine.getPage(candidates[0]);
+        page = await ctx.engine.getPage(candidates[0], { includeDeleted });
         resolved_slug = candidates[0];
       } else if (candidates.length > 1) {
         return { error: 'ambiguous_slug', candidates };
@@ -316,7 +318,7 @@ const get_page: Operation = {
     }
 
     if (!page) {
-      throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug or use fuzzy: true');
+      throw new OperationError('page_not_found', `Page not found: ${slug}`, includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify');
     }
 
     const tags = await ctx.engine.getTags(page.slug);
@@ -625,39 +627,99 @@ async function runAutoLink(
 
 const delete_page: Operation = {
   name: 'delete_page',
-  description: 'Delete a page',
+  description: 'Soft-delete a page. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed.',
   params: {
     slug: { type: 'string', required: true },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_page', slug: p.slug };
-    await ctx.engine.deletePage(p.slug as string);
-    return { status: 'deleted' };
+    const slug = p.slug as string;
+    if (ctx.dryRun) return { dry_run: true, action: 'soft_delete_page', slug };
+    // v0.26.5: rewired from hard-delete to soft-delete. The hard-delete primitive
+    // (engine.deletePage) is now reserved for purgeDeletedPages and explicit
+    // tests. softDeletePage returns null when the slug is unknown OR already
+    // soft-deleted (idempotent-as-null) — preserve that as a clean no-op shape.
+    const result = await ctx.engine.softDeletePage(slug);
+    if (result === null) {
+      // Distinguish "not found" from "already soft-deleted" so the agent gets a
+      // clear signal. Probe once with include_deleted to disambiguate.
+      const existing = await ctx.engine.getPage(slug, { includeDeleted: true });
+      if (!existing) {
+        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug.');
+      }
+      return { status: 'already_soft_deleted', slug, deleted_at: existing.deleted_at };
+    }
+    return { status: 'soft_deleted', slug, recoverable_until: 'now + 72h via restore_page' };
   },
   cliHints: { name: 'delete', positional: ['slug'] },
 };
 
+const restore_page: Operation = {
+  name: 'restore_page',
+  description: 'v0.26.5 — restore a soft-deleted page (clear deleted_at). Returns success only if the page was actually soft-deleted. After this op, the page reappears in search and in get_page/list_pages without the include_deleted flag.',
+  params: {
+    slug: { type: 'string', required: true },
+  },
+  mutating: true,
+  scope: 'write',
+  handler: async (ctx, p) => {
+    const slug = p.slug as string;
+    if (ctx.dryRun) return { dry_run: true, action: 'restore_page', slug };
+    const ok = await ctx.engine.restorePage(slug);
+    if (!ok) {
+      // Distinguish "not found" from "already active" (idempotent-as-false).
+      const existing = await ctx.engine.getPage(slug, { includeDeleted: true });
+      if (!existing) {
+        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug.');
+      }
+      return { status: 'already_active', slug };
+    }
+    return { status: 'restored', slug };
+  },
+  cliHints: { name: 'restore', positional: ['slug'] },
+};
+
+const purge_deleted_pages: Operation = {
+  name: 'purge_deleted_pages',
+  description: 'v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.',
+  params: {
+    older_than_hours: { type: 'number', description: 'Age cutoff in hours. Default 72.' },
+  },
+  mutating: true,
+  scope: 'admin',
+  localOnly: true,
+  handler: async (ctx, p) => {
+    const olderThanHours = (p.older_than_hours as number | undefined) ?? 72;
+    if (ctx.dryRun) return { dry_run: true, action: 'purge_deleted_pages', older_than_hours: olderThanHours };
+    const result = await ctx.engine.purgeDeletedPages(olderThanHours);
+    return { status: 'purged', count: result.count, slugs: result.slugs };
+  },
+  cliHints: { name: 'purge-deleted' },
+};
+
 const list_pages: Operation = {
   name: 'list_pages',
-  description: 'List pages with optional filters',
+  description: 'List pages with optional filters. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated.',
   params: {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
     limit: { type: 'number', description: 'Max results (default 50)' },
+    include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
   },
   handler: async (ctx, p) => {
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
       limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      includeDeleted: (p.include_deleted as boolean) === true,
     });
     return pages.map(pg => ({
       slug: pg.slug,
       type: pg.type,
       title: pg.title,
       updated_at: pg.updated_at,
+      ...(pg.deleted_at ? { deleted_at: pg.deleted_at } : {}),
     }));
   },
   scope: 'read',
@@ -1529,6 +1591,8 @@ const find_orphans: Operation = {
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
+  // v0.26.5 destructive-guard ops (page-level soft-delete + recovery + admin purge)
+  restore_page, purge_deleted_pages,
   // Search
   search, query,
   // Tags

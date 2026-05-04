@@ -2,6 +2,99 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.26.5] - 2026-05-03
+
+## **Destructive operation guard, end to end. Sources AND pages now have a 72h recovery window.**
+## **The MCP `delete_page` op stops being a footgun: it soft-deletes by default and restores in one call.**
+
+The motivating incident: an agent removed a federated source instead of clarifying intent and the data was unrecoverable. The cherry-picked PR #595 closed half that footgun (the CLI source-remove path). v0.26.5 closes the other half — every destructive surface gbrain ships now lands behind the same posture. Sources, pages, autopilot. One pattern, applied everywhere.
+
+What changes for operators: `gbrain sources remove --yes` against a populated source refuses without `--confirm-destructive`. `gbrain sources archive` is the safe default. What changes for agents: the MCP `delete_page` op no longer hard-deletes — it sets `deleted_at`, the page disappears from search and from `get_page`/`list_pages`, and an agent that notices the mistake can call `restore_page` within 72h. The autopilot cycle's new `purge` phase hard-deletes what's truly past the recovery window. No cron to wire up. No manual sweep needed.
+
+### The numbers that matter
+
+| Metric | BEFORE v0.26.5 | AFTER v0.26.5 | Δ |
+|---|---|---|---|
+| `sources remove --yes` shows blast radius | hidden | boxed preview (pages, chunks, embeddings, files) | visible upfront |
+| Flag required to delete a populated source | `--yes` | `--confirm-destructive` (additionally) | explicit intent |
+| Source recovery window after accidental remove | 0s | 72h soft-delete TTL | restorable |
+| MCP `delete_page` blast radius | hard-delete, immediate cascade | soft-delete, 72h recovery, then autopilot purge | bounded |
+| `restore_page` op | doesn't exist | new `scope: 'write'` op | symmetric undo |
+| Soft-delete TTL enforcement | n/a | autopilot `purge` phase + manual `gbrain sources purge` / `gbrain pages purge-deleted` | automated + escape hatch |
+| `get_page` / `list_pages` for soft-deleted | would return the row | returns null/excludes by default; `include_deleted: true` opts in | matches search filter contract |
+
+### What this means for operators
+
+`gbrain upgrade` runs the schema migration that adds `pages.deleted_at` and promotes the source archive metadata to real columns (`sources.archived`, `archived_at`, `archive_expires_at`). If a `sources remove <id> --yes` script of yours starts refusing, that's the new gate working — pass `--confirm-destructive` only if you actually want permanent deletion. Otherwise switch to `gbrain sources archive`, verify nothing breaks, then either run `gbrain sources purge` or let the 72h TTL do it for you. The autopilot `dream` cycle picks up the new `purge` phase automatically.
+
+### What this means for agent integrators
+
+The MCP `delete_page` description string now says "soft-delete; recoverable via `restore_page` within 72h." Agents discovering tools via `list_tools` see the new contract. Behavior shift: an agent that calls `delete_page` followed by `get_page` with the same slug now gets `null` (the page is hidden by default) — pass `include_deleted: true` to surface it with `deleted_at` populated. If you had agent code that asserted hard-delete via this signal, the new contract is `get_page(slug)` returns null and `get_page(slug, {include_deleted: true})` returns the row. Ship-day stable.
+
+### What this means for OAuth scope
+
+`restore_page` is `scope: 'write'` — agents can self-correct mistakes within the recovery window without needing admin access. `purge_deleted_pages` is `scope: 'admin'` AND `localOnly: true` — operators only, never reachable over `gbrain serve --http`. The autopilot phase calls the same library function under the cycle lock.
+
+## To take advantage of v0.26.5
+
+`gbrain upgrade` runs the v34 schema migration (`destructive_guard_columns`) automatically. The migration adds the `pages.deleted_at` column + partial purge index, promotes archive state to real columns on `sources`, and backfills any pre-v0.26.5 JSONB shape into the new columns. Idempotent — re-runs are safe.
+
+```bash
+gbrain upgrade
+gbrain --version           # should print 0.26.5
+gbrain doctor --json       # schema_version should be 34
+gbrain sources --help      # archive / restore / archived / purge / remove
+gbrain pages --help        # purge-deleted (manual escape hatch)
+```
+
+If `gbrain doctor` warns about a partial migration:
+
+1. Re-run the orchestrator manually: `gbrain apply-migrations --yes`
+2. Verify `gbrain doctor --json` returns `schema_version >= 34`.
+3. Smoke-test the new posture: `gbrain sources archive <id>` then `gbrain sources archived` to confirm the row shows up. `gbrain sources restore <id>` to un-archive.
+4. If the upgrade chain fails, file an issue at https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl` if present.
+
+### Itemized changes
+
+#### Schema migration (v34: `destructive_guard_columns`)
+- New column `pages.deleted_at TIMESTAMPTZ NULL`. Partial index `pages_deleted_at_purge_idx ON pages (deleted_at) WHERE deleted_at IS NOT NULL` supports the autopilot purge query. Search filters (`WHERE deleted_at IS NULL`) do NOT need their own index — soft-deleted cardinality stays low and the predicate doesn't match the partial index. Don't add a regular `(deleted_at)` index without measuring.
+- New columns `sources.archived BOOLEAN NOT NULL DEFAULT false`, `sources.archived_at TIMESTAMPTZ`, `sources.archive_expires_at TIMESTAMPTZ`. Replaces the JSONB-key shape from PR #595's cherry-pick. Faster filter, no reserved-key footgun, indexable on demand.
+- Backfill: any row with the legacy `config @> '{"archived":true}'::jsonb` shape gets migrated into the new columns and the keys are stripped from JSONB. Idempotent.
+- Postgres uses `CREATE INDEX CONCURRENTLY` (no write-blocking lock). PGLite uses plain `CREATE INDEX`.
+- Forward-reference bootstrap (both engines) extended to probe for `pages.deleted_at` so the embedded schema's `pages_deleted_at_purge_idx` doesn't crash on pre-v0.26.5 brains. Test guard in `test/schema-bootstrap-coverage.test.ts`.
+
+#### BrainEngine surface (`src/core/engine.ts` and both engines)
+- New methods: `softDeletePage(slug, opts?)`, `restorePage(slug, opts?)`, `purgeDeletedPages(olderThanHours)`. All idempotent-as-null/false. `purgeDeletedPages` clamps the hours arg to a non-negative integer and cascades through existing FKs.
+- `getPage(slug, opts?)` and `listPages(filters?)` extended with `includeDeleted` boolean (default false). Default behavior matches the search visibility filter — soft-deleted pages are hidden everywhere agents look, until they explicitly opt in.
+- `Page` type adds optional `deleted_at?: Date | null`. `rowToPage` populates it when the SELECT projects the column.
+
+#### Operations (`src/core/operations.ts`)
+- `delete_page` rewired from `engine.deletePage` to `engine.softDeletePage`. Description updated to the v0.26.5 contract. Returns `{ status: 'soft_deleted', recoverable_until: 'now + 72h via restore_page' }` on success and `{ status: 'already_soft_deleted', deleted_at }` for idempotent re-calls.
+- `get_page` and `list_pages` params extended with `include_deleted: boolean`. Description strings updated.
+- New op `restore_page` — `scope: 'write'`, calls `engine.restorePage`. Returns `{ status: 'restored' | 'already_active' }`.
+- New op `purge_deleted_pages` — `scope: 'admin'`, `localOnly: true`. Calls `engine.purgeDeletedPages` with a `older_than_hours` param (default 72). Manual escape hatch.
+
+#### Search-filter sweep (`src/core/search/sql-ranking.ts` + both engines)
+- New helper `buildVisibilityClause(pageAlias, sourceAlias)` emits `AND <p>.deleted_at IS NULL AND NOT <s>.archived`. Pure SQL string builder; column-based so the predicate compiles to index lookups, not JSONB containment.
+- Applied in `searchKeyword`, `searchKeywordChunks`, and `searchVector` for both Postgres and PGLite. Postgres `searchVector` two-stage CTE applies the filter in the inner CTE so HNSW stays usable. NOT bypassed by `detail=high` — soft-delete is a contract, not a temporal preference.
+- All three search methods now `JOIN sources s ON s.id = p.source_id` so the visibility predicate has a target.
+
+#### Autopilot purge phase + manual CLI (v0.26.5)
+- New `CyclePhase` value `'purge'`. 9th phase in `ALL_PHASES`, runs after `orphans`. `runPhasePurge` calls `purgeExpiredSources(engine)` (sources past `archive_expires_at`) AND `engine.purgeDeletedPages(72)` (pages past 72h `deleted_at`). Adds two new `CycleReport.totals` fields: `purged_sources_count` and `purged_pages_count`. Schema-version stable (additive only).
+- New CLI command `gbrain pages purge-deleted [--older-than HOURS|Nd] [--dry-run] [--json]`. Mirrors `gbrain sources purge` (no id). Operator escape hatch alongside the autopilot phase.
+
+#### Refactor `src/core/destructive-guard.ts`
+- `softDeleteSource`, `restoreSource`, `listArchivedSources`, `purgeExpiredSources` now read/write the new column shape (atomic UPDATE...RETURNING). The `federated:false` JSONB key still flips on archive (federation has its own toggle path).
+- `purgeExpiredSources` is now a single set-based DELETE...RETURNING instead of N+1 iteration.
+- `assessDestructiveImpact`, `checkDestructiveConfirmation`, `formatImpact`, `formatSoftDelete` unchanged (don't read `config`).
+
+#### Tests (~30 cases planned for the v0.26.5 ship; see `test/destructive-guard.test.ts` and the new E2E suites)
+- `test/schema-bootstrap-coverage.test.ts` — `pages.deleted_at` added to `REQUIRED_BOOTSTRAP_COVERAGE` and to the drop-and-rebuild fixture. Coverage contract test fails loud if the bootstrap drifts behind PGLITE_SCHEMA_SQL.
+- The plan calls for full unit + E2E suites for the new module; ship-day E2E coverage is the contract gate at `test/e2e/sources-archive.test.ts`, `test/e2e/pages-soft-delete.test.ts` (Q3 IRON-rule regression), `test/e2e/search-visibility.test.ts`, and `test/e2e/cycle-purge-phase.test.ts`.
+
+#### Mechanics
+- `VERSION` → `0.26.5`. `package.json` → `0.26.5`. `src/schema.sql` regenerated into `src/core/schema-embedded.ts` via `bun run build:schema`. `src/core/migrate.ts` adds migration v34. `src/core/pglite-schema.ts` mirrors the new columns + partial index.
+
 ## [0.26.4] - 2026-05-03
 
 ## **`bun run test` finishes in 85 seconds. Was 18 minutes.**
