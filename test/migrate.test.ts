@@ -136,6 +136,76 @@ describe('migrate v33 — admin_dashboard_columns_v0_26_3', () => {
   });
 });
 
+// ============================================================
+// v0.27 — v34 subagent_provider_neutral_persistence_v0_27
+// ============================================================
+// Codex F-OV-1 / D11. The subagent_messages and subagent_tool_executions
+// tables stored Anthropic-shaped tool_use / tool_result blocks as JSONB.
+// When a worker resumes mid-loop and the live model is OpenAI/DeepSeek/etc,
+// the persisted shape is the runtime contract — translation at read time
+// is lossy.
+//
+// Fix: schema_version + provider_id columns. v=1 = legacy Anthropic shape,
+// v=2 = provider-neutral ChatBlock format (commit 2). subagent.ts (commit
+// 2) writes v=2 going forward.
+describe('migrate v34 — subagent_provider_neutral_persistence_v0_27', () => {
+  const v34 = MIGRATIONS.find(m => m.version === 34);
+
+  test('v34 exists with the expected name', () => {
+    expect(v34).toBeDefined();
+    expect(v34!.name).toBe('subagent_provider_neutral_persistence_v0_27');
+  });
+
+  test('v34 adds schema_version + provider_id to both subagent tables', () => {
+    const sql = v34!.sql;
+    expect(sql).toContain('ALTER TABLE subagent_messages');
+    expect(sql).toContain('ALTER TABLE subagent_tool_executions');
+    // schema_version present in both tables
+    const schemaVersionMatches = sql.match(/ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1/g) || [];
+    expect(schemaVersionMatches.length).toBe(2);
+    // provider_id present in both tables
+    const providerIdMatches = sql.match(/ADD COLUMN IF NOT EXISTS provider_id TEXT/g) || [];
+    expect(providerIdMatches.length).toBe(2);
+  });
+
+  test('v34 keeps DEFAULT 1 so existing rows are taggable as legacy Anthropic shape', () => {
+    // Existing rows backfill to schema_version=1 (legacy) automatically via
+    // DEFAULT. No explicit UPDATE needed; subagent.ts read path checks the
+    // version and dispatches the right mapper.
+    expect(v34!.sql).toContain('DEFAULT 1');
+  });
+
+  test('v34 creates idx_subagent_messages_provider for cost rollups', () => {
+    expect(v34!.sql).toContain('idx_subagent_messages_provider');
+    expect(v34!.sql).toContain('subagent_messages (job_id, provider_id)');
+  });
+
+  test('v34 ALTERs are idempotent (ADD COLUMN IF NOT EXISTS)', () => {
+    const sql = v34!.sql;
+    const addColumnLines = sql.match(/ADD COLUMN[^,;]+/gi) || [];
+    expect(addColumnLines.length).toBe(4);
+    for (const line of addColumnLines) {
+      expect(line).toContain('IF NOT EXISTS');
+    }
+    // Index creation must also be idempotent.
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS');
+  });
+
+  test('PGLite fresh-install schema reflects v34 columns', async () => {
+    const { PGLITE_SCHEMA_SQL } = await import('../src/core/pglite-schema.ts');
+    expect(PGLITE_SCHEMA_SQL).toContain('schema_version      INTEGER     NOT NULL DEFAULT 1');
+    expect(PGLITE_SCHEMA_SQL).toContain('provider_id         TEXT');
+    expect(PGLITE_SCHEMA_SQL).toContain('idx_subagent_messages_provider');
+  });
+
+  test('embedded schema (src/core/schema-embedded.ts) reflects v34 columns', async () => {
+    const { SCHEMA_SQL } = await import('../src/core/schema-embedded.ts');
+    expect(SCHEMA_SQL).toContain('schema_version');
+    expect(SCHEMA_SQL).toContain('provider_id');
+    expect(SCHEMA_SQL).toContain('idx_subagent_messages_provider');
+  });
+});
+
 describe('migrate v21 — pages_source_id_composite_unique', () => {
   const v21 = MIGRATIONS.find(m => m.version === 21);
 
