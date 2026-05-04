@@ -2230,21 +2230,75 @@ Net target post-M2: **11 active → 7-8 active by next sync (v0.27.x window)**.
 The fork README's "扩展应随时间自愿退场,而非永久膨胀"
 (`skills/kos-jarvis/README.md:84`) is operationalizing as designed.
 
-### Production follow-up (NOT in this commit)
+### Production follow-up — completed 2026-05-04 same day
 
-- [ ] **P0**: `gbrain apply-migrations --yes` on production Postgres
-  to land v0.26.0 `oauth_infrastructure`, v0.26.3
-  `admin_dashboard_columns`, v0.26.5 `destructive_guard_columns`. Schema
-  v31 → v34. Without this `gbrain doctor` and `kos-compat-api /status`
-  will surface DB errors on read/write paths involving the new columns.
-- [ ] Restart `kos-compat-api` + `gemini-embed-shim` to load v0.26.7
-  src via the `gbrain → src/cli.ts` shim (same ritual as v0.25.0
-  sync §6.20).
-- [ ] Verify `kos.chenge.ink/status` shows `total_pages=2425+` after
-  restart.
-- [ ] Spot-check launchd cron logs next morning (kos-patrol,
-  dream-cycle, notion-poller, enrich-sweep, kos-deep-lint) — new deps
-  loaded clean, no missing module errors.
+- [x] **P0**: `gbrain apply-migrations --yes` on production Postgres
+  — schema v31 → v34. 3 migrations applied (v32 oauth_infrastructure /
+  v33 admin_dashboard_columns / v34 destructive_guard_columns). Initial
+  attempt failed with `column "agent_name" does not exist` (upstream
+  bootstrap miss for v0.26.3 `mcp_request_log` columns). Workaround:
+  manual `ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS
+  agent_name TEXT, params JSONB, error_message TEXT;` then re-ran
+  init --migrate-only. **Upstream PR filed**:
+  [garrytan/gbrain#627](https://github.com/garrytan/gbrain/pull/627)
+  extends `applyForwardReferenceBootstrap()` to cover the three v0.26.3
+  columns; bootstrap-coverage test (PGLite) + e2e regression
+  (Postgres) both pass. After merge, future fresh installs hitting
+  this case will self-heal, and the manual ALTER runbook in
+  `docs/UPSTREAM-PATCHES/v026-bootstrap-mcp-log-fix.md` becomes
+  historical.
+- [x] Restart `kos-compat-api` (PID 87485 → 27071) + `gemini-embed-shim`
+  (PID 63403 → 27143) via launchctl bootout/bootstrap. `:7222` + `:7225`
+  listening. `gbrain --version` returns 0.26.7 via the shim → src/cli.ts.
+- [x] `kos.chenge.ink/status` + local `127.0.0.1:7225/status` both
+  return `total_pages=2477` — boundary intact.
+- [x] `launchctl kickstart -k kos-patrol` smoke: exit=0, **0 ERROR /
+  0 WARN**, dashboard + digest written to `~/brain/.agent/{dashboards,
+  digests}/`. notion-poller (5-min cron) clean: stderr 31+ min idle
+  after the merge transient (one captured `<<<<<<< HEAD` token in
+  package.json mid-merge), 5 subsequent cycles all `0 ingested,
+  0 skipped`.
+- **Surprise finding**: kos-patrol stderr shows `kos-lint JSON parse
+  failed; exit=3` — `kos-lint` is **already broken** in production,
+  patrol skips it and reports 0 WARN. The PILOT-RETIRE pilot for
+  `kos-lint` (PLAN §5 / M1.kos-lint-retire) now has overwhelming
+  evidence: nothing in the production loop depends on it. Pilot
+  procedure simplifies from 4h evaluation to ~30 min of mechanical
+  cleanup.
+
+### M2-A resolution (same day, 2026-05-04)
+
+Production data probe drove M2-A to a definitive verdict before any
+pilot ran:
+
+- `frontmatter.dikw_layer` — set on **0 / 2477** pages.
+- `frontmatter.evidence_level` — set on **1 / 2477** pages (single E2).
+- `frontmatter.confidence` — set on 2470 / 2477, but the values are
+  hardcoded template strings in `server/kos-compat-api.ts:454,533`
+  (`confidence: low`), never written by `confidence-score/run.ts`.
+
+Cross-checked with `kos-compat-api.ts`, `workers/notion-poller`,
+`kos-patrol/run.ts`: none of these spawn the triplet's `run.ts`. They
+only execute when invoked manually from the CLI. The triplet was
+designed as the gate that quality-controlled every ingest, but it was
+never wired in. **All three skills are dead code in production.**
+
+`concept-synthesis` (v0.25.1) is structurally distinct from
+`dikw-compile`, not a 1:1 replacement: per-batch sweep over
+`concepts/` only (188 pages in production), 4-phase pipeline
+(dedup + score + LLM-synth T1+T2 + cluster), no per-page DIKW layer.
+For `concepts/` the upstream coverage is sufficient; for other kinds
+nothing was running anyway.
+
+**Decision**: archive all three triplet skills (`dikw-compile`,
+`confidence-score`, `evidence-gate`) → `skills/kos-jarvis/_archived/`.
+Pilot `concept-synthesis` on the 188 concept pages next session.
+Decision details + 30-min execution plan recorded in
+`docs/KOS-JARVIS-CONSOLIDATION-PLAN.md` §M2-A.
+
+**Net fork shrinkage from M2-A alone**: 11 active skill dirs → 8.
+Combined with M1's `kos-lint` retire (now also evidence-driven),
+the next-sync target tightens to 11 → **7 active**.
 
 ### Rollback
 

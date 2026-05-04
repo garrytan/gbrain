@@ -221,24 +221,62 @@ landed 25 commits / 8 releases / 9 new upstream skills + admin HTTP
 boundary + destructive guard + Operation.scope. Four overlap surfaces
 opened that didn't exist at M1.
 
-#### M2-A: `concept-synthesis` ↔ KOS quality triad evaluation
+#### M2-A: `concept-synthesis` ↔ KOS quality triad evaluation — RESOLVED 2026-05-04
 
-- [ ] Run `concept-synthesis` (dry-run + `--limit 50`) on `concepts/`,
-  inspect T1/T2/T3/T4 distribution
-- [ ] If fork `dikw-compile` historical reports exist, diff T1+T2 vs
-  A+B grade buckets — semantic equivalence test
-- [ ] Decision matrix (recorded to `~/brain/.agent/reports/concept-synthesis-pilot.md`):
-  - `concept-synthesis` replaces `dikw-compile` on `concepts/` only:
-    `dikw-compile/SKILL.md` scope-narrowed to non-`concepts/` kinds
-  - Full retire of `dikw-compile` if upstream covers all kinds (likely
-    NO; concept-synthesis is concepts-specific by design)
-  - Retire `confidence-score` if T1-T4 → high/med/low/none equivalence
-    holds
-- [ ] Estimated 3 h pilot + decision
-- **Depends on / blocks**: M1 wire-status check. If wire-check finds
-  `dikw-compile` was never wired in production, M2-A folds into a
-  full retire decision (no migration needed; nothing was producing
-  output to migrate from).
+**Verdict: RETIRE all three fork triplet skills. PILOT `concept-synthesis`
+on `concepts/` (188 pages) next session.**
+
+##### Wire-status evidence (decisive)
+
+Production Postgres probe on 2026-05-04 (post v0.26.7 sync, schema v34):
+
+| Skill | What it would write | Pages with that frontmatter field set | Verdict |
+|---|---|---|---|
+| `dikw-compile` | `frontmatter.dikw_layer` (D/I/K/W) | **0 / 2477** (0.00%) | DEAD CODE |
+| `evidence-gate` | `frontmatter.evidence_level` (E0-E4) | **1 / 2477** (0.04%, single E2) | EFFECTIVELY DEAD |
+| `confidence-score` | `frontmatter.confidence` (high/med/low) | 2470 / 2477 — but **values are hardcoded template strings** in `server/kos-compat-api.ts:454,533`, never written by the script | DEAD CODE (script), KEEP field name (template-controlled) |
+
+Cross-checked: `kos-compat-api.ts` (sole HTTP ingest entry), `workers/`
+(notion-poller cron), `kos-patrol/run.ts` — none of these spawn
+`bun run skills/kos-jarvis/{dikw-compile,confidence-score,evidence-gate}/run.ts`.
+The triplet only runs when invoked manually by CLI. They were never
+wired into the production loop they were designed to gate.
+
+The script line at `kos-compat-api.ts:600` mentions "dikw-compile
+recommended" in a JSON `next:` hint, but that's a string the API caller
+might ignore — not an invocation. `kos-patrol/SKILL.md:100` cross-refs
+`confidence-score/SKILL.md` as documentation, but `kos-patrol/run.ts`
+doesn't call it either.
+
+##### Concept-synthesis comparison
+
+`concept-synthesis` is **structurally distinct** from `dikw-compile`,
+not a 1:1 replacement:
+
+| Axis | `dikw-compile` (fork) | `concept-synthesis` (upstream v0.25.1) |
+|---|---|---|
+| Trigger | Per-page on ingest | Batch sweep over `concepts/` |
+| Output | D/I/K/W layer per page | T1/T2/T3/T4 tier per concept + dedup-merged stubs |
+| Phases | 1 (LLM scoring) | 4 (dedup + score + LLM-synthesize T1+T2 + cluster) |
+| Coverage | All page kinds | `concepts/` only (188 pages in production) |
+
+So even if dikw-compile HAD been wired, concept-synthesis would replace
+it for `concepts/` only. Since it WASN'T wired, the migration is
+trivial: retire all three, pilot concept-synthesis on the 188 concept
+pages, observe Tier distribution, decide whether to wire it into
+dream-cycle's patterns or synthesize phase.
+
+##### Execution plan (next session, ~30 min)
+
+- [ ] `mv skills/kos-jarvis/{dikw-compile,confidence-score,evidence-gate} skills/kos-jarvis/_archived/`
+- [ ] Strip RESOLVER.md `## KOS-Jarvis extensions` triggers for the three
+- [ ] Strip `skills/manifest.json` entries for the three (or mark `archived: true`)
+- [ ] Update `server/kos-compat-api.ts:600` hint string: `"dikw-compile recommended"` → `"page is searchable; use \`gbrain dream\` patterns/synthesize for cross-page synthesis"`
+- [ ] Pilot run: `gbrain query "type:concept" --limit 200 --json > /tmp/concepts.json`, then invoke `concept-synthesis` skill via Claude/agent on `~/brain/concepts/`, inspect tier output
+- [ ] If output is reasonable, file P1 to wire concept-synthesis into dream-cycle (or as a manual `kos-patrol`-tier weekly sweep)
+- [ ] Update `JARVIS-ARCHITECTURE.md` §6.21 with retirement record + concept-synthesis pilot result
+
+**Net fork shrinkage from M2-A**: 3 active skill dirs gone (11 → 8).
 
 #### M2-B: `kos-compat-api` ↔ `gbrain serve --http` + thin translator
 
