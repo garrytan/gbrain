@@ -90,4 +90,39 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     await engine.initSchema();
     expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
   });
+
+  test('PostgresEngine.initSchema bootstraps mcp_request_log v0.26.3 columns on a v31 brain', async () => {
+    // Regression for the v0.26.3 mcp_request_log forward-reference miss:
+    // a brain stuck at v31 has the v0.22.7-shape mcp_request_log (5 cols, no
+    // agent_name / params / error_message), but SCHEMA_SQL line ~420 declares
+    // `CREATE INDEX idx_mcp_log_agent_time ON mcp_request_log(agent_name, ...)`.
+    // Without bootstrap coverage, init crashes with `column "agent_name" does
+    // not exist` BEFORE migration v33 (admin_dashboard_columns_v0_26_3) runs.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+
+    // Mutate to pre-v0.26.3 mcp_request_log shape.
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS idx_mcp_log_agent_time;
+      DROP INDEX IF EXISTS idx_mcp_log_time_agent;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS agent_name CASCADE;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS params CASCADE;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS error_message CASCADE;
+    `);
+    await engine.setConfig('version', '31');
+
+    // Bootstrap → SCHEMA_SQL → runMigrations chain. Must not crash.
+    await engine.initSchema();
+
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+
+    // Verify the bootstrapped columns exist after upgrade.
+    const cols = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'mcp_request_log'
+        AND column_name IN ('agent_name', 'params', 'error_message')
+    `;
+    expect(cols).toHaveLength(3);
+  });
 });

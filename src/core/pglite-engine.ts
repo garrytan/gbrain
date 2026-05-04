@@ -213,6 +213,9 @@ export class PGLiteEngine implements BrainEngine {
    *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
    *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
    *   - `pages.deleted_at` column (indexed by `pages_deleted_at_purge_idx`) — v0.26.5
+   *   - `mcp_request_log.agent_name` column (indexed by `idx_mcp_log_agent_time`) — v0.26.3
+   *   - `mcp_request_log.params` column (referenced by SCHEMA_SQL replay) — v0.26.3
+   *   - `mcp_request_log.error_message` column (referenced by SCHEMA_SQL replay) — v0.26.3
    *
    * **Maintenance contract:** when a future migration adds a column-with-index
    * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
@@ -240,7 +243,15 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='content_chunks' AND column_name='symbol_name') AS symbol_name_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='mcp_request_log') AS mcp_log_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='mcp_request_log' AND column_name='agent_name') AS mcp_log_agent_name_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='mcp_request_log' AND column_name='params') AS mcp_log_params_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='mcp_request_log' AND column_name='error_message') AS mcp_log_error_message_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -252,6 +263,10 @@ export class PGLiteEngine implements BrainEngine {
       chunks_exists: boolean;
       symbol_name_exists: boolean;
       language_exists: boolean;
+      mcp_log_exists: boolean;
+      mcp_log_agent_name_exists: boolean;
+      mcp_log_params_exists: boolean;
+      mcp_log_error_message_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -260,9 +275,22 @@ export class PGLiteEngine implements BrainEngine {
     const needsChunksBootstrap = probe.chunks_exists
       && (!probe.symbol_name_exists || !probe.language_exists);
     const needsPagesDeletedAt = probe.pages_exists && !probe.deleted_at_exists;
+    // v0.26.3: idx_mcp_log_agent_time in PGLITE_SCHEMA_SQL crashes if
+    // agent_name doesn't exist yet. v33 (admin_dashboard_columns_v0_26_3)
+    // also adds these but bootstrap runs first.
+    const needsMcpLogBootstrap = probe.mcp_log_exists
+      && (!probe.mcp_log_agent_name_exists
+        || !probe.mcp_log_params_exists
+        || !probe.mcp_log_error_message_exists);
 
     // Fresh installs (no tables yet) and modern brains both no-op.
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt) return;
+    if (
+      !needsPagesBootstrap
+      && !needsLinksBootstrap
+      && !needsChunksBootstrap
+      && !needsPagesDeletedAt
+      && !needsMcpLogBootstrap
+    ) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -318,6 +346,20 @@ export class PGLiteEngine implements BrainEngine {
       // not to crash. v34 runs later via runMigrations and is idempotent.
       await this.db.exec(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsMcpLogBootstrap) {
+      // v33 (admin_dashboard_columns_v0_26_3) adds these three columns to
+      // mcp_request_log AND backfills agent_name. Bootstrap only adds the
+      // column shells so PGLITE_SCHEMA_SQL's
+      // `CREATE INDEX idx_mcp_log_agent_time ON mcp_request_log(agent_name, ...)`
+      // doesn't crash on a v0.22.7-shape mcp_request_log. v33 runs later via
+      // runMigrations and is idempotent.
+      await this.db.exec(`
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS agent_name TEXT;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS params JSONB;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_message TEXT;
       `);
     }
   }

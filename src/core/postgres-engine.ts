@@ -153,6 +153,9 @@ export class PostgresEngine implements BrainEngine {
    *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
    *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
    *   - `pages.deleted_at` column (indexed by `pages_deleted_at_purge_idx`) — v0.26.5
+   *   - `mcp_request_log.agent_name` column (indexed by `idx_mcp_log_agent_time`) — v0.26.3
+   *   - `mcp_request_log.params` column (referenced by SCHEMA_SQL replay) — v0.26.3
+   *   - `mcp_request_log.error_message` column (referenced by SCHEMA_SQL replay) — v0.26.3
    *
    * Keep this in sync with the PGLite version; covered by
    * `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
@@ -174,6 +177,10 @@ export class PostgresEngine implements BrainEngine {
       chunks_exists: boolean;
       symbol_name_exists: boolean;
       language_exists: boolean;
+      mcp_log_exists: boolean;
+      mcp_log_agent_name_exists: boolean;
+      mcp_log_params_exists: boolean;
+      mcp_log_error_message_exists: boolean;
     }[]>`
       SELECT
         EXISTS (SELECT 1 FROM information_schema.tables
@@ -193,7 +200,15 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'symbol_name') AS symbol_name_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log') AS mcp_log_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log' AND column_name = 'agent_name') AS mcp_log_agent_name_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log' AND column_name = 'params') AS mcp_log_params_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log' AND column_name = 'error_message') AS mcp_log_error_message_exists
     `;
     const probe = probeRows[0]!;
 
@@ -205,8 +220,22 @@ export class PostgresEngine implements BrainEngine {
     // v0.26.5: pages_deleted_at_purge_idx in SCHEMA_SQL crashes if the column
     // doesn't exist yet. Migration v34 also adds it, but bootstrap runs first.
     const needsPagesDeletedAt = probe.pages_exists && !probe.deleted_at_exists;
+    // v0.26.3: idx_mcp_log_agent_time in SCHEMA_SQL crashes if agent_name
+    // doesn't exist yet. Migration v33 also adds it, but bootstrap runs first.
+    // We bootstrap params + error_message together because v33's UPDATE/SELECT
+    // statements that backfill agent_name reference all three columns.
+    const needsMcpLogBootstrap = probe.mcp_log_exists
+      && (!probe.mcp_log_agent_name_exists
+        || !probe.mcp_log_params_exists
+        || !probe.mcp_log_error_message_exists);
 
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt) return;
+    if (
+      !needsPagesBootstrap
+      && !needsLinksBootstrap
+      && !needsChunksBootstrap
+      && !needsPagesDeletedAt
+      && !needsMcpLogBootstrap
+    ) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -261,6 +290,22 @@ export class PostgresEngine implements BrainEngine {
       // not to crash. v34 runs later via runMigrations and is idempotent.
       await conn.unsafe(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsMcpLogBootstrap) {
+      // v33 (admin_dashboard_columns_v0_26_3) adds these three columns to
+      // mcp_request_log AND backfills agent_name via an UPDATE that joins on
+      // oauth_clients/access_tokens. Bootstrap only adds the column shells
+      // so SCHEMA_SQL's `CREATE INDEX idx_mcp_log_agent_time ON
+      // mcp_request_log(agent_name, ...)` doesn't crash on a v0.22.7-shape
+      // mcp_request_log. v33 runs later via runMigrations and is idempotent
+      // (its `ADD COLUMN IF NOT EXISTS` statements no-op, the backfill
+      // UPDATE finds NULL agent_name rows and fills them).
+      await conn.unsafe(`
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS agent_name TEXT;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS params JSONB;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_message TEXT;
       `);
     }
   }

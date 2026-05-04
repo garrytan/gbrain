@@ -63,6 +63,14 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // v0.26.5 — forward-referenced by `CREATE INDEX pages_deleted_at_purge_idx
   // ON pages (deleted_at) WHERE deleted_at IS NOT NULL`.
   { kind: 'column', table: 'pages', column: 'deleted_at' },
+  // v0.26.3 — forward-referenced by `CREATE INDEX idx_mcp_log_agent_time
+  // ON mcp_request_log(agent_name, created_at DESC)`.
+  { kind: 'column', table: 'mcp_request_log', column: 'agent_name' },
+  // v0.26.3 — admin dashboard request log columns. Not directly indexed, but
+  // referenced by the same v33 migration's UPDATE backfill, so the schema-blob
+  // replay assumes they're present alongside agent_name.
+  { kind: 'column', table: 'mcp_request_log', column: 'params' },
+  { kind: 'column', table: 'mcp_request_log', column: 'error_message' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -95,6 +103,12 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
 
       DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
       ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at;
+
+      DROP INDEX IF EXISTS idx_mcp_log_agent_time;
+      DROP INDEX IF EXISTS idx_mcp_log_time_agent;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS agent_name;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS params;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS error_message;
     `);
 
     // Run bootstrap in isolation (NOT initSchema). This is what we're testing.
@@ -150,6 +164,11 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE links DROP COLUMN IF EXISTS origin_page_id;
       DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
       ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at;
+      DROP INDEX IF EXISTS idx_mcp_log_agent_time;
+      DROP INDEX IF EXISTS idx_mcp_log_time_agent;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS agent_name;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS params;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS error_message;
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.
