@@ -109,6 +109,33 @@ export function parseEmbedding(value: unknown): Float32Array | null {
   return null;
 }
 
+/**
+ * Detect a Postgres "undefined column" error (SQLSTATE 42703) without depending
+ * on the postgres.js driver-specific error class.
+ *
+ * Used for forward-compat probes — code that does `SELECT foo FROM bar` against
+ * schemas where `foo` may not exist yet on legacy installs (column was added in
+ * a later migration). Bare `try { ... } catch {}` swallows EVERY error
+ * (network blips, lock timeouts, auth failures) which masks real bugs as
+ * "column missing." This predicate keeps the probe narrow.
+ *
+ * Matches on either:
+ *   - SQLSTATE code `42703` (postgres.js sets this on the error)
+ *   - the column name appearing in the message alongside a "does not exist" /
+ *     "no such column" / "undefined column" clause (PGLite + various driver
+ *     wraps)
+ *
+ * Anything else falls through and the caller MUST re-throw.
+ */
+export function isUndefinedColumnError(error: unknown, column: string): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : '';
+  if (code === '42703') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(column) && /does not exist|no such column|undefined column/i.test(message);
+}
+
 let _tryParseEmbeddingWarned = false;
 
 /**

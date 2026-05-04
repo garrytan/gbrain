@@ -22,14 +22,14 @@ import type {
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { hashToken, generateToken } from './utils.ts';
+import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 /** Raw SQL query function — works with both PGLite and postgres tagged templates */
-type SqlQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
+export type SqlQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
 
 /**
  * Convert a JS array to a PostgreSQL array literal for PGLite compat.
@@ -111,6 +111,16 @@ interface GBrainOAuthProviderOptions {
   tokenTtl?: number;
   /** Default refresh token TTL in seconds (default: 30 days) */
   refreshTtl?: number;
+  /**
+   * Disable Dynamic Client Registration (RFC 7591) while keeping the rest of
+   * the OAuth surface intact. When true, `clientsStore.registerClient` is not
+   * surfaced to the SDK router, so POST `/register` returns 404 even though
+   * the underlying provider can still register clients programmatically via
+   * `registerClientManual`. Replaces the previous monkey-patching pattern in
+   * serve-http.ts (cleanup, not a security fix — DCR was never reachable
+   * before mcpAuthRouter ran).
+   */
+  dcrDisabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,17 +195,29 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
 export class GBrainOAuthProvider implements OAuthServerProvider {
   private sql: SqlQuery;
   private _clientsStore: GBrainClientsStore;
+  private readonly dcrDisabled: boolean;
   private tokenTtl: number;
   private refreshTtl: number;
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
     this._clientsStore = new GBrainClientsStore(this.sql);
+    this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
   }
 
   get clientsStore(): OAuthRegisteredClientsStore {
+    if (this.dcrDisabled) {
+      // Surface getClient only — without registerClient the SDK's mcpAuthRouter
+      // does not wire up the /register DCR endpoint. Replaces the prior
+      // monkey-patch in serve-http.ts; the outcome is identical (DCR off-by-
+      // default), but the API expresses intent on the constructor instead of
+      // requiring callers to mutate `_clientsStore` after construction.
+      return {
+        getClient: this._clientsStore.getClient.bind(this._clientsStore),
+      } as OAuthRegisteredClientsStore;
+    }
     return this._clientsStore;
   }
 
@@ -230,13 +252,18 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   }
 
   async challengeForAuthorizationCode(
-    _client: OAuthClientInformationFull,
+    client: OAuthClientInformationFull,
     authorizationCode: string,
   ): Promise<string> {
     const codeHash = hashToken(authorizationCode);
+    // F1 hardening: bind client_id atomically so a wrong client cannot read
+    // another client's PKCE challenge. Pre-fix the SELECT didn't filter on
+    // client_id at all.
     const rows = await this.sql`
       SELECT code_challenge FROM oauth_codes
-      WHERE code_hash = ${codeHash} AND expires_at > ${Math.floor(Date.now() / 1000)}
+      WHERE code_hash = ${codeHash}
+        AND client_id = ${client.client_id}
+        AND expires_at > ${Math.floor(Date.now() / 1000)}
     `;
     if (rows.length === 0) throw new Error('Authorization code not found or expired');
     return rows[0].code_challenge as string;
@@ -246,27 +273,40 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     client: OAuthClientInformationFull,
     authorizationCode: string,
     _codeVerifier?: string,
-    _redirectUri?: string,
+    redirectUri?: string,
     resource?: URL,
   ): Promise<OAuthTokens> {
     const codeHash = hashToken(authorizationCode);
     const now = Math.floor(Date.now() / 1000);
 
-    // Atomic single-use: DELETE...RETURNING in one statement closes the
-    // TOCTOU window. RFC 6749 §10.5 requires auth codes be single-use; the
-    // earlier SELECT-then-DELETE pattern let two concurrent token requests
-    // both pass the SELECT before either ran the DELETE, issuing two valid
-    // token pairs from one code. With RETURNING, the second request gets
-    // zero rows back and fails cleanly. See CSO finding #2.
-    const rows = await this.sql`
-      DELETE FROM oauth_codes
-      WHERE code_hash = ${codeHash} AND expires_at > ${now}
-      RETURNING client_id, scopes, resource
-    `;
+    // F1 + F7c hardening: bind client_id AND redirect_uri atomically into the
+    // DELETE WHERE clause. RFC 6749 §10.5 requires auth codes be single-use;
+    // RFC 6749 §4.1.3 requires the token endpoint validate redirect_uri
+    // matches the value sent at /authorize. The previous SELECT-then-compare
+    // pattern (a) burned the code on the wrong-client path so the legitimate
+    // client could not retry, and (b) ignored redirect_uri on exchange
+    // entirely. With RETURNING, the second request — or any wrong-client /
+    // wrong-redirect-uri attempt — gets zero rows back and fails cleanly.
+    // The legitimate client's code stays available for one valid redemption.
+    const rows = redirectUri
+      ? await this.sql`
+          DELETE FROM oauth_codes
+          WHERE code_hash = ${codeHash}
+            AND client_id = ${client.client_id}
+            AND redirect_uri = ${redirectUri}
+            AND expires_at > ${now}
+          RETURNING client_id, scopes, resource
+        `
+      : await this.sql`
+          DELETE FROM oauth_codes
+          WHERE code_hash = ${codeHash}
+            AND client_id = ${client.client_id}
+            AND expires_at > ${now}
+          RETURNING client_id, scopes, resource
+        `;
     if (rows.length === 0) throw new Error('Authorization code not found or expired');
 
     const codeRow = rows[0];
-    if (codeRow.client_id !== client.client_id) throw new Error('Client mismatch');
 
     // Issue tokens
     const scopes = (codeRow.scopes as string[]) || [];
@@ -286,26 +326,42 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const tokenHash = hashToken(refreshToken);
     const now = Math.floor(Date.now() / 1000);
 
-    // Atomic rotation: DELETE...RETURNING closes the TOCTOU window. RFC 6749
-    // §10.4 detection of stolen refresh tokens depends on second-use failure;
-    // the earlier SELECT-then-DELETE pattern let attacker + victim both
-    // succeed, defeating that signal. See CSO finding #3.
+    // F2 hardening: bind client_id atomically into the DELETE WHERE clause.
+    // RFC 6749 §10.4 detection of stolen refresh tokens depends on second-use
+    // failure. The previous SELECT-then-DELETE pattern + post-hoc client
+    // compare let an attacker who guessed/stole a refresh token burn it on
+    // the wrong-client path, defeating the stolen-token signal for the
+    // legitimate client. With the predicate in the DELETE, wrong-client
+    // attempts get zero rows back; the legitimate client retains the row
+    // for one valid rotation.
     const rows = await this.sql`
       DELETE FROM oauth_tokens
-      WHERE token_hash = ${tokenHash} AND token_type = 'refresh'
+      WHERE token_hash = ${tokenHash}
+        AND token_type = 'refresh'
+        AND client_id = ${client.client_id}
       RETURNING client_id, scopes, expires_at
     `;
     if (rows.length === 0) throw new Error('Refresh token not found');
 
     const row = rows[0];
-    if (row.client_id !== client.client_id) throw new Error('Client mismatch');
     // NULL expires_at is treated as expired (fail-closed). Schema permits NULL
     // even though issueTokens always sets it, so a corrupt or hand-modified row
     // can't ride past validation.
     const expiresAt = coerceTimestamp(row.expires_at);
     if (expiresAt === undefined || expiresAt < now) throw new Error('Refresh token expired');
 
-    const tokenScopes = scopes || (row.scopes as string[]) || [];
+    // F3 hardening: requested scopes on refresh MUST be a subset of the
+    // original grant on this refresh token's row. RFC 6749 §6: "the scope of
+    // the access token … MUST NOT include any scope not originally granted by
+    // the resource owner." Scope is checked against the row's scopes (the
+    // grant), NOT against the client's currently-allowed scopes (which can
+    // expand later). Omitted scope (`undefined`) inherits the original grant
+    // verbatim and stays distinct from an explicit empty array.
+    const grantedScopes = (row.scopes as string[]) || [];
+    if (scopes && scopes.some(s => !grantedScopes.includes(s))) {
+      throw new Error('Requested scope exceeds refresh token grant');
+    }
+    const tokenScopes = scopes ?? grantedScopes;
     return this.issueTokens(client.client_id, tokenScopes, resource, true);
   }
 
@@ -378,11 +434,21 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // -------------------------------------------------------------------------
 
   async revokeToken(
-    _client: OAuthClientInformationFull,
+    client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest,
   ): Promise<void> {
     const tokenHash = hashToken(request.token);
-    await this.sql`DELETE FROM oauth_tokens WHERE token_hash = ${tokenHash}`;
+    // F4 hardening: bind client_id so a client can only revoke its own
+    // tokens. RFC 7009 §2.1: "The authorization server first validates the
+    // client credentials … and then verifies whether the token was issued
+    // to the client making the revocation request." Pre-fix, any
+    // authenticated client that knew (or guessed) another client's token
+    // hash could revoke it.
+    await this.sql`
+      DELETE FROM oauth_tokens
+      WHERE token_hash = ${tokenHash}
+        AND client_id = ${client.client_id}
+    `;
   }
 
   // -------------------------------------------------------------------------
@@ -397,13 +463,19 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const client = await this._clientsStore.getClient(clientId);
     if (!client) throw new Error('Client not found');
 
-    // Check if client has been revoked (soft-deleted)
+    // Check if client has been revoked (soft-deleted). The deleted_at column
+    // is recent — pre-migration brains don't have it, so the probe must
+    // tolerate that one specific failure mode without swallowing real errors
+    // (lock timeouts, network blips, auth failures).
     try {
       const [revoked] = await this.sql`SELECT deleted_at FROM oauth_clients WHERE client_id = ${clientId} AND deleted_at IS NOT NULL`;
       if (revoked) throw new Error('Client has been revoked');
     } catch (e) {
-      // deleted_at column may not exist on PGLite/older schemas — skip check
+      // F5 hardening: surface anything that ISN'T a missing-column error.
+      // Bare `catch {}` masked DB outages as "client not revoked" — fail-open
+      // posture in a security-sensitive code path.
       if (e instanceof Error && e.message === 'Client has been revoked') throw e;
+      if (!isUndefinedColumnError(e, 'deleted_at')) throw e;
     }
 
     // Check grant type first (before verifying secret)
@@ -427,7 +499,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     try {
       const ttlRows = await this.sql`SELECT token_ttl FROM oauth_clients WHERE client_id = ${clientId}`;
       if (ttlRows.length > 0 && ttlRows[0].token_ttl) clientTtl = Number(ttlRows[0].token_ttl);
-    } catch { /* token_ttl column doesn't exist — use server default */ }
+    } catch (e) {
+      // F5 hardening: same posture as the deleted_at probe above. Only the
+      // "column doesn't exist" path is a non-fatal fall-through.
+      if (!isUndefinedColumnError(e, 'token_ttl')) throw e;
+    }
 
     // Client credentials: access token only, NO refresh token (RFC 6749 4.4.3)
     return this.issueTokens(clientId, grantedScopes, undefined, false, clientTtl);
@@ -439,13 +515,17 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   async sweepExpiredTokens(): Promise<number> {
     const now = Math.floor(Date.now() / 1000);
+    // F6 hardening: postgres.js and PGLite expose deleted-row count on
+    // different shapes; `(result as any).count` returned 0 on at least one
+    // engine even when rows were deleted, and codes were never counted at
+    // all. RETURNING 1 + array length is portable across both engines.
     const result = await this.sql`
-      DELETE FROM oauth_tokens WHERE expires_at < ${now}
+      DELETE FROM oauth_tokens WHERE expires_at < ${now} RETURNING 1
     `;
     const deletedCodes = await this.sql`
-      DELETE FROM oauth_codes WHERE expires_at < ${now}
+      DELETE FROM oauth_codes WHERE expires_at < ${now} RETURNING 1
     `;
-    return (result as any).count || 0;
+    return result.length + deletedCodes.length;
   }
 
   // -------------------------------------------------------------------------

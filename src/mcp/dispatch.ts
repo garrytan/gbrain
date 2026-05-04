@@ -23,6 +23,82 @@ export interface DispatchOpts {
   logger?: OperationContext['logger'];
 }
 
+/**
+ * Build a privacy-safe summary of MCP request params for logging + the admin
+ * SSE feed.
+ *
+ * The previous default of `JSON.stringify(params)` wrote raw payloads —
+ * page bodies, search queries, file paths — into `mcp_request_log` and
+ * broadcast them to every connected admin browser. For a personal-knowledge
+ * brain those payloads include private notes about real people / deals /
+ * companies, retained indefinitely.
+ *
+ * The redactor returns the SHAPE of the request (what op was called, which
+ * declared params were passed, approximate size) without any of the values.
+ *
+ * Hardening note (codex C8): a naive "dump all submitted keys" summary still
+ * leaks via attacker-controlled key names — a caller can submit
+ * `put_page {"wiki/people/sensitive_name": "..."}` and the key becomes a
+ * persistent log entry. To prevent this, we intersect submitted keys
+ * against the operation's declared `params` allow-list (the same definition
+ * `validateParams` reads). Anything outside the allow-list is counted but
+ * not named.
+ *
+ * Operators who want full payloads for debugging set `--log-full-params` on
+ * `gbrain serve --http`; that path bypasses this helper and writes the raw
+ * JSON, with a loud startup warning.
+ */
+export interface ParamSummary {
+  redacted: true;
+  kind: 'array' | 'object' | string;
+  declared_keys?: string[];
+  unknown_key_count?: number;
+  length?: number;
+  approx_bytes?: number;
+}
+
+export function summarizeMcpParams(opName: string, params: unknown): ParamSummary | null {
+  if (params == null) return null;
+
+  let approxBytes: number | undefined;
+  try { approxBytes = JSON.stringify(params).length; } catch { approxBytes = undefined; }
+
+  if (Array.isArray(params)) {
+    return {
+      redacted: true,
+      kind: 'array',
+      length: params.length,
+      ...(approxBytes !== undefined ? { approx_bytes: approxBytes } : {}),
+    };
+  }
+
+  if (typeof params === 'object') {
+    const submittedKeys = Object.keys(params as Record<string, unknown>);
+    const op = operations.find(o => o.name === opName);
+    const allowList = op ? new Set(Object.keys(op.params)) : new Set<string>();
+    const declared: string[] = [];
+    let unknown = 0;
+    for (const k of submittedKeys) {
+      if (allowList.has(k)) declared.push(k);
+      else unknown += 1;
+    }
+    declared.sort();
+    return {
+      redacted: true,
+      kind: 'object',
+      declared_keys: declared,
+      unknown_key_count: unknown,
+      ...(approxBytes !== undefined ? { approx_bytes: approxBytes } : {}),
+    };
+  }
+
+  return {
+    redacted: true,
+    kind: typeof params,
+    ...(approxBytes !== undefined ? { approx_bytes: approxBytes } : {}),
+  };
+}
+
 /** Validate required params exist and have the expected type. Returns null on success, error message on failure. */
 export function validateParams(op: Operation, params: Record<string, unknown>): string | null {
   for (const [key, def] of Object.entries(op.params)) {
