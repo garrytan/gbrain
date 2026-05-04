@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { readFileSync } from 'fs';
+import { readFileSync, fstatSync } from 'fs';
 import { loadConfig, toEngineConfig } from './core/config.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
@@ -132,15 +132,30 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
     }
   }
 
-  // Read stdin for content params
-  if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
-    const stdinContent = readFileSync('/dev/stdin', 'utf-8');
-    const MAX_STDIN = 5_000_000; // 5MB
-    if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
-      console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
-      process.exit(1);
+  // Read stdin for content params.
+  // Cross-platform: read from fd 0 (works on Windows; '/dev/stdin' as a path
+  // resolves to C:\dev\stdin and ENOENTs there). Use fstatSync(0) instead of
+  // !isTTY because process.stdin.isTTY is `undefined` on Windows pipes which
+  // happens to coerce correctly today, but a stricter check also avoids
+  // blocking when fd 0 is detached (e.g. systemd service) by only consuming
+  // stdin when it's actually a pipe/file/socket.
+  if (op.cliHints?.stdin && !params[op.cliHints.stdin]) {
+    let hasReadableStdin = false;
+    try {
+      const st = fstatSync(0);
+      hasReadableStdin = st.isFIFO() || st.isFile() || st.isSocket();
+    } catch {
+      // fd 0 not statable (rare); skip stdin read.
     }
-    params[op.cliHints.stdin] = stdinContent;
+    if (hasReadableStdin) {
+      const stdinContent = readFileSync(0, 'utf-8');
+      const MAX_STDIN = 5_000_000; // 5MB
+      if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
+        console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
+        process.exit(1);
+      }
+      params[op.cliHints.stdin] = stdinContent;
+    }
   }
 
   return params;
