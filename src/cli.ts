@@ -561,6 +561,12 @@ async function handleCliOnly(command: string, args: string[]) {
         await runSources(engine, args);
         break;
       }
+      case 'pages': {
+        // v0.26.5: page-level operator commands (purge-deleted escape hatch).
+        const { runPages } = await import('./commands/pages.ts');
+        await runPages(engine, args);
+        break;
+      }
       case 'storage': {
         const { runStorage } = await import('./commands/storage.ts');
         await runStorage(engine, args);

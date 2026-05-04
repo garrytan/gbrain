@@ -60,6 +60,9 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // v0.19+ — forward-referenced by `CREATE INDEX idx_chunks_language
   // ON content_chunks(language) WHERE language IS NOT NULL`.
   { kind: 'column', table: 'content_chunks', column: 'language' },
+  // v0.26.5 — forward-referenced by `CREATE INDEX pages_deleted_at_purge_idx
+  // ON pages (deleted_at) WHERE deleted_at IS NOT NULL`.
+  { kind: 'column', table: 'pages', column: 'deleted_at' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -89,6 +92,9 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       DROP INDEX IF EXISTS idx_chunks_language;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS symbol_name;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS language;
+
+      DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at;
     `);
 
     // Run bootstrap in isolation (NOT initSchema). This is what we're testing.
@@ -142,6 +148,8 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE links DROP CONSTRAINT IF EXISTS links_from_to_type_source_origin_unique;
       ALTER TABLE links DROP COLUMN IF EXISTS link_source;
       ALTER TABLE links DROP COLUMN IF EXISTS origin_page_id;
+      DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at;
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.

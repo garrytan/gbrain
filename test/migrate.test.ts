@@ -137,7 +137,7 @@ describe('migrate v33 — admin_dashboard_columns_v0_26_3', () => {
 });
 
 // ============================================================
-// v0.27 — v34 subagent_provider_neutral_persistence_v0_27
+// v0.27 — v35 subagent_provider_neutral_persistence_v0_27
 // ============================================================
 // Codex F-OV-1 / D11. The subagent_messages and subagent_tool_executions
 // tables stored Anthropic-shaped tool_use / tool_result blocks as JSONB.
@@ -148,16 +148,19 @@ describe('migrate v33 — admin_dashboard_columns_v0_26_3', () => {
 // Fix: schema_version + provider_id columns. v=1 = legacy Anthropic shape,
 // v=2 = provider-neutral ChatBlock format (commit 2). subagent.ts (commit
 // 2) writes v=2 going forward.
-describe('migrate v34 — subagent_provider_neutral_persistence_v0_27', () => {
-  const v34 = MIGRATIONS.find(m => m.version === 34);
+//
+// Renumbered v34→v35 on master merge: master's v34 (destructive_guard_columns,
+// v0.26.5 soft-delete) landed first.
+describe('migrate v35 — subagent_provider_neutral_persistence_v0_27', () => {
+  const v35 = MIGRATIONS.find(m => m.version === 35);
 
-  test('v34 exists with the expected name', () => {
-    expect(v34).toBeDefined();
-    expect(v34!.name).toBe('subagent_provider_neutral_persistence_v0_27');
+  test('v35 exists with the expected name', () => {
+    expect(v35).toBeDefined();
+    expect(v35!.name).toBe('subagent_provider_neutral_persistence_v0_27');
   });
 
-  test('v34 adds schema_version + provider_id to both subagent tables', () => {
-    const sql = v34!.sql;
+  test('v35 adds schema_version + provider_id to both subagent tables', () => {
+    const sql = v35!.sql;
     expect(sql).toContain('ALTER TABLE subagent_messages');
     expect(sql).toContain('ALTER TABLE subagent_tool_executions');
     // schema_version present in both tables
@@ -168,20 +171,20 @@ describe('migrate v34 — subagent_provider_neutral_persistence_v0_27', () => {
     expect(providerIdMatches.length).toBe(2);
   });
 
-  test('v34 keeps DEFAULT 1 so existing rows are taggable as legacy Anthropic shape', () => {
+  test('v35 keeps DEFAULT 1 so existing rows are taggable as legacy Anthropic shape', () => {
     // Existing rows backfill to schema_version=1 (legacy) automatically via
     // DEFAULT. No explicit UPDATE needed; subagent.ts read path checks the
     // version and dispatches the right mapper.
-    expect(v34!.sql).toContain('DEFAULT 1');
+    expect(v35!.sql).toContain('DEFAULT 1');
   });
 
-  test('v34 creates idx_subagent_messages_provider for cost rollups', () => {
-    expect(v34!.sql).toContain('idx_subagent_messages_provider');
-    expect(v34!.sql).toContain('subagent_messages (job_id, provider_id)');
+  test('v35 creates idx_subagent_messages_provider for cost rollups', () => {
+    expect(v35!.sql).toContain('idx_subagent_messages_provider');
+    expect(v35!.sql).toContain('subagent_messages (job_id, provider_id)');
   });
 
-  test('v34 ALTERs are idempotent (ADD COLUMN IF NOT EXISTS)', () => {
-    const sql = v34!.sql;
+  test('v35 ALTERs are idempotent (ADD COLUMN IF NOT EXISTS)', () => {
+    const sql = v35!.sql;
     const addColumnLines = sql.match(/ADD COLUMN[^,;]+/gi) || [];
     expect(addColumnLines.length).toBe(4);
     for (const line of addColumnLines) {
@@ -191,14 +194,14 @@ describe('migrate v34 — subagent_provider_neutral_persistence_v0_27', () => {
     expect(sql).toContain('CREATE INDEX IF NOT EXISTS');
   });
 
-  test('PGLite fresh-install schema reflects v34 columns', async () => {
+  test('PGLite fresh-install schema reflects v35 columns', async () => {
     const { PGLITE_SCHEMA_SQL } = await import('../src/core/pglite-schema.ts');
     expect(PGLITE_SCHEMA_SQL).toContain('schema_version      INTEGER     NOT NULL DEFAULT 1');
     expect(PGLITE_SCHEMA_SQL).toContain('provider_id         TEXT');
     expect(PGLITE_SCHEMA_SQL).toContain('idx_subagent_messages_provider');
   });
 
-  test('embedded schema (src/core/schema-embedded.ts) reflects v34 columns', async () => {
+  test('embedded schema (src/core/schema-embedded.ts) reflects v35 columns', async () => {
     const { SCHEMA_SQL } = await import('../src/core/schema-embedded.ts');
     expect(SCHEMA_SQL).toContain('schema_version');
     expect(SCHEMA_SQL).toContain('provider_id');

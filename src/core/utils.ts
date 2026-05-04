@@ -43,6 +43,12 @@ export function contentHash(page: PageInput): string {
 }
 
 export function rowToPage(row: Record<string, unknown>): Page {
+  // v0.26.5: deleted_at is optional in the SELECT projection. When the column
+  // isn't selected (legacy callers), keep the field absent on the returned object.
+  const deletedAtRaw = row.deleted_at;
+  const deletedAt = deletedAtRaw == null
+    ? (deletedAtRaw === null ? null : undefined)
+    : new Date(deletedAtRaw as string);
   return {
     id: row.id as number,
     slug: row.slug as string,
@@ -54,6 +60,7 @@ export function rowToPage(row: Record<string, unknown>): Page {
     content_hash: row.content_hash as string | undefined,
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
+    ...(deletedAt !== undefined && { deleted_at: deletedAt }),
   };
 }
 

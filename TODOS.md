@@ -1,5 +1,107 @@
 # TODOS
 
+## destructive-guard (v0.26.5 follow-up)
+
+### Adjacent 2 — Storage objects orphan on hard purge
+**Priority:** P2
+
+**What:** When `purgeExpiredSources` (sources cascade) or `purgeDeletedPages` (page-level) deletes rows, the underlying object-storage payloads referenced by `files.storage_uri` (S3 / Supabase Storage) are NOT torn down. The cascade FK on `files.source_id` removes the DB row that points at the object; the object itself stays.
+
+**Why:** Bound today by most brains carrying `Files: 0` (operator preview boxes confirm this in the wild). The leak compounds the moment attachments / images / audio start landing — every soft-delete + 72h TTL purge silently abandons object-storage bytes.
+
+**Pros:** Closes a real data-leak path. Operators stop paying for orphaned bytes. Aligns sources/pages purge with the file lifecycle.
+**Cons:** Storage backend code is non-trivial (S3 vs Supabase vs local-fs paths each have different cleanup APIs). Single-flight delete + retries on 5xx; needs an audit log.
+**Context:** Plan calls this out explicitly in v0.26.5 CEO review (`~/.claude/plans/take-a-look-and-gentle-pine.md` Adjacent 2). Targets: `src/core/storage.ts` for the object-storage interface, `src/core/destructive-guard.ts` `purgeExpiredSources` for the call site, plus a new sweep in the cycle's purge phase. v0.26.6 candidate.
+**Depends on:** Schema is fine (already has `files.storage_uri`). Just needs the storage delete plumbing.
+
+### Adjacent 3 — sources remove + sources purge race against gbrain sync
+**Priority:** P3
+
+**What:** `gbrain sources remove <id>` and the new `gbrain sources purge <id>` paths don't acquire `SYNC_LOCK_ID` (the `gbrain-sync` writer lock from PR #490). If `gbrain sync` is mid-import for the same source, the parent row can DELETE while sync is INSERTing children, surfacing as a loud FK violation.
+
+**Why:** Failure mode is loud (FK violation, not data corruption), and the race window is narrow. Worth closing while the destructive surface is touched, not before.
+
+**Pros:** Single line at the top of `runRemove` and `runPurge`. Reuses `tryAcquireDbLock(engine, SYNC_LOCK_ID, 5)`. No design surface.
+**Cons:** Adds an extra "couldn't acquire lock" exit path the operator has to recognize and retry.
+**Context:** Plan calls this out in CEO review Adjacent 3. Targets: `src/commands/sources.ts` `runRemove` and `runPurge`. v0.26.6 candidate. Pattern: `try { await fn() } finally { await release() }` mirrors the cycle.ts use of the same primitive.
+**Depends on:** Nothing.
+
+### Auth revoke-client gets the destructive-guard pattern
+**Priority:** P3
+
+**What:** `gbrain auth revoke-client <client_id>` (v0.26.2) lands without an impact preview or `--confirm-destructive` gate. CASCADE-purges every active token + auth code in one transaction; one stray client_id wipes a production integration.
+
+**Why:** Lower urgency than sources/pages because operators run this explicitly with a known client_id, not reflexively. But if the v0.26.5 posture is "every destructive surface gets the same gate," this surface should adopt it.
+
+**Pros:** Posture consistency — every destructive verb in the gbrain CLI follows one pattern. Operators get the impact preview before nuking a production OAuth client.
+**Cons:** Marginal — single-row delete with cascade. The CASCADE is the blast radius, not the verb itself.
+**Context:** Plan flags this in CEO review. Targets: `src/commands/auth.ts` `runRevokeClient` (current shape: atomic DELETE...RETURNING with CASCADE on `oauth_tokens` + `oauth_codes`). Add an impact preview that counts `oauth_tokens` and `oauth_codes` for the client, then gate behind `--confirm-destructive`.
+**Depends on:** Nothing.
+
+## test infra (v0.26.4 follow-up — intra-file parallelism)
+
+### Sweep cross-file shared-state contention; enable `bun test --concurrent` for another 2-3x speedup
+**Priority:** P0
+
+**What:** v0.26.4 shipped file-level parallel fan-out (8 shards) and got `bun run test` from 18 minutes to ~85s — a 12x speedup. The next layer is **intra-file** parallelism via Bun's `--concurrent` flag (or per-test `test.concurrent()` markers). This requires every test file to be safe under concurrent execution within the same `bun test` process.
+
+The constraint: when multiple test files load into the same bun process (which is what `bun test foo.test.ts bar.test.ts ...` does inside a shard), they share module-level state. Three contention surfaces today:
+
+- **~58 PGLiteEngine instantiations** across `test/` (per codex's grep). Many use module-level `let engine: PGLiteEngine` patterns. Race when multiple test files load and each invokes `new PGLiteEngine().connect({})`.
+- **~40 process.env mutations** without restore. `process.env.X = '...'` not paired with `afterEach` cleanup leaks across files in the same process.
+- **2 top-level `mock.module(...)` calls** in `test/core/cycle.test.ts:26` and `test/embed.test.ts`. Top-level mocks affect every other test file in the same process.
+
+The repo already has the right helper: `test/helpers/reset-pglite.ts` exports `resetPgliteState(engine)` which is "two orders of magnitude faster" than fresh-engine-per-test (per the helper's own comment). Sweep all PGLite sites to use one shared engine + this reset in `beforeEach`. Do NOT introduce a `freshPglite()` allocator — codex correctly flagged that the repo already rejected that direction.
+
+Two flakes already known and quarantined as `*.serial.test.ts` (run after parallel pass at `--max-concurrency=1`):
+- `test/brain-registry.serial.test.ts` (was `brain-registry.test.ts`)
+- `test/reconcile-links.serial.test.ts` (was `reconcile-links.test.ts`)
+
+After the sweep, both should be fixable and renameable back to plain `*.test.ts`.
+
+**Why:**
+- 2-3x additional speedup on top of v0.26.4's 12x. Target: `bun run test` < 30s on a Mac dev box.
+- Forces the test architecture to be principled (no shared mutable state across files in the same process).
+- The empirical proof point: when `bun run test` was first measured at v0.26.4, two flakes surfaced under cross-file pressure that pass cleanly in isolation. That same pattern WILL surface more flakes if the suite grows. Better to sweep proactively than to keep growing the `*.serial.test.ts` quarantine.
+
+**Pros:**
+- Real architectural win, not just speed: tests become composable.
+- Existing helper (`test/helpers/reset-pglite.ts`) already validates the pattern.
+- Quarantined flakes auto-resolve: rename back to `*.test.ts` after the sweep.
+
+**Cons:**
+- 1-2 weeks of careful refactoring across ~100 test files.
+- Some tests genuinely need shared file-wide state (top-level mocks for module-replacement tests). Those stay quarantined as `*.serial.test.ts` permanently — but the count should shrink to a known small set, not grow.
+
+**Context:** v0.26.4 plan considered doing this in scope (Codex Tension #2 = C). After empirical measurement showed `--max-concurrency=4` does nothing on tests not marked `test.concurrent()`, the user chose to ship v0.26.4 as file-level-only and file this as the v0.27+ project. Plan file: `~/.claude/plans/system-instruction-you-are-working-tranquil-ladybug.md`. Codex critical findings #2, #3, #6 are all relevant.
+
+**Acceptance criteria:**
+1. All ~58 PGLiteEngine sites use shared-engine + `resetPgliteState()` in `beforeEach`.
+2. All ~40 `process.env` mutations use a `withEnv(...)` helper that saves + restores.
+3. The 2 top-level `mock.module()` calls scoped to `beforeEach`/`afterEach`, OR the file moves to `*.serial.test.ts`.
+4. Wrapper passes `--concurrent` (or every test marked `.concurrent()`).
+5. `bun run test` runs 5 times consecutively without flakes.
+6. Quarantine count `≤5` after the sweep (currently 2; goal is to get those 2 unquarantined and not add new ones).
+7. Wallclock target: `bun run test` < 30s.
+
+**Estimated effort:** 1-2 weeks of one engineer's focused work. Could parallelize by sub-area (env-mutation sweep is independent of PGLite sweep).
+
+### Speed up E2E via Postgres template databases
+**Priority:** P1
+
+**What:** E2E tests (`bun run test:e2e`) currently run sequentially in one shared Postgres container, each test file calling `initSchema()` from scratch (~5-20s each on cold init). Speed-up: build the schema ONCE into a template DB (`gbrain_template`), then have each test file `CREATE DATABASE foo TEMPLATE gbrain_template` (~50ms per clone). With per-shard `DATABASE_URL` overrides, E2E can fan out to N parallel shards too.
+
+**Why:** Current E2E wallclock is ~5-10 min in CI. Template DB clones could bring that to ~1-2 min. Critical for the inner loop on E2E-bearing PRs (currently a real friction point per `/ship` workflow).
+
+**Sketch:**
+1. Build template DB once via `initSchema()` against `gbrain_template`.
+2. Per-test-file: `CREATE DATABASE gbrain_test_clone_<n> TEMPLATE gbrain_template` (50ms vs 5-20s).
+3. Per-shard isolation via `DATABASE_URL` env override.
+4. Schema-version stamp on the template so it invalidates when `migrate.ts` changes.
+5. Cleanup via `DROP DATABASE` in afterAll.
+
+**Estimated effort:** 1-2 days. Filed during v0.26.4 plan as a deferred follow-up (D4 = B).
+
 ## test infra (v0.26.2 follow-up — pre-existing failures triage)
 
 ### Fix 22 pre-existing test failures unrelated to OAuth
