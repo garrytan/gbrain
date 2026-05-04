@@ -753,7 +753,10 @@ export class PGLiteEngine implements BrainEngine {
     const pageResult = await this.db.query('SELECT id FROM pages WHERE slug = $1', [slug]);
     if (pageResult.rows.length === 0) throw new Error(`Page not found: ${slug}`);
     const pageId = (pageResult.rows[0] as { id: number }).id;
+    await this.upsertChunksByPageId(Number(pageId), chunks);
+  }
 
+  async upsertChunksByPageId(pageId: number, chunks: ChunkInput[]): Promise<void> {
     // Remove chunks that no longer exist
     const newIndices = chunks.map(c => c.chunk_index);
     if (newIndices.length > 0) {
@@ -846,6 +849,16 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r));
   }
 
+  async getChunksByPageId(pageId: number): Promise<Chunk[]> {
+    const { rows } = await this.db.query(
+      `SELECT cc.* FROM content_chunks cc
+       WHERE cc.page_id = $1
+       ORDER BY cc.chunk_index`,
+      [pageId]
+    );
+    return (rows as Record<string, unknown>[]).map(r => rowToChunk(r));
+  }
+
   async countStaleChunks(): Promise<number> {
     const { rows } = await this.db.query(
       `SELECT count(*)::int AS count
@@ -858,7 +871,8 @@ export class PGLiteEngine implements BrainEngine {
 
   async listStaleChunks(): Promise<StaleChunkRow[]> {
     const { rows } = await this.db.query(
-      `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+      `SELECT p.id AS page_id, p.source_id, p.slug,
+              cc.chunk_index, cc.chunk_text, cc.chunk_source,
               cc.model, cc.token_count
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id

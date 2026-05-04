@@ -786,7 +786,11 @@ export class PostgresEngine implements BrainEngine {
     const pages = await sql`SELECT id FROM pages WHERE slug = ${slug}`;
     if (pages.length === 0) throw new Error(`Page not found: ${slug}`);
     const pageId = pages[0].id;
+    await this.upsertChunksByPageId(Number(pageId), chunks);
+  }
 
+  async upsertChunksByPageId(pageId: number, chunks: ChunkInput[]): Promise<void> {
+    const sql = this.sql;
     // Remove chunks that no longer exist (chunk_index beyond new count)
     const newIndices = chunks.map(c => c.chunk_index);
     if (newIndices.length > 0) {
@@ -879,6 +883,16 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => rowToChunk(r as Record<string, unknown>));
   }
 
+  async getChunksByPageId(pageId: number): Promise<Chunk[]> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT cc.* FROM content_chunks cc
+      WHERE cc.page_id = ${pageId}
+      ORDER BY cc.chunk_index
+    `;
+    return rows.map((r) => rowToChunk(r as Record<string, unknown>));
+  }
+
   async countStaleChunks(): Promise<number> {
     const sql = this.sql;
     const [row] = await sql`
@@ -892,7 +906,8 @@ export class PostgresEngine implements BrainEngine {
   async listStaleChunks(): Promise<StaleChunkRow[]> {
     const sql = this.sql;
     const rows = await sql`
-      SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+      SELECT p.id AS page_id, p.source_id, p.slug,
+             cc.chunk_index, cc.chunk_text, cc.chunk_source,
              cc.model, cc.token_count
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id

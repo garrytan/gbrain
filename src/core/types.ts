@@ -106,6 +106,10 @@ export interface Chunk {
  * rows) embedding bytes over the wire. See `embed --stale` egress fix.
  */
 export interface StaleChunkRow {
+  /** Source-scoped page identity. Present for engines that support source-scoped stale embedding. */
+  page_id?: number;
+  /** Source id for diagnostics/grouping. Slugs are only unique within a source. */
+  source_id?: string;
   slug: string;
   chunk_index: number;
   chunk_text: string;
