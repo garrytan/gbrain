@@ -294,6 +294,33 @@ export interface Operation {
 
 // --- Page CRUD ---
 
+async function assertSourceExists(ctx: OperationContext, sourceId: string): Promise<void> {
+  const rows = await ctx.engine.executeRaw<{ id: string }>(
+    'SELECT id FROM sources WHERE id = $1 LIMIT 1',
+    [sourceId],
+  );
+  if (rows.length === 0) {
+    throw new OperationError(
+      'invalid_params',
+      `Unknown source_id: ${sourceId}`,
+      `Register the source first with: gbrain sources add ${sourceId} --path <path>`,
+    );
+  }
+}
+
+async function getPageTags(ctx: OperationContext, slug: string, sourceId?: string): Promise<string[]> {
+  if (!sourceId) return ctx.engine.getTags(slug);
+  const rows = await ctx.engine.executeRaw<{ tag: string }>(
+    `SELECT t.tag
+     FROM tags t
+     JOIN pages p ON p.id = t.page_id
+     WHERE p.slug = $1 AND p.source_id = $2
+     ORDER BY t.tag`,
+    [slug, sourceId],
+  );
+  return rows.map(r => r.tag);
+}
+
 const get_page: Operation = {
   name: 'get_page',
   description: 'Read a page by slug (supports optional fuzzy matching). Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
@@ -301,19 +328,21 @@ const get_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
+    source_id: { type: 'string', required: false, description: 'Source to read from. Defaults to "default". Must be a registered source.' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
+    const sourceId = ((p.source_id || p.source) as string | undefined) || undefined;
 
-    let page = await ctx.engine.getPage(slug, { includeDeleted });
+    let page = await ctx.engine.getPage(slug, { includeDeleted, sourceId });
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
       const candidates = await ctx.engine.resolveSlugs(slug);
       if (candidates.length === 1) {
-        page = await ctx.engine.getPage(candidates[0], { includeDeleted });
+        page = await ctx.engine.getPage(candidates[0], { includeDeleted, sourceId });
         resolved_slug = candidates[0];
       } else if (candidates.length > 1) {
         return { error: 'ambiguous_slug', candidates };
@@ -324,7 +353,7 @@ const get_page: Operation = {
       throw new OperationError('page_not_found', `Page not found: ${slug}`, includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify');
     }
 
-    const tags = await ctx.engine.getTags(page.slug);
+    const tags = await getPageTags(ctx, page.slug, sourceId);
     return { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) };
   },
   scope: 'read',
@@ -337,11 +366,13 @@ const put_page: Operation = {
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
+    source_id: { type: 'string', required: false, description: 'Source to write into. Defaults to "default". Must be a registered source.' },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+    const sourceId = ((p.source_id || p.source) as string | undefined) || undefined;
 
     // Subagent namespace enforcement (v0.15+). Runs BEFORE the dry-run
     // short-circuit so preview calls surface the same rejection. Confines
@@ -377,12 +408,13 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
+    if (sourceId) await assertSourceExists(ctx, sourceId);
     // Skip embedding when the AI gateway has no embedding provider configured.
     // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
     // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
     const { isAvailable } = await import('./ai/gateway.ts');
     const noEmbed = !isAvailable('embedding');
-    const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
+    const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed, sourceId });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
     // transaction). Runs even on status='skipped' so reconciliation catches drift
