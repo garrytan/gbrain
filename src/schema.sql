@@ -128,7 +128,13 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   parent_symbol_path    TEXT[],
   doc_comment           TEXT,
   symbol_name_qualified TEXT,
-  search_vector         TSVECTOR
+  search_vector         TSVECTOR,
+  -- v0.27.1 multimodal. modality discriminates text vs image rows for search
+  -- filtering. embedding_image holds 1024-dim Voyage multimodal vectors;
+  -- mixed-provider brains (e.g. OpenAI 1536 text + Voyage 1024 images) keep
+  -- both columns populated with distinct dim spaces.
+  modality              TEXT NOT NULL DEFAULT 'text',
+  embedding_image       vector(1024)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
@@ -137,6 +143,11 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (em
 -- v0.19.0: partial indexes — only code chunks populate these columns.
 CREATE INDEX IF NOT EXISTS idx_chunks_symbol_name ON content_chunks(symbol_name) WHERE symbol_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE language IS NOT NULL;
+-- v0.27.1: partial HNSW for multimodal images. Footprint stays proportional
+-- to image-chunk count, not table size.
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding_image
+  ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
+  WHERE embedding_image IS NOT NULL;
 -- v0.20.0 Cathedral II: GIN index on the new chunk-grain FTS vector.
 CREATE INDEX IF NOT EXISTS idx_chunks_search_vector ON content_chunks USING GIN(search_vector);
 CREATE INDEX IF NOT EXISTS idx_chunks_symbol_qualified

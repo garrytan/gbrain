@@ -245,7 +245,9 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='content_chunks' AND column_name='symbol_name') AS symbol_name_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='embedding_image') AS embedding_image_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -257,6 +259,7 @@ export class PGLiteEngine implements BrainEngine {
       chunks_exists: boolean;
       symbol_name_exists: boolean;
       language_exists: boolean;
+      embedding_image_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -265,9 +268,12 @@ export class PGLiteEngine implements BrainEngine {
     const needsChunksBootstrap = probe.chunks_exists
       && (!probe.symbol_name_exists || !probe.language_exists);
     const needsPagesDeletedAt = probe.pages_exists && !probe.deleted_at_exists;
+    // v0.27.1 — partial HNSW idx_chunks_embedding_image references this column.
+    const needsChunksEmbeddingImage = probe.chunks_exists && !probe.embedding_image_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt) return;
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
+        && !needsPagesDeletedAt && !needsChunksEmbeddingImage) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -323,6 +329,18 @@ export class PGLiteEngine implements BrainEngine {
       // not to crash. v34 runs later via runMigrations and is idempotent.
       await this.db.exec(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsChunksEmbeddingImage) {
+      // v36 (multimodal_dual_column_v0_27_1) adds modality + embedding_image
+      // columns to content_chunks plus the partial HNSW index that references
+      // the column. Bootstrap mirrors enough for PGLITE_SCHEMA_SQL's
+      // `CREATE INDEX idx_chunks_embedding_image ... WHERE embedding_image IS NOT NULL`
+      // not to crash. v36 runs later via runMigrations and is idempotent.
+      await this.db.exec(`
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS modality TEXT NOT NULL DEFAULT 'text';
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_image vector(1024);
       `);
     }
   }

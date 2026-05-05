@@ -86,27 +86,37 @@ CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
 -- content_chunks: chunked content with embeddings
 -- ============================================================
 CREATE TABLE IF NOT EXISTS content_chunks (
-  id            SERIAL PRIMARY KEY,
-  page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  chunk_index   INTEGER NOT NULL,
-  chunk_text    TEXT    NOT NULL,
-  chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(__EMBEDDING_DIMS__),
-  model         TEXT    NOT NULL DEFAULT '__EMBEDDING_MODEL__',
-  token_count   INTEGER,
-  embedded_at   TIMESTAMPTZ,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  id              SERIAL PRIMARY KEY,
+  page_id         INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  chunk_index     INTEGER NOT NULL,
+  chunk_text      TEXT    NOT NULL,
+  chunk_source    TEXT    NOT NULL DEFAULT 'compiled_truth',
+  embedding       vector(__EMBEDDING_DIMS__),
+  model           TEXT    NOT NULL DEFAULT '__EMBEDDING_MODEL__',
+  token_count     INTEGER,
+  embedded_at     TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- v0.19.0: code chunk metadata (markdown chunks leave NULL).
-  language      TEXT,
-  symbol_name   TEXT,
-  symbol_type   TEXT,
-  start_line    INTEGER,
-  end_line      INTEGER
+  language        TEXT,
+  symbol_name     TEXT,
+  symbol_type     TEXT,
+  start_line      INTEGER,
+  end_line        INTEGER,
+  -- v0.27.1 multimodal. modality discriminates text vs image rows; image
+  -- chunks carry their 1024-dim Voyage multimodal vector in embedding_image
+  -- (independent of the brain primary embedding column dim).
+  modality        TEXT NOT NULL DEFAULT 'text',
+  embedding_image vector(1024)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+-- v0.27.1: partial HNSW for multimodal images. Footprint stays proportional
+-- to image-chunk count, not table size.
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding_image
+  ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
+  WHERE embedding_image IS NOT NULL;
 -- v0.19.0: partial indexes for code chunk lookups.
 CREATE INDEX IF NOT EXISTS idx_chunks_symbol_name ON content_chunks(symbol_name) WHERE symbol_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE language IS NOT NULL;
