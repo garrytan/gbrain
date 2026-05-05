@@ -154,11 +154,10 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           return ok({ lex, vec, hyde, results }, Date.now() - t0);
         }
 
-        // Simple mode: single ?q= via hybridSearch
+        // Simple mode: single ?q= via keyword search (fast, no embedding)
         const q = url.searchParams.get('q');
         if (!q) return err('missing_param', 'Provide ?q=... or at least one of ?lex=, ?vec=, ?hyde=');
-        const expand = url.searchParams.get('expand') === '1';
-        const results = await hybridSearch(engine, q, { limit, expand });
+        const results = await searchOp.handler(ctx, { query: q, limit });
         return ok({ query: q, results }, Date.now() - t0);
       }
 
