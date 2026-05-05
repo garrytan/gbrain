@@ -1,5 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { hybridSearch } from '../core/search/hybrid.ts';
+import { hybridSearch, rrfFusion } from '../core/search/hybrid.ts';
+import type { SearchResult } from '../core/types.ts';
+import { embed } from '../core/embedding.ts';
 import { operationsByName } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { createHmac, randomBytes } from 'crypto';
@@ -114,7 +116,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           return err('otp_required',
             'This vault requires a one-time password. Ask the user to run: gbrain otp',
             401,
-            { hint: 'Run `bun /path/to/gbrain/scripts/otp.ts` to get a 60-second key, then retry with ?otp=<code>' }
+            { hint: 'Run `bun scripts/otp-app.ts` to get today\'s key, then retry with ?otp=<code>' }
           );
         }
         return err('unauthorized', 'Valid Bearer token required', 401);
@@ -122,12 +124,41 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
 
       const ctx = makeCtx(engine);
 
-      // ── GET /search?q=...&limit=N ─────────────────────────────────────────
+      // ── GET /search ───────────────────────────────────────────────────────
+      // Supports two modes:
+      // 1. qmd-style: ?lex=keywords&vec=semantic+question&hyde=hypothetical+doc
+      //    Runs each typed sub-query independently and RRF-merges results.
+      //    Any combination of lex/vec/hyde works; first-listed gets 2x weight via RRF.
+      // 2. Simple: ?q=query (hybridSearch with optional ?expand=1)
       if (path === '/search' && req.method === 'GET') {
-        const q = url.searchParams.get('q');
-        if (!q) return err('missing_param', 'q is required');
         const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '10', 10), 50);
-        const results = await searchOp.handler(ctx, { query: q, limit });
+        const innerOpts = { limit: Math.min(limit * 3, 50) };
+
+        const lex  = url.searchParams.get('lex');
+        const vec  = url.searchParams.get('vec');
+        const hyde = url.searchParams.get('hyde');
+
+        if (lex || vec || hyde) {
+          // Multi-typed mode: run sub-queries in parallel, RRF-merge
+          const tasks: Promise<SearchResult[]>[] = [];
+          if (lex)  tasks.push(engine.searchKeyword(lex, innerOpts));
+          if (vec)  tasks.push(embed(vec).then(emb => engine.searchVector(emb, innerOpts)));
+          if (hyde) tasks.push(embed(hyde).then(emb => engine.searchVector(emb, innerOpts)));
+
+          const settled = await Promise.allSettled(tasks);
+          const lists = settled
+            .filter((r): r is PromiseFulfilledResult<SearchResult[]> => r.status === 'fulfilled')
+            .map(r => r.value);
+
+          const results = rrfFusion(lists, 60, true).slice(0, limit);
+          return ok({ lex, vec, hyde, results }, Date.now() - t0);
+        }
+
+        // Simple mode: single ?q= via hybridSearch
+        const q = url.searchParams.get('q');
+        if (!q) return err('missing_param', 'Provide ?q=... or at least one of ?lex=, ?vec=, ?hyde=');
+        const expand = url.searchParams.get('expand') === '1';
+        const results = await hybridSearch(engine, q, { limit, expand });
         return ok({ query: q, results }, Date.now() - t0);
       }
 
@@ -213,11 +244,12 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   });
 
   console.error(`GBrain HTTP search API listening on http://${host}:${port}`);
-  console.error('Auth mode:', totpSecret ? 'OTP (dynamic key, 60s window)' : 'Static token');
+  console.error('Auth mode:', totpSecret ? 'OTP (daily key, UTC midnight rotation)' : 'Static token');
   console.error('Endpoints:');
   console.error('  GET  /health');
-  console.error('  GET  /search?q=...&limit=10&otp=<code>');
-  console.error('  POST /query   {query, limit?, expand?}  Authorization: OTP <code>');
+  console.error('  GET  /search?q=...&limit=10&otp=<code>              (hybridSearch)');
+  console.error('  GET  /search?lex=...&vec=...&hyde=...&otp=<code>    (qmd-style multi-query)');
+  console.error('  POST /query   {query, limit?, expand?}              (hybridSearch + expansion)');
   console.error('  GET  /page?slug=...&otp=<code>');
   console.error('  GET  /pages?domain=...&limit=20&otp=<code>');
   console.error('  PUT  /page        {content, slug?, tags?, source?}');
