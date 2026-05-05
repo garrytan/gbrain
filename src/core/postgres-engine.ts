@@ -25,6 +25,22 @@ import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, pa
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause } from './search/sql-ranking.ts';
 
+function escapeSqlStringLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+export function getPostgresSchema(dims: number = 1536, model: string = 'text-embedding-3-large'): string {
+  const parsedDims = Number(dims);
+  if (!Number.isInteger(parsedDims) || parsedDims <= 0) {
+    throw new Error(`Invalid embedding dimensions: ${dims}`);
+  }
+  const sanitizedModel = escapeSqlStringLiteral(String(model));
+  return applyChunkEmbeddingIndexPolicy(SCHEMA_SQL, parsedDims)
+    .replace(/vector\(1536\)/g, `vector(${parsedDims})`)
+    .replace(/'text-embedding-3-large'/g, `'${sanitizedModel}'`)
+    .replace(/\('embedding_dimensions', '1536'\)/g, `('embedding_dimensions', '${parsedDims}')`);
+}
+
 // CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
 // executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
 // retry as unsound (regex idempotence-boundary doesn't hold for writable
@@ -111,9 +127,7 @@ export class PostgresEngine implements BrainEngine {
       model = gw.getEmbeddingModel().split(':').slice(1).join(':') || model;
     } catch { /* gateway not yet configured — use defaults */ }
 
-    const sql = applyChunkEmbeddingIndexPolicy(SCHEMA_SQL, dims)
-      .replace(/vector\(1536\)/g, `vector(${dims})`)
-      .replace(/'text-embedding-3-large'/g, `'${model}'`);
+    const sql = getPostgresSchema(dims, model);
 
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock).

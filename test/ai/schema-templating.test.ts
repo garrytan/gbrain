@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { getPGLiteSchema, PGLITE_SCHEMA_SQL } from '../../src/core/pglite-schema.ts';
+import { getPostgresSchema } from '../../src/core/postgres-engine.ts';
 
 describe('getPGLiteSchema', () => {
   test('default produces v0.13-compatible schema (1536d + text-embedding-3-large)', () => {
@@ -39,5 +40,21 @@ describe('getPGLiteSchema', () => {
 
   test('PGLITE_SCHEMA_SQL back-compat constant is the default-dim schema', () => {
     expect(PGLITE_SCHEMA_SQL).toBe(getPGLiteSchema());
+  });
+});
+
+describe('getPostgresSchema', () => {
+  test('Voyage 2048d updates vector column and seeded config but skips HNSW', () => {
+    const sql = getPostgresSchema(2048, 'voyage-4-large');
+    expect(sql).toMatch(/vector\(2048\)/);
+    expect(sql).toMatch(/\('embedding_model', 'voyage-4-large'\)/);
+    expect(sql).toMatch(/\('embedding_dimensions', '2048'\)/);
+    expect(sql).not.toContain('idx_chunks_embedding ON content_chunks USING hnsw');
+  });
+
+  test('escapes configured model before inserting into schema SQL literals', () => {
+    const sql = getPostgresSchema(1024, "voyage-weird'quoted");
+    expect(sql).toContain("'voyage-weird''quoted'");
+    expect(sql).not.toContain("'voyage-weird'quoted'");
   });
 });
