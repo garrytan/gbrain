@@ -1452,18 +1452,18 @@ export class PostgresEngine implements BrainEngine {
     return rows[0] as unknown as PageVersion;
   }
 
-  async getVersions(slug: string): Promise<PageVersion[]> {
+  async getVersions(slug: string, opts?: { sourceId?: string }): Promise<PageVersion[]> {
     const sql = this.sql;
     const rows = await sql`
       SELECT pv.* FROM page_versions pv
       JOIN pages p ON p.id = pv.page_id
-      WHERE p.slug = ${slug}
+      WHERE p.slug = ${slug} AND p.source_id = ${opts?.sourceId ?? 'default'}
       ORDER BY pv.snapshot_at DESC
     `;
     return rows as unknown as PageVersion[];
   }
 
-  async revertToVersion(slug: string, versionId: number): Promise<void> {
+  async revertToVersion(slug: string, versionId: number, opts?: { sourceId?: string }): Promise<void> {
     const sql = this.sql;
     await sql`
       UPDATE pages SET
@@ -1471,7 +1471,10 @@ export class PostgresEngine implements BrainEngine {
         frontmatter = pv.frontmatter,
         updated_at = now()
       FROM page_versions pv
-      WHERE pages.slug = ${slug} AND pv.id = ${versionId} AND pv.page_id = pages.id
+      WHERE pages.slug = ${slug}
+        AND pages.source_id = ${opts?.sourceId ?? 'default'}
+        AND pv.id = ${versionId}
+        AND pv.page_id = pages.id
     `;
   }
 

@@ -1088,9 +1088,13 @@ const get_versions: Operation = {
   description: 'Page version history',
   params: {
     slug: { type: 'string', required: true },
+    source_id: { type: 'string' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getVersions(p.slug as string);
+    return ctx.engine.getVersions(
+      p.slug as string,
+      p.source_id !== undefined ? { sourceId: p.source_id as string } : undefined,
+    );
   },
   scope: 'read',
   cliHints: { name: 'history', positional: ['slug'] },
@@ -1102,13 +1106,15 @@ const revert_version: Operation = {
   params: {
     slug: { type: 'string', required: true },
     version_id: { type: 'number', required: true },
+    source_id: { type: 'string' },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'revert_version', slug: p.slug, version_id: p.version_id };
-    await ctx.engine.createVersion(p.slug as string);
-    await ctx.engine.revertToVersion(p.slug as string, p.version_id as number);
+    const sourceOpts = p.source_id !== undefined ? { sourceId: p.source_id as string } : undefined;
+    await ctx.engine.createVersion(p.slug as string, sourceOpts);
+    await ctx.engine.revertToVersion(p.slug as string, p.version_id as number, sourceOpts);
     return { status: 'reverted' };
   },
   cliHints: { name: 'revert', positional: ['slug', 'version_id'] },

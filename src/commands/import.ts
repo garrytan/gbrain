@@ -28,6 +28,30 @@ export interface RunImportResult {
   failures: Array<{ path: string; error: string }>;
 }
 
+async function writeImportSyncAnchor(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  which: 'repo_path' | 'last_commit',
+  value: string,
+): Promise<void> {
+  if (sourceId !== undefined) {
+    const col = which === 'repo_path' ? 'local_path' : 'last_commit';
+    if (which === 'last_commit') {
+      await engine.executeRaw(
+        `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+        [value, sourceId],
+      );
+    } else {
+      await engine.executeRaw(
+        `UPDATE sources SET ${col} = $1 WHERE id = $2`,
+        [value, sourceId],
+      );
+    }
+    return;
+  }
+  await engine.setConfig(`sync.${which}`, value);
+}
+
 export async function runImport(
   engine: BrainEngine,
   args: string[],
@@ -274,7 +298,7 @@ export async function runImport(
       recordSyncFailures(failures, gitHead);
     }
     if (failures.length === 0) {
-      await engine.setConfig('sync.last_commit', gitHead);
+      await writeImportSyncAnchor(engine, opts.sourceId, 'last_commit', gitHead);
     } else {
       console.error(
         `\nImport completed with ${failures.length} failure(s). ` +
@@ -283,7 +307,7 @@ export async function runImport(
       );
     }
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await engine.setConfig('sync.repo_path', dir);
+    await writeImportSyncAnchor(engine, opts.sourceId, 'repo_path', dir);
   }
 
   return { imported, skipped, errors, chunksCreated, failures };

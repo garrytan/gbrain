@@ -390,6 +390,33 @@ describe('performSync dry-run never writes', () => {
     expect(rows).toEqual([{ source_id: 'source-sync', n: 2 }]);
   });
 
+  test('empty-string source id is still an explicit source scope', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $2, $3, '{}'::jsonb)`,
+      ['', 'empty-source', repoPath],
+    );
+
+    const result = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      sourceId: '',
+    });
+
+    expect(result.status).toBe('first_sync');
+    expect(await engine.getPage('people/alice', { sourceId: '' })).not.toBeNull();
+    expect(await engine.getPage('people/alice')).toBeNull();
+    expect(await engine.getConfig('sync.last_commit')).toBeNull();
+    const rows = await engine.executeRaw<{ last_commit: string | null; chunker_version: string | null }>(
+      `SELECT last_commit, chunker_version FROM sources WHERE id = $1`,
+      [''],
+    );
+    expect(rows[0].last_commit).toBeTruthy();
+    expect(rows[0].chunker_version).toBeTruthy();
+  });
+
   test('runImport threads sourceId into imported pages, chunks, tags, and versions', async () => {
     const { runImport } = await import('../src/commands/import.ts');
     await engine.executeRaw(
@@ -435,6 +462,49 @@ describe('performSync dry-run never writes', () => {
           AND p.source_id = 'source-import'`,
     );
     expect(versions[0].n).toBe(1);
+  });
+
+  test('version history and revert are scoped by source id', async () => {
+    const { importFromContent } = await import('../src/core/import-file.ts');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $2, $3, '{}'::jsonb)`,
+      ['version-source', 'version-source', repoPath],
+    );
+
+    await importFromContent(engine, 'people/shared', [
+      '---',
+      'type: person',
+      'title: Default Shared',
+      '---',
+      '',
+      'Default source body.',
+    ].join('\n'), { noEmbed: true });
+    await importFromContent(engine, 'people/shared', [
+      '---',
+      'type: person',
+      'title: Named Shared',
+      '---',
+      '',
+      'Named source first body.',
+    ].join('\n'), { noEmbed: true, sourceId: 'version-source' });
+    await importFromContent(engine, 'people/shared', [
+      '---',
+      'type: person',
+      'title: Named Shared Updated',
+      '---',
+      '',
+      'Named source updated body.',
+    ].join('\n'), { noEmbed: true, sourceId: 'version-source' });
+
+    const defaultVersions = await engine.getVersions('people/shared');
+    const namedVersions = await engine.getVersions('people/shared', { sourceId: 'version-source' });
+    expect(defaultVersions).toHaveLength(0);
+    expect(namedVersions).toHaveLength(1);
+
+    await engine.revertToVersion('people/shared', namedVersions[0].id, { sourceId: 'version-source' });
+    expect((await engine.getPage('people/shared'))?.title).toBe('Default Shared');
+    expect((await engine.getPage('people/shared', { sourceId: 'version-source' }))?.compiled_truth).toBe('Named source first body.');
   });
 });
 

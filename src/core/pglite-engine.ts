@@ -1397,26 +1397,26 @@ export class PGLiteEngine implements BrainEngine {
     return rows[0] as unknown as PageVersion;
   }
 
-  async getVersions(slug: string): Promise<PageVersion[]> {
+  async getVersions(slug: string, opts?: { sourceId?: string }): Promise<PageVersion[]> {
     const { rows } = await this.db.query(
       `SELECT pv.* FROM page_versions pv
        JOIN pages p ON p.id = pv.page_id
-       WHERE p.slug = $1
+       WHERE p.slug = $1 AND p.source_id = $2
        ORDER BY pv.snapshot_at DESC`,
-      [slug]
+      [slug, opts?.sourceId ?? 'default']
     );
     return rows as unknown as PageVersion[];
   }
 
-  async revertToVersion(slug: string, versionId: number): Promise<void> {
+  async revertToVersion(slug: string, versionId: number, opts?: { sourceId?: string }): Promise<void> {
     await this.db.query(
       `UPDATE pages SET
         compiled_truth = pv.compiled_truth,
         frontmatter = pv.frontmatter,
         updated_at = now()
       FROM page_versions pv
-      WHERE pages.slug = $1 AND pv.id = $2 AND pv.page_id = pages.id`,
-      [slug, versionId]
+      WHERE pages.slug = $1 AND pages.source_id = $2 AND pv.id = $3 AND pv.page_id = pages.id`,
+      [slug, opts?.sourceId ?? 'default', versionId]
     );
   }
 

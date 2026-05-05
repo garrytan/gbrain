@@ -206,7 +206,7 @@ async function readSyncAnchor(
   sourceId: string | undefined,
   which: 'repo_path' | 'last_commit',
 ): Promise<string | null> {
-  if (sourceId) {
+  if (sourceId !== undefined) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     const rows = await engine.executeRaw<Record<string, string | null>>(
       `SELECT ${col} AS value FROM sources WHERE id = $1`,
@@ -223,7 +223,7 @@ async function writeSyncAnchor(
   which: 'repo_path' | 'last_commit',
   value: string,
 ): Promise<void> {
-  if (sourceId) {
+  if (sourceId !== undefined) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.
     if (which === 'last_commit') {
@@ -259,7 +259,7 @@ async function readChunkerVersion(
   engine: BrainEngine,
   sourceId: string | undefined,
 ): Promise<string | null> {
-  if (!sourceId) return null;
+  if (sourceId === undefined) return null;
   const rows = await engine.executeRaw<{ chunker_version: string | null }>(
     `SELECT chunker_version FROM sources WHERE id = $1`,
     [sourceId],
@@ -272,7 +272,7 @@ async function writeChunkerVersion(
   sourceId: string | undefined,
   version: string,
 ): Promise<void> {
-  if (!sourceId) return;
+  if (sourceId === undefined) return;
   await engine.executeRaw(
     `UPDATE sources SET chunker_version = $1 WHERE id = $2`,
     [version, sourceId],
@@ -316,7 +316,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // Resolve repo path
   const repoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (!repoPath) {
-    const hint = opts.sourceId
+    const hint = opts.sourceId !== undefined
       ? `Source "${opts.sourceId}" has no local_path. Run: gbrain sources add ${opts.sourceId} --path <path>`
       : `No repo path specified. Use --repo or run gbrain init with --repo first.`;
     throw new Error(hint);
@@ -432,9 +432,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   for (const path of unsyncableModified) {
     const slug = resolveSlugForPath(path);
     try {
-      const existing = await engine.getPage(slug, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
+      const sourceOpts = opts.sourceId !== undefined ? { sourceId: opts.sourceId } : undefined;
+      const existing = await engine.getPage(slug, sourceOpts);
       if (existing) {
-        await engine.deletePage(slug, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
+        await engine.deletePage(slug, sourceOpts);
         console.log(`  Deleted un-syncable page: ${slug}`);
       }
     } catch { /* ignore */ }
@@ -500,7 +501,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     progress.start('sync.deletes', filtered.deleted.length);
     for (const path of filtered.deleted) {
       const slug = resolveSlugForPath(path);
-      await engine.deletePage(slug, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
+      await engine.deletePage(slug, opts.sourceId !== undefined ? { sourceId: opts.sourceId } : undefined);
       pagesAffected.push(slug);
       progress.tick(1, slug);
     }

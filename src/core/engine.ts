@@ -320,8 +320,8 @@ export interface BrainEngine {
 
   // Versions
   createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion>;
-  getVersions(slug: string): Promise<PageVersion[]>;
-  revertToVersion(slug: string, versionId: number): Promise<void>;
+  getVersions(slug: string, opts?: { sourceId?: string }): Promise<PageVersion[]>;
+  revertToVersion(slug: string, versionId: number, opts?: { sourceId?: string }): Promise<void>;
 
   // Stats + health
   getStats(): Promise<BrainStats>;

@@ -72,7 +72,7 @@ export interface PageFilters {
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */
 export interface GetPageOpts {
-  /** Filter to a specific source. When omitted, page CRUD uses the default source. */
+  /** Filter get/soft-delete/restore calls to a specific source. When omitted, uses the default source. */
   sourceId?: string;
   /** Include soft-deleted pages. Default false. See PageFilters.includeDeleted. */
   includeDeleted?: boolean;

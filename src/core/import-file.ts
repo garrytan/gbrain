@@ -174,6 +174,10 @@ interface ImportOptions {
   sourceId?: string;
 }
 
+function sourceOptions(sourceId: string | undefined): { sourceId: string } | undefined {
+  return sourceId !== undefined ? { sourceId } : undefined;
+}
+
 const MAX_FILE_SIZE = 5_000_000; // 5MB
 
 /**
@@ -230,7 +234,7 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
-  const sourceOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
+  const sourceOpts = sourceOptions(opts.sourceId);
   const existing = await engine.getPage(slug, sourceOpts);
   if (existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
@@ -423,7 +427,7 @@ export async function importCodeFile(
     .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
     .digest('hex');
 
-  const sourceOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
+  const sourceOpts = sourceOptions(opts.sourceId);
   const existing = await engine.getPage(slug, sourceOpts);
   if (!opts.force && existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0 };
