@@ -10,6 +10,10 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { __testing as _srcTesting } from '../core/source-resolver.ts';
+
+/** Re-export for internal use only. */
+const SOURCE_ID_RE = _srcTesting.SOURCE_ID_RE;
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -143,17 +147,42 @@ const stderrLogger: OperationContext['logger'] = {
   error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
 };
 
+/**
+ * Resolve GBRAIN_SOURCE env var for MCP stdio context.
+ *
+ * This mirrors the env-var step (priority 2) from resolveSourceId in
+ * source-resolver.ts, but without the DB assertion — the operation layer
+ * already handles unknown source ids gracefully (404 errors). Skipping the
+ * assertSourceExists round-trip keeps every tool dispatch O(1) with respect
+ * to the sources table.
+ *
+ * Returns the env-var value if it is set and well-formed, otherwise undefined.
+ */
+function resolveMcpDefaultSourceId(): string | undefined {
+  const env = process.env.GBRAIN_SOURCE;
+  if (!env || env.length === 0) return undefined;
+  if (!SOURCE_ID_RE.test(env)) {
+    process.stderr.write(
+      `[warn] GBRAIN_SOURCE="${env}" is not a valid source id (must match [a-z0-9][a-z0-9-]{0,30}[a-z0-9]?) — ignoring\n`,
+    );
+    return undefined;
+  }
+  return env;
+}
+
 export function buildOperationContext(
   engine: BrainEngine,
   params: Record<string, unknown>,
   opts: DispatchOpts = {},
 ): OperationContext {
+  const defaultSourceId = resolveMcpDefaultSourceId();
   return {
     engine,
     config: loadConfig() || { engine: 'postgres' },
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
+    ...(defaultSourceId !== undefined ? { defaultSourceId } : {}),
   };
 }
 
