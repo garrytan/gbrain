@@ -707,8 +707,19 @@ ADMIN
   gbrain doctor --locks                 List idle-in-tx backends (57014 diagnostic, Postgres only)
   gbrain stats                          Brain statistics
   gbrain serve                          MCP server (stdio)
-  gbrain serve --http --port 8787       MCP server (HTTP, Postgres-only, bearer auth)
+gbrain serve --http --port 8787       MCP server (HTTP, Postgres-only, bearer auth)
   gbrain auth create|list|revoke|test   Token management for the HTTP transport
+gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
+                                        [--token-ttl 3600] [--enable-dcr]
+                                        [--public-url URL] [--log-full-params]
+  gbrain auth create|list|revoke|test   Legacy bearer token management
+  gbrain auth register-client <name>    Register an OAuth 2.1 client
+        --grant-types client_credentials,authorization_code
+        --scopes "read write admin"
+  gbrain auth revoke-client <client_id> Revoke an OAuth 2.1 client (cascade purges
+                                        active tokens + auth codes via FK CASCADE)
+  # OAuth 2.1 clients can also be registered from the /admin dashboard or
+  # programmatically via oauthProvider.registerClientManual() for host-repo wrappers.
   gbrain integrations                   Integration recipe dashboard
   gbrain sources list|add|remove|...    Multi-source brain management (v0.18)
   gbrain dream [--dry-run] [--phase N]  8-phase maintenance cycle (lint→backlinks→sync→synthesize

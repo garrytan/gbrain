@@ -3,6 +3,130 @@
 All notable changes to GBrain will be documented in this file.
 
 ## [0.28.0] - 2026-05-01
+## [0.26.9] - 2026-05-04
+
+## **OAuth 2.1 hardening + closes an HTTP MCP shell-job RCE.**
+## **Anyone running `gbrain serve --http` should upgrade. The same write-scoped token your agent uses to call `put_page` could submit `shell` jobs and execute commands on the gbrain host.**
+
+The HTTP MCP transport's request-handler context literal was missing one field — `remote: true` — and that one field was the difference between a trusted local CLI write and an untrusted agent-facing write. With it absent, `operations.ts:1391`'s protected-job-name guard saw a falsy undefined and skipped. An HTTP MCP caller with a `read+write` OAuth token could submit `submit_job {name: "shell", params: {cmd: "id"}}` and own the host. Stdio MCP set the field correctly via `src/mcp/dispatch.ts:61`; HTTP inlined a parallel context-builder for several releases and lost it.
+
+Fix is two-layered. **F7** (`serve-http.ts`) sets `remote: true` explicitly. **F7b** flips the four trust-boundary call sites in `operations.ts` from falsy-default to `ctx.remote !== false` — anything that isn't strictly `false` now treats the caller as remote/untrusted, so a future transport that forgets the field fails closed instead of fails open. **D12** makes `OperationContext.remote` REQUIRED in the TypeScript type so the compiler is the first line of defense; the runtime fail-closed defaults are belt+suspenders for `as` casts and `Partial<>` spreads.
+
+The OAuth provider in `src/core/oauth-provider.ts` got a parallel hardening pass on the same release. **F1+F2** fold `client_id` atomically into the auth-code and refresh-token DELETE WHERE clauses (RFC 6749 §10.5 + §10.4 — pre-fix the post-hoc client compare burned the row on wrong-client paths so the legitimate client couldn't retry). **F3** enforces the refresh-scope-subset rule against the original grant on the row, not the client's currently-allowed scopes (RFC 6749 §6). **F4** binds `client_id` on `revokeToken` so a client can only revoke its own tokens (RFC 7009 §2.1). **F7c** validates `redirect_uri` on `/token` against the value stored at `/authorize` (RFC 6749 §4.1.3 — eva-brain missed this; codex caught it). **F5** swaps bare `catch {}` for SQLSTATE 42703 column-existence probes so lock timeouts and network blips no longer ride through as "column missing." **F6** fixes `sweepExpiredTokens` to actually return a count.
+
+`mcp_request_log` and the admin SSE feed now redact request payloads by default. The new `summarizeMcpParams` helper at `src/mcp/dispatch.ts` intersects submitted keys against the operation's declared `params` allow-list — declared keys preserve for debug visibility, unknown keys are counted but never named (closes the attacker-controlled-key-name leak surface). Byte counts get bucketed to 1KB so attackers can't binary-search secret-content sizes via repeated probes. Operators on their own laptops who want full payload visibility can flip on `--log-full-params` with a loud stderr warning.
+
+Smaller hardening: admin cookies set `Secure` when behind HTTPS or a public-URL proxy (F9), magic-link nonces are bounded by an LRU cap (F10), `/mcp` wraps `transport.handleRequest` in try/catch so SDK throws hit a JSON-RPC 500 instead of express's default HTML error page (F14), and OperationError + unexpected exceptions both route through the unified `buildError`/`serializeError` envelope (F15). DCR disable became a constructor option on the provider rather than a serve-http monkey-patch (F12 — cleanup, not security).
+
+To take advantage of v0.26.9
+============================
+
+`gbrain upgrade` is a one-step upgrade. There is no migration; all changes are application-layer.
+
+1. **Upgrade.** `gbrain upgrade`. Confirm `gbrain --version` shows `0.26.9`.
+
+2. **If you run `gbrain serve --http`,** restart the process. The trust-boundary fix is in the request handler, so it takes effect on the next listen.
+
+3. **If you run a multi-tenant deployment** (operators other than you have admin / register-client access), audit existing OAuth clients for unexpected redirect_uris with `gbrain auth list-clients` (when you wire the helper) or by inspecting `oauth_clients.redirect_uris` directly. The hardening doesn't touch existing clients; it only constrains future redemptions.
+
+4. **If your dashboard or scripts read `mcp_request_log.params`,** note the schema shift. The default shape is now `{redacted: true, kind, declared_keys, unknown_key_count, approx_bytes}` (declared_keys is sorted; approx_bytes rounds up to nearest KB). Pass `--log-full-params` to `gbrain serve --http` to opt back into raw payloads with a startup warning.
+
+5. **If anything breaks,** please file an issue: https://github.com/garrytan/gbrain/issues
+
+Thanks to @ElectricSheepIO on X for the security review that surfaced this hardening pass.
+
+### Itemized changes
+
+- `src/core/oauth-provider.ts` — atomic client_id binding (F1, F2, F4), redirect_uri validation on exchange (F7c), refresh scope subset (F3), `isUndefinedColumnError` column probes (F5), `sweepExpiredTokens` correct count via `RETURNING 1` (F6), `dcrDisabled` constructor option (F12).
+- `src/core/operations.ts` — `OperationContext.remote` becomes required (D12). Four sites flipped to `ctx.remote !== false` / `=== false` for fail-closed semantics (F7b).
+- `src/commands/serve-http.ts` — explicit `remote: true` on /mcp context (F7), `summarizeMcpParams` wired into `mcp_request_log` + SSE feed by default (F8), `--log-full-params` opt-in, cookie `secure` flag (F9), bounded magic-link nonce LRU (F10), try/catch wrap on transport.handleRequest (F14), unified error envelope via `buildError`/`serializeError` (F15), DCR disable via provider constructor (F12).
+- `src/commands/serve.ts` — `--log-full-params` argv flag with stderr warning at startup.
+- `src/mcp/dispatch.ts` — new `summarizeMcpParams(opName, params)` helper. Returns `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}` with allow-list intersection and 1KB bucketing.
+- `src/core/utils.ts` — extracted `isUndefinedColumnError` predicate (D14, reusable).
+- `test/oauth.test.ts` — 14 new cases pinning F1/F2/F3/F4/F5/F6/F7c/F12 invariants, including the empty-string redirect_uri bypass test from the adversarial-review pass.
+- `test/mcp-dispatch-summarize.test.ts` — 7 cases pinning F8 redaction invariants including the attacker-key-name probe and the 1KB bucket assertion.
+- `test/trust-boundary-contract.test.ts` — 4 cases pinning F7b fail-closed semantics under cast bypass.
+- `test/e2e/serve-http-oauth.test.ts` — 2 new E2E regressions for shell-job and subagent-job submission rejection over HTTP MCP.
+- `test/e2e/graph-quality.test.ts` — adds explicit `remote: false` to the test fixture (D13 audit follow-through).
+
+### For contributors
+
+- `test/oauth.test.ts` now uses the F1/F4 cross-client isolation pattern: a wrong-client attempt must reject AND the rightful owner must still succeed atomically afterward. Apply the same shape when adding tests around the OAuth provider's predicate-bound DELETEs.
+- `summarizeMcpParams` is the canonical privacy-preserving redactor. New code paths that log MCP request shapes should route through it rather than inlining `JSON.stringify(params)`.
+
+## [0.26.8] - 2026-05-04
+
+## **Every gbrain brain becomes secure by default on upgrade. No public table without RLS, ever.**
+## **The trigger covers `CREATE TABLE`, `CREATE TABLE AS`, and `SELECT INTO`, and the one-time backfill closes existing gaps.**
+
+A production incident on 2026-05-04 found a `public.*` table sitting in a Supabase project without Row Level Security enabled. `gbrain doctor` caught it after the fact, but the gap window between create and next doctor run was the silent vector. v0.26.8 closes that gap from both sides.
+
+The new migration v35 ships a Postgres DDL event trigger named `auto_rls_on_create_table` that fires on every `ddl_command_end` and runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` for every new `public.*` table, across all three table-creation syntaxes Postgres reports (`CREATE TABLE`, `CREATE TABLE AS … SELECT`, and `SELECT … INTO`). Same migration also walks every existing `public.*` base table and enables RLS on any that don't already have it, modulo the `GBRAIN:RLS_EXEMPT` comment escape hatch that doctor already honors. After upgrade, `gbrain doctor`'s `rls` check should be a no-op on every brain.
+
+Posture choices, all caught during plan review: ENABLE only, no FORCE (so non-BYPASSRLS apps sharing the project can still read tables they create); public-schema-only (Supabase manages auth/storage/realtime/etc. and we must not touch those); no EXCEPTION wrap inside the trigger (event triggers fire inside the DDL transaction, so a failed ALTER aborts the offending CREATE TABLE and produces a loud signal — wrapping would have replaced that with a silent permissive default); no hand-rolled privilege pre-check (the migration runner already fails loud on permission errors and gates the version bump).
+
+`gbrain doctor` gains a new `rls_event_trigger` check that verifies the trigger is installed and enabled. Healthy values are `evtenabled` of `O` (origin) or `A` (always). `R` is replica-only and would not fire in normal sessions; `D` is disabled. Both produce a warn with the recovery command.
+
+### The numbers that matter
+
+11 test cases gating the new shape: 4 happy-path coverage cases (CREATE TABLE, CTAS, SELECT INTO, function exists), 1 explicit "no FORCE" assertion against `pg_class.relforcerowsecurity`, 1 schema-scope test (non-public schemas remain RLS-off), 1 replay idempotency test, 3 backfill cases (plain table, exemption regex, mixed-case identifier safety), and 1 regression guard pinning the absence of `EXCEPTION WHEN OTHERS` in the trigger function body. Plus 9 structural assertions in `test/migrate.test.ts` and 1 new pin in `test/doctor.test.ts` for the doctor check.
+
+| Metric | BEFORE v0.26.8 | AFTER v0.26.8 | Δ |
+|---|---|---|---|
+| New `public.*` table without RLS | possible (gap window until next `gbrain doctor`) | impossible (event trigger aborts CREATE TABLE on RLS failure) | structural |
+| Existing `public.*` tables without RLS on upgrade | manual fix (operator copy-pastes ALTER TABLE) | auto-backfill on `gbrain upgrade` | one round-trip removed |
+| Table-creation syntaxes covered | 0 (no auto-RLS) | 3 (`CREATE TABLE`, `CREATE TABLE AS`, `SELECT INTO`) | full literal coverage |
+| Stale parallel RLS audit surface | 1 (`supabase-admin.ts:checkRls()` with hardcoded 10-table list, 0 callers) | 0 | deleted |
+| doctor RLS coverage | RLS-on every public table | RLS-on every public table + trigger-installed check | drift-resistant |
+
+### What this means for operators
+
+If you run gbrain on Supabase, your brain becomes secure on upgrade. Run `gbrain upgrade`, run `gbrain doctor`, and unless the trigger genuinely failed to install (you're on self-hosted Postgres without superuser), both checks are green. New tables created from anywhere — gbrain itself, Baku, Hermes, raw psql — get RLS the moment they exist.
+
+If you run gbrain on PGLite, this release is a no-op for you. PGLite has no event triggers, no PostgREST, and is single-tenant by design.
+
+## To take advantage of v0.26.8
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about either the `rls` or `rls_event_trigger` check:
+
+1. **Run the migration manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   # rls: ok — RLS enabled on N/N public tables
+   # rls_event_trigger: ok — Auto-RLS event trigger installed
+   ```
+3. **If the trigger is missing on Supabase**, your role probably can't `CREATE EVENT TRIGGER`. On Supabase only the `postgres` role has the grant. Re-run upgrade with the connection string for `postgres`, not the pooler-default user.
+4. **If the trigger is missing on self-hosted Postgres**, you need superuser to create event triggers. Run the migration as a superuser role:
+   ```bash
+   DATABASE_URL=postgresql://postgres@... gbrain apply-migrations --force-retry 35
+   ```
+5. **If anything looks wrong**, file an issue: https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl`.
+
+### Breaking change: read this before upgrading
+
+If you have public tables that are intentionally RLS-off and you want them to stay that way, you MUST add the `GBRAIN:RLS_EXEMPT` comment **before** running `gbrain upgrade` to v0.26.8. The migration's one-time backfill flips RLS on for any public table whose comment doesn't carry the exact contract:
+
+```sql
+COMMENT ON TABLE public.your_table IS
+  'GBRAIN:RLS_EXEMPT reason=<at-least-4-character-justification>';
+```
+
+The recovery cost is one round-trip: `ALTER TABLE … DISABLE ROW LEVEL SECURITY;` followed by the comment SQL above. No data is lost. See `docs/guides/rls-and-you.md` for the full contract.
+
+### Itemized changes
+
+- `src/core/migrate.ts` — migration v35 rewritten per plan review and codex outside-voice corrections. Drops FORCE (matches v24/v29/schema.sql posture so non-BYPASSRLS apps can still read their own tables). Adds public-schema-only filter so Supabase-managed schemas (`auth`, `storage`, `realtime`, etc.) are untouched. Drops the EXCEPTION wrap inside the trigger so per-table failures abort the offending CREATE TABLE instead of silently succeeding. Drops the hand-rolled privilege pre-check (the runner already fails loud on permission errors). Extends `WHEN TAG` to cover `CREATE TABLE`, `CREATE TABLE AS`, and `SELECT INTO`. Bundles a one-time backfill that reuses doctor's regex contract for `GBRAIN:RLS_EXEMPT` exemptions and uses `format('%I.%I', schema, table)` for identifier safety.
+- `src/commands/doctor.ts` — new `rls_event_trigger` check after the `// 6. Schema version` block. Verifies the trigger is installed and `evtenabled` is `O` or `A`. Recovery command points at `gbrain apply-migrations --force-retry 35`. Renumbered the existing 7/8/9 numbered blocks accordingly.
+- `src/core/supabase-admin.ts` — deleted `checkRls()`. Zero callers, zero test coverage; doctor is the single source of truth for RLS posture.
+- `test/migration-v35-auto-rls.test.ts` — extended from 3 to 11 cases. Adds replay idempotency, public-only scope, CTAS coverage, SELECT INTO coverage, no-FORCE assertion, backfill happy path, backfill exemption regex, mixed-case identifier safety, and the EXCEPTION-not-present regression guard.
+- `test/migrate.test.ts` — 8 structural assertions on the v35 SQL shape (no FORCE, public-only, WHEN TAG covers all three syntaxes, no EXCEPTION WHEN OTHERS, %I.%I backfill quoting, doctor-regex match, BYPASSRLS gate, PGLite no-op).
+- `test/doctor.test.ts` — structural assertion that `rls_event_trigger` is wired correctly and the existing `// 5. RLS` slice tests stay intact.
+- `docs/guides/rls-and-you.md` — new "v0.26.7 — auto-RLS event trigger and one-time backfill" section explaining the trigger, the breaking change for intentionally-RLS-off public tables, and the cross-app implications.
+- `CLAUDE.md` — extended `src/core/migrate.ts` annotation with v35 specifics and added the `rls_event_trigger` check to the `src/commands/doctor.ts` annotation.
 ## [0.26.7] - 2026-05-04
 
 ## **Test isolation foundation. Lint guard + helper + quarantine renames before the env and PGLite sweeps.**
