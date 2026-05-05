@@ -4,6 +4,7 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
+import { applyChunkEmbeddingIndexPolicy } from './vector-index.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow,
@@ -110,7 +111,7 @@ export class PostgresEngine implements BrainEngine {
       model = gw.getEmbeddingModel().split(':').slice(1).join(':') || model;
     } catch { /* gateway not yet configured — use defaults */ }
 
-    const sql = SCHEMA_SQL
+    const sql = applyChunkEmbeddingIndexPolicy(SCHEMA_SQL, dims)
       .replace(/vector\(1536\)/g, `vector(${dims})`)
       .replace(/'text-embedding-3-large'/g, `'${model}'`);
 

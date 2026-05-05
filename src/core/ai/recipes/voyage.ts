@@ -16,7 +16,7 @@ export const voyage: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['voyage-3-large', 'voyage-3', 'voyage-3-lite'],
+      models: ['voyage-4-large', 'voyage-4', 'voyage-3.5', 'voyage-3-large', 'voyage-3', 'voyage-3-lite'],
       default_dims: 1024,
       cost_per_1m_tokens_usd: 0.18,
       price_last_verified: '2026-04-20',

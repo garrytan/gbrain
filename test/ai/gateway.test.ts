@@ -151,8 +151,18 @@ describe('dims.dimsProviderOptions', () => {
     expect(opts).toBeUndefined();
   });
 
-  test('openai-compatible returns undefined (no standard dim param)', () => {
+  test('openai-compatible returns undefined for providers without a dim param', () => {
     const opts = dimsProviderOptions('openai-compatible', 'nomic-embed-text', 768);
+    expect(opts).toBeUndefined();
+  });
+
+  test('Voyage openai-compatible returns output_dimension', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'voyage-4-large', 2048);
+    expect(opts).toEqual({ openaiCompatible: { output_dimension: 2048 } });
+  });
+
+  test('Voyage model without flexible dimensions returns undefined', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'voyage-3-lite', 1024);
     expect(opts).toBeUndefined();
   });
 });
