@@ -1536,7 +1536,7 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 38,
+    version: 37,
     name: 'oauth_client_default_source_id',
     // Per-OAuth-client default source pinning. When an OAuth client has a
     // default_source_id configured, page writes/reads from that client are
@@ -1554,6 +1554,27 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_oauth_clients_default_source
         ON oauth_clients(default_source_id)
+        WHERE default_source_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 38,
+    name: 'access_token_default_source_id',
+    // Per-API-key default source pinning. Mirror of v37 (oauth_clients) for
+    // the legacy access_tokens table. API keys (no TTL) are preferred over
+    // OAuth tokens (TTL) for headless agent setups, so the same source-pin
+    // ergonomics need to land on the legacy path.
+    //
+    // FK with ON DELETE SET NULL: deleting a source clears the pin (request
+    // falls back to 'default') rather than orphaning the API key.
+    // Idempotent (ADD COLUMN IF NOT EXISTS).
+    sql: `
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS default_source_id TEXT
+        REFERENCES sources(id) ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_access_tokens_default_source
+        ON access_tokens(default_source_id)
         WHERE default_source_id IS NOT NULL;
     `,
   },

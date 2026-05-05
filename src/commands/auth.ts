@@ -64,24 +64,94 @@ async function create(name: string) {
 async function list() {
   const sql = postgres(getDatabaseUrl(true)!);
   try {
-    const rows = await sql`
-      SELECT name, created_at, last_used_at, revoked_at
-      FROM access_tokens
-      ORDER BY created_at DESC
-    `;
+    // v38: surface default_source_id so operators can audit per-API-key
+    // source pins without dropping into psql. Pre-v38 brains lack the
+    // column — fall back to the legacy SELECT shape.
+    let rows: any[];
+    try {
+      rows = await sql`
+        SELECT name, created_at, last_used_at, revoked_at, default_source_id
+        FROM access_tokens
+        ORDER BY created_at DESC
+      `;
+    } catch (e: any) {
+      if (e?.code === '42703') {
+        rows = await sql`
+          SELECT name, created_at, last_used_at, revoked_at
+          FROM access_tokens
+          ORDER BY created_at DESC
+        `;
+      } else {
+        throw e;
+      }
+    }
     if (rows.length === 0) {
       console.log('No tokens found. Create one: bun run src/commands/auth.ts create "my-client"');
       return;
     }
-    console.log('Name                  Created              Last Used            Status');
-    console.log('─'.repeat(80));
+    console.log('Name                  Created              Last Used            Default Source        Status');
+    console.log('─'.repeat(110));
     for (const r of rows) {
       const name = (r.name as string).padEnd(20);
       const created = new Date(r.created_at as string).toISOString().slice(0, 19);
       const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
+      const src = ((r.default_source_id as string | null) ?? '—').padEnd(20);
       const status = r.revoked_at ? 'REVOKED' : 'active';
-      console.log(`${name}  ${created}  ${lastUsed}  ${status}`);
+      console.log(`${name}  ${created}  ${lastUsed}  ${src}  ${status}`);
     }
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
+ * Pin a legacy API key (access_tokens row) to a default source.
+ *
+ * Mirror of `setSource` (OAuth clients) for the legacy access_tokens table.
+ * Pass a real `source_id` to pin: subsequent put_page / get_page calls
+ * authenticated with that API key default to the pinned source unless the
+ * request supplies an explicit `source_id` param. Pass the literal string
+ * `none` (or an empty string) to clear the pin and fall back to source
+ * 'default'.
+ *
+ * Validates that the source exists before writing, so a typo can't silently
+ * pin to a nonexistent source. The schema FK has ON DELETE SET NULL, so a
+ * later source-delete unpins automatically.
+ */
+async function setSourceKey(name: string, sourceId: string) {
+  if (!name || sourceId === undefined) {
+    console.error('Usage: gbrain auth set-source-key <name> <source_id|none>');
+    process.exit(1);
+  }
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    const clear = sourceId === 'none' || sourceId === '';
+    if (!clear) {
+      const [src] = await sql`SELECT id FROM sources WHERE id = ${sourceId} LIMIT 1`;
+      if (!src) {
+        console.error(`No source found with id "${sourceId}". Use \`gbrain sources list\` to see available sources.`);
+        process.exit(1);
+      }
+    }
+    const newValue = clear ? null : sourceId;
+    const rows = await sql`
+      UPDATE access_tokens SET default_source_id = ${newValue}
+      WHERE name = ${name} AND revoked_at IS NULL
+      RETURNING name, default_source_id
+    `;
+    if (rows.length === 0) {
+      console.error(`No active API key found with name "${name}".`);
+      process.exit(1);
+    }
+    if (clear) {
+      console.log(`Cleared default source for API key "${name}".`);
+      console.log('Subsequent requests fall back to source \'default\' (or explicit params.source_id).');
+    } else {
+      console.log(`API key "${name}" now defaults to source "${sourceId}".`);
+    }
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
   } finally {
     await sql.end();
   }
@@ -378,6 +448,7 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'list': await list(); return;
     case 'list-clients': await listClients(); return;
     case 'set-source': await setSource(rest[0], rest[1]); return;
+    case 'set-source-key': await setSourceKey(rest[0], rest[1]); return;
     case 'revoke': await revoke(rest[0]); return;
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
@@ -396,6 +467,7 @@ Usage:
   gbrain auth list                                         List all legacy tokens
   gbrain auth list-clients                                 List OAuth clients with default source pins (v37)
   gbrain auth set-source <client_id> <source_id|none>      Pin OAuth client to a default source (v37). Use 'none' to clear.
+  gbrain auth set-source-key <name> <source_id|none>       Pin legacy API key to a default source (v38). Use 'none' to clear.
   gbrain auth revoke <name>                                Revoke a legacy token
   gbrain auth register-client <name> [options]            Register an OAuth 2.1 client
      --grant-types <client_credentials,authorization_code> (default: client_credentials)

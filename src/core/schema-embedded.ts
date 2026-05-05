@@ -349,16 +349,18 @@ ON CONFLICT (key) DO NOTHING;
 -- access_tokens: bearer tokens for remote MCP access
 -- ============================================================
 CREATE TABLE IF NOT EXISTS access_tokens (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name         TEXT NOT NULL,
-  token_hash   TEXT NOT NULL UNIQUE,
-  scopes       TEXT[],
-  created_at   TIMESTAMPTZ DEFAULT now(),
-  last_used_at TIMESTAMPTZ,
-  revoked_at   TIMESTAMPTZ
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name              TEXT NOT NULL,
+  token_hash        TEXT NOT NULL UNIQUE,
+  scopes            TEXT[],
+  created_at        TIMESTAMPTZ DEFAULT now(),
+  last_used_at      TIMESTAMPTZ,
+  revoked_at        TIMESTAMPTZ,
+  default_source_id TEXT REFERENCES sources(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_access_tokens_default_source ON access_tokens (default_source_id) WHERE default_source_id IS NOT NULL;
 
 -- ============================================================
 -- mcp_request_log: usage logging for remote MCP requests
