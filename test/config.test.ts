@@ -1,5 +1,10 @@
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { runConfig } from '../src/commands/config.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 // redactUrl is not exported, so we test it by reading the source and
 // reimplementing the regex to verify the pattern, then test via CLI
@@ -59,5 +64,54 @@ describe('config source correctness', () => {
 
   test('redactUrl uses the correct regex pattern', () => {
     expect(configSource).toContain('postgresql:\\/\\/');
+  });
+});
+
+describe('config show', () => {
+  test('renders object values as indented JSON and preserves string redaction', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-config-show-'));
+    const configDir = join(home, '.gbrain');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+      engine: 'postgres',
+      database_url: 'postgresql://user:secret@host:5432/dbname',
+      openai_api_key: 'sk-test',
+      provider_base_urls: {
+        ollama: 'http://localhost:11434',
+      },
+      storage: {
+        bucket: 'brain-files',
+        serviceRoleKey: 'nested-service-role-secret',
+      },
+      replicas: {
+        analytics: 'postgresql://reader:nested-pg-pass@analytics:5432/db',
+      },
+    }, null, 2));
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(' '));
+
+    try {
+      await withEnv({ GBRAIN_HOME: home, OPENAI_API_KEY: undefined }, async () => {
+        await runConfig({} as BrainEngine, ['show']);
+      });
+    } finally {
+      console.log = originalLog;
+      rmSync(home, { recursive: true, force: true });
+    }
+
+    const output = logs.join('\n');
+    expect(output).not.toContain('[object Object]');
+    expect(output).toContain('provider_base_urls: {');
+    expect(output).toContain('      "ollama": "http://localhost:11434"');
+    expect(output).toContain('database_url: postgresql://user:***@host:5432/dbname');
+    expect(output).toContain('openai_api_key: ***');
+    expect(output).toContain('storage: {');
+    expect(output).toContain('      "bucket": "brain-files"');
+    expect(output).toContain('      "serviceRoleKey": "***"');
+    expect(output).not.toContain('nested-service-role-secret');
+    expect(output).toContain('"analytics": "postgresql://reader:***@analytics:5432/db"');
+    expect(output).not.toContain('nested-pg-pass');
   });
 });
