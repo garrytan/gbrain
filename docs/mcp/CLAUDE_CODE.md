@@ -38,3 +38,27 @@ You should see results from your GBrain knowledge base.
 ```bash
 claude mcp remove gbrain
 ```
+
+## Source Pinning (stdio transport)
+
+When using the stdio transport (`command: gbrain serve`), you can pin all
+tool calls to a specific source by setting the `GBRAIN_SOURCE` env var in
+your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "gbrain": {
+      "command": "gbrain",
+      "args": ["serve"],
+      "env": {
+        "GBRAIN_SOURCE": "reisponde"
+      }
+    }
+  }
+}
+```
+
+This sets `defaultSourceId` on every `OperationContext`, equivalent to the
+OAuth token-pin mechanism used by the HTTP transport. Precedence:
+`params.source_id` (explicit per-call) > `GBRAIN_SOURCE` env (session pin) > unscoped.
