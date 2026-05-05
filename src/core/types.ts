@@ -74,6 +74,12 @@ export interface PageFilters {
    * the 72h window before the autopilot purge phase hard-deletes them.
    */
   includeDeleted?: boolean;
+  /**
+   * v37/v38: scope listing to a specific source. When set, only pages with
+   * matching source_id are returned. Used by token-pinned reads as a HARD
+   * scope. Omitted = unscoped (legacy cross-source visible).
+   */
+  sourceId?: string;
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */

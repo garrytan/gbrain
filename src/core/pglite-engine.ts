@@ -493,6 +493,11 @@ export class PGLiteEngine implements BrainEngine {
     if (filters?.includeDeleted !== true) {
       where.push('p.deleted_at IS NULL');
     }
+    // v37/v38: hard-scope by source when token is pinned (or admin asks).
+    if (filters?.sourceId) {
+      params.push(filters.sourceId);
+      where.push(`p.source_id = $${params.length}`);
+    }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     params.push(limit, offset);

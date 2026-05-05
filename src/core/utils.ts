@@ -61,6 +61,7 @@ export function rowToPage(row: Record<string, unknown>): Page {
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
     ...(deletedAt !== undefined && { deleted_at: deletedAt }),
+    ...(row.source_id !== undefined ? { source_id: row.source_id as string } : {}),
   };
 }
 

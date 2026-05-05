@@ -430,11 +430,15 @@ export class PostgresEngine implements BrainEngine {
     const deletedCondition = filters?.includeDeleted === true
       ? sql``
       : sql`AND p.deleted_at IS NULL`;
+    // v37/v38: hard-scope by source when token is pinned.
+    const sourceCondition = filters?.sourceId
+      ? sql`AND p.source_id = ${filters.sourceId}`
+      : sql``;
 
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${deletedCondition}
+      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${deletedCondition} ${sourceCondition}
       ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
     `;
 
