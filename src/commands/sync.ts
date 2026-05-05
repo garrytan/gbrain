@@ -196,6 +196,33 @@ function git(repoPath: string, ...args: string[]): string {
   }).trim();
 }
 
+function isDetachedHead(repoPath: string): boolean {
+  try {
+    git(repoPath, 'symbolic-ref', '--quiet', 'HEAD');
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function unique<T>(items: T[]): T[] {
+  return [...new Set(items)];
+}
+
+function buildDetachedWorkingTreeManifest(repoPath: string): SyncManifest {
+  const manifest = buildSyncManifest(git(repoPath, 'diff', '--name-status', '-M', 'HEAD'));
+  const untracked = git(repoPath, 'ls-files', '--others', '--exclude-standard')
+    .split('\n')
+    .filter(line => line.length > 0);
+
+  return {
+    added: unique([...manifest.added, ...untracked]),
+    modified: unique(manifest.modified),
+    deleted: unique(manifest.deleted),
+    renamed: manifest.renamed,
+  };
+}
+
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
 // is set, read/write the per-source row instead of the global config
 // keys. These wrappers centralize the branch so every read/write site
@@ -375,13 +402,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     throw new Error(`Not a git repository: ${repoPath}. GBrain sync requires a git-initialized repo.`);
   }
 
+  // Detect detached HEAD up front so the working-tree fallback fires for both
+  // the default sync and `--no-pull` callers. Only the actual git pull is
+  // gated on opts.noPull.
+  const detachedHead = isDetachedHead(repoPath);
+  if (detachedHead && !opts.noPull) {
+    console.error(`Detached HEAD on ${repoPath}; skipping git pull. Syncing from local working tree.`);
+  }
+
   // Git pull (unless --no-pull). v0.28.1 codex finding (HIGH): the legacy
   // git() helper at sync.ts:192 spawns git without GIT_SSRF_FLAGS, so
   // every steady-state pull was bypassing the redirect/submodule/protocol
   // hardening that cloneRepo applies. Route through pullRepo from
   // git-remote.ts so the flag set is consistent across initial clone and
   // ongoing pulls — single source of truth for the defensive flags.
-  if (!opts.noPull) {
+  if (!opts.noPull && !detachedHead) {
     try {
       const { pullRepo } = await import('../core/git-remote.ts');
       pullRepo(repoPath);
@@ -440,8 +475,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   const currentVersion = String(CHUNKER_VERSION);
   const versionMismatch = storedVersion !== null && storedVersion !== currentVersion;
   const versionNeverSet = storedVersion === null && opts.sourceId !== undefined;
+  const detachedWorkingTreeManifest = detachedHead ? buildDetachedWorkingTreeManifest(repoPath) : null;
+  const hasDetachedWorkingTreeChanges = detachedWorkingTreeManifest !== null &&
+    (detachedWorkingTreeManifest.added.length > 0 ||
+      detachedWorkingTreeManifest.modified.length > 0 ||
+      detachedWorkingTreeManifest.deleted.length > 0 ||
+      detachedWorkingTreeManifest.renamed.length > 0);
 
-  if (lastCommit === headCommit && !versionMismatch && !versionNeverSet) {
+  if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -466,6 +507,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // Diff using git diff (net result, not per-commit)
   const diffOutput = git(repoPath, 'diff', '--name-status', '-M', `${lastCommit}..${headCommit}`);
   const manifest = buildSyncManifest(diffOutput);
+  if (detachedWorkingTreeManifest) {
+    manifest.added = unique([...manifest.added, ...detachedWorkingTreeManifest.added]);
+    manifest.modified = unique([...manifest.modified, ...detachedWorkingTreeManifest.modified]);
+    manifest.deleted = unique([...manifest.deleted, ...detachedWorkingTreeManifest.deleted]);
+    manifest.renamed = [...manifest.renamed, ...detachedWorkingTreeManifest.renamed];
+  }
 
   // Filter to syncable files (strategy-aware)
   const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
