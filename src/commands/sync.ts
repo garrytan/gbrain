@@ -25,7 +25,7 @@ import {
   shouldRunParallel,
   parseWorkers,
 } from '../core/sync-concurrency.ts';
-import { tryAcquireDbLock, SYNC_LOCK_ID } from '../core/db-lock.ts';
+import { acquireDbLockOrInfo, SYNC_LOCK_ID } from '../core/db-lock.ts';
 import { loadStorageConfig } from '../core/storage-config.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
 
@@ -294,13 +294,18 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // mechanism (none in v0.22.13; reserved for future).
   let lockHandle: { release: () => Promise<void> } | null = null;
   if (!opts.skipLock) {
-    lockHandle = await tryAcquireDbLock(engine, SYNC_LOCK_ID);
-    if (!lockHandle) {
+    const lockResult = await acquireDbLockOrInfo(engine, SYNC_LOCK_ID);
+    if (!lockResult.handle) {
+      const info = (lockResult as { handle: null; info: import('../core/db-lock.ts').DbLockInfo | null }).info;
+      const details = info
+        ? ` holder_pid=${info.holder_pid ?? 'unknown'} holder_host=${info.holder_host ?? 'unknown'} acquired_at=${info.acquired_at ?? 'unknown'} ttl_expires_at=${info.ttl_expires_at ?? 'unknown'}.`
+        : '';
       throw new Error(
-        `Another sync is in progress (lock ${SYNC_LOCK_ID} held). ` +
-        `Wait for it to finish, or run 'gbrain doctor' if it has been more than 30 minutes.`,
+        `Another sync is in progress (lock ${SYNC_LOCK_ID} held).${details} ` +
+        `If the holder is dead, same-host stale locks are auto-cleared; otherwise wait or inspect with 'gbrain doctor --locks'.`,
       );
     }
+    lockHandle = lockResult.handle;
   }
 
   try {
@@ -579,7 +584,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         return;
       }
       try {
-        const result = await importFile(eng, filePath, path, { noEmbed });
+        const result = await importFile(eng, filePath, path, { noEmbed, sourceId: opts.sourceId });
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
@@ -823,19 +828,46 @@ async function performFullSync(
     };
   }
 
-  // v0.22.13 (PR #490 A1 + Q5): full sync is always "large" by definition
-  // (entire working tree). Auto-concurrency fires unconditionally for Postgres;
-  // PGLite stays serial because its engine is single-connection. Routes the
-  // policy through autoConcurrency() so it stays consistent with incremental
-  // sync and the jobs handler.
-  const FULL_SYNC_LARGE_MARKER = Number.MAX_SAFE_INTEGER;
-  const fullConcurrency = autoConcurrency(engine, FULL_SYNC_LARGE_MARKER, opts.concurrency);
-  console.log(`Running full import of ${repoPath}${fullConcurrency > 1 ? ` (${fullConcurrency} workers)` : ''}...`);
-  const { runImport } = await import('./import.ts');
-  const importArgs = [repoPath];
-  if (opts.noEmbed) importArgs.push('--no-embed');
-  if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
-  const result = await runImport(engine, importArgs, { commit: headCommit });
+  const strategy = opts.strategy ?? 'markdown';
+
+  let result: { imported: number; chunksCreated: number; failures: Array<{ path: string; error: string; line?: number }> };
+
+  if (strategy === 'markdown') {
+    // v0.22.13 (PR #490 A1 + Q5): full markdown sync keeps using the optimized
+    // import command path for backwards compatibility.
+    const FULL_SYNC_LARGE_MARKER = Number.MAX_SAFE_INTEGER;
+    const fullConcurrency = autoConcurrency(engine, FULL_SYNC_LARGE_MARKER, opts.concurrency);
+    console.log(`Running full import of ${repoPath}${fullConcurrency > 1 ? ` (${fullConcurrency} workers)` : ''}...`);
+    const { runImport } = await import('./import.ts');
+    const importArgs = [repoPath];
+    if (opts.noEmbed) importArgs.push('--no-embed');
+    if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
+    result = await runImport(engine, importArgs, { commit: headCommit });
+  } else {
+    // Source-scoped code/auto sync must honor strategy and sourceId. runImport
+    // only walks Markdown files and writes default-source pages, so do the
+    // strategy-aware walk here and route through importFile(..., sourceId).
+    const files: string[] = [];
+    walkSyncableFiles(repoPath, (filePath) => files.push(relative(repoPath, filePath)), strategy);
+    console.log(`Running full ${strategy} import of ${repoPath} (${files.length} files)...`);
+    let imported = 0;
+    let chunksCreated = 0;
+    const failures: Array<{ path: string; error: string; line?: number }> = [];
+    for (const rel of files) {
+      try {
+        const r = await importFile(engine, join(repoPath, rel), rel, { noEmbed: opts.noEmbed, sourceId: opts.sourceId });
+        if (r.status === 'imported') {
+          imported++;
+          chunksCreated += r.chunks;
+        } else if (r.status === 'skipped' && r.error) {
+          failures.push({ path: rel, error: r.error });
+        }
+      } catch (e: unknown) {
+        failures.push({ path: rel, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    result = { imported, chunksCreated, failures };
+  }
 
   // Bug 9 — gate the full-sync bookmark on success. runImport already
   // writes its own sync.last_commit conditionally (import.ts), but

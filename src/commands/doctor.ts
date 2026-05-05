@@ -11,6 +11,8 @@ import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts'
 import type { DbUrlSource } from '../core/config.ts';
 import { join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
 
 export interface Check {
   name: string;
@@ -180,6 +182,86 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   } catch {
     // Read/parse failure is itself best-effort; skip silently.
+  }
+
+  // 3b-ter. Embedding runtime configuration (filesystem/config-only).
+  // Catches the class of bug where config says Ollama/768 but runtime still
+  // gates on OPENAI_API_KEY or assumes OpenAI dimensions.
+  try {
+    const { getEmbeddingConfig, embeddingsConfigured } = await import('../core/embedding.ts');
+    const cfg = getEmbeddingConfig();
+    const configured = embeddingsConfigured();
+    const noOpenAi = !process.env.OPENAI_API_KEY;
+    const dim = cfg.dimensions;
+    const provider = cfg.provider;
+    const model = cfg.model;
+    if (!configured) {
+      checks.push({
+        name: 'embedding_runtime',
+        status: 'warn',
+        message: `provider=${provider} model=${model} dimensions=${dim}; embeddings not configured`,
+      });
+    } else if (provider === 'ollama' && noOpenAi) {
+      checks.push({
+        name: 'embedding_runtime',
+        status: 'ok',
+        message: `provider=ollama model=${model} dimensions=${dim}; OPENAI_API_KEY not required`,
+      });
+    } else {
+      checks.push({
+        name: 'embedding_runtime',
+        status: 'ok',
+        message: `provider=${provider} model=${model} dimensions=${dim}`,
+      });
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    checks.push({ name: 'embedding_runtime', status: 'warn', message: `Could not inspect embedding runtime: ${msg}` });
+  }
+
+  // 3b. Active CLI path. This catches the repo-source vs globally-installed or
+  // installed-copy drift that made repo patches appear ineffective.
+  try {
+    const cliPath = execFileSync('which', ['gbrain'], { encoding: 'utf8' }).trim();
+    const invokedPath = process.argv[1] ?? 'unknown';
+    const repoRoot = findRepoRoot();
+    const repoHint = repoRoot ? `; repo=${repoRoot}` : '';
+    let status: Check['status'] = 'ok';
+    let driftDetail = '';
+
+    if (repoRoot && invokedPath.includes('/node_modules/')) {
+      const criticalFiles = [
+        'src/commands/doctor.ts',
+        'src/commands/sync.ts',
+        'src/core/db-lock.ts',
+        'src/core/embedding.ts',
+        'src/core/pglite-engine.ts',
+        'src/core/postgres-engine.ts',
+      ];
+      const mismatched = criticalFiles.filter((rel) => {
+        const repoFile = join(repoRoot, rel);
+        const installedFile = invokedPath.replace(/src\/cli\.ts$/, rel);
+        if (!existsSync(repoFile) || !existsSync(installedFile)) return true;
+        const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
+        return hash(repoFile) !== hash(installedFile);
+      });
+      if (mismatched.length > 0) {
+        status = 'warn';
+        driftDetail = `; drift=${mismatched.join(',')}`;
+      } else {
+        driftDetail = '; installed copy matches repo critical files';
+      }
+    }
+
+    checks.push({
+      name: 'active_cli_path',
+      status,
+      message: status === 'warn'
+        ? `gbrain executable=${cliPath}; invoked=${invokedPath}${repoHint}${driftDetail}. Run package install/link if local edits should be active.`
+        : `gbrain executable=${cliPath}; invoked=${invokedPath}${repoHint}${driftDetail}`,
+    });
+  } catch {
+    checks.push({ name: 'active_cli_path', status: 'warn', message: 'gbrain executable path unavailable' });
   }
 
   // 3b-bis. Supervisor health (filesystem-only: PID liveness + audit log).

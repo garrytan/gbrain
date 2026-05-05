@@ -9,17 +9,6 @@
  * transaction pooling drops session state between calls. This row-based
  * lock survives PgBouncer because it's plain INSERT/UPDATE/DELETE with
  * a TTL fallback (a crashed holder's row times out).
- *
- * Why a separate table-row per lock id rather than reusing the cycle lock:
- * the cycle lock is broader (covers every phase). performSync's write-window
- * is narrower. If performSync reused the cycle lock and the cycle handler
- * called performSync, the inner acquire would deadlock against itself. Two
- * lock ids let callers nest cleanly: cycle holds gbrain-cycle for its run;
- * performSync (called from anywhere — cycle, jobs handler, CLI) takes
- * gbrain-sync just for the write window.
- *
- * v0.22.13 — added in PR #490 to fix CODEX-2 (no cross-process lock for
- * direct sync paths). The cycle path was already protected.
  */
 import { hostname } from 'os';
 import type { BrainEngine } from './engine.ts';
@@ -30,23 +19,30 @@ export interface DbLockHandle {
   refresh: () => Promise<void>;
 }
 
+export interface DbLockInfo {
+  id: string;
+  holder_pid: number | null;
+  holder_host: string | null;
+  acquired_at: string | null;
+  ttl_expires_at: string | null;
+}
+
 /** Default TTL: 30 minutes, same as cycle lock. */
 const DEFAULT_TTL_MINUTES = 30;
+
+function rawAccess(engine: BrainEngine) {
+  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
+  const maybePGLite = engine as unknown as {
+    db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
+  };
+  return { maybePG, maybePGLite };
+}
 
 /**
  * Try to acquire a named DB lock.
  *
  * Returns a handle on success. Returns `null` if another live holder has
  * the lock (its row exists and ttl_expires_at is in the future).
- *
- * The acquire is upsert-style:
- *   INSERT ... ON CONFLICT (id) DO UPDATE
- *     ... WHERE existing.ttl_expires_at < NOW()
- *   RETURNING id
- *
- * Empty RETURNING means the existing row is still live. An expired holder
- * (worker crashed without releasing) is auto-superseded by the UPDATE
- * branch.
  */
 export async function tryAcquireDbLock(
   engine: BrainEngine,
@@ -55,13 +51,7 @@ export async function tryAcquireDbLock(
 ): Promise<DbLockHandle | null> {
   const pid = process.pid;
   const host = hostname();
-
-  // Engine-agnostic: prefer the engine's raw escape hatch (`sql` for postgres-js,
-  // `db.query` for PGLite). Mirrors cycle.ts's pattern so behavior stays identical.
-  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
-  const maybePGLite = engine as unknown as {
-    db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
-  };
+  const { maybePG, maybePGLite } = rawAccess(engine);
 
   if (engine.kind === 'postgres' && maybePG.sql) {
     const sql = maybePG.sql as any;
@@ -132,6 +122,67 @@ export async function tryAcquireDbLock(
   }
 
   throw new Error(`Unknown engine kind for db-lock: ${engine.kind}`);
+}
+
+function isPidAlive(pid: number | null | undefined): boolean {
+  if (!pid || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+export async function getDbLockInfo(engine: BrainEngine, lockId: string): Promise<DbLockInfo | null> {
+  const { maybePG, maybePGLite } = rawAccess(engine);
+  if (engine.kind === 'postgres' && maybePG.sql) {
+    const sql = maybePG.sql as any;
+    const rows = await sql`
+      SELECT id, holder_pid, holder_host, acquired_at::text, ttl_expires_at::text
+      FROM gbrain_cycle_locks WHERE id = ${lockId} LIMIT 1
+    ` as DbLockInfo[];
+    return rows[0] ?? null;
+  }
+  if (engine.kind === 'pglite' && maybePGLite.db) {
+    const { rows } = await maybePGLite.db.query(
+      `SELECT id, holder_pid, holder_host, acquired_at::text, ttl_expires_at::text
+       FROM gbrain_cycle_locks WHERE id = $1 LIMIT 1`,
+      [lockId],
+    );
+    return (rows[0] as DbLockInfo | undefined) ?? null;
+  }
+  return null;
+}
+
+async function clearDbLock(engine: BrainEngine, lockId: string): Promise<void> {
+  const { maybePG, maybePGLite } = rawAccess(engine);
+  if (engine.kind === 'postgres' && maybePG.sql) {
+    const sql = maybePG.sql as any;
+    await sql`DELETE FROM gbrain_cycle_locks WHERE id = ${lockId}`;
+    return;
+  }
+  if (engine.kind === 'pglite' && maybePGLite.db) {
+    await maybePGLite.db.query(`DELETE FROM gbrain_cycle_locks WHERE id = $1`, [lockId]);
+  }
+}
+
+/**
+ * Acquire a lock, auto-clearing the common interrupted-agent case: same-host
+ * lock row whose holder PID is no longer alive. Returns lock info on failure
+ * so callers can print actionable diagnostics.
+ */
+export async function acquireDbLockOrInfo(
+  engine: BrainEngine,
+  lockId: string,
+  ttlMinutes: number = DEFAULT_TTL_MINUTES,
+): Promise<{ handle: DbLockHandle; clearedStale?: DbLockInfo } | { handle: null; info: DbLockInfo | null }> {
+  const first = await tryAcquireDbLock(engine, lockId, ttlMinutes);
+  if (first) return { handle: first };
+
+  const info = await getDbLockInfo(engine, lockId);
+  const sameHost = info?.holder_host === hostname();
+  if (sameHost && !isPidAlive(info?.holder_pid)) {
+    await clearDbLock(engine, lockId);
+    const second = await tryAcquireDbLock(engine, lockId, ttlMinutes);
+    if (second) return { handle: second, clearedStale: info ?? undefined };
+  }
+  return { handle: null, info };
 }
 
 /** Lock id for performSync's writer window. Distinct from gbrain-cycle so the

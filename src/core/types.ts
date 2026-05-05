@@ -29,6 +29,7 @@ export interface Page {
 export type PageKind = 'markdown' | 'code';
 
 export interface PageInput {
+  source_id?: string;
   type: PageType;
   title: string;
   compiled_truth: string;

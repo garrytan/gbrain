@@ -361,6 +361,61 @@ describe('performSync dry-run never writes', () => {
   });
 });
 
+describe('performSync code strategy source isolation', () => {
+  let engine: PGLiteEngine;
+  let repoPath: string;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+    repoPath = mkdtempSync(join(tmpdir(), 'gbrain-sync-code-source-'));
+    execSync('git init', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: repoPath, stdio: 'pipe' });
+    mkdirSync(join(repoPath, 'src'), { recursive: true });
+    writeFileSync(join(repoPath, 'src/index.ts'), 'export function performSyncSmoke() { return 42; }\n');
+    writeFileSync(join(repoPath, 'README.md'), '# ignored by code strategy\n');
+    execSync('git add -A && git commit -m "initial code"', { cwd: repoPath, stdio: 'pipe' });
+  });
+
+  afterEach(() => {
+    if (repoPath) rmSync(repoPath, { recursive: true, force: true });
+  });
+
+  test('full code sync writes pages under the requested source_id, not default', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    await (engine as any).db.query(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      ['test-code-source', 'Test Code Source', repoPath, '{}'],
+    );
+
+    const result = await performSync(engine, {
+      repoPath,
+      full: true,
+      noPull: true,
+      noEmbed: true,
+      strategy: 'code',
+      sourceId: 'test-code-source',
+    });
+
+    expect(result.status).toBe('first_sync');
+    expect(result.added).toBeGreaterThan(0);
+    expect(await engine.getPage('src-index-ts', { sourceId: 'test-code-source' })).not.toBeNull();
+    expect(await engine.getPage('src-index-ts', { sourceId: 'default' })).toBeNull();
+  });
+});
+
 describe('sync regression — #132 nested transaction deadlock', () => {
   test('src/commands/sync.ts does not wrap the add/modify loop in engine.transaction()', async () => {
     const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();

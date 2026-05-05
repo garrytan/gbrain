@@ -185,7 +185,7 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: { noEmbed?: boolean; sourceId?: string } = {},
 ): Promise<ImportResult> {
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
@@ -223,7 +223,7 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
-  const existing = await engine.getPage(slug);
+  const existing = await engine.getPage(slug, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
   if (existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
@@ -270,6 +270,7 @@ export async function importFromContent(
     if (existing) await tx.createVersion(slug);
 
     await tx.putPage(slug, {
+      source_id: opts.sourceId,
       type: parsed.type,
       title: parsed.title,
       compiled_truth: parsed.compiled_truth,
@@ -285,11 +286,11 @@ export async function importFromContent(
       if (!newTags.has(old)) await tx.removeTag(slug, old);
     }
     for (const tag of parsed.tags) {
-      await tx.addTag(slug, tag);
+      await tx.addTag(slug, tag, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
     }
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks);
+      await tx.upsertChunks(slug, chunks, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
       await tx.deleteChunks(slug);
@@ -339,7 +340,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean; inferFrontmatter?: boolean } = {},
+  opts: { noEmbed?: boolean; inferFrontmatter?: boolean; sourceId?: string } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -404,7 +405,7 @@ export async function importCodeFile(
   engine: BrainEngine,
   relativePath: string,
   content: string,
-  opts: { noEmbed?: boolean; force?: boolean } = {},
+  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string } = {},
 ): Promise<ImportResult> {
   const slug = slugifyCodePath(relativePath);
   const lang = detectCodeLanguage(relativePath) || 'unknown';
@@ -421,7 +422,7 @@ export async function importCodeFile(
     .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
     .digest('hex');
 
-  const existing = await engine.getPage(slug);
+  const existing = await engine.getPage(slug, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
   if (!opts.force && existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0 };
   }
@@ -497,6 +498,7 @@ export async function importCodeFile(
     if (existing) await tx.createVersion(slug);
 
     await tx.putPage(slug, {
+      source_id: opts.sourceId,
       type: 'code' as PageType,
       page_kind: 'code',
       title,
@@ -506,11 +508,11 @@ export async function importCodeFile(
       content_hash: hash,
     });
 
-    await tx.addTag(slug, 'code');
-    await tx.addTag(slug, lang);
+    await tx.addTag(slug, 'code', opts.sourceId ? { sourceId: opts.sourceId } : undefined);
+    await tx.addTag(slug, lang, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks);
+      await tx.upsertChunks(slug, chunks, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
     } else {
       await tx.deleteChunks(slug);
     }
