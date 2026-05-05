@@ -44,6 +44,18 @@ describe('doctor command', () => {
     expect(check.issues![0].action).toContain('trigger');
   });
 
+  test('doctor resolver health uses the shared OpenClaw-aware skills auto-detection', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const resolverBlock = source.slice(
+      source.indexOf('// 1. Resolver health'),
+      source.indexOf('// 3. Half-migrated Minions detection'),
+    );
+    expect(resolverBlock).toContain('autoDetectSkillsDir()');
+    expect(resolverBlock).toContain('const skillsDir = skillsDetection.dir');
+    expect(resolverBlock).toContain("existsSync(join(skillsDir, 'manifest.json'))");
+    expect(resolverBlock).not.toContain('findRepoRoot()');
+  });
+
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
     // runDoctor should accept null engine — it runs filesystem checks only.
