@@ -13,7 +13,7 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
-export const PGLITE_SCHEMA_SQL = `
+const PGLITE_SCHEMA_SQL_TEMPLATE = `
 -- GBrain PGLite schema (local embedded Postgres)
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -74,8 +74,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding     vector(1536),
-  model         TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
+  embedding     vector(__EMBEDDING_DIMS__),
+  model         TEXT    NOT NULL DEFAULT '__EMBEDDING_MODEL__',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -309,7 +309,11 @@ CREATE TABLE IF NOT EXISTS subagent_messages (
   job_id              BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
   message_idx         INTEGER     NOT NULL,
   role                TEXT        NOT NULL,
+  -- v0.27+ stores provider-neutral ChatBlock[] when schema_version=2; legacy
+  -- Anthropic-shape blocks when schema_version=1.
   content_blocks      JSONB       NOT NULL,
+  schema_version      INTEGER     NOT NULL DEFAULT 1,
+  provider_id         TEXT,
   tokens_in           INTEGER,
   tokens_out          INTEGER,
   tokens_cache_read   INTEGER,
@@ -320,19 +324,22 @@ CREATE TABLE IF NOT EXISTS subagent_messages (
   CONSTRAINT chk_subagent_messages_role CHECK (role IN ('user','assistant'))
 );
 CREATE INDEX IF NOT EXISTS idx_subagent_messages_job ON subagent_messages (job_id, message_idx);
+CREATE INDEX IF NOT EXISTS idx_subagent_messages_provider ON subagent_messages (job_id, provider_id);
 
 CREATE TABLE IF NOT EXISTS subagent_tool_executions (
-  id           BIGSERIAL PRIMARY KEY,
-  job_id       BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
-  message_idx  INTEGER     NOT NULL,
-  tool_use_id  TEXT        NOT NULL,
-  tool_name    TEXT        NOT NULL,
-  input        JSONB       NOT NULL,
-  status       TEXT        NOT NULL,
-  output       JSONB,
-  error        TEXT,
-  started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  ended_at     TIMESTAMPTZ,
+  id              BIGSERIAL PRIMARY KEY,
+  job_id          BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  message_idx     INTEGER     NOT NULL,
+  tool_use_id     TEXT        NOT NULL,
+  tool_name       TEXT        NOT NULL,
+  input           JSONB       NOT NULL,
+  status          TEXT        NOT NULL,
+  output          JSONB,
+  error           TEXT,
+  schema_version  INTEGER     NOT NULL DEFAULT 1,
+  provider_id     TEXT,
+  started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ended_at        TIMESTAMPTZ,
   CONSTRAINT uniq_subagent_tools_use_id UNIQUE (job_id, tool_use_id),
   CONSTRAINT chk_subagent_tools_status CHECK (status IN ('pending','complete','failed'))
 );
@@ -430,3 +437,16 @@ CREATE TRIGGER trg_pages_search_vector
 DROP TRIGGER IF EXISTS trg_timeline_search_vector ON timeline_entries;
 DROP FUNCTION IF EXISTS update_page_search_vector_from_timeline();
 `;
+
+/**
+ * Return the PGLite schema SQL with embedding vector dim + model name substituted.
+ * Defaults preserve v0.13 behavior (1536d + text-embedding-3-large).
+ */
+export function getPGLiteSchema(dims: number = 1536, model: string = 'text-embedding-3-large'): string {
+  return PGLITE_SCHEMA_SQL_TEMPLATE
+    .replace(/__EMBEDDING_DIMS__/g, String(dims))
+    .replace(/__EMBEDDING_MODEL__/g, model);
+}
+
+/** Back-compat: pre-computed default-1536 schema for existing callers. */
+export const PGLITE_SCHEMA_SQL = getPGLiteSchema();

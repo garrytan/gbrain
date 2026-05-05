@@ -345,11 +345,11 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    // Skip embedding when no OpenAI key is configured. importFromContent's existing
-    // try/catch around embed only catches; without a key the OpenAI client would
-    // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
-    // giving up. Detect early.
-    const noEmbed = !process.env.OPENAI_API_KEY;
+    // Skip embedding when the AI gateway has no embedding provider configured.
+    // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
+    // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
+    const { isAvailable } = await import('./ai/gateway.ts');
+    const noEmbed = !isAvailable('embedding');
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
