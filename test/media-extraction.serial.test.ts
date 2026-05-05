@@ -107,4 +107,32 @@ describe('media evidence import', () => {
     expect(data.kind).toBe('video');
     expect(data.segments.some((segment: any) => segment.kind === 'transcript_segment')).toBe(true);
   });
+
+  test('CLI import-media without content file preserves existing page tags', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-media-import-tags-'));
+    const contentPath = join(dir, 'page.md');
+    const extractionPath = join(dir, 'evidence.json');
+    writeFileSync(contentPath, `---\ntype: media\ntitle: Tagged Screenshot\ntags: [receipt, stripe]\n---\n\nTagged evidence page.`);
+    writeFileSync(extractionPath, readFileSync(join(FIXTURES, 'media-extraction-image.json'), 'utf-8'));
+
+    try {
+      await runImportMedia(engine, [
+        '--slug', 'media/tagged-screenshot',
+        '--content-file', contentPath,
+        '--extraction', extractionPath,
+        '--no-embed',
+      ]);
+      expect(await engine.getTags('media/tagged-screenshot')).toEqual(['receipt', 'stripe']);
+
+      await runImportMedia(engine, [
+        '--slug', 'media/tagged-screenshot',
+        '--extraction', extractionPath,
+        '--no-embed',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    expect(await engine.getTags('media/tagged-screenshot')).toEqual(['receipt', 'stripe']);
+  });
 });

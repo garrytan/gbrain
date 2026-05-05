@@ -4,6 +4,28 @@ GBrain can import normalized media evidence as searchable brain pages. This is t
 
 This does not perform binary image or video understanding by itself. Use an OCR, transcript, multimodal, or host adapter to produce `gbrain.media-extraction.v1` JSON first.
 
+```mermaid
+flowchart LR
+  Media["Media file\nimage, PDF, audio, video"]
+  Extractor["Extractor or host adapter\nOCR, captioning, transcript"]
+  Extraction["gbrain.media-extraction.v1\nnormalized extractor output"]
+  Importer["gbrain import-media / ingest-media"]
+  Page["Media page\ncompiled truth + frontmatter"]
+  Raw["raw_data sidecar\ngbrain.media-evidence.v1"]
+  Chunks["Search chunks\nkeyword now, embeddings optional"]
+
+  Media --> Extractor
+  Extractor --> Extraction
+  Extraction --> Importer
+  Importer --> Page
+  Importer --> Raw
+  Importer --> Chunks
+```
+
+In plain English: the extractor tells GBrain what the media contains. GBrain
+then gives that media a normal brain page, keeps the structured evidence in
+`raw_data`, and makes the useful text searchable.
+
 ## Schemas
 
 Extractor output uses `gbrain.media-extraction.v1`:

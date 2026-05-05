@@ -86,12 +86,13 @@ function readMediaFileMetadata(mediaFilePath: string | undefined): MediaFileMeta
   };
 }
 
-function existingPageContent(existing: Awaited<ReturnType<BrainEngine['getPage']>>): string | undefined {
+async function existingPageContent(engine: BrainEngine, slug: string, existing: Awaited<ReturnType<BrainEngine['getPage']>>): Promise<string | undefined> {
   if (!existing) return undefined;
+  const tags = await engine.getTags(slug);
   return serializeMarkdown(existing.frontmatter || {}, existing.compiled_truth, existing.timeline || '', {
     type: existing.type,
     title: existing.title,
-    tags: [],
+    tags,
   });
 }
 
@@ -131,7 +132,7 @@ export async function runImportMedia(engine: BrainEngine, args: string[]) {
   const existing = await engine.getPage(slug);
   const content = contentFile
     ? readFileSync(contentFile, 'utf-8')
-    : existingPageContent(existing) ?? defaultMediaContent(finalTitle, evidence);
+    : await existingPageContent(engine, slug, existing) ?? defaultMediaContent(finalTitle, evidence);
 
   const result = await importNormalizedMediaEvidence(engine, {
     slug,
