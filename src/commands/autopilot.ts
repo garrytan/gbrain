@@ -162,10 +162,19 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       // worker. Bare `gbrain jobs work` has no default; the supervisor and
       // autopilot are the production paths that opt in.
       const args = ['jobs', 'work', '--max-rss', '2048'];
-      const child = spawn(cliPath, args, { stdio: 'inherit', env: process.env });
+
+      // Wrap with tini when available — reaps zombie children from shell jobs
+      // and embed batches that outlive a watchdog-killed worker.
+      let tiniPath = '';
+      try { tiniPath = execSync('which tini', { encoding: 'utf8', timeout: 2000 }).trim(); } catch {}
+      const spawnCmd = tiniPath || cliPath;
+      const spawnArgs = tiniPath ? ['--', cliPath, ...args] : args;
+
+      const child = spawn(spawnCmd, spawnArgs, { stdio: 'inherit', env: process.env });
       workerProc = child;
       lastWorkerStartTime = Date.now();
-      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid}, watchdog: 2048MB)`);
+      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid}, watchdog: 2048MB${tiniPath ? ', tini: active' : ''})`);
+
       child.on('exit', (code) => {
         workerProc = null;
         if (stopping) return;

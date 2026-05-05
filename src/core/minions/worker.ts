@@ -422,6 +422,10 @@ export class MinionWorker extends EventEmitter {
         ]);
       }
 
+      // Release database connection pool so PgBouncer slots are freed
+      // immediately rather than waiting for TCP keepalive timeout.
+      try { await this.engine.disconnect(); } catch {}
+
       console.log('Minion worker stopped.');
     }
   }

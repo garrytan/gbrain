@@ -226,10 +226,23 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   app.get('/health', async (_req, res) => {
     try {
-      const stats = await engine.getStats();
+      // 5s timeout — a slow/saturated DB connection pool must not make the
+      // entire server look dead to orchestrators and load balancers.
+      const stats = await Promise.race([
+        engine.getStats(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('health_timeout')), 5000),
+        ),
+      ]);
       res.json({ status: 'ok', version: VERSION, engine: config.engine, ...stats });
-    } catch {
-      res.status(503).json({ error: 'service_unavailable', error_description: 'Database connection failed' });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'unknown';
+      res.status(503).json({
+        error: 'service_unavailable',
+        error_description: msg === 'health_timeout'
+          ? 'Health check timed out (database pool may be saturated)'
+          : 'Database connection failed',
+      });
     }
   });
 
