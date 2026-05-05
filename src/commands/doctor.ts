@@ -499,7 +499,64 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // the canonical half-migration signal and fires when the stopgap ran
   // but `apply-migrations` didn't follow up.
 
-  // 7. Embedding health
+  // 7. RLS event trigger (post-install drift detector for v35 auto-RLS).
+  // Catches the case where an operator manually drops the trigger to debug
+  // something and forgets to recreate it. Does NOT catch install-time silent
+  // failure — runMigrations rethrows on SQL failure and only bumps
+  // config.version after success, so a failed v35 install means version
+  // stays at 34 and check #6 (schema_version) fires loudly.
+  //
+  // Healthy evtenabled values: 'O' (origin) and 'A' (always). 'R' is
+  // replica-only and would NOT fire in normal origin sessions; 'D' is
+  // disabled. Both of those are warn states.
+  progress.heartbeat('rls_event_trigger');
+  if (engine.kind === 'pglite') {
+    checks.push({
+      name: 'rls_event_trigger',
+      status: 'ok',
+      message: 'Skipped (PGLite — no event trigger support)',
+    });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const rows = await sql`
+        SELECT evtname, evtenabled FROM pg_event_trigger
+        WHERE evtname = 'auto_rls_on_create_table'
+      `;
+      if (rows.length === 0) {
+        checks.push({
+          name: 'rls_event_trigger',
+          status: 'warn',
+          message:
+            'Auto-RLS event trigger missing. New tables created outside gbrain may not get RLS. ' +
+            'Fix: gbrain apply-migrations --force-retry 35',
+        });
+      } else if (rows[0].evtenabled !== 'O' && rows[0].evtenabled !== 'A') {
+        checks.push({
+          name: 'rls_event_trigger',
+          status: 'warn',
+          message:
+            `Auto-RLS event trigger present but evtenabled=${rows[0].evtenabled} ` +
+            `(not origin/always). Trigger will not fire in normal sessions. ` +
+            `Fix: ALTER EVENT TRIGGER auto_rls_on_create_table ENABLE;`,
+        });
+      } else {
+        checks.push({
+          name: 'rls_event_trigger',
+          status: 'ok',
+          message: 'Auto-RLS event trigger installed',
+        });
+      }
+    } catch {
+      checks.push({
+        name: 'rls_event_trigger',
+        status: 'warn',
+        message: 'Could not check RLS event trigger',
+      });
+    }
+  }
+
+  // 8. Embedding health
   progress.heartbeat('embeddings');
   try {
     const health = await engine.getHealth();
@@ -515,7 +572,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
   }
 
-  // 8. Graph health (link + timeline coverage on entity pages).
+  // 9. Graph health (link + timeline coverage on entity pages).
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
   progress.heartbeat('graph_coverage');
   try {
@@ -556,7 +613,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     checks.push({ name: 'graph_coverage', status: 'warn', message: 'Could not check graph coverage' });
   }
 
-  // 9. Integrity sample scan (v0.13 knowledge runtime).
+  // 10. Integrity sample scan (v0.13 knowledge runtime).
   // Read-only — no network, no writes, no resolver calls. Samples the first
   // 500 pages by slug order and surfaces bare-tweet + dead-link counts as a
   // warning. Full-brain scan: `gbrain integrity check`.

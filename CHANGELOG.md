@@ -2,6 +2,80 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.26.7] - 2026-05-04
+
+## **Every gbrain brain becomes secure by default on upgrade. No public table without RLS, ever.**
+## **The trigger covers `CREATE TABLE`, `CREATE TABLE AS`, and `SELECT INTO`, and the one-time backfill closes existing gaps.**
+
+A production incident on 2026-05-04 found a `public.*` table sitting in a Supabase project without Row Level Security enabled. `gbrain doctor` caught it after the fact, but the gap window between create and next doctor run was the silent vector. v0.26.7 closes that gap from both sides.
+
+The new migration v35 ships a Postgres DDL event trigger named `auto_rls_on_create_table` that fires on every `ddl_command_end` and runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` for every new `public.*` table, across all three table-creation syntaxes Postgres reports (`CREATE TABLE`, `CREATE TABLE AS … SELECT`, and `SELECT … INTO`). Same migration also walks every existing `public.*` base table and enables RLS on any that don't already have it, modulo the `GBRAIN:RLS_EXEMPT` comment escape hatch that doctor already honors. After upgrade, `gbrain doctor`'s `rls` check should be a no-op on every brain.
+
+Posture choices, all caught during plan review: ENABLE only, no FORCE (so non-BYPASSRLS apps sharing the project can still read tables they create); public-schema-only (Supabase manages auth/storage/realtime/etc. and we must not touch those); no EXCEPTION wrap inside the trigger (event triggers fire inside the DDL transaction, so a failed ALTER aborts the offending CREATE TABLE and produces a loud signal — wrapping would have replaced that with a silent permissive default); no hand-rolled privilege pre-check (the migration runner already fails loud on permission errors and gates the version bump).
+
+`gbrain doctor` gains a new `rls_event_trigger` check that verifies the trigger is installed and enabled. Healthy values are `evtenabled` of `O` (origin) or `A` (always). `R` is replica-only and would not fire in normal sessions; `D` is disabled. Both produce a warn with the recovery command.
+
+### The numbers that matter
+
+11 test cases gating the new shape: 4 happy-path coverage cases (CREATE TABLE, CTAS, SELECT INTO, function exists), 1 explicit "no FORCE" assertion against `pg_class.relforcerowsecurity`, 1 schema-scope test (non-public schemas remain RLS-off), 1 replay idempotency test, 3 backfill cases (plain table, exemption regex, mixed-case identifier safety), and 1 regression guard pinning the absence of `EXCEPTION WHEN OTHERS` in the trigger function body. Plus 9 structural assertions in `test/migrate.test.ts` and 1 new pin in `test/doctor.test.ts` for the doctor check.
+
+| Metric | BEFORE v0.26.7 | AFTER v0.26.7 | Δ |
+|---|---|---|---|
+| New `public.*` table without RLS | possible (gap window until next `gbrain doctor`) | impossible (event trigger aborts CREATE TABLE on RLS failure) | structural |
+| Existing `public.*` tables without RLS on upgrade | manual fix (operator copy-pastes ALTER TABLE) | auto-backfill on `gbrain upgrade` | one round-trip removed |
+| Table-creation syntaxes covered | 0 (no auto-RLS) | 3 (`CREATE TABLE`, `CREATE TABLE AS`, `SELECT INTO`) | full literal coverage |
+| Stale parallel RLS audit surface | 1 (`supabase-admin.ts:checkRls()` with hardcoded 10-table list, 0 callers) | 0 | deleted |
+| doctor RLS coverage | RLS-on every public table | RLS-on every public table + trigger-installed check | drift-resistant |
+
+### What this means for operators
+
+If you run gbrain on Supabase, your brain becomes secure on upgrade. Run `gbrain upgrade`, run `gbrain doctor`, and unless the trigger genuinely failed to install (you're on self-hosted Postgres without superuser), both checks are green. New tables created from anywhere — gbrain itself, Baku, Hermes, raw psql — get RLS the moment they exist.
+
+If you run gbrain on PGLite, this release is a no-op for you. PGLite has no event triggers, no PostgREST, and is single-tenant by design.
+
+## To take advantage of v0.26.7
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about either the `rls` or `rls_event_trigger` check:
+
+1. **Run the migration manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   # rls: ok — RLS enabled on N/N public tables
+   # rls_event_trigger: ok — Auto-RLS event trigger installed
+   ```
+3. **If the trigger is missing on Supabase**, your role probably can't `CREATE EVENT TRIGGER`. On Supabase only the `postgres` role has the grant. Re-run upgrade with the connection string for `postgres`, not the pooler-default user.
+4. **If the trigger is missing on self-hosted Postgres**, you need superuser to create event triggers. Run the migration as a superuser role:
+   ```bash
+   DATABASE_URL=postgresql://postgres@... gbrain apply-migrations --force-retry 35
+   ```
+5. **If anything looks wrong**, file an issue: https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl`.
+
+### Breaking change: read this before upgrading
+
+If you have public tables that are intentionally RLS-off and you want them to stay that way, you MUST add the `GBRAIN:RLS_EXEMPT` comment **before** running `gbrain upgrade` to v0.26.7. The migration's one-time backfill flips RLS on for any public table whose comment doesn't carry the exact contract:
+
+```sql
+COMMENT ON TABLE public.your_table IS
+  'GBRAIN:RLS_EXEMPT reason=<at-least-4-character-justification>';
+```
+
+The recovery cost is one round-trip: `ALTER TABLE … DISABLE ROW LEVEL SECURITY;` followed by the comment SQL above. No data is lost. See `docs/guides/rls-and-you.md` for the full contract.
+
+### Itemized changes
+
+- `src/core/migrate.ts` — migration v35 rewritten per plan review and codex outside-voice corrections. Drops FORCE (matches v24/v29/schema.sql posture so non-BYPASSRLS apps can still read their own tables). Adds public-schema-only filter so Supabase-managed schemas (`auth`, `storage`, `realtime`, etc.) are untouched. Drops the EXCEPTION wrap inside the trigger so per-table failures abort the offending CREATE TABLE instead of silently succeeding. Drops the hand-rolled privilege pre-check (the runner already fails loud on permission errors). Extends `WHEN TAG` to cover `CREATE TABLE`, `CREATE TABLE AS`, and `SELECT INTO`. Bundles a one-time backfill that reuses doctor's regex contract for `GBRAIN:RLS_EXEMPT` exemptions and uses `format('%I.%I', schema, table)` for identifier safety.
+- `src/commands/doctor.ts` — new `rls_event_trigger` check after the `// 6. Schema version` block. Verifies the trigger is installed and `evtenabled` is `O` or `A`. Recovery command points at `gbrain apply-migrations --force-retry 35`. Renumbered the existing 7/8/9 numbered blocks accordingly.
+- `src/core/supabase-admin.ts` — deleted `checkRls()`. Zero callers, zero test coverage; doctor is the single source of truth for RLS posture.
+- `test/migration-v35-auto-rls.test.ts` — extended from 3 to 11 cases. Adds replay idempotency, public-only scope, CTAS coverage, SELECT INTO coverage, no-FORCE assertion, backfill happy path, backfill exemption regex, mixed-case identifier safety, and the EXCEPTION-not-present regression guard.
+- `test/migrate.test.ts` — 8 structural assertions on the v35 SQL shape (no FORCE, public-only, WHEN TAG covers all three syntaxes, no EXCEPTION WHEN OTHERS, %I.%I backfill quoting, doctor-regex match, BYPASSRLS gate, PGLite no-op).
+- `test/doctor.test.ts` — structural assertion that `rls_event_trigger` is wired correctly and the existing `// 5. RLS` slice tests stay intact.
+- `docs/guides/rls-and-you.md` — new "v0.26.7 — auto-RLS event trigger and one-time backfill" section explaining the trigger, the breaking change for intentionally-RLS-off public tables, and the cross-app implications.
+- `CLAUDE.md` — extended `src/core/migrate.ts` annotation with v35 specifics and added the `rls_event_trigger` check to the `src/commands/doctor.ts` annotation.
+
 ## [0.26.6] - 2026-05-03
 
 ## **PGLite ↔ Postgres schema parity is now a CI gate. Adding a column to one side without the other fails the PR before merge.**
