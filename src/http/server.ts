@@ -5,8 +5,39 @@ import { embed } from '../core/embedding.ts';
 import { operationsByName } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { createHmac, randomBytes } from 'crypto';
+import pkg from '../../package.json' with { type: 'json' };
 
 const ALLOWED_TAGS = ['preference', 'fact', 'method', 'project', 'person', 'decision'] as const;
+const VERSION = pkg.version as string;
+
+// Per-subquery timeout budget. Tunable via env so Railway cold-starts don't
+// nuke the whole request: lex (BM25) is fast, vec/hyde do an OpenAI embedding
+// call so they get a wider window.
+const LEX_TIMEOUT_MS  = parseInt(process.env.GBRAIN_LEX_TIMEOUT_MS  || '3000', 10);
+const VEC_TIMEOUT_MS  = parseInt(process.env.GBRAIN_VEC_TIMEOUT_MS  || '8000', 10);
+
+// Warm-state tracking. Module-level so /health can report whether the
+// instance has serviced at least one successful query (i.e. embeddings warmed,
+// DB pool primed). Cheap and accurate enough for cold-start detection.
+const SERVER_STARTED_AT = Date.now();
+let firstQueryAt: number | null = null;
+let lastQueryAt: number | null = null;
+
+function markQuerySuccess(): void {
+  if (firstQueryAt === null) firstQueryAt = Date.now();
+  lastQueryAt = Date.now();
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms);
+  });
+  return Promise.race([
+    p.finally(() => clearTimeout(timer)),
+    timeout,
+  ]);
+}
 
 export interface HttpServeOptions {
   port?: number;
@@ -52,6 +83,8 @@ function verifyOtp(secret: string, provided: string): boolean {
 }
 
 // ── 認證：OTP 優先，否則 fallback 靜態 token ───────────────────────────────────
+// OTP 來源優先順序：?otp= → X-Gbrain-OTP header → Authorization: OTP <code>
+// header 路徑避免把 OTP 寫進 access logs / 瀏覽歷史。
 function authenticate(
   req: Request,
   url: URL,
@@ -59,12 +92,16 @@ function authenticate(
   totpSecret: string | undefined
 ): { ok: true } | { ok: false; needOtp: boolean } {
   const queryOtp = url.searchParams.get('otp');
+  const headerOtp = req.headers.get('X-Gbrain-OTP');
   const queryToken = url.searchParams.get('token');
   const authHeader = req.headers.get('Authorization');
 
   // OTP 模式（當 GBRAIN_TOTP_SECRET 設定時）
   if (totpSecret) {
-    const otpProvided = queryOtp ?? (authHeader?.startsWith('OTP ') ? authHeader.slice(4).trim() : null);
+    const otpProvided =
+      queryOtp ??
+      headerOtp ??
+      (authHeader?.startsWith('OTP ') ? authHeader.slice(4).trim() : null);
     if (!otpProvided) return { ok: false, needOtp: true };
     return verifyOtp(totpSecret, otpProvided) ? { ok: true } : { ok: false, needOtp: true };
   }
@@ -104,8 +141,19 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
       const t0 = Date.now();
 
       // ── health (no auth) ──────────────────────────────────────────────────
+      // `warm` flips true after the first successful query (embedding pool
+      // primed, DB warmed). Agents should hit /health before /search on first
+      // contact — if warm:false, send a cheap ?lex= probe before lex+vec.
       if (path === '/health' && req.method === 'GET') {
-        return ok({ status: 'ok', engine: engine.kind, auth: totpSecret ? 'otp' : 'token' }, Date.now() - t0);
+        return ok({
+          status: 'ok',
+          engine: engine.kind,
+          auth: totpSecret ? 'otp' : 'token',
+          version: VERSION,
+          warm: firstQueryAt !== null,
+          uptime_ms: Date.now() - SERVER_STARTED_AT,
+          last_query_ago_ms: lastQueryAt ? Date.now() - lastQueryAt : null,
+        }, Date.now() - t0);
       }
 
       // ── 認證 ─────────────────────────────────────────────────────────────
@@ -139,25 +187,52 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         const hyde = url.searchParams.get('hyde');
 
         if (lex || vec || hyde) {
-          // Multi-typed mode: run sub-queries in parallel, RRF-merge
-          const tasks: Promise<SearchResult[]>[] = [];
-          if (lex)  tasks.push(engine.searchKeyword(lex, innerOpts));
-          if (vec)  tasks.push(embed(vec).then(emb => engine.searchVector(emb, innerOpts)));
-          if (hyde) tasks.push(embed(hyde).then(emb => engine.searchVector(emb, innerOpts)));
+          // Multi-typed mode: run sub-queries in parallel under per-task
+          // timeout budgets, RRF-merge whatever survived. If lex completes
+          // but vec times out, return lex results with `degraded:true` instead
+          // of failing the whole request — strictly better than the prior
+          // "all-or-nothing Promise.allSettled" path on cold Railway boots.
+          const taskMeta: { kind: 'lex' | 'vec' | 'hyde'; promise: Promise<SearchResult[]> }[] = [];
+          if (lex)  taskMeta.push({ kind: 'lex',  promise: withTimeout(engine.searchKeyword(lex, innerOpts), LEX_TIMEOUT_MS, 'lex') });
+          if (vec)  taskMeta.push({ kind: 'vec',  promise: withTimeout(embed(vec).then(emb => engine.searchVector(emb, innerOpts)), VEC_TIMEOUT_MS, 'vec') });
+          if (hyde) taskMeta.push({ kind: 'hyde', promise: withTimeout(embed(hyde).then(emb => engine.searchVector(emb, innerOpts)), VEC_TIMEOUT_MS, 'hyde') });
 
-          const settled = await Promise.allSettled(tasks);
-          const lists = settled
-            .filter((r): r is PromiseFulfilledResult<SearchResult[]> => r.status === 'fulfilled')
-            .map(r => r.value);
+          const settled = await Promise.allSettled(taskMeta.map(t => t.promise));
+          const lists: SearchResult[][] = [];
+          const dropped: { kind: string; reason: string }[] = [];
+          settled.forEach((r, i) => {
+            if (r.status === 'fulfilled') lists.push(r.value);
+            else dropped.push({ kind: taskMeta[i].kind, reason: String((r as PromiseRejectedResult).reason).slice(0, 200) });
+          });
+
+          if (lists.length === 0) {
+            // Every subquery failed — almost certainly a cold start.
+            return err('warming_up',
+              'All search subqueries timed out — service may be cold-starting',
+              503,
+              {
+                retry_after_ms: 3000,
+                hint: 'Wait ~3s and retry, or fall back to ?q=<query> for the keyword-only fast path',
+                dropped,
+              }
+            );
+          }
 
           const results = rrfFusion(lists, 60, true).slice(0, limit);
-          return ok({ lex, vec, hyde, results }, Date.now() - t0);
+          markQuerySuccess();
+          const body: Record<string, unknown> = { lex, vec, hyde, results };
+          if (dropped.length > 0) {
+            body.degraded = true;
+            body.dropped = dropped;
+          }
+          return ok(body, Date.now() - t0);
         }
 
         // Simple mode: single ?q= via keyword search (fast, no embedding)
         const q = url.searchParams.get('q');
         if (!q) return err('missing_param', 'Provide ?q=... or at least one of ?lex=, ?vec=, ?hyde=');
         const results = await searchOp.handler(ctx, { query: q, limit });
+        markQuerySuccess();
         return ok({ query: q, results }, Date.now() - t0);
       }
 
@@ -170,6 +245,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         const limit = Math.min(parseInt(String(body.limit ?? 10), 10), 50);
         const expand = body.expand !== false;
         const results = await hybridSearch(engine, q, { limit, expand });
+        markQuerySuccess();
         return ok({ query: q, results }, Date.now() - t0);
       }
 
@@ -242,10 +318,11 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
     },
   });
 
-  console.error(`GBrain HTTP search API listening on http://${host}:${port}`);
+  console.error(`GBrain HTTP search API v${VERSION} listening on http://${host}:${port}`);
   console.error('Auth mode:', totpSecret ? 'OTP (daily key, UTC midnight rotation)' : 'Static token');
+  console.error(`Search timeouts: lex=${LEX_TIMEOUT_MS}ms, vec/hyde=${VEC_TIMEOUT_MS}ms (override via GBRAIN_LEX_TIMEOUT_MS / GBRAIN_VEC_TIMEOUT_MS)`);
   console.error('Endpoints:');
-  console.error('  GET  /health');
+  console.error('  GET  /health                                       (warm/uptime/version, no auth)');
   console.error('  GET  /search?q=...&limit=10&otp=<code>              (hybridSearch)');
   console.error('  GET  /search?lex=...&vec=...&hyde=...&otp=<code>    (qmd-style multi-query)');
   console.error('  POST /query   {query, limit?, expand?}              (hybridSearch + expansion)');
