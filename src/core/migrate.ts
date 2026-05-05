@@ -1535,6 +1535,28 @@ export const MIGRATIONS: Migration[] = [
         ON subagent_messages (job_id, provider_id);
     `,
   },
+  {
+    version: 38,
+    name: 'oauth_client_default_source_id',
+    // Per-OAuth-client default source pinning. When an OAuth client has a
+    // default_source_id configured, page writes/reads from that client are
+    // routed to that source unless the request explicitly overrides via
+    // params.source_id. Multi-agent deployments use this to give each agent
+    // its own brain-source without per-call configuration.
+    //
+    // FK with ON DELETE SET NULL: deleting a source clears the pin (request
+    // falls back to 'default') rather than orphaning the OAuth client.
+    // Idempotent (ADD COLUMN IF NOT EXISTS).
+    sql: `
+      ALTER TABLE oauth_clients
+        ADD COLUMN IF NOT EXISTS default_source_id TEXT
+        REFERENCES sources(id) ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_oauth_clients_default_source
+        ON oauth_clients(default_source_id)
+        WHERE default_source_id IS NOT NULL;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

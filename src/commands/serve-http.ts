@@ -702,6 +702,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // belt; this is the suspenders.
         remote: true,
         auth: authInfo,
+        // v37: thread per-OAuth-client default source pin into the op context.
+        // Resolved by GBrainOAuthProvider.verifyAccessToken (above) from
+        // oauth_clients.default_source_id, so no extra DB roundtrip here.
+        // Source-aware ops (get_page, put_page) apply precedence:
+        //   params.source_id > ctx.defaultSourceId > 'default'
+        defaultSourceId: authInfo.defaultSourceId,
       };
 
       // F8: redact request payload by default (declared keys only via the

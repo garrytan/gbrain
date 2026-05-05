@@ -330,12 +330,20 @@ export class PostgresEngine implements BrainEngine {
 
     // v0.18.0 Step 2: source_id relies on schema DEFAULT 'default'. ON
     // CONFLICT target becomes (source_id, slug) since global UNIQUE(slug)
-    // was dropped in migration v17. See pglite-engine.ts for matching
-    // notes; multi-source sync (Step 5) will surface an explicit sourceId.
+    // was dropped in migration v17.
+    //
+    // v37: when page.source_id is set, INSERT writes that explicit value
+    // (and the upsert key is still (source_id, slug)). Omitted → schema
+    // DEFAULT 'default' applies. The DEFAULT-vs-explicit fork is done with
+    // a sql fragment so the param list stays positional and the DEFAULT
+    // path keeps byte-for-byte parity with pre-v37 behaviour.
     const pageKind = page.page_kind || 'markdown';
+    const sourceIdFragment = page.source_id
+      ? sql`, ${page.source_id}`
+      : sql`, DEFAULT`;
     const rows = await sql`
-      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now())
+      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, source_id)
+      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now()${sourceIdFragment})
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,

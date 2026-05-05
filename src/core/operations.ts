@@ -193,6 +193,16 @@ export interface AuthInfo {
   clientName?: string;
   scopes: string[];
   expiresAt?: number;
+  /**
+   * Per-OAuth-client default source pin (v37 migration). When set, page
+   * writes/reads from this client are routed to this source unless the
+   * request supplies an explicit `source_id`. Resolved by
+   * `verifyAccessToken` from `oauth_clients.default_source_id` so the
+   * dispatcher doesn't pay an extra DB roundtrip per request.
+   *
+   * NULL/undefined means: fall back to legacy 'default' source.
+   */
+  defaultSourceId?: string;
 }
 
 export interface OperationContext {
@@ -274,6 +284,17 @@ export interface OperationContext {
    * working without change).
    */
   brainId?: string;
+  /**
+   * Per-OAuth-client default source pin (v37 migration). Threaded by
+   * `serve-http.ts` from `AuthInfo.defaultSourceId` after the OAuth
+   * verifier resolves the token. Consumed by source-aware operations
+   * (`get_page`, `put_page`) with the precedence:
+   *
+   *   params.source_id > ctx.defaultSourceId > 'default'
+   *
+   * Local CLI invocations leave this undefined (no OAuth client → no pin).
+   */
+  defaultSourceId?: string;
 }
 
 export interface Operation {
@@ -301,19 +322,30 @@ const get_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
+    source_id: { type: 'string', description: 'v37: scope read to a specific source. Precedence: params.source_id > ctx.defaultSourceId (OAuth client pin) > unscoped (first match across sources).' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
 
-    let page = await ctx.engine.getPage(slug, { includeDeleted });
+    // v37 source precedence: params.source_id > ctx.defaultSourceId > undefined.
+    // undefined means "first match across sources" (pre-v37 semantics) so
+    // single-source brains and untagged OAuth clients keep working unchanged.
+    const sourceId = (typeof p.source_id === 'string' && p.source_id) ? p.source_id
+      : ctx.defaultSourceId;
+
+    const opts = sourceId
+      ? { includeDeleted, sourceId }
+      : { includeDeleted };
+
+    let page = await ctx.engine.getPage(slug, opts);
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
       const candidates = await ctx.engine.resolveSlugs(slug);
       if (candidates.length === 1) {
-        page = await ctx.engine.getPage(candidates[0], { includeDeleted });
+        page = await ctx.engine.getPage(candidates[0], opts);
         resolved_slug = candidates[0];
       } else if (candidates.length > 1) {
         return { error: 'ambiguous_slug', candidates };
@@ -337,6 +369,7 @@ const put_page: Operation = {
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
+    source_id: { type: 'string', description: 'v37: target a specific source. Precedence: params.source_id > ctx.defaultSourceId (OAuth client pin) > schema DEFAULT (\'default\').' },
   },
   mutating: true,
   scope: 'write',
@@ -382,7 +415,13 @@ const put_page: Operation = {
     // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
     const { isAvailable } = await import('./ai/gateway.ts');
     const noEmbed = !isAvailable('embedding');
-    const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
+    // v37 source precedence: explicit param > ctx pin (OAuth client) > undefined
+    // (engine applies schema DEFAULT 'default'). Resolved here so the import
+    // path, dedupe lookup, and downstream auto-link all see the same source.
+    const resolvedSourceId = (typeof p.source_id === 'string' && p.source_id) ? p.source_id
+      : ctx.defaultSourceId;
+    const result = await importFromContent(ctx.engine, slug, p.content as string,
+      resolvedSourceId ? { noEmbed, sourceId: resolvedSourceId } : { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
     // transaction). Runs even on status='skipped' so reconciliation catches drift

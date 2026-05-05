@@ -285,6 +285,88 @@ async function registerClient(name: string, args: string[]) {
 }
 
 /**
+ * Set (or clear) a per-OAuth-client default source pin (v37 migration).
+ *
+ * Pass a real `source_id` to pin: subsequent put_page / get_page calls from
+ * that OAuth client default to the pinned source unless the request supplies
+ * an explicit `source_id` param. Pass the literal string `none` (or an empty
+ * string) to clear the pin and fall back to source 'default'.
+ *
+ * Validates that the source exists before writing, so a typo can't silently
+ * pin to a nonexistent source. The schema FK has ON DELETE SET NULL, so a
+ * later source-delete unpins automatically.
+ */
+async function setSource(clientId: string, sourceId: string) {
+  if (!clientId || sourceId === undefined) {
+    console.error('Usage: gbrain auth set-source <client_id> <source_id|none>');
+    process.exit(1);
+  }
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    const clear = sourceId === 'none' || sourceId === '';
+    if (!clear) {
+      const [src] = await sql`SELECT id FROM sources WHERE id = ${sourceId} LIMIT 1`;
+      if (!src) {
+        console.error(`No source found with id "${sourceId}". Use \`gbrain sources list\` to see available sources.`);
+        process.exit(1);
+      }
+    }
+    const newValue = clear ? null : sourceId;
+    const rows = await sql`
+      UPDATE oauth_clients SET default_source_id = ${newValue}
+      WHERE client_id = ${clientId}
+      RETURNING client_id, client_name, default_source_id
+    `;
+    if (rows.length === 0) {
+      console.error(`No OAuth client found with id "${clientId}".`);
+      process.exit(1);
+    }
+    if (clear) {
+      console.log(`Cleared default source for OAuth client "${rows[0].client_name}" (${clientId}).`);
+      console.log('Subsequent requests fall back to source \'default\' (or explicit params.source_id).');
+    } else {
+      console.log(`OAuth client "${rows[0].client_name}" (${clientId}) now defaults to source "${sourceId}".`);
+    }
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
+ * List both legacy access_tokens and OAuth clients in a single table.
+ * Surfaces `default_source_id` (v37) so operators can audit per-client
+ * source pins without dropping into psql.
+ */
+async function listClients() {
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    const oauthRows = await sql`
+      SELECT client_id, client_name, default_source_id, created_at, deleted_at
+      FROM oauth_clients
+      ORDER BY created_at DESC
+    `;
+    if (oauthRows.length === 0) {
+      console.log('No OAuth clients registered. Create one: gbrain auth register-client "my-agent"');
+      return;
+    }
+    console.log('Client ID                                 Name                  Default Source        Status');
+    console.log('─'.repeat(110));
+    for (const r of oauthRows) {
+      const id = (r.client_id as string).padEnd(40);
+      const name = (r.client_name as string).slice(0, 20).padEnd(20);
+      const src = ((r.default_source_id as string | null) ?? '—').padEnd(20);
+      const status = r.deleted_at ? 'REVOKED' : 'active';
+      console.log(`${id}  ${name}  ${src}  ${status}`);
+    }
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
  * Entry point for the `gbrain auth` CLI subcommand. Also reused by the
  * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
  * still works.
@@ -294,6 +376,8 @@ export async function runAuth(args: string[]): Promise<void> {
   switch (cmd) {
     case 'create': await create(rest[0]); return;
     case 'list': await list(); return;
+    case 'list-clients': await listClients(); return;
+    case 'set-source': await setSource(rest[0], rest[1]); return;
     case 'revoke': await revoke(rest[0]); return;
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
@@ -309,7 +393,9 @@ export async function runAuth(args: string[]): Promise<void> {
 
 Usage:
   gbrain auth create <name>                                Create a legacy bearer token
-  gbrain auth list                                         List all tokens
+  gbrain auth list                                         List all legacy tokens
+  gbrain auth list-clients                                 List OAuth clients with default source pins (v37)
+  gbrain auth set-source <client_id> <source_id|none>      Pin OAuth client to a default source (v37). Use 'none' to clear.
   gbrain auth revoke <name>                                Revoke a legacy token
   gbrain auth register-client <name> [options]            Register an OAuth 2.1 client
      --grant-types <client_credentials,authorization_code> (default: client_credentials)
