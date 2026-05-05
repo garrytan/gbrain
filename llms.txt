@@ -17,6 +17,7 @@ Repo: https://github.com/garrytan/gbrain
 - [docs/ENGINES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ENGINES.md): PGLite vs Postgres trade-off and when to migrate.
 - [docs/GBRAIN_RECOMMENDED_SCHEMA.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md): MECE directory structure (people/, companies/, concepts/).
 - [docs/guides/live-sync.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/live-sync.md): Incremental markdown sync setup.
+- [docs/guides/media-evidence.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/media-evidence.md): Normalized media evidence import for OCR, captions, and transcripts.
 - [docs/guides/cron-schedule.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/cron-schedule.md): Recurring job scheduling.
 - [docs/guides/minions-deployment.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-deployment.md): Deploying the gbrain jobs worker: crontab + watchdog, inline --follow, systemd/Procfile/fly.toml, upgrade checklist.
 - [docs/guides/quiet-hours.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/quiet-hours.md): Notification hold + timezone-aware delivery.

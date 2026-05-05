@@ -88,6 +88,12 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/live-sync.md",
       },
       {
+        title: "docs/guides/media-evidence.md",
+        description:
+          "Normalized media evidence import for OCR, captions, and transcripts.",
+        path: "docs/guides/media-evidence.md",
+      },
+      {
         title: "docs/guides/cron-schedule.md",
         description: "Recurring job scheduling.",
         path: "docs/guides/cron-schedule.md",
