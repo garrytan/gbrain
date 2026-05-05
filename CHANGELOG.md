@@ -2,12 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.26.7] - 2026-05-04
+## [0.26.8] - 2026-05-04
 
 ## **Every gbrain brain becomes secure by default on upgrade. No public table without RLS, ever.**
 ## **The trigger covers `CREATE TABLE`, `CREATE TABLE AS`, and `SELECT INTO`, and the one-time backfill closes existing gaps.**
 
-A production incident on 2026-05-04 found a `public.*` table sitting in a Supabase project without Row Level Security enabled. `gbrain doctor` caught it after the fact, but the gap window between create and next doctor run was the silent vector. v0.26.7 closes that gap from both sides.
+A production incident on 2026-05-04 found a `public.*` table sitting in a Supabase project without Row Level Security enabled. `gbrain doctor` caught it after the fact, but the gap window between create and next doctor run was the silent vector. v0.26.8 closes that gap from both sides.
 
 The new migration v35 ships a Postgres DDL event trigger named `auto_rls_on_create_table` that fires on every `ddl_command_end` and runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` for every new `public.*` table, across all three table-creation syntaxes Postgres reports (`CREATE TABLE`, `CREATE TABLE AS … SELECT`, and `SELECT … INTO`). Same migration also walks every existing `public.*` base table and enables RLS on any that don't already have it, modulo the `GBRAIN:RLS_EXEMPT` comment escape hatch that doctor already honors. After upgrade, `gbrain doctor`'s `rls` check should be a no-op on every brain.
 
@@ -19,7 +19,7 @@ Posture choices, all caught during plan review: ENABLE only, no FORCE (so non-BY
 
 11 test cases gating the new shape: 4 happy-path coverage cases (CREATE TABLE, CTAS, SELECT INTO, function exists), 1 explicit "no FORCE" assertion against `pg_class.relforcerowsecurity`, 1 schema-scope test (non-public schemas remain RLS-off), 1 replay idempotency test, 3 backfill cases (plain table, exemption regex, mixed-case identifier safety), and 1 regression guard pinning the absence of `EXCEPTION WHEN OTHERS` in the trigger function body. Plus 9 structural assertions in `test/migrate.test.ts` and 1 new pin in `test/doctor.test.ts` for the doctor check.
 
-| Metric | BEFORE v0.26.7 | AFTER v0.26.7 | Δ |
+| Metric | BEFORE v0.26.8 | AFTER v0.26.8 | Δ |
 |---|---|---|---|
 | New `public.*` table without RLS | possible (gap window until next `gbrain doctor`) | impossible (event trigger aborts CREATE TABLE on RLS failure) | structural |
 | Existing `public.*` tables without RLS on upgrade | manual fix (operator copy-pastes ALTER TABLE) | auto-backfill on `gbrain upgrade` | one round-trip removed |
@@ -33,7 +33,7 @@ If you run gbrain on Supabase, your brain becomes secure on upgrade. Run `gbrain
 
 If you run gbrain on PGLite, this release is a no-op for you. PGLite has no event triggers, no PostgREST, and is single-tenant by design.
 
-## To take advantage of v0.26.7
+## To take advantage of v0.26.8
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about either the `rls` or `rls_event_trigger` check:
 
@@ -56,7 +56,7 @@ If you run gbrain on PGLite, this release is a no-op for you. PGLite has no even
 
 ### Breaking change: read this before upgrading
 
-If you have public tables that are intentionally RLS-off and you want them to stay that way, you MUST add the `GBRAIN:RLS_EXEMPT` comment **before** running `gbrain upgrade` to v0.26.7. The migration's one-time backfill flips RLS on for any public table whose comment doesn't carry the exact contract:
+If you have public tables that are intentionally RLS-off and you want them to stay that way, you MUST add the `GBRAIN:RLS_EXEMPT` comment **before** running `gbrain upgrade` to v0.26.8. The migration's one-time backfill flips RLS on for any public table whose comment doesn't carry the exact contract:
 
 ```sql
 COMMENT ON TABLE public.your_table IS
@@ -75,6 +75,85 @@ The recovery cost is one round-trip: `ALTER TABLE … DISABLE ROW LEVEL SECURITY
 - `test/doctor.test.ts` — structural assertion that `rls_event_trigger` is wired correctly and the existing `// 5. RLS` slice tests stay intact.
 - `docs/guides/rls-and-you.md` — new "v0.26.7 — auto-RLS event trigger and one-time backfill" section explaining the trigger, the breaking change for intentionally-RLS-off public tables, and the cross-app implications.
 - `CLAUDE.md` — extended `src/core/migrate.ts` annotation with v35 specifics and added the `rls_event_trigger` check to the `src/commands/doctor.ts` annotation.
+
+## [0.26.7] - 2026-05-04
+
+## **Test isolation foundation. Lint guard + helper + quarantine renames before the env and PGLite sweeps.**
+## **`scripts/check-test-isolation.sh` fails CI when test files mutate `process.env`, call `mock.module(...)`, or leak PGLite engines across files.**
+
+v0.26.4 shipped file-level parallel test fan-out (8 shards, 18min → ~85s). The next layer — intra-file parallelism via `test.concurrent()` — needs every test file to be safe under shared-process execution. The original v0.26.7 plan tried to bundle the whole sweep (~92 files) into one PR. Codex review caught it: the wallclock target wasn't derivable from that approach, the codemod glob didn't recurse, and the lint script wiring claimed `bun run test` includes the pre-check chain (it doesn't — that's `verify`). The plan was re-sliced into three PRs. This is the foundation slice.
+
+Four lint rules on every non-serial unit test file:
+- **R1:** no `process.env.X = ...`, bracket assignment, `delete process.env.X`, `Object.assign(process.env, ...)`, `Reflect.set(process.env, ...)` — use `withEnv()` from `test/helpers/with-env.ts`, or rename to `*.serial.test.ts`
+- **R2:** no `mock.module(...)` anywhere — top-level module mocks affect every other file in the same shard process
+- **R3:** `new PGLiteEngine(` only allowed within ~50 lines after a `beforeAll(`
+- **R4:** every `beforeAll(create)` must pair with `afterAll(disconnect)` — without it, engines leak across files in the same shard process
+
+Wired into `bun run verify` and `bun run check:all` (NOT `bun run test`, which is the parallel runner script with no pre-check chain). 51 baseline violators captured in `scripts/check-test-isolation.allowlist` — list MUST shrink over time. Future v0.26.8 (env sweep) and v0.26.9 (PGLite sweep) remove entries as files get fixed.
+
+`test/helpers/with-env.ts` save+restores `process.env` keys via try/finally (sync + async, handles delete via `undefined` overrides, nested calls compose). Cross-test safe; explicitly NOT intra-file concurrent-safe (`process.env` is process-global). Files using it stay outside the future codemod's eligibility filter.
+
+Two existing `mock.module()` files quarantined as `*.serial.test.ts`:
+- `test/core/cycle.test.ts` → `test/core/cycle.serial.test.ts`
+- `test/embed.test.ts` → `test/embed.serial.test.ts`
+
+Both run at `--max-concurrency=1` after the parallel pass, same as the existing `*.serial.test.ts` quarantine pattern shipped in v0.26.4.
+
+Wallclock observed: 74s on a Mac dev box (running `bun run test` with the new quarantines). Already at the v0.26.9 informational target. The full intra-file marker flip (with codemod + per-file `test.concurrent()`) lands in v0.26.9 and aims for the same ≤60s with pinned config.
+
+To take advantage of v0.26.7
+============================
+
+`gbrain upgrade` does nothing functional in this release — it ships test infrastructure, not user-facing code. But if you contribute tests:
+
+1. **Run `bun run verify` before pushing.** The new `check-test-isolation.sh` runs alongside the privacy + jsonb + progress checks. Catches new env-mutation, mock.module, and PGLite-pattern violations before CI does.
+
+2. **For env-touching tests, use `withEnv`:**
+
+   ```ts
+   import { withEnv } from './helpers/with-env.ts';
+
+   test('reads OPENAI_API_KEY', async () => {
+     await withEnv({ OPENAI_API_KEY: 'sk-test' }, async () => {
+       expect(loadConfig().openai_key).toBe('sk-test');
+     });
+   });
+   ```
+
+3. **For new PGLite-using tests, use the canonical 4-line block** (documented in `test/helpers/reset-pglite.ts` JSDoc and `CLAUDE.md`):
+
+   ```ts
+   beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); });
+   afterAll(async () => { await engine.disconnect(); });
+   beforeEach(async () => { await resetPgliteState(engine); });
+   ```
+
+4. **For tests with file-wide shared state** (mock.module, intentional cross-test ordering), rename to `*.serial.test.ts`. The runner already routes those to a serial post-pass at `--max-concurrency=1`.
+
+If you hit the lint and your file is genuinely un-fixable, add it to `scripts/check-test-isolation.allowlist` with a TODO naming the sweep PR that will remove it. The allow-list is informational at cap 10; beyond that, redesign.
+
+### Itemized changes
+
+#### Added
+- `test/helpers/with-env.ts` + `test/helpers/with-env.test.ts` — env save/restore helper with 7 unit cases (sync, async, delete, restore-on-throw, nested compose, multi-key, prior-undefined)
+- `scripts/check-test-isolation.sh` — grep-based lint enforcing R1-R4 with allow-list escape hatch
+- `scripts/check-test-isolation.allowlist` — 51 baseline violators (pre-sweep)
+- `test/scripts/check-test-isolation.test.ts` — 16 fixture-driven cases for the lint
+- `bun run check:test-isolation` script entry; wired into `bun run verify` and `bun run check:all`
+
+#### Changed
+- `test/helpers/reset-pglite.ts` — JSDoc extended with the canonical 4-line PGLite block
+- `CLAUDE.md` `## Testing` section — added R1-R4 lint rules table, canonical PGLite block, withEnv pattern, when-to-quarantine guidance
+
+#### Renamed (mock.module quarantine)
+- `test/core/cycle.test.ts` → `test/core/cycle.serial.test.ts`
+- `test/embed.test.ts` → `test/embed.serial.test.ts`
+
+#### Test counts
+- Before: 3720 unit tests
+- After: 3738 unit tests (+18 new from with-env + check-test-isolation cases)
+- Coverage: 96% on new production files (1 trivial gap on empty-overrides invocation)
+- Wallclock on Mac dev box: 74s (under the v0.26.9 ≤60s informational target already)
 
 ## [0.26.6] - 2026-05-03
 
@@ -801,7 +880,7 @@ No schema migration. Existing brains work unchanged.
 ### Cross-model review credit
 
 This release ran two rounds of `/plan-eng-review` plus `/codex` outside voice, capturing 15 user decisions. Codex caught the four most consequential architectural mistakes the eng review missed (read the plan file's GSTACK REVIEW REPORT for the full audit trail). The atomic-refusal bug in applyUninstall was caught by the test for the contract — the test was written with the contract in mind, the implementation lied about the contract, and the lie surfaced immediately. That's the cross-model loop working.
-=======
+
 ## [0.25.0] - 2026-04-26
 
 ## **Contributors can now benchmark retrieval changes against real captured queries before merging.**

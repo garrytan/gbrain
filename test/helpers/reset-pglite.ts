@@ -8,6 +8,35 @@
  * that across every test in every file. Sharing one engine and wiping data
  * is two orders of magnitude faster.
  *
+ * Canonical block (copy verbatim into PGLite-using test files; enforced by
+ * scripts/check-test-isolation.sh rules R3 + R4):
+ *
+ *   import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+ *   import { resetPgliteState } from './helpers/reset-pglite.ts';
+ *
+ *   let engine: PGLiteEngine;
+ *
+ *   beforeAll(async () => {
+ *     engine = new PGLiteEngine();
+ *     await engine.connect({});
+ *     await engine.initSchema();
+ *   });
+ *
+ *   afterAll(async () => {
+ *     await engine.disconnect();
+ *   });
+ *
+ *   beforeEach(async () => {
+ *     await resetPgliteState(engine);
+ *   });
+ *
+ * Why this exact shape:
+ *   - `beforeAll` creates one engine per file (~20s schema init paid once).
+ *   - `beforeEach` resets user data without re-creating the engine.
+ *   - `afterAll(disconnect)` is REQUIRED. The v0.26.4 parallel runner loads
+ *     multiple test files into one bun process per shard; without disconnect,
+ *     engines leak across file boundaries within a shard process.
+ *
  * Implementation:
  *   1. TRUNCATE every public table CASCADE, including `sources` (so tests
  *      that register their own sources don't leak rows into the next test).
