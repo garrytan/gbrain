@@ -7,11 +7,11 @@ const MANIFEST_PATH = join(SKILLS_DIR, "manifest.json");
 
 /** Simple YAML frontmatter parser — extracts fields between --- delimiters */
 function parseFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return null;
   const yaml = match[1];
   const result: Record<string, string> = {};
-  for (const line of yaml.split("\n")) {
+  for (const line of yaml.split(/\r?\n/)) {
     const colonIdx = line.indexOf(":");
     if (colonIdx > 0) {
       const key = line.slice(0, colonIdx).trim();
@@ -65,7 +65,7 @@ describe("skills conformance", () => {
       const content = readFileSync(join(SKILLS_DIR, dir, "SKILL.md"), "utf-8");
 
       test("has YAML frontmatter", () => {
-        expect(content.startsWith("---\n")).toBe(true);
+        expect(/^---\r?\n/.test(content)).toBe(true);
         const fm = parseFrontmatter(content);
         expect(fm).not.toBeNull();
       });

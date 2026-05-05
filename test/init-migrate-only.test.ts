@@ -20,13 +20,14 @@ const CLI = join(__dirname, '..', 'src', 'cli.ts');
 
 let tmp: string;
 let origHome: string | undefined;
+let origGbrainHome: string | undefined;
 
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
   // Strip DATABASE_URL / GBRAIN_DATABASE_URL from the subprocess env. The
   // "no config" error-path tests need loadConfig() to return null, which it
   // won't if any env var fallback is set (src/core/config.ts:30). Tests
   // that seed their own config use freshHomeWithConfig() below.
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  const env = { ...process.env, HOME: tmp, GBRAIN_HOME: tmp } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {
@@ -47,12 +48,16 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
 
 beforeEach(() => {
   origHome = process.env.HOME;
+  origGbrainHome = process.env.GBRAIN_HOME;
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-init-migrate-only-test-'));
+  process.env.GBRAIN_HOME = tmp;
 });
 
 afterEach(() => {
   if (origHome === undefined) delete process.env.HOME;
   else process.env.HOME = origHome;
+  if (origGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = origGbrainHome;
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 

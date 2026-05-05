@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, it, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, symlinkSync, mkdirSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -8,6 +8,7 @@ import {
   validateFilename,
   OperationError,
 } from '../src/core/operations.ts';
+import { canCreateDirSymlink, canCreateFileSymlink } from './helpers/symlink.ts';
 
 // --- validateUploadPath ---
 
@@ -65,11 +66,11 @@ describe('validateUploadPath', () => {
     expect(() => validateUploadPath('/etc/passwd', root)).toThrow(OperationError);
   });
 
-  it('rejects a symlink whose final component points outside root (B5 regression)', () => {
+  test.skipIf(!canCreateFileSymlink())('rejects a symlink whose final component points outside root (B5 regression)', () => {
     const target = join(outside, 'target.txt');
     writeFileSync(target, 'secret');
     const link = join(root, 'link-to-outside.txt');
-    symlinkSync(target, link);
+    symlinkSync(target, link, 'file');
     try {
       expect(() => validateUploadPath(link, root)).toThrow(OperationError);
     } finally {
@@ -77,9 +78,9 @@ describe('validateUploadPath', () => {
     }
   });
 
-  it('rejects a symlink whose parent dir points outside root (B5 parent-symlink regression)', () => {
+  test.skipIf(!canCreateDirSymlink())('rejects a symlink whose parent dir points outside root (B5 parent-symlink regression)', () => {
     const linkDir = join(root, 'link-dir');
-    symlinkSync(outside, linkDir);
+    symlinkSync(outside, linkDir, 'dir');
     const p = join(linkDir, 'secret.txt');
     writeFileSync(join(outside, 'secret.txt'), 'secret');
     try {

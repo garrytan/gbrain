@@ -133,6 +133,41 @@ describe("checkResolvable — real skills directory", () => {
   });
 });
 
+describe("checkResolvable — frontmatter newline handling", () => {
+  let dir: string;
+  afterEachCleanup(() => dir && rmSync(dir, { recursive: true, force: true }));
+
+  test("parses CRLF frontmatter triggers", () => {
+    dir = mkdtempSync(join(tmpdir(), "gbrain-crlf-frontmatter-"));
+    writeFileSync(join(dir, "RESOLVER.md"), [
+      "## Test",
+      "| Trigger | Skill |",
+      "|-----|-----|",
+      "| \"alpha\" | `skills/alpha/SKILL.md` |",
+      "",
+    ].join("\r\n"));
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({ skills: [{ name: "alpha", path: "alpha/SKILL.md" }] }, null, 2)
+    );
+    mkdirSync(join(dir, "alpha"), { recursive: true });
+    writeFileSync(join(dir, "alpha", "SKILL.md"), [
+      "---",
+      "name: alpha",
+      "description: test",
+      "triggers:",
+      "  - \"alpha\"",
+      "---",
+      "",
+      "# Alpha",
+      "",
+    ].join("\r\n"));
+
+    const report = checkResolvable(dir);
+    expect(report.issues.filter(i => i.type === "mece_gap")).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // DRY detection — proximity-based suppression
 // ---------------------------------------------------------------------------

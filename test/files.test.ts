@@ -5,6 +5,7 @@ import { createHash } from 'crypto';
 import { extname } from 'path';
 import { tmpdir } from 'os';
 import { collectFiles } from '../src/commands/files.ts';
+import { canCreateFileSymlink } from './helpers/symlink.ts';
 
 const TMP = join(import.meta.dir, '.tmp-files-test');
 
@@ -157,11 +158,11 @@ describe('collectFiles (production import)', () => {
     expect(files).toEqual(sorted);
   });
 
-  test('collectFiles skips symlinks', () => {
+  test.skipIf(!canCreateFileSymlink())('collectFiles skips symlinks', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-symlink-'));
     try {
       writeFileSync(join(tmpDir, 'real.txt'), 'content');
-      symlinkSync('/etc/passwd', join(tmpDir, 'evil.txt'));
+      symlinkSync(join(tmpDir, 'real.txt'), join(tmpDir, 'evil.txt'), 'file');
       const files = collectFiles(tmpDir);
       expect(files.map(f => basename(f))).toContain('real.txt');
       expect(files.map(f => basename(f))).not.toContain('evil.txt');
@@ -170,11 +171,11 @@ describe('collectFiles (production import)', () => {
     }
   });
 
-  test('collectFiles skips broken symlinks', () => {
+  test.skipIf(!canCreateFileSymlink())('collectFiles skips broken symlinks', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-broken-'));
     try {
       writeFileSync(join(tmpDir, 'real.txt'), 'content');
-      symlinkSync('/nonexistent/path', join(tmpDir, 'broken.txt'));
+      symlinkSync(join(tmpDir, 'missing-target.txt'), join(tmpDir, 'broken.txt'), 'file');
       const files = collectFiles(tmpDir);
       expect(files.map(f => basename(f))).toContain('real.txt');
       expect(files.map(f => basename(f))).not.toContain('broken.txt');

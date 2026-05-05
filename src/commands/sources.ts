@@ -24,7 +24,7 @@
  */
 
 import { writeFileSync, unlinkSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, relative, isAbsolute, sep } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import {
   assessDestructiveImpact,
@@ -138,11 +138,15 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       [id],
     );
     for (const other of others) {
-      const a = localPath;
-      const b = other.local_path;
-      if (a === b || a.startsWith(b + '/') || b.startsWith(a + '/')) {
+      const a = resolve(localPath);
+      const b = resolve(other.local_path);
+      const aToB = relative(a, b);
+      const bToA = relative(b, a);
+      const bInsideA = aToB === '' || (!aToB.startsWith(`..${sep}`) && aToB !== '..' && !isAbsolute(aToB));
+      const aInsideB = bToA === '' || (!bToA.startsWith(`..${sep}`) && bToA !== '..' && !isAbsolute(bToA));
+      if (bInsideA || aInsideB) {
         throw new Error(
-          `path "${a}" overlaps with existing source "${other.id}" at "${b}". ` +
+          `path "${localPath}" overlaps with existing source "${other.id}" at "${other.local_path}". ` +
           `Overlapping sources are not allowed — same files would ingest twice under different source_ids.`,
         );
       }

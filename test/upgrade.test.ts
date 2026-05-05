@@ -1,12 +1,15 @@
 import { describe, test, expect } from 'bun:test';
+import { fileURLToPath } from 'url';
 
 // We can't easily mock process.execPath in bun, so we test the upgrade
 // command's --help output and the detection logic via subprocess
+const bunExe = process.execPath;
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 describe('upgrade command', () => {
   test('--help prints usage and exits 0', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'upgrade', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'upgrade', '--help'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -18,8 +21,8 @@ describe('upgrade command', () => {
   });
 
   test('-h also prints usage', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'upgrade', '-h'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'upgrade', '-h'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -84,8 +87,8 @@ describe('post-upgrade behavior (post v0.12.0 merge)', () => {
   //   - --help still prints usage.
 
   test('--help prints usage', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'post-upgrade', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'post-upgrade', '--help'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });

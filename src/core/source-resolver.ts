@@ -14,7 +14,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, resolve, relative, isAbsolute, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 
 const DOTFILE = '.gbrain-source';
@@ -98,7 +98,8 @@ export async function resolveSourceId(
   let best: { id: string; pathLen: number } | null = null;
   for (const r of registered) {
     const p = resolve(r.local_path);
-    if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
+    const relToSource = relative(p, cwdResolved);
+    if (relToSource === '' || (!relToSource.startsWith(`..${sep}`) && relToSource !== '..' && !isAbsolute(relToSource))) {
       if (!best || p.length > best.pathLen) {
         best = { id: r.id, pathLen: p.length };
       }

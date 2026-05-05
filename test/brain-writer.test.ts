@@ -10,6 +10,7 @@ import {
 } from '../src/core/brain-writer.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { canCreateDirSymlink } from './helpers/symlink.ts';
 
 const fence = '---';
 
@@ -196,16 +197,11 @@ describe('scanBrainSources (PGLite)', () => {
     expect(ghost.total).toBe(0);
   });
 
-  test('skips symlinks (matches sync no-symlink policy)', async () => {
+  test.skipIf(!canCreateDirSymlink())('skips symlinks (matches sync no-symlink policy)', async () => {
     mkdirSync(join(tmp, 'real'), { recursive: true });
     writeFileSync(join(tmp, 'real', 'good.md'), `${fence}\ntype: x\ntitle: ok\n${fence}\n\nbody`);
     // Create a symlink loop: tmp/real/loop -> tmp/real
-    try {
-      symlinkSync(join(tmp, 'real'), join(tmp, 'real', 'loop'));
-    } catch {
-      // Some CI environments forbid symlink creation; skip the assertion.
-      return;
-    }
+    symlinkSync(join(tmp, 'real'), join(tmp, 'real', 'loop'), 'dir');
     await registerSource('with-symlink', tmp);
     const report = await scanBrainSources(engine);
     // The walk should complete without infinite-looping; at most one .md

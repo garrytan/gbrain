@@ -3,7 +3,8 @@
  *
  * Separate from src/core/config.ts (engine config), written to its own file so
  * engine config and agent preferences can evolve independently. Atomic writes
- * via mktemp + rename; 0o600 perms; forward-compatible (preserves unknown keys).
+ * via mktemp + rename; best-effort 0o600 perms on platforms that support POSIX
+ * mode bits; forward-compatible (preserves unknown keys).
  *
  * Also houses ~/.gbrain/migrations/completed.jsonl append helper.
  */
@@ -83,7 +84,8 @@ export function loadPreferences(): Preferences {
 
 /**
  * Save preferences atomically (mktemp on same filesystem + rename). Preserves
- * any unknown keys passed in. Chmods 0o600 after write.
+ * any unknown keys passed in. Chmods 0o600 after write where the platform
+ * honors POSIX mode bits.
  */
 export function savePreferences(prefs: Preferences): void {
   if (prefs.minion_mode !== undefined) validateMinionMode(prefs.minion_mode);

@@ -7,6 +7,10 @@ import { SECTIONS, FULL_SIZE_BUDGET } from "../scripts/llms-config";
 
 const repoRoot = join(import.meta.dir, "..");
 
+function normalizeNewlines(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
+
 describe("build-llms generator", () => {
   // Case 1 — every config path resolves on disk. Catches rename-induced 404s.
   test("every configured path exists on disk", () => {
@@ -63,8 +67,12 @@ describe("build-llms generator", () => {
 
     const helpMsg =
       "Run `bun run build:llms` and commit the updated output before shipping.";
-    expect(committedLlms, helpMsg).toBe(llmsTxt);
-    expect(committedFull, helpMsg).toBe(llmsFullTxt);
+    expect(normalizeNewlines(committedLlms), helpMsg).toBe(
+      normalizeNewlines(llmsTxt),
+    );
+    expect(normalizeNewlines(committedFull), helpMsg).toBe(
+      normalizeNewlines(llmsFullTxt),
+    );
   });
 
   // Case 5 — content contract. Prevents silent removal of critical sections or

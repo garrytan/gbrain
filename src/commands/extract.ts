@@ -17,7 +17,7 @@
  */
 
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'fs';
-import { join, relative, dirname } from 'path';
+import { join, relative, posix } from 'path';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from '../core/engine.ts';
 import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
@@ -71,13 +71,17 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
         if (lstatSync(full).isDirectory()) {
           walk(full);
         } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
-          files.push({ path: full, relPath: relative(dir, full) });
+          files.push({ path: full, relPath: toSlugPath(relative(dir, full)) });
         }
       } catch { /* skip unreadable */ }
     }
   }
   walk(dir);
   return files;
+}
+
+function toSlugPath(path: string): string {
+  return path.replace(/[\\/]+/g, '/');
 }
 
 // --- Link extraction ---
@@ -133,15 +137,15 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
  * Returns null when no matching slug is found (dangling link).
  */
 export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<string>): string | null {
-  const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
+  const targetNoExt = toSlugPath(relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget);
 
-  const s1 = join(fileDir, targetNoExt);
+  const s1 = posix.join(toSlugPath(fileDir), targetNoExt);
   if (allSlugs.has(s1)) return s1;
 
-  const parts = fileDir.split('/').filter(Boolean);
+  const parts = toSlugPath(fileDir).split('/').filter(Boolean);
   for (let strip = 1; strip <= parts.length; strip++) {
     const ancestor = parts.slice(0, parts.length - strip).join('/');
-    const candidate = ancestor ? join(ancestor, targetNoExt) : targetNoExt;
+    const candidate = ancestor ? posix.join(ancestor, targetNoExt) : targetNoExt;
     if (allSlugs.has(candidate)) return candidate;
   }
 
@@ -197,8 +201,9 @@ export async function extractLinksFromFile(
   opts?: { includeFrontmatter?: boolean },
 ): Promise<ExtractedLink[]> {
   const links: ExtractedLink[] = [];
-  const slug = relPath.replace('.md', '');
-  const fileDir = dirname(relPath);
+  const normalizedRelPath = toSlugPath(relPath);
+  const slug = normalizedRelPath.replace(/\.md$/, '');
+  const fileDir = posix.dirname(normalizedRelPath);
   const fm = parseFrontmatterFromContent(content, relPath);
 
   for (const { name, relTarget } of extractMarkdownLinks(content)) {
@@ -206,7 +211,7 @@ export async function extractLinksFromFile(
     if (resolved !== null) {
       links.push({
         from_slug: slug, to_slug: resolved,
-        link_type: inferTypeByDir(fileDir, dirname(resolved), fm),
+        link_type: inferTypeByDir(fileDir, posix.dirname(resolved), fm),
         context: `markdown link: [${name}]`,
       });
     }

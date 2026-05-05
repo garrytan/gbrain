@@ -12,10 +12,11 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'fs';
-import { join } from 'path';
+import { dirname, join, sep } from 'path';
 import { tmpdir } from 'os';
 
 import { __testing, type PendingHostWorkEntry } from '../src/commands/migrations/v0_11_0.ts';
+import { canCreateFileSymlink } from './helpers/symlink.ts';
 
 const {
   injectAgentsMdMarker,
@@ -55,9 +56,6 @@ function writeCronJson(dir: string, jobs: unknown[]) {
   writeFileSync(path, JSON.stringify({ jobs }, null, 2) + '\n');
   return path;
 }
-// Re-export dirname so writeCronJson can use it without another import
-const dirname = (p: string) => p.substring(0, p.lastIndexOf('/'));
-
 const DEFAULT_OPTS = {
   yes: true,
   mode: undefined,
@@ -114,14 +112,14 @@ describe('AGENTS.md marker injection', () => {
     expect(after).not.toContain(AGENTS_MD_MARKER);
   });
 
-  test('SKIPs symlink target that escapes scoped roots', () => {
+  test.skipIf(!canCreateFileSymlink())('SKIPs symlink target that escapes scoped roots', () => {
     const outside = join(tmp, 'outside', 'AGENTS.md');
     mkdirSync(join(tmp, 'outside'), { recursive: true });
     writeFileSync(outside, '# escaped\n');
 
     const inside = join(tmp, '.claude', 'AGENTS.md');
     mkdirSync(join(tmp, '.claude'), { recursive: true });
-    symlinkSync(outside, inside);
+    symlinkSync(outside, inside, 'file');
 
     const result = injectAgentsMdMarker(inside, DEFAULT_OPTS);
     expect(result.injected).toBe(false);
@@ -279,11 +277,11 @@ describe('findAgentsMdFiles + findCronManifests scoping', () => {
     writeFileSync(join(tmp, 'project', 'AGENTS.md'), '# project\n');
     // No --host-dir
     const found = findAgentsMdFiles(DEFAULT_OPTS);
-    expect(found.some(p => p.includes('/project/'))).toBe(false);
+    expect(found.some(p => p.includes(`${sep}project${sep}`))).toBe(false);
 
     // With --host-dir
     const foundWithHostDir = findAgentsMdFiles({ ...DEFAULT_OPTS, hostDir: join(tmp, 'project') });
-    expect(foundWithHostDir.some(p => p.includes('/project/'))).toBe(true);
+    expect(foundWithHostDir.some(p => p.includes(`${sep}project${sep}`))).toBe(true);
   });
 
   test('findCronManifests picks up cron/jobs.json under scoped roots', () => {
