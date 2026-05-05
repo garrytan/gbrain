@@ -382,9 +382,19 @@ export class PGLiteEngine implements BrainEngine {
     // global UNIQUE(slug) was dropped in migration v17. Step 5+ will
     // surface an explicit sourceId param on putPage for multi-source sync.
     const pageKind = page.page_kind || 'markdown';
+    // v37: explicit source_id ($9) overrides the schema DEFAULT 'default'.
+    // Branching on placeholder vs DEFAULT keeps positional params clean and
+    // preserves byte-for-byte parity with pre-v37 calls when source_id is
+    // omitted (DEFAULT path).
+    const sourceIdSql = page.source_id ? '$9' : 'DEFAULT';
+    const params: unknown[] = [
+      slug, page.type, pageKind, page.title, page.compiled_truth,
+      page.timeline || '', JSON.stringify(frontmatter), hash,
+    ];
+    if (page.source_id) params.push(page.source_id);
     const { rows } = await this.db.query(
-      `INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, now())
+      `INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, source_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, now(), ${sourceIdSql})
        ON CONFLICT (source_id, slug) DO UPDATE SET
          type = EXCLUDED.type,
          page_kind = EXCLUDED.page_kind,
@@ -395,7 +405,7 @@ export class PGLiteEngine implements BrainEngine {
          content_hash = EXCLUDED.content_hash,
          updated_at = now()
        RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at`,
-      [slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash]
+      params
     );
     return rowToPage(rows[0] as Record<string, unknown>);
   }
