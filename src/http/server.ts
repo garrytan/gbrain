@@ -39,6 +39,53 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ]);
 }
 
+// Shared qmd-style search runner. Returns either the result envelope (and
+// updates warm state on success) or a structured warming_up error envelope
+// when every subquery dropped. Used by GET /search and POST /search/batch.
+type QmdSearchInput = { lex?: string | null; vec?: string | null; hyde?: string | null; limit?: number };
+type QmdSearchOutcome =
+  | { ok: true; lex?: string | null; vec?: string | null; hyde?: string | null; results: SearchResult[]; degraded?: true; dropped?: { kind: string; reason: string }[] }
+  | { ok: false; code: 'warming_up'; error: string; retry_after_ms: number; hint: string; dropped: { kind: string; reason: string }[] };
+
+async function runQmdSearch(engine: BrainEngine, input: QmdSearchInput): Promise<QmdSearchOutcome> {
+  const { lex, vec, hyde } = input;
+  const limit = Math.min(input.limit ?? 10, 50);
+  const innerOpts = { limit: Math.min(limit * 3, 50) };
+
+  const taskMeta: { kind: 'lex' | 'vec' | 'hyde'; promise: Promise<SearchResult[]> }[] = [];
+  if (lex)  taskMeta.push({ kind: 'lex',  promise: withTimeout(engine.searchKeyword(lex, innerOpts), LEX_TIMEOUT_MS, 'lex') });
+  if (vec)  taskMeta.push({ kind: 'vec',  promise: withTimeout(embed(vec).then(emb => engine.searchVector(emb, innerOpts)), VEC_TIMEOUT_MS, 'vec') });
+  if (hyde) taskMeta.push({ kind: 'hyde', promise: withTimeout(embed(hyde).then(emb => engine.searchVector(emb, innerOpts)), VEC_TIMEOUT_MS, 'hyde') });
+
+  const settled = await Promise.allSettled(taskMeta.map(t => t.promise));
+  const lists: SearchResult[][] = [];
+  const dropped: { kind: string; reason: string }[] = [];
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled') lists.push(r.value);
+    else dropped.push({ kind: taskMeta[i].kind, reason: String((r as PromiseRejectedResult).reason).slice(0, 200) });
+  });
+
+  if (lists.length === 0) {
+    return {
+      ok: false,
+      code: 'warming_up',
+      error: 'All search subqueries timed out — service may be cold-starting',
+      retry_after_ms: 3000,
+      hint: 'Wait ~3s and retry, or fall back to ?q=<query> for the keyword-only fast path',
+      dropped,
+    };
+  }
+
+  const results = rrfFusion(lists, 60, true).slice(0, limit);
+  markQuerySuccess();
+  const out: QmdSearchOutcome = { ok: true, lex, vec, hyde, results };
+  if (dropped.length > 0) {
+    (out as any).degraded = true;
+    (out as any).dropped = dropped;
+  }
+  return out;
+}
+
 export interface HttpServeOptions {
   port?: number;
   host?: string;
@@ -187,44 +234,15 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         const hyde = url.searchParams.get('hyde');
 
         if (lex || vec || hyde) {
-          // Multi-typed mode: run sub-queries in parallel under per-task
-          // timeout budgets, RRF-merge whatever survived. If lex completes
-          // but vec times out, return lex results with `degraded:true` instead
-          // of failing the whole request — strictly better than the prior
-          // "all-or-nothing Promise.allSettled" path on cold Railway boots.
-          const taskMeta: { kind: 'lex' | 'vec' | 'hyde'; promise: Promise<SearchResult[]> }[] = [];
-          if (lex)  taskMeta.push({ kind: 'lex',  promise: withTimeout(engine.searchKeyword(lex, innerOpts), LEX_TIMEOUT_MS, 'lex') });
-          if (vec)  taskMeta.push({ kind: 'vec',  promise: withTimeout(embed(vec).then(emb => engine.searchVector(emb, innerOpts)), VEC_TIMEOUT_MS, 'vec') });
-          if (hyde) taskMeta.push({ kind: 'hyde', promise: withTimeout(embed(hyde).then(emb => engine.searchVector(emb, innerOpts)), VEC_TIMEOUT_MS, 'hyde') });
-
-          const settled = await Promise.allSettled(taskMeta.map(t => t.promise));
-          const lists: SearchResult[][] = [];
-          const dropped: { kind: string; reason: string }[] = [];
-          settled.forEach((r, i) => {
-            if (r.status === 'fulfilled') lists.push(r.value);
-            else dropped.push({ kind: taskMeta[i].kind, reason: String((r as PromiseRejectedResult).reason).slice(0, 200) });
-          });
-
-          if (lists.length === 0) {
-            // Every subquery failed — almost certainly a cold start.
-            return err('warming_up',
-              'All search subqueries timed out — service may be cold-starting',
-              503,
-              {
-                retry_after_ms: 3000,
-                hint: 'Wait ~3s and retry, or fall back to ?q=<query> for the keyword-only fast path',
-                dropped,
-              }
-            );
+          const outcome = await runQmdSearch(engine, { lex, vec, hyde, limit });
+          if (!outcome.ok) {
+            return err(outcome.code, outcome.error, 503, {
+              retry_after_ms: outcome.retry_after_ms,
+              hint: outcome.hint,
+              dropped: outcome.dropped,
+            });
           }
-
-          const results = rrfFusion(lists, 60, true).slice(0, limit);
-          markQuerySuccess();
-          const body: Record<string, unknown> = { lex, vec, hyde, results };
-          if (dropped.length > 0) {
-            body.degraded = true;
-            body.dropped = dropped;
-          }
+          const { ok: _omit, ...body } = outcome;
           return ok(body, Date.now() - t0);
         }
 
@@ -234,6 +252,69 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         const results = await searchOp.handler(ctx, { query: q, limit });
         markQuerySuccess();
         return ok({ query: q, results }, Date.now() - t0);
+      }
+
+      // ── POST /search/batch  { queries: [{lex?, vec?, hyde?, q?, limit?}, ...] } ──
+      // Single round-trip for agent-driven multi-topic sweeps. Each query
+      // honors per-subquery timeouts so one slow vec doesn't drag the rest.
+      // Concurrency capped at 4 to be polite to the embedding provider on
+      // cold-start. Returns parallel results array; per-item failures don't
+      // fail the whole batch.
+      if (path === '/search/batch' && req.method === 'POST') {
+        let body: Record<string, unknown>;
+        try { body = await req.json(); } catch { return err('invalid_json', 'Body must be JSON'); }
+
+        const queries = body.queries;
+        if (!Array.isArray(queries) || queries.length === 0) {
+          return err('missing_param', 'queries must be a non-empty array');
+        }
+        if (queries.length > 20) {
+          return err('too_large', 'queries array exceeds 20-item batch limit', 400, { hint: 'Split into multiple /search/batch calls' });
+        }
+
+        const CONCURRENCY = 4;
+        const out: unknown[] = new Array(queries.length);
+        let cursor = 0;
+        async function worker(): Promise<void> {
+          while (true) {
+            const i = cursor++;
+            if (i >= queries.length) return;
+            const q = queries[i] as Record<string, unknown>;
+            try {
+              if (typeof q.q === 'string' && q.q) {
+                // Simple ?q= path — keyword-only via searchOp, fast.
+                const limit = Math.min(parseInt(String(q.limit ?? 10), 10), 50);
+                const results = await searchOp.handler(ctx, { query: q.q, limit });
+                markQuerySuccess();
+                out[i] = { ok: true, query: q.q, results };
+              } else {
+                const outcome = await runQmdSearch(engine, {
+                  lex: typeof q.lex === 'string' ? q.lex : null,
+                  vec: typeof q.vec === 'string' ? q.vec : null,
+                  hyde: typeof q.hyde === 'string' ? q.hyde : null,
+                  limit: typeof q.limit === 'number' ? q.limit : parseInt(String(q.limit ?? 10), 10),
+                });
+                if (!outcome.ok) {
+                  out[i] = { ok: false, code: outcome.code, error: outcome.error, retry_after_ms: outcome.retry_after_ms, dropped: outcome.dropped };
+                } else {
+                  const { ok: _omit, ...rest } = outcome;
+                  out[i] = { ok: true, ...rest };
+                }
+              }
+            } catch (e) {
+              out[i] = { ok: false, code: 'internal_error', error: String(e).slice(0, 200) };
+            }
+          }
+        }
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queries.length) }, worker));
+
+        const failures = out.filter(r => (r as { ok?: boolean }).ok === false).length;
+        return ok({
+          results: out,
+          batch_size: queries.length,
+          succeeded: queries.length - failures,
+          failed: failures,
+        }, Date.now() - t0);
       }
 
       // ── POST /query  { query, limit?, expand? } ───────────────────────────
@@ -314,7 +395,96 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         return ok({ pages }, Date.now() - t0);
       }
 
-      return err('not_found', 'Unknown endpoint', 404);
+      // ── GET /topics — knowledge map (no-OTP-needed entry point) ───────────
+      // Lets a fresh agent see what's actually in the brain before guessing
+      // keywords. Returns domains (slug prefix before "/") with count + a
+      // few sample slugs each, sorted by count desc.
+      if (path === '/topics' && req.method === 'GET') {
+        const sampleSize = Math.min(Math.max(parseInt(url.searchParams.get('samples') ?? '3', 10), 0), 10);
+        const minCount = Math.max(parseInt(url.searchParams.get('min_count') ?? '1', 10), 1);
+
+        const slugs = await engine.getAllSlugs();
+        const buckets = new Map<string, string[]>();
+        for (const slug of slugs) {
+          const idx = slug.indexOf('/');
+          const domain = idx === -1 ? '_root' : slug.slice(0, idx);
+          let bucket = buckets.get(domain);
+          if (!bucket) { bucket = []; buckets.set(domain, bucket); }
+          bucket.push(slug);
+        }
+
+        const topics = [...buckets.entries()]
+          .filter(([, list]) => list.length >= minCount)
+          .map(([name, list]) => ({
+            name,
+            count: list.length,
+            sample_slugs: list.slice(0, sampleSize),
+          }))
+          .sort((a, b) => b.count - a.count);
+
+        return ok({ topics, total_pages: slugs.size }, Date.now() - t0);
+      }
+
+      // ── GET /schema — return-shape contract for agents ────────────────────
+      // Static documentation of result fields + score semantics so agents
+      // don't have to reverse-engineer chunk_source, score thresholds, etc.
+      if (path === '/schema' && req.method === 'GET') {
+        return ok({
+          version: VERSION,
+          search_result: {
+            slug: 'string — page identifier; pass to /page?slug=… to fetch full markdown',
+            page_id: 'integer — internal DB id, opaque to agents',
+            title: 'string — human-readable title, often pulled from frontmatter',
+            type: 'string | null — page type (concept, person, company, deal, …)',
+            chunk_text: 'string — chunk content, NOT truncated; full chunks can be 500–4000 chars',
+            chunk_source: '"compiled_truth" | "draft" — compiled_truth = canonical merged version, draft = raw imported source',
+            chunk_id: 'integer — opaque DB id for the chunk',
+            chunk_index: 'integer — position of this chunk inside the page (0 = first)',
+            score: 'float — RRF or cosine score; ≥0.4 strong, 0.25–0.4 borderline, <0.25 weak. Compare relatively, not absolutely.',
+            stale: 'boolean — true if the underlying page changed after this chunk was indexed; agent should re-fetch via /page',
+          },
+          search_response: {
+            ok: 'boolean — false on error',
+            took_ms: 'integer — server-side wall time',
+            results: 'SearchResult[] — sorted by score desc',
+            degraded: 'boolean? — present when at least one subquery (lex/vec/hyde) was dropped due to timeout',
+            dropped: 'array? — when degraded:true, lists which subqueries failed and why',
+            query: 'string? — present in ?q= simple mode',
+            lex: 'string? — present in qmd-style mode',
+            vec: 'string? — present in qmd-style mode',
+            hyde: 'string? — present in qmd-style mode',
+          },
+          error_envelope: {
+            ok: 'false',
+            error: 'string — human-readable message',
+            code: 'string — machine-readable; current values: otp_required, otp_invalid, unauthorized, missing_param, invalid_json, invalid_tags, too_large, not_found, warming_up',
+            retry_after_ms: 'integer? — when present, agent should wait this long before retrying',
+            hint: 'string? — concrete next step (e.g. "fall back to ?q=")',
+            dropped: 'array? — on warming_up, lists which subqueries timed out',
+          },
+          search_modes: {
+            simple: '?q=<query>  — keyword-only (BM25), fast, no embedding round-trip; good for known names/terms',
+            qmd:    '?lex=<keywords>&vec=<question>&hyde=<hypothetical>  — any combination; results RRF-merged. lex+vec is the recommended balance.',
+          },
+          limits: {
+            limit_max: 50,
+            search_subquery_timeout_ms_lex: LEX_TIMEOUT_MS,
+            search_subquery_timeout_ms_vec: VEC_TIMEOUT_MS,
+            put_page_max_content_bytes: 50_000,
+          },
+          first_contact_flow: [
+            'GET /health           → check warm:true; if false, send a cheap ?lex= probe before lex+vec',
+            'GET /topics           → see what domains exist; pick relevant ones',
+            'GET /search?q=<term>  → fast keyword scan to confirm topic has content',
+            'GET /search?lex=…&vec=…  → precision retrieval once you know the topic',
+            'GET /page?slug=<slug> → fetch full page when a chunk looks promising',
+          ],
+        }, Date.now() - t0);
+      }
+
+      return err('not_found', 'Unknown endpoint', 404, {
+        hint: 'Available: GET /health, /topics, /schema, /search, /page, /pages, /pages/recent | POST /query | PUT /page | DELETE /page',
+      });
     },
   });
 
@@ -323,9 +493,12 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   console.error(`Search timeouts: lex=${LEX_TIMEOUT_MS}ms, vec/hyde=${VEC_TIMEOUT_MS}ms (override via GBRAIN_LEX_TIMEOUT_MS / GBRAIN_VEC_TIMEOUT_MS)`);
   console.error('Endpoints:');
   console.error('  GET  /health                                       (warm/uptime/version, no auth)');
+  console.error('  GET  /topics                                        (knowledge map: domain → count + samples)');
+  console.error('  GET  /schema                                        (search-result/error contract)');
   console.error('  GET  /search?q=...&limit=10&otp=<code>              (hybridSearch)');
   console.error('  GET  /search?lex=...&vec=...&hyde=...&otp=<code>    (qmd-style multi-query)');
   console.error('  POST /query   {query, limit?, expand?}              (hybridSearch + expansion)');
+  console.error('  POST /search/batch  {queries: [{lex?,vec?,hyde?,q?,limit?}, ...]}  (multi-topic sweep, max 20)');
   console.error('  GET  /page?slug=...&otp=<code>');
   console.error('  GET  /pages?domain=...&limit=20&otp=<code>');
   console.error('  PUT  /page        {content, slug?, tags?, source?}');
