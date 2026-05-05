@@ -1,6 +1,6 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
 import { tmpdir } from 'os';
 import {
   loadMounts,
@@ -124,7 +124,7 @@ describe('loadMounts — entry validation', () => {
       mounts: [{ id: 'a', path: '/tmp/relative-test', engine: 'pglite', database_path: '/tmp/a/.pg' }],
     }));
     const mounts = loadMounts(path);
-    expect(mounts[0].path.startsWith('/')).toBe(true);
+    expect(isAbsolute(mounts[0].path)).toBe(true);
   });
 
   test('enabled=false is preserved', () => {

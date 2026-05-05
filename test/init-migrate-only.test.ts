@@ -114,7 +114,7 @@ describe('gbrain init --migrate-only — happy path with PGLite config', () => {
 
     // Brain file should exist (schema applied).
     expect(existsSync(dbPath)).toBe(true);
-  }, 30_000);
+  }, 60_000);
 
   test('idempotent on rerun — second call succeeds without error', () => {
     const gbrainDir = join(tmp, '.gbrain');

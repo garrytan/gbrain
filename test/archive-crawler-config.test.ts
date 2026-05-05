@@ -17,7 +17,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve as resolvePath } from 'path';
 import { homedir, tmpdir } from 'os';
 import {
   loadArchiveCrawlerConfig,
@@ -44,6 +44,11 @@ function writeYaml(content: string): string {
   const path = join(workdir, 'gbrain.yml');
   writeFileSync(path, content);
   return path;
+}
+
+function normalizedPrefix(path: string): string {
+  const normalized = resolvePath(path).replace(/\\/g, '/');
+  return normalized.endsWith('/') ? normalized : normalized + '/';
 }
 
 describe('loadArchiveCrawlerConfig — D12 missing_section', () => {
@@ -140,8 +145,8 @@ describe('loadArchiveCrawlerConfig — happy path', () => {
 `);
     const config = loadArchiveCrawlerConfig(workdir);
     expect(config.scan_paths).toEqual([
-      '/home/user/writing/',
-      '/mnt/backup/old-letters/',
+      normalizedPrefix('/home/user/writing'),
+      normalizedPrefix('/mnt/backup/old-letters'),
     ]);
     expect(config.deny_paths).toEqual([]);
   });
@@ -150,7 +155,7 @@ describe('loadArchiveCrawlerConfig — happy path', () => {
     const home = homedir();
     writeYaml('archive-crawler:\n  scan_paths:\n    - ~/Documents/writing\n');
     const config = loadArchiveCrawlerConfig(workdir);
-    expect(config.scan_paths[0]).toBe(`${home}/Documents/writing/`);
+    expect(config.scan_paths[0]).toBe(normalizedPrefix(join(home, 'Documents', 'writing')));
   });
 
   it('accepts deny_paths alongside scan_paths', () => {
@@ -163,15 +168,15 @@ describe('loadArchiveCrawlerConfig — happy path', () => {
 `);
     const config = loadArchiveCrawlerConfig(workdir);
     expect(config.deny_paths).toEqual([
-      '/home/user/Documents/finances/',
-      '/home/user/Documents/medical/',
+      normalizedPrefix('/home/user/Documents/finances'),
+      normalizedPrefix('/home/user/Documents/medical'),
     ]);
   });
 
   it('accepts both archive-crawler and archive_crawler key spellings', () => {
     writeYaml('archive_crawler:\n  scan_paths:\n    - /home/user/notes\n');
     const config = loadArchiveCrawlerConfig(workdir);
-    expect(config.scan_paths[0]).toBe('/home/user/notes/');
+    expect(config.scan_paths[0]).toBe(normalizedPrefix('/home/user/notes'));
   });
 });
 
@@ -186,15 +191,15 @@ describe('normalizeAndValidateArchiveCrawlerConfig — direct API', () => {
     const out = normalizeAndValidateArchiveCrawlerConfig({
       scan_paths: ['/a/b', '/c/d/'],
     });
-    expect(out.scan_paths).toEqual(['/a/b/', '/c/d/']);
+    expect(out.scan_paths).toEqual([normalizedPrefix('/a/b'), normalizedPrefix('/c/d')]);
   });
 });
 
 describe('isPathAllowed', () => {
-  const config = {
+  const config = normalizeAndValidateArchiveCrawlerConfig({
     scan_paths: ['/home/user/writing/', '/home/user/Dropbox/'],
     deny_paths: ['/home/user/Dropbox/finances/'],
-  };
+  });
 
   it('returns true for a path inside a scan_path', () => {
     expect(isPathAllowed('/home/user/writing/essay.md', config)).toBe(true);

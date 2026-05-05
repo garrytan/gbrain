@@ -12,8 +12,12 @@ import {
   isInternalUrl,
 } from '../src/commands/integrations.ts';
 
-const okCommand = [process.execPath, '-e', 'process.exit(0)'];
-const failCommand = [process.execPath, '-e', 'process.exit(1)'];
+const okCommand = process.platform === 'win32'
+  ? [process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe', '/d', '/s', '/c', 'exit /b 0']
+  : ['/bin/sh', '-c', 'exit 0'];
+const failCommand = process.platform === 'win32'
+  ? [process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe', '/d', '/s', '/c', 'exit /b 1']
+  : ['/bin/sh', '-c', 'exit 1'];
 
 // --- parseRecipe tests ---
 
@@ -400,7 +404,7 @@ describe('executeHealthCheck', () => {
 
   test('command returns ok for exit 0', async () => {
     const result = await executeHealthCheck({ type: 'command', argv: okCommand, label: 'ok cmd' }, 'test-id', true);
-    expect(result.status).toBe('ok');
+    expect(result).toMatchObject({ status: 'ok' });
   });
 
   test('command returns fail for exit 1', async () => {
