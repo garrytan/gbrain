@@ -27,6 +27,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { getSecret } from '../secrets.ts';
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -341,8 +342,9 @@ export interface JudgeClient {
 }
 
 function makeHaikuClient(): JudgeClient | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  const client = new Anthropic();
+  const apiKey = getSecret('ANTHROPIC_API_KEY');
+  if (!apiKey) return null;
+  const client = new Anthropic({ apiKey });
   return { create: client.messages.create.bind(client.messages) };
 }
 

@@ -278,6 +278,45 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // Best-effort. A broken JSONL should not stop doctor.
   }
 
+  // Secret resolution (filesystem-only — runs with or without DB).
+  // When users configure `secrets.<name>_command` in ~/.gbrain/config.json
+  // (e.g. macOS Keychain via `security find-generic-password ...`), this
+  // check actually runs each command and reports per-key resolution status.
+  // Resolved values are NEVER printed — only success / failure with stderr.
+  try {
+    const { resolveAllConfiguredSecrets } = await import('../core/secrets.ts');
+    const statuses = resolveAllConfiguredSecrets();
+    const configured = statuses.filter(s => s.configured);
+    if (configured.length === 0) {
+      checks.push({
+        name: 'secret_resolution',
+        status: 'ok',
+        message: 'No secret resolver commands configured (using env vars or no keys).',
+      });
+    } else {
+      const failed = configured.filter(s => !s.resolved);
+      if (failed.length === 0) {
+        const names = configured.map(s => s.name).join(', ');
+        checks.push({
+          name: 'secret_resolution',
+          status: 'ok',
+          message: `${configured.length} resolver command(s) succeeded (${names}).`,
+        });
+      } else {
+        const detail = failed
+          .map(s => `${s.name}: ${(s.error ?? 'unknown error').replace(/\n/g, ' ')}`)
+          .join(' | ');
+        checks.push({
+          name: 'secret_resolution',
+          status: 'fail',
+          message: `${failed.length}/${configured.length} resolver command(s) failed. ${detail}`,
+        });
+      }
+    }
+  } catch {
+    // Best-effort: never let a doctor sub-check crash the whole run.
+  }
+
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {

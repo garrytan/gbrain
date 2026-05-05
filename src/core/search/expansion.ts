@@ -15,6 +15,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { getSecret } from '../secrets.ts';
 
 const MAX_QUERIES = 3;
 const MIN_WORDS = 3;
@@ -24,7 +25,7 @@ let anthropicClient: Anthropic | null = null;
 
 function getClient(): Anthropic {
   if (!anthropicClient) {
-    anthropicClient = new Anthropic();
+    anthropicClient = new Anthropic({ apiKey: getSecret('ANTHROPIC_API_KEY') });
   }
   return anthropicClient;
 }

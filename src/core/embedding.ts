@@ -8,6 +8,7 @@
  */
 
 import OpenAI from 'openai';
+import { getSecret } from './secrets.ts';
 
 const MODEL = 'text-embedding-3-large';
 const DIMENSIONS = 1536;
@@ -21,7 +22,7 @@ let client: OpenAI | null = null;
 
 function getClient(): OpenAI {
   if (!client) {
-    client = new OpenAI();
+    client = new OpenAI({ apiKey: getSecret('OPENAI_API_KEY') });
   }
   return client;
 }

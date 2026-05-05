@@ -174,7 +174,8 @@ strict behavior when unset.
 - `src/core/search/hybrid.ts` — Cathedral II `Promise<SearchResult[]>` return shape unchanged in v0.25.0. Adds `onMeta?: (m: HybridSearchMeta) => void` callback so op-layer capture can record what hybridSearch actually did. Existing callers leave it undefined.
 - `docs/eval-capture.md` (v0.25.0) — stable NDJSON schema reference for gbrain-evals consumers.
 - `test/public-exports.test.ts` (v0.25.0 / R2) — runtime contract test. Imports each of the 17 public subpaths via package name and pins a canary symbol per module. Paired with `scripts/check-exports-count.sh`.
-- `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff
+- `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff. v0.27.0: SDK constructor now passes `apiKey: getSecret('OPENAI_API_KEY')` instead of relying on the SDK's env-var auto-pickup, so users with a configured `secrets.openai_api_key_command` (Keychain/pass/op) keep the key out of `process.env`.
+- `src/core/secrets.ts` (v0.27.0) — module-private secret resolver. `getSecret('OPENAI_API_KEY' | 'ANTHROPIC_API_KEY' | 'GROQ_API_KEY')` resolves to a configured `~/.gbrain/config.json` `secrets.<name>_command` (run via `execSync` with 10s timeout), falling back to `process.env[name]`. Resolved values cached in a process-lifetime `Map`; never written to `process.env` so they don't inherit into subprocesses. A configured-but-broken command throws loudly with stderr — no silent fallback to env (would mask Keychain ACL bugs). `clearSecretsCache()` is test-only; `resolveAllConfiguredSecrets()` powers the `gbrain doctor` `secret_resolution` check (reports per-key success/failure without exposing values).
 - `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects. v0.14.1: `CROSS_CUTTING_PATTERNS.conventions` is an array (notability gate accepts both `conventions/quality.md` and `_brain-filing-rules.md`). New `extractDelegationTargets()` parses `> **Convention:**`, `> **Filing rule:**`, and inline backtick references. DRY suppression is proximity-based via `DRY_PROXIMITY_LINES = 40`.
 - `src/core/repo-root.ts` — Shared `findRepoRoot(startDir?)` (v0.16.4): walks up from `startDir` (default `process.cwd()`) looking for `skills/RESOLVER.md`. Zero-dependency module imported by both `doctor.ts` and `check-resolvable.ts`. Parameterized `startDir` makes tests hermetic.
 - `src/commands/check-resolvable.ts` — Standalone CLI wrapper (v0.16.4) over `checkResolvable()`. Exports `parseFlags`, `resolveSkillsDir`, `DEFERRED`, `runCheckResolvable`. Exit rule: **1 on any issue (warnings OR errors)**, stricter than doctor's `ok` flag — honors README:259. Stable JSON envelope `{ok, skillsDir, report, autoFix, deferred, error, message}` — same shape on success and error paths. `--fix` path runs `autoFixDryViolations` BEFORE `checkResolvable` (same ordering as doctor). `scripts/skillify-check.ts` subprocess-calls `gbrain check-resolvable --json` (cached per process) and fails loud on binary-missing — no silent false-pass. **v0.19:** AGENTS.md workspaces now resolve natively (see `src/core/resolver-filenames.ts`) — gbrain inspects the 107-skill OpenClaw deployment whether the routing file is `RESOLVER.md` or `AGENTS.md`. `DEFERRED[]` is empty — Checks 5 + 6 shipped as real code, not issue URLs.
@@ -1524,6 +1525,50 @@ These apply to ALL brain-writing skills:
 
 | "voice note" | `skills/voice-note-ingest/SKILL.md` |
 
+<!-- gbrain:skillpack:begin -->
+
+<!-- Installed by gbrain 0.25.1 — do not hand-edit between markers. -->
+<!-- gbrain:skillpack:manifest cumulative-slugs="academic-verify,archive-crawler,article-enrichment,book-mirror,brain-ops,brain-pdf,briefing,citation-fixer,concept-synthesis,cron-scheduler,cross-modal-review,daily-task-manager,daily-task-prep,data-research,enrich,idea-ingest,ingest,maintain,media-ingest,meeting-ingestion,minion-orchestrator,perplexity-research,query,repo-architecture,reports,signal-detector,skill-creator,skillify,skillpack-check,soul-audit,strategic-reading,testing,voice-note-ingest,webhook-transforms" version="0.25.1" -->
+
+| Trigger | Skill |
+|---------|-------|
+| "academic-verify" | `skills/academic-verify/SKILL.md` |
+| "archive-crawler" | `skills/archive-crawler/SKILL.md` |
+| "article-enrichment" | `skills/article-enrichment/SKILL.md` |
+| "book-mirror" | `skills/book-mirror/SKILL.md` |
+| "brain-ops" | `skills/brain-ops/SKILL.md` |
+| "brain-pdf" | `skills/brain-pdf/SKILL.md` |
+| "briefing" | `skills/briefing/SKILL.md` |
+| "citation-fixer" | `skills/citation-fixer/SKILL.md` |
+| "concept-synthesis" | `skills/concept-synthesis/SKILL.md` |
+| "cron-scheduler" | `skills/cron-scheduler/SKILL.md` |
+| "cross-modal-review" | `skills/cross-modal-review/SKILL.md` |
+| "daily-task-manager" | `skills/daily-task-manager/SKILL.md` |
+| "daily-task-prep" | `skills/daily-task-prep/SKILL.md` |
+| "data-research" | `skills/data-research/SKILL.md` |
+| "enrich" | `skills/enrich/SKILL.md` |
+| "idea-ingest" | `skills/idea-ingest/SKILL.md` |
+| "ingest" | `skills/ingest/SKILL.md` |
+| "maintain" | `skills/maintain/SKILL.md` |
+| "media-ingest" | `skills/media-ingest/SKILL.md` |
+| "meeting-ingestion" | `skills/meeting-ingestion/SKILL.md` |
+| "minion-orchestrator" | `skills/minion-orchestrator/SKILL.md` |
+| "perplexity-research" | `skills/perplexity-research/SKILL.md` |
+| "query" | `skills/query/SKILL.md` |
+| "repo-architecture" | `skills/repo-architecture/SKILL.md` |
+| "reports" | `skills/reports/SKILL.md` |
+| "signal-detector" | `skills/signal-detector/SKILL.md` |
+| "skill-creator" | `skills/skill-creator/SKILL.md` |
+| "skillify" | `skills/skillify/SKILL.md` |
+| "skillpack-check" | `skills/skillpack-check/SKILL.md` |
+| "soul-audit" | `skills/soul-audit/SKILL.md` |
+| "strategic-reading" | `skills/strategic-reading/SKILL.md` |
+| "testing" | `skills/testing/SKILL.md` |
+| "voice-note-ingest" | `skills/voice-note-ingest/SKILL.md` |
+| "webhook-transforms" | `skills/webhook-transforms/SKILL.md` |
+
+<!-- gbrain:skillpack:end -->
+
 ---
 
 ## README.md
@@ -1596,6 +1641,32 @@ aborts with `Aborted()` the first time it opens PGLite. Use `git clone + bun ins
 3. concepts/build-something-people-want (score: 0.81)
    The YC motto. Connected to 12 other brain pages.
 ```
+
+### Storing API keys outside `$ENV` (v0.27.0)
+
+If you'd rather not put `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GROQ_API_KEY` in `~/.zshrc`, configure a shell command per secret in `~/.gbrain/config.json`:
+
+```jsonc
+{
+  "engine": "pglite",
+  "database_path": "/Users/you/.gbrain/brain.pglite",
+  "secrets": {
+    "openai_api_key_command":    "security find-generic-password -a $USER -s gbrain-openai -w",
+    "anthropic_api_key_command": "security find-generic-password -a $USER -s gbrain-anthropic -w",
+    "groq_api_key_command":      "pass show gbrain/groq"
+  }
+}
+```
+
+gbrain runs the command at first-use, holds the value in module-private memory for the process lifetime, and **never writes it to `process.env`**. Subprocesses (shell handlers, the jobs-work daemon, autopilot) re-resolve via their own config load — secrets don't inherit, don't leak via `ps -E`, and don't show in `gbrain config show`. Configured command beats env var when both are set; a command that fails throws loudly so misconfig surfaces immediately. `gbrain doctor` reports per-key resolution status.
+
+Recipes:
+
+- **macOS Keychain**: `security add-generic-password -a "$USER" -s "gbrain-openai" -w` to store, then the command above to read.
+- **Linux pass**: `pass insert gbrain/openai` to store, `pass show gbrain/openai` to read.
+- **1Password CLI**: `op read "op://Personal/openai/credential"` (requires `op signin`).
+
+Env vars still work when no command is configured — fully backwards compatible. Design notes: [docs/designs/secrets-resolution.md](docs/designs/secrets-resolution.md).
 
 ### MCP server (Claude Code, Cursor, Windsurf)
 

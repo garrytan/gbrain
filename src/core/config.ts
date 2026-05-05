@@ -50,6 +50,25 @@ export interface GBrainConfig {
     /** false disables PII scrubbing before insert. Defaults to true. */
     scrub_pii?: boolean;
   };
+  /**
+   * v0.27.0 — keep API keys out of `process.env` by configuring a shell
+   * command per secret. gbrain runs the command at first-use, caches the
+   * value in module-private memory for the process lifetime, and never
+   * writes it to env. Subprocesses re-resolve via their own config load.
+   *
+   * Examples (macOS Keychain):
+   *   "openai_api_key_command": "security find-generic-password -a $USER -s gbrain-openai -w"
+   *   "anthropic_api_key_command": "security find-generic-password -a $USER -s gbrain-anthropic -w"
+   *
+   * Precedence: configured command > env var. A configured-but-broken
+   * resolver throws loudly rather than silently falling back to env, so
+   * misconfig surfaces immediately. See `src/core/secrets.ts`.
+   */
+  secrets?: {
+    openai_api_key_command?: string;
+    anthropic_api_key_command?: string;
+    groq_api_key_command?: string;
+  };
 }
 
 /**

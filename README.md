@@ -65,6 +65,32 @@ aborts with `Aborted()` the first time it opens PGLite. Use `git clone + bun ins
    The YC motto. Connected to 12 other brain pages.
 ```
 
+### Storing API keys outside `$ENV` (v0.27.0)
+
+If you'd rather not put `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GROQ_API_KEY` in `~/.zshrc`, configure a shell command per secret in `~/.gbrain/config.json`:
+
+```jsonc
+{
+  "engine": "pglite",
+  "database_path": "/Users/you/.gbrain/brain.pglite",
+  "secrets": {
+    "openai_api_key_command":    "security find-generic-password -a $USER -s gbrain-openai -w",
+    "anthropic_api_key_command": "security find-generic-password -a $USER -s gbrain-anthropic -w",
+    "groq_api_key_command":      "pass show gbrain/groq"
+  }
+}
+```
+
+gbrain runs the command at first-use, holds the value in module-private memory for the process lifetime, and **never writes it to `process.env`**. Subprocesses (shell handlers, the jobs-work daemon, autopilot) re-resolve via their own config load — secrets don't inherit, don't leak via `ps -E`, and don't show in `gbrain config show`. Configured command beats env var when both are set; a command that fails throws loudly so misconfig surfaces immediately. `gbrain doctor` reports per-key resolution status.
+
+Recipes:
+
+- **macOS Keychain**: `security add-generic-password -a "$USER" -s "gbrain-openai" -w` to store, then the command above to read.
+- **Linux pass**: `pass insert gbrain/openai` to store, `pass show gbrain/openai` to read.
+- **1Password CLI**: `op read "op://Personal/openai/credential"` (requires `op signin`).
+
+Env vars still work when no command is configured — fully backwards compatible. Design notes: [docs/designs/secrets-resolution.md](docs/designs/secrets-resolution.md).
+
 ### MCP server (Claude Code, Cursor, Windsurf)
 
 GBrain exposes 30+ MCP tools via stdio:

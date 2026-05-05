@@ -20,6 +20,7 @@
 
 import { join, dirname } from 'node:path';
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { getSecret } from '../secrets.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
@@ -64,7 +65,7 @@ export async function runPhasePatterns(
     }
 
     // Submit one subagent for pattern detection.
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!getSecret('ANTHROPIC_API_KEY')) {
       return skipped('no_api_key', 'ANTHROPIC_API_KEY unset; pattern detection skipped');
     }
 

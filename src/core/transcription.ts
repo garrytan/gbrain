@@ -8,6 +8,7 @@
 
 import { statSync, readFileSync } from 'fs';
 import { basename, extname } from 'path';
+import { getSecret } from './secrets.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -87,15 +88,17 @@ export async function transcribe(
 // ---------------------------------------------------------------------------
 
 function detectProvider(): 'groq' | 'openai' {
-  if (process.env.GROQ_API_KEY) return 'groq';
-  if (process.env.OPENAI_API_KEY) return 'openai';
+  if (getSecret('GROQ_API_KEY')) return 'groq';
+  if (getSecret('OPENAI_API_KEY')) return 'openai';
   return 'groq'; // default, will fail with clear error if no key
 }
 
 function getApiKey(provider: string): string | undefined {
   switch (provider) {
-    case 'groq': return process.env.GROQ_API_KEY;
-    case 'openai': return process.env.OPENAI_API_KEY;
+    case 'groq': return getSecret('GROQ_API_KEY');
+    case 'openai': return getSecret('OPENAI_API_KEY');
+    // DEEPGRAM not yet covered by the v0.27.0 secrets resolver. Falls back to
+    // env-only until we expand the secret name set in a follow-up minor.
     case 'deepgram': return process.env.DEEPGRAM_API_KEY;
     default: return undefined;
   }
