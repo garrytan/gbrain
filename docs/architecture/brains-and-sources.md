@@ -240,3 +240,92 @@ know the other.
 - v0.19.0 CHANGELOG (TBD after PR 0+1+2 ship) — introduces `mounts`.
 - `docs/mounts/publishing-a-team-brain.md` (PR 2) — how to be the brain
   publisher, not just the subscriber.
+
+---
+
+## Token-level source pinning (v37+)
+
+Multi-tenant brains historically relied on agents passing `source_id`
+correctly on every call. This works for write paths but **leaks on read
+paths via slug collisions**: a token without explicit scope can read any
+page from any source by guessing the slug, regardless of which source it
+"belongs to".
+
+`v37` (OAuth clients) and `v38` (legacy API keys) make `source_id` a
+property of the **credential**, not just of the call. When an OAuth client
+or API key is pinned to a source via `gbrain auth set-source[-key]`, that
+source becomes a **HARD scope** on all reads and writes for requests
+authenticated by that credential.
+
+### Precedence (per-operation)
+
+For every read and write operation:
+
+1. `params.source_id` (explicit) — wins. Admin / cross-source overrides
+   route here. Used by tooling that intentionally crosses sources (sync
+   migrations, dashboards, debugging).
+2. `ctx.defaultSourceId` (token pin) — **HARD scope**, no fallback to
+   other sources. The credential is bound to one source; reads MUST NOT
+   leak cross-source via slug collisions.
+3. neither — unscoped (legacy cross-source visible). Single-source brains
+   and untagged tokens keep working unchanged.
+
+This closes the cross-source slug-collision read leak: previously a token
+without an explicit scope could read pages from any source by knowing the
+slug. With token pinning, that path returns `Page not found`.
+
+### Operations affected (read scope)
+
+All read tools honor the precedence rule:
+
+- `get_page`, `list_pages` — engine-level filter by `source_id`.
+- `search`, `query` — engine-level filter via `SearchOpts.sourceId`, plus
+  a belt-and-suspenders post-filter.
+- `resolve_slugs` — candidate slugs are filtered to those visible in the
+  pinned source.
+- `get_chunks`, `get_tags`, `get_links`, `get_backlinks`,
+  `get_timeline`, `get_versions`, `get_raw_data` — return `[]` when the
+  requested slug doesn't exist in the pinned source (cross-source slugs
+  are opaque).
+- `traverse_graph` — opaque cross-source root; same-source paths only
+  when scoped.
+- `find_orphans` — filtered to orphans visible in the pinned source.
+
+### Operations affected (write scope)
+
+`put_page` and `import_from_content` apply the same precedence:
+explicit `params.source_id` > `ctx.defaultSourceId` > schema DEFAULT
+(`'default'`). The dedupe lookup, INSERT, and downstream auto-link all
+see the same resolved source so a pinned token cannot accidentally
+short-circuit on a hash from another source.
+
+### Configuring a pin
+
+```bash
+# Per-OAuth-client (v37)
+gbrain auth set-source <client_id> <source_id|none>
+gbrain auth list-clients      # shows default_source_id column
+
+# Per-API-key (v38)
+gbrain auth set-source-key <name> <source_id|none>
+gbrain auth list              # shows default_source_id column
+```
+
+`none` (or empty string) clears the pin. Passing `<source_id>` validates
+the source exists before persisting.
+
+### Schema
+
+Both `oauth_clients.default_source_id` (v37) and
+`access_tokens.default_source_id` (v38) are FKs to `sources(id)` with
+`ON DELETE SET NULL`. Deleting the pinned source clears the pin
+(subsequent calls fall back to schema DEFAULT) instead of orphaning the
+credential.
+
+### Backward compatibility
+
+- Tokens without a pin retain global cross-source behavior. No regression
+  for single-source brains or untagged clients.
+- `params.source_id` always wins, preserving the admin override path.
+- Migrations are idempotent (`ADD COLUMN IF NOT EXISTS`) and safe against
+  pre-v37 brains via `isUndefinedColumnError` fallbacks in the verifier.
