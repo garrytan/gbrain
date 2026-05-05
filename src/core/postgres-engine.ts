@@ -471,6 +471,7 @@ export class PostgresEngine implements BrainEngine {
     const excludeSlugs = opts?.exclude_slugs;
     const language = opts?.language;
     const symbolKind = opts?.symbolKind;
+    const sourceId = opts?.sourceId;
 
     if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
@@ -515,6 +516,11 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    let sourceClause = '';
+    if (sourceId) {
+      params.push(sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -543,6 +549,7 @@ export class PostgresEngine implements BrainEngine {
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${languageClause}
           ${symbolKindClause}
+          ${sourceClause}
           ${hardExcludeClause}
           ${visibilityClause}
         ORDER BY score DESC
@@ -589,6 +596,7 @@ export class PostgresEngine implements BrainEngine {
     const detailLow = opts?.detail === 'low';
     const language = opts?.language;
     const symbolKind = opts?.symbolKind;
+    const sourceId = opts?.sourceId;
 
     if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
@@ -624,6 +632,11 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    let sourceClause = '';
+    if (sourceId) {
+      params.push(sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
     params.push(limit);
     const limitParam = `$${params.length}`;
     params.push(offset);
@@ -647,6 +660,7 @@ export class PostgresEngine implements BrainEngine {
         ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
         ${languageClause}
         ${symbolKindClause}
+        ${sourceClause}
         ${hardExcludeClause}
         ${visibilityClause}
       ORDER BY score DESC
@@ -670,6 +684,7 @@ export class PostgresEngine implements BrainEngine {
     const detailLow = opts?.detail === 'low';
     const language = opts?.language;
     const symbolKind = opts?.symbolKind;
+    const sourceId = opts?.sourceId;
 
     if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
@@ -712,6 +727,11 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    let sourceClause = '';
+    if (sourceId) {
+      params.push(sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -740,6 +760,7 @@ export class PostgresEngine implements BrainEngine {
           ${excludeSlugsClause}
           ${languageClause}
           ${symbolKindClause}
+          ${sourceClause}
           ${hardExcludeClause}
           ${visibilityClause}
         ORDER BY cc.embedding <=> $1::vector
