@@ -1557,6 +1557,27 @@ export const MIGRATIONS: Migration[] = [
         WHERE default_source_id IS NOT NULL;
     `,
   },
+  {
+    version: 39,
+    name: 'access_token_default_source_id',
+    // Per-API-key default source pinning. Mirror of v38 (oauth_clients) for
+    // the legacy access_tokens table. API keys (no TTL) are preferred over
+    // OAuth tokens (TTL) for headless agent setups, so the same source-pin
+    // ergonomics need to land on the legacy path.
+    //
+    // FK with ON DELETE SET NULL: deleting a source clears the pin (request
+    // falls back to 'default') rather than orphaning the API key.
+    // Idempotent (ADD COLUMN IF NOT EXISTS).
+    sql: `
+      ALTER TABLE access_tokens
+        ADD COLUMN IF NOT EXISTS default_source_id TEXT
+        REFERENCES sources(id) ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_access_tokens_default_source
+        ON access_tokens(default_source_id)
+        WHERE default_source_id IS NOT NULL;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

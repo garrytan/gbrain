@@ -429,11 +429,29 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       } as AuthInfo;
     }
 
-    // Fallback: legacy access_tokens table (backward compat)
-    const legacyRows = await this.sql`
-      SELECT name FROM access_tokens
-      WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
-    `;
+    // Fallback: legacy access_tokens table (backward compat).
+    // v39: include default_source_id so per-API-key source pinning is
+    // resolved at token-verify time without an extra request-time roundtrip.
+    // The column is nullable + ON DELETE SET NULL, so a deleted source
+    // surfaces as NULL here and the request falls back to 'default'.
+    let legacyRows: Record<string, unknown>[];
+    try {
+      legacyRows = await this.sql`
+        SELECT name, default_source_id FROM access_tokens
+        WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+      `;
+    } catch (e) {
+      // Pre-v39 brains lack default_source_id. Fall back to the legacy
+      // shape so verifyAccessToken keeps working before the migration runs.
+      if (isUndefinedColumnError(e, 'default_source_id')) {
+        legacyRows = await this.sql`
+          SELECT name FROM access_tokens
+          WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+        `;
+      } else {
+        throw e;
+      }
+    }
 
     if (legacyRows.length > 0) {
       // Legacy tokens get full admin access (grandfather in).
@@ -449,6 +467,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         clientName: name,
         scopes: ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
+        defaultSourceId: (legacyRows[0].default_source_id as string | null) ?? undefined,
       } as AuthInfo;
     }
 
