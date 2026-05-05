@@ -26,6 +26,11 @@ function fresh(): string {
   return mkdtempSync(join(tmpdir(), 'gbrain-home-isolation-'));
 }
 
+function restoreGbrainHome(): void {
+  if (ORIG_GBRAIN_HOME !== undefined) process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+  else delete process.env.GBRAIN_HOME;
+}
+
 describe('GBRAIN_HOME write-side isolation', () => {
   test('configDir() returns <GBRAIN_HOME>/.gbrain when override is set', async () => {
     const tmp = fresh();
@@ -35,7 +40,7 @@ describe('GBRAIN_HOME write-side isolation', () => {
       expect(configDir()).toBe(join(tmp, '.gbrain'));
       expect(gbrainPath('foo', 'bar.json')).toBe(join(tmp, '.gbrain', 'foo', 'bar.json'));
     } finally {
-      process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+      restoreGbrainHome();
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -49,7 +54,7 @@ describe('GBRAIN_HOME write-side isolation', () => {
       expect(result.endsWith('.gbrain')).toBe(true);
       expect(result.startsWith('/tmp/')).toBe(false);
     } finally {
-      if (ORIG_GBRAIN_HOME !== undefined) process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+      restoreGbrainHome();
     }
   });
 
@@ -59,7 +64,7 @@ describe('GBRAIN_HOME write-side isolation', () => {
       const { configDir } = await import('../src/core/config.ts');
       expect(() => configDir()).toThrow(/absolute path/);
     } finally {
-      process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+      restoreGbrainHome();
     }
   });
 
@@ -69,7 +74,7 @@ describe('GBRAIN_HOME write-side isolation', () => {
       const { configDir } = await import('../src/core/config.ts');
       expect(() => configDir()).toThrow(/'\.\.' segments/);
     } finally {
-      process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+      restoreGbrainHome();
     }
   });
 
@@ -88,7 +93,7 @@ describe('GBRAIN_HOME write-side isolation', () => {
       expect(loaded?.engine).toBe('pglite');
       expect(loaded?.database_path).toBe(cfg.database_path);
     } finally {
-      process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+      restoreGbrainHome();
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -117,7 +122,7 @@ describe('GBRAIN_HOME write-side isolation', () => {
         expect(p.startsWith(join(tmp, '.gbrain'))).toBe(true);
       }
     } finally {
-      process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+      restoreGbrainHome();
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -132,7 +137,7 @@ describe('GBRAIN_HOME write-side isolation', () => {
       // Per the docstring: GBRAIN_AUDIT_DIR is the explicit override and wins.
       expect(resolveAuditDir()).toBe(auditTmp);
     } finally {
-      process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+      restoreGbrainHome();
       delete process.env.GBRAIN_AUDIT_DIR;
       rmSync(tmp, { recursive: true, force: true });
       rmSync(auditTmp, { recursive: true, force: true });

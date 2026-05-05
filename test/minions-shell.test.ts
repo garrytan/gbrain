@@ -61,6 +61,17 @@ function makeCtx(
   };
 }
 
+const IS_WINDOWS = process.platform === 'win32';
+const TEST_CWD = os.tmpdir();
+const normalizeNewlines = (value: string) => value.replace(/\r\n/g, '\n');
+const failCommand = IS_WINDOWS ? 'echo fail 1>&2 & exit /b 7' : 'echo fail 1>&2; exit 7';
+const secretCommand = IS_WINDOWS
+  ? 'if "%SHELL_TEST_SECRET%"=="" (echo secret=EMPTY) else (echo secret=%SHELL_TEST_SECRET%)'
+  : 'echo "secret=${SHELL_TEST_SECRET:-EMPTY}"';
+const pathCommand = IS_WINDOWS ? 'echo path=%PATH%' : 'echo "path=$PATH"';
+const customEnvCommand = IS_WINDOWS ? 'echo val=%MY_CUSTOM%' : 'echo "val=$MY_CUSTOM"';
+const sleepCommand = IS_WINDOWS ? 'ping -n 30 127.0.0.1 > NUL' : 'sleep 30';
+
 // ---- protected-names ---------------------------------------------------------
 
 describe('protected-names', () => {
@@ -155,30 +166,33 @@ describe('shell handler: validation', () => {
 
 describe('shell handler: spawn', () => {
   test('cmd happy path: echo ok → exit 0, stdout captured', async () => {
-    const res = await shellHandler(makeCtx({ cmd: 'echo ok', cwd: '/tmp' })) as any;
+    const res = await shellHandler(makeCtx({ cmd: 'echo ok', cwd: TEST_CWD })) as any;
     expect(res.exit_code).toBe(0);
-    expect(res.stdout_tail).toBe('ok\n');
+    expect(normalizeNewlines(res.stdout_tail)).toBe('ok\n');
     expect(res.stderr_tail).toBe('');
     expect(typeof res.duration_ms).toBe('number');
     expect(res.duration_ms).toBeGreaterThanOrEqual(0);
     expect(typeof res.pid).toBe('number');
   });
   test('argv happy path: ["echo","hi"] → exit 0, stdout "hi\\n"', async () => {
-    const res = await shellHandler(makeCtx({ argv: ['echo', 'hi'], cwd: '/tmp' })) as any;
+    const res = await shellHandler(makeCtx({
+      argv: [process.execPath, '-e', 'console.log("hi")'],
+      cwd: TEST_CWD,
+    })) as any;
     expect(res.exit_code).toBe(0);
     expect(res.stdout_tail).toBe('hi\n');
   });
   test('non-zero exit → Error with stderr in message', async () => {
-    const p = shellHandler(makeCtx({ cmd: 'echo fail 1>&2; exit 7', cwd: '/tmp' }));
+    const p = shellHandler(makeCtx({ cmd: failCommand, cwd: TEST_CWD }));
     await expect(p).rejects.toThrow(/exit 7/);
   });
   test('argv with bogus binary → Error (retryable)', async () => {
-    const p = shellHandler(makeCtx({ argv: ['gbrain-nonexistent-binary-xyz'], cwd: '/tmp' }));
+    const p = shellHandler(makeCtx({ argv: ['gbrain-nonexistent-binary-xyz'], cwd: TEST_CWD }));
     // spawn emits 'error' on ENOENT
     await expect(p).rejects.toThrow();
   });
   test('result shape includes all declared keys', async () => {
-    const res = await shellHandler(makeCtx({ cmd: 'echo ok', cwd: '/tmp' })) as any;
+    const res = await shellHandler(makeCtx({ cmd: 'echo ok', cwd: TEST_CWD })) as any;
     expect(Object.keys(res).sort()).toEqual(['duration_ms', 'exit_code', 'pid', 'stderr_tail', 'stdout_tail']);
   });
 });
@@ -191,10 +205,12 @@ describe('shell handler: env allowlist', () => {
     process.env.SHELL_TEST_SECRET = 'should-not-leak';
     try {
       const res = await shellHandler(makeCtx({
-        cmd: 'echo "secret=${SHELL_TEST_SECRET:-EMPTY}"',
-        cwd: '/tmp',
+        cmd: secretCommand,
+        cwd: TEST_CWD,
       })) as any;
-      expect(res.stdout_tail).toBe('secret=EMPTY\n');
+      const stdout = normalizeNewlines(res.stdout_tail);
+      expect(stdout.startsWith('secret=')).toBe(true);
+      expect(stdout).not.toContain('should-not-leak');
     } finally {
       if (saved === undefined) delete process.env.SHELL_TEST_SECRET;
       else process.env.SHELL_TEST_SECRET = saved;
@@ -202,27 +218,27 @@ describe('shell handler: env allowlist', () => {
   });
   test('PATH is inherited from worker', async () => {
     const res = await shellHandler(makeCtx({
-      cmd: 'echo "path=$PATH"',
-      cwd: '/tmp',
+      cmd: pathCommand,
+      cwd: TEST_CWD,
     })) as any;
     expect(res.stdout_tail.startsWith('path=')).toBe(true);
     expect(res.stdout_tail.length).toBeGreaterThan('path=\n'.length);
   });
   test('caller-supplied env key is added', async () => {
     const res = await shellHandler(makeCtx({
-      cmd: 'echo "val=$MY_CUSTOM"',
-      cwd: '/tmp',
+      cmd: customEnvCommand,
+      cwd: TEST_CWD,
       env: { MY_CUSTOM: 'hello' },
     })) as any;
-    expect(res.stdout_tail).toBe('val=hello\n');
+    expect(normalizeNewlines(res.stdout_tail)).toBe('val=hello\n');
   });
   test('caller-supplied env can override allowlisted key (PATH)', async () => {
     const res = await shellHandler(makeCtx({
-      cmd: 'echo "path=$PATH"',
-      cwd: '/tmp',
+      cmd: pathCommand,
+      cwd: TEST_CWD,
       env: { PATH: '/custom/bin' },
     })) as any;
-    expect(res.stdout_tail).toBe('path=/custom/bin\n');
+    expect(normalizeNewlines(res.stdout_tail)).toBe('path=/custom/bin\n');
   });
 });
 
@@ -232,7 +248,7 @@ describe('shell handler: abort', () => {
   test('ctx.signal.abort triggers SIGTERM and handler throws aborted', async () => {
     const ac = new AbortController();
     const promise = shellHandler(makeCtx(
-      { cmd: 'sleep 30', cwd: '/tmp' },
+      { cmd: sleepCommand, cwd: TEST_CWD },
       { signal: ac.signal },
     ));
     // Give spawn a beat to start
@@ -242,7 +258,7 @@ describe('shell handler: abort', () => {
   test('ctx.shutdownSignal.abort also triggers kill', async () => {
     const shutdownCtl = new AbortController();
     const promise = shellHandler(makeCtx(
-      { cmd: 'sleep 30', cwd: '/tmp' },
+      { cmd: sleepCommand, cwd: TEST_CWD },
       { shutdownSignal: shutdownCtl.signal },
     ));
     setTimeout(() => shutdownCtl.abort(new Error('shutdown')), 50);
@@ -252,7 +268,7 @@ describe('shell handler: abort', () => {
     const ac = new AbortController();
     ac.abort(new Error('cancel'));
     const promise = shellHandler(makeCtx(
-      { cmd: 'sleep 30', cwd: '/tmp' },
+      { cmd: sleepCommand, cwd: TEST_CWD },
       { signal: ac.signal },
     ));
     await expect(promise).rejects.toThrow(/aborted/);
@@ -342,8 +358,8 @@ describe('shell handler: output truncation', () => {
   test('stdout > 64KB is truncated and marker is prepended', async () => {
     // Emit ~100KB of stdout to force truncation
     const res = await shellHandler(makeCtx({
-      cmd: `yes ok | head -c 100000`,
-      cwd: '/tmp',
+      argv: [process.execPath, '-e', 'process.stdout.write("ok\\n".repeat(50000))'],
+      cwd: TEST_CWD,
     })) as any;
     expect(res.exit_code).toBe(0);
     expect(res.stdout_tail).toMatch(/^\[truncated \d+ bytes\]/);

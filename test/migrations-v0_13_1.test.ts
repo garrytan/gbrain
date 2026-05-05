@@ -68,7 +68,8 @@ describe('v0_13_1 orchestrator — dry-run path', () => {
   });
 
   afterAll(() => {
-    process.env.HOME = ORIG_HOME;
+    if (ORIG_HOME !== undefined) process.env.HOME = ORIG_HOME;
+    else delete process.env.HOME;
   });
 
   test('dryRun skips the connect phase', async () => {

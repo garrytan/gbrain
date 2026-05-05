@@ -18,9 +18,12 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
 import { MinionWorker } from '../../src/core/minions/worker.ts';
 import { registerBuiltinHandlers } from '../../src/commands/jobs.ts';
+import { tmpdir } from 'node:os';
 
 let engine: PGLiteEngine;
 let originalAllowShellJobs: string | undefined;
+const TEST_CWD = tmpdir();
+const normalizeNewlines = (value: string) => value.replace(/\r\n/g, '\n');
 
 async function waitTerminal(queue: MinionQueue, id: number, timeoutMs = 15000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
@@ -67,7 +70,7 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     const queue = new MinionQueue(engine);
     const job = await queue.add(
       'shell',
-      { cmd: 'echo hello', cwd: '/tmp' },
+      { cmd: 'echo hello', cwd: TEST_CWD },
       {},
       { allowProtectedSubmit: true },
     );
@@ -86,7 +89,7 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
       expect(status).toBe('completed');
       const final = await queue.getJob(job.id);
       expect((final!.result as any).exit_code).toBe(0);
-      expect((final!.result as any).stdout_tail).toBe('hello\n');
+      expect(normalizeNewlines((final!.result as any).stdout_tail)).toBe('hello\n');
     } finally {
       worker.stop();
       await runPromise;

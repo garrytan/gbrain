@@ -95,8 +95,9 @@ export function shouldProceed(config?: Partial<ThrottleConfig>): ThrottleResult 
   const load = getLoad();
   const memUsed = getMemoryUsage();
 
-  // Windows/unsupported: loadavg returns [0,0,0] — can't determine load, proceed
-  if (loadavg()[0] === 0 && loadavg()[1] === 0 && loadavg()[2] === 0) {
+  // Windows/unsupported: loadavg returns [0,0,0]. Only CPU-load checks
+  // degrade; concurrency and memory still use host-independent signals.
+  if (_activeProcesses < MAX_CONCURRENT && memUsed <= cfg.memoryStopPct && loadavg()[0] === 0 && loadavg()[1] === 0 && loadavg()[2] === 0) {
     return { proceed: true, delay: 0, reason: 'Load data unavailable (Windows?), proceeding', load: 0, memoryUsed: memUsed };
   }
 

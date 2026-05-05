@@ -9,6 +9,7 @@ let maxConcurrentEmbedCalls = 0;
 let totalEmbedCalls = 0;
 
 mock.module('../src/core/embedding.ts', () => ({
+  embed: async () => new Float32Array(1536),
   embedBatch: async (texts: string[]) => {
     activeEmbedCalls++;
     totalEmbedCalls++;
@@ -20,6 +21,10 @@ mock.module('../src/core/embedding.ts', () => ({
     activeEmbedCalls--;
     return texts.map(() => new Float32Array(1536));
   },
+  EMBEDDING_MODEL: 'text-embedding-3-large',
+  EMBEDDING_DIMENSIONS: 1536,
+  EMBEDDING_COST_PER_1K_TOKENS: 0.00013,
+  estimateEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
 }));
 
 // Import AFTER mocking.

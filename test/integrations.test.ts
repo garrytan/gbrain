@@ -1,4 +1,6 @@
 import { describe, test, expect, beforeAll } from 'bun:test';
+import { basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   parseRecipe,
   isUnsafeHealthCheck,
@@ -9,6 +11,9 @@ import {
   isPrivateIpv4,
   isInternalUrl,
 } from '../src/commands/integrations.ts';
+
+const okCommand = [process.execPath, '-e', 'process.exit(0)'];
+const failCommand = [process.execPath, '-e', 'process.exit(1)'];
 
 // --- parseRecipe tests ---
 
@@ -255,7 +260,7 @@ describe('twilio-voice-brain recipe', () => {
     );
     const recipe = parseRecipe(content, 'twilio-voice-brain.md');
     expect(recipe).not.toBeNull();
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = fileURLToPath(new URL('../recipes/', import.meta.url));
     for (const dep of recipe!.frontmatter.requires) {
       const depPath = resolve(recipesDir, `${dep}.md`);
       expect(existsSync(depPath)).toBe(true);
@@ -269,7 +274,7 @@ describe('all recipes', () => {
   test('every recipe file in recipes/ parses correctly', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = fileURLToPath(new URL('../recipes/', import.meta.url));
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
@@ -283,7 +288,7 @@ describe('all recipes', () => {
   test('no recipe contains personal references', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = fileURLToPath(new URL('../recipes/', import.meta.url));
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
     const personalPatterns = /wintermute|mercury|16507969501|\+1650796/i;
     for (const file of files) {
@@ -295,7 +300,7 @@ describe('all recipes', () => {
   test('typed health_checks parse correctly in all recipes', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');
-    const recipesDir = new URL('../recipes/', import.meta.url).pathname;
+    const recipesDir = fileURLToPath(new URL('../recipes/', import.meta.url));
     const files = readdirSync(recipesDir).filter((f: string) => f.endsWith('.md'));
     for (const file of files) {
       const content = readFileSync(resolve(recipesDir, file), 'utf-8');
@@ -394,12 +399,12 @@ describe('executeHealthCheck', () => {
   });
 
   test('command returns ok for exit 0', async () => {
-    const result = await executeHealthCheck({ type: 'command', argv: ['true'], label: 'true cmd' }, 'test-id', true);
+    const result = await executeHealthCheck({ type: 'command', argv: okCommand, label: 'ok cmd' }, 'test-id', true);
     expect(result.status).toBe('ok');
   });
 
   test('command returns fail for exit 1', async () => {
-    const result = await executeHealthCheck({ type: 'command', argv: ['false'], label: 'false cmd' }, 'test-id', true);
+    const result = await executeHealthCheck({ type: 'command', argv: failCommand, label: 'fail cmd' }, 'test-id', true);
     expect(result.status).toBe('fail');
   });
 
@@ -474,13 +479,13 @@ describe('executeHealthCheck', () => {
 
   // Fix 2: command DSL health checks are gated on isEmbedded.
   test('command health_check is blocked for non-embedded recipes', async () => {
-    const result = await executeHealthCheck({ type: 'command', argv: ['true'], label: 'true' }, 'test-id', false);
+    const result = await executeHealthCheck({ type: 'command', argv: okCommand, label: 'ok' }, 'test-id', false);
     expect(result.status).toBe('blocked');
     expect(result.output).toContain('restricted to embedded recipes');
   });
 
   test('command health_check runs for embedded recipes', async () => {
-    const result = await executeHealthCheck({ type: 'command', argv: ['true'], label: 'true' }, 'test-id', true);
+    const result = await executeHealthCheck({ type: 'command', argv: okCommand, label: 'ok' }, 'test-id', true);
     expect(result.status).toBe('ok');
   });
 
@@ -632,7 +637,7 @@ describe('getRecipeDirs (B1 trust boundary)', () => {
       expect(typeof d.dir).toBe('string');
     }
     // In this repo, the source recipes dir must be trusted
-    const source = dirs.find(d => d.dir.endsWith('/recipes') && d.trusted);
+    const source = dirs.find(d => basename(d.dir) === 'recipes' && d.trusted);
     expect(source).toBeDefined();
   });
 

@@ -307,22 +307,32 @@ describe('runCycle — engine = null (filesystem-only mode)', () => {
   });
 
   test('file lock blocks concurrent engine=null cycles', async () => {
-    // Seed a lock file pointing at PID 1 (init/launchd — always alive on
-    // unix, and never equals our test PID). Fresh mtime means "live holder".
-    // With engine=null + the default phases selection, lint + backlinks
-    // trigger NEEDS_LOCK_PHASES → acquireFileLock sees the live holder and
-    // returns null → runCycle returns skipped/cycle_already_running.
     const { writeFileSync, mkdirSync } = require('fs');
     const path = require('path');
-    mkdirSync(path.dirname(lockFile), { recursive: true });
-    writeFileSync(lockFile, `1\n${new Date().toISOString()}\n`);
+    const holder = Bun.spawn(
+      [process.execPath, '-e', 'setTimeout(() => {}, 60_000)'],
+      { stdout: 'ignore', stderr: 'ignore' },
+    );
 
-    const report = await runCycle(null, { brainDir: '/tmp/brain' });
-    expect(report.status).toBe('skipped');
-    expect(report.reason).toBe('cycle_already_running');
-    // None of the filesystem phases ran because the lock blocked entry.
-    expect(lintCalls.length).toBe(0);
-    expect(backlinksCalls.length).toBe(0);
+    try {
+      // Seed a lock file pointing at a real live process that is not this test
+      // process. PID 1 is not portable: it is usually live on Unix, but not a
+      // reliable live holder on Windows.
+      expect(holder.pid).toBeGreaterThan(0);
+      expect(holder.pid).not.toBe(process.pid);
+      mkdirSync(path.dirname(lockFile), { recursive: true });
+      writeFileSync(lockFile, `${holder.pid}\n${new Date().toISOString()}\n`);
+
+      const report = await runCycle(null, { brainDir: '/tmp/brain' });
+      expect(report.status).toBe('skipped');
+      expect(report.reason).toBe('cycle_already_running');
+      // None of the filesystem phases ran because the lock blocked entry.
+      expect(lintCalls.length).toBe(0);
+      expect(backlinksCalls.length).toBe(0);
+    } finally {
+      holder.kill();
+      await holder.exited.catch(() => {});
+    }
   });
 });
 

@@ -30,7 +30,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env.GBRAIN_HOME = ORIG_HOME;
+  if (ORIG_HOME !== undefined) process.env.GBRAIN_HOME = ORIG_HOME;
+  else delete process.env.GBRAIN_HOME;
   rmSync(tmp, { recursive: true, force: true });
 });
 

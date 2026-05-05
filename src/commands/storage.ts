@@ -184,9 +184,9 @@ export function formatStorageStatusHuman(result: StorageStatusResult): string {
   lines.push('');
   lines.push('Storage Tiers:');
   lines.push('-------------');
-  lines.push(`DB tracked:     ${result.pagesByTier.db_tracked.toLocaleString()} pages`);
-  lines.push(`DB only:        ${result.pagesByTier.db_only.toLocaleString()} pages`);
-  lines.push(`Unspecified:    ${result.pagesByTier.unspecified.toLocaleString()} pages`);
+  lines.push(`DB tracked:     ${formatPageCount(result.pagesByTier.db_tracked)} pages`);
+  lines.push(`DB only:        ${formatPageCount(result.pagesByTier.db_only)} pages`);
+  lines.push(`Unspecified:    ${formatPageCount(result.pagesByTier.unspecified)} pages`);
 
   if (result.diskUsageByTier.db_tracked > 0 || result.diskUsageByTier.db_only > 0) {
     lines.push('');
@@ -242,4 +242,8 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function formatPageCount(count: number): string {
+  return count.toLocaleString('en-US');
 }

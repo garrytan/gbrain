@@ -103,7 +103,7 @@ describe('createTranscriptSink', () => {
 describe('spawnWithCapture', () => {
   test('captures stdout from a small command', async () => {
     const sink = createTranscriptSink(path);
-    const result = await spawnWithCapture('/bin/sh', ['-c', 'printf hi'], {
+    const result = await spawnWithCapture(process.execPath, ['-e', 'process.stdout.write("hi")'], {
       cwd: tmp,
       env: { PATH: process.env.PATH ?? '' },
       timeoutMs: 5_000,
@@ -123,7 +123,7 @@ describe('spawnWithCapture', () => {
 
   test('non-zero exit propagates', async () => {
     const sink = createTranscriptSink(path);
-    const result = await spawnWithCapture('/bin/sh', ['-c', 'exit 7'], {
+    const result = await spawnWithCapture(process.execPath, ['-e', 'process.exit(7)'], {
       cwd: tmp,
       env: { PATH: process.env.PATH ?? '' },
       timeoutMs: 5_000,
@@ -136,11 +136,11 @@ describe('spawnWithCapture', () => {
 
   test('timeout fires SIGTERM/SIGKILL', async () => {
     const sink = createTranscriptSink(path);
-    // `exec sleep` replaces sh with sleep so the child we spawn IS sleep —
-    // SIGTERM goes directly to it, no shell-vs-child process-group ambiguity.
+    // The child process is Bun itself, so SIGTERM goes directly to it without
+    // shell-vs-grandchild process-group ambiguity.
     // CI runners are slower than local, so the test cap is 30s with headroom
     // even if SIGTERM is missed and SIGKILL has to run after the 5s grace.
-    const result = await spawnWithCapture('/bin/sh', ['-c', 'exec sleep 30'], {
+    const result = await spawnWithCapture(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], {
       cwd: tmp,
       env: { PATH: process.env.PATH ?? '' },
       timeoutMs: 200,

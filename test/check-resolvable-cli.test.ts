@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'bun:test';
 import { spawnSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { basename, join, resolve } from 'path';
 import {
   parseFlags,
   resolveSkillsDir,
@@ -133,7 +133,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
 
   it('resolves relative --skills-dir against cwd', () => {
     const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: 'skills' });
-    expect(r.dir).toMatch(/\/skills$/);
+    expect(basename(r.dir!)).toBe('skills');
     expect(r.error).toBeNull();
     expect(r.source).toBe('explicit');
   });
@@ -159,7 +159,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     // Running from this test file — we're inside the real gbrain repo.
     const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
     expect(r.error).toBeNull();
-    expect(r.dir).toMatch(/\/skills$/);
+    expect(basename(r.dir!)).toBe('skills');
     expect(r.source).toBe('repo_root');
   });
 
@@ -356,6 +356,6 @@ describe('gbrain check-resolvable CLI — integration', () => {
     const r = run([]);
     expect(r.status === 0 || r.status === 1).toBe(true);
     expect(r.stdout).toContain('Auto-detected skills directory');
-    expect(r.stdout).toContain('/skills');
+    expect(r.stdout).toMatch(/[\\/]skills\b/);
   });
 });
