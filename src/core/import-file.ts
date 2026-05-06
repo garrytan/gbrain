@@ -11,6 +11,7 @@ import { extractCodeRefs } from './link-extraction.ts';
 import { embedBatch } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageType } from './types.ts';
+import { computeEffectiveDate } from './effective-date.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -185,7 +186,15 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: {
+    noEmbed?: boolean;
+    /**
+     * v0.29.1: basename without extension for filename-date precedence on
+     * `daily/`, `meetings/` slugs. importFromFile threads this from the
+     * disk path; the put_page MCP op derives it from the slug tail.
+     */
+    filename?: string;
+  } = {},
 ): Promise<ImportResult> {
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
@@ -269,6 +278,23 @@ export async function importFromContent(
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug);
 
+    // v0.29.1 — compute effective_date from frontmatter precedence chain.
+    // Filename comes from importFromFile path (basename) or the slug tail
+    // (put_page MCP op fallback). updatedAt/createdAt use the existing
+    // page's timestamps when present; otherwise NOW() (the row about to
+    // be created). The result drives the recency boost and since/until
+    // filters when callers opt in; nothing in the default search path
+    // consults it.
+    const filenameForChain = opts.filename ?? slug.split('/').pop() ?? slug;
+    const nowDate = new Date();
+    const { date: effectiveDate, source: effectiveDateSource } = computeEffectiveDate({
+      slug,
+      frontmatter: parsed.frontmatter,
+      filename: filenameForChain,
+      updatedAt: existing?.updated_at ?? nowDate,
+      createdAt: existing?.created_at ?? nowDate,
+    });
+
     await tx.putPage(slug, {
       type: parsed.type,
       title: parsed.title,
@@ -276,6 +302,9 @@ export async function importFromContent(
       timeline: parsed.timeline || '',
       frontmatter: parsed.frontmatter,
       content_hash: hash,
+      effective_date: effectiveDate,
+      effective_date_source: effectiveDateSource,
+      import_filename: filenameForChain,
     });
 
     // Tag reconciliation: remove stale, add current
@@ -392,7 +421,11 @@ export async function importFromFile(
 
   // Pass the path-derived slug explicitly so that any future change to
   // parseMarkdown's precedence rules cannot re-introduce this bug.
-  return importFromContent(engine, expectedSlug, content, opts);
+  // v0.29.1: thread the basename (without extension) for filename-date
+  // precedence in computeEffectiveDate. e.g. `daily/2024-03-15.md` →
+  // filename `2024-03-15`.
+  const fileBasename = basename(relativePath, '.md');
+  return importFromContent(engine, expectedSlug, content, { ...opts, filename: fileBasename });
 }
 
 /**

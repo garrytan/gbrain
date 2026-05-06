@@ -43,13 +43,21 @@ export function contentHash(page: PageInput): string {
     .digest('hex');
 }
 
+function readOptionalDate(raw: unknown): Date | null | undefined {
+  // Three-state read for columns that may or may not be in the SELECT
+  // projection: undefined (not selected), null (selected, NULL value),
+  // Date (selected, populated). Mirrors the v0.26.5 deleted_at pattern.
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  return new Date(raw as string);
+}
+
 export function rowToPage(row: Record<string, unknown>): Page {
-  // v0.26.5: deleted_at is optional in the SELECT projection. When the column
-  // isn't selected (legacy callers), keep the field absent on the returned object.
-  const deletedAtRaw = row.deleted_at;
-  const deletedAt = deletedAtRaw == null
-    ? (deletedAtRaw === null ? null : undefined)
-    : new Date(deletedAtRaw as string);
+  const deletedAt = readOptionalDate(row.deleted_at);
+  const effectiveDate = readOptionalDate(row.effective_date);
+  const salienceTouchedAt = readOptionalDate(row.salience_touched_at);
+  const effectiveDateSource = row.effective_date_source as Page['effective_date_source'] | undefined;
+  const importFilename = row.import_filename as string | null | undefined;
   return {
     id: row.id as number,
     slug: row.slug as string,
@@ -59,11 +67,16 @@ export function rowToPage(row: Record<string, unknown>): Page {
     timeline: row.timeline as string,
     frontmatter: (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as Record<string, unknown>,
     content_hash: row.content_hash as string | undefined,
-    // v0.29 (column added in migration v34). Old brains pre-migration return undefined.
+    // v0.29 (column added in migration v37). Old brains pre-migration return undefined.
     emotional_weight: row.emotional_weight == null ? undefined : Number(row.emotional_weight),
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
     ...(deletedAt !== undefined && { deleted_at: deletedAt }),
+    // v0.29.1 (columns added in migration v38). Optional in SELECT projection.
+    ...(effectiveDate !== undefined && { effective_date: effectiveDate }),
+    ...(effectiveDateSource !== undefined && { effective_date_source: effectiveDateSource }),
+    ...(importFilename !== undefined && { import_filename: importFilename }),
+    ...(salienceTouchedAt !== undefined && { salience_touched_at: salienceTouchedAt }),
   };
 }
 

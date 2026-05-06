@@ -331,12 +331,19 @@ export class PostgresEngine implements BrainEngine {
 
     // v0.18.0 Step 2: source_id relies on schema DEFAULT 'default'. ON
     // CONFLICT target becomes (source_id, slug) since global UNIQUE(slug)
-    // was dropped in migration v17. See pglite-engine.ts for matching
-    // notes; multi-source sync (Step 5) will surface an explicit sourceId.
+    // was dropped in migration v17.
     const pageKind = page.page_kind || 'markdown';
+    // v0.29.1 — effective_date / effective_date_source / import_filename are
+    // additive opt-in inputs from the importer (computeEffectiveDate). When
+    // omitted, the ON CONFLICT path preserves any existing value via
+    // COALESCE(EXCLUDED.x, pages.x) so a putPage that doesn't know about
+    // these columns (auto-link, code reindex, etc.) doesn't blank them out.
+    const effectiveDate = page.effective_date ?? null;
+    const effectiveDateSource = page.effective_date_source ?? null;
+    const importFilename = page.import_filename ?? null;
     const rows = await sql`
-      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now())
+      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename)
+      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename})
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -345,8 +352,11 @@ export class PostgresEngine implements BrainEngine {
         timeline = EXCLUDED.timeline,
         frontmatter = EXCLUDED.frontmatter,
         content_hash = EXCLUDED.content_hash,
-        updated_at = now()
-      RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
+        updated_at = now(),
+        effective_date        = COALESCE(EXCLUDED.effective_date,        pages.effective_date),
+        effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source),
+        import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename)
+      RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename
     `;
     return rowToPage(rows[0]);
   }
