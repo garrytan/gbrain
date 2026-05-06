@@ -401,6 +401,50 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     expect(upsertByPageCalls[0].chunks[0].embedding).toBeInstanceOf(Float32Array);
   });
 
+  test('--stale groups fallback rows by source id and slug when page id is unavailable', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const stale = [
+      {
+        source_id: 'source-a',
+        slug: 'shared-slug',
+        chunk_index: 0,
+        chunk_text: 'stale in first source',
+        chunk_source: 'compiled_truth' as const,
+        model: null,
+        token_count: null,
+      },
+      {
+        source_id: 'source-b',
+        slug: 'shared-slug',
+        chunk_index: 0,
+        chunk_text: 'stale in second source',
+        chunk_source: 'compiled_truth' as const,
+        model: null,
+        token_count: null,
+      },
+    ];
+    const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
+    const engine = mockEngine({
+      countStaleChunks: async () => 2,
+      listStaleChunks: async () => stale,
+      getChunks: async () => [
+        { chunk_index: 0, chunk_text: 'stale fallback row', chunk_source: 'compiled_truth', embedded_at: null, token_count: 5 },
+      ],
+      upsertChunks: async (slug: string, chunks: any[]) => {
+        upsertCalls.push({ slug, chunks });
+      },
+    });
+
+    const result = await runEmbedCore(engine, { stale: true });
+
+    expect(result.embedded).toBe(2);
+    expect(result.pages_processed).toBe(2);
+    expect(totalEmbedCalls).toBe(2);
+    expect(upsertCalls).toHaveLength(2);
+    expect(upsertCalls.every(call => call.slug === 'shared-slug')).toBe(true);
+    expect(upsertCalls.every(call => call.chunks[0].embedding instanceof Float32Array)).toBe(true);
+  });
+
   test('--stale dry-run: counts stale via countStaleChunks, reports via listStaleChunks, no embedBatch or upsertChunks', async () => {
     const { runEmbedCore } = await import('../src/commands/embed.ts');
     const stale = [

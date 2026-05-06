@@ -365,7 +365,9 @@ async function embedAllStale(
   // pages and send duplicate chunk_index rows into one upsert.
   const byPage = new Map<string, typeof staleRows>();
   for (const row of staleRows) {
-    const key = row.page_id != null ? `page:${row.page_id}` : `slug:${row.slug}`;
+    const key = row.page_id != null
+      ? `page:${row.page_id}`
+      : `source:${row.source_id ?? 'unknown'}:slug:${row.slug}`;
     const list = byPage.get(key);
     if (list) list.push(row);
     else byPage.set(key, [row]);
