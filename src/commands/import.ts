@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
-import { importFile } from '../core/import-file.ts';
+import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -105,7 +105,13 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   async function processFile(eng: BrainEngine, filePath: string) {
     const relativePath = relative(dir, filePath);
     try {
-      const result = await importFile(eng, filePath, relativePath, { noEmbed });
+      // v0.27.1 (F2): dispatch image extensions to importImageFile when
+      // multimodal is enabled. The walker (collectMarkdownFiles) only picks
+      // up images when GBRAIN_EMBEDDING_MULTIMODAL=true so this branch is
+      // unreachable when the gate is off; defense-in-depth check anyway.
+      const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
+        ? await importImageFile(eng, filePath, relativePath, { noEmbed })
+        : await importFile(eng, filePath, relativePath, { noEmbed });
       if (result.status === 'imported') {
         imported++;
         chunksCreated += result.chunks;
@@ -324,10 +330,15 @@ export function collectMarkdownFiles(dir: string): string[] {
         walk(full);
       } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
         files.push(full);
+      } else if (multimodalEnabled && isImageFilePath(entry)) {
+        // v0.27.1 (F2): images join the walker only when multimodal is on.
+        // Pre-v0.27.1 brains keep their existing markdown-only walk.
+        files.push(full);
       }
     }
   }
 
+  const multimodalEnabled = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
   walk(dir);
   return files.sort();
 }

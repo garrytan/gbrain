@@ -12,6 +12,12 @@ import {
   getEmbeddingDimensions as gatewayGetDims,
 } from './ai/gateway.ts';
 
+// v0.27.1: re-export multimodal embedding so callers can pull both text and
+// image embedding APIs from `src/core/embedding`. import-image-file consumes
+// embedMultimodal directly.
+export { embedMultimodal } from './ai/gateway.ts';
+export type { MultimodalInput } from './ai/types.ts';
+
 /** Embed one text. */
 export async function embed(text: string): Promise<Float32Array> {
   return gatewayEmbedOne(text);

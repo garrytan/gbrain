@@ -29,7 +29,26 @@ export interface EmbeddingTouchpoint {
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
+  /**
+   * v0.27.1: when true, at least one model in this recipe accepts image
+   * inputs via a multimodal embedding endpoint (e.g. Voyage's
+   * /v1/multimodalembeddings). Drives gateway.embedMultimodal() routing.
+   * Text-only providers leave this undefined.
+   */
+  supports_multimodal?: boolean;
 }
+
+/**
+ * v0.27.1: input shape for gateway.embedMultimodal(). Discriminated union;
+ * today the only kind is image_base64 (raw bytes encoded by the caller).
+ * Future kinds (image_url, video_keyframe) extend the union without
+ * widening callers because the discriminator is exhaustive.
+ *
+ * No image_url variant: SSRF surface. Callers must read the bytes and
+ * base64-encode them; the gateway never fetches external URLs.
+ */
+export type MultimodalInput =
+  | { kind: 'image_base64'; data: string; mime: string };
 
 export interface ExpansionTouchpoint {
   models: string[];

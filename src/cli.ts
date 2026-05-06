@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { readFileSync } from 'fs';
-import { loadConfig, toEngineConfig } from './core/config.ts';
+import { loadConfig, loadConfigWithEngine, toEngineConfig } from './core/config.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
@@ -81,9 +81,33 @@ async function main() {
   try {
     const params = parseOpArgs(op, subArgs);
 
-    // Validate required params before calling handler
+    // v0.27.1 (`gbrain query --image <path>`): swap the `image` param from
+    // a filesystem path into base64 bytes + mime. The op accepts base64; the
+    // CLI accepts a path. Helper is exported so tests can exercise the
+    // transform without spawning a subprocess.
+    if (op.name === 'query' && typeof params.image === 'string' && params.image.length > 0) {
+      try {
+        const { path, base64, mime } = resolveQueryImage(
+          params.image as string,
+          (params.image_mime as string) || undefined,
+        );
+        params.image = base64;
+        params.image_mime = mime;
+        void path;
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    }
+
+    // Validate required params before calling handler. v0.27.1: the
+    // `query` op's positional `query` is required only when --image is
+    // NOT supplied. The runtime altRequired check below overrides the
+    // generic required-flag check for that op.
+    const queryHasAlt = op.name === 'query' && typeof params.image === 'string' && params.image.length > 0;
     for (const [key, def] of Object.entries(op.params)) {
       if (def.required && params[key] === undefined) {
+        if (queryHasAlt && key === 'query') continue;
         const cliName = op.cliHints?.name || op.name;
         const positional = op.cliHints?.positional || [];
         const usage = positional.map(p => `<${p}>`).join(' ');
@@ -107,6 +131,41 @@ async function main() {
   } finally {
     await engine.disconnect();
   }
+}
+
+/**
+ * v0.27.1: shared transform for `gbrain query --image <path>` (and any future
+ * CLI surface that takes an image path). Reads the file, base64-encodes,
+ * derives MIME from the extension, enforces the 20MB cap. Exported so tests
+ * can verify the transform without spawning a subprocess.
+ *
+ * Throws Error on any failure (file missing, oversized, etc.). Caller is
+ * responsible for routing to process.exit(1) with a user-facing message.
+ */
+export function resolveQueryImage(
+  imagePath: string,
+  explicitMime?: string,
+): { path: string; base64: string; mime: string } {
+  const bytes = readFileSync(imagePath);
+  if (bytes.length > 20 * 1024 * 1024) {
+    throw new Error(`Error: image too large (${bytes.length} bytes, max 20MB).`);
+  }
+  const base64 = bytes.toString('base64');
+  let mime = explicitMime;
+  if (!mime) {
+    const lower = imagePath.toLowerCase();
+    const mimeFromExt: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.heic': 'image/heic', '.heif': 'image/heif',
+      '.avif': 'image/avif',
+    };
+    const ext = Object.keys(mimeFromExt).find(e => lower.endsWith(e));
+    mime = ext ? mimeFromExt[ext] : 'image/jpeg';
+  }
+  return { path: imagePath, base64, mime };
 }
 
 function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
@@ -646,6 +705,33 @@ async function connectEngine(): Promise<BrainEngine> {
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');
   await connectWithRetry(engine, toEngineConfig(config), { noRetry });
+
+  // v0.27.1 (F3 fix): re-merge DB-plane config now that the engine is up.
+  // Flags like `embedding_multimodal` are user-mutable via `gbrain config set`
+  // (DB plane) and need to flow into the gateway after connect. Schema-sizing
+  // fields (embedding_dimensions etc.) keep their pre-connect file/env values
+  // — those drove initSchema and the merged config respects file/env first.
+  try {
+    const merged = await loadConfigWithEngine(engine, config);
+    if (merged) {
+      // Only re-configure when a runtime-relevant DB flag actually overrode
+      // a pre-connect default. Today the only consumer is the import-image
+      // path; the gateway itself doesn't read these flags. The stash on
+      // process.env preserves the contract for downstream readers without
+      // changing the gateway's signature.
+      if (merged.embedding_multimodal !== undefined) {
+        process.env.GBRAIN_EMBEDDING_MULTIMODAL = String(merged.embedding_multimodal);
+      }
+      if (merged.embedding_image_ocr !== undefined) {
+        process.env.GBRAIN_EMBEDDING_IMAGE_OCR = String(merged.embedding_image_ocr);
+      }
+      if (merged.embedding_image_ocr_model !== undefined) {
+        process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL = merged.embedding_image_ocr_model;
+      }
+    }
+  } catch {
+    // Non-fatal. Pre-v36 brains may not have a usable config table yet.
+  }
   return engine;
 }
 

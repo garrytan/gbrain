@@ -2,6 +2,170 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.27.1] - 2026-05-05
+
+## **gbrain remembers what you SAW, not just what you typed.**
+## **Drop a screenshot, a whiteboard photo, or an iPhone HEIC into your brain. Voyage multimodal embeddings, opt-in OCR, EXIF in frontmatter, auto-link to the meeting page that already lived next door.**
+
+The user reply that sparked this: "does v0.27.0 do voyage-multimodal-3?" Today the answer is yes. Drop a PNG, JPG, GIF, WEBP, HEIC, or AVIF into your brain repo, run `gbrain sync`, and the image lands as a first-class page with a 1024-dim Voyage multimodal embedding. Optionally turn on `embedding_image_ocr` and gpt-4o-mini extracts the visible text — whiteboard captures become keyword-searchable in one move.
+
+The v0.27.1 architecture lights up multiple foundations at once: dual-column embedding schema (text in `embedding`, images in `embedding_image vector(1024)`), so a brain can run OpenAI 1536-dim text alongside Voyage 1024-dim images without dim-mismatch headaches. PGLite gains the `files` table it has been missing since v0.18, with full Postgres parity verified by the v0.26.6 schema-drift gate. The bun --compile probe (mirroring the v0.19.0 tree-sitter pattern) catches HEIC/AVIF decoder regressions before users hit them on shipped binaries.
+
+### The numbers that matter
+
+Tested on a fresh PGLite brain with the new fixture set + ratified tests:
+
+| Metric | Before (v0.27.0) | After (v0.27.1) | Δ |
+|--------|------------------|-----------------|---|
+| Image extensions admitted by sync | 0 | 7 (PNG, JPG, JPEG, GIF, WEBP, HEIC, AVIF) | +7 |
+| Voyage models registered | 3 (text only) | 4 (+ voyage-multimodal-3) | +1 |
+| Engines with `files` table | 1 (Postgres only) | 2 (PGLite parity) | +1 |
+| New BrainEngine APIs | — | upsertFile / getFile / listFilesForPage | +3 |
+| New doctor checks | — | image_assets, ocr_health | +2 |
+| Voyage batch size | n/a | 32 inputs/call (Voyage's max) | — |
+| OCR concurrency | n/a | 8 (cuts 100-image first-import OCR latency from ~200s to ~25s) | — |
+| Schema migration | — | v36 (modality + embedding_image + partial HNSW + PGLite files + page_kind widen) | — |
+| New test cases | — | 60+ (recipe, gateway, batch boundary, importImageFile, link-extraction, migration, config-merge) | — |
+| Decoder probe runtime | — | ~150ms in CI (single bun --compile + decode round-trip) | — |
+| Binary size delta | — | +5MB (heic-decode + @jsquash/avif + @jsquash/png + exifr WASMs) | +5MB |
+
+### What this means for you
+
+```bash
+gbrain upgrade
+gbrain config set embedding_model voyage:voyage-3-large
+gbrain config set embedding_dimensions 1024
+gbrain config set embedding_multimodal true
+gbrain config set embedding_image_ocr true   # optional ($0.0003/image gpt-4o-mini)
+cp ~/Pictures/whiteboard.heic ~/brain/originals/photos/
+gbrain sync
+gbrain query "the photo from the seed meeting"   # text search (image rows hidden by default)
+gbrain query --image ~/Pictures/whiteboard.heic  # image-similarity search
+gbrain doctor                                    # image_assets + ocr_health checks
+```
+
+If `originals/meetings/<same-basename>.md` already exists, the photo auto-links via an `image_of` graph edge — your meeting page now references the whiteboard.
+
+### For contributors
+
+Outside-voice review by codex caught six load-bearing pieces missing from the original cathedral plan: PGLite needed a files table, runImport was markdown-only, the file/env vs DB config planes were mismatched, the type system rejected `'image'`, BrainEngine had no upsertFile method, and `gbrain query --image` targeted a CLI surface that didn't exist. All six landed in scope. The v0.27.1 PR is roughly 1500 lines, ten atomic phases, 26 ratified decisions across the CEO + codex + eng review.
+
+## To take advantage of v0.27.1
+
+`gbrain upgrade` should do this automatically. If `gbrain doctor` warns about
+`schema_version` or `image_assets`:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+   This applies migration v36 (adds modality + embedding_image columns, widens
+   the page_kind CHECK, creates the partial HNSW index, and on PGLite creates
+   the files table).
+2. **Enable multimodal** by setting `embedding_multimodal: true` in the DB
+   plane: `gbrain config set embedding_multimodal true`.
+3. **Drop a sample image** into your brain repo and `gbrain sync`. Confirm with
+   `gbrain doctor` that `image_assets` shows the new file present.
+4. **If migration v36 fails with a pgvector error,** you're on pgvector < 0.5.
+   The handler refuses BEFORE running DDL with a clear fix hint:
+   `ALTER EXTENSION vector UPDATE` then re-run `gbrain apply-migrations --yes`.
+5. **If anything else fails or behavior surprises you,** file an issue at
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+
+### Itemized changes
+
+**Voyage multimodal embedding:**
+- New `voyage-multimodal-3` model in the Voyage recipe; `supports_multimodal`
+  flag added to `EmbeddingTouchpoint`. Other Voyage text models unchanged.
+- `gateway.embedMultimodal(inputs)` direct fetch to `/v1/multimodalembeddings`.
+  Vercel AI SDK has no multimodal-embedding abstraction yet, so we bypass it.
+- `MultimodalInput` discriminated union (kind: `'image_base64'` today). No
+  `image_url` variant by design — that would be an SSRF surface.
+- Voyage batch size = 32 inputs/call; pinned by Eng-3A boundary tests at
+  n=0, 1, 32, 33, 64.
+
+**Schema (migration v36):**
+- `content_chunks.modality TEXT NOT NULL DEFAULT 'text'`
+- `content_chunks.embedding_image vector(1024)` + partial HNSW index
+- PGLite files table mirrors Postgres v0.18 shape (storage_path, mime_type,
+  content_hash, page_id link, etc.)
+- `pages.page_kind` CHECK widened to admit `'image'`
+- pgvector >= 0.5 preflight refuses BEFORE DDL on too-old Postgres
+
+**Image ingestion:**
+- `importImageFile()` reads bytes, sha256-hashes for idempotency, decodes
+  HEIC/AVIF via `heic-decode` + `@jsquash/avif` (re-encoded to PNG via
+  `@jsquash/png`), parses EXIF via `exifr` (date, GPS, camera, dims),
+  optionally OCRs via `gpt-4o-mini`, embeds via Voyage multimodal, persists
+  page + files row + image chunk through `withImportTransaction`.
+- `withImportTransaction` shared helper consumed by both markdown + image
+  paths. Type-specific work (markdown tags, image auto-link) runs through an
+  inside-transaction `after` hook.
+- `pLimit(8)` semaphore parallelizes OCR calls across the import pipeline.
+- 20MB cap (Voyage's per-input limit). Oversized images route to
+  `sync_failures.jsonl` with `FILE_TOO_LARGE`.
+- `runImport()` walker admits image extensions when
+  `GBRAIN_EMBEDDING_MULTIMODAL=true`. Off-by-default for existing brains.
+
+**Auto-link (`image_of` edge):**
+- `imageOfCandidates(slug)` proposes sibling-page candidates via
+  parallel-directory swap (`originals/photos/X` → `originals/meetings/X`)
+  plus a same-directory basename fallback.
+- First matching candidate gets an `image_of` graph edge inside the
+  ingestion transaction.
+
+**Doctor checks:**
+- `image_assets`: scans the files table for image MIME rows whose
+  `storage_path` doesn't exist on disk. Reports the first 5 vanished paths.
+- `ocr_health`: reads ocr_attempted/succeeded/failed_no_key/failed_other
+  counters. Warns when OCR is opted-in but no calls succeeded — surfaces the
+  silent failure mode where a stale OPENAI_API_KEY would otherwise leave OCR
+  invisible.
+
+**Type-system tightening:**
+- `assertNever()` exhaustive-check helper in `src/core/types.ts`.
+- `scripts/check-pagetype-exhaustive.sh` CI guard catches any future
+  `switch (X.type)` site that doesn't use `assertNever` in default. Wired
+  into `bun run verify`.
+- Contract test walks every PageType value (including `'image'`) through
+  serialize + parse round-trip.
+
+**Config plane unification (codex F3):**
+- `loadConfigWithEngine(engine, base?)` async overlay merges DB-plane config
+  on top of file/env. Precedence: env > file > DB > defaults.
+- `gbrain config set embedding_multimodal true` now actually flips the gate
+  at runtime (it didn't pre-v0.27.1 — the gateway only read file/env).
+
+**bun --compile correctness gate:**
+- `scripts/check-image-decoders-embedded.sh` builds a minimal harness against
+  `heic-decode` + `@jsquash/avif`, runs the resulting binary, decodes fixture
+  HEIC + AVIF, asserts non-empty pixel buffers. Wired into
+  `bun run verify`. Mirrors the v0.19.0 tree-sitter pattern.
+- The probe caught one real bug along the way: `@jsquash/avif` loads its
+  WASM relative to its own JS file, which fails inside a bun --compile VFS.
+  Fix: pre-init via `init(WebAssembly.Module)` with bytes loaded through
+  `with { type: 'file' }` import attribute.
+
+**Image-similarity search (`gbrain query --image`):**
+- New `--image <path>` flag on `gbrain query`. Reads the file, base64-
+  encodes, derives MIME from the extension (PNG/JPG/JPEG/GIF/WEBP/HEIC/
+  HEIF/AVIF), enforces 20MB cap, embeds via Voyage multimodal, runs vector
+  search against `content_chunks.embedding_image` with the v0.27.1 column
+  routing (`embeddingColumn: 'embedding_image'`).
+- The `query` op now accepts either `query` (text) or `image` (base64) but
+  not zero of either. Existing text-query callers unchanged.
+- Modality filtering on the `embedding_image` path keeps the result set
+  pure (image rows only); the default text path stays text-rows-only.
+  Cross-modal text→image RRF fusion is the v0.27.2 follow-up.
+
+**What's NOT in this release** (deferred to v0.27.2+):
+- Cross-modal text→image RRF fusion (text query embeds through both text
+  AND voyage-multimodal models, fuses results).
+- PDF page rasterization.
+- Video keyframe extraction (waits on Voyage 3.5 multimodal video).
+- OpenAI / Cohere multimodal embed.
+- `gbrain capture-screenshot` macOS inbox flow.
+
 ## [0.27.0] - 2026-04-28
 
 ## **GBrain runs on any embedding stack. OpenAI, Google Gemini, Ollama, Voyage, or anything via LiteLLM — one config line away.**

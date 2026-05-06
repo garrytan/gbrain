@@ -1006,6 +1006,72 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
+  // v0.27.1: image_assets — vanished images (files row exists but file
+  // missing on disk). Cherry-4b. Engine-agnostic; uses listFilesForPage's
+  // sibling SQL via raw query for cross-engine compatibility.
+  if (engine) {
+    progress.heartbeat('image_assets');
+    try {
+      const rows = await engine.executeRaw<{ storage_path: string }>(
+        `SELECT storage_path FROM files WHERE mime_type LIKE 'image/%' LIMIT 1000`
+      );
+      let vanished = 0;
+      const vanishedPaths: string[] = [];
+      const fs = await import('node:fs');
+      for (const r of rows) {
+        try {
+          fs.statSync(r.storage_path);
+        } catch {
+          vanished++;
+          if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
+        }
+      }
+      if (rows.length === 0) {
+        checks.push({ name: 'image_assets', status: 'ok', message: 'No image assets indexed yet' });
+      } else if (vanished === 0) {
+        checks.push({ name: 'image_assets', status: 'ok', message: `${rows.length} image(s) all present on disk` });
+      } else {
+        checks.push({
+          name: 'image_assets',
+          status: 'warn',
+          message: `${vanished} of ${rows.length} image(s) missing from disk (e.g. ${vanishedPaths.join(', ')}). ` +
+                   `Fix: restore from git, or \`gbrain sync --skip-failed\` to acknowledge.`,
+        });
+      }
+    } catch {
+      // Pre-v36 brains may not have the files table on PGLite — quiet skip.
+    }
+
+    // v0.27.1 Eng-1B: ocr_health — counters incremented by importImageFile.
+    // Warns when OCR is opted-in (attempted > 0) but never succeeds.
+    progress.heartbeat('ocr_health');
+    try {
+      const attempted = parseInt((await engine.getConfig('ocr_attempted')) ?? '0', 10);
+      const succeeded = parseInt((await engine.getConfig('ocr_succeeded')) ?? '0', 10);
+      const failedNoKey = parseInt((await engine.getConfig('ocr_failed_no_key')) ?? '0', 10);
+      const failedOther = parseInt((await engine.getConfig('ocr_failed_other')) ?? '0', 10);
+      if (attempted === 0) {
+        checks.push({ name: 'ocr_health', status: 'ok', message: 'OCR not in use (or no images ingested with OCR opt-in)' });
+      } else if (succeeded === 0 && (failedNoKey > 0 || failedOther > 0)) {
+        const reasons: string[] = [];
+        if (failedNoKey > 0) reasons.push(`${failedNoKey} no-key`);
+        if (failedOther > 0) reasons.push(`${failedOther} other`);
+        checks.push({
+          name: 'ocr_health',
+          status: 'warn',
+          message: `OCR is opted-in but no calls succeeded (${attempted} attempted, ${reasons.join(', ')}). ` +
+                   `Fix: verify OPENAI_API_KEY is set, or set embedding_image_ocr=false to disable.`,
+        });
+      } else {
+        checks.push({
+          name: 'ocr_health',
+          status: 'ok',
+          message: `OCR healthy (${succeeded}/${attempted} succeeded; ${failedNoKey} no-key, ${failedOther} other failures)`,
+        });
+      }
+    } catch { /* config table missing on a very old brain — skip */ }
+  }
+
   progress.finish();
 
   const hasFail = outputResults(checks, jsonOutput);
