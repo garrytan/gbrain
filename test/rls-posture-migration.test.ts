@@ -25,7 +25,8 @@ describe('Phase 4D RLS posture migration', () => {
     expect(sql).toContain('DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table');
     expect(sql).toContain('DROP FUNCTION IF EXISTS auto_enable_rls');
     expect(handlerSource).toContain('DISABLE ROW LEVEL SECURITY');
-    expect(handlerSource).toContain('COMMENT ON TABLE ${table} IS $1');
+    expect(handlerSource).toContain('COMMENT ON TABLE ${table} IS ${quoteLiteral(RLS_POSTURE_COMMENT)}');
+    expect(handlerSource).toContain('quoteLiteral');
     expect(RLS_POSTURE_COMMENT).toContain('GBRAIN:RLS_POSTURE service-role-only');
     expect(RLS_POSTURE_COMMENT).toContain('MCP/app bearer-token authorization is the security boundary');
     for (const table of ['pages', 'content_chunks', 'access_tokens', 'mcp_request_log', 'minion_jobs', 'subagent_messages']) {

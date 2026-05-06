@@ -530,8 +530,8 @@ describe('migration v39 — service-role-only RLS posture', () => {
 
   test('documents disabled tables with GBRAIN:RLS_POSTURE comments', () => {
     const handlerSource = String(v39!.handler);
-    expect(handlerSource).toContain('COMMENT ON TABLE ${table} IS $1');
-    expect(handlerSource).toContain('RLS_POSTURE_COMMENT');
+    expect(handlerSource).toContain('COMMENT ON TABLE ${table} IS ${quoteLiteral(RLS_POSTURE_COMMENT)}');
+    expect(handlerSource).toContain('quoteLiteral');
     expect(RLS_POSTURE_COMMENT).toContain('GBRAIN:RLS_POSTURE service-role-only');
     expect(RLS_POSTURE_COMMENT).toContain('MCP/app bearer-token authorization is the security boundary');
   });

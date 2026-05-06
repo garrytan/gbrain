@@ -528,9 +528,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         : typeof scopes === 'string'
           ? scopes.split(/[\s,]+/).filter(Boolean)
           : ['read', 'write', 'admin'];
-      const invalidScopes = requestedScopes.filter((scope: string) => (
-        !VALID_SCOPES.includes(scope as any) && !['read', 'write', 'admin'].includes(scope)
-      ));
+      const validOrLegacyScopes = new Set<string>([...VALID_SCOPES, 'read', 'write', 'admin']);
+      const invalidScopes = requestedScopes.filter((scope: string) => !validOrLegacyScopes.has(scope));
       const validatedScopes = normalizeTokenScopes(requestedScopes);
       if (invalidScopes.length > 0 || validatedScopes.length === 0) {
         res.status(400).json({ error: 'invalid_scope', invalid_scopes: invalidScopes });

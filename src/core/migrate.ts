@@ -80,6 +80,10 @@ function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
+function quoteLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 async function applyServiceRoleOnlyRlsPosture(engine: BrainEngine): Promise<void> {
   if (engine.kind !== 'postgres') return;
 
@@ -92,7 +96,7 @@ async function applyServiceRoleOnlyRlsPosture(engine: BrainEngine): Promise<void
 
     const table = `public.${quoteIdent(tableName)}`;
     await engine.executeRaw(`ALTER TABLE ${table} DISABLE ROW LEVEL SECURITY`);
-    await engine.executeRaw(`COMMENT ON TABLE ${table} IS $1`, [RLS_POSTURE_COMMENT]);
+    await engine.executeRaw(`COMMENT ON TABLE ${table} IS ${quoteLiteral(RLS_POSTURE_COMMENT)}`);
   }
 }
 

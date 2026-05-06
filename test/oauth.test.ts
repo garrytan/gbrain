@@ -271,7 +271,7 @@ describe('verifyAccessToken', () => {
 
     const authInfo = await provider.verifyAccessToken(legacyToken);
     expect(authInfo.clientId).toBe('legacy-agent');
-    expect(authInfo.scopes).toEqual(['read', 'write', 'admin']); // grandfathered full access
+    expect(authInfo.scopes).toEqual(['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write', 'admin']); // grandfathered full access
   });
 });
 

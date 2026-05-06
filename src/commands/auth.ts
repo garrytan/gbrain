@@ -340,7 +340,7 @@ export async function runAuth(args: string[]): Promise<void> {
 
 Usage:
   gbrain auth create <name> [--scope S] [--admin-all]     Create a scoped bearer token
-     Phase 4B preset names also work: researcher-read, writer-agent, chunk-indexer, audit-logger, admin-operator
+     Phase 4B preset names also work: agent-cto-ryde, agent-backend-ryde, agent-frontend-ryde, agent-ios-ryde, agent-head-of-product-ryde, orchestrator-ryde
   gbrain auth list                                         List all tokens
   gbrain auth revoke <name>                                Revoke a legacy token
   gbrain auth register-client <name> [options]            Register an OAuth 2.1 client
