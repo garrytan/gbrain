@@ -218,6 +218,37 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     console.error('Run `gbrain apply-migrations --yes` manually to retry.');
   }
 
+  // v0.28.5 (X1): explicitly apply pending schema migrations.
+  // apply-migrations runs orchestrator migrations and only WARNs about
+  // schema-version drift (apply-migrations.ts:296-302). Without this hook,
+  // `gbrain upgrade` leaves wedged brains wedged — the user has to read
+  // the WARN and run `gbrain init --migrate-only` themselves. We've shipped
+  // 11 wedge incidents asking users to read warnings; close the loop here.
+  // A1's hasPendingMigrations probe in connectEngine is belt-and-suspenders
+  // for any path that bypasses upgrade (autopilot, direct CLI on stale brain).
+  try {
+    const { loadConfig: lcSchema, toEngineConfig: toCfgSchema } = await import('../core/config.ts');
+    const { createEngine } = await import('../core/engine-factory.ts');
+    const cfgSchema = lcSchema();
+    if (cfgSchema) {
+      const engine = await createEngine(toCfgSchema(cfgSchema));
+      try {
+        await engine.connect(toCfgSchema(cfgSchema));
+        await engine.initSchema();
+        console.log('  Schema up to date.');
+      } finally {
+        try { await engine.disconnect(); } catch { /* best-effort */ }
+      }
+    }
+  } catch (e) {
+    // Non-fatal: connection or DDL failure here falls back to the existing
+    // user-facing WARN. apply-migrations.ts:296-302 already surfaces the
+    // hint to run `gbrain init --migrate-only`.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`\nSchema auto-apply skipped: ${msg}`);
+    console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
+  }
+
   // v0.25.1: agent-readable advisory listing recommended skills the
   // workspace hasn't installed yet. No-op when everything is installed.
   try {
