@@ -1,11 +1,7 @@
 #!/usr/bin/env bun
 
-// Reap zombie child processes. Bun (like Node) only auto-reaps children when
-// a SIGCHLD handler is installed. Without this, child processes spawned by the
-// worker (embed batches, shell jobs, sub-agents) become zombies when they exit,
-// accumulating in the PID table and holding phantom DB connection slots.
-// A no-op handler is sufficient — the runtime calls waitpid() internally.
-process.on('SIGCHLD', () => {});
+import { installSigchldHandler } from './core/zombie-reap.ts';
+installSigchldHandler();
 
 import { readFileSync } from 'fs';
 import { loadConfig, toEngineConfig } from './core/config.ts';
