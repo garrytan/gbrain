@@ -26,6 +26,7 @@ import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
+import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
 import { summarizeMcpParams } from '../mcp/dispatch.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
@@ -192,7 +193,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const authRouterOptions: any = {
     provider: oauthProvider,
     issuerUrl,
-    scopesSupported: ['read', 'write', 'admin'],
+    // v0.28: scopesSupported sourced from ALLOWED_SCOPES_LIST so MCP clients
+    // (Claude Desktop, ChatGPT, Perplexity) can discover sources_admin and
+    // users_admin via /.well-known/oauth-authorization-server. The legacy
+    // ['read','write','admin'] list left those new scopes invisible.
+    scopesSupported: [...ALLOWED_SCOPES_LIST],
     resourceName: 'GBrain MCP Server',
   };
 
@@ -669,9 +674,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }] };
       }
 
-      // Scope enforcement
+      // Scope enforcement (v0.28: hasScope replaces exact-string-match so
+      // admin tokens satisfy any scope, write satisfies read, and the new
+      // sources_admin / users_admin scopes resolve through the same
+      // hierarchy. Plain string includes() at this site would have made
+      // sources_admin tokens look like they couldn't even read.)
       const requiredScope = op.scope || 'read';
-      if (!authInfo.scopes.includes(requiredScope)) {
+      if (!hasScope(authInfo.scopes, requiredScope)) {
         return {
           content: [{
             type: 'text',
