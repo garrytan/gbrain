@@ -23,6 +23,7 @@ import { execSync, spawn, type ChildProcess } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
 import { loadConfig } from '../core/config.ts';
+import { detectTini, buildSpawnInvocation } from '../core/minions/spawn-helpers.ts';
 
 function parseArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -157,15 +158,23 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
 
   if (spawnManagedWorker) {
     const cliPath = resolveGbrainCliPath();
+    // Resolve tini once at startup — not per respawn — to avoid shelling out
+    // every time the worker restarts. Reaps zombie children from shell jobs
+    // and embed batches that outlive a watchdog-killed worker.
+    const tiniPath = detectTini();
     const startWorker = () => {
       // Inject the RSS watchdog default (2048 MB) for the autopilot-supervised
       // worker. Bare `gbrain jobs work` has no default; the supervisor and
       // autopilot are the production paths that opt in.
       const args = ['jobs', 'work', '--max-rss', '2048'];
-      const child = spawn(cliPath, args, { stdio: 'inherit', env: process.env });
+
+      const { cmd: spawnCmd, args: spawnArgs } = buildSpawnInvocation(tiniPath, cliPath, args);
+
+      const child = spawn(spawnCmd, spawnArgs, { stdio: 'inherit', env: process.env });
       workerProc = child;
       lastWorkerStartTime = Date.now();
-      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid}, watchdog: 2048MB)`);
+      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid}, watchdog: 2048MB${tiniPath ? ', tini: active' : ''})`);
+
       child.on('exit', (code) => {
         workerProc = null;
         if (stopping) return;
