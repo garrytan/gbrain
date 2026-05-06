@@ -934,6 +934,22 @@ export async function runSync(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
+  // --skip-failed: acknowledge pre-existing unacked failures BEFORE the sync
+  // runs, not only ones the current run produces. Without this, the common
+  // recovery flow — fix the YAML, re-run sync, then run --skip-failed to
+  // clear the log — fails to clear anything: when there are no NEW failures
+  // (because the files are now fixed), the inner ack path in performSync is
+  // never reached, and "Already up to date." leaves the log untouched. Both
+  // doctor and printSyncResult instruct users to run --skip-failed in
+  // exactly this case, so the flag has to handle stale entries up-front.
+  if (skipFailed) {
+    const stale = unacknowledgedSyncFailures();
+    if (stale.length > 0) {
+      const acked = acknowledgeSyncFailures();
+      console.log(`Acknowledged ${acked.count} pre-existing failure(s).`);
+    }
+  }
+
   // v0.18.0 Step 5: --source resolves to a sources(id) row. Falls back
   // to pre-v0.17 global config (sync.repo_path + sync.last_commit) when
   // no flag, no env, no dotfile is present.
