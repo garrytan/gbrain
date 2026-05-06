@@ -680,6 +680,41 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean): Promise<Phas
  * `gbrain pages purge-deleted` both call the same library functions, so
  * scripted purges and the autopilot phase converge on a single behavior.
  */
+/**
+ * v0.28 P1: sweep $GBRAIN_HOME/clones/.tmp/ for entries older than the
+ * configured TTL. addSource / recloneIfMissing clone into temp first then
+ * rename atomically; if the process is SIGKILL'd between clone and rename,
+ * the temp dir orphans. Without this sweep, a brain server accumulates
+ * gigabytes over months. Mirrors the page/source soft-delete TTL pattern
+ * so behavior is uniform across the purge phase.
+ */
+async function purgeOrphanClones(staleHours: number): Promise<{ count: number; bytes: number; names: string[] }> {
+  const fs = await import('fs');
+  const cfg = await import('./config.ts');
+  const tmpRoot = cfg.gbrainPath('clones', '.tmp');
+  if (!fs.existsSync(tmpRoot)) return { count: 0, bytes: 0, names: [] };
+  const STALE_MS = staleHours * 3600 * 1000;
+  const now = Date.now();
+  const removed: string[] = [];
+  let bytes = 0;
+  for (const ent of fs.readdirSync(tmpRoot, { withFileTypes: true })) {
+    const full = `${tmpRoot}/${ent.name}`;
+    try {
+      const st = fs.lstatSync(full);
+      if (now - st.mtimeMs <= STALE_MS) continue;
+      // Approximate size via stat (rough — recursive walk would be slow on
+      // a stuck-clone with thousands of files; the bytes field is just
+      // operator-visible feedback, not load-bearing).
+      try { bytes += st.size; } catch { /* skip */ }
+      fs.rmSync(full, { recursive: true, force: true });
+      removed.push(ent.name);
+    } catch {
+      /* skip unreadable / racing-with-another-process */
+    }
+  }
+  return { count: removed.length, bytes, names: removed };
+}
+
 async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<PhaseResult> {
   try {
     if (dryRun) {
@@ -688,20 +723,25 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         status: 'ok',
         duration_ms: 0,
         summary: 'dry-run: skipped purge sweep',
-        details: { dry_run: true, purged_sources_count: 0, purged_pages_count: 0 },
+        details: { dry_run: true, purged_sources_count: 0, purged_pages_count: 0, purged_orphan_clones_count: 0 },
       };
     }
     const { purgeExpiredSources } = await import('./destructive-guard.ts');
     const purgedSources = await purgeExpiredSources(engine);
     const purgedPages = await engine.purgeDeletedPages(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
+    const purgedClones = await purgeOrphanClones(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
     return {
       phase: 'purge',
       status: 'ok',
       duration_ms: 0,
-      summary: `purged ${purgedSources.length} source(s) and ${purgedPages.count} page(s) past the 72h recovery window`,
+      summary:
+        `purged ${purgedSources.length} source(s), ${purgedPages.count} page(s), and ` +
+        `${purgedClones.count} orphan clone temp dir(s) past the 72h recovery window`,
       details: {
         purged_sources_count: purgedSources.length,
         purged_pages_count: purgedPages.count,
+        purged_orphan_clones_count: purgedClones.count,
+        purged_orphan_clone_names: purgedClones.names,
         purged_sources: purgedSources,
         purged_page_slugs: purgedPages.slugs,
       },

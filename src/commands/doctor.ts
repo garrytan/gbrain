@@ -278,6 +278,53 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // Best-effort. A broken JSONL should not stop doctor.
   }
 
+  // 3c. Orphan clone temp dirs (v0.28 P1). `gbrain sources add --url` clones
+  // into $GBRAIN_HOME/clones/.tmp/<id>-<rand>/ and renames atomically; if the
+  // process is SIGKILL'd between clone-finish and rename, the temp dir
+  // orphans. Surface entries older than 24h so operators notice before the
+  // disk fills. The autopilot purge phase nukes these on its cadence; this
+  // check just makes the state visible.
+  try {
+    const fs = await import('fs');
+    const cfg = await import('../core/config.ts');
+    const tmpRoot = cfg.gbrainPath('clones', '.tmp');
+    if (fs.existsSync(tmpRoot)) {
+      const STALE_MS = 24 * 3600 * 1000;
+      const now = Date.now();
+      const stale: { name: string; ageHours: number }[] = [];
+      for (const ent of fs.readdirSync(tmpRoot, { withFileTypes: true })) {
+        const full = join(tmpRoot, ent.name);
+        try {
+          const st = fs.lstatSync(full);
+          const age = now - st.mtimeMs;
+          if (age > STALE_MS) {
+            stale.push({ name: ent.name, ageHours: Math.floor(age / 3600_000) });
+          }
+        } catch {
+          /* skip unreadable */
+        }
+      }
+      if (stale.length === 0) {
+        checks.push({
+          name: 'orphan_clones',
+          status: 'ok',
+          message: `No stale clone temp dirs in ${tmpRoot}.`,
+        });
+      } else {
+        checks.push({
+          name: 'orphan_clones',
+          status: 'warn',
+          message:
+            `${stale.length} stale clone temp dir(s) in ${tmpRoot}: ` +
+            stale.map(s => `${s.name} (${s.ageHours}h)`).join(', ') +
+            `. Run \`gbrain sources purge-orphan-clones\` or wait for the autopilot purge phase.`,
+        });
+      }
+    }
+  } catch {
+    // Filesystem read failure is non-fatal.
+  }
+
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {
