@@ -161,7 +161,6 @@ Phase 5: Write and deliver
   for fresh data
 - `skills/conventions/quality.md` — citation + back-link rules
 
-
 ## Contract
 
 This skill guarantees:

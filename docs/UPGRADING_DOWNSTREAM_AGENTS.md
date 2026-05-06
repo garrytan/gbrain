@@ -537,4 +537,3 @@ To check what your fork is missing:
 ```bash
 diff <(grep -A3 "Based on gbrain" ~/<your-fork>/skills/brain-ops/SKILL.md) \
      <(grep "v[0-9]" ~/gbrain/skills/migrations/ | tail -3)
-```

@@ -131,6 +131,56 @@ gbrain files restore <dir>                # Download back to local
 This ensures any derived brain page can be traced back to its original source,
 and large files don't bloat the git repo.
 
+## `docs/` — Workspace Document Index (v0.5, gdoc-ingest skill)
+
+The `docs/` directory is the canonical INDEX of Google Workspace documents
+(Docs / Sheets / Slides / PDFs in Drive) that Rafael cares about. Drive
+remains source of truth; the brain is the searchable index.
+
+### Path conventions
+
+| State | Slug pattern | Owner |
+|-------|--------------|-------|
+| Inbox (untriaged) | `docs/inbox/<slug>` | gdoc-ingest skill auto-creates |
+| Triaged (canonical) | `docs/<disciplina>/<tema>/<slug>` | Triage promotes after Rafael confirms |
+| Aggregated view | `docs/inbox` | Materialized view of pending items |
+| Templates | `docs/<disciplina>/_templates/<slug>` | Underscore prefix |
+| Concepts | `docs/concepts/<slug>` | Reusable principles (e.g. title-first-classification) |
+
+### Frontmatter contract
+
+All `docs/` pages MUST carry these frontmatter keys (see prds/gdoc-ingest):
+
+- `type: document`
+- `status: draft-index | oficial | draft | arquivado | obsoleto | stale-untriaged`
+- `kind: doc | sheet | slide | pdf | drive-file`
+- `disciplina` + `tema` (canonical taxonomy in TAXONOMY constant)
+- `secondary_tags: []` (other taxonomy matches in body)
+- `owner` (email)
+- `url_drive` (Drive link — source of truth)
+- `file_id` (Drive file ID for de-dup)
+- `mimetype` (MIME of the source file)
+- `last_modified_drive` + `indexed_at` (ISO timestamps)
+- `indexed_via: slack-paste | drive-crawler | manual-cli | e2e-test`
+- `raw_char_count` (extracted text length)
+- `is_meeting_doc: true` (if Google Meet transcript or Gemini Anotações)
+- `slide_stats` (for slides) OR `sheet_stats` (for sheets)
+
+### Filing rule for documents
+
+1. **Title-first classification** — the title decides disciplina/tema, not body keywords. (See `concepts/title-first-classification`.)
+2. **Iron Law** — every entity (person, project) mentioned with an existing brain page MUST get a back-link FROM that entity TO the doc page. Skill applies this automatically when `--commit` is used; only entities that ALREADY have pages get linked (notability gate).
+3. **Successor detection** — if title suggests a newer version (e.g. "Relatório Mar 2026" with "Relatório Feb 2026" already in brain), skill flags `successorOf` in payload. Triage decides if predecessor goes to `status: arquivado`.
+4. **No PII redaction at ingest** — fallback heuristic surfaces raw text. PII redaction is the LLM's responsibility at TRIAGE (sonnet-4-6).
+5. **Drive is source of truth** — NEVER edit content in brain page; brain is a read-only index. To change content, edit in Drive and re-ingest.
+
+### Triage workflow
+
+1. Cron `gdoc-inbox-triagem-ping` (sex 15h BRT) lists pending items in Slack.
+2. Rafael responds: ✅ confirma slug, ✏️ corrige tema, 🗑️ descarta, ou 🔗 marca como sucessor.
+3. On confirm: page moves from `docs/inbox/<slug>` to `docs/<disciplina>/<tema>/<slug>`, status changes to `oficial`.
+4. On stale (>60d in inbox): cron auto-tags `stale-untriaged`.
+
 ## Dream-cycle synthesize / patterns directories (v0.23)
 
 The `synthesize` and `patterns` phases of `gbrain dream` write to a

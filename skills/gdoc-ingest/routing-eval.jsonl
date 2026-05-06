@@ -1,0 +1,18 @@
+// Routing eval fixtures for skills/gdoc-ingest. Asserts that user phrases
+// route to gdoc-ingest, not to media-ingest / meeting-ingestion / archive-crawler.
+// Fixtures must NOT be verbatim-identical to RESOLVER trigger phrases (lint
+// rule). Each line below is a realistic user utterance that surfaces the
+// trigger phrase as a substring, ensuring the resolver still routes correctly.
+{"intent":"indexa esse doc no brain pra mim","expected_skill":"gdoc-ingest"}
+{"intent":"salva esse link aqui pra eu achar depois","expected_skill":"gdoc-ingest"}
+{"intent":"opsos, ingest gdoc do relatório","expected_skill":"gdoc-ingest"}
+{"intent":"manda ingest gsheet dessa planilha pra mim","expected_skill":"gdoc-ingest"}
+{"intent":"ingest gslide dessa apresentação aí","expected_skill":"gdoc-ingest"}
+{"intent":"https://docs.google.com/document/d/1Pb1AxiBcNg5bcHEa7XaHgzDQLmMu0eRlfweM0xLZ0XA/edit","expected_skill":"gdoc-ingest"}
+{"intent":"https://drive.google.com/file/d/abcdefghijklmnopqrstuv/view?usp=sharing","expected_skill":"gdoc-ingest"}
+{"intent":"olha esse documento que a Bruna compartilhou: https://docs.google.com/document/d/abcdefghijklmnopqrstuv/edit","expected_skill":"gdoc-ingest"}
+// MECE counter-cases — these MUST NOT route to gdoc-ingest:
+{"intent":"watch this YouTube video","expected_skill":"media-ingest"}
+{"intent":"process this PDF that I downloaded","expected_skill":"media-ingest"}
+{"intent":"process this meeting transcript file","expected_skill":"meeting-ingestion"}
+{"intent":"crawl my Dropbox archive","expected_skill":"archive-crawler"}
