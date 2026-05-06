@@ -2,6 +2,86 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.28.3] - 2026-05-06
+
+## **`gbrain integrations show restart-sweep` — detect dropped Telegram messages after OpenClaw gateway restarts.**
+## **Self-contained recipe: copy the script into your host repo, set three env vars, wire a 5-minute cron. Cooldown-gated so the same dropped session doesn't spam you.**
+
+When the OpenClaw gateway restarts, webhook-delivered Telegram messages that haven't been processed yet get dropped permanently. Long-poll bots can replay missed updates via `getUpdates`. Webhook bots cannot. The new `restart-sweep` recipe reads OpenClaw's session state, finds sessions with `abortedLastRun: true`, and alerts you on Telegram (or stdout) so you know when something was lost. The script is inlined in the recipe so the agent installer is self-contained.
+
+Three pieces of correctness that the original PR missed: the alert message double-escaped newlines so Telegram saw literal `\n` characters; the shell-interpolated `exec()` was command-injectable on `OPENCLAW_TELEGRAM_GROUP`; the idempotency state collapsed when `/tmp/bootstrap-services.log` was missing because the restart-time fallback changed every run, so the same stale session would re-alert every 5 minutes forever. All fixed. The cooldown layer keys on `(sessionKey, lastAlertedAt)` with a 6h re-alert threshold — works whether the bootstrap log is stable or missing.
+
+### What you get
+
+| Capability | Before | After |
+|---|---|---|
+| Detect dropped Telegram messages after gateway restarts | Manual eyeballing | `gbrain integrations doctor restart-sweep` |
+| Idempotent re-alerting | None — re-alerts every 5 min | 6h cooldown per sessionKey |
+| Shell-injection surface in alert path | `exec()` of interpolated string | `execFile` argv array |
+| State file location | Hardcoded `/tmp/restart-sweep.log` | `~/.gbrain/integrations/restart-sweep/` (honors `GBRAIN_HOME`) |
+| Tests | 14 (vitest, semantically bogus due to import-time env snapshot) | 27 (bun:test, constructor-time env reads) |
+
+### What this means for you
+
+If you run OpenClaw with Telegram in webhook mode:
+
+```bash
+gbrain integrations show restart-sweep
+```
+
+Follow the recipe body. The agent will copy the script into your host repo, configure cron, and verify health. Default behavior is conservative — only `abortedLastRun` sessions alert. Set `OPENCLAW_RESTART_SWEEP_AGGRESSIVE=1` to enable the timing-based heuristic (active-before, silent-after) when you want maximum sensitivity.
+
+Long-poll Telegram bots, non-Telegram message backends, and deployments that don't restart the gateway don't need this — the recipe stays invisible until you set the OpenClaw envs.
+
+## To take advantage of v0.28.3
+
+`gbrain upgrade` picks up the new recipe automatically. To install it:
+
+1. **Browse the recipe:**
+   ```bash
+   gbrain integrations show restart-sweep
+   ```
+2. **Set the secrets** in your host's `.env`:
+   ```bash
+   OPENCLAW_OWNER_IDS=<your user IDs>
+   OPENCLAW_TELEGRAM_GROUP=<your target group>
+   OPENCLAW_ALERT_TOPIC=<optional topic ID>
+   ```
+3. **Verify health:**
+   ```bash
+   gbrain integrations doctor restart-sweep
+   ```
+4. **Wire cron** following the recipe body's wrapper-script pattern (cron doesn't inherit your shell env — the recipe's troubleshooting section walks you through PATH + `.env` loading).
+
+If you've been running an earlier copy of `restart-sweep.mjs` from the directory-shaped recipe (`recipes/restart-sweep/`), the directory is gone in v0.28.3. The script content lives inlined inside `recipes/restart-sweep.md` now. Re-copy the script into your host repo from the new location.
+
+### Itemized changes
+
+#### Added
+- `recipes/restart-sweep.md` — opt-in recipe in the `reflex` category. Frontmatter declares two required env_exists checks plus an `openclaw sessions --json` command check. Body is agent-facing setup instructions: prerequisites, secret collection, host-repo install path, dry-run, cron wiring with absolute paths, verification, tuning, troubleshooting.
+- `test/restart-sweep.test.ts` — 27 bun:test cases covering constructor mode resolution, session filtering, dropped-message detection, log timestamp parsing, idempotency (load/save/prune/atomic-write), cooldown gating, AGGRESSIVE env handling, alert formatting, execFile shell-injection defense, GBRAIN_HOME path overrides, and a sentinel-shape guard.
+
+#### Changed (vs the original PR)
+- Reshaped from `recipes/restart-sweep/` directory (3 files: README + .mjs + .test.ts) into a single self-contained `recipes/restart-sweep.md` with the script inlined as a fenced code block. The recipe loader at `src/commands/integrations.ts:445-485` only discovers `*.md` — the directory shape was invisible.
+- Test extractor anchors on `<!-- restart-sweep:script -->` sentinel comment, salts the tmp filename per call to bypass the ESM import cache. Future doc edits adding example blocks above the script can't accidentally redirect what's tested.
+
+#### Fixed
+- Newline double-escape in alert text — `'\\n'` literals at 8 sites printed as `\n` characters, not real newlines.
+- Shell injection in `sendTelegramAlert` — replaced `exec()` of an interpolated string with `execFile` taking an argv array. Shell metachars in `OPENCLAW_TELEGRAM_GROUP` no longer reach `/bin/sh`.
+- Idempotency state file location — moved from `/tmp/restart-sweep.log` to `~/.gbrain/integrations/restart-sweep/` (honors `GBRAIN_HOME`).
+- Atomic state write via tmp+rename — prevents file corruption from concurrent cron runs (file corruption only; duplicate-send race under overlapping cron is documented as accepted).
+- Corrupt-JSON recovery in `loadAlerted` — invalid `alerted.json` warns to stderr and falls back to empty Map instead of crashing every cron run.
+- Idempotency key collapse with synthesized restart time — added a `(sessionKey, lastAlertedAt)` cooldown layer with 6h re-alert threshold. Cooldown wins when the bootstrap log is missing and `restartTime` is unstable.
+- Constructor-time env reads — moved `OWNER_IDS`, `TELEGRAM_GROUP_ID`, `ALERT_TOPIC` from module top-level to `MessageSweepDetector` constructor. Tests can mutate `process.env` between constructions.
+- Aggressive heuristic gating — the timing-based "active before, silent after" detection is now opt-in via `OPENCLAW_RESTART_SWEEP_AGGRESSIVE=1`. Default OFF because it false-positives during normal quiet periods.
+- Cron environment guidance — recipe body now includes a wrapper-script pattern (`set -a; source .env; set +a; exec /usr/local/bin/node ...`) and explicit `PATH=` line for the cron entry. Closes 80% of cron-day-one failures (env doesn't load, `node` not on stripped PATH).
+
+#### Removed
+- `recipes/restart-sweep/README.md`, `recipes/restart-sweep/restart-sweep.mjs`, `recipes/restart-sweep/test/restart-sweep.test.ts` — superseded by the inlined recipe.
+
+#### For contributors
+- Plan + reviews for this work live at `~/.claude/plans/figure-out-if-we-eager-coral.md`. Three review passes ran (CEO/HOLD, ENG/PLAN, codex outside-voice). Codex caught two silent-correctness bugs the eng review missed: idempotency key collapse (C1) and import-time env snapshot (C2). Both folded in before merge. The plan documents the recipe-vs-plugin-handler decision (held recipe path for v1; plugin handler is the v2 shape per `docs/guides/plugin-handlers.md`).
+
 ## [0.27.0] - 2026-04-28
 
 ## **GBrain runs on any embedding stack. OpenAI, Google Gemini, Ollama, Voyage, or anything via LiteLLM — one config line away.**
