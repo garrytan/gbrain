@@ -646,6 +646,25 @@ async function connectEngine(): Promise<BrainEngine> {
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');
   await connectWithRetry(engine, toEngineConfig(config), { noRetry });
+
+  // Auto-apply pending schema migrations on connect (#651). Cheap probe
+  // first so already-migrated brains don't pay the bootstrap-probe +
+  // SCHEMA_SQL replay + ledger-check cost on every short-lived CLI call.
+  // This is the conditional version of #652 (oyi77's investigation):
+  // same correctness, no perf regression on the hot path.
+  try {
+    const { hasPendingMigrations } = await import('./core/migrate.ts');
+    if (await hasPendingMigrations(engine)) {
+      await engine.initSchema();
+    }
+  } catch (err) {
+    // Non-fatal: if probe or initSchema fails, surface a hint and continue
+    // with the connected engine. Subsequent operations will surface the
+    // real schema error in context.
+    console.warn(`  Schema probe/migrate failed: ${(err as Error).message}`);
+    console.warn('  Try: gbrain init --migrate-only');
+  }
+
   return engine;
 }
 
