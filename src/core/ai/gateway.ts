@@ -193,10 +193,47 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
           recipe.setup_hint,
         );
       }
+      // Voyage AI compatibility shim:
+      // 1. Rejects `encoding_format: "float"` (only accepts "base64" or omit).
+      //    The AI SDK hardcodes encoding_format: "float" for openai-compatible.
+      // 2. Returns `usage.total_tokens` instead of `usage.prompt_tokens`.
+      //    The AI SDK Zod schema requires `prompt_tokens` when usage is present.
+      const voyageFetch = recipe.id === 'voyage'
+        ? async (url: string | URL | Request, init?: RequestInit) => {
+            if (init?.body && typeof init.body === 'string') {
+              try {
+                const parsed = JSON.parse(init.body);
+                delete parsed.encoding_format;
+                init = { ...init, body: JSON.stringify(parsed) };
+              } catch { /* not JSON, pass through */ }
+            }
+            const resp = await globalThis.fetch(url, init);
+            // Patch response to add prompt_tokens from total_tokens
+            const text = await resp.text();
+            try {
+              const json = JSON.parse(text);
+              if (json.usage && json.usage.total_tokens != null && json.usage.prompt_tokens == null) {
+                json.usage.prompt_tokens = json.usage.total_tokens;
+              }
+              return new Response(JSON.stringify(json), {
+                status: resp.status,
+                statusText: resp.statusText,
+                headers: resp.headers,
+              });
+            } catch {
+              return new Response(text, {
+                status: resp.status,
+                statusText: resp.statusText,
+                headers: resp.headers,
+              });
+            }
+          }
+        : undefined;
       const client = createOpenAICompatible({
         name: recipe.id,
         baseURL: baseUrl,
         apiKey: apiKey ?? 'unauthenticated',
+        ...(voyageFetch ? { fetch: voyageFetch } : {}),
       });
       return client.textEmbeddingModel(modelId);
     }

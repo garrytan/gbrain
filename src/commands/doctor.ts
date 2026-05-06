@@ -572,6 +572,75 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
   }
 
+  // 8b. Embedding provider eval — live smoke test of the configured provider.
+  //     Verifies: correct model, API key works, dimensions match config, DB column matches.
+  progress.heartbeat('embedding_provider');
+  try {
+    const {
+      getEmbeddingModel,
+      getEmbeddingDimensions,
+      embedOne,
+      isAvailable,
+    } = await import('../core/ai/gateway.ts');
+
+    const configuredModel = getEmbeddingModel();
+    const configuredDims = getEmbeddingDimensions();
+    const available = isAvailable('embedding');
+
+    if (!available) {
+      checks.push({
+        name: 'embedding_provider',
+        status: 'fail',
+        message: `Embedding provider not available. Model: ${configuredModel}. Check API keys.`,
+      });
+    } else {
+      // Live embed test
+      const start = Date.now();
+      const vec = await embedOne('gbrain doctor embedding smoke test');
+      const ms = Date.now() - start;
+      const actualDims = vec.length;
+
+      const issues: string[] = [];
+
+      // Check dimensions match config
+      if (actualDims !== configuredDims) {
+        issues.push(`Dimension mismatch: provider returned ${actualDims} but config expects ${configuredDims}`);
+      }
+
+      // Check DB column dimensions match
+      try {
+        const dbDimRow = await engine.sql`
+          SELECT vector_dims(embedding) as dims
+          FROM content_chunks
+          WHERE embedding IS NOT NULL
+          LIMIT 1`;
+        if (dbDimRow.length > 0 && dbDimRow[0].dims !== actualDims) {
+          issues.push(`DB dimension mismatch: stored vectors are ${dbDimRow[0].dims}-dim but provider returns ${actualDims}-dim. Migration needed.`);
+        }
+      } catch { /* no chunks with embeddings yet, that's fine */ }
+
+      if (issues.length > 0) {
+        checks.push({
+          name: 'embedding_provider',
+          status: 'warn',
+          message: `${configuredModel} responds (${ms}ms, ${actualDims} dims) but: ${issues.join('; ')}`,
+        });
+      } else {
+        checks.push({
+          name: 'embedding_provider',
+          status: 'ok',
+          message: `${configuredModel} ✓ ${ms}ms, ${actualDims} dims, DB aligned`,
+        });
+      }
+    }
+  } catch (e: any) {
+    checks.push({
+      name: 'embedding_provider',
+      status: 'fail',
+      message: `Embedding provider probe failed: ${e.message?.slice(0, 200) ?? e}`,
+    });
+  }
+
   // 9. Graph health (link + timeline coverage on entity pages).
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
   progress.heartbeat('graph_coverage');
