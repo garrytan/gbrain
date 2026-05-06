@@ -22,10 +22,27 @@ const VEC_TIMEOUT_MS  = parseInt(process.env.GBRAIN_VEC_TIMEOUT_MS  || '8000', 1
 const SERVER_STARTED_AT = Date.now();
 let firstQueryAt: number | null = null;
 let lastQueryAt: number | null = null;
+let requestsTotal = 0;
+let requestsToday = 0;
+let requestsTodayDay = Math.floor(Date.now() / 86_400_000);
+
+function markRequest(): void {
+  const day = Math.floor(Date.now() / 86_400_000);
+  if (day !== requestsTodayDay) { requestsTodayDay = day; requestsToday = 0; }
+  requestsTotal++;
+  requestsToday++;
+}
 
 function markQuerySuccess(): void {
   if (firstQueryAt === null) firstQueryAt = Date.now();
   lastQueryAt = Date.now();
+}
+
+// OTP rotation: keys flip at UTC midnight. Surface the boundary in errors
+// and /health so agents can display countdown / pre-fetch the next key.
+function nextOtpRotationMs(): number {
+  const day = Math.floor(Date.now() / 86_400_000);
+  return (day + 1) * 86_400_000;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -186,12 +203,17 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
       const url = new URL(req.url);
       const path = url.pathname;
       const t0 = Date.now();
+      markRequest();
 
       // ── health (no auth) ──────────────────────────────────────────────────
       // `warm` flips true after the first successful query (embedding pool
       // primed, DB warmed). Agents should hit /health before /search on first
       // contact — if warm:false, send a cheap ?lex= probe before lex+vec.
       if (path === '/health' && req.method === 'GET') {
+        const otpInfo = totpSecret
+          ? { next_rotation_at: new Date(nextOtpRotationMs()).toISOString(),
+              ms_until_rotation: nextOtpRotationMs() - Date.now() }
+          : null;
         return ok({
           status: 'ok',
           engine: engine.kind,
@@ -200,6 +222,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           warm: firstQueryAt !== null,
           uptime_ms: Date.now() - SERVER_STARTED_AT,
           last_query_ago_ms: lastQueryAt ? Date.now() - lastQueryAt : null,
+          requests_total: requestsTotal,
+          requests_today: requestsToday,
+          otp: otpInfo,
         }, Date.now() - t0);
       }
 
@@ -207,11 +232,16 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
       const auth = authenticate(req, url, staticToken, totpSecret);
       if (!auth.ok) {
         if (auth.needOtp) {
-          // LLM 收到這個就知道要跟你要鑰匙
+          // LLM 收到這個就知道要跟你要鑰匙；附上下一把鑰匙時間方便倒數
+          const rotateAt = nextOtpRotationMs();
           return err('otp_required',
             'This vault requires a one-time password. Ask the user to run: gbrain otp',
             401,
-            { hint: 'Run `bun scripts/otp-app.ts` to get today\'s key, then retry with ?otp=<code>' }
+            {
+              hint: 'Run `bun scripts/otp-app.ts` to get today\'s key, then retry with ?otp=<code> or X-Gbrain-OTP header',
+              next_rotation_at: new Date(rotateAt).toISOString(),
+              ms_until_rotation: rotateAt - Date.now(),
+            }
           );
         }
         return err('unauthorized', 'Valid Bearer token required', 401);
@@ -330,10 +360,47 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         return ok({ query: q, results }, Date.now() - t0);
       }
 
-      // ── GET /page?slug=... ────────────────────────────────────────────────
+      // ── GET /page?slug=...&[chunk_id=N | chunk_index=N] ───────────────────
+      // Without chunk filters: returns the full page (legacy shape).
+      // With ?chunk_id= or ?chunk_index=: returns ONE chunk only — saves
+      // tokens on long pages where the agent already knows which chunk it
+      // wants (e.g. from a prior /search hit).
       if (path === '/page' && req.method === 'GET') {
         const slug = url.searchParams.get('slug');
         if (!slug) return err('missing_param', 'slug is required');
+
+        const chunkIdParam = url.searchParams.get('chunk_id');
+        const chunkIndexParam = url.searchParams.get('chunk_index');
+
+        if (chunkIdParam !== null || chunkIndexParam !== null) {
+          // Resolve the page first so we get the canonical slug + page_id,
+          // then filter chunks. Same lookup path getPageOp uses, so slug
+          // aliasing/redirects still work.
+          const page = await getPageOp.handler(ctx, { slug }) as { slug?: string; page_id?: number } | null;
+          if (!page) return err('not_found', `Page not found: ${slug}`, 404);
+          const chunks = await engine.getChunks(page.slug as string);
+          let target;
+          if (chunkIdParam !== null) {
+            const id = parseInt(chunkIdParam, 10);
+            if (!Number.isFinite(id)) return err('missing_param', 'chunk_id must be an integer');
+            target = chunks.find(c => c.id === id);
+          } else {
+            const idx = parseInt(chunkIndexParam!, 10);
+            if (!Number.isFinite(idx)) return err('missing_param', 'chunk_index must be an integer');
+            target = chunks.find(c => c.chunk_index === idx);
+          }
+          if (!target) {
+            return err('not_found',
+              `Chunk not found in ${page.slug ?? slug}`,
+              404,
+              { hint: `Page has ${chunks.length} chunks (indexes 0..${chunks.length - 1}); call /page?slug=… without chunk filters to see them all.` }
+            );
+          }
+          // strip embedding (large + binary)
+          const { embedding: _omit, ...lean } = target as { embedding?: unknown } & Record<string, unknown>;
+          return ok({ slug: page.slug ?? slug, chunk: lean, total_chunks: chunks.length }, Date.now() - t0);
+        }
+
         const page = await getPageOp.handler(ctx, { slug });
         if (!page) return err('not_found', `Page not found: ${slug}`, 404);
         return ok({ page }, Date.now() - t0);
