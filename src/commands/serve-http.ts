@@ -30,7 +30,7 @@ import { summarizeMcpParams } from '../mcp/dispatch.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
-import * as db from '../core/db.ts';
+import { sqlQueryForEngine } from '../core/sql-query.ts';
 
 interface ServeHttpOptions {
   port: number;
@@ -66,8 +66,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     );
   }
 
-  // Get raw SQL connection for OAuth provider
-  const sql = db.getConnection() as SqlQuery;
+  // Get an engine-aware SQL adapter for OAuth/admin infrastructure. PGLite
+  // does not populate db.ts's Postgres singleton, so this must route through
+  // the connected BrainEngine.
+  const sql = sqlQueryForEngine(engine) as SqlQuery;
 
   // Initialize OAuth provider. F12 cleanup: DCR-disable now flips a
   // constructor option instead of monkey-patching `_clientsStore` after
@@ -478,25 +480,24 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const operation = req.query.operation as string;
       const status = req.query.status as string;
 
-      // Dynamic filtering via postgres.js tagged-template fragments.
-      // Each filter expands to either `AND col = $N` (parameterized) or
-      // an empty fragment. `WHERE 1=1` lets us always have a WHERE clause
-      // and unconditionally append AND-prefixed fragments — no string
-      // interpolation, no manual escaping, no sql.unsafe.
-      const agentFilter = agent && agent !== 'all' ? sql`AND token_name = ${agent}` : sql``;
-      const opFilter = operation && operation !== 'all' ? sql`AND operation = ${operation}` : sql``;
-      const statusFilter = status && status !== 'all' ? sql`AND status = ${status}` : sql``;
+      const agentFilter = agent && agent !== 'all' ? agent : null;
+      const opFilter = operation && operation !== 'all' ? operation : null;
+      const statusFilter = status && status !== 'all' ? status : null;
 
       const rows = await sql`
         SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
                operation, latency_ms, status, params, error_message, created_at
         FROM mcp_request_log
-        WHERE 1=1 ${agentFilter} ${opFilter} ${statusFilter}
+        WHERE (${agentFilter}::text IS NULL OR token_name = ${agentFilter})
+          AND (${opFilter}::text IS NULL OR operation = ${opFilter})
+          AND (${statusFilter}::text IS NULL OR status = ${statusFilter})
         ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}
       `;
       const [countResult] = await sql`
         SELECT count(*)::int as total FROM mcp_request_log
-        WHERE 1=1 ${agentFilter} ${opFilter} ${statusFilter}
+        WHERE (${agentFilter}::text IS NULL OR token_name = ${agentFilter})
+          AND (${opFilter}::text IS NULL OR operation = ${opFilter})
+          AND (${statusFilter}::text IS NULL OR status = ${statusFilter})
       `;
       res.json({ rows, total: (countResult as any).total, page, pages: Math.ceil((countResult as any).total / limit) });
     } catch {

@@ -11,20 +11,15 @@
  * Also runs standalone (no compiled binary required):
  *   DATABASE_URL=... bun run src/commands/auth.ts create "claude-desktop"
  *
- * Both paths require DATABASE_URL or GBRAIN_DATABASE_URL (except `test`,
- * which only hits the remote URL and doesn't need a local DB).
+ * DB-backed commands use the active gbrain config, so they work with both
+ * PGLite and Postgres. Env DATABASE_URL / GBRAIN_DATABASE_URL still works via
+ * loadConfig() for the direct-script path. `test` only hits a remote URL.
  */
-import postgres from 'postgres';
 import { createHash, randomBytes } from 'crypto';
-
-function getDatabaseUrl(requireDb: boolean): string | undefined {
-  const url = process.env.DATABASE_URL || process.env.GBRAIN_DATABASE_URL;
-  if (!url && requireDb) {
-    console.error('Set DATABASE_URL or GBRAIN_DATABASE_URL environment variable.');
-    process.exit(1);
-  }
-  return url;
-}
+import { loadConfig, toEngineConfig } from '../core/config.ts';
+import { createEngine } from '../core/engine-factory.ts';
+import type { SqlQuery } from '../core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../core/sql-query.ts';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -36,19 +31,20 @@ function generateToken(): string {
 
 async function create(name: string) {
   if (!name) { console.error('Usage: auth create <name>'); process.exit(1); }
-  const sql = postgres(getDatabaseUrl(true)!);
   const token = generateToken();
   const hash = hashToken(token);
 
   try {
-    await sql`
-      INSERT INTO access_tokens (name, token_hash)
-      VALUES (${name}, ${hash})
-    `;
-    console.log(`Token created for "${name}":\n`);
-    console.log(`  ${token}\n`);
-    console.log('Save this token — it will not be shown again.');
-    console.log(`Revoke with: bun run src/commands/auth.ts revoke "${name}"`);
+    await withConfiguredSql(async (sql) => {
+      await sql`
+        INSERT INTO access_tokens (name, token_hash)
+        VALUES (${name}, ${hash})
+      `;
+      console.log(`Token created for "${name}":\n`);
+      console.log(`  ${token}\n`);
+      console.log('Save this token — it will not be shown again.');
+      console.log(`Revoke with: bun run src/commands/auth.ts revoke "${name}"`);
+    });
   } catch (e: any) {
     if (e.code === '23505') {
       console.error(`A token named "${name}" already exists. Revoke it first or use a different name.`);
@@ -56,14 +52,11 @@ async function create(name: string) {
       console.error('Error:', e.message);
     }
     process.exit(1);
-  } finally {
-    await sql.end();
   }
 }
 
 async function list() {
-  const sql = postgres(getDatabaseUrl(true)!);
-  try {
+  await withConfiguredSql(async (sql) => {
     const rows = await sql`
       SELECT name, created_at, last_used_at, revoked_at
       FROM access_tokens
@@ -82,27 +75,23 @@ async function list() {
       const status = r.revoked_at ? 'REVOKED' : 'active';
       console.log(`${name}  ${created}  ${lastUsed}  ${status}`);
     }
-  } finally {
-    await sql.end();
-  }
+  });
 }
 
 async function revoke(name: string) {
   if (!name) { console.error('Usage: auth revoke <name>'); process.exit(1); }
-  const sql = postgres(getDatabaseUrl(true)!);
-  try {
-    const result = await sql`
+  await withConfiguredSql(async (sql) => {
+    const rows = await sql`
       UPDATE access_tokens SET revoked_at = now()
       WHERE name = ${name} AND revoked_at IS NULL
+      RETURNING 1
     `;
-    if (result.count === 0) {
+    if (rows.length === 0) {
       console.error(`No active token found with name "${name}".`);
       process.exit(1);
     }
     console.log(`Token "${name}" revoked.`);
-  } finally {
-    await sql.end();
-  }
+  });
 }
 
 async function test(url: string, token: string) {
@@ -230,26 +219,25 @@ async function revokeClient(clientId: string) {
     console.error('Usage: auth revoke-client <client_id>');
     process.exit(1);
   }
-  const sql = postgres(getDatabaseUrl(true)!);
   try {
-    // Atomic single-statement delete: no race window between count + delete.
-    // Postgres cascades to oauth_tokens and oauth_codes (FK ON DELETE CASCADE
-    // declared in src/schema.sql:370,382) before the transaction commits.
-    const rows = await sql`
-      DELETE FROM oauth_clients WHERE client_id = ${clientId}
-      RETURNING client_id, client_name
-    `;
-    if (rows.length === 0) {
-      console.error(`No client found with id "${clientId}"`);
-      process.exit(1);
-    }
-    console.log(`OAuth client revoked: "${rows[0].client_name}" (${clientId})`);
-    console.log('Tokens and authorization codes purged via cascade.');
+    await withConfiguredSql(async (sql) => {
+      // Atomic single-statement delete: no race window between count + delete.
+      // Postgres cascades to oauth_tokens and oauth_codes (FK ON DELETE CASCADE
+      // declared in src/schema.sql:370,382) before the transaction commits.
+      const rows = await sql`
+        DELETE FROM oauth_clients WHERE client_id = ${clientId}
+        RETURNING client_id, client_name
+      `;
+      if (rows.length === 0) {
+        console.error(`No client found with id "${clientId}"`);
+        process.exit(1);
+      }
+      console.log(`OAuth client revoked: "${rows[0].client_name}" (${clientId})`);
+      console.log('Tokens and authorization codes purged via cascade.');
+    });
   } catch (e: any) {
     console.error('Error:', e.message);
     process.exit(1);
-  } finally {
-    await sql.end();
   }
 }
 
@@ -262,25 +250,41 @@ async function registerClient(name: string, args: string[]) {
     : ['client_credentials'];
   const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
 
-  const sql = postgres(getDatabaseUrl(true)!);
   try {
-    const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
-    const provider = new GBrainOAuthProvider({ sql: sql as any });
-    const { clientId, clientSecret } = await provider.registerClientManual(
-      name, grantTypes, scopes, [],
-    );
-    console.log(`OAuth client registered: "${name}"\n`);
-    console.log(`  Client ID:     ${clientId}`);
-    console.log(`  Client Secret: ${clientSecret}\n`);
-    console.log(`  Grant types: ${grantTypes.join(', ')}`);
-    console.log(`  Scopes:      ${scopes}\n`);
-    console.log('Save the client secret — it will not be shown again.');
-    console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
+    await withConfiguredSql(async (sql) => {
+      const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
+      const provider = new GBrainOAuthProvider({ sql });
+      const { clientId, clientSecret } = await provider.registerClientManual(
+        name, grantTypes, scopes, [],
+      );
+      console.log(`OAuth client registered: "${name}"\n`);
+      console.log(`  Client ID:     ${clientId}`);
+      console.log(`  Client Secret: ${clientSecret}\n`);
+      console.log(`  Grant types: ${grantTypes.join(', ')}`);
+      console.log(`  Scopes:      ${scopes}\n`);
+      console.log('Save the client secret — it will not be shown again.');
+      console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
+    });
   } catch (e: any) {
     console.error('Error:', e.message);
     process.exit(1);
+  }
+}
+
+async function withConfiguredSql<T>(fn: (sql: SqlQuery) => Promise<T>): Promise<T> {
+  const config = loadConfig();
+  if (!config) {
+    console.error('No brain configured. Run `gbrain init` or set DATABASE_URL / GBRAIN_DATABASE_URL.');
+    process.exit(1);
+  }
+
+  const engineConfig = toEngineConfig(config);
+  const engine = await createEngine(engineConfig);
+  try {
+    await engine.connect(engineConfig);
+    return await fn(sqlQueryForEngine(engine));
   } finally {
-    await sql.end();
+    try { await engine.disconnect(); } catch { /* best-effort */ }
   }
 }
 
