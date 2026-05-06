@@ -32,7 +32,7 @@ import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
 
 // CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
 // executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
@@ -2326,13 +2326,24 @@ export class PostgresEngine implements BrainEngine {
     const prefixCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sql``;
+    // v0.29.1: the third score term moves from inline `1.0 / (1 + days_old)`
+    // into buildRecencyComponentSql with a "flat" decay map (halflife=1d,
+    // coefficient=1.0; same numeric output as v0.29.0). Commit 7 adds an
+    // opt-in `recency_bias='on'` param that swaps this for the per-prefix
+    // map, but the default (this commit) preserves v0.29.0 behavior verbatim.
+    const flatRecency = buildRecencyComponentSql({
+      slugColumn: 'p.slug',
+      dateExpr: 'p.updated_at',
+      decayMap: {},
+      fallback: { halflifeDays: 1, coefficient: 1.0 },
+    });
     const rows = await sql`
       SELECT p.slug, p.source_id, p.title, p.type, p.updated_at, p.emotional_weight,
              COUNT(DISTINCT t.id) AS take_count,
              COALESCE(AVG(t.weight), 0) AS take_avg_weight,
              (p.emotional_weight * 5)
                + ln(1 + COUNT(DISTINCT t.id))
-               + (1.0 / (1 + EXTRACT(EPOCH FROM (now() - p.updated_at)) / 86400))
+               + ${sql.unsafe(flatRecency)}
                AS score
         FROM pages p
         LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
