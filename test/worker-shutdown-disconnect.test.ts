@@ -1,16 +1,25 @@
 /**
- * Tests for the new try/catch around `engine.disconnect()` in
- * MinionWorker.start()'s finally block (worker.ts:425-432).
+ * Regression guard for engine-ownership invariant on worker shutdown.
  *
- * Two cases:
- *   - Happy path: disconnect resolves, worker shuts down cleanly.
- *   - Error path: disconnect rejects, error is logged via console.error
- *     prefixed with "[worker] disconnect failed during shutdown:", and
- *     start() still resolves (no rethrow — shutdown is best-effort).
+ * Earlier waves of this branch experimented with calling
+ * `engine.disconnect()` inside `MinionWorker.start()`'s finally block to
+ * free PgBouncer pool slots faster on shutdown. That violated engine
+ * ownership: the worker doesn't create the engine, it's passed in. Tests
+ * that share an engine across multiple worker.start() / worker.stop()
+ * cycles (every PGLite-shared E2E + every Postgres test that calls
+ * makeEngine() + engine.disconnect() in its own finally) all broke
+ * because the engine got disconnected behind their back.
  *
- * The test instance-patches `engine.disconnect` via `spyOn` — this is
- * object-level monkey-patching (parallel-safe), NOT module-level mocking
- * which R2 of scripts/check-test-isolation.sh forbids in non-serial tests.
+ * Final design (commit 7 of this branch): the worker leaves the engine
+ * alone. The CLI handler in src/commands/jobs.ts case 'work' calls
+ * engine.disconnect() itself in its own try/finally — the CLI owns the
+ * engine, so the CLI disposes of it.
+ *
+ * This test pins the invariant so future refactors can't silently
+ * reintroduce the regression. The check uses spyOn against the engine
+ * instance (object-level monkey-patching, parallel-safe) rather than
+ * module-level mocking which R2 of scripts/check-test-isolation.sh
+ * forbids in non-serial unit tests.
  */
 
 import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
@@ -26,55 +35,36 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
-  // The tests below replace engine.disconnect; restore the real one before
-  // tearing down so afterAll's disconnect actually closes the pool.
-  // spyOn's mockRestore handles this on a per-test basis when called in
-  // each test's finally; here we just call the real disconnect best-effort.
   try { await engine.disconnect(); } catch { /* already disconnected */ }
 });
 
-describe('MinionWorker shutdown disconnect', () => {
-  test('happy path: engine.disconnect is called once during shutdown', async () => {
-    const worker = new MinionWorker(engine, { queue: 'test-shutdown-happy', pollInterval: 10 });
+describe('MinionWorker engine-ownership invariant', () => {
+  test('worker.start() shutdown does NOT call engine.disconnect()', async () => {
+    const worker = new MinionWorker(engine, { queue: 'test-no-disconnect', pollInterval: 10 });
     worker.register('noop', async () => ({ ok: true }));
 
-    // Intercept (don't call through) so the shared engine stays connected
-    // for the next test in this file. afterAll handles the real disconnect.
-    const disconnectSpy = spyOn(engine, 'disconnect').mockImplementation(async () => {});
+    const disconnectSpy = spyOn(engine, 'disconnect');
 
     setTimeout(() => worker.stop(), 50);
     await worker.start();
 
-    expect(disconnectSpy).toHaveBeenCalledTimes(1);
+    // Critical invariant: worker leaves engine.disconnect() to its caller.
+    expect(disconnectSpy).not.toHaveBeenCalled();
     disconnectSpy.mockRestore();
   });
 
-  test('error path: disconnect rejects → logged to stderr, start() still resolves', async () => {
-    const worker = new MinionWorker(engine, { queue: 'test-shutdown-error', pollInterval: 10 });
+  test('engine remains usable after worker.start() returns', async () => {
+    const worker = new MinionWorker(engine, { queue: 'test-still-usable', pollInterval: 10 });
     worker.register('noop', async () => ({ ok: true }));
 
-    const errorSpy = spyOn(console, 'error');
-    const disconnectSpy = spyOn(engine, 'disconnect').mockImplementation(
-      async () => { throw new Error('boom-test-only'); },
-    );
-
     setTimeout(() => worker.stop(), 50);
-    // Must not throw — the catch in worker.ts:431-432 swallows + logs.
     await worker.start();
 
-    expect(disconnectSpy).toHaveBeenCalledTimes(1);
-    // Find the matching log line (other shutdown logs go through the same
-    // console.error in this codebase, so we can't assert a single call).
-    const calls = errorSpy.mock.calls;
-    const matched = calls.find(args =>
-      typeof args[0] === 'string'
-      && args[0].includes('[worker] disconnect failed during shutdown:'),
-    );
-    expect(matched).toBeDefined();
-    // Second arg should be the thrown Error.
-    expect((matched?.[1] as Error)?.message).toBe('boom-test-only');
-
-    disconnectSpy.mockRestore();
-    errorSpy.mockRestore();
+    // Engine must still be connected and queryable. If worker.start()
+    // ever disconnects again, this throws "PGLite not connected" and the
+    // regression is loud.
+    const result = await engine.executeRaw('SELECT 1 as ok');
+    expect(result.length).toBe(1);
+    expect((result[0] as { ok: number }).ok).toBe(1);
   });
 });

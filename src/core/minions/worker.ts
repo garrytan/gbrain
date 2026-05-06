@@ -422,15 +422,17 @@ export class MinionWorker extends EventEmitter {
         ]);
       }
 
-      // Release database connection pool so PgBouncer slots are freed
-      // immediately rather than waiting for TCP keepalive timeout.
-      // Log on failure (don't rethrow): shutdown is best-effort, but a
-      // silent disconnect failure is exactly the bug class the v0.26.9
-      // direction (isUndefinedColumnError, oauth-provider) was created
-      // to surface.
-      try { await this.engine.disconnect(); }
-      catch (e) { console.error('[worker] disconnect failed during shutdown:', e); }
-
+      // The worker does NOT disconnect the engine: it doesn't own the
+      // engine's lifecycle. The caller (CLI handler at src/commands/jobs.ts
+      // case 'work', or a test fixture) is responsible for disconnect when
+      // it has finished using the engine. Earlier wave's experiment of
+      // calling engine.disconnect() here violated ownership and broke
+      // every test that shared a single engine across multiple
+      // worker.start() / worker.stop() cycles (PGLiteEngine kills its
+      // single _db connection; PostgresEngine.disconnect was non-idempotent
+      // and clobbered the global db singleton on the second call). The
+      // pool-slot-release intent is now handled in the CLI handler which
+      // does own the engine.
       console.log('Minion worker stopped.');
     }
   }
