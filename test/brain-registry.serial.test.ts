@@ -266,16 +266,31 @@ describe('BrainRegistry — lazy init', () => {
   });
 
   test('empty/null/undefined id routes to host', async () => {
-    // We can't actually call getBrain('') without a host config, so we just
-    // verify the routing logic by observing the default-branch path. This
-    // test proves the fall-through to HOST_BRAIN_ID happens before any
-    // lookup, not that host init actually succeeds.
-    const reg = new BrainRegistry([]);
-    // Expect the host-init path to be attempted (it'll fail on missing
-    // ~/.gbrain/config.json in test env, but the error will come from
-    // initHostBrain, not UnknownBrainError — proving routing hit host).
-    await expect(reg.getBrain(null)).rejects.not.toBeInstanceOf(UnknownBrainError);
-    await expect(reg.getBrain(undefined)).rejects.not.toBeInstanceOf(UnknownBrainError);
-    await expect(reg.getBrain('')).rejects.not.toBeInstanceOf(UnknownBrainError);
+    // Isolate from the developer's real ~/.gbrain/config.json and DB env vars.
+    // The behavior under test is routing to host (not successful host init), so
+    // host init should fail with GBrainError rather than UnknownBrainError.
+    const oldHome = process.env.GBRAIN_HOME;
+    const oldGbrainDb = process.env.GBRAIN_DATABASE_URL;
+    const oldDb = process.env.DATABASE_URL;
+    const testHome = track(mkdtempSync(join(tmpdir(), 'brain-registry-home-')));
+    process.env.GBRAIN_HOME = testHome;
+    delete process.env.GBRAIN_DATABASE_URL;
+    delete process.env.DATABASE_URL;
+
+    try {
+      for (const id of [null, undefined, ''] as const) {
+        const reg = new BrainRegistry([]);
+        const promise = reg.getBrain(id);
+        await expect(promise).rejects.toBeInstanceOf(GBrainError);
+        await expect(promise).rejects.not.toBeInstanceOf(UnknownBrainError);
+      }
+    } finally {
+      if (oldHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = oldHome;
+      if (oldGbrainDb === undefined) delete process.env.GBRAIN_DATABASE_URL;
+      else process.env.GBRAIN_DATABASE_URL = oldGbrainDb;
+      if (oldDb === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = oldDb;
+    }
   });
 });

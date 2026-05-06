@@ -129,20 +129,22 @@ export function parseFlags(argv: string[]): Flags {
 // Skills-dir resolution
 // ---------------------------------------------------------------------------
 
-export function resolveSkillsDir(flags: Flags): {
+export function resolveSkillsDir(flags: Flags, options: { startDir?: string; env?: NodeJS.ProcessEnv } = {}): {
   dir: string | null;
   error: Envelope['error'];
   message: string | null;
   source: SkillsDirResolutionSource;
 } {
+  const startDir = options.startDir ?? process.cwd();
+  const env = options.env ?? process.env;
   if (flags.skillsDir) {
     const dir = isAbsolute(flags.skillsDir)
       ? flags.skillsDir
-      : resolvePath(process.cwd(), flags.skillsDir);
+      : resolvePath(startDir, flags.skillsDir);
     return { dir, error: null, message: null, source: 'explicit' };
   }
 
-  const detected = autoDetectSkillsDir();
+  const detected = autoDetectSkillsDir(startDir, env);
   if (!detected.dir) {
     return {
       dir: null,

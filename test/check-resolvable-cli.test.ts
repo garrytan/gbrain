@@ -139,25 +139,28 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
   });
 
   it('REGRESSION-GATE: returns no_skills_dir error when no --skills-dir and findRepoRoot fails', () => {
-    // Temporarily chdir to a guaranteed-empty tmpdir. findRepoRoot will walk
-    // up and fail to find skills/RESOLVER.md.
+    // Use an explicit empty start dir/env so developer-local OpenClaw installs
+    // (e.g. ~/.openclaw/workspace) cannot make this test pass/fail differently.
     const empty = mkdtempSync(join(tmpdir(), 'empty-for-resolve-'));
-    const original = process.cwd();
     try {
-      process.chdir(empty);
-      const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
+      const r = resolveSkillsDir(
+        { help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null },
+        { startDir: empty, env: {} },
+      );
       expect(r.error).toBe('no_skills_dir');
       expect(r.dir).toBeNull();
       expect(typeof r.message).toBe('string');
     } finally {
-      process.chdir(original);
       rmSync(empty, { recursive: true, force: true });
     }
   });
 
   it('finds skills via findRepoRoot when cwd is inside a repo (no --skills-dir)', () => {
-    // Running from this test file — we're inside the real gbrain repo.
-    const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
+    const repoRoot = REPO_ROOT;
+    const r = resolveSkillsDir(
+      { help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null },
+      { startDir: repoRoot, env: {} },
+    );
     expect(r.error).toBeNull();
     expect(r.dir).toMatch(/\/skills$/);
     expect(r.source).toBe('repo_root');

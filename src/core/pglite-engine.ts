@@ -217,7 +217,12 @@ export class PGLiteEngine implements BrainEngine {
    *   - `links.origin_page_id` column (indexed by `idx_links_origin`) — v0.13
    *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
    *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
+   *   - `mcp_request_log.agent_name`/`params`/`error_message` and
+   *     `oauth_clients.token_ttl`/`deleted_at` columns (indexed by
+   *     `idx_mcp_log_agent_time`) — v0.26.3
    *   - `pages.deleted_at` column (indexed by `pages_deleted_at_purge_idx`) — v0.26.5
+   *   - `subagent_messages.provider_id` + `subagent_tool_executions.provider_id`
+   *     columns (indexed by `idx_subagent_messages_provider`) — v0.27
    *
    * **Maintenance contract:** when a future migration adds a column-with-index
    * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
@@ -247,7 +252,29 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='embedding_image') AS embedding_image_exists
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='embedding_image') AS embedding_image_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='mcp_request_log') AS mcp_request_log_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='mcp_request_log' AND column_name='agent_name') AS mcp_agent_name_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='mcp_request_log' AND column_name='params') AS mcp_params_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='mcp_request_log' AND column_name='error_message') AS mcp_error_message_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='oauth_clients') AS oauth_clients_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='token_ttl') AS oauth_token_ttl_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='deleted_at') AS oauth_deleted_at_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='subagent_messages') AS subagent_messages_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='subagent_messages' AND column_name='provider_id') AS subagent_messages_provider_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='subagent_tool_executions') AS subagent_tool_executions_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='subagent_tool_executions' AND column_name='provider_id') AS subagent_tool_executions_provider_id_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -260,6 +287,17 @@ export class PGLiteEngine implements BrainEngine {
       symbol_name_exists: boolean;
       language_exists: boolean;
       embedding_image_exists: boolean;
+      mcp_request_log_exists: boolean;
+      mcp_agent_name_exists: boolean;
+      mcp_params_exists: boolean;
+      mcp_error_message_exists: boolean;
+      oauth_clients_exists: boolean;
+      oauth_token_ttl_exists: boolean;
+      oauth_deleted_at_exists: boolean;
+      subagent_messages_exists: boolean;
+      subagent_messages_provider_id_exists: boolean;
+      subagent_tool_executions_exists: boolean;
+      subagent_tool_executions_provider_id_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -270,10 +308,20 @@ export class PGLiteEngine implements BrainEngine {
     const needsPagesDeletedAt = probe.pages_exists && !probe.deleted_at_exists;
     // v0.27.1 — partial HNSW idx_chunks_embedding_image references this column.
     const needsChunksEmbeddingImage = probe.chunks_exists && !probe.embedding_image_exists;
+    const needsMcpRequestLogBootstrap =
+      probe.mcp_request_log_exists
+      && (!probe.mcp_agent_name_exists || !probe.mcp_params_exists || !probe.mcp_error_message_exists);
+    const needsOauthClientsBootstrap =
+      probe.oauth_clients_exists
+      && (!probe.oauth_token_ttl_exists || !probe.oauth_deleted_at_exists);
+    const needsSubagentProviderBootstrap =
+      (probe.subagent_messages_exists && !probe.subagent_messages_provider_id_exists)
+      || (probe.subagent_tool_executions_exists && !probe.subagent_tool_executions_provider_id_exists);
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
-        && !needsPagesDeletedAt && !needsChunksEmbeddingImage) return;
+        && !needsPagesDeletedAt && !needsChunksEmbeddingImage && !needsMcpRequestLogBootstrap
+        && !needsOauthClientsBootstrap && !needsSubagentProviderBootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -341,6 +389,35 @@ export class PGLiteEngine implements BrainEngine {
       await this.db.exec(`
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS modality TEXT NOT NULL DEFAULT 'text';
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_image vector(1024);
+      `);
+    }
+
+    if (needsMcpRequestLogBootstrap) {
+      // v33 adds admin dashboard columns and idx_mcp_log_agent_time. Add enough
+      // before schema replay so older PGLite brains don't crash on that index.
+      await this.db.exec(`
+        ALTER TABLE mcp_request_log
+          ADD COLUMN IF NOT EXISTS agent_name TEXT,
+          ADD COLUMN IF NOT EXISTS params JSONB,
+          ADD COLUMN IF NOT EXISTS error_message TEXT;
+      `);
+    }
+
+    if (needsOauthClientsBootstrap) {
+      await this.db.exec(`
+        ALTER TABLE oauth_clients
+          ADD COLUMN IF NOT EXISTS token_ttl INTEGER,
+          ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsSubagentProviderBootstrap) {
+      // v0.27 stores provider-neutral subagent transcripts. The schema blob's
+      // `idx_subagent_messages_provider` references subagent_messages.provider_id,
+      // so older v0.16+ brains need these columns before PGLITE_SCHEMA_SQL replays.
+      await this.db.exec(`
+        ALTER TABLE subagent_messages ADD COLUMN IF NOT EXISTS provider_id TEXT;
+        ALTER TABLE subagent_tool_executions ADD COLUMN IF NOT EXISTS provider_id TEXT;
       `);
     }
   }

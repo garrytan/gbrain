@@ -45,6 +45,7 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { hostname } from 'os';
+import { createHash } from 'crypto';
 import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
@@ -596,26 +597,35 @@ async function runPhaseExtract(
     }
     // Incremental path: if sync told us which slugs changed, only extract those.
     // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
+    // Exception: if entity graph/timeline coverage is still below the health
+    // threshold, run a cooldown-gated full backfill so old entity pages are not
+    // permanently missed by incremental-only autopilot cycles.
+    const backfillDecision = await decideFullExtractBackfill(engine, brainDir, dryRun, changedSlugs);
+    const slugsForExtract = backfillDecision.run ? undefined : changedSlugs;
     const result = await runExtractCore(engine, {
       mode: 'all',
       dir: brainDir,
-      slugs: changedSlugs,  // undefined = full walk (first run / manual)
+      slugs: slugsForExtract,  // undefined = full walk (first run / manual / backfill)
     });
+    if (backfillDecision.run) markFullExtractBackfill(brainDir, backfillDecision.reason);
     const linksCreated = result?.links_created ?? 0;
     const timelineCreated = result?.timeline_entries_created ?? 0;
-    const incremental = changedSlugs !== undefined;
+    const incremental = slugsForExtract !== undefined;
     return {
       phase: 'extract',
       status: 'ok',
       duration_ms: 0,
-      summary: incremental
-        ? `${linksCreated} link(s), ${timelineCreated} timeline entries (incremental: ${changedSlugs.length} slugs)`
+      summary: backfillDecision.run
+        ? `${linksCreated} link(s), ${timelineCreated} timeline entries (full graph/timeline backfill: ${backfillDecision.reason})`
+        : incremental
+        ? `${linksCreated} link(s), ${timelineCreated} timeline entries (incremental: ${slugsForExtract.length} slugs)`
         : `${linksCreated} link(s), ${timelineCreated} timeline entries`,
       details: {
         linksCreated, timelineCreated,
         pages_processed: result?.pages_processed ?? 0,
         incremental,
-        ...(incremental ? { slugs_targeted: changedSlugs.length } : {}),
+        ...(incremental ? { slugs_targeted: slugsForExtract.length } : {}),
+        ...(backfillDecision.run ? { full_backfill: true, backfill_reason: backfillDecision.reason } : {}),
       },
     };
   } catch (e) {
@@ -628,6 +638,84 @@ async function runPhaseExtract(
       error: makeErrorFromException(e),
     };
   }
+}
+
+const ENTITY_COVERAGE_BACKFILL_THRESHOLD = 0.5;
+const FULL_EXTRACT_BACKFILL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+function fullExtractBackfillMarkerPath(brainDir: string): string {
+  const key = createHash('sha256').update(brainDir).digest('hex').slice(0, 16);
+  return gbrainPath(`extract-backfill-${key}.json`);
+}
+
+async function countEntityPages(engine: BrainEngine): Promise<number> {
+  try {
+    const rows = await engine.executeRaw<{ n: number | string }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE type IN ('person', 'company') AND deleted_at IS NULL`,
+    );
+    return Number(rows[0]?.n ?? 0);
+  } catch {
+    try {
+      const rows = await engine.executeRaw<{ n: number | string }>(
+        `SELECT COUNT(*)::int AS n FROM pages WHERE type IN ('person', 'company')`,
+      );
+      return Number(rows[0]?.n ?? 0);
+    } catch {
+      return 0;
+    }
+  }
+}
+
+function backfillCooldownActive(brainDir: string, now = Date.now()): boolean {
+  try {
+    const marker = JSON.parse(readFileSync(fullExtractBackfillMarkerPath(brainDir), 'utf-8')) as { last_run_at?: string };
+    const lastRun = marker.last_run_at ? Date.parse(marker.last_run_at) : NaN;
+    return Number.isFinite(lastRun) && now - lastRun < FULL_EXTRACT_BACKFILL_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+function markFullExtractBackfill(brainDir: string, reason: string): void {
+  try {
+    mkdirSync(gbrainPath(), { recursive: true });
+    writeFileSync(fullExtractBackfillMarkerPath(brainDir), JSON.stringify({
+      last_run_at: new Date().toISOString(),
+      reason,
+    }, null, 2));
+  } catch {
+    // The marker is only a cooldown optimization. Never fail extraction because
+    // the local home directory is read-only or temporarily unavailable.
+  }
+}
+
+async function decideFullExtractBackfill(
+  engine: BrainEngine,
+  brainDir: string,
+  dryRun: boolean,
+  changedSlugs?: string[],
+): Promise<{ run: boolean; reason: string }> {
+  // Only override an incremental extract. Manual/extract-only runs already do a
+  // full walk; dry-run extract is skipped earlier.
+  if (dryRun || changedSlugs === undefined) return { run: false, reason: 'not_incremental' };
+  if (backfillCooldownActive(brainDir)) return { run: false, reason: 'cooldown_active' };
+
+  const entityPages = await countEntityPages(engine);
+  if (entityPages <= 0) return { run: false, reason: 'no_entity_pages' };
+
+  try {
+    const health = await engine.getHealth();
+    const linkCoverage = health.link_coverage ?? 1;
+    const timelineCoverage = health.timeline_coverage ?? 1;
+    if (linkCoverage < ENTITY_COVERAGE_BACKFILL_THRESHOLD || timelineCoverage < ENTITY_COVERAGE_BACKFILL_THRESHOLD) {
+      const linkPct = Math.round(linkCoverage * 100);
+      const timelinePct = Math.round(timelineCoverage * 100);
+      return { run: true, reason: `low_entity_coverage(link=${linkPct}%, timeline=${timelinePct}%)` };
+    }
+  } catch {
+    return { run: false, reason: 'health_unavailable' };
+  }
+  return { run: false, reason: 'coverage_ok' };
 }
 
 async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean): Promise<PhaseResult> {

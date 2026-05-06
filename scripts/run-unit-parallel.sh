@@ -125,10 +125,11 @@ for i in $(seq 1 "$N"); do
         sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
       cap_pid=$!
       wait "$pid" 2>/dev/null
+      rc=$?
       kill "$cap_pid" 2>/dev/null
-      wait "$cap_pid" 2>/dev/null
+      wait "$cap_pid" 2>/dev/null || true
     fi
-    rc=$?
+    rc=${rc:-$?}
     echo "$rc" > "$LOG_DIR/shard-$i.exit"
     [ "$rc" = "124" ] && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
   ) &

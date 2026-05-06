@@ -10,7 +10,8 @@
  */
 
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll, afterEach } from 'bun:test';
-import { existsSync, unlinkSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
 
 // ─── Mocks ──────────────────────────────────────────────────────────
 // Track what each phase was called with so tests can assert.
@@ -424,6 +425,42 @@ describe('runCycle — incremental extract slug propagation (#417)', () => {
     expect(syncCalls.length).toBe(0);
     expect(extractCalls.length).toBe(1);
     expect(extractCalls[0].slugs).toBeUndefined();
+  });
+
+  test('low entity graph/timeline coverage triggers a cooldown-gated full backfill', async () => {
+    const oldHome = process.env.GBRAIN_HOME;
+    const testHome = mkdtempSync(`${tmpdir()}/gbrain-cycle-backfill-`);
+    process.env.GBRAIN_HOME = testHome;
+
+    const originalExecuteRaw = sharedEngine.executeRaw.bind(sharedEngine);
+    const originalGetHealth = sharedEngine.getHealth.bind(sharedEngine);
+    (sharedEngine as any).executeRaw = async (sql: string, params?: any[]) => {
+      if (String(sql).includes("COUNT(*)::int AS n FROM pages WHERE type IN ('person', 'company')")) {
+        return [{ n: 1 }];
+      }
+      return originalExecuteRaw(sql as any, params as any);
+    };
+    (sharedEngine as any).getHealth = async () => ({ link_coverage: 0, timeline_coverage: 0 });
+
+    try {
+      const first = await runCycle(sharedEngine, { brainDir: '/tmp/brain-backfill', phases: ['sync', 'extract'] });
+      expect(extractCalls.at(-1)?.slugs).toBeUndefined();
+      const firstExtract = first.phases.find(p => p.phase === 'extract');
+      expect(firstExtract?.details.full_backfill).toBe(true);
+      expect(firstExtract?.summary).toContain('full graph/timeline backfill');
+
+      extractCalls = [];
+      const second = await runCycle(sharedEngine, { brainDir: '/tmp/brain-backfill', phases: ['sync', 'extract'] });
+      expect(extractCalls.at(-1)?.slugs).toEqual(['a', 'b']);
+      const secondExtract = second.phases.find(p => p.phase === 'extract');
+      expect(secondExtract?.details.full_backfill).toBeUndefined();
+    } finally {
+      (sharedEngine as any).executeRaw = originalExecuteRaw;
+      (sharedEngine as any).getHealth = originalGetHealth;
+      if (oldHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = oldHome;
+      rmSync(testHome, { recursive: true, force: true });
+    }
   });
 });
 
