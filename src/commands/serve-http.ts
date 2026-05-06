@@ -55,12 +55,18 @@ export async function probeHealth(
   version: string,
   timeoutMs: number = HEALTH_TIMEOUT_MS,
 ): Promise<ProbeHealthResult> {
+  // Capture the handle so we can clearTimeout when getStats() wins. Without
+  // this, every fast /health request leaves a 3s pending timer in the event
+  // loop until it fires — under high probe rates this builds up a rolling
+  // backlog of timers and avoidable wakeups. Both adversarial reviewers
+  // (Claude + Codex) flagged this independently.
+  let timer: ReturnType<typeof setTimeout> | null = null;
   try {
     const stats = await Promise.race([
       engine.getStats(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('health_timeout')), timeoutMs),
-      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('health_timeout')), timeoutMs);
+      }),
     ]);
     return {
       ok: true,
@@ -79,6 +85,10 @@ export async function probeHealth(
           : 'Database connection failed',
       },
     };
+  } finally {
+    // Clear the timer regardless of which branch won the race. No-op when
+    // the timer already fired (we're in the timeout-rejection catch block).
+    if (timer !== null) clearTimeout(timer);
   }
 }
 
