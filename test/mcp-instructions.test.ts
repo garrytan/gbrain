@@ -29,18 +29,38 @@ describe('MCP instructions', () => {
 });
 
 describe('core tool descriptions include trigger context', () => {
-  test('search description mentions when to use it', () => {
+  test('search description frames keyword lookup as candidate discovery', () => {
     const search = operations.find(op => op.name === 'search');
     expect(search).toBeDefined();
-    expect(search!.description).toContain('BEFORE Grep or WebSearch');
-    expect(search!.description).toContain('named entity');
+    expect(search!.description).toContain('Keyword candidate discovery');
+    expect(search!.description).toContain('exact names');
+    expect(search!.description).toContain('chunks are not answer evidence');
+    expect(search!.description).toContain('call retrieve_context or read_context');
+    expect(search!.description).not.toContain('Returns matching pages with relevance scores');
   });
 
-  test('query description explains semantic use case', () => {
+  test('query description frames semantic lookup as candidate discovery', () => {
     const query = operations.find(op => op.name === 'query');
     expect(query).toBeDefined();
-    expect(query!.description).toContain('Semantic search');
+    expect(query!.description).toContain('Semantic candidate discovery');
     expect(query!.description).toContain('conceptual');
+    expect(query!.description).toContain('chunks are not answer evidence');
+    expect(query!.description).toContain('call retrieve_context or read_context');
+    expect(query!.description).not.toContain('best recall');
+  });
+
+  test('retrieve_context description makes it the preferred agent probe', () => {
+    const retrieveContext = operations.find(op => op.name === 'retrieve_context');
+    expect(retrieveContext).toBeDefined();
+    expect(retrieveContext!.description).toContain('required canonical reads');
+    expect(retrieveContext!.description).toContain('read_context');
+  });
+
+  test('read_context description marks it as the evidence boundary', () => {
+    const readContext = operations.find(op => op.name === 'read_context');
+    expect(readContext).toBeDefined();
+    expect(readContext!.description).toContain('bounded canonical evidence');
+    expect(readContext!.description).toContain('before answering factual questions');
   });
 
   test('get_page description references compiled truth + timeline', () => {

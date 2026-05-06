@@ -44,7 +44,9 @@ import { DEFAULT_PROFILE_MEMORY_SCOPE_ID, getPersonalProfileLookupRoute } from '
 import { selectPersonalWriteTarget } from './services/personal-write-target-service.ts';
 import { getPrecisionLookupRoute } from './services/precision-lookup-route-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
+import { readContext } from './services/read-context-service.ts';
 import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
+import { retrieveContext } from './services/retrieve-context-service.ts';
 import { selectRetrievalRoute } from './services/retrieval-route-selector-service.ts';
 import { selectActivationPolicy } from './services/memory-activation-policy-service.ts';
 import { classifyMemoryScenario } from './services/memory-scenario-classifier-service.ts';
@@ -81,6 +83,8 @@ import type {
   ProfileMemoryType,
   RetrievalRequestPlannerInput,
   RetrievalRouteIntent,
+  RetrievalSelector,
+  RetrievalSelectorKind,
   RetrievalTrace,
   RetrievalTraceWriteOutcome,
   ScopeGatePolicy,
@@ -269,6 +273,32 @@ const MEMORY_SCENARIO_KNOWN_SUBJECT_KINDS = [
   'profile',
   'personal_episode',
 ] as const satisfies readonly MemoryScenarioKnownSubjectKind[];
+
+const RETRIEVAL_SELECTOR_KINDS = [
+  'page',
+  'compiled_truth',
+  'section',
+  'line_span',
+  'timeline_entry',
+  'timeline_range',
+  'source_ref',
+  'task_working_set',
+  'task_attempt',
+  'task_decision',
+  'profile_memory',
+  'personal_episode',
+] as const satisfies readonly RetrievalSelectorKind[];
+
+const CONTEXT_READ_MODES = [
+  'explicit',
+  'auto',
+] as const;
+
+const CONTEXT_TIMELINE_MODES = [
+  'auto',
+  'include',
+  'exclude',
+] as const;
 
 const MEMORY_ARTIFACT_KINDS = [
   'current_artifact',
@@ -931,6 +961,50 @@ export function formatResult(
         `Route steps: ${(route.retrieval_route || []).join(' -> ')}`,
       ].join('\n') + '\n';
     }
+    case 'retrieve_context': {
+      const resultValue = result as any;
+      const scopeGate = resultValue.scope_gate;
+      return [
+        `Scenario: ${resultValue.scenario ?? 'unknown'}`,
+        `Answerable from probe: ${resultValue.answerability?.answerable_from_probe ? 'yes' : 'no'}`,
+        `Must read context: ${resultValue.answerability?.must_read_context ? 'yes' : 'no'}`,
+        `Reason codes: ${formatCsv(resultValue.answerability?.reason_codes)}`,
+        ...(scopeGate ? [
+          `Scope gate: ${scopeGate.policy ?? 'unknown'} (${scopeGate.resolved_scope ?? 'unknown'})`,
+        ] : []),
+        'Required reads:',
+        ...formatSelectorLines(resultValue.required_reads),
+        'Candidates:',
+        ...formatCandidateLines(resultValue.candidates),
+        ...(resultValue.warnings?.length ? [
+          'Warnings:',
+          ...resultValue.warnings.map((warning: string) => `- ${warning}`),
+        ] : []),
+        'Chunks are candidate pointers; call read_context before answering.',
+      ].join('\n') + '\n';
+    }
+    case 'read_context': {
+      const resultValue = result as any;
+      const scopeGate = resultValue.scope_gate;
+      return [
+        `Answer ready: ${resultValue.answer_ready?.ready ? 'yes' : 'no'}`,
+        `Citation policy: ${resultValue.answer_ready?.citation_policy ?? 'none'}`,
+        `Unsupported reasons: ${formatCsv(resultValue.answer_ready?.unsupported_reasons)}`,
+        ...(scopeGate ? [
+          `Scope gate: ${scopeGate.policy ?? 'unknown'} (${scopeGate.resolved_scope ?? 'unknown'})`,
+        ] : []),
+        'Canonical reads:',
+        ...formatCanonicalReadLines(resultValue.canonical_reads),
+        'Continuations:',
+        ...formatSelectorLines(resultValue.continuations),
+        'Unread selectors:',
+        ...formatSelectorLines(resultValue.unread_required),
+        ...(resultValue.warnings?.length ? [
+          'Warnings:',
+          ...resultValue.warnings.map((warning: string) => `- ${warning}`),
+        ] : []),
+      ].join('\n') + '\n';
+    }
     case 'get_workspace_system_card': {
       const resultValue = result as any;
       if (!resultValue.card) {
@@ -1141,6 +1215,61 @@ export function formatResult(
   }
 }
 
+function formatCsv(values: unknown): string {
+  return Array.isArray(values) && values.length > 0 ? values.join(', ') : 'none';
+}
+
+function formatSelectorLines(selectors: unknown): string[] {
+  if (!Array.isArray(selectors) || selectors.length === 0) return ['- none'];
+  return selectors.map((selector) => {
+    const value = selector as Record<string, unknown>;
+    return `- ${formatSelectorId(value)} [${String(value.kind ?? 'unknown')}]`;
+  });
+}
+
+function formatSelectorId(selector: Record<string, unknown>): string {
+  if (typeof selector.selector_id === 'string' && selector.selector_id.length > 0) {
+    return selector.selector_id;
+  }
+  return [
+    selector.kind,
+    selector.scope_id,
+    selector.slug ?? selector.section_id ?? selector.source_ref ?? selector.object_id,
+  ].filter((part) => part !== undefined && part !== null && part !== '').join(':') || 'unknown';
+}
+
+function formatCandidateLines(candidates: unknown): string[] {
+  if (!Array.isArray(candidates) || candidates.length === 0) return ['- none'];
+  return candidates.map((candidate) => {
+    const value = candidate as Record<string, any>;
+    const target = value.canonical_target ?? {};
+    const selector = value.read_selector ?? {};
+    const chunks = Array.isArray(value.matched_chunks) ? value.matched_chunks : [];
+    const topScore = typeof chunks[0]?.score === 'number' ? chunks[0].score.toFixed(4) : '?';
+    const targetLabel = target.slug ?? target.section_id ?? target.path ?? target.title ?? 'unknown';
+    return [
+      `- ${value.candidate_id ?? 'candidate'} -> ${formatSelectorId(selector)}`,
+      `[${selector.kind ?? target.kind ?? 'unknown'} target=${targetLabel} activation=${value.activation ?? 'unknown'} score=${topScore}]`,
+    ].join(' ');
+  });
+}
+
+function formatCanonicalReadLines(reads: unknown): string[] {
+  if (!Array.isArray(reads) || reads.length === 0) return ['- none'];
+  return reads.flatMap((read) => {
+    const value = read as Record<string, any>;
+    const selector = value.selector ?? {};
+    const sourceRefs = Array.isArray(value.source_refs) ? value.source_refs : [];
+    const text = String(value.text ?? '').trim();
+    return [
+      `Read: ${value.title ?? 'unknown'} [${value.authority ?? 'unknown'} tokens=${value.token_estimate ?? '?'} has_more=${value.has_more ? 'yes' : 'no'}]`,
+      `Selector: ${formatSelectorId(selector)}`,
+      `Source refs: ${sourceRefs.join(', ') || 'none'}`,
+      text,
+    ].filter((line) => line.length > 0);
+  });
+}
+
 function parseStringListParam(value: unknown, key: string): string[] | undefined {
   if (value === undefined) return undefined;
   if (Array.isArray(value)) {
@@ -1176,6 +1305,14 @@ function parseOptionalStringParam(value: unknown, key: string): string | undefin
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') {
     throw new OperationError('invalid_params', `${key} must be a string.`);
+  }
+  return value;
+}
+
+function parsePositiveIntegerParam(value: unknown, key: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    throw new OperationError('invalid_params', `${key} must be a positive integer.`);
   }
   return value;
 }
@@ -1229,6 +1366,70 @@ function parseKnownSubjectsParam(
     }
     return knownSubject;
   });
+}
+
+function parseRetrievalSelectors(value: unknown, key: string): RetrievalSelector[] | undefined {
+  if (value === undefined || value === null) return undefined;
+
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return [];
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new OperationError('invalid_params', `${key} must be valid JSON when passed as a string.`);
+    }
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new OperationError('invalid_params', `${key} must be an array of selector objects.`);
+  }
+
+  return parsed.map((item, index) => parseRetrievalSelectorObject(item, `${key}[${index}]`));
+}
+
+function parseRetrievalSelectorObject(value: unknown, key: string): RetrievalSelector {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new OperationError('invalid_params', `${key} must be an object.`);
+  }
+
+  const selector = { ...(value as Record<string, unknown>) };
+  const kind = parseEnumParam(selector.kind, `${key}.kind`, RETRIEVAL_SELECTOR_KINDS);
+  if (!kind) {
+    throw new OperationError('invalid_params', `${key}.kind must be one of: ${RETRIEVAL_SELECTOR_KINDS.join(', ')}.`);
+  }
+  selector.kind = kind;
+
+  for (const field of [
+    'selector_id',
+    'scope_id',
+    'slug',
+    'path',
+    'section_id',
+    'source_ref',
+    'object_id',
+    'content_hash',
+    'freshness',
+  ]) {
+    if (selector[field] !== undefined && typeof selector[field] !== 'string') {
+      throw new OperationError('invalid_params', `${key}.${field} must be a string.`);
+    }
+  }
+
+  for (const field of ['line_start', 'line_end', 'char_start', 'char_end']) {
+    if (selector[field] !== undefined && typeof selector[field] !== 'number') {
+      throw new OperationError('invalid_params', `${key}.${field} must be a number.`);
+    }
+  }
+
+  if (selector.source_refs !== undefined) {
+    if (!Array.isArray(selector.source_refs) || !selector.source_refs.every((item) => typeof item === 'string')) {
+      throw new OperationError('invalid_params', `${key}.source_refs must be an array of strings.`);
+    }
+  }
+
+  return selector as unknown as RetrievalSelector;
 }
 
 function parseActivationArtifacts(
@@ -1333,6 +1534,18 @@ function parseEnumParam<T extends string>(
     throw new OperationError('invalid_params', `${key} must be one of: ${allowed.join(', ')}.`);
   }
   return value as T;
+}
+
+async function withSelectorParamErrors<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof OperationError) throw error;
+    if (error instanceof Error && error.message.toLowerCase().includes('selector')) {
+      throw new OperationError('invalid_params', error.message);
+    }
+    throw error;
+  }
 }
 
 function parseOptionalDateParam(value: unknown, key: string): Date | undefined {
@@ -2162,7 +2375,7 @@ const list_pages: Operation = {
 
 const search: Operation = {
   name: 'search',
-  description: 'Search the knowledge graph for people, companies, concepts, systems, and organizational context by keyword. Use this BEFORE Grep or WebSearch when the question involves a named entity or domain-specific topic. Returns matching pages with relevance scores.',
+  description: 'Keyword candidate discovery across MBrain. Use for exact names, slugs, dates, and terms; chunks are not answer evidence. For factual answers, call retrieve_context or read_context to load canonical evidence.',
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
@@ -2179,7 +2392,7 @@ const search: Operation = {
 
 const query: Operation = {
   name: 'query',
-  description: 'Semantic search across the knowledge graph. Use when the question is conceptual, cross-cutting, or when keyword search returned no results. Combines vector similarity with keyword matching and multi-query expansion for best recall.',
+  description: 'Semantic candidate discovery across MBrain. Use when the question is conceptual, cross-cutting, or keyword search missed likely pages; chunks are not answer evidence. For factual answers, call retrieve_context or read_context to load canonical evidence.',
   params: {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
@@ -3973,6 +4186,82 @@ const plan_retrieval_request: Operation = {
   cliHints: { name: 'plan-retrieval-request' },
 };
 
+const retrieve_context: Operation = {
+  name: 'retrieve_context',
+  description: 'Agentic MBrain retrieval probe. Returns candidate pointers and required canonical reads; chunks are not answer evidence. Call read_context on required_reads before answering factual questions.',
+  params: {
+    query: { type: 'string', description: 'Raw user request or memory query' },
+    selectors: {
+      type: ['array', 'string'],
+      items: { type: 'object' },
+      description: 'Optional exact retrieval selector objects, or a JSON array string for CLI usage',
+    },
+    task_id: { type: 'string', description: 'Optional active task id' },
+    repo_path: { type: 'string', description: 'Optional active repository path' },
+    requested_scope: { type: 'string', description: 'Optional explicit scope override', enum: [...REQUESTED_SCOPES] },
+    source_kind: { type: 'string', description: 'Optional source kind for classification', enum: [...MEMORY_SCENARIO_SOURCE_KINDS] },
+    known_subjects: {
+      type: ['array', 'string'],
+      items: { type: ['string', 'object'] },
+      description: 'Optional detected subject refs as strings or objects with ref and kind, or a JSON array string',
+    },
+    limit: { type: 'number', description: 'Candidate and required-read limit' },
+    token_budget: { type: 'number', description: 'Approximate probe output token budget' },
+    include_orientation: { type: 'boolean', description: 'Include derived orientation when useful' },
+    persist_trace: { type: 'boolean', description: 'Persist a retrieval trace for this probe' },
+  },
+  mutating: false,
+  handler: async (ctx, p) => withSelectorParamErrors(() => retrieveContext(ctx.engine, {
+    query: parseOptionalStringParam(p.query, 'query'),
+    selectors: parseRetrievalSelectors(p.selectors, 'selectors'),
+    task_id: parseOptionalStringParam(p.task_id, 'task_id'),
+    repo_path: parseOptionalStringParam(p.repo_path, 'repo_path'),
+    requested_scope: parseEnumParam(p.requested_scope, 'requested_scope', REQUESTED_SCOPES),
+    source_kind: parseEnumParam(p.source_kind, 'source_kind', MEMORY_SCENARIO_SOURCE_KINDS),
+    known_subjects: parseKnownSubjectsParam(p.known_subjects, 'known_subjects'),
+    limit: parsePositiveIntegerParam(p.limit, 'limit'),
+    token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
+    include_orientation: typeof p.include_orientation === 'boolean' ? p.include_orientation : undefined,
+    persist_trace: p.persist_trace === true,
+  })),
+  cliHints: { name: 'retrieve-context', positional: ['query'], aliases: { n: 'limit', scope: 'requested_scope' } },
+};
+
+const read_context: Operation = {
+  name: 'read_context',
+  description: 'Read bounded canonical evidence for retrieval selectors. This is the evidence boundary before answering factual questions.',
+  params: {
+    query: { type: 'string', description: 'Optional natural-language request for automatic reads' },
+    selectors: {
+      type: ['array', 'string'],
+      items: { type: 'object' },
+      description: 'Retrieval selector objects, or a JSON array string for CLI usage',
+    },
+    reads: { type: 'string', description: 'Read selection mode', enum: [...CONTEXT_READ_MODES] },
+    token_budget: { type: 'number', description: 'Approximate canonical read token budget' },
+    max_selectors: { type: 'number', description: 'Maximum selectors to read before returning unread selectors' },
+    include_timeline: { type: 'string', description: 'Timeline inclusion mode', enum: [...CONTEXT_TIMELINE_MODES] },
+    include_source_refs: { type: 'boolean', description: 'Include extracted source refs when available' },
+    persist_trace: { type: 'boolean', description: 'Persist a retrieval trace for this canonical read' },
+    task_id: { type: 'string', description: 'Optional active task id' },
+    requested_scope: { type: 'string', description: 'Optional explicit scope override for scope-gate enforcement', enum: [...REQUESTED_SCOPES] },
+  },
+  mutating: false,
+  handler: async (ctx, p) => withSelectorParamErrors(() => readContext(ctx.engine, {
+    query: parseOptionalStringParam(p.query, 'query'),
+    selectors: parseRetrievalSelectors(p.selectors, 'selectors'),
+    reads: parseEnumParam(p.reads, 'reads', CONTEXT_READ_MODES),
+    token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
+    max_selectors: parsePositiveIntegerParam(p.max_selectors, 'max_selectors'),
+    include_timeline: parseEnumParam(p.include_timeline, 'include_timeline', CONTEXT_TIMELINE_MODES),
+    include_source_refs: typeof p.include_source_refs === 'boolean' ? p.include_source_refs : undefined,
+    persist_trace: p.persist_trace === true,
+    task_id: parseOptionalStringParam(p.task_id, 'task_id') ?? null,
+    requested_scope: parseEnumParam(p.requested_scope, 'requested_scope', REQUESTED_SCOPES),
+  })),
+  cliHints: { name: 'read-context', aliases: { n: 'max_selectors' } },
+};
+
 const classify_memory_scenario: Operation = {
   name: 'classify_memory_scenario',
   description: 'Classify a memory request into a scenario before retrieval.',
@@ -4703,7 +4992,7 @@ export const operations: Operation[] = [
   // Structural graph
   get_note_structural_neighbors, find_note_structural_path,
   // Persisted context maps
-  build_context_map, get_context_map_entry, list_context_map_entries, get_context_map_report, get_context_map_explanation, query_context_map, find_context_map_path, get_broad_synthesis_route, get_precision_lookup_route, get_mixed_scope_bridge, get_mixed_scope_disclosure, get_personal_profile_lookup_route, get_personal_episode_lookup_route, select_personal_write_target, preview_personal_export, evaluate_scope_gate, select_retrieval_route, classify_memory_scenario, select_activation_policy, plan_scenario_memory_request, plan_retrieval_request, reverify_code_claims, get_workspace_system_card, get_workspace_project_card, get_workspace_orientation_bundle, get_workspace_corpus_card,
+  build_context_map, get_context_map_entry, list_context_map_entries, get_context_map_report, get_context_map_explanation, query_context_map, find_context_map_path, get_broad_synthesis_route, get_precision_lookup_route, get_mixed_scope_bridge, get_mixed_scope_disclosure, get_personal_profile_lookup_route, get_personal_episode_lookup_route, select_personal_write_target, preview_personal_export, evaluate_scope_gate, select_retrieval_route, plan_retrieval_request, retrieve_context, read_context, classify_memory_scenario, select_activation_policy, plan_scenario_memory_request, reverify_code_claims, get_workspace_system_card, get_workspace_project_card, get_workspace_orientation_bundle, get_workspace_corpus_card,
   // Context atlas registry
   build_context_atlas, get_context_atlas_entry, list_context_atlas_entries, select_context_atlas_entry, get_context_atlas_overview, get_context_atlas_report, get_atlas_orientation_card, get_atlas_orientation_bundle,
   // Operational memory

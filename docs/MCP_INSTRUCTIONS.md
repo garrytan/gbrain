@@ -31,9 +31,20 @@ or general programming.
 | Layer | What | Where |
 |-------|------|-------|
 | MCP Instructions | WHEN to use MBrain | `operations.ts` → `InitializeResult` |
-| Tool Descriptions | WHY to prefer this tool | `operations.ts` → tool definitions |
+| Tool Descriptions | WHICH retrieval layer to use | `operations.ts` → `retrieve_context`, `read_context`, `search`, `query`, `get_page` |
 | Agent Rules | HOW to use MBrain | `MBRAIN_AGENT_RULES.md` |
 | Skillpack | REFERENCE for advanced patterns | `MBRAIN_SKILLPACK.md` |
+
+- Normal factual Q&A should prefer `retrieve_context -> read_context` because
+  raw `search` and `query` chunks are candidate pointers. The runtime
+  `MCP_INSTRUCTIONS` stays short; the detailed tool choice lives in operation
+  descriptions and skills.
+- `retrieve_context` is the agent probe: it discovers candidates, applies route
+  and scope context, and returns required canonical reads.
+- `read_context` is the evidence boundary: it reads bounded canonical selectors
+  before factual answers.
+- `search` and `query` remain lower-level candidate discovery tools; `get_page`
+  remains the full-page canonical read escape hatch.
 
 ## See Also
 

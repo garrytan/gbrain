@@ -42,13 +42,15 @@ agent planning/spec files are intentionally not tracked.
 | S19 | `s19-interaction-id-supersession.test.ts` | L6, L5 | ✅ green on SQLite + PGLite, Postgres when `DATABASE_URL` is set |
 | S20 | `s20-interaction-id-nullable.test.ts` | L6 | ✅ green |
 | S21 | `s21-candidate-status-events-audit.test.ts` | L6, G1 | ✅ green |
+| S22 | `s22-agentic-canonical-retrieval.test.ts` | Task 7 | ✅ green |
 
 Legend:
 - ✅ green = passes on current code
 
 The redesign scenario suite currently has zero placeholder tests. It covers the
-original S1-S14 redesign contracts plus S15-S21 loop-observability and
-interaction-identity contracts. Run this as part of final acceptance:
+original S1-S14 redesign contracts, S15-S21 loop-observability and
+interaction-identity contracts, plus S22 agentic canonical retrieval transcript
+coverage. Run this as part of final acceptance:
 
 ```sh
 if rg -n "test\\.todo|todo\\(" test/scenarios; then

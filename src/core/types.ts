@@ -1675,6 +1675,162 @@ export interface ScenarioMemoryRequestPlan {
   planned_activation_rules: MemoryPlannedActivationRule[];
 }
 
+export type RetrievalSelectorKind =
+  | 'page'
+  | 'compiled_truth'
+  | 'section'
+  | 'line_span'
+  | 'timeline_entry'
+  | 'timeline_range'
+  | 'source_ref'
+  | 'task_working_set'
+  | 'task_attempt'
+  | 'task_decision'
+  | 'profile_memory'
+  | 'personal_episode';
+
+export type RetrievalFreshness = 'current' | 'stale' | 'unknown';
+export type ProbeAnswerKind = 'mention_existence' | 'slug_disambiguation' | 'none';
+export type ContextReadMode = 'explicit' | 'auto';
+export type ContextTimelineMode = 'auto' | 'include' | 'exclude';
+
+export interface RetrievalSelector {
+  selector_id?: string;
+  kind: RetrievalSelectorKind;
+  scope_id?: string;
+  slug?: string;
+  path?: string;
+  section_id?: string;
+  line_start?: number;
+  line_end?: number;
+  char_start?: number;
+  char_end?: number;
+  source_ref?: string;
+  object_id?: string;
+  source_refs?: string[];
+  content_hash?: string;
+  freshness?: RetrievalFreshness;
+}
+
+export interface RetrievalCanonicalTarget {
+  kind: RetrievalSelectorKind;
+  slug?: string;
+  title?: string;
+  type?: PageType;
+  path?: string;
+  section_id?: string;
+  scope_id?: string;
+}
+
+export interface RetrievalMatchedChunk {
+  slug: string;
+  page_id: number;
+  title: string;
+  type: PageType;
+  chunk_source: ChunkSource;
+  score: number;
+  stale: boolean;
+}
+
+export interface RetrieveContextCandidate {
+  candidate_id: string;
+  canonical_target: RetrievalCanonicalTarget;
+  matched_chunks: RetrievalMatchedChunk[];
+  why_matched: string[];
+  activation: MemoryActivationDecision;
+  read_priority: number;
+  read_selector: RetrievalSelector;
+}
+
+export interface RetrieveContextAnswerability {
+  answerable_from_probe: boolean;
+  allowed_probe_answer_kind: ProbeAnswerKind;
+  must_read_context: boolean;
+  reason_codes: string[];
+}
+
+export interface RetrieveContextOrientation {
+  derived_consulted: string[];
+  recommended_reads: RetrievalSelector[];
+  summary_lines: string[];
+}
+
+export interface RetrieveContextInput extends MemoryScenarioClassifierInput {
+  selectors?: RetrievalSelector[];
+  limit?: number;
+  token_budget?: number;
+  include_orientation?: boolean;
+  persist_trace?: boolean;
+}
+
+export interface RetrieveContextResult {
+  request_id: string;
+  scenario: MemoryScenario;
+  scope_gate?: ScopeGateDecisionResult;
+  route: RetrievalRouteSelectorResult | null;
+  answerability: RetrieveContextAnswerability;
+  candidates: RetrieveContextCandidate[];
+  required_reads: RetrievalSelector[];
+  orientation: RetrieveContextOrientation;
+  warnings: string[];
+  trace?: RetrievalTrace | null;
+}
+
+export interface ContextAnswerReady {
+  ready: boolean;
+  answer_ground: RetrievalSelector[];
+  unsupported_reasons: string[];
+  citation_policy: string;
+}
+
+export interface CanonicalContextRead {
+  selector: RetrievalSelector;
+  authority: MemoryArtifactAuthority;
+  title: string;
+  text: string;
+  source_refs: string[];
+  token_estimate: number;
+  has_more: boolean;
+  continuation_selector?: RetrievalSelector;
+}
+
+export interface ContextEvidenceClaim {
+  selector_id: string;
+  claim_kind: 'compiled_truth' | 'timeline_evidence' | 'task_state' | 'profile_memory' | 'personal_episode';
+  source_refs: string[];
+}
+
+export interface ContextConflict {
+  selector_id: string;
+  summary: string;
+  source_refs: string[];
+}
+
+export interface ReadContextInput {
+  query?: string;
+  selectors?: RetrievalSelector[];
+  reads?: ContextReadMode;
+  token_budget?: number;
+  max_selectors?: number;
+  include_timeline?: ContextTimelineMode;
+  include_source_refs?: boolean;
+  persist_trace?: boolean;
+  task_id?: string | null;
+  requested_scope?: Exclude<ScopeGateScope, 'unknown'>;
+}
+
+export interface ReadContextResult {
+  answer_ready: ContextAnswerReady;
+  canonical_reads: CanonicalContextRead[];
+  evidence_claims: ContextEvidenceClaim[];
+  conflicts: ContextConflict[];
+  warnings: string[];
+  unread_required: RetrievalSelector[];
+  continuations: RetrievalSelector[];
+  scope_gate?: ScopeGateDecisionResult;
+  trace?: RetrievalTrace | null;
+}
+
 export interface RetrievalRouteSelectorResult {
   selected_intent: RetrievalRouteIntent;
   selection_reason: string;

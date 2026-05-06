@@ -1,78 +1,80 @@
 # Search Modes
 
 ## Goal
-Know which search command to use and when -- keyword, hybrid, or direct -- so every lookup is fast and returns the right result.
+
+Use the canonical retrieval flow for normal agent answers, and use keyword,
+hybrid, and direct page reads as lower-level tools when they are the right fit.
 
 ## What the User Gets
-Without this: the agent fumbles between search commands, returns chunks when full pages are needed, runs expensive semantic searches when a direct get would do, or misses results entirely. With this: every lookup uses the optimal mode, token budgets are respected, and the user gets the right information in the fewest calls.
 
-## Implementation
+Without this: the agent can answer from snippets that cut through meaning or
+treat graph orientation as truth. With this: the agent discovers candidates
+cheaply, reads bounded canonical evidence, and answers only from supported
+context.
+
+## Canonical Retrieval Modes
 
 ```
 on user_asks_about(topic):
-    # Decision tree: pick the right search mode
+    if exact_selector_or_known_slug(topic):
+        # MODE 0: Exact canonical read
+        result = mbrain read-context --selectors '[...]'
+        # Use mbrain get <slug> only when a full Markdown page is needed.
 
-    if know_exact_slug(topic):
-        # MODE 3: Direct get -- instant, no search overhead
-        result = mbrain get <slug>
-        # e.g., "Tell me about Pedro" -> mbrain get pedro-franceschi
-        # Returns the FULL page -- compiled truth + timeline
+    elif asks_only_whether_memory_mentions(topic):
+        # MODE 1: Mention/existence probe
+        result = mbrain retrieve-context "{topic}"
+        # search/query metadata may also be used for existence only.
+        # Disclose that the answer is probe/candidate metadata.
 
-    elif topic.is_exact_name or topic.is_keyword:
-        # MODE 1: Keyword search -- fast, no embeddings needed, day-one ready
-        results = mbrain search "{name_or_keyword}"
-        # e.g., "Find anything about Series A" -> mbrain search "Series A"
-        # Returns CHUNKS, not full pages
-
-        # IMPORTANT: keyword search returns chunks
-        # If the chunk confirms relevance, THEN load the full page:
-        if chunk.confirms_relevance:
-            full_page = mbrain get <slug_from_chunk>
-
-    elif topic.is_semantic_question:
-        # MODE 2: Hybrid search -- semantic + keyword, needs embeddings
-        results = mbrain query "{natural language question}"
-        # e.g., "Who do I know at fintech companies?" -> mbrain query "fintech contacts"
-        # Returns ranked chunks via vector + keyword + RRF
-
-        # Same rule: chunks first, then get full page if needed
-        if chunk.confirms_relevance:
-            full_page = mbrain get <slug_from_chunk>
-
-# Quick reference:
-# | Mode    | Command              | Needs Embeddings | Speed   | Best For                        |
-# |---------|----------------------|------------------|---------|---------------------------------|
-# | Keyword | mbrain search "term" | No               | Fastest | Known names, exact matches      |
-# | Hybrid  | mbrain query "..."   | Yes              | Fast    | Semantic questions, fuzzy match  |
-# | Direct  | mbrain get <slug>    | No               | Instant | When you know the slug          |
-
-# Progression over time:
-#   Day 1:  keyword search (works without embeddings)
-#   After first embed: hybrid search unlocked
-#   Once you know slugs: direct get for speed
-
-# Precedence for conflicting information within a page:
-#   1. User's direct statements (always wins)
-#   2. Compiled truth sections (synthesized from evidence)
-#   3. Timeline entries (raw signal, reverse chronological)
-#   4. External sources (web search, APIs)
+    else:
+        # MODE 2: Normal agent Q&A
+        probe = mbrain retrieve-context "{question}"
+        read = mbrain read-context --selectors '<probe.required_reads json>'
+        # Answer only from read.canonical_reads when answer_ready is true.
 ```
 
-## Tricky Spots
+## Lower-Level Tools
 
-1. **Search returns chunks, not full pages.** After `mbrain search` or `mbrain query`, you get excerpts. Always run `mbrain get <slug>` to load the full page when the chunk confirms relevance. Don't answer questions from chunks alone when the full context matters.
-2. **Keyword search works without embeddings.** On day one before any embedding run, `mbrain search` still works. Don't tell the user "search isn't available yet" -- keyword search is always available.
-3. **Don't use hybrid search for known names.** `mbrain query "Pedro Franceschi"` wastes embedding compute. Use `mbrain search "Pedro Franceschi"` or better yet `mbrain get pedro-franceschi` if you know the slug.
-4. **Token budget awareness.** A full page via `mbrain get` can be large. Read the search chunks first to confirm relevance before pulling the full page. "Did anyone mention the Series A?" -- search results (chunks) are probably enough. "Tell me everything about Pedro" -- get the full page.
-5. **Hybrid search needs embeddings to have been run.** If `mbrain query` returns nothing but `mbrain search` finds results, the embeddings haven't been generated yet. Run the embedding pipeline first.
+These tools remain available, but they are not the default evidence boundary for
+factual answers.
+
+| Mode | Command | Needs Embeddings | Best For | Evidence Status |
+|------|---------|------------------|----------|-----------------|
+| Probe | `mbrain retrieve-context "..."` | Optional | Candidate grouping, scope/route planning, required reads | Candidate plan |
+| Canonical read | `mbrain read-context --selectors '[...]'` | No | Bounded answer evidence | Answer evidence |
+| Keyword | `mbrain search "term"` | No | Known names, slugs, dates, exact terms | Candidate chunks |
+| Hybrid | `mbrain query "..."` | Yes | Conceptual or cross-cutting discovery | Candidate chunks |
+| Full page | `mbrain get <slug>` | No | Complete Markdown page escape hatch | Canonical full page |
+
+## Decision Notes
+
+1. **Search/query return chunks.** Treat chunks as candidate pointers. Run
+   `retrieve_context` or `read_context` before making factual claims.
+2. **Exact selectors skip fuzzy discovery.** If you already know the slug,
+   section id, source ref, task id, profile-memory id, or personal-episode id,
+   go straight to `read_context`.
+3. **Context maps and backlinks orient.** They can explain relationships,
+   recommend reads, or help rank candidates, but they are not canonical truth.
+4. **Mention/existence questions are narrower.** For "did anyone mention Y?",
+   probe/search metadata can answer existence if you disclose that it is
+   candidate metadata and do not infer meaning without a canonical read.
+5. **Keyword search works without embeddings.** If hybrid search misses results
+   but keyword search finds them, embedding coverage may be incomplete.
+6. **Full pages are an escape hatch.** Use `mbrain get <slug>` when the user
+   asks for the complete page or when a bounded selector read is insufficient.
 
 ## How to Verify
 
-1. Run `mbrain search "Pedro"` -- confirm it returns chunks with matching text and slug references.
-2. Run `mbrain query "who works at fintech companies"` -- confirm it returns semantically relevant results (not just keyword matches on "fintech").
-3. Run `mbrain get pedro-franceschi` -- confirm it returns the full page with compiled truth and timeline.
-4. Compare: search for the same entity using all three modes. Keyword should be fastest, hybrid should surface conceptual matches, direct should return the complete page.
-5. After a search returns a chunk, run `mbrain get` on the slug from that chunk. Confirm the full page contains more context than the chunk alone.
+1. Run `mbrain retrieve-context "Pedro"` and confirm it returns candidates plus
+   `required_reads`.
+2. Run `mbrain read-context --selectors '<required_reads json>'` and confirm it
+   returns `canonical_reads` and `answer_ready`.
+3. Run `mbrain search "Pedro"` and confirm it returns candidate chunks with slug
+   references, not answer-ready evidence.
+4. Run `mbrain query "who works at fintech companies"` and confirm it returns
+   semantic candidate chunks when embeddings are available.
+5. Run `mbrain get pedro-franceschi` when you need the complete canonical page.
 
 ---
 *Part of the [MBrain Skillpack](../MBRAIN_SKILLPACK.md).*
