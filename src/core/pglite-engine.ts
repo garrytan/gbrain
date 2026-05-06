@@ -217,7 +217,12 @@ export class PGLiteEngine implements BrainEngine {
    *   - `links.origin_page_id` column (indexed by `idx_links_origin`) — v0.13
    *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
    *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
+   *   - `content_chunks.search_vector` + `parent_symbol_path` + `doc_comment`
+   *     + `symbol_name_qualified` columns (indexed by `idx_chunks_search_vector`
+   *     and `idx_chunks_symbol_qualified`) — v0.20 Cathedral II
    *   - `pages.deleted_at` column (indexed by `pages_deleted_at_purge_idx`) — v0.26.5
+   *   - `mcp_request_log.agent_name` + `params` + `error_message` columns
+   *     (indexed by `idx_mcp_log_agent_time`) — v0.26.3
    *
    * **Maintenance contract:** when a future migration adds a column-with-index
    * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
@@ -245,7 +250,13 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='content_chunks' AND column_name='symbol_name') AS symbol_name_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='search_vector') AS search_vector_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='mcp_request_log') AS mcp_log_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='mcp_request_log' AND column_name='agent_name') AS agent_name_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -257,17 +268,22 @@ export class PGLiteEngine implements BrainEngine {
       chunks_exists: boolean;
       symbol_name_exists: boolean;
       language_exists: boolean;
+      search_vector_exists: boolean;
+      mcp_log_exists: boolean;
+      agent_name_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
     const needsLinksBootstrap = probe.links_exists
       && (!probe.link_source_exists || !probe.origin_page_id_exists);
     const needsChunksBootstrap = probe.chunks_exists
-      && (!probe.symbol_name_exists || !probe.language_exists);
+      && (!probe.symbol_name_exists || !probe.language_exists || !probe.search_vector_exists);
     const needsPagesDeletedAt = probe.pages_exists && !probe.deleted_at_exists;
+    // v0.26.3 (v33): idx_mcp_log_agent_time in PGLITE_SCHEMA_SQL needs agent_name col.
+    const needsMcpLogBootstrap = probe.mcp_log_exists && !probe.agent_name_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt) return;
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt && !needsMcpLogBootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -305,14 +321,19 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     if (needsChunksBootstrap) {
-      // v26 (content_chunks_code_metadata) adds the full code-chunk metadata
-      // surface (language, symbol_name, symbol_type, start_line, end_line).
-      // The bootstrap only adds the two columns the schema blob's partial
-      // indexes reference (idx_chunks_symbol_name, idx_chunks_language).
-      // v26 runs later via runMigrations and adds the rest idempotently.
+      // v26 (content_chunks_code_metadata) adds symbol_name + language; v27
+      // (Cathedral II) adds parent_symbol_path + doc_comment +
+      // symbol_name_qualified + search_vector. PGLITE_SCHEMA_SQL has indexes
+      // (idx_chunks_search_vector, idx_chunks_symbol_qualified) that need the
+      // v27 columns to exist before they run. v26 + v27 run later via
+      // runMigrations and are idempotent.
       await this.db.exec(`
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS language TEXT;
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS parent_symbol_path TEXT[];
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS doc_comment TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name_qualified TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
       `);
     }
 
@@ -323,6 +344,19 @@ export class PGLiteEngine implements BrainEngine {
       // not to crash. v34 runs later via runMigrations and is idempotent.
       await this.db.exec(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsMcpLogBootstrap) {
+      // v33 (admin_dashboard_columns_v0_26_3) adds agent_name + params +
+      // error_message to mcp_request_log. PGLITE_SCHEMA_SQL's
+      // `CREATE INDEX idx_mcp_log_agent_time ON mcp_request_log(agent_name,...)`
+      // crashes without agent_name. v33 runs later via runMigrations and is
+      // idempotent (and also handles backfill).
+      await this.db.exec(`
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS agent_name TEXT;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS params JSONB;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_message TEXT;
       `);
     }
   }
