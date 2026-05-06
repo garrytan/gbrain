@@ -114,14 +114,15 @@ function resolveClientIp(req: Request, server: { requestIP: (r: Request) => { ad
 export async function startHttpTransport(opts: HttpTransportOptions) {
   const { port, engine } = opts;
 
-  // Fail-fast: HTTP transport requires Postgres because access_tokens / mcp_request_log
-  // only exist in the Postgres schema (see src/core/pglite-schema.ts:5-6).
+  // Legacy HTTP transport requires Postgres because it reaches into the
+  // postgres.js client directly. The main `gbrain serve --http` path uses
+  // src/commands/serve-http.ts and is engine-aware, including PGLite.
   if ((engine as { kind?: string }).kind !== 'postgres') {
-    console.error('Error: gbrain serve --http requires a Postgres engine for remote auth tokens.');
-    console.error('PGLite is local-only by design (access_tokens table is Postgres-only).');
+    console.error('Error: legacy HTTP transport requires a Postgres engine.');
+    console.error('Use `gbrain serve --http` / src/commands/serve-http.ts for the engine-aware HTTP server.');
     console.error('Either:');
     console.error('  - Use stdio: gbrain serve');
-    console.error('  - Migrate to Postgres: gbrain migrate --to supabase');
+    console.error('  - Use the current serve-http.ts path for PGLite HTTP');
     process.exit(1);
   }
 

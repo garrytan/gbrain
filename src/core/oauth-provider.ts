@@ -28,8 +28,15 @@ import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 // Types
 // ---------------------------------------------------------------------------
 
-/** Raw SQL query function — works with both PGLite and postgres tagged templates */
-export type SqlQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
+/**
+ * Minimal tagged SQL function used by OAuth/admin infrastructure.
+ *
+ * This is deliberately narrower than postgres.js's `sql` tag: values must be
+ * scalar bind parameters only. It does not support nested SQL fragments,
+ * sql.json(), sql.unsafe(), sql.begin(), or direct JS array binding.
+ */
+export type SqlValue = string | number | bigint | boolean | Date | null;
+export type SqlQuery = (strings: TemplateStringsArray, ...values: SqlValue[]) => Promise<Record<string, unknown>[]>;
 
 /**
  * Convert a JS array to a PostgreSQL array literal for PGLite compat.

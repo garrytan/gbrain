@@ -85,15 +85,20 @@ export function loadConfig(): GBrainConfig | null {
 
   if (!fileConfig && !dbUrl) return null;
 
-  // Infer engine type if not explicitly set
-  const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
-    || (fileConfig?.database_path ? 'pglite' : 'postgres');
+  // Infer engine type if not explicitly set. A DATABASE_URL-style env var is
+  // always a Postgres connection target and must override a file-backed PGLite
+  // engine selection; otherwise direct-script/operator paths can silently hit
+  // the local PGLite brain while claiming to use the env URL.
+  const inferredEngine: 'postgres' | 'pglite' = dbUrl
+    ? 'postgres'
+    : fileConfig?.engine || (fileConfig?.database_path ? 'pglite' : 'postgres');
 
   // Merge: env vars override config file. READ only — never mutate process.env.
   const merged = {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
+    ...(dbUrl ? { database_path: undefined } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
