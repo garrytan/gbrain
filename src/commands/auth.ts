@@ -16,6 +16,7 @@
  */
 import postgres from 'postgres';
 import { createHash, randomBytes } from 'crypto';
+import { PHASE_4B_TOKEN_PRESETS, VALID_SCOPES, validateScopes, type Scope } from '../core/scopes.ts';
 
 function getDatabaseUrl(requireDb: boolean): string | undefined {
   const url = process.env.DATABASE_URL || process.env.GBRAIN_DATABASE_URL;
@@ -34,19 +35,48 @@ function generateToken(): string {
   return 'gbrain_' + randomBytes(32).toString('hex');
 }
 
-async function create(name: string) {
-  if (!name) { console.error('Usage: auth create <name>'); process.exit(1); }
+function parseCreateScopes(name: string, args: string[]): Scope[] {
+  if (args.includes('--admin-all')) {
+    return [...VALID_SCOPES];
+  }
+
+  const explicit: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === '--scope' || args[i] === '--scopes') && args[i + 1]) {
+      explicit.push(...args[i + 1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean));
+      i += 1;
+    }
+  }
+
+  if (explicit.length > 0) return validateScopes(explicit);
+
+  const preset = PHASE_4B_TOKEN_PRESETS[name];
+  if (preset) return preset;
+
+  throw new Error(`Refusing to create unscoped token "${name}". Pass --scope <scope> (repeatable), --admin-all, or use a Phase 4B preset name. Valid scopes: ${VALID_SCOPES.join(', ')}`);
+}
+
+async function create(name: string, args: string[] = []) {
+  if (!name) { console.error('Usage: auth create <name> --scope pages:read [--scope chunks:read]'); process.exit(1); }
+  let scopes: Scope[];
+  try {
+    scopes = parseCreateScopes(name, args);
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
   const sql = postgres(getDatabaseUrl(true)!);
   const token = generateToken();
   const hash = hashToken(token);
 
   try {
     await sql`
-      INSERT INTO access_tokens (name, token_hash)
-      VALUES (${name}, ${hash})
+      INSERT INTO access_tokens (name, token_hash, scopes)
+      VALUES (${name}, ${hash}, ${scopes})
     `;
     console.log(`Token created for "${name}":\n`);
     console.log(`  ${token}\n`);
+    console.log(`Scopes: ${scopes.join(', ')}`);
     console.log('Save this token — it will not be shown again.');
     console.log(`Revoke with: bun run src/commands/auth.ts revoke "${name}"`);
   } catch (e: any) {
@@ -65,7 +95,7 @@ async function list() {
   const sql = postgres(getDatabaseUrl(true)!);
   try {
     const rows = await sql`
-      SELECT name, created_at, last_used_at, revoked_at
+      SELECT name, scopes, created_at, last_used_at, revoked_at
       FROM access_tokens
       ORDER BY created_at DESC
     `;
@@ -73,14 +103,15 @@ async function list() {
       console.log('No tokens found. Create one: bun run src/commands/auth.ts create "my-client"');
       return;
     }
-    console.log('Name                  Created              Last Used            Status');
-    console.log('─'.repeat(80));
+    console.log('Name                  Created              Last Used            Status    Scopes');
+    console.log('─'.repeat(120));
     for (const r of rows) {
       const name = (r.name as string).padEnd(20);
       const created = new Date(r.created_at as string).toISOString().slice(0, 19);
       const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
-      const status = r.revoked_at ? 'REVOKED' : 'active';
-      console.log(`${name}  ${created}  ${lastUsed}  ${status}`);
+      const status = (r.revoked_at ? 'REVOKED' : 'active').padEnd(8);
+      const scopes = Array.isArray(r.scopes) && r.scopes.length > 0 ? r.scopes.join(',') : 'legacy:read,write,admin';
+      console.log(`${name}  ${created}  ${lastUsed}  ${status}  ${scopes}`);
     }
   } finally {
     await sql.end();
@@ -292,7 +323,7 @@ async function registerClient(name: string, args: string[]) {
 export async function runAuth(args: string[]): Promise<void> {
   const [cmd, ...rest] = args;
   switch (cmd) {
-    case 'create': await create(rest[0]); return;
+    case 'create': await create(rest[0], rest.slice(1)); return;
     case 'list': await list(); return;
     case 'revoke': await revoke(rest[0]); return;
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
@@ -308,7 +339,8 @@ export async function runAuth(args: string[]): Promise<void> {
       console.log(`GBrain Token Management
 
 Usage:
-  gbrain auth create <name>                                Create a legacy bearer token
+  gbrain auth create <name> [--scope S] [--admin-all]     Create a scoped bearer token
+     Phase 4B preset names also work: agent-cto-ryde, agent-backend-ryde, agent-frontend-ryde, agent-ios-ryde, agent-head-of-product-ryde, orchestrator-ryde
   gbrain auth list                                         List all tokens
   gbrain auth revoke <name>                                Revoke a legacy token
   gbrain auth register-client <name> [options]            Register an OAuth 2.1 client

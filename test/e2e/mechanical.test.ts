@@ -941,26 +941,35 @@ describeE2E('E2E: RLS Verification', () => {
   const cliCwd = join(import.meta.dir, '../..');
   const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, GBRAIN_DATABASE_URL: process.env.DATABASE_URL! });
 
-  // Seed a unique suffix per run so concurrent test DBs / crashed prior
-  // runs don't collide. All helper tables follow `gbrain_rls_regression_<suffix>`.
   const suffix = `${process.pid}_${Date.now()}`;
 
-  test('RLS is enabled on every public table (no hardcoded allowlist)', async () => {
+  test('GBrain-owned public tables are service-role-only: RLS disabled and documented', async () => {
     const conn = getConn();
-    const tables = await conn.unsafe(`
-      SELECT tablename, rowsecurity FROM pg_tables
-      WHERE schemaname = 'public'
+    Bun.spawnSync({
+      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+      cwd: cliCwd, env: cliEnv(), timeout: 15_000,
+    });
+
+    const rows = await conn.unsafe(`
+      SELECT
+        c.relname AS table_name,
+        c.relrowsecurity AS rowsecurity,
+        COALESCE(obj_description(c.oid, 'pg_class'), '') AS comment
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relkind = 'r'
+        AND c.relname IN ('pages', 'content_chunks', 'links', 'tags', 'raw_data', 'timeline_entries', 'page_versions', 'ingest_log', 'config', 'files', 'access_tokens', 'mcp_request_log')
+      ORDER BY c.relname
     `);
-    const noRls = tables.filter((t: any) => !t.rowsecurity);
-    // Some test DBs may not have BYPASSRLS privilege, so RLS might be skipped.
-    // If RLS was enabled at all (the common case against Docker postgres), EVERY
-    // public table must have it — no hardcoded IN-list exceptions.
-    if (tables.some((t: any) => t.rowsecurity)) {
-      expect(noRls.map((t: any) => t.tablename)).toEqual([]);
+    expect(rows.length).toBeGreaterThanOrEqual(10);
+    for (const row of rows as any[]) {
+      expect(row.rowsecurity).toBe(false);
+      expect(row.comment).toContain('GBRAIN:RLS_POSTURE service-role-only');
     }
   });
 
-  test('current user role has BYPASSRLS', async () => {
+  test('current user role has BYPASSRLS for service-role maintenance', async () => {
     const conn = getConn();
     const rows = await conn.unsafe(`SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user`);
     if (rows.length > 0) {
@@ -968,28 +977,17 @@ describeE2E('E2E: RLS Verification', () => {
     }
   });
 
-  test('gbrain doctor fails with exit 1 when a public table is missing RLS', async () => {
+  test('gbrain doctor fails when a public table is RLS-enabled with zero policies', async () => {
     const conn = getConn();
-    const tbl = `gbrain_rls_regression_${suffix}`;
+    const tbl = `gbrain_rls_zero_policy_${suffix}`;
     try {
-      // Init first so all migrations (including v35's auto-RLS event trigger
-      // and one-time backfill) are applied. AFTER migrations run, simulate
-      // the post-v35 escape route: operator drops the auto-RLS trigger
-      // (e.g. while debugging) and creates a public table without RLS.
-      // doctor's existing rls check must still flag it. The new
-      // rls_event_trigger check warns separately about the missing trigger.
       Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
         cwd: cliCwd, env: cliEnv(), timeout: 15_000,
       });
 
-      // Drop the trigger so CREATE TABLE doesn't auto-enable RLS, then create
-      // the test table without RLS. ALTER TABLE … DISABLE is a belt-and-
-      // suspenders no-op in this path but matches what an operator would do
-      // if they had toggled RLS off manually after the trigger ran.
-      await conn.unsafe(`DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table`);
       await conn.unsafe(`CREATE TABLE public.${tbl} (id int)`);
-      await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
+      await conn.unsafe(`ALTER TABLE public.${tbl} ENABLE ROW LEVEL SECURITY`);
 
       const result = Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
@@ -1001,30 +999,22 @@ describeE2E('E2E: RLS Verification', () => {
       expect(rls).toBeDefined();
       expect(rls.status).toBe('fail');
       expect(rls.message).toContain(tbl);
-      expect(rls.message).toContain('ALTER TABLE');
+      expect(rls.message).toContain('RLS enabled with ZERO policies');
+      expect(rls.message).toContain('DISABLE ROW LEVEL SECURITY');
       expect(result.exitCode).toBe(1);
     } finally {
       await conn.unsafe(`DROP TABLE IF EXISTS public.${tbl}`);
-      // Restore the trigger via a no-op v35 replay so subsequent tests in
-      // this file (which expect the post-init steady state) don't see drift.
-      const { MIGRATIONS } = await import('../../src/core/migrate.ts');
-      const v35sql = (MIGRATIONS.find(m => m.version === 35)?.sqlFor as any)?.postgres;
-      if (v35sql) await conn.unsafe(v35sql);
     }
   }, 60_000);
 
-  test('GBRAIN:RLS_EXEMPT comment with valid reason exempts a non-RLS public table', async () => {
+  test('GBRAIN:RLS_POSTURE comment documents an intentionally disabled service-role table', async () => {
     const conn = getConn();
-    const tbl = `gbrain_rls_exempt_ok_${suffix}`;
+    const tbl = `gbrain_rls_documented_${suffix}`;
     try {
       await conn.unsafe(`CREATE TABLE public.${tbl} (id int)`);
       await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
-      await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'GBRAIN:RLS_EXEMPT reason=e2e test fixture, anon-readable ok'`);
+      await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'GBRAIN:RLS_POSTURE service-role-only; RLS disabled; MCP/app bearer-token authorization is the security boundary.'`);
 
-      Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
-        cwd: cliCwd, env: cliEnv(), timeout: 15_000,
-      });
       const result = Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
         cwd: cliCwd, env: cliEnv(), timeout: 20_000,
@@ -1032,27 +1022,20 @@ describeE2E('E2E: RLS Verification', () => {
       const stdout = new TextDecoder().decode(result.stdout);
       const parsed = JSON.parse(stdout);
       const rls = parsed.checks.find((c: any) => c.name === 'rls');
-      expect(rls.status).toBe('ok');
-      expect(rls.message).toContain('explicitly exempt');
-      expect(rls.message).toContain(tbl);
+      expect(rls.status).not.toBe('fail');
+      expect(rls.message).toContain('No zero-policy RLS trapdoors');
     } finally {
       await conn.unsafe(`DROP TABLE IF EXISTS public.${tbl}`);
     }
   }, 60_000);
 
-  test('GBRAIN:RLS_EXEMPT comment WITHOUT reason= still fails doctor', async () => {
+  test('undocumented disabled public table warns instead of failing as a trapdoor', async () => {
     const conn = getConn();
-    const tbl = `gbrain_rls_exempt_bad_${suffix}`;
+    const tbl = `gbrain_rls_undocumented_${suffix}`;
     try {
       await conn.unsafe(`CREATE TABLE public.${tbl} (id int)`);
       await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
-      // Missing the `reason=<...>` segment — prefix alone is not enough.
-      await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'GBRAIN:RLS_EXEMPT'`);
 
-      Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
-        cwd: cliCwd, env: cliEnv(), timeout: 15_000,
-      });
       const result = Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
         cwd: cliCwd, env: cliEnv(), timeout: 20_000,
@@ -1060,35 +1043,9 @@ describeE2E('E2E: RLS Verification', () => {
       const stdout = new TextDecoder().decode(result.stdout);
       const parsed = JSON.parse(stdout);
       const rls = parsed.checks.find((c: any) => c.name === 'rls');
-      expect(rls.status).toBe('fail');
-      expect(rls.message).toContain(tbl);
-      expect(result.exitCode).toBe(1);
-    } finally {
-      await conn.unsafe(`DROP TABLE IF EXISTS public.${tbl}`);
-    }
-  }, 60_000);
-
-  test('Non-exempt unrelated COMMENT on a no-RLS table still fails doctor', async () => {
-    const conn = getConn();
-    const tbl = `gbrain_rls_comment_${suffix}`;
-    try {
-      await conn.unsafe(`CREATE TABLE public.${tbl} (id int)`);
-      await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
-      await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'Regular docs comment, not an exemption'`);
-
-      Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
-        cwd: cliCwd, env: cliEnv(), timeout: 15_000,
-      });
-      const result = Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
-        cwd: cliCwd, env: cliEnv(), timeout: 20_000,
-      });
-      const stdout = new TextDecoder().decode(result.stdout);
-      const parsed = JSON.parse(stdout);
-      const rls = parsed.checks.find((c: any) => c.name === 'rls');
-      expect(rls.status).toBe('fail');
-      expect(result.exitCode).toBe(1);
+      expect(rls.status).toBe('warn');
+      expect(rls.message).toContain('lack GBRAIN:RLS_POSTURE comments');
+      expect(result.exitCode).toBe(0);
     } finally {
       await conn.unsafe(`DROP TABLE IF EXISTS public.${tbl}`);
     }
@@ -1100,34 +1057,21 @@ describeE2E('E2E: RLS Verification', () => {
   // logs — so dropping them is a reasonable cleanup), v24 must NOT fail
   // with 42P01. The information_schema.tables IF EXISTS guards around those
   // two ALTERs let the migration skip them and continue.
-  //
-  // Without the guard, a brain with dropped budget_* tables would get stuck
-  // in an infinite retry loop: v24 fails → transaction rolls back →
-  // schema_version stays at prior value → next initSchema re-runs v24 →
-  // same failure forever.
   test('v24 self-heals when budget_ledger + budget_reservations are missing', async () => {
     const conn = getConn();
     let priorVersion: string | null = null;
     try {
-      // Capture current version so we can restore after the test.
       const verRows = await conn.unsafe(`SELECT value FROM config WHERE key = 'version'`);
       priorVersion = (verRows[0] as any)?.value ?? null;
 
-      // Simulate an operator who dropped the budget_* tables for any reason
-      // (cleanup, migration from an older gbrain, etc).
       await conn.unsafe(`DROP TABLE IF EXISTS public.budget_ledger CASCADE`);
       await conn.unsafe(`DROP TABLE IF EXISTS public.budget_reservations CASCADE`);
 
-      // Roll the version back to 23 so v24 re-runs on the next initSchema.
-      // UPSERT so this works whether the key exists or not.
       await conn.unsafe(`
         INSERT INTO config (key, value) VALUES ('version', '23')
         ON CONFLICT (key) DO UPDATE SET value = '23'
       `);
 
-      // Re-trigger initSchema via the CLI. With the guard, this should
-      // apply v24 cleanly and advance version to 24. Without the guard,
-      // this would error out with 42P01 and leave version at 23.
       const result = Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
         cwd: cliCwd, env: cliEnv(), timeout: 30_000,
@@ -1135,22 +1079,13 @@ describeE2E('E2E: RLS Verification', () => {
       const stdout = new TextDecoder().decode(result.stdout);
       const stderr = new TextDecoder().decode(result.stderr);
 
-      // Must succeed — no 42P01, no transaction rollback.
       expect(result.exitCode).toBe(0);
       expect(stderr + stdout).not.toMatch(/42P01|does not exist.*budget/i);
 
-      // Version must have advanced PAST 24. Since v0.18.1, v25-v29 (v0.19.0
-      // + v0.21.0 Cathedral II) and v30 (OAuth) have shipped. init runs every
-      // pending migration, so after rolling back to 23 the version advances
-      // to LATEST_VERSION. The test's intent is to prove v24 didn't crash on
-      // missing budget_* tables — assert version >= 24.
       const afterRows = await conn.unsafe(`SELECT value FROM config WHERE key = 'version'`);
       const finalVersion = parseInt((afterRows[0] as any).value, 10);
       expect(finalVersion).toBeGreaterThanOrEqual(24);
 
-      // The tables stayed dropped (v12 didn't re-run because current=23 > 12
-      // was already true before this test ran). That's intentional — we're
-      // proving v24 doesn't require those tables to exist.
       const tblRows = await conn.unsafe(`
         SELECT tablename FROM pg_tables
         WHERE schemaname = 'public'
@@ -1158,10 +1093,6 @@ describeE2E('E2E: RLS Verification', () => {
       `);
       expect(tblRows.length).toBe(0);
     } finally {
-      // Restore: recreate the budget_* tables (minimal schema — just enough
-      // to keep the rest of the test suite happy) and reset version.
-      // Mirror migration v12's CREATE TABLE IF NOT EXISTS exactly so any
-      // downstream test that touches these tables sees the original shape.
       await conn.unsafe(`
         CREATE TABLE IF NOT EXISTS budget_ledger (
           scope          TEXT        NOT NULL,
@@ -1187,12 +1118,10 @@ describeE2E('E2E: RLS Verification', () => {
           status         TEXT        NOT NULL DEFAULT 'held'
         )
       `);
-      // Enable RLS on the recreated tables so the "every public table has
-      // RLS" assertion earlier in this block stays green if re-run.
-      await conn.unsafe(`ALTER TABLE budget_ledger ENABLE ROW LEVEL SECURITY`);
-      await conn.unsafe(`ALTER TABLE budget_reservations ENABLE ROW LEVEL SECURITY`);
-      // Restore version so we don't leave the DB at a weird state for
-      // subsequent test blocks.
+      await conn.unsafe(`ALTER TABLE budget_ledger DISABLE ROW LEVEL SECURITY`);
+      await conn.unsafe(`ALTER TABLE budget_reservations DISABLE ROW LEVEL SECURITY`);
+      await conn.unsafe(`COMMENT ON TABLE budget_ledger IS 'GBRAIN:RLS_POSTURE service-role-only; RLS disabled; MCP/app bearer-token authorization is the security boundary.'`);
+      await conn.unsafe(`COMMENT ON TABLE budget_reservations IS 'GBRAIN:RLS_POSTURE service-role-only; RLS disabled; MCP/app bearer-token authorization is the security boundary.'`);
       if (priorVersion !== null) {
         await conn.unsafe(
           `UPDATE config SET value = $1 WHERE key = 'version'`,

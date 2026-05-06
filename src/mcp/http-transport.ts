@@ -17,7 +17,8 @@
  *     so attacker-controlled keys can't grow memory unbounded.
  *   - Body cap: 1 MiB default (GBRAIN_HTTP_MAX_BODY_BYTES). Stream-counted, not buffered —
  *     chunked transfers without Content-Length are still capped.
- *   - last_used_at debounce: only one UPDATE per token per 60s (SQL-level WHERE clause).
+ *   - last_used_at debounce: in-process LRU plus SQL WHERE guard; at most one UPDATE
+ *     per token per 60s per process.
  *   - mcp_request_log: one row per request with token_name + operation + status + latency.
  *
  * Replaces the standalone HTTP+OAuth wrapper that was vulnerable to unauthenticated
@@ -31,6 +32,8 @@ import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall } from './dispatch.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
+import { operationLogName, normalizeTokenScopes, type Scope } from '../core/scopes.ts';
+import { shouldUpdateAccessTokenLastUsed } from '../core/token-last-used.ts';
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
 
@@ -62,9 +65,9 @@ interface AuthResult {
   ok: boolean;
   tokenId?: string;
   tokenName?: string;
+  scopes?: Scope[];
 }
 
-/** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
 async function readBodyWithCap(req: Request, cap: number): Promise<string | null> {
   const cl = req.headers.get('content-length');
   if (cl) {
@@ -163,18 +166,27 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
     const hash = hashToken(token);
     try {
       const [row] = await sql`
-        SELECT id, name FROM access_tokens
+        SELECT id, name, scopes FROM access_tokens
         WHERE token_hash = ${hash} AND revoked_at IS NULL
       `;
       if (!row) return { ok: false };
-      // Debounced last_used_at update — only writes once per token per 60s.
-      // SQL-level WHERE clause keeps this race-tolerant even under concurrent requests.
-      sql`UPDATE access_tokens
-          SET last_used_at = now()
-          WHERE id = ${row.id}
-            AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')`
-        .catch(() => { /* fire-and-forget */ });
-      return { ok: true, tokenId: row.id, tokenName: row.name };
+      // Debounced last_used_at update — in-process LRU avoids issuing an UPDATE
+      // on every hot-token request; SQL WHERE keeps this race-tolerant across processes.
+      if (shouldUpdateAccessTokenLastUsed(`http:${String(row.id)}`)) {
+        sql`UPDATE access_tokens
+            SET last_used_at = now()
+            WHERE id = ${row.id}
+              AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')`
+          .catch(() => { /* fire-and-forget */ });
+      }
+      return {
+        ok: true,
+        tokenId: row.id,
+        tokenName: row.name,
+        scopes: normalizeTokenScopes(Array.isArray(row.scopes) && row.scopes.length > 0
+          ? row.scopes
+          : ['read', 'write', 'admin']),
+      };
     } catch {
       return { ok: false };
     }
@@ -320,9 +332,21 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       if (method === 'tools/call') {
         const toolName: string = params?.name ?? 'unknown';
         const args: Record<string, unknown> = params?.arguments ?? {};
-        const result = await dispatchToolCall(engine, toolName, args, { remote: true });
-        const status = result.isError ? 'error' : 'success';
-        logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);
+        const operation = operationLogName(method, toolName);
+        const result = await dispatchToolCall(engine, toolName, args, {
+          remote: true,
+          auth: {
+            token: '',
+            clientId: auth.tokenName!,
+            clientName: auth.tokenName!,
+            scopes: auth.scopes || normalizeTokenScopes(['read', 'write', 'admin']),
+          },
+        });
+        let status = result.isError ? 'error' : 'success';
+        if (result.isError && result.content[0]?.text.includes('insufficient_scope')) {
+          status = 'forbidden';
+        }
+        logRequest(auth.tokenName!, operation, status, Date.now() - startedMs);
         return Response.json(
           { result, jsonrpc: '2.0', id },
           { headers: corsHeaders(origin) },

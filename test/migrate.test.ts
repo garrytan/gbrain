@@ -1,5 +1,12 @@
 import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
-import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers } from '../src/core/migrate.ts';
+import {
+  LATEST_VERSION,
+  runMigrations,
+  MIGRATIONS,
+  getIdleBlockers,
+  RLS_POSTURE_COMMENT,
+  RLS_SERVICE_ROLE_ONLY_TABLES,
+} from '../src/core/migrate.ts';
 import type { IdleBlocker } from '../src/core/migrate.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -133,6 +140,44 @@ describe('migrate v33 — admin_dashboard_columns_v0_26_3', () => {
     for (const line of addColumnLines) {
       expect(line).toContain('IF NOT EXISTS');
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 4C — v38 mcp_request_log_indexes_partman_v0_27_1
+// ─────────────────────────────────────────────────────────────────
+describe('migrate v38 — mcp_request_log indexes + pg_partman', () => {
+  const v38 = MIGRATIONS.find(m => m.version === 38);
+
+  test('v38 exists with the expected name', () => {
+    expect(v38).toBeDefined();
+    expect(v38!.name).toBe('mcp_request_log_indexes_partman_v0_27_1');
+  });
+
+  test('v38 creates the common request-log lookup indexes', () => {
+    const sql = v38!.sqlFor!.postgres!;
+    expect(sql).toContain('idx_mcp_log_created_at');
+    expect(sql).toContain('ON mcp_request_log (created_at DESC)');
+    expect(sql).toContain('idx_mcp_log_token_created');
+    expect(sql).toContain('ON mcp_request_log (token_name, created_at DESC)');
+    expect(sql).toContain('idx_mcp_log_op_status');
+    expect(sql).toContain("WHERE status <> 'success'");
+  });
+
+  test('v38 configures pg_partman monthly partitioning before 100k rows', () => {
+    const sql = v38!.sqlFor!.postgres!;
+    expect(sql).toContain('CREATE EXTENSION IF NOT EXISTS pg_partman');
+    expect(sql).toContain('row_count >= 100000');
+    expect(sql).toContain('PARTITION BY RANGE (created_at)');
+    expect(sql).toContain('create_parent');
+    expect(sql).toContain("'1 month'");
+    expect(sql).toContain('part_config');
+    expect(sql).toContain("'12 months'");
+    expect(sql).toContain('mcp_request_log_legacy');
+  });
+
+  test('v38 is Postgres-only; PGLite skips partitioning', () => {
+    expect(v38!.sqlFor!.pglite).toBe('');
   });
 });
 
@@ -428,82 +473,71 @@ describe('migration v24 — rls_backfill_missing_tables', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// v0.26.7 — migration v35 structural guards (auto-RLS event trigger)
+// Phase 4D — migration v35 deprecated, v39 owns RLS posture
 // ─────────────────────────────────────────────────────────────────
 //
-// The PR review caught that the original v35 had three correctness issues:
-//   - FORCE ROW LEVEL SECURITY locked out non-BYPASSRLS table owners.
-//   - Trigger fired on Supabase-managed schemas (auth/storage/realtime/...).
-//   - EXCEPTION WHEN OTHERS would silently swallow per-table failures and
-//     replace a transactional rollback (loud) with a permissive default (quiet).
-// These tests pin the corrected shape so a future revert can't reintroduce
-// the original bugs.
-describe('migration v35 — auto_rls_event_trigger structural guards', () => {
-  test('exists with the expected name and SQL shape', () => {
-    const v35 = MIGRATIONS.find(m => m.version === 35);
+// v35 originally installed auto_rls_on_create_table and backfilled every
+// public table to RLS-on with zero policies. Phase 4D reverses that: new
+// installs must not create the trapdoor, and existing installs are cleaned by
+// v39. Keep v35 as a recorded no-op for migration-ledger compatibility.
+describe('migration v35 — auto_rls_event_trigger deprecated no-op', () => {
+  const v35 = MIGRATIONS.find(m => m.version === 35);
+
+  test('exists as an explicit no-op on both engines', () => {
     expect(v35).toBeDefined();
-    expect(v35?.name).toBe('auto_rls_event_trigger');
-    expect((v35?.sqlFor as any)?.postgres?.length).toBeGreaterThan(0);
+    expect(v35!.name).toBe('auto_rls_event_trigger_deprecated_noop');
+    expect(v35!.sql).toBe('');
+    expect(v35!.sqlFor!.postgres).toBe('');
+    expect(v35!.sqlFor!.pglite).toBe('');
   });
 
-  test('uses a PGLite no-op override (no event trigger support on PGLite)', () => {
-    const v35 = MIGRATIONS.find(m => m.version === 35);
-    expect(v35?.sqlFor?.pglite).toBe('');
+  test('does not install the legacy trigger or enable zero-policy RLS', () => {
+    const sql = [v35!.sql, v35!.sqlFor!.postgres, v35!.sqlFor!.pglite].join('\n');
+    expect(sql).not.toContain('auto_rls_on_create_table');
+    expect(sql).not.toContain('auto_enable_rls');
+    expect(sql).not.toMatch(/ENABLE\s+ROW\s+LEVEL\s+SECURITY/i);
+  });
+});
+
+describe('migration v39 — service-role-only RLS posture', () => {
+  const v39 = MIGRATIONS.find(m => m.version === 39);
+
+  test('exists with the expected name and is Postgres-only', () => {
+    expect(v39).toBeDefined();
+    expect(v39!.name).toBe('rls_service_role_only_posture_v0_27_2');
+    expect(v39!.sql).toBe('');
+    expect(v39!.sqlFor!.postgres!.length).toBeGreaterThan(0);
+    expect(v39!.sqlFor!.pglite).toBe('');
   });
 
-  test('does NOT issue FORCE ROW LEVEL SECURITY (D1: ENABLE only)', () => {
-    const v35 = MIGRATIONS.find(m => m.version === 35);
-    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
-    expect(sql).not.toMatch(/FORCE\s+ROW\s+LEVEL\s+SECURITY/i);
-    expect(sql).toMatch(/ENABLE\s+ROW\s+LEVEL\s+SECURITY/i);
+  test('drops the legacy auto-RLS trigger/function', () => {
+    const sql = v39!.sqlFor!.postgres!;
+    expect(sql).toContain('DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table');
+    expect(sql).toContain('DROP FUNCTION IF EXISTS auto_enable_rls()');
   });
 
-  test('trigger function is scoped to schema_name = public (D2)', () => {
-    const v35 = MIGRATIONS.find(m => m.version === 35);
-    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
-    expect(sql).toMatch(/schema_name\s*=\s*'public'/);
+  test('disables RLS on every known GBrain-owned service-role table', () => {
+    expect(RLS_SERVICE_ROLE_ONLY_TABLES).toEqual(expect.arrayContaining([
+      'access_tokens', 'config', 'content_chunks', 'files', 'ingest_log',
+      'links', 'mcp_request_log', 'oauth_clients', 'oauth_codes', 'oauth_tokens',
+      'page_versions', 'pages', 'raw_data', 'sources', 'tags', 'timeline_entries',
+      'minion_jobs', 'subagent_messages', 'subagent_tool_executions',
+    ]));
+    const handlerSource = String(v39!.handler);
+    expect(handlerSource).toContain('DISABLE ROW LEVEL SECURITY');
+    expect(handlerSource).toContain('RLS_SERVICE_ROLE_ONLY_TABLES');
   });
 
-  test('WHEN TAG covers CREATE TABLE, CREATE TABLE AS, and SELECT INTO (D6)', () => {
-    const v35 = MIGRATIONS.find(m => m.version === 35);
-    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
-    expect(sql).toMatch(/WHEN\s+TAG\s+IN\s*\([^)]*'CREATE TABLE'[^)]*\)/i);
-    expect(sql).toMatch(/'CREATE TABLE AS'/);
-    expect(sql).toMatch(/'SELECT INTO'/);
+  test('documents disabled tables with GBRAIN:RLS_POSTURE comments', () => {
+    const handlerSource = String(v39!.handler);
+    expect(handlerSource).toContain('COMMENT ON TABLE ${table} IS ${quoteLiteral(RLS_POSTURE_COMMENT)}');
+    expect(handlerSource).toContain('quoteLiteral');
+    expect(RLS_POSTURE_COMMENT).toContain('GBRAIN:RLS_POSTURE service-role-only');
+    expect(RLS_POSTURE_COMMENT).toContain('MCP/app bearer-token authorization is the security boundary');
   });
 
-  test('does NOT contain EXCEPTION WHEN OTHERS inside the trigger function (D5 reversed)', () => {
-    const v35 = MIGRATIONS.find(m => m.version === 35);
-    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
-    // ddl_command_end fires inside the DDL transaction, so a failed ALTER
-    // aborts the offending CREATE TABLE — that's the security guarantee.
-    // Wrapping in EXCEPTION WHEN OTHERS would convert that loud rollback
-    // into a silent permissive default. Pin the absence.
-    expect(sql.toUpperCase()).not.toContain('EXCEPTION WHEN OTHERS');
-  });
-
-  test('backfill block uses %I.%I identifier quoting (codex correction)', () => {
-    const v35 = MIGRATIONS.find(m => m.version === 35);
-    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
-    // The backfill iterates pg_class and ALTERs each non-exempt RLS-off public
-    // table. Mixed-case identifiers require %I quoting; raw concat would break.
-    expect(sql).toMatch(/format\(\s*'ALTER TABLE %I\.%I/);
-  });
-
-  test('backfill exemption regex matches the doctor.ts contract', () => {
-    const v35 = MIGRATIONS.find(m => m.version === 35);
-    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
-    // doctor.ts:418 EXEMPT_RE = /^GBRAIN:RLS_EXEMPT\s+reason=\S.{3,}/
-    // The plpgsql side must use the same pattern (via ~) so the two surfaces
-    // honor identical exemptions.
-    expect(sql).toMatch(/'\^GBRAIN:RLS_EXEMPT\\s\+reason=\\S\.\{3,\}'/);
-  });
-
-  test('backfill is gated on rolbypassrls (matches v24 posture)', () => {
-    const v35 = MIGRATIONS.find(m => m.version === 35);
-    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
-    expect(sql).toMatch(/rolbypassrls/);
-    expect(sql).toMatch(/RAISE\s+EXCEPTION/i);
+  test('PGLite remains untouched because RLS is not applicable there', () => {
+    expect(v39!.sqlFor!.pglite).toBe('');
   });
 });
 
