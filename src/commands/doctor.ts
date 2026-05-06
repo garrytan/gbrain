@@ -3,7 +3,7 @@ import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
-import { findRepoRoot } from '../core/repo-root.ts';
+import { autoDetectSkillsDir } from '../core/repo-root.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
@@ -228,9 +228,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // --- Filesystem checks (always run, no DB needed) ---
 
   // 1. Resolver health
-  const repoRoot = findRepoRoot();
-  if (repoRoot) {
-    const skillsDir = join(repoRoot, 'skills');
+  // Use the same auto-detect as `check-resolvable` so doctor sees a
+  // workspace/skills dir reachable via $OPENCLAW_WORKSPACE or
+  // ~/.openclaw/workspace, not just a `skills/` walked up from cwd.
+  const detected = autoDetectSkillsDir();
+  const skillsDir = detected.dir;
+  if (skillsDir) {
 
     // --fix: run auto-repair BEFORE checkResolvable so the post-fix scan
     // reflects the new state. Auto-fix only targets DRY violations today;
@@ -268,8 +271,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   }
 
   // 2. Skill conformance
-  if (repoRoot) {
-    const skillsDir = join(repoRoot, 'skills');
+  if (skillsDir) {
     const conformanceResult = checkSkillConformance(skillsDir);
     checks.push(conformanceResult);
   }
