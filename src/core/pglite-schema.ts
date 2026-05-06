@@ -69,6 +69,11 @@ CREATE TABLE IF NOT EXISTS pages (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- v0.26.5: soft-delete + recovery window (mirrors src/schema.sql).
   deleted_at    TIMESTAMPTZ,
+  -- v0.29.1: salience-and-recency, additive opt-in (mirrors src/schema.sql).
+  effective_date        TIMESTAMPTZ,
+  effective_date_source TEXT,
+  import_filename       TEXT,
+  salience_touched_at   TIMESTAMPTZ,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -79,6 +84,9 @@ CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 -- v0.26.5: partial index supports the autopilot purge sweep (mirrors src/schema.sql).
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
+-- v0.29.1: expression index for since/until date-range filters.
+CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
+  ON pages ((COALESCE(effective_date, updated_at)));
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
