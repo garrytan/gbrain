@@ -60,9 +60,22 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // v0.19+ — forward-referenced by `CREATE INDEX idx_chunks_language
   // ON content_chunks(language) WHERE language IS NOT NULL`.
   { kind: 'column', table: 'content_chunks', column: 'language' },
+  // v0.20+ Cathedral II — forward-referenced by `CREATE INDEX
+  // idx_chunks_search_vector ON content_chunks USING GIN(search_vector)`.
+  { kind: 'column', table: 'content_chunks', column: 'search_vector' },
+  // v0.20+ Cathedral II — forward-referenced by `CREATE INDEX
+  // idx_chunks_symbol_qualified ON content_chunks(symbol_name_qualified)`.
+  { kind: 'column', table: 'content_chunks', column: 'symbol_name_qualified' },
+  // v0.20+ Cathedral II — populated by update_chunk_search_vector trigger;
+  // present in PGLITE_SCHEMA_SQL CREATE TABLE definition.
+  { kind: 'column', table: 'content_chunks', column: 'parent_symbol_path' },
+  { kind: 'column', table: 'content_chunks', column: 'doc_comment' },
   // v0.26.5 — forward-referenced by `CREATE INDEX pages_deleted_at_purge_idx
   // ON pages (deleted_at) WHERE deleted_at IS NOT NULL`.
   { kind: 'column', table: 'pages', column: 'deleted_at' },
+  // v0.26.3 (v33) — forward-referenced by `CREATE INDEX idx_mcp_log_agent_time
+  // ON mcp_request_log(agent_name, created_at DESC)`.
+  { kind: 'column', table: 'mcp_request_log', column: 'agent_name' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -90,11 +103,25 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
 
       DROP INDEX IF EXISTS idx_chunks_symbol_name;
       DROP INDEX IF EXISTS idx_chunks_language;
+      DROP INDEX IF EXISTS idx_chunks_search_vector;
+      DROP INDEX IF EXISTS idx_chunks_symbol_qualified;
+      DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON content_chunks;
+      DROP FUNCTION IF EXISTS update_chunk_search_vector;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS symbol_name;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS language;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS parent_symbol_path;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS doc_comment;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS symbol_name_qualified;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS search_vector;
 
       DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
       ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at;
+
+      DROP INDEX IF EXISTS idx_mcp_log_agent_time;
+      DROP INDEX IF EXISTS idx_mcp_log_time_agent;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS agent_name;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS params;
+      ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS error_message;
     `);
 
     // Run bootstrap in isolation (NOT initSchema). This is what we're testing.
