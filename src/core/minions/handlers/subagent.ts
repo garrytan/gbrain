@@ -131,9 +131,12 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   // lives at sdk.messages.create. Assigning sdk.messages directly gets the
   // right object; JS method-call semantics preserve `this` at the call
   // site (subagent.ts invokes client.create(...) with client === sdk.messages).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
-  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
+  const makeAnthropic = deps.makeAnthropic ?? (() => {
+    if (config.anthropic_api_key) return new Anthropic({ apiKey: config.anthropic_api_key });
+    return new Anthropic();
+  });
+  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
   const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
   const leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
