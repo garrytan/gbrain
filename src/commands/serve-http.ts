@@ -655,6 +655,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
               description: v.description,
               ...(v.enum ? { enum: v.enum } : {}),
               ...(v.default !== undefined ? { default: v.default } : {}),
+              ...(v.items ? { items: { type: (v.items as { type: string }).type } } : {}),
             }]),
           ),
           required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),

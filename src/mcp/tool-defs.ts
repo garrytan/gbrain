@@ -1,4 +1,4 @@
-import type { Operation } from '../core/operations.ts';
+import type { Operation, ParamDef } from '../core/operations.ts';
 
 export interface McpToolDef {
   name: string;
@@ -10,6 +10,17 @@ export interface McpToolDef {
   };
 }
 
+/** Convert a ParamDef to a valid MCP JSON Schema object (recursive for nested items). */
+function paramDefToMcpSchema(def: ParamDef): Record<string, unknown> {
+  const schema: Record<string, unknown> = { type: def.type };
+  if (def.description) schema.description = def.description;
+  if (def.enum) schema.enum = def.enum;
+  if (def.items) {
+    schema.items = paramDefToMcpSchema(def.items);
+  }
+  return schema;
+}
+
 export function buildToolDefs(ops: Operation[]): McpToolDef[] {
   return ops.map(op => ({
     name: op.name,
@@ -17,12 +28,15 @@ export function buildToolDefs(ops: Operation[]): McpToolDef[] {
     inputSchema: {
       type: 'object' as const,
       properties: Object.fromEntries(
-        Object.entries(op.params).map(([k, v]) => [k, {
-          type: v.type === 'array' ? 'array' : v.type,
-          ...(v.description ? { description: v.description } : {}),
-          ...(v.enum ? { enum: v.enum } : {}),
-          ...(v.items ? { items: { type: v.items.type } } : {}),
-        }]),
+        Object.entries(op.params).map(([k, v]) => {
+          const base: Record<string, unknown> = { type: v.type };
+          if (v.description) base.description = v.description;
+          if (v.enum) base.enum = v.enum;
+          if (v.items) {
+            base.items = paramDefToMcpSchema(v.items);
+          }
+          return [k, base];
+        }),
       ),
       required: Object.entries(op.params)
         .filter(([, v]) => v.required)
