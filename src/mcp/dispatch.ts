@@ -8,8 +8,9 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
-import type { Operation, OperationContext } from '../core/operations.ts';
+import type { AuthInfo, Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { authorizeScopes, normalizeTokenScopes } from '../core/scopes.ts';
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -19,6 +20,8 @@ export interface ToolResult {
 export interface DispatchOpts {
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
   remote?: boolean;
+  /** OAuth/API-key bearer auth info. When present, fine-grained operation scopes are enforced. */
+  auth?: AuthInfo;
   /** Override the default stderr logger (e.g. CLI uses console.* directly). */
   logger?: OperationContext['logger'];
 }
@@ -154,6 +157,7 @@ export function buildOperationContext(
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
+    auth: opts.auth,
   };
 }
 
@@ -181,6 +185,27 @@ export async function dispatchToolCall(
       content: [{ type: 'text', text: JSON.stringify({ error: 'invalid_params', message: validationError }, null, 2) }],
       isError: true,
     };
+  }
+
+  if (opts.auth) {
+    const grantedScopes = normalizeTokenScopes(opts.auth.scopes);
+    const requiredScopes = op.requiredScopes || [];
+    const authz = authorizeScopes(grantedScopes, requiredScopes);
+    if (authz.ok === false) {
+      const missingScopes = authz.missingScopes;
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'insufficient_scope',
+            message: `Operation ${name} requires scope(s): ${requiredScopes.join(', ')}`,
+            missing_scopes: missingScopes,
+            your_scopes: grantedScopes,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
   }
 
   const ctx = buildOperationContext(engine, safeParams, opts);

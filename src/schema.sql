@@ -55,6 +55,13 @@ INSERT INTO sources (id, name, config)
   VALUES ('default', 'default', '{"federated": true}'::jsonb)
   ON CONFLICT (id) DO NOTHING;
 
+-- Fresh installs get these columns from CREATE TABLE. Existing brains run
+-- schema.sql before migrations, so keep additive ALTERs here too; otherwise
+-- later baseline indexes/checks can reference columns that old tables lack.
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS archive_expires_at TIMESTAMPTZ;
+
 -- ============================================================
 -- pages: the core content table
 -- ============================================================
@@ -86,6 +93,10 @@ CREATE TABLE IF NOT EXISTS pages (
   deleted_at    TIMESTAMPTZ,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
+
+-- Existing brains can have `pages` from an older schema; schema.sql runs before
+-- migrations, so this additive guard must precede indexes using deleted_at.
+ALTER TABLE pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
@@ -345,16 +356,30 @@ ON CONFLICT (key) DO NOTHING;
 -- access_tokens: bearer tokens for remote MCP access
 -- ============================================================
 CREATE TABLE IF NOT EXISTS access_tokens (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name         TEXT NOT NULL,
-  token_hash   TEXT NOT NULL UNIQUE,
-  scopes       TEXT[],
-  created_at   TIMESTAMPTZ DEFAULT now(),
-  last_used_at TIMESTAMPTZ,
-  revoked_at   TIMESTAMPTZ
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                TEXT NOT NULL,
+  token_hash          TEXT NOT NULL UNIQUE,
+  scopes              TEXT[] NOT NULL DEFAULT '{}'::text[],
+  description         TEXT NOT NULL DEFAULT '',
+  created_by          TEXT NOT NULL DEFAULT 'operator',
+  created_at          TIMESTAMPTZ DEFAULT now(),
+  last_used_at        TIMESTAMPTZ,
+  last_used_operation TEXT,
+  last_used_client    TEXT,
+  revoked_at          TIMESTAMPTZ
 );
 
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS scopes TEXT[];
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'operator';
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS last_used_operation TEXT;
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS last_used_client TEXT;
+ALTER TABLE access_tokens ALTER COLUMN scopes SET DEFAULT '{}'::text[];
+
 CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_access_tokens_hash_active ON access_tokens (token_hash) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_access_tokens_name_active ON access_tokens (name) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_access_tokens_name_active_unique ON access_tokens (name) WHERE revoked_at IS NULL;
 
 -- ============================================================
 -- mcp_request_log: usage logging for remote MCP requests
@@ -370,6 +395,12 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
   error_message TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Existing brains may have the v4 request log shape; schema.sql runs before
+-- migrations, so add dashboard/logging columns before baseline indexes use them.
+ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS agent_name TEXT;
+ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS params JSONB;
+ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_message TEXT;
 
 -- ============================================================
 -- OAuth 2.1: clients, tokens, authorization codes
@@ -416,6 +447,9 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 );
 
 -- Composite indexes for admin dashboard request log queries
+CREATE INDEX IF NOT EXISTS idx_mcp_log_created_at ON mcp_request_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_log_token_created ON mcp_request_log (token_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_log_op_status ON mcp_request_log (operation, status) WHERE status <> 'success';
 CREATE INDEX IF NOT EXISTS idx_mcp_log_time_agent ON mcp_request_log(created_at, token_name);
 CREATE INDEX IF NOT EXISTS idx_mcp_log_agent_time ON mcp_request_log(agent_name, created_at DESC);
 
@@ -634,6 +668,10 @@ CREATE TABLE IF NOT EXISTS subagent_messages (
   CONSTRAINT uniq_subagent_messages_idx UNIQUE (job_id, message_idx),
   CONSTRAINT chk_subagent_messages_role CHECK (role IN ('user','assistant'))
 );
+-- Existing brains may have pre-v0.27 subagent tables; add provider-neutral
+-- columns before baseline indexes reference provider_id.
+ALTER TABLE subagent_messages ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE subagent_messages ADD COLUMN IF NOT EXISTS provider_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_subagent_messages_job ON subagent_messages (job_id, message_idx);
 CREATE INDEX IF NOT EXISTS idx_subagent_messages_provider ON subagent_messages (job_id, provider_id);
 
@@ -657,6 +695,8 @@ CREATE TABLE IF NOT EXISTS subagent_tool_executions (
   CONSTRAINT uniq_subagent_tools_use_id UNIQUE (job_id, tool_use_id),
   CONSTRAINT chk_subagent_tools_status CHECK (status IN ('pending','complete','failed'))
 );
+ALTER TABLE subagent_tool_executions ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE subagent_tool_executions ADD COLUMN IF NOT EXISTS provider_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_subagent_tools_job ON subagent_tool_executions (job_id, status);
 
 -- Rate-lease table — concurrency cap on outbound providers (e.g.
@@ -758,48 +798,62 @@ CREATE TRIGGER minion_job_notify AFTER INSERT OR UPDATE OF status ON minion_jobs
   FOR EACH ROW EXECUTE FUNCTION notify_minion_job_change();
 
 -- ============================================================
--- Row Level Security: block anon access, postgres role bypasses
+-- Row Level Security posture: service-role-only by default
 -- ============================================================
--- The postgres role (used by gbrain via pooler) has BYPASSRLS.
--- Enabling RLS with no policies means the anon key can't read anything.
--- Only enable if the current role actually has BYPASSRLS privilege,
--- otherwise we'd lock ourselves out.
+-- GBrain authorizes remote access in the MCP/app layer with bearer tokens and
+-- connects to Postgres with service credentials. Enabling RLS with zero policies
+-- is a trapdoor: it looks like protection while BYPASSRLS service connections
+-- ignore it and non-bypass maintenance roles get locked out. New installs keep
+-- RLS disabled on GBrain-owned tables until explicit, policy-backed anon or
+-- non-service access exists.
 DO $$
 DECLARE
-  has_bypass BOOLEAN;
+  table_name TEXT;
+  table_names TEXT[] := ARRAY[
+    'access_tokens',
+    'budget_ledger',
+    'budget_reservations',
+    'code_edges_chunk',
+    'code_edges_symbol',
+    'config',
+    'content_chunks',
+    'dream_verdicts',
+    'eval_candidates',
+    'eval_capture_failures',
+    'file_migration_ledger',
+    'files',
+    'gbrain_cycle_locks',
+    'ingest_log',
+    'links',
+    'mcp_request_log',
+    'minion_attachments',
+    'minion_inbox',
+    'minion_jobs',
+    'oauth_clients',
+    'oauth_codes',
+    'oauth_tokens',
+    'page_versions',
+    'pages',
+    'raw_data',
+    'sources',
+    'subagent_messages',
+    'subagent_rate_leases',
+    'subagent_tool_executions',
+    'tags',
+    'timeline_entries'
+  ];
 BEGIN
-  SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
-  IF has_bypass THEN
-    ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE content_chunks ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE links ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE raw_data ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE timeline_entries ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE page_versions ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE ingest_log ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE config ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE files ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE minion_jobs ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE sources ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE file_migration_ledger ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE mcp_request_log ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE minion_inbox ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE minion_attachments ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE subagent_messages ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE subagent_tool_executions ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE subagent_rate_leases ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE gbrain_cycle_locks ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE dream_verdicts ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY;
-    -- v0.26 OAuth 2.1 tables
-    ALTER TABLE oauth_clients ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE oauth_codes ENABLE ROW LEVEL SECURITY;
-    RAISE NOTICE 'RLS enabled on all tables (role % has BYPASSRLS)', current_user;
-  ELSE
-    RAISE WARNING 'Skipping RLS: role % does not have BYPASSRLS privilege. Run as postgres role to enable.', current_user;
-  END IF;
+  DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table;
+  DROP FUNCTION IF EXISTS auto_enable_rls();
+
+  FOREACH table_name IN ARRAY table_names LOOP
+    IF to_regclass(format('public.%I', table_name)) IS NOT NULL THEN
+      EXECUTE format('ALTER TABLE public.%I DISABLE ROW LEVEL SECURITY', table_name);
+      EXECUTE format(
+        'COMMENT ON TABLE public.%I IS %L',
+        table_name,
+        'GBRAIN:RLS_POSTURE service-role-only; RLS disabled; MCP/app bearer-token authorization is the security boundary.'
+      );
+    END IF;
+  END LOOP;
 END $$;

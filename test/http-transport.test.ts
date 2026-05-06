@@ -44,7 +44,7 @@ function hash(token: string): string {
 }
 
 interface FakeEngineConfig {
-  validTokens?: Map<string, { id: string; name: string }>;
+  validTokens?: Map<string, { id: string; name: string; scopes?: string[] }>;
   /** Tokens that are present but revoked (revoked_at IS NOT NULL — query returns empty). */
   revokedTokens?: Set<string>;
   /** If true, every SELECT throws (simulating DB outage). */
@@ -64,11 +64,11 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
       return [{ '?column?': 1 }];
     }
 
-    if (query.startsWith('SELECT id, name FROM access_tokens')) {
+    if (query.startsWith('SELECT id, name, scopes FROM access_tokens')) {
       const tokenHash = values[0] as string;
       if (revokedTokens.has(tokenHash)) return [];
       const row = validTokens.get(tokenHash);
-      return row ? [row] : [];
+      return row ? [{ ...row, scopes: row.scopes ?? null }] : [];
     }
 
     if (query.startsWith('UPDATE access_tokens')) {
@@ -295,6 +295,34 @@ describe('http-transport: tools/call dispatch', () => {
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0].text).toContain('Unknown tool');
   });
+
+  test('9c. read-only token cannot execute write tools and audit logs forbidden operation', async () => {
+    const READONLY = 'readonly-token';
+    const readonlySrv = await startTest({
+      validTokens: new Map([[hash(READONLY), {
+        id: 'readonly-id',
+        name: 'readonly-agent',
+        scopes: ['pages:read', 'chunks:read', 'log:write'],
+      }]]),
+    });
+    try {
+      const r = await fetch(`${readonlySrv.url}/mcp`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${READONLY}`, 'Content-Type': 'application/json' },
+        body: rpc('tools/call', { name: 'put_page', arguments: { slug: 'wiki/test', content: '# nope', dry_run: true } }),
+      });
+
+      expect(r.status).toBe(200);
+      const body = await r.json();
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0].text).toContain('insufficient_scope');
+      await new Promise(resolve => setTimeout(resolve, 10));
+      const row = readonlySrv.engine.audit[readonlySrv.engine.audit.length - 1];
+      expect(row.token_name).toBe('readonly-agent');
+      expect(row.operation).toBe('put_page');
+      expect(row.status).toBe('forbidden');
+    } finally { readonlySrv.stop(); }
+  });
 });
 
 // --------------------------------------------------------------------------
@@ -514,6 +542,25 @@ describe('http-transport: mcp_request_log audit', () => {
       const row = srv.engine.audit[srv.engine.audit.length - 1];
       expect(row.token_name).toBeNull();
       expect(row.status).toBe('auth_failed');
+    } finally { srv.stop(); }
+  });
+
+  test('23. tools/call audit uses the real operation name, not a generic method blob', async () => {
+    const TOK = 'audit-op-tok';
+    const srv = await startTest({ validTokens: new Map([[hash(TOK), { id: 'a-2', name: 'audit-op' }]]) });
+    try {
+      await fetch(`${srv.url}/mcp`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+        body: rpc('tools/call', { name: 'get_page', arguments: { slug: 42 } }),
+      });
+      await new Promise(r => setTimeout(r, 10));
+      const row = srv.engine.audit[srv.engine.audit.length - 1];
+      expect(row.token_name).toBe('audit-op');
+      expect(row.operation).toBe('get_page');
+      expect(row.operation).not.toBe('mcp_request');
+      expect(row.operation).not.toBe('tools/call:get_page');
+      expect(row.status).toBe('error');
     } finally { srv.stop(); }
   });
 });

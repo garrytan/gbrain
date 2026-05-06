@@ -23,6 +23,8 @@ import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprot
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
+import { shouldUpdateAccessTokenLastUsed } from './token-last-used.ts';
+import { normalizeTokenScopes } from './scopes.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -409,23 +411,37 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     // Fallback: legacy access_tokens table (backward compat)
     const legacyRows = await this.sql`
-      SELECT name FROM access_tokens
+      SELECT name, scopes FROM access_tokens
       WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
     `;
 
     if (legacyRows.length > 0) {
-      // Legacy tokens get full admin access (grandfather in).
+      // Legacy access_tokens now carry fine-grained scopes when created by
+      // Phase 4B+ auth CLI. Older rows with NULL/empty scopes are grandfathered
+      // to read+write+admin so existing Hermes/Claude/Codex clients still auth.
       // For legacy tokens, name = clientId = clientName (single identifier).
-      // Update last_used_at
-      await this.sql`
-        UPDATE access_tokens SET last_used_at = now() WHERE token_hash = ${tokenHash}
-      `;
-      const name = legacyRows[0].name as string;
+      // Cool last_used_at in-process so a hot legacy token does not write the
+      // same access_tokens row on every request. The SQL predicate keeps the
+      // path race-tolerant across multiple Node/Bun processes.
+      if (shouldUpdateAccessTokenLastUsed(`legacy:${tokenHash}`)) {
+        await this.sql`
+          UPDATE access_tokens
+          SET last_used_at = now()
+          WHERE token_hash = ${tokenHash}
+            AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')
+        `;
+      }
+      const row = legacyRows[0];
+      const name = row.name as string;
+      const storedScopes = Array.isArray(row.scopes) ? row.scopes as string[] : [];
+      const scopes = storedScopes.length > 0
+        ? normalizeTokenScopes(storedScopes)
+        : normalizeTokenScopes(['read', 'write', 'admin']);
       return {
         token,
         clientId: name,
         clientName: name,
-        scopes: ['read', 'write', 'admin'],
+        scopes,
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
       } as AuthInfo;
     }

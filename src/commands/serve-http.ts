@@ -29,6 +29,7 @@ import type { SqlQuery } from '../core/oauth-provider.ts';
 import { summarizeMcpParams } from '../mcp/dispatch.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
+import { authorizeScopes, normalizeTokenScopes, validateScopes, VALID_SCOPES } from '../core/scopes.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 
@@ -192,7 +193,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const authRouterOptions: any = {
     provider: oauthProvider,
     issuerUrl,
-    scopesSupported: ['read', 'write', 'admin'],
+    scopesSupported: ['read', 'write', 'admin', 'pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write'],
     resourceName: 'GBrain MCP Server',
   };
 
@@ -520,14 +521,27 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   app.post('/admin/api/api-keys', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name } = req.body;
+      const { name, scopes } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      const requestedScopes = Array.isArray(scopes)
+        ? scopes
+        : typeof scopes === 'string'
+          ? scopes.split(/[\s,]+/).filter(Boolean)
+          : ['read', 'write', 'admin'];
+      const invalidScopes = requestedScopes.filter((scope: string) => (
+        !VALID_SCOPES.includes(scope as any) && !['read', 'write', 'admin'].includes(scope)
+      ));
+      const validatedScopes = normalizeTokenScopes(requestedScopes);
+      if (invalidScopes.length > 0 || validatedScopes.length === 0) {
+        res.status(400).json({ error: 'invalid_scope', invalid_scopes: invalidScopes });
+        return;
+      }
       const { generateToken, hashToken } = await import('../core/utils.ts');
       const token = generateToken('gbrain_');
       const hash = hashToken(token);
       const id = (await import('crypto')).randomUUID();
-      await sql`INSERT INTO access_tokens (id, name, token_hash) VALUES (${id}, ${name}, ${hash})`;
-      res.json({ name, token, id });
+      await sql`INSERT INTO access_tokens (id, name, token_hash, scopes) VALUES (${id}, ${name}, ${hash}, ${validatedScopes})`;
+      res.json({ name, token, id, scopes: validatedScopes });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to create API key' });
     }
@@ -669,16 +683,26 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }] };
       }
 
-      // Scope enforcement
-      const requiredScope = op.scope || 'read';
-      if (!authInfo.scopes.includes(requiredScope)) {
+      // Fine-grained scope enforcement. Legacy OAuth scopes (`read`, `write`, `admin`)
+      // are normalized for compatibility, but `admin` alone does not imply content scopes.
+      const grantedScopes = normalizeTokenScopes(authInfo.scopes);
+      const requiredScopes = op.requiredScopes || [];
+      const authz = authorizeScopes(grantedScopes, requiredScopes);
+      if (!authz.ok) {
+        const missingScopes = (authz as { ok: false; missingScopes: string[] }).missingScopes;
+        const latency = Date.now() - startTime;
+        try {
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'forbidden'}, ${`Missing scope(s): ${missingScopes.join(', ')}`})`;
+        } catch { /* best effort */ }
         return {
           content: [{
             type: 'text',
             text: JSON.stringify({
               error: 'insufficient_scope',
-              message: `Operation ${name} requires '${requiredScope}' scope`,
-              your_scopes: authInfo.scopes,
+              message: `Operation ${name} requires scope(s): ${requiredScopes.join(', ')}`,
+              missing_scopes: missingScopes,
+              your_scopes: grantedScopes,
             }),
           }],
           isError: true,

@@ -372,93 +372,81 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // best-effort; never fail doctor on this check
   }
 
-  // 5. RLS — check ALL public tables, not just gbrain's own.
-  // Any table without RLS in the public schema is a security risk:
-  // Supabase exposes the public schema via PostgREST, so tables without
-  // RLS are readable/writable by anyone with the anon key.
-  //
-  // Escape hatch ("write it in blood"): if a user or plugin deliberately
-  // wants a public-schema table readable by the anon key (analytics,
-  // materialized views the anon key needs), they can exempt it with a
-  // Postgres COMMENT whose value starts with:
-  //
-  //     GBRAIN:RLS_EXEMPT reason=<non-empty reason>
-  //
-  // The comment lives in pg_description, survives pg_dump, is visible in
-  // schema diffs, and requires raw SQL in psql to set — there is no
-  // `gbrain rls-exempt add` CLI on purpose. Doctor re-enumerates the
-  // exemption list on every successful run so exempt tables never go
-  // invisible. See docs/guides/rls-and-you.md.
+  // 5. RLS posture — service-role-only unless policy-backed.
+  // GBrain does not use database RLS as its authorization layer today. The
+  // secure posture is explicit, not magical:
+  //   - GBrain-owned service-role-only tables: RLS disabled, documented by
+  //     GBRAIN:RLS_POSTURE comments from schema.sql / migration v39.
+  //   - Future anon/non-service tables: RLS enabled WITH real policies.
+  //   - Bad trapdoor: RLS enabled with zero policies. That looks safe, but the
+  //     service role bypasses it while non-bypass maintenance roles get denied.
   progress.heartbeat('rls');
   if (engine.kind === 'pglite') {
-    // PGLite is embedded and single-user — no PostgREST exposure,
-    // RLS is not a meaningful security boundary here.
     checks.push({
       name: 'rls',
       status: 'ok',
-      message: 'Skipped (PGLite — no PostgREST exposure, RLS not applicable)',
+      message: 'Skipped (PGLite — embedded single-user engine, RLS not applicable)',
     });
   } else {
     try {
       const sql = db.getConnection();
-      // Left-join pg_description so we get the (optional) COMMENT ON TABLE
-      // value alongside rowsecurity in a single round-trip. Filter to
-      // base tables in the public schema.
       const tables = await sql`
         SELECT
-          t.tablename,
-          t.rowsecurity,
-          COALESCE(
-            obj_description(format('public.%I', t.tablename)::regclass, 'pg_class'),
-            ''
-          ) AS comment
-        FROM pg_tables t
-        WHERE t.schemaname = 'public'
+          c.relname AS tablename,
+          c.relrowsecurity AS rowsecurity,
+          c.relforcerowsecurity AS force_rowsecurity,
+          COALESCE(p.policy_count, 0)::int AS policy_count,
+          COALESCE(obj_description(c.oid, 'pg_class'), '') AS comment
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN (
+          SELECT polrelid, count(*) AS policy_count
+          FROM pg_policy
+          GROUP BY polrelid
+        ) p ON p.polrelid = c.oid
+        WHERE n.nspname = 'public'
+          AND c.relkind = 'r'
+        ORDER BY c.relname
       `;
-      const EXEMPT_RE = /^GBRAIN:RLS_EXEMPT\s+reason=\S.{3,}/;
-      const exempt: string[] = [];
-      const gaps: string[] = [];
-      for (const t of tables as Array<any>) {
-        if (t.rowsecurity) continue;
-        if (EXEMPT_RE.test(t.comment || '')) {
-          exempt.push(t.tablename);
-        } else {
-          gaps.push(t.tablename);
-        }
-      }
-      if (gaps.length === 0) {
-        const suffix = exempt.length > 0
-          ? ` (${exempt.length} explicitly exempt: ${exempt.join(', ')})`
+
+      const trapdoors = (tables as Array<any>).filter(t => t.rowsecurity && Number(t.policy_count) === 0);
+      const policyBacked = (tables as Array<any>).filter(t => t.rowsecurity && Number(t.policy_count) > 0);
+      const disabled = (tables as Array<any>).filter(t => !t.rowsecurity);
+      const documentedDisabled = disabled.filter(t => String(t.comment || '').startsWith('GBRAIN:RLS_POSTURE'));
+
+      if (trapdoors.length === 0) {
+        const policySuffix = policyBacked.length > 0
+          ? `; ${policyBacked.length} policy-backed table(s): ${policyBacked.map(t => t.tablename).join(', ')}`
+          : '';
+        const undocumented = disabled.length - documentedDisabled.length;
+        const docSuffix = undocumented > 0
+          ? `; ${undocumented} disabled table(s) lack GBRAIN:RLS_POSTURE comments`
           : '';
         checks.push({
           name: 'rls',
-          status: 'ok',
-          message: `RLS enabled on ${tables.length - exempt.length}/${tables.length} public tables${suffix}`,
+          status: undocumented > 0 ? 'warn' : 'ok',
+          message:
+            `No zero-policy RLS trapdoors. ${disabled.length}/${tables.length} public table(s) RLS-disabled for service-role-only access` +
+            `${policySuffix}${docSuffix}`,
         });
       } else {
-        const names = gaps.join(', ');
-        // Double-escape " inside identifiers so a pathological table name
-        // like `weird"table` renders as `"weird""table"` in the remediation
-        // SQL (matches how Postgres parses quoted identifiers). Doubling
-        // any existing " is the minimum needed to keep the output valid
-        // copy-paste SQL. Extremely rare in practice but cheap to get right.
-        const fixes = gaps
-          .map(n => `ALTER TABLE "public"."${n.replace(/"/g, '""')}" ENABLE ROW LEVEL SECURITY;`)
+        const names = trapdoors.map(t => t.tablename).join(', ');
+        const fixes = trapdoors
+          .map(t => {
+            const name = String(t.tablename).replace(/"/g, '""');
+            return `ALTER TABLE "public"."${name}" DISABLE ROW LEVEL SECURITY; -- service-role-only, or CREATE POLICY before keeping RLS enabled`;
+          })
           .join(' ');
-        const exemptInfo = exempt.length > 0
-          ? ` (${exempt.length} other table(s) explicitly exempt.)`
-          : '';
         checks.push({
           name: 'rls',
           status: 'fail',
           message:
-            `${gaps.length} table(s) WITHOUT Row Level Security: ${names}.${exemptInfo} ` +
-            `Fix: ${fixes} ` +
-            `If a table should stay readable by the anon key on purpose, see docs/guides/rls-and-you.md for the GBRAIN:RLS_EXEMPT comment escape hatch.`,
+            `${trapdoors.length} table(s) have RLS enabled with ZERO policies: ${names}. ` +
+            `Fix: ${fixes} See docs/guides/rls-and-you.md.`,
         });
       }
     } catch {
-      checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS status' });
+      checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS posture' });
     }
   }
 
@@ -499,16 +487,10 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // the canonical half-migration signal and fires when the stopgap ran
   // but `apply-migrations` didn't follow up.
 
-  // 7. RLS event trigger (post-install drift detector for v35 auto-RLS).
-  // Catches the case where an operator manually drops the trigger to debug
-  // something and forgets to recreate it. Does NOT catch install-time silent
-  // failure — runMigrations rethrows on SQL failure and only bumps
-  // config.version after success, so a failed v35 install means version
-  // stays at 34 and check #6 (schema_version) fires loudly.
-  //
-  // Healthy evtenabled values: 'O' (origin) and 'A' (always). 'R' is
-  // replica-only and would NOT fire in normal origin sessions; 'D' is
-  // disabled. Both of those are warn states.
+  // 7. Legacy auto-RLS event trigger.
+  // Phase 4D expects this trigger to be gone. It enabled RLS with no policies
+  // on every public table, which created exactly the trapdoor the RLS check now
+  // rejects. Migration v39 drops it; doctor fails if it comes back.
   progress.heartbeat('rls_event_trigger');
   if (engine.kind === 'pglite') {
     checks.push({
@@ -526,32 +508,23 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       if (rows.length === 0) {
         checks.push({
           name: 'rls_event_trigger',
-          status: 'warn',
-          message:
-            'Auto-RLS event trigger missing. New tables created outside gbrain may not get RLS. ' +
-            'Fix: gbrain apply-migrations --force-retry 35',
-        });
-      } else if (rows[0].evtenabled !== 'O' && rows[0].evtenabled !== 'A') {
-        checks.push({
-          name: 'rls_event_trigger',
-          status: 'warn',
-          message:
-            `Auto-RLS event trigger present but evtenabled=${rows[0].evtenabled} ` +
-            `(not origin/always). Trigger will not fire in normal sessions. ` +
-            `Fix: ALTER EVENT TRIGGER auto_rls_on_create_table ENABLE;`,
+          status: 'ok',
+          message: 'Legacy auto-RLS event trigger absent (expected service-role-only posture)',
         });
       } else {
         checks.push({
           name: 'rls_event_trigger',
-          status: 'ok',
-          message: 'Auto-RLS event trigger installed',
+          status: 'fail',
+          message:
+            `Legacy auto-RLS event trigger still present (evtenabled=${rows[0].evtenabled}). ` +
+            `Fix: gbrain apply-migrations --force-retry 39 or run DROP EVENT TRIGGER auto_rls_on_create_table;`,
         });
       }
     } catch {
       checks.push({
         name: 'rls_event_trigger',
         status: 'warn',
-        message: 'Could not check RLS event trigger',
+        message: 'Could not check legacy RLS event trigger',
       });
     }
   }

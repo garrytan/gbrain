@@ -17,6 +17,7 @@ import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
+import { requiredScopesForOperation, type Scope } from './scopes.ts';
 
 // --- Types ---
 
@@ -283,6 +284,7 @@ export interface Operation {
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   mutating?: boolean;
   scope?: 'read' | 'write' | 'admin';
+  requiredScopes?: Scope[];
   localOnly?: boolean;
   cliHints?: {
     name?: string;
@@ -1625,6 +1627,10 @@ export const operations: Operation[] = [
   // Orphans
   find_orphans,
 ];
+
+for (const op of operations) {
+  op.requiredScopes = requiredScopesForOperation(op.name);
+}
 
 export const operationsByName = Object.fromEntries(
   operations.map(op => [op.name, op]),

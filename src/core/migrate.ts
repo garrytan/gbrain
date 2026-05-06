@@ -34,6 +34,68 @@ interface Migration {
   handler?: (engine: BrainEngine) => Promise<void>;
 }
 
+export const RLS_POSTURE_COMMENT =
+  'GBRAIN:RLS_POSTURE service-role-only; RLS disabled; MCP/app bearer-token authorization is the security boundary.';
+
+// Ordered to match common write flow (content tables before request log) so the
+// v39 cleanup does not lock mcp_request_log first while live app transactions
+// hold page/chunk locks and then try to log. Each ALTER/COMMENT pair is issued
+// as its own statement by the handler below, releasing locks immediately.
+export const RLS_SERVICE_ROLE_ONLY_TABLES = [
+  'pages',
+  'content_chunks',
+  'links',
+  'tags',
+  'raw_data',
+  'timeline_entries',
+  'page_versions',
+  'ingest_log',
+  'files',
+  'file_migration_ledger',
+  'sources',
+  'code_edges_chunk',
+  'code_edges_symbol',
+  'minion_jobs',
+  'minion_inbox',
+  'minion_attachments',
+  'subagent_messages',
+  'subagent_tool_executions',
+  'subagent_rate_leases',
+  'gbrain_cycle_locks',
+  'dream_verdicts',
+  'eval_candidates',
+  'eval_capture_failures',
+  'budget_ledger',
+  'budget_reservations',
+  'oauth_clients',
+  'oauth_tokens',
+  'oauth_codes',
+  'access_tokens',
+  'config',
+  'mcp_request_log',
+  'mcp_request_log_legacy',
+] as const;
+
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+async function applyServiceRoleOnlyRlsPosture(engine: BrainEngine): Promise<void> {
+  if (engine.kind !== 'postgres') return;
+
+  for (const tableName of RLS_SERVICE_ROLE_ONLY_TABLES) {
+    const exists = await engine.executeRaw<{ exists: boolean }>(
+      `SELECT to_regclass($1) IS NOT NULL AS exists`,
+      [`public.${tableName}`],
+    );
+    if (!exists[0]?.exists) continue;
+
+    const table = `public.${quoteIdent(tableName)}`;
+    await engine.executeRaw(`ALTER TABLE ${table} DISABLE ROW LEVEL SECURITY`);
+    await engine.executeRaw(`COMMENT ON TABLE ${table} IS $1`, [RLS_POSTURE_COMMENT]);
+  }
+}
+
 // Migrations are embedded here, not loaded from files.
 // Add new migrations at the end. Never modify existing ones.
 // Exported for tests that structurally assert migration contents (e.g., "v9 must
@@ -1396,106 +1458,17 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 35,
-    name: 'auto_rls_event_trigger',
-    sql: '', // engine-specific via sqlFor
-    // v0.26.7 — Postgres event trigger that auto-enables RLS on every new public.*
-    // table, plus one-time backfill on every existing public.* table without it.
-    //
-    // Problem: tables created outside gbrain migrations (Baku's face_detections,
-    // manual SQL, other apps sharing the Supabase project) shipped without RLS.
-    // doctor caught them after the fact; the gap window between create and next
-    // doctor run was the silent vector.
-    //
-    // Fix has two halves:
-    //   1. Event trigger — fires on ddl_command_end for CREATE TABLE,
-    //      CREATE TABLE AS, and SELECT INTO; runs ALTER TABLE ... ENABLE ROW
-    //      LEVEL SECURITY for any new public.* table. Supabase-recommended
-    //      approach (no dashboard toggle exists).
-    //   2. One-time backfill — every existing public.* table whose RLS is off
-    //      and whose comment does NOT match the GBRAIN:RLS_EXEMPT contract
-    //      (same regex doctor.ts uses) gets RLS enabled.
-    //
-    // Posture choices (vs PR-as-shipped):
-    //   - ENABLE only, no FORCE — matches v24/v29/schema.sql. FORCE would lock
-    //     out non-BYPASSRLS apps from their own newly-created tables (the
-    //     trigger function inherits the caller's role, and the new table is
-    //     owned by that role). gbrain has BYPASSRLS so gbrain itself is unaffected.
-    //   - public-only schema scope — Supabase manages auth/storage/realtime/etc.
-    //     and runs its own RLS posture there; we must not disturb those schemas.
-    //   - No EXCEPTION wrap inside the trigger — ddl_command_end fires inside
-    //     the DDL transaction, so a failed ALTER aborts the offending CREATE
-    //     TABLE. That's a loud signal, not a silent gap. Wrapping would CREATE
-    //     the silent path this migration exists to close.
-    //   - No privilege pre-check — runMigrations rethrows on SQL failure and
-    //     gates config.version, so a non-superuser run already fails loud with
-    //     an actionable Postgres error.
-    //
-    // BREAKING CHANGE: the backfill is a one-time override of intentionally
-    // RLS-off public tables that don't carry the GBRAIN:RLS_EXEMPT comment.
-    // Operators with such tables MUST add the exempt comment BEFORE upgrading.
-    //
-    // PGLite: no-op — no RLS engine, no event triggers, single-tenant by design.
+    name: 'auto_rls_event_trigger_deprecated_noop',
+    sql: '',
+    // v35 originally installed auto_rls_on_create_table and backfilled RLS on
+    // every public table. Phase 4D reverses that posture: GBrain is
+    // service-role-only at the database layer, with authorization in MCP/app
+    // bearer-token scopes. Keep v35 as an explicit no-op so fresh installs do
+    // not enable zero-policy RLS before v39 runs, while existing installs that
+    // already applied the old v35 are cleaned up by v39.
     sqlFor: {
-      postgres: `
-        -- Trigger function: fires post-DDL inside the CREATE TABLE transaction.
-        -- A failure here aborts the CREATE TABLE so no public.* table is ever
-        -- created without RLS. object_identity is pre-quoted by Postgres
-        -- (e.g. "public"."My Table"), so %s is correct — %I would double-quote.
-        CREATE OR REPLACE FUNCTION auto_enable_rls()
-        RETURNS event_trigger AS $$
-        DECLARE
-          obj record;
-        BEGIN
-          FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands()
-            WHERE object_type = 'table'
-            AND schema_name = 'public'
-          LOOP
-            EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity);
-          END LOOP;
-        END;
-        $$ LANGUAGE plpgsql;
-
-        -- WHEN TAG covers all three table-creation syntaxes Postgres reports.
-        -- CREATE TABLE / CREATE TABLE AS / SELECT INTO produce distinct command
-        -- tags; covering only 'CREATE TABLE' would leave a syntax-shaped hole.
-        DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table;
-        CREATE EVENT TRIGGER auto_rls_on_create_table
-          ON ddl_command_end
-          WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
-          EXECUTE FUNCTION auto_enable_rls();
-
-        -- One-time backfill of every existing public.* base table without RLS.
-        -- Honors the same GBRAIN:RLS_EXEMPT regex doctor.ts uses
-        -- (^GBRAIN:RLS_EXEMPT\\s+reason=\\S.{3,}) so the two surfaces stay aligned.
-        -- %I.%I quotes the schema and table names safely, including mixed-case.
-        DO $$
-        DECLARE
-          has_bypass BOOLEAN;
-          r record;
-        BEGIN
-          SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
-          IF NOT has_bypass THEN
-            -- Same posture as v24: raise to abort the migration so the runner
-            -- leaves config.version unbumped and retries on the next call.
-            RAISE EXCEPTION 'v35 auto_rls_event_trigger backfill: role % does not have BYPASSRLS — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role).', current_user;
-          END IF;
-
-          FOR r IN
-            SELECT n.nspname AS schema_name, c.relname AS table_name
-            FROM pg_class c
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            LEFT JOIN pg_description d ON d.objoid = c.oid AND d.objsubid = 0
-            WHERE n.nspname = 'public'
-              AND c.relkind = 'r'
-              AND c.relrowsecurity = false
-              AND (d.description IS NULL OR d.description !~ '^GBRAIN:RLS_EXEMPT\\s+reason=\\S.{3,}')
-          LOOP
-            EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', r.schema_name, r.table_name);
-            RAISE NOTICE 'v35: backfilled RLS on %.%', r.schema_name, r.table_name;
-          END LOOP;
-        END $$;
-      `,
-      pglite: '', // PGLite has no RLS and no event trigger support
+      postgres: '',
+      pglite: '',
     },
   },
   {
@@ -1534,6 +1507,170 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_subagent_messages_provider
         ON subagent_messages (job_id, provider_id);
     `,
+  },
+  {
+    version: 37,
+    name: 'scoped_access_tokens_v0_27_1',
+    // Phase 4B: bearer tokens become explicitly scoped. Existing tokens with
+    // NULL/empty scopes are treated as legacy operator tokens and backfilled to
+    // the old effective access (`read`, `write`, `admin` expanded to all fine
+    // scopes) so Hermes/Claude/Codex clients keep authenticating after upgrade.
+    sql: '',
+    sqlFor: {
+      postgres: `
+        ALTER TABLE access_tokens
+          ADD COLUMN IF NOT EXISTS scopes TEXT[],
+          ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '',
+          ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT 'operator',
+          ADD COLUMN IF NOT EXISTS last_used_operation TEXT,
+          ADD COLUMN IF NOT EXISTS last_used_client TEXT;
+
+        UPDATE access_tokens
+          SET scopes = ARRAY['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write', 'admin']::text[]
+          WHERE scopes IS NULL OR cardinality(scopes) = 0;
+
+        ALTER TABLE access_tokens
+          ALTER COLUMN scopes SET DEFAULT '{}'::text[],
+          ALTER COLUMN scopes SET NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_access_tokens_hash_active
+          ON access_tokens (token_hash) WHERE revoked_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_access_tokens_name_active
+          ON access_tokens (name) WHERE revoked_at IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_access_tokens_name_active_unique
+          ON access_tokens (name) WHERE revoked_at IS NULL;
+      `,
+      pglite: '',
+    },
+  },
+  {
+    version: 38,
+    name: 'mcp_request_log_indexes_partman_v0_27_1',
+    // Phase 4C: request-log lookup indexes, pg_partman monthly config, and
+    // pre-100k partition migration for Postgres/Supabase. PGLite is local-only
+    // for MCP auth/log partitioning, so this is a no-op there.
+    sql: '',
+    sqlFor: {
+      postgres: `
+        CREATE INDEX IF NOT EXISTS idx_mcp_log_created_at
+          ON mcp_request_log (created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mcp_log_token_created
+          ON mcp_request_log (token_name, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mcp_log_op_status
+          ON mcp_request_log (operation, status) WHERE status <> 'success';
+
+        DO $$
+        DECLARE
+          row_count BIGINT;
+          partman_schema TEXT;
+          is_partitioned BOOLEAN;
+        BEGIN
+          SELECT EXISTS (
+            SELECT 1
+            FROM pg_partitioned_table pt
+            JOIN pg_class c ON c.oid = pt.partrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'mcp_request_log'
+          ) INTO is_partitioned;
+
+          IF is_partitioned THEN
+            RAISE NOTICE 'v38: mcp_request_log is already partitioned; keeping existing pg_partman setup';
+            RETURN;
+          END IF;
+
+          BEGIN
+            CREATE EXTENSION IF NOT EXISTS pg_partman;
+          EXCEPTION
+            WHEN insufficient_privilege OR undefined_file OR feature_not_supported THEN
+              RAISE WARNING 'v38: pg_partman extension unavailable for role %, leaving mcp_request_log unpartitioned with indexes', current_user;
+              RETURN;
+          END;
+
+          SELECT n.nspname
+          INTO partman_schema
+          FROM pg_extension e
+          JOIN pg_namespace n ON n.oid = e.extnamespace
+          WHERE e.extname = 'pg_partman';
+
+          IF partman_schema IS NULL THEN
+            RAISE WARNING 'v38: pg_partman extension not installed after CREATE EXTENSION attempt; leaving mcp_request_log unpartitioned with indexes';
+            RETURN;
+          END IF;
+
+          EXECUTE 'SELECT count(*) FROM public.mcp_request_log' INTO row_count;
+          IF row_count >= 100000 THEN
+            RAISE EXCEPTION 'v38: mcp_request_log has % rows; refusing automatic partition migration at/after 100k rows. Run the documented manual partition plan during a maintenance window.', row_count;
+          END IF;
+
+          ALTER TABLE public.mcp_request_log RENAME TO mcp_request_log_legacy;
+
+          CREATE TABLE public.mcp_request_log (
+            id            BIGINT GENERATED BY DEFAULT AS IDENTITY,
+            token_name    TEXT,
+            agent_name    TEXT,
+            operation     TEXT NOT NULL,
+            latency_ms    INTEGER,
+            status        TEXT NOT NULL DEFAULT 'success',
+            params        JSONB,
+            error_message TEXT,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+          ) PARTITION BY RANGE (created_at);
+
+          -- Let pg_partman create/manage the default partition. Pre-creating it
+          -- makes create_parent() fail with "already a partition" on current partman.
+          BEGIN
+            EXECUTE format(
+              'SELECT %I.create_parent(p_parent_table := $1, p_control := $2, p_interval := $3, p_premake := $4)',
+              partman_schema
+            ) USING 'public.mcp_request_log', 'created_at', '1 month', 3;
+          EXCEPTION WHEN undefined_function THEN
+            EXECUTE format(
+              'SELECT %I.create_parent(p_parent_table := $1, p_control := $2, p_type := $3, p_interval := $4, p_premake := $5)',
+              partman_schema
+            ) USING 'public.mcp_request_log', 'created_at', 'native', 'monthly', 3;
+          END;
+
+          INSERT INTO public.mcp_request_log (id, token_name, agent_name, operation, latency_ms, status, params, error_message, created_at)
+          SELECT id, token_name, agent_name, operation, latency_ms, status, params, error_message, created_at
+          FROM public.mcp_request_log_legacy;
+
+          EXECUTE format(
+            'UPDATE %I.part_config SET premake = 3, retention = $1, retention_keep_table = true WHERE parent_table = $2',
+            partman_schema
+          ) USING '12 months', 'public.mcp_request_log';
+
+          RAISE NOTICE 'v38: mcp_request_log partitioned monthly with pg_partman; legacy copy retained as mcp_request_log_legacy';
+        END $$;
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_log_created_at
+          ON mcp_request_log (created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mcp_log_token_created
+          ON mcp_request_log (token_name, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mcp_log_op_status
+          ON mcp_request_log (operation, status) WHERE status <> 'success';
+      `,
+      pglite: '',
+    },
+  },
+  {
+    version: 39,
+    name: 'rls_service_role_only_posture_v0_27_2',
+    sql: '',
+    // Phase 4D: remove the accidental zero-policy RLS trapdoor. GBrain is not
+    // using database RLS as its authorization layer today; remote authorization
+    // lives in MCP/app bearer-token scopes and the DB connection is service-role.
+    // Existing installs may have applied the old v35 auto-RLS trigger, so this
+    // migration drops that trigger/function and disables RLS on every known
+    // GBrain-owned table. Tables that need anon/non-service DB access later must
+    // add explicit policies before re-enabling RLS.
+    sqlFor: {
+      postgres: `
+        DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table;
+        DROP FUNCTION IF EXISTS auto_enable_rls();
+      `,
+      pglite: '',
+    },
+    handler: applyServiceRoleOnlyRlsPosture,
   },
 ];
 
