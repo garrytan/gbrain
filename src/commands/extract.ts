@@ -354,7 +354,19 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
 export async function runExtract(engine: BrainEngine, args: string[]) {
   const subcommand = args[0];
   const dirIdx = args.indexOf('--dir');
-  const brainDir = (dirIdx >= 0 && dirIdx + 1 < args.length) ? args[dirIdx + 1] : '.';
+  const explicitDir = dirIdx >= 0 && dirIdx + 1 < args.length;
+  // When --dir is not passed, resolve from the configured brain source
+  // BEFORE falling back to '.' (the prior default). The bare `.` default was
+  // a footgun: a user who runs `gbrain extract links` from anywhere outside
+  // their brain dir (e.g., a project checkout with a node_modules tree) had
+  // the recursive walker grab tens of thousands of unrelated .md files,
+  // attempt to extract links between them, then write 0 rows because the
+  // synthetic from_slugs don't match any pages row. The output ("created 0
+  // links from 28989 pages") looks like a no-op, but it walked 28K junk files
+  // first. Resolving from sources(local_path) makes the no-arg invocation
+  // match what `gbrain sync` already does, and keeps cwd-cwd usage available
+  // via explicit `--dir .`.
+  let brainDir = explicitDir ? args[dirIdx + 1] : '.';
   const sourceIdx = args.indexOf('--source');
   const source = (sourceIdx >= 0 && sourceIdx + 1 < args.length) ? args[sourceIdx + 1] : 'fs';
   const typeIdx = args.indexOf('--type');
@@ -390,7 +402,25 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
-  // FS source needs a brain dir; DB source ignores --dir.
+  // FS source needs a brain dir. When --dir wasn't passed, resolve from
+  // sources(local_path) — same path `gbrain sync` uses — instead of
+  // silently walking cwd. See the brainDir comment above for the footgun.
+  if (source === 'fs' && !explicitDir) {
+    const { getDefaultSourcePath } = await import('../core/source-resolver.ts');
+    const configured = await getDefaultSourcePath(engine);
+    if (configured) {
+      brainDir = configured;
+    } else {
+      console.error(
+        `No brain directory configured. Pass --dir <path> explicitly, or use --source db ` +
+        `to extract from already-synced pages. To register a brain dir as the default, ` +
+        `run: gbrain sources add default --path <brain-dir>`,
+      );
+      process.exit(1);
+    }
+  }
+
+  // DB source ignores --dir.
   if (source === 'fs' && !existsSync(brainDir)) {
     console.error(`Directory not found: ${brainDir}`);
     process.exit(1);
