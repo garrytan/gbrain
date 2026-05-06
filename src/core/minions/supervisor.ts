@@ -26,7 +26,8 @@
  *   3 PID file unwritable (permission / path error)
  */
 
-import { spawn, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
+import { detectTini, buildSpawnInvocation } from './spawn-helpers.ts';
 import {
   closeSync,
   existsSync,
@@ -158,11 +159,17 @@ export class MinionSupervisor {
     // don't shell out on every respawn. Belt-and-suspenders with the
     // SIGCHLD handler in cli.ts — tini catches children spawned by native
     // addons that bypass the JS event loop.
-    let tini = '';
-    try {
-      tini = execFileSync('which', ['tini'], { encoding: 'utf8', timeout: 2000 }).trim();
-    } catch { /* not installed — that's fine */ }
-    this.tiniPath = tini;
+    this.tiniPath = detectTini();
+  }
+
+  /**
+   * Read-only accessor for whether tini was detected at construction.
+   * Used by `test/supervisor-tini.test.ts` to verify the wiring without
+   * exposing the resolved path. Returns true when `worker_spawned` events
+   * will include `tini: true` in their payload.
+   */
+  get isTiniDetected(): boolean {
+    return this.tiniPath !== '';
   }
 
   /**
@@ -453,12 +460,11 @@ export class MinionSupervisor {
 
       // Wrap with tini when available — reaps zombie children that the
       // SIGCHLD handler in cli.ts might miss (native addons, edge cases).
-      const spawnCmd = this.tiniPath
-        ? this.tiniPath
-        : this.opts.cliPath;
-      const spawnArgs = this.tiniPath
-        ? ['--', this.opts.cliPath, ...args]
-        : args;
+      const { cmd: spawnCmd, args: spawnArgs } = buildSpawnInvocation(
+        this.tiniPath,
+        this.opts.cliPath,
+        args,
+      );
 
       let child: ChildProcess;
       try {
