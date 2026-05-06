@@ -29,7 +29,7 @@ import type { SqlQuery } from '../core/oauth-provider.ts';
 import { summarizeMcpParams } from '../mcp/dispatch.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
-import { authorizeScopes, normalizeTokenScopes, validateScopes, VALID_SCOPES } from '../core/scopes.ts';
+import { authorizeScopes, normalizeTokenScopes, VALID_SCOPES } from '../core/scopes.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 
