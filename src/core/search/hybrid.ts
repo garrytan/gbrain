@@ -227,6 +227,11 @@ export async function hybridSearch(
     // per-engine searchKeyword / searchVector apply the filters at SQL level.
     language: opts?.language,
     symbolKind: opts?.symbolKind,
+    // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
+    // The engine still consumes the legacy field names; this aliasing keeps
+    // PR #618 callers compiling while the new names are the public surface.
+    afterDate: opts?.since ?? opts?.afterDate,
+    beforeDate: opts?.until ?? opts?.beforeDate,
   };
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
