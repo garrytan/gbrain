@@ -561,6 +561,16 @@ JOBS (Minions)
   gbrain jobs smoke                                     One-command health check
   gbrain jobs work [--queue Q] [--concurrency N]        Start worker daemon
 
+HTTP API (for LLMs)
+  gbrain http-serve [--port=4242]       Start search API server
+  GET  /health                          Warm/uptime/version/OTP rotation countdown
+  GET  /topics                          Knowledge map (domain → count + samples)
+  GET  /schema                          Full API contract + error codes
+  GET  /search?otp=...&lex=...&vec=...  Hybrid search (qmd multi-query)
+  POST /search/batch                    Multi-topic sweep (max 20 queries)
+  GET  /page?slug=...&chunk_index=N     Single chunk retrieval (saves tokens)
+  POST /query                           Hybrid search + expansion
+
 ADMIN
   gbrain doctor [--json] [--fast]       Health checks (resolver, skills, DB, embeddings)
   gbrain doctor --fix [--dry-run]       Auto-fix DRY violations (delegate inlined rules to conventions)
