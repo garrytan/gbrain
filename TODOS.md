@@ -62,6 +62,18 @@
 **Context:** Eng review A5 — the boring choice for v0.28.1 was `--depth=1`. This is the unboring follow-up.
 **Depends on:** Nothing.
 
+### DNS rebinding defense for `parseRemoteUrl`
+**Priority:** P3
+
+**What:** `isInternalUrl` (`src/core/url-safety.ts`) does lexical/string-based classification only — no DNS resolution. An attacker who controls a public hostname's A/AAAA records can resolve to internal IPs (`127.0.0.1`, `169.254.169.254`, RFC 1918) and bypass the SSRF gate. The gate catches direct IP literals + metadata hostnames; it doesn't catch `https://attacker-controlled.example/repo.git` where DNS points internal.
+
+**Why:** Defense in depth. The current gate is sufficient for naive abuse (typing `192.168.1.1` directly), but a deliberate attacker with DNS control can bypass it. Adding async DNS resolution + revalidation closes the hole.
+
+**Pros:** Closes the cleanest remaining SSRF bypass. Mirrors the redirect-revalidation pattern at `integrations.ts:289`. Pinned by a future test using a mock resolver.
+**Cons:** Async DNS makes `parseRemoteUrl` `async`. Every caller (CLI, MCP op, test) needs to update. ~50-line change.
+**Context:** Codex finding from v0.28.1 ship adversarial review. The IPv6 ULA + link-local portion of the same finding shipped in v0.28.1; DNS rebinding deferred.
+**Depends on:** Nothing.
+
 ### `sources.chunker_version` PGLite-schema parity
 **Priority:** P3
 

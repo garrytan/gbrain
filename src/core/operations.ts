@@ -1809,14 +1809,42 @@ const sources_add: Operation = {
   scope: 'sources_admin',
   handler: async (ctx, p) => {
     const { addSource } = await import('./sources-ops.ts');
+
+    // v0.28.1 codex finding (CRITICAL + HIGH): a `sources_admin` token over
+    // HTTP MCP must not be able to plant content at arbitrary host paths.
+    //
+    // - `path` lets a remote caller register `/etc/` (or any host dir) as a
+    //   "source"; later `gbrain sync --all` walks every sources.local_path,
+    //   which exfiltrates host content into the brain.
+    // - `clone_dir` lets a remote caller name the destination directly;
+    //   addSource's renameSync places the cloned tree there with no
+    //   confinement, AND validateRepoState's degraded-state recovery later
+    //   does rm -rf on src.local_path, so the same primitive doubles as
+    //   arbitrary-delete.
+    //
+    // Both fields are CLI-only (the operator runs `gbrain sources add --path
+    // /home/me/notes`). For HTTP MCP, ignore overrides — clone_dir defaults
+    // to $GBRAIN_HOME/clones/<id>/ and path is rejected. Local CLI callers
+    // (ctx.remote === false, per F7b fail-closed contract) keep the override.
+    const isLocal = ctx.remote === false;
+    const remotePath = isLocal ? (p.path as string | undefined) ?? null : null;
+    const remoteCloneDir = isLocal ? (p.clone_dir as string | undefined) : undefined;
+    if (!isLocal && (p.path !== undefined || p.clone_dir !== undefined)) {
+      ctx.logger.warn(
+        '[sources_add] ignoring path/clone_dir overrides on HTTP MCP transport ' +
+          '(remote callers can only register a remote --url; the clone path is ' +
+          'fixed under $GBRAIN_HOME/clones/).',
+      );
+    }
+
     const row = await addSource(ctx.engine, {
       id: p.id as string,
       name: p.name as string | undefined,
-      localPath: (p.path as string | undefined) ?? null,
+      localPath: remotePath,
       remoteUrl: p.url as string | undefined,
       federated:
         p.federated === undefined ? null : (p.federated as boolean),
-      cloneDir: p.clone_dir as string | undefined,
+      cloneDir: remoteCloneDir,
     });
     return row;
   },

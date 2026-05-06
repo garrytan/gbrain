@@ -97,6 +97,16 @@ export function isInternalUrl(urlStr: string): boolean {
 
   if (host === '::1' || host === '::') return true;
 
+  // v0.28.1 codex finding (HIGH): also block IPv6 ULA fc00::/7 (private
+  // unique-local addresses) and link-local fe80::/10. Without this, an
+  // attacker who controls a hostname's AAAA record can target internal
+  // IPv6 services even though IPv4 internal-classification fires.
+  // ULA: first hex tuple matches /^fc[0-9a-f]{2}/ or /^fd[0-9a-f]{2}/
+  // Link-local: first hex tuple matches /^fe[89ab][0-9a-f]/
+  if (/^f[cd][0-9a-f]{2}:/i.test(host) || /^fe[89ab][0-9a-f]:/i.test(host)) {
+    return true;
+  }
+
   if (host.startsWith('::ffff:')) {
     const tail = host.slice(7);
     const dotted = hostnameToOctets(tail);

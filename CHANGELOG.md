@@ -142,6 +142,33 @@ the new tiers via standard OAuth discovery.
 `src/core/scope.ts`. `scripts/check-admin-scope-drift.sh` fails the build
 if the two diverge — wired into `bun run verify`.
 
+### Codex hardening pass (pre-ship adversarial review)
+
+The pre-ship adversarial review caught five issues that landed alongside the
+core feature:
+
+- `sources_admin` tokens over HTTP MCP can no longer override `path` or
+  `clone_dir`. Those flags were a privilege escalation primitive: a remote
+  caller with the new scope could plant repo content at any host path,
+  and the auto-recovery branch's `rm -rf` on degraded state turned that
+  into arbitrary delete. Local CLI keeps the override (operator trust);
+  remote callers get the safe default `$GBRAIN_HOME/clones/<id>/` and a
+  warn log when they tried.
+- Steady-state `git pull --ff-only` now routes through the same SSRF-defensive
+  flag set as the initial clone. The legacy helper at `src/commands/sync.ts:192`
+  was spawning git without `-c http.followRedirects=false -c protocol.{file,ext}.allow=never --no-recurse-submodules`,
+  so every recurring sync was reopening the redirect/submodule/protocol
+  bypass that `cloneRepo` closed.
+- `sources_list` honors `include_archived: false` (the default). Archived
+  sources' ids, local_paths, and remote_urls were leaking to read-scoped
+  callers regardless of the flag.
+- `parseRemoteUrl` blocks IPv6 ULA `fc00::/7` and link-local `fe80::/10`.
+  Previously only `::1` / `::` and IPv4-mapped IPv6 were rejected.
+- DNS rebinding defense filed as a v0.28.x follow-up TODO. The current
+  gate is lexical only; a deliberate attacker with DNS control can still
+  resolve a public hostname to an internal IP. Closing this needs async
+  DNS resolution + revalidation.
+
 ### For contributors
 
 - `src/core/url-safety.ts` extracted from `integrations.ts` for cross-layer

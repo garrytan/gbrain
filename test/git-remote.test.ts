@@ -166,6 +166,22 @@ describe('parseRemoteUrl — rejection cases', () => {
   test('rejects 169.254.x.x AWS metadata range', () => {
     expect(() => parseRemoteUrl('https://169.254.169.254/foo')).toThrow(/internal/i);
   });
+
+  // Codex v0.28.1 finding: IPv6 ULA + link-local were not blocked.
+  test('rejects IPv6 ULA fc00::/7 (fd-prefix)', () => {
+    expect(() => parseRemoteUrl('https://[fd00:1234::1]/repo')).toThrow(/internal/i);
+  });
+  test('rejects IPv6 ULA fc00::/7 (fc-prefix)', () => {
+    expect(() => parseRemoteUrl('https://[fc01:2345::abcd]/repo')).toThrow(/internal/i);
+  });
+  test('rejects IPv6 link-local fe80::/10', () => {
+    expect(() => parseRemoteUrl('https://[fe80::1]/repo')).toThrow(/internal/i);
+  });
+  test('does NOT reject public IPv6', () => {
+    // 2606:4700:4700::1111 is Cloudflare DNS — public IPv6
+    const r = parseRemoteUrl('https://[2606:4700:4700::1111]/repo');
+    expect(r.hostname).toBe('[2606:4700:4700::1111]');
+  });
 });
 
 // T3 — Tailscale CGNAT regression cases.

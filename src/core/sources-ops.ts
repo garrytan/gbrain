@@ -381,8 +381,16 @@ export async function addSource(
 
 export async function listSources(
   engine: BrainEngine,
-  _opts: { includeArchived?: boolean } = {},
+  opts: { includeArchived?: boolean } = {},
 ): Promise<SourceListEntry[]> {
+  // v0.28.1 codex finding (MEDIUM): the prior version ignored the
+  // includeArchived flag and returned every row. That leaked archived
+  // sources' ids, local_paths, and remote_urls to read-scoped MCP callers
+  // who shouldn't see soft-deleted state. Filter at the SQL level so the
+  // archived rows never reach the wire by default.
+  const archivedFilter = opts.includeArchived
+    ? ''
+    : 'WHERE archived IS NOT TRUE';
   const rows = await engine.executeRaw<{
     id: string;
     name: string;
@@ -391,7 +399,7 @@ export async function listSources(
     config: unknown;
   }>(
     `SELECT id, name, local_path, last_sync_at, config
-       FROM sources ORDER BY (id = 'default') DESC, id`,
+       FROM sources ${archivedFilter} ORDER BY (id = 'default') DESC, id`,
   );
   const out: SourceListEntry[] = [];
   for (const r of rows) {

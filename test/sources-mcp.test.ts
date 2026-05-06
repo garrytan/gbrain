@@ -255,6 +255,116 @@ describe('sources_* scope enforcement (simulates serve-http gate)', () => {
 // SSRF rejection at the op layer
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// v0.28.1 codex hardening: remote callers cannot override path/clone_dir
+// (those are local-CLI-only — remote sources_admin is for managing federated
+// remote URLs, not arbitrary host-path writes).
+// ---------------------------------------------------------------------------
+
+describe('sources_add — remote callers ignore path/clone_dir overrides', () => {
+  test('remote sources_admin: clone_dir override is silently ignored', async () => {
+    await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
+      const op = findOp('sources_add');
+      const ctx = ctxRemote(['sources_admin']);
+      const row = (await op.handler(ctx, {
+        id: 'attack-clone-dir',
+        url: 'https://github.com/example/repo',
+        clone_dir: '/etc/gbrain-pwned',  // attacker-supplied
+      })) as any;
+      // Clone landed at the SAFE default, not /etc/gbrain-pwned.
+      expect(row.local_path).not.toBe('/etc/gbrain-pwned');
+      expect(row.local_path).toContain('clones/attack-clone-dir');
+      // /etc/gbrain-pwned was never written.
+      expect(existsSync('/etc/gbrain-pwned')).toBe(false);
+    });
+  });
+
+  test('remote sources_admin: path override (without url) gets nulled', async () => {
+    await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
+      const op = findOp('sources_add');
+      const ctx = ctxRemote(['sources_admin']);
+      // Without a URL and with a remote-supplied path, the path is dropped.
+      // The op then has neither path nor url, which is fine — it creates a
+      // pure DB-only source row (local_path=null).
+      const row = (await op.handler(ctx, {
+        id: 'attack-path',
+        path: '/etc',
+      })) as any;
+      // local_path was nulled — /etc is NOT registered as a source.
+      expect(row.local_path).toBeNull();
+    });
+  });
+
+  test('local CLI caller (ctx.remote=false) keeps clone_dir override', async () => {
+    await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
+      const op = findOp('sources_add');
+      // Simulate trusted local CLI: ctx.remote = false, no auth needed.
+      const ctxLocal: OperationContext = {
+        engine: engine as any,
+        config: { engine: 'pglite' } as any,
+        logger: { info() {}, warn() {}, error() {} },
+        dryRun: false,
+        remote: false,
+      };
+      const customDir = join(GBRAIN_HOME, 'custom-clones', 'local-override');
+      const row = (await op.handler(ctxLocal, {
+        id: 'local-override',
+        url: 'https://github.com/example/repo',
+        clone_dir: customDir,
+      })) as any;
+      // Local CLI is trusted: the override took effect.
+      expect(row.local_path).toBe(customDir);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.28.1 codex hardening: listSources honors include_archived flag
+// ---------------------------------------------------------------------------
+
+describe('sources_list — include_archived honored (was silently leaking)', () => {
+  test('default: archived sources are NOT returned', async () => {
+    await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
+      // Add source then archive it.
+      const addOp = findOp('sources_add');
+      await addOp.handler(ctxRemote(['sources_admin']), {
+        id: 'archived-src',
+        url: 'https://github.com/example/repo',
+      });
+      await engine.executeRaw(
+        `UPDATE sources SET archived = true WHERE id = $1`,
+        ['archived-src'],
+      );
+
+      const listOp = findOp('sources_list');
+      const result = (await listOp.handler(ctxRemote(['read']), {})) as any;
+      const found = result.sources.find((s: any) => s.id === 'archived-src');
+      expect(found).toBeUndefined();
+    });
+  });
+
+  test('include_archived: true returns archived sources', async () => {
+    await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
+      const addOp = findOp('sources_add');
+      await addOp.handler(ctxRemote(['sources_admin']), {
+        id: 'archived-included',
+        url: 'https://github.com/example/repo',
+      });
+      await engine.executeRaw(
+        `UPDATE sources SET archived = true WHERE id = $1`,
+        ['archived-included'],
+      );
+
+      const listOp = findOp('sources_list');
+      const result = (await listOp.handler(ctxRemote(['read']), {
+        include_archived: true,
+      })) as any;
+      const found = result.sources.find((s: any) => s.id === 'archived-included');
+      expect(found).toBeDefined();
+    });
+  });
+});
+
 describe('sources_add SSRF gate (delegated to parseRemoteUrl)', () => {
   test('rejects RFC1918 192.168.x.x with structured error', async () => {
     await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
