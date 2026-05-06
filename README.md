@@ -729,7 +729,7 @@ ADMIN
   gbrain serve                          MCP server (stdio)
   gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
                                         [--token-ttl 3600] [--enable-dcr]
-                                        [--public-url URL]
+                                        [--public-url URL] [--log-full-params]
   gbrain auth create|list|revoke|test   Legacy bearer token management
   gbrain auth register-client <name>    Register an OAuth 2.1 client
         --grant-types client_credentials,authorization_code

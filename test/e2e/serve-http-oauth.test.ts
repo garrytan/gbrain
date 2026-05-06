@@ -722,4 +722,62 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     });
     expect(res.status).toBe(401);
   });
+
+  // =========================================================================
+  // F7 + F7b: HTTP MCP shell-job RCE regression
+  // =========================================================================
+  //
+  // The headline trust-boundary fix. Pre-fix, the inlined OperationContext
+  // literal in serve-http.ts forgot to set `remote: true`, which meant
+  // operations.ts:1391's protected-job-name guard (`if (ctx.remote && ...)`)
+  // saw a falsy undefined and skipped. An HTTP MCP caller with a write-scoped
+  // token could then submit `{name: "shell", params: {cmd: "id"}}` over /mcp
+  // and execute arbitrary commands on the gbrain host.
+  //
+  // The fix is two-layered:
+  //   1) F7  — serve-http.ts sets `remote: true` explicitly.
+  //   2) F7b — operations.ts:1391 + :1400 use `ctx.remote !== false` /
+  //            `ctx.remote === false` so undefined fails closed even if a
+  //            future transport bypasses the type via cast.
+  //
+  // Together they close the path even if either layer regresses alone.
+
+  test('F7: HTTP MCP cannot submit shell jobs (RCE regression)', async () => {
+    const { access_token } = await mintToken('read write');
+    const res = await mcpCall(access_token, 'tools/call', {
+      name: 'submit_job',
+      arguments: { name: 'shell', data: { cmd: 'id' } },
+    });
+
+    const body = await res.text();
+    // Must reject. Either HTTP 4xx, or a JSON-RPC envelope carrying an
+    // OperationError with code permission_denied. The exact wire shape
+    // depends on SDK error mapping — assert the negative invariant
+    // (no command executed) and the positive invariant (rejection signal).
+    const rejected =
+      res.status >= 400 ||
+      body.includes('permission_denied') ||
+      body.includes('cannot be submitted over MCP');
+    expect(rejected).toBe(true);
+
+    // Negative: response must NOT contain a successful submit_job result
+    // (which would surface a job_id field). If a job ID came back the
+    // privesc landed.
+    expect(body).not.toMatch(/"job_id"\s*:\s*"?\d+/);
+  }, 15_000);
+
+  test('F7: HTTP MCP cannot submit subagent jobs (protected name)', async () => {
+    const { access_token } = await mintToken('read write');
+    const res = await mcpCall(access_token, 'tools/call', {
+      name: 'submit_job',
+      arguments: { name: 'subagent', data: { prompt: 'noop' } },
+    });
+    const body = await res.text();
+    const rejected =
+      res.status >= 400 ||
+      body.includes('permission_denied') ||
+      body.includes('cannot be submitted over MCP');
+    expect(rejected).toBe(true);
+    expect(body).not.toMatch(/"job_id"\s*:\s*"?\d+/);
+  }, 15_000);
 });

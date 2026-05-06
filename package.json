@@ -64,13 +64,19 @@
     }
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.71",
+    "@ai-sdk/google": "^3.0.64",
+    "@ai-sdk/openai": "^3.0.53",
+    "@ai-sdk/openai-compatible": "^2.0.41",
     "@anthropic-ai/sdk": "^0.30.0",
     "@aws-sdk/client-s3": "^3.1028.0",
     "@dqbd/tiktoken": "^1.0.22",
     "@electric-sql/pglite": "0.4.3",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "ai": "^6.0.168",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "eventsource-parser": "^3.0.8",
     "express": "^5.1.0",
     "express-rate-limit": "^7.5.0",
     "gray-matter": "^4.0.3",
@@ -79,7 +85,8 @@
     "pgvector": "^0.2.0",
     "postgres": "^3.4.0",
     "tree-sitter-wasms": "0.1.13",
-    "web-tree-sitter": "0.22.6"
+    "web-tree-sitter": "0.22.6",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -1,5 +1,31 @@
 # TODOS
 
+## OAuth/MCP hardening (v0.26.7 follow-up)
+
+### F11 — `auth register-client --redirect-uri` flag
+**Priority:** P3
+
+**What:** `gbrain auth register-client` always passes `[]` for redirect URIs; there is no CLI flag to set them. Operators who want to register an `authorization_code` client without DCR have to hand-edit the database.
+
+**Why:** Operator UX gap, not a trust-boundary issue. Codex C11 correctly flagged it as scope creep on the v0.26.7 hardening pass — kept out of that PR but worth doing.
+
+**Pros:** Closes the operator-experience gap. Validates `https://` or loopback per RFC 6749 §3.1.2.1 at registration time. Repeatable flag.
+**Cons:** ~30 lines of argv parsing + URL validation. Adds one more flag to the `auth register-client` surface. Low value relative to the OAuth provider hardening that already shipped.
+**Context:** Eva-brain has the implementation under `src/commands/auth.ts:registerClient`. Lift verbatim — the `localhost`/`127.0.0.1`/`::1` exact-match validation is correct; codex spot-check confirmed it does NOT match `localhost.evil.com`. v0.27 candidate.
+**Depends on:** Nothing.
+
+### F13 — `gbrain serve --http` argv positive-int validator
+**Priority:** P3
+
+**What:** `parseInt(args[idx + 1])` on `--port` and `--token-ttl` accepts the next flag as the value if the argument is missing (e.g., `--port --token-ttl 100` parses port as NaN → fallback 3131). Negative integers like `--port -1` parse to -1, server fails to bind with a confusing error.
+
+**Why:** Hygiene, not security. Codex C11 flagged as scope creep. Cheap to do later.
+
+**Pros:** Replaces `parseInt(...)  || fallback` with a `parsePositiveIntOption(args, flag, fallback, {max?})` helper that validates the next arg isn't a flag, matches `^[1-9]\d*$`, and clamps to a max. Exits 2 with a clear error.
+**Cons:** ~20 lines of helper + threading through `serve.ts`. Behavior change: previously-silent bad input now exits loud. Probably fine; no consumer relies on the silent fallback.
+**Context:** Eva-brain has the helper at `src/commands/serve.ts`. v0.27 candidate.
+**Depends on:** Nothing.
+
 ## destructive-guard (v0.26.5 follow-up)
 
 ### Adjacent 2 — Storage objects orphan on hard purge

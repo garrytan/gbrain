@@ -214,9 +214,12 @@ export interface OperationContext {
    * confinement when remote=true and allow unrestricted local-filesystem access
    * when remote=false.
    *
-   * When unset, operations MUST default to the stricter (remote=true) behavior.
+   * REQUIRED as of the F7b hardening — the type system is the first line of defense.
+   * Every transport (CLI / stdio MCP / HTTP MCP / subagent dispatcher) sets this
+   * explicitly. Consumers still treat anything that isn't strictly `false` as
+   * remote/untrusted (defense in depth in case the type is bypassed via cast).
    */
-  remote?: boolean;
+  remote: boolean;
   /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
@@ -388,11 +391,11 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    // Skip embedding when no OpenAI key is configured. importFromContent's existing
-    // try/catch around embed only catches; without a key the OpenAI client would
-    // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
-    // giving up. Detect early.
-    const noEmbed = !process.env.OPENAI_API_KEY;
+    // Skip embedding when the AI gateway has no embedding provider configured.
+    // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
+    // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
+    const { isAvailable } = await import('./ai/gateway.ts');
+    const noEmbed = !isAvailable('embedding');
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
@@ -421,7 +424,7 @@ const put_page: Operation = {
     const trustedWorkspace = ctx.viaSubagent === true
       && Array.isArray(ctx.allowedSlugPrefixes)
       && ctx.allowedSlugPrefixes.length > 0;
-    if (ctx.remote === true && !trustedWorkspace) {
+    if (ctx.remote !== false && !trustedWorkspace) {
       autoLinks = { skipped: 'remote' };
       autoTimeline = { skipped: 'remote' };
     } else if (result.parsedPage) {
@@ -1506,16 +1509,19 @@ const submit_job: Operation = {
     // GBRAIN_ALLOW_SHELL_JOBS env flag — even if that flag is on, MCP callers
     // cannot submit protected-type jobs.
     const { isProtectedJobName } = await import('./minions/protected-names.ts');
-    if (ctx.remote && isProtectedJobName(name)) {
+    // F7b fail-closed: anything that is not strictly false (i.e., remote=true OR
+    // the field somehow leaks in undefined despite the required type) rejects
+    // protected job submissions. Closes the HTTP MCP shell-job RCE that surfaced
+    // when the HTTP transport's OperationContext literal forgot to set remote.
+    if (ctx.remote !== false && isProtectedJobName(name)) {
       throw new OperationError('permission_denied', `'${name}' jobs cannot be submitted over MCP (CLI-only for security)`);
     }
 
     const { MinionQueue } = await import('./minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    // Trusted flag set only when this is a local (non-remote) submission. When
-    // remote=true, the guard above has already thrown for protected names, so
-    // passing undefined here is safe for any non-protected name that slips by.
-    const trusted = !ctx.remote && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
+    // Trusted flag fires ONLY for an explicit local CLI submission of a protected
+    // name. Strict `=== false` so an untyped/cast context can't escalate.
+    const trusted = ctx.remote === false && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
     return queue.add(name, (p.data as Record<string, unknown>) || {}, {
       queue: (p.queue as string) || 'default',
       priority: (p.priority as number) || 0,
