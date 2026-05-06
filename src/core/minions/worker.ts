@@ -424,7 +424,12 @@ export class MinionWorker extends EventEmitter {
 
       // Release database connection pool so PgBouncer slots are freed
       // immediately rather than waiting for TCP keepalive timeout.
-      try { await this.engine.disconnect(); } catch {}
+      // Log on failure (don't rethrow): shutdown is best-effort, but a
+      // silent disconnect failure is exactly the bug class the v0.26.9
+      // direction (isUndefinedColumnError, oauth-provider) was created
+      // to surface.
+      try { await this.engine.disconnect(); }
+      catch (e) { console.error('[worker] disconnect failed during shutdown:', e); }
 
       console.log('Minion worker stopped.');
     }
