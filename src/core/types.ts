@@ -260,6 +260,15 @@ export interface SearchOpts {
    * undefined to search all sources.
    */
   sourceId?: string;
+  /**
+   * v0.27.1: target column for vector search. 'embedding' (default) hits
+   * the brain's primary text-embedding column. 'embedding_image' targets
+   * the multimodal column populated by importImageFile. The two columns
+   * may live in different dim spaces (e.g. OpenAI 1536 + Voyage 1024)
+   * which is why the dual-column schema landed in v0.27.1. searchKeyword
+   * is unaffected — modality filtering on the keyword path is independent.
+   */
+  embeddingColumn?: 'embedding' | 'embedding_image';
 }
 
 /**

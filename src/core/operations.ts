@@ -778,7 +778,17 @@ const query: Operation = {
   name: 'query',
   description: 'Hybrid search with vector + keyword + multi-query expansion',
   params: {
-    query: { type: 'string', required: true },
+    // v0.27.1: `query` is no longer strictly required — `--image <path>`
+    // is the alternative entry point for image-similarity search. The CLI
+    // validator at src/cli.ts honors `cliHints.altRequired` and admits the
+    // image-only invocation. MCP / programmatic callers must still pass
+    // `query` OR `image` (handler refuses if both are absent).
+    query: { type: 'string', required: false },
+    /** v0.27.1: image-similarity search. Path resolved on the CLI side
+     *  before the op fires (the op receives raw bytes neither side; the
+     *  CLI loads the file, base64-encodes, and passes through `image`). */
+    image: { type: 'string', description: 'Base64-encoded image bytes for image-similarity search (CLI: --image <path>).' },
+    image_mime: { type: 'string', description: 'MIME type for the image bytes (auto-derived from path on CLI; required when calling op directly).' },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
@@ -794,7 +804,29 @@ const query: Operation = {
     const startedAt = Date.now();
     const expand = p.expand !== false;
     const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
-    const queryText = p.query as string;
+    const queryText = p.query as string | undefined;
+    const imageData = p.image as string | undefined;
+    const imageMime = (p.image_mime as string) || 'image/jpeg';
+
+    // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
+    // text-only); embeds the image via embedMultimodal and runs a direct
+    // vector search against the embedding_image column.
+    if (imageData) {
+      const { embedMultimodal } = await import('./ai/gateway.ts');
+      const [vec] = await embedMultimodal([
+        { kind: 'image_base64', data: imageData, mime: imageMime },
+      ]);
+      const results = await ctx.engine.searchVector(vec, {
+        limit: (p.limit as number) || 20,
+        offset: (p.offset as number) || 0,
+        embeddingColumn: 'embedding_image',
+      });
+      return results;
+    }
+
+    if (!queryText) {
+      throw new Error('query requires either `query` (text) or `image` (base64 bytes).');
+    }
 
     // v0.25.0 — capture meta side-channel. hybridSearch's return contract
     // stays SearchResult[] (Cathedral II callers depend on that); meta

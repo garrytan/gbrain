@@ -729,16 +729,20 @@ export class PostgresEngine implements BrainEngine {
     // wasting candidate slots on hidden rows.
     const visibilityClause = buildVisibilityClause('p', 's');
 
+    // v0.27.1: column routing. See pglite-engine.ts searchVector for rationale.
+    const col = opts?.embeddingColumn === 'embedding_image' ? 'embedding_image' : 'embedding';
+    const modalityFilter = col === 'embedding_image' ? `AND cc.modality = 'image'` : `AND cc.modality = 'text'`;
+
     const rawQuery = `
       WITH hnsw_candidates AS (
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          1 - (cc.embedding <=> $1::vector) AS raw_score
+          1 - (cc.${col} <=> $1::vector) AS raw_score
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
-        WHERE cc.embedding IS NOT NULL
+        WHERE cc.${col} IS NOT NULL ${modalityFilter}
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${typeClause}
           ${excludeSlugsClause}
@@ -746,7 +750,7 @@ export class PostgresEngine implements BrainEngine {
           ${symbolKindClause}
           ${hardExcludeClause}
           ${visibilityClause}
-        ORDER BY cc.embedding <=> $1::vector
+        ORDER BY cc.${col} <=> $1::vector
         LIMIT ${innerLimitParam}
       )
       SELECT

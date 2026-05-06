@@ -40,6 +40,7 @@ gbrain config set embedding_image_ocr true   # optional ($0.0003/image gpt-4o-mi
 cp ~/Pictures/whiteboard.heic ~/brain/originals/photos/
 gbrain sync
 gbrain query "the photo from the seed meeting"   # text search (image rows hidden by default)
+gbrain query --image ~/Pictures/whiteboard.heic  # image-similarity search
 gbrain doctor                                    # image_assets + ocr_health checks
 ```
 
@@ -145,10 +146,19 @@ Outside-voice review by codex caught six load-bearing pieces missing from the or
   Fix: pre-init via `init(WebAssembly.Module)` with bytes loaded through
   `with { type: 'file' }` import attribute.
 
+**Image-similarity search (`gbrain query --image`):**
+- New `--image <path>` flag on `gbrain query`. Reads the file, base64-
+  encodes, derives MIME from the extension (PNG/JPG/JPEG/GIF/WEBP/HEIC/
+  HEIF/AVIF), enforces 20MB cap, embeds via Voyage multimodal, runs vector
+  search against `content_chunks.embedding_image` with the v0.27.1 column
+  routing (`embeddingColumn: 'embedding_image'`).
+- The `query` op now accepts either `query` (text) or `image` (base64) but
+  not zero of either. Existing text-query callers unchanged.
+- Modality filtering on the `embedding_image` path keeps the result set
+  pure (image rows only); the default text path stays text-rows-only.
+  Cross-modal text→image RRF fusion is the v0.27.2 follow-up.
+
 **What's NOT in this release** (deferred to v0.27.2+):
-- `gbrain query --image <path>` flag — image-similarity search entry point.
-  The dual-column schema and `embedMultimodal` API are both ready; the
-  missing piece is purely CLI surface.
 - Cross-modal text→image RRF fusion (text query embeds through both text
   AND voyage-multimodal models, fuses results).
 - PDF page rasterization.

@@ -721,17 +721,27 @@ export class PGLiteEngine implements BrainEngine {
     // same candidate count it always did. See postgres-engine.ts for rationale.
     const visibilityClause = buildVisibilityClause('p', 's');
 
+    // v0.27.1: column routing. Default 'embedding' targets the brain's
+    // primary text-embedding column; 'embedding_image' targets the
+    // multimodal column populated by importImageFile. Image-similarity
+    // queries pass embeddingColumn='embedding_image' AND a 1024-dim vector
+    // produced by gateway.embedMultimodal — must match the column dim.
+    const col = opts?.embeddingColumn === 'embedding_image' ? 'embedding_image' : 'embedding';
+    // Image rows live in modality='image'; text/code in 'text'. Restrict
+    // to the modality matching the column to avoid cross-mode dim leaks.
+    const modalityFilter = col === 'embedding_image' ? `AND cc.modality = 'image'` : `AND cc.modality = 'text'`;
+
     const { rows } = await this.db.query(
       `WITH hnsw_candidates AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           1 - (cc.embedding <=> $1::vector) AS raw_score
+           1 - (cc.${col} <=> $1::vector) AS raw_score
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
-         WHERE cc.embedding IS NOT NULL ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-         ORDER BY cc.embedding <=> $1::vector
+         WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         ORDER BY cc.${col} <=> $1::vector
          LIMIT $2
        )
        SELECT
@@ -830,8 +840,11 @@ export class PGLiteEngine implements BrainEngine {
         `$${paramIdx++}, ${embeddingImagePh})`,
       );
 
-      // Param order MUST match the placeholder order built above.
+      // Param push order MUST match placeholder allocation order. Both
+      // embedding placeholders (when present) are allocated BEFORE the
+      // bulk row placeholders, so their values must be pushed first.
       if (embeddingStr) params.push(embeddingStr);
+      if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
         chunk.model || 'text-embedding-3-large', chunk.token_count || null,
@@ -840,7 +853,6 @@ export class PGLiteEngine implements BrainEngine {
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
         modality,
       );
-      if (embeddingImageStr) params.push(embeddingImageStr);
     }
 
     // CONSISTENCY: when chunk_text changes and no new embedding is supplied, BOTH embedding AND
