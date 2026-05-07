@@ -1542,6 +1542,125 @@ export const MIGRATIONS: Migration[] = [
     // this flag, so the index DDL runs in whatever wrapper applies.
     transaction: false,
   },
+  {
+    version: 34,
+    name: 'auto_rls_event_trigger',
+    sql: '', // engine-specific via sqlFor
+    // v0.26.7 — Postgres event trigger that auto-enables RLS on every new public.*
+    // table, plus one-time backfill on every existing public.* table without it.
+    //
+    // Problem: tables created outside gbrain migrations (Baku's face_detections,
+    // manual SQL, other apps sharing the Supabase project) shipped without RLS.
+    // doctor caught them after the fact; the gap window between create and next
+    // doctor run was the silent vector.
+    //
+    // Fix has two halves:
+    //   1. Event trigger — fires on ddl_command_end for CREATE TABLE,
+    //      CREATE TABLE AS, and SELECT INTO; runs ALTER TABLE ... ENABLE ROW
+    //      LEVEL SECURITY for any new public.* table. Supabase-recommended
+    //      approach (no dashboard toggle exists).
+    //   2. One-time backfill — every existing public.* table whose RLS is off
+    //      and whose comment does NOT match the GBRAIN:RLS_EXEMPT contract
+    //      (same regex doctor.ts uses) gets RLS enabled.
+    //
+    // Posture choices (vs PR-as-shipped):
+    //   - ENABLE only, no FORCE — matches v24/v29/schema.sql. FORCE would lock
+    //     out non-BYPASSRLS apps from their own newly-created tables (the
+    //     trigger function inherits the caller's role, and the new table is
+    //     owned by that role). gbrain has BYPASSRLS so gbrain itself is unaffected.
+    //   - public-only schema scope — Supabase manages auth/storage/realtime/etc.
+    //     and runs its own RLS posture there; we must not disturb those schemas.
+    //   - No EXCEPTION wrap inside the trigger — ddl_command_end fires inside
+    //     the DDL transaction, so a failed ALTER aborts the offending CREATE
+    //     TABLE. That's a loud signal, not a silent gap. Wrapping would CREATE
+    //     the silent path this migration exists to close.
+    //   - No privilege pre-check — runMigrations rethrows on SQL failure and
+    //     gates config.version, so a non-superuser run already fails loud with
+    //     an actionable Postgres error.
+    //
+    // BREAKING CHANGE: the backfill is a one-time override of intentionally
+    // RLS-off public tables that don't carry the GBRAIN:RLS_EXEMPT comment.
+    // Operators with such tables MUST add the exempt comment BEFORE upgrading.
+    //
+    // PGLite: no-op — no RLS engine, no event triggers, single-tenant by design.
+    sqlFor: {
+      postgres: `
+        -- Trigger function: fires post-DDL inside the CREATE TABLE transaction.
+        -- A failure here aborts the CREATE TABLE so no public.* table is ever
+        -- created without RLS. object_identity is pre-quoted by Postgres
+        -- (e.g. "public"."My Table"), so %s is correct — %I would double-quote.
+        CREATE OR REPLACE FUNCTION auto_enable_rls()
+        RETURNS event_trigger AS $$
+        DECLARE
+          obj record;
+        BEGIN
+          FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands()
+            WHERE object_type = 'table'
+            AND schema_name = 'public'
+          LOOP
+            EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity);
+          END LOOP;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        -- WHEN TAG covers all three table-creation syntaxes Postgres reports.
+        -- CREATE TABLE / CREATE TABLE AS / SELECT INTO produce distinct command
+        -- tags; covering only 'CREATE TABLE' would leave a syntax-shaped hole.
+        DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table;
+        CREATE EVENT TRIGGER auto_rls_on_create_table
+          ON ddl_command_end
+          WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
+          EXECUTE FUNCTION auto_enable_rls();
+
+        -- One-time backfill of every existing public.* base table without RLS.
+        -- Honors the same GBRAIN:RLS_EXEMPT regex doctor.ts uses
+        -- (^GBRAIN:RLS_EXEMPT\\s+reason=\\S.{3,}) so the two surfaces stay aligned.
+        -- %I.%I quotes the schema and table names safely, including mixed-case.
+        DO $$
+        DECLARE
+          has_bypass BOOLEAN;
+          r record;
+        BEGIN
+          SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+          IF NOT has_bypass THEN
+            -- Same posture as v24: raise to abort the migration so the runner
+            -- leaves config.version unbumped and retries on the next call.
+            RAISE EXCEPTION 'v34 auto_rls_event_trigger backfill: role % does not have BYPASSRLS — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role).', current_user;
+          END IF;
+
+          FOR r IN
+            SELECT n.nspname AS schema_name, c.relname AS table_name
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_description d ON d.objoid = c.oid AND d.objsubid = 0
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND c.relrowsecurity = false
+              AND (d.description IS NULL OR d.description !~ '^GBRAIN:RLS_EXEMPT\\s+reason=\\S.{3,}')
+          LOOP
+            EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', r.schema_name, r.table_name);
+            RAISE NOTICE 'v34: backfilled RLS on %.%', r.schema_name, r.table_name;
+          END LOOP;
+        END $$;
+      `,
+      pglite: '', // PGLite has no RLS and no event trigger support
+    },
+  },
+  {
+    version: 35,
+    name: 'oauth_clients_permissions',
+    // v0.29 fork — add JSONB permissions column to oauth_clients table so
+    // lookupTakesHolders() in serve-http.ts can store per-client takes_holders.
+    // Idempotent (IF NOT EXISTS). PGLite: noop (no oauth_clients table).
+    sql: '',
+    sqlFor: {
+      postgres: `
+        ALTER TABLE oauth_clients
+          ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}'::jsonb;
+      `,
+      pglite: '', // no OAuth in PGLite deployments
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
