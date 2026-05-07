@@ -50,6 +50,32 @@
 **Context:** v0.27.x candidate.
 **Depends on:** None.
 
+## /health endpoint hardening (v0.28.1 follow-up)
+
+### Cancel `engine.getStats()` when /health times out
+**Priority:** P2
+
+**What:** `probeHealth()` in `src/commands/serve-http.ts` races `engine.getStats()` against a 3s timeout. When the timeout wins, the original `getStats()` keeps running on a saturated pool. Under sustained probe traffic with a slow DB, timed-out probes pile up expensive `count(*)` queries that turn a partial slowdown into a total outage.
+
+**Why:** Both adversarial reviewers (Claude + Codex) flagged this independently during the v0.28.1 ship. Deferred because cancellation requires `AbortController` plumbing through `BrainEngine.getStats()` which doesn't exist yet — wider blast radius than v0.28.1's zombie-reaping scope justified.
+
+**Pros:** Closes the self-DoS path. /health returning 503 stops contributing to pool saturation.
+**Cons:** Touches the BrainEngine interface (PostgresEngine + PGLiteEngine implementations). Needs postgres.js or PgBouncer-level query cancellation. Wider blast radius.
+**Context:** Drop-in replacement for `Promise.race([getStats(), timeout])` is `getStats({ signal })` consumed via AbortController. Reviewer findings: see PR #637 (v0.28.1) adversarial review section.
+**Depends on:** AbortController plumbing in BrainEngine interface.
+
+### Replace `/health` with a lighter liveness probe
+**Priority:** P3
+
+**What:** `engine.getStats()` does `count(*) FROM pages, content_chunks, links, tags, timeline_entries` plus `GROUP BY type`. On a large but otherwise healthy brain, this can normally exceed 3s and cause false-positive 503s + orchestrator restart loops.
+
+**Why:** Codex flagged that the new 3s timeout is aggressive for the cost of the probe. Pre-existing behavior (the /health endpoint was already doing full stats in v0.27 with no timeout). Worth splitting probe purpose: `/health` for liveness (`SELECT 1`), `/stats` for the full counts.
+
+**Pros:** Liveness probe stays under 100ms even on saturated pools. Operators get a separate `/stats` for the count breakdown when they actually want it.
+**Cons:** Behavior change for orchestrator setups that scrape /health as both liveness AND count source.
+**Context:** PR #637 (v0.28.1) adversarial review. Pair with the AbortController follow-up above.
+**Depends on:** Nothing.
+
 ## OAuth/MCP hardening (v0.26.7 follow-up)
 
 ### F11 — `auth register-client --redirect-uri` flag
