@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { marked } from 'marked';
 import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
-import { chunkText } from './chunkers/recursive.ts';
+import { chunkText, PROSE_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs } from './link-extraction.ts';
@@ -202,7 +202,11 @@ export async function importFromContent(
 
   const parsed = parseMarkdown(content, slug + '.md');
 
-  // Hash includes ALL fields for idempotency (not just compiled_truth + timeline)
+  // Hash includes ALL fields for idempotency (not just compiled_truth + timeline).
+  // PROSE_CHUNKER_VERSION is folded in so any bump forces existing markdown
+  // pages to re-chunk on next put_page (see chunkers/recursive.ts). Without
+  // this, fixes to the chunker only affect newly-edited pages — the 158
+  // already-broken CJK pages would stay broken until someone re-saves them.
   const hash = createHash('sha256')
     .update(JSON.stringify({
       title: parsed.title,
@@ -211,6 +215,7 @@ export async function importFromContent(
       timeline: parsed.timeline,
       frontmatter: parsed.frontmatter,
       tags: parsed.tags.sort(),
+      prose_chunker_version: PROSE_CHUNKER_VERSION,
     }))
     .digest('hex');
 
