@@ -290,8 +290,40 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Health check
   // ---------------------------------------------------------------------------
   app.get('/health', async (_req, res) => {
-    const result = await probeHealth(engine, config.engine || 'pglite', VERSION);
-    res.status(result.status).json(result.body);
+    // Lightweight liveness: `SELECT 1` instead of full `getStats()` which runs
+    // 6× count(*) across large tables (96K+ pages). On PgBouncer with
+    // statement_timeout, getStats() routinely exceeds the 3s probe window and
+    // produces false 503s — causing external health checks (cron, Fly.io, k8s)
+    // to restart otherwise-healthy servers.
+    //
+    // Full stats remain available at /admin/api/health-indicators for dashboards.
+    // Use ?full=true to opt into the heavy getStats() probe when needed.
+    const full = _req.query.full === 'true';
+    if (full) {
+      const result = await probeHealth(engine, config.engine || 'pglite', VERSION);
+      res.status(result.status).json(result.body);
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      await Promise.race([
+        sql`SELECT 1`,
+        new Promise<never>((_, rej) => {
+          timer = setTimeout(() => rej(new Error('health_timeout')), HEALTH_TIMEOUT_MS);
+        }),
+      ]);
+      res.json({ status: 'ok', version: VERSION, engine: config.engine || 'pglite' });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'unknown';
+      res.status(503).json({
+        error: 'service_unavailable',
+        error_description: msg === 'health_timeout'
+          ? 'Health check timed out (database pool may be saturated)'
+          : 'Database connection failed',
+      });
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
   });
 
   // ---------------------------------------------------------------------------
