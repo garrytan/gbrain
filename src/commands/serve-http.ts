@@ -654,6 +654,30 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         };
       }
 
+      // MERGE-INTENT §3.5 — per-token takes-holders allow-list (privacy gate).
+      // Checks oauth_clients.permissions first (OAuth path), then falls back
+      // to access_tokens.permissions (legacy bearer path). Default-deny: [\world\].
+      let takesHoldersAllowList: string[] = ["world"];
+      try {
+        const [oauthRow] = await sql`
+          SELECT permissions FROM oauth_clients
+          WHERE client_id = ${authInfo.clientId} AND deleted_at IS NULL
+          LIMIT 1
+        `;
+        if (oauthRow && Array.isArray((oauthRow as any).permissions?.takes_holders)) {
+          takesHoldersAllowList = (oauthRow as any).permissions.takes_holders as string[];
+        } else {
+          const [legacyRow] = await sql`
+            SELECT permissions FROM access_tokens
+            WHERE name = ${authInfo.clientName ?? authInfo.clientId} AND revoked_at IS NULL
+            LIMIT 1
+          `;
+          if (legacyRow && Array.isArray((legacyRow as any).permissions?.takes_holders)) {
+            takesHoldersAllowList = (legacyRow as any).permissions.takes_holders as string[];
+          }
+        }
+      } catch { /* default-deny on error */ }
+
       const ctx: OperationContext = {
         engine,
         config,
@@ -665,6 +689,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         dryRun: !!(params?.dry_run),
         remote: true,
         auth: authInfo,
+        takesHoldersAllowList,
       };
 
       try {
