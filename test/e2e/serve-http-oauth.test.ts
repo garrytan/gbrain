@@ -286,21 +286,77 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }, 15_000);
 
   // =========================================================================
-  // Health endpoint (no auth required)
+  // Health endpoint (no auth required) — v0.28.10 made /health liveness-only;
+  // engine stats moved to /admin/api/full-stats behind requireAdmin so a
+  // saturated pool can't pin /health and trigger orchestrator restart cascades.
   // =========================================================================
 
-  test('health endpoint returns OK without auth', async () => {
+  test('v0.28.10: /health returns liveness-only body (no engine stats)', async () => {
     const res = await fetch(`${BASE}/health`);
     expect(res.ok).toBe(true);
     const data = await res.json() as any;
     expect(data.status).toBe('ok');
     expect(data.version).toBeDefined();
-    // page_count: the endpoint must return a non-negative integer. The exact
-    // value depends on the deployment's brain state and is not what this test
-    // is checking — pre-v0.26.2 this asserted `> 0` and broke on fresh schemas.
-    expect(typeof data.page_count).toBe('number');
-    expect(data.page_count).toBeGreaterThanOrEqual(0);
+    expect(data.engine).toBeDefined();
+    // Regression: pre-v0.28.10 /health spread getStats() (page_count,
+    // chunk_count, etc.) into the body. The whole point of the v0.28.10
+    // split is that /health stops touching those tables. If page_count
+    // ever reappears here, the heavy probe leaked back into the public
+    // route and the original DoS surface is back.
+    expect(data.page_count).toBeUndefined();
+    expect(data.chunk_count).toBeUndefined();
+    expect(data.embedded_count).toBeUndefined();
+    // Body shape is exactly {status, version, engine}.
+    expect(Object.keys(data).sort()).toEqual(['engine', 'status', 'version']);
   });
+
+  test('v0.28.10: /admin/api/full-stats without admin cookie returns 401', async () => {
+    const res = await fetch(`${BASE}/admin/api/full-stats`);
+    expect(res.status).toBe(401);
+    const data = await res.json() as any;
+    expect(data.error).toBe('Admin authentication required');
+  });
+
+  test('v0.28.10: /admin/api/full-stats with valid admin cookie returns getStats() body', async () => {
+    // Same magic-link cookie dance the existing single-use test uses.
+    // Skip gracefully if the bootstrap token isn't extractable — the 401
+    // case above pins the auth gate; this test pins the happy path.
+    const stderrBuf = (serverProcess as any)?._stderrBuffer || '';
+    const tokenMatch = String(stderrBuf).match(/Admin Token[\s\S]*?([a-f0-9]{32,64})/);
+    if (!tokenMatch) {
+      console.warn('[e2e] skipped /admin/api/full-stats happy path: could not extract bootstrap token');
+      return;
+    }
+    const bootstrapToken = tokenMatch[1];
+
+    const issueRes = await fetch(`${BASE}/admin/api/issue-magic-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bootstrapToken}` },
+      body: '{}',
+    });
+    expect(issueRes.ok).toBe(true);
+    const { url } = await issueRes.json() as any;
+
+    const click = await fetch(url, { redirect: 'manual' });
+    expect(click.status).toBe(302);
+    const setCookie = click.headers.get('set-cookie') || '';
+    const cookieMatch = setCookie.match(/gbrain_admin=([^;]+)/);
+    expect(cookieMatch).toBeTruthy();
+    const cookieValue = cookieMatch![1];
+
+    const statsRes = await fetch(`${BASE}/admin/api/full-stats`, {
+      headers: { Cookie: `gbrain_admin=${cookieValue}` },
+    });
+    expect(statsRes.ok).toBe(true);
+    const stats = await statsRes.json() as any;
+    expect(stats.status).toBe('ok');
+    expect(stats.version).toBeDefined();
+    expect(stats.engine).toBeDefined();
+    // The full-stats body is probeHealth's spread of getStats() — page_count
+    // is the canonical signal that we're hitting the heavy path here.
+    expect(typeof stats.page_count).toBe('number');
+    expect(stats.page_count).toBeGreaterThanOrEqual(0);
+  }, 15_000);
 
   // =========================================================================
   // Token lifecycle

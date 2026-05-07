@@ -93,6 +93,51 @@ export async function probeHealth(
   }
 }
 
+/**
+ * Lightweight liveness probe. Races `SELECT 1` against the same timeout
+ * `probeHealth` uses, returns the same tagged-union result type, but the
+ * 200 body is intentionally bare: `{status, version, engine}` — no engine
+ * stats. Stats moved to `/admin/api/full-stats` (admin auth) in v0.28.10
+ * because `getStats()`'s six count(*) queries exceeded HEALTH_TIMEOUT_MS
+ * on production brains through PgBouncer, producing false 503s that
+ * triggered orchestrator restart cascades and advisory-lock pile-ups.
+ */
+export async function probeLiveness(
+  sql: SqlQuery,
+  engineName: string,
+  version: string,
+  timeoutMs: number = HEALTH_TIMEOUT_MS,
+): Promise<ProbeHealthResult> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      sql`SELECT 1`,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('health_timeout')), timeoutMs);
+      }),
+    ]);
+    return {
+      ok: true,
+      status: 200,
+      body: { status: 'ok', version, engine: engineName },
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'unknown';
+    return {
+      ok: false,
+      status: 503,
+      body: {
+        error: 'service_unavailable',
+        error_description: msg === 'health_timeout'
+          ? 'Health check timed out (database pool may be saturated)'
+          : 'Database connection failed',
+      },
+    };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
 interface ServeHttpOptions {
   port: number;
   tokenTtl: number;
@@ -287,43 +332,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.use(authRouter);
 
   // ---------------------------------------------------------------------------
-  // Health check
+  // Health check — liveness only. Full engine stats live at
+  // /admin/api/full-stats (requireAdmin). See probeLiveness above for the why.
   // ---------------------------------------------------------------------------
   app.get('/health', async (_req, res) => {
-    // Lightweight liveness: `SELECT 1` instead of full `getStats()` which runs
-    // 6× count(*) across large tables (96K+ pages). On PgBouncer with
-    // statement_timeout, getStats() routinely exceeds the 3s probe window and
-    // produces false 503s — causing external health checks (cron, Fly.io, k8s)
-    // to restart otherwise-healthy servers.
-    //
-    // Full stats remain available at /admin/api/health-indicators for dashboards.
-    // Use ?full=true to opt into the heavy getStats() probe when needed.
-    const full = _req.query.full === 'true';
-    if (full) {
-      const result = await probeHealth(engine, config.engine || 'pglite', VERSION);
-      res.status(result.status).json(result.body);
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    try {
-      await Promise.race([
-        sql`SELECT 1`,
-        new Promise<never>((_, rej) => {
-          timer = setTimeout(() => rej(new Error('health_timeout')), HEALTH_TIMEOUT_MS);
-        }),
-      ]);
-      res.json({ status: 'ok', version: VERSION, engine: config.engine || 'pglite' });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'unknown';
-      res.status(503).json({
-        error: 'service_unavailable',
-        error_description: msg === 'health_timeout'
-          ? 'Health check timed out (database pool may be saturated)'
-          : 'Database connection failed',
-      });
-    } finally {
-      if (timer !== null) clearTimeout(timer);
-    }
+    const result = await probeLiveness(sql, config.engine || 'pglite', VERSION);
+    res.status(result.status).json(result.body);
   });
 
   // ---------------------------------------------------------------------------
@@ -560,6 +574,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
     }
+  });
+
+  // Full engine stats. v0.28.10 moved this off /health (which is now liveness
+  // only — see probeLiveness) so dashboards needing page_count / chunk_count
+  // / etc. authenticate as admin and call this endpoint. probeHealth races
+  // engine.getStats() against HEALTH_TIMEOUT_MS so a saturated pool returns
+  // 503 rather than hanging.
+  app.get('/admin/api/full-stats', requireAdmin, async (_req: Request, res: Response) => {
+    const result = await probeHealth(engine, config.engine || 'pglite', VERSION);
+    res.status(result.status).json(result.body);
   });
 
   app.get('/admin/api/requests', requireAdmin, async (req: Request, res: Response) => {
