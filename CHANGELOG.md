@@ -2,6 +2,69 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.28.4] - 2026-05-06
+
+## **`gbrain eval cross-modal` — three frontier models score your skill output BEFORE tests cement it.**
+## **Different providers, different blind spots. Pass criterion: every dim mean >= 7 AND no model scored any dim < 5. INCONCLUSIVE when fewer than 2 of 3 evaluators returned parseable scores.**
+
+Cross-modal eval is the new Phase 3 in the skillify checklist (now 11 items, up from 10). Run it against any skill output before you write tests. Three frontier models from three different providers score the output on five documented dimensions in parallel. Receipts bind to a SHA-8 of the SKILL.md content so `gbrain skillify check` can tell whether the audit is current or stale. Required:false in v0.28.4, informational only, so existing skills don't retroactively fail their audits.
+
+The original v0.27 PR added a hand-rolled `.mjs` script with three correctness bugs: hardcoded `/data/.env` (cloud-sandbox path; failed on every normal Mac), all-models-fail returned PASS because `Object.values({}).every(...)` is `true` for an empty array, and the documented "no single model < 5" floor was never implemented. Plan-eng-review caught those plus structural drift between SKILL.md and the gbrain CLI. Codex consult-mode caught five more I missed: the script rolled a parallel provider stack instead of reusing `src/core/ai/gateway.ts`; the `gbrain eval` dispatch path required `connectEngine()` so first-run users couldn't run the gate; the `rate-leases` helper requires a `minion_jobs.id` that a CLI eval doesn't have; the proposed `gbrainPath` semantics were wrong; the conformance test required an `## Output Format` section the rewrite dropped. All fixed. 25 decisions resolved across the two review rounds.
+
+### What you get
+
+| Capability | Before | After |
+|---|---|---|
+| Multi-model quality gate | Hand-rolled `.mjs` script with `/data/.env` hardcoded | `gbrain eval cross-modal --task "..." --output skills/<slug>/SKILL.md` |
+| Provider config | Parallel stack with raw `fetch` + custom env loader | Reuses `src/core/ai/gateway.ts:chat()`; configure via `gbrain config` or env vars |
+| Pass criterion | Mean >= 7 only | Mean >= 7 AND no model scored any dim < 5 |
+| All-models-fail bug | Silent PASS (empty-array `.every()` = true) | INCONCLUSIVE (exit 2) when < 2/3 succeed |
+| Default model identifiers | `gpt-5.5`, `claude-opus-4-7`, `deepseek-ai/DeepSeek-V4-Pro` (two of three fictional) | `openai:gpt-4o`, `anthropic:claude-opus-4-7`, `google:gemini-1.5-pro` (all real, all addressable) |
+| Receipt path | `/tmp/cross-modal-eval-<ts>.json` (Windows-broken; cleared on reboot) | `~/.gbrain/.gbrain/eval-receipts/<slug>-<sha8>.json` (honors `GBRAIN_HOME`; sha-8 detects stale) |
+| Onboarding | Required `gbrain init` first | No-DB CLI branch, runs before any brain exists |
+| Cycle default | Always 3 (cost runaway risk in CI loops) | 3 in TTY, 1 in non-TTY; cost-estimate prints to stderr before each run |
+| Tests for the gate logic | Zero | 32 unit + 4 mocked-fetch E2E (verdict / floor / inconclusive / dedup pinned) |
+
+### What this means for you
+
+If you're skillifying a feature and want to lock quality in BEFORE writing tests:
+
+```bash
+gbrain eval cross-modal \
+  --task "Skillify SKILL.md teaches the 11-item meta-skill checklist" \
+  --output skills/skillify/SKILL.md
+```
+
+Three frontier models score in parallel. Total wallclock is 30-60s per cycle. Cost estimate prints before each run. Exit 0 = PASS, 1 = FAIL, 2 = INCONCLUSIVE (don't trust the verdict; rerun). Receipt lands at `~/.gbrain/.gbrain/eval-receipts/skillify-<sha8>.json` so `gbrain skillify check` can show its status the next time you run an audit.
+
+If you contribute to gbrain itself: `skills/skillify/SKILL.md` is the canonical 11-item checklist. `skills/cross-modal-review/SKILL.md` is the manual second-opinion gate (one model reviews work in flow). The two are complementary; both have a Relationship section pointing at each other so you know which to use when.
+
+### Itemized changes
+
+- `gbrain eval cross-modal` (new CLI subcommand). Reuses `src/core/ai/gateway.ts:chat()` for provider config + auth + model aliasing. No-DB dispatch in `src/cli.ts` mirrors the `dream` pattern so first-run users (no `gbrain init` yet) can run the gate.
+- `src/core/cross-modal-eval/{json-repair,aggregate,runner,receipt-name,receipt-write}.ts` (new) — pure-logic foundation. JSON repair has a 4-strategy fallback chain; nuclear-option throws rather than fabricates scores. Aggregate enforces both pass criteria (mean >= 7 AND min >= 5) and the >=2/3-successes rule.
+- `skills/skillify/SKILL.md` — bumped to v1.1.0. Phase 3 documents the gate; Anti-Patterns section warns against single-provider correlated blind spots and budget-model evaluation.
+- `skills/cross-modal-review/SKILL.md` — Relationship section added pointing at the new command.
+- `src/commands/skillify-check.ts` — informational 11th item surfaces receipt status (`found` / `stale` / `missing`). Not blocking; existing skills keep their required-score.
+- `src/core/skillify/templates.ts` — scaffolded SKILL.md now includes a Phase 3 section so new skill authors discover the gate.
+- `recipes/cross-modal-eval/cross-modal-eval.mjs` — DELETED. Behavior moved to the new command.
+- `test/cross-modal-eval-{json-repair,aggregate,cli}.test.ts` (new) — 32 unit cases.
+- `test/e2e/cross-modal-eval.test.ts` (new, mocked fetch) — 4 verdict-contract cases.
+- `test/skillify-scaffold.test.ts` — extended with the 11-item assertion (replaces the original plan's mutating shell-out verification).
+- `CLAUDE.md` — Key Files entries for the new module + Commands list under v0.27.x. `TODOS.md` files four follow-ups (full `--budget-usd` cap, subagent integration to recover rate-leases, adoption telemetry, user guide).
+
+## To take advantage of v0.28.4
+
+`gbrain upgrade` should do this automatically. The new command is wired through the existing CLI; nothing schema-level changed. To verify:
+
+```bash
+gbrain eval cross-modal --help
+# If you have OPENAI_API_KEY + ANTHROPIC_API_KEY + GOOGLE_GENERATIVE_AI_API_KEY in your shell:
+gbrain eval cross-modal \
+  --task "Sample task description" \
+  --output skills/skillify/SKILL.md
+```
+
 ## [0.28.3] - 2026-05-06
 
 ## **`gbrain integrations show restart-sweep` — detect dropped Telegram messages after OpenClaw gateway restarts.**

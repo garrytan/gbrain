@@ -1,5 +1,55 @@
 # TODOS
 
+## cross-modal-eval (v0.27.x follow-ups from PR #674 plan)
+
+### `--budget-usd` hard cap + per-call cost telemetry (T11=B follow-up)
+**Priority:** P2
+
+**What:** `gbrain eval cross-modal` ships in v0.27.x with a partial cost guardrail: default `--cycles 1` in non-TTY plus a stderr cost-estimate printed before each run. The full `--budget-usd N` hard cap (refuse to start the next cycle if estimated spend would exceed) and per-call actual-cost telemetry written into the receipt are intentionally deferred.
+
+**Why:** Codex pushback on the original P2=B "defer everything" decision was right — even with `>=2/3` success required for a verdict (Q3=A), 3 cycles × 3 calls = 9 frontier calls per run, repeated across N skills if anyone scripts a bulk audit. The TTY/non-TTY cycle default catches the worst case; the hard cap catches the next class of mistakes.
+
+**Pros:** Deterministic spend ceiling. Real per-call cost in the receipt drives a feedback loop that lets us refine the price-table constant in `src/core/cross-modal-eval/runner.ts:estimateCost`. Future bulk-audit integrations get a safety net by default.
+**Cons:** ~80 lines of pricing-table + parsing + threading. Pricing values drift; the file becomes a small maintenance burden between model-family bumps.
+**Context:** Pricing table lives at `src/core/cross-modal-eval/runner.ts:estimateCost`. Once we have real telemetry from a few weeks of usage, we can switch the table to "last observed" instead of "list price" and get more accurate caps. v0.27.x candidate.
+**Depends on:** Nothing.
+
+### Subagent integration (recovers cross-process rate-leases — T4 deferred)
+**Priority:** P2
+
+**What:** Wire `gbrain eval cross-modal` to be invokable as a `gbrain agent run` child job. Today the CLI runs synchronously and bypasses `src/core/minions/rate-leases.ts` because the lease helper requires a `minion_jobs.id` that the CLI path doesn't have (T4=A in plans/radiant-napping-lerdorf.md).
+
+**Why:** Cross-process concurrency cap. A user running `gbrain eval cross-modal` in one terminal alongside `gbrain agent run` in another can hit Anthropic 429s due to combined load. As a minion job, the eval gets the rate-lease behavior for free, plus stagger / quiet-hours / retry surface from the existing Minions queue.
+
+**Pros:** No new helper API; reuses what's already there. Closes the cross-process gap that today's `Promise.allSettled` design intentionally leaves open.
+**Cons:** Requires a job handler registration + receipt-path threading through job context. Probably ~150 lines plus tests. Behavior parity (verdict / receipt shape) needs to be pinned with a parametrized test.
+**Context:** Pattern is the same as `src/core/minions/handlers/subagent.ts`. v0.27.x candidate.
+**Depends on:** Nothing.
+
+### Skill adoption telemetry (revisit T7=C with data)
+**Priority:** P3
+
+**What:** Track how many skills land cross-modal eval receipts. If adoption stalls at, say, <30% of skills after 30 days, consider flipping the 11th item from `required:false` (T7=C, current) to `required:true` (T7=A) in v0.28.x.
+
+**Why:** T7=C ships the gate as informational so existing audits don't regress. The forcing function is documentation alone. We don't yet know if that's enough.
+
+**Pros:** Data-driven decision instead of guessing. Lightweight: count receipt files in `gbrainPath('eval-receipts')` against the count of skills under `skills/*/SKILL.md`.
+**Cons:** "Adoption stalled" is a judgment call without a baseline. Could become a debate.
+**Context:** New check in `gbrain doctor` would surface the count. v0.28.x candidate.
+**Depends on:** None.
+
+### `docs/cross-modal-eval.md` user guide
+**Priority:** P3
+
+**What:** Add a user-facing guide. Cover the gateway-config flow, receipt forensics, the `<slug>-<sha8>.json` filename convention, default models + how to override them, the relationship to `skills/cross-modal-review/SKILL.md`, and worked examples on a real skill.
+
+**Why:** SKILL.md teaches the workflow but lives under `skills/skillify/`. CLAUDE.md "Key files" entries are agent-facing, not human-facing. A `docs/cross-modal-eval.md` is the natural home for "I'm a user, how do I use this command?" answers.
+
+**Pros:** Discoverable from CLAUDE.md "Key files" reference. Mirrors `docs/eval-bench.md` precedent.
+**Cons:** Doc-write task; ~250 lines of prose.
+**Context:** v0.27.x candidate.
+**Depends on:** None.
+
 ## /health endpoint hardening (v0.28.1 follow-up)
 
 ### Cancel `engine.getStats()` when /health times out
