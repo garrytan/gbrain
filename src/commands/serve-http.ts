@@ -760,30 +760,66 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       { capabilities: { tools: {} } },
     );
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: mcpOperations.map(op => ({
-        name: op.name,
-        description: op.description,
-        inputSchema: {
-          type: 'object' as const,
-          properties: Object.fromEntries(
-            Object.entries(op.params).map(([k, v]) => [k, {
-              type: v.type,
-              description: v.description,
-              ...(v.enum ? { enum: v.enum } : {}),
-              ...(v.default !== undefined ? { default: v.default } : {}),
-            }]),
-          ),
-          required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
-        },
-      })),
-    }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      // v0.28.10: log every JSON-RPC method, not just successful tools/call.
+      // Pre-fix, /admin/api/requests showed nothing for clients that only
+      // ever called tools/list, and the v0.26.3 persistence regression test
+      // asserting >= 2 rows after tools/list + tools/call was unreachable.
+      const latency = Date.now() - startTime;
+      try {
+        await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+                  VALUES (${authInfo.clientId}, ${agentName}, ${'tools/list'}, ${latency}, ${'success'}, ${null})`;
+      } catch { /* best effort */ }
+      broadcastEvent({
+        agent: agentName,
+        operation: 'tools/list',
+        scopes: authInfo.scopes.join(','),
+        latency_ms: latency,
+        status: 'success',
+        timestamp: new Date().toISOString(),
+      });
+      return {
+        tools: mcpOperations.map(op => ({
+          name: op.name,
+          description: op.description,
+          inputSchema: {
+            type: 'object' as const,
+            properties: Object.fromEntries(
+              Object.entries(op.params).map(([k, v]) => [k, {
+                type: v.type,
+                description: v.description,
+                ...(v.enum ? { enum: v.enum } : {}),
+                ...(v.default !== undefined ? { default: v.default } : {}),
+              }]),
+            ),
+            required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
+          },
+        })),
+      };
+    });
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: params } = request.params;
       const op = mcpOperations.find(o => o.name === name);
       if (!op) {
-        return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }] };
+        // v0.28.10: persist unknown-op attempts. Operators investigating
+        // misbehaving agents need to see the full attempt log, not just
+        // valid-op success/error.
+        const latency = Date.now() - startTime;
+        try {
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${null}, ${`unknown_operation: ${name}`})`;
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: name,
+          scopes: authInfo.scopes.join(','),
+          latency_ms: latency,
+          status: 'error',
+          error: { code: 'unknown_operation', message: `Unknown: ${name}` },
+          timestamp: new Date().toISOString(),
+        });
+        return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
       }
 
       // Scope enforcement (v0.28: hasScope replaces exact-string-match so
@@ -793,6 +829,23 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // sources_admin tokens look like they couldn't even read.)
       const requiredScope = op.scope || 'read';
       if (!hasScope(authInfo.scopes, requiredScope)) {
+        // v0.28.10: persist scope-rejected attempts. Same operator-visibility
+        // motivation as the unknown-op path — and it makes the v0.26.3
+        // persistence regression test reliable across both rejection paths.
+        const latency = Date.now() - startTime;
+        try {
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${null}, ${`insufficient_scope: requires '${requiredScope}'`})`;
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: name,
+          scopes: authInfo.scopes.join(','),
+          latency_ms: latency,
+          status: 'error',
+          error: { code: 'insufficient_scope', message: `requires '${requiredScope}'` },
+          timestamp: new Date().toISOString(),
+        });
         return {
           content: [{
             type: 'text',

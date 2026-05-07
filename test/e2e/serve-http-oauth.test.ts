@@ -43,8 +43,17 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     // via process.env mutation, which is invisible to subprocesses unless we
     // explicitly re-pass process.env. Same pattern applies to every execSync
     // in this file.
+    // v0.28.10: register with admin scope so the F7 protected-name guard
+    // tests can mint admin-scoped tokens that actually exercise the guard
+    // at operations.ts:1527. Without admin in the client's allowed scopes,
+    // submit_job for a protected name (`shell`, `subagent`) gets rejected
+    // by hasScope() in serve-http.ts BEFORE reaching the F7 guard, so the
+    // test was validating scope enforcement instead of the RCE protection.
+    // Other tests that mint specific subsets ('read', 'read write') still
+    // get the subset they ask for — adding admin to the client's allowed
+    // ceiling does not auto-grant it to every minted token.
     const regOutput = execSync(
-      'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write"',
+      'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write admin"',
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
     );
     const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
@@ -532,8 +541,9 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       expect(okRes.status).not.toBe(401);
 
       // Trigger an error path so the error_message column gets a value too.
-      // Request a tool that doesn't exist — server returns an MCP error in
-      // the body but the underlying handler logs status='error' to mcp_request_log.
+      // Request a tool that doesn't exist — v0.28.10 logs unknown-op attempts
+      // with operation = the attempted name and error_message starting with
+      // 'unknown_operation:'.
       await mcpCall(access_token, 'tools/call', { name: 'this_tool_does_not_exist', arguments: {} });
 
       // Allow async best-effort INSERT to flush.
@@ -554,18 +564,26 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
         expect(row.agent_name).toBe('e2e-oauth-test');
       }
 
-      // params persisted as JSONB (postgres-js returns object form).
-      // The params field is non-null on tools/call (carries the call args)
-      // and on tools/list (carries an empty {} or undefined depending on payload).
-      const callRow = rows.find(r => r.operation === 'tools/call');
+      // v0.28.10: tools/list logs as operation='tools/list' (the JSON-RPC
+      // method name). tools/call success/error logs as operation=<inner
+      // tool name> (the convention preserved from pre-v0.28.10 dispatch
+      // logging — agents querying mcp_request_log filter by tool name, not
+      // by JSON-RPC method).
+      const listRow = rows.find(r => r.operation === 'tools/list');
+      expect(listRow).toBeDefined();
+      expect(listRow!.status).toBe('success');
+
+      // The unknown-op call shows up with operation = the attempted name.
+      const callRow = rows.find(r => r.operation === 'this_tool_does_not_exist');
       expect(callRow).toBeDefined();
-      expect(callRow!.params).toBeDefined();
+      expect(callRow!.status).toBe('error');
 
       // error_message populated on the failed call.
       const errorRow = rows.find(r => r.status === 'error');
       expect(errorRow).toBeDefined();
       expect(errorRow!.error_message).toBeTruthy();
       expect(typeof errorRow!.error_message).toBe('string');
+      expect(errorRow!.error_message as string).toContain('unknown_operation');
     } finally {
       await sql.end();
     }
@@ -814,7 +832,12 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // Together they close the path even if either layer regresses alone.
 
   test('F7: HTTP MCP cannot submit shell jobs (RCE regression)', async () => {
-    const { access_token } = await mintToken('read write');
+    // v0.28.10: must mint admin scope. submit_job's required scope is
+    // 'admin'; without it, hasScope() rejects with insufficient_scope BEFORE
+    // the F7 protected-name guard at operations.ts:1527 fires. To validate
+    // the actual RCE protection (the protected-name guard), the token has
+    // to clear the scope check first.
+    const { access_token } = await mintToken('admin');
     const res = await mcpCall(access_token, 'tools/call', {
       name: 'submit_job',
       arguments: { name: 'shell', data: { cmd: 'id' } },
@@ -838,7 +861,8 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }, 15_000);
 
   test('F7: HTTP MCP cannot submit subagent jobs (protected name)', async () => {
-    const { access_token } = await mintToken('read write');
+    // Same admin-scope requirement as the shell-job sibling test above.
+    const { access_token } = await mintToken('admin');
     const res = await mcpCall(access_token, 'tools/call', {
       name: 'submit_job',
       arguments: { name: 'subagent', data: { prompt: 'noop' } },
