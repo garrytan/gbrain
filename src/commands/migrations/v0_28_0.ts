@@ -96,9 +96,34 @@ async function phaseBBackfill(
   if (!engine) return { name: 'backfill', status: 'skipped', detail: 'no_brain_configured' };
 
   try {
-    // Inline run on both engines for v0.28.0 simplicity. Larger brains can run
-    // `gbrain extract takes --rebuild` later; the migration's job is to get
-    // the table populated for upgrade-time doctor checks.
+    // Postgres brains can be large and remote. Do not block
+    // `apply-migrations` on a foreground full-brain scan; queue the work for a
+    // Minion worker and let the migration ledger reach a terminal state.
+    if (engine.kind === 'postgres') {
+      const { MinionQueue } = await import('../../core/minions/queue.ts');
+      const queue = new MinionQueue(engine);
+      const job = await queue.add('extract-takes', {
+        source: 'db',
+        rebuild: false,
+        migration: '0.28.0',
+      }, {
+        queue: 'default',
+        priority: 5,
+        max_attempts: 3,
+        max_stalled: 5,
+        timeout_ms: 30 * 60_000,
+        maxWaiting: 1,
+        idempotency_key: 'migration:0.28.0:extract-takes:db',
+      });
+      return {
+        name: 'backfill',
+        status: 'complete',
+        detail: `queued extract-takes job #${job.id} (idempotency_key=migration:0.28.0:extract-takes:db)`,
+      };
+    }
+
+    // PGLite brains are local and small enough for the inline path; they also
+    // may not have a persistent worker process.
     const { extractTakes } = await import('../../core/cycle/extract-takes.ts');
     const result = await extractTakes(engine, { source: 'db' });
     return {
@@ -143,7 +168,7 @@ function phaseCRechunkTodo(opts: OrchestratorOpts): OrchestratorPhaseResult {
       ts: new Date().toISOString(),
       skill: 'skills/migrations/v0.28.0.md',
       reason: 'Pages with pre-v0.28 chunks still contain fenced takes content. Re-chunk so the new chunker strip rule is applied (Codex P0 #3 fix).',
-      command: "gbrain extract takes --rebuild  # forces re-chunk via reimport pipeline; see migration doc for the precise sweep command in your env",
+      command: "gbrain jobs submit extract-takes --params '{\"source\":\"db\",\"rebuild\":true}' --follow",
       _key: key,
     };
     appendFileSync(pendingHostWorkPath(), JSON.stringify(entry) + '\n');
