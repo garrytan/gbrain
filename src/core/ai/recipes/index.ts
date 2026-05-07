@@ -10,6 +10,7 @@ import { openai } from './openai.ts';
 import { google } from './google.ts';
 import { anthropic } from './anthropic.ts';
 import { ollama } from './ollama.ts';
+import { llamaServer } from './llama-server.ts';
 import { voyage } from './voyage.ts';
 import { litellmProxy } from './litellm-proxy.ts';
 import { deepseek } from './deepseek.ts';
@@ -21,6 +22,7 @@ const ALL: Recipe[] = [
   google,
   anthropic,
   ollama,
+  llamaServer,
   voyage,
   litellmProxy,
   deepseek,
