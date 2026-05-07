@@ -285,8 +285,42 @@ export async function hybridSearch(
     // Non-fatal: missing tables or transient DB error must not break base retrieval.
   }
 
+  // Query-token overlap rerank: when same-prefix-family pages tie on RRF
+  // (e.g. "Demo Day W34" returns 13 demo-day pages), boost results whose
+  // chunk_text contains more of the query's distinct word-tokens. Pure
+  // multiplicative score-shaping. Multilingual-safe via Unicode word
+  // boundaries (\p{L}+); no English stopword list, no entity dictionary.
+  applyQueryTokenOverlapBoost(withGraphHop, query);
+  withGraphHop.sort((a, b) => b.score - a.score);
+
   emitMeta({ vector_enabled: true, detail_resolved: detailResolved, expansion_applied: expansionApplied });
   return withGraphHop.slice(offset, offset + limit);
+}
+
+/**
+ * Multiply each result's score by (1 + QTO_FACTOR * matched / total) where
+ * matched counts how many of the query's distinct word-tokens appear in the
+ * result's chunk_text. \p{L}+ tokenization is multilingual-safe.
+ */
+const QTO_FACTOR = 0.15;
+const QTO_TOKEN_RE = /\p{L}+/gu;
+function applyQueryTokenOverlapBoost(results: SearchResult[], query: string): void {
+  const queryTokens = new Set<string>();
+  for (const m of (query.match(QTO_TOKEN_RE) ?? [])) {
+    if (m.length >= 2) queryTokens.add(m.toLowerCase());
+  }
+  if (queryTokens.size === 0) return;
+  for (const r of results) {
+    const text = (r.chunk_text || '').toLowerCase();
+    let matched = 0;
+    for (const t of queryTokens) {
+      if (text.includes(t)) matched++;
+    }
+    if (matched > 0) {
+      const factor = 1 + QTO_FACTOR * (matched / queryTokens.size);
+      r.score *= factor;
+    }
+  }
 }
 
 /**
