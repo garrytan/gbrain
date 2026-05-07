@@ -668,9 +668,21 @@ async function extractTimelineFromDir(
 
 // --- Sync integration hooks ---
 
-export async function extractLinksForSlugs(engine: BrainEngine, repoPath: string, slugs: string[]): Promise<number> {
+export async function extractLinksForSlugs(
+  engine: BrainEngine,
+  repoPath: string,
+  slugs: string[],
+  opts?: { sourceId?: string },
+): Promise<number> {
   const allFiles = walkMarkdownFiles(repoPath);
   const allSlugs = new Set(allFiles.map(f => f.relPath.replace('.md', '')));
+  // v0.18.0+ multi-source: post-sync extract reconciles same-source edges.
+  // Markdown→markdown links within one repo always live in the caller's
+  // sourceId. Cross-source extraction (rare) would need a per-repo source
+  // manifest; not in this PR's scope.
+  const linkOpts = opts?.sourceId
+    ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
+    : undefined;
   let created = 0;
   for (const slug of slugs) {
     const filePath = join(repoPath, slug + '.md');
@@ -678,14 +690,23 @@ export async function extractLinksForSlugs(engine: BrainEngine, repoPath: string
     try {
       const content = readFileSync(filePath, 'utf-8');
       for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs)) {
-        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type); created++; } catch { /* skip */ }
+        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, undefined, undefined, undefined, linkOpts); created++; } catch { /* skip */ }
       }
     } catch { /* skip */ }
   }
   return created;
 }
 
-export async function extractTimelineForSlugs(engine: BrainEngine, repoPath: string, slugs: string[]): Promise<number> {
+export async function extractTimelineForSlugs(
+  engine: BrainEngine,
+  repoPath: string,
+  slugs: string[],
+  opts?: { sourceId?: string },
+): Promise<number> {
+  // v0.18.0+ multi-source: source-qualify so timeline rows don't fan out
+  // across every source containing the slug (the addTimelineEntry's
+  // INSERT...SELECT-from-pages fan-out was Data R1's HIGH 2).
+  const entryOpts = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
   let created = 0;
   for (const slug of slugs) {
     const filePath = join(repoPath, slug + '.md');
@@ -693,7 +714,7 @@ export async function extractTimelineForSlugs(engine: BrainEngine, repoPath: str
     try {
       const content = readFileSync(filePath, 'utf-8');
       for (const entry of extractTimelineFromContent(content, slug)) {
-        try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }); created++; } catch { /* skip */ }
+        try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ }
       }
     } catch { /* skip */ }
   }

@@ -188,6 +188,7 @@ export async function importFromContent(
   content: string,
   opts: {
     noEmbed?: boolean;
+    sourceId?: string;
     /**
      * v0.29.1: basename without extension for filename-date precedence on
      * `daily/`, `meetings/` slugs. importFromFile threads this from the
@@ -196,6 +197,12 @@ export async function importFromContent(
     filename?: string;
   } = {},
 ): Promise<ImportResult> {
+  // v0.18.0+ multi-source: when caller is syncing under a non-default source,
+  // every per-page tx call must carry `sourceId` so writes target the right
+  // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and
+  // silently fabricated a duplicate at (default, slug) — causing later
+  // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
+  const sourceId = opts.sourceId;
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -232,7 +239,7 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
-  const existing = await engine.getPage(slug);
+  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
   if (existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
@@ -268,9 +275,13 @@ export async function importFromContent(
     }
   }
 
-  // Transaction wraps all DB writes
+  // Transaction wraps all DB writes. Every per-page tx call carries the
+  // caller's sourceId so writes target (sourceId, slug) rather than the
+  // schema DEFAULT — required for multi-source brains; harmless ('default')
+  // for single-source callers.
+  const txOpts = sourceId ? { sourceId } : undefined;
   await engine.transaction(async (tx) => {
-    if (existing) await tx.createVersion(slug);
+    if (existing) await tx.createVersion(slug, txOpts);
 
     // v0.29.1 — compute effective_date from frontmatter precedence chain.
     // Filename comes from importFromFile path (basename) or the slug tail
@@ -299,23 +310,23 @@ export async function importFromContent(
       effective_date: effectiveDate,
       effective_date_source: effectiveDateSource,
       import_filename: filenameForChain,
-    });
+    }, txOpts);
 
     // Tag reconciliation: remove stale, add current
-    const existingTags = await tx.getTags(slug);
+    const existingTags = await tx.getTags(slug, txOpts);
     const newTags = new Set(parsed.tags);
     for (const old of existingTags) {
-      if (!newTags.has(old)) await tx.removeTag(slug, old);
+      if (!newTags.has(old)) await tx.removeTag(slug, old, txOpts);
     }
     for (const tag of parsed.tags) {
-      await tx.addTag(slug, tag);
+      await tx.addTag(slug, tag, txOpts);
     }
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks);
+      await tx.upsertChunks(slug, chunks, txOpts);
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
-      await tx.deleteChunks(slug);
+      await tx.deleteChunks(slug, txOpts);
     }
 
     // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
@@ -325,6 +336,15 @@ export async function importFromContent(
     // before their code repo syncs are common, and the missing edges land
     // later via `gbrain reconcile-links` (Layer 8 D3, v0.21.0).
     const codeRefs = extractCodeRefs(parsed.compiled_truth + '\n' + (parsed.timeline || ''));
+    // For doc↔impl edges, both endpoints are within the same source as the
+    // markdown page being imported. Cross-source edges (markdown in one
+    // source, code in another) currently fail with "page not found" — a
+    // faster failure mode than the pre-fix cross-product fan-out, which
+    // silently wired edges to whichever same-slug page Postgres returned
+    // first across sources.
+    const linkOpts = sourceId
+      ? { fromSourceId: sourceId, toSourceId: sourceId, originSourceId: sourceId }
+      : undefined;
     for (const ref of codeRefs) {
       const codeSlug = slugifyCodePath(ref.path);
       // Forward: markdown guide → code page (this guide documents that code)
@@ -333,6 +353,7 @@ export async function importFromContent(
           slug, codeSlug,
           ref.line ? `cited at ${ref.path}:${ref.line}` : ref.path,
           'documents', 'markdown', slug, 'compiled_truth',
+          linkOpts,
         );
       } catch { /* code page not yet imported — reconcile-links will catch it */ }
       // Reverse: code page → markdown guide (this code is documented by the guide)
@@ -340,6 +361,7 @@ export async function importFromContent(
         await tx.addLink(
           codeSlug, slug,
           ref.path, 'documented_by', 'markdown', slug, 'compiled_truth',
+          linkOpts,
         );
       } catch { /* same reason — silent skip */ }
     }
@@ -362,7 +384,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean; inferFrontmatter?: boolean } = {},
+  opts: { noEmbed?: boolean; inferFrontmatter?: boolean; sourceId?: string } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -379,7 +401,10 @@ export async function importFromFile(
 
   // Route code files through the code import path
   if (isCodeFilePath(relativePath)) {
-    return importCodeFile(engine, relativePath, content, opts);
+    return importCodeFile(engine, relativePath, content, {
+      noEmbed: opts.noEmbed,
+      sourceId: opts.sourceId,
+    });
   }
 
   // v0.22.8 — Frontmatter inference: if the file has no frontmatter and
@@ -431,11 +456,13 @@ export async function importCodeFile(
   engine: BrainEngine,
   relativePath: string,
   content: string,
-  opts: { noEmbed?: boolean; force?: boolean } = {},
+  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string } = {},
 ): Promise<ImportResult> {
   const slug = slugifyCodePath(relativePath);
   const lang = detectCodeLanguage(relativePath) || 'unknown';
   const title = `${relativePath} (${lang})`;
+  const sourceId = opts.sourceId;
+  const txOpts = sourceId ? { sourceId } : undefined;
 
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
@@ -448,7 +475,7 @@ export async function importCodeFile(
     .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
     .digest('hex');
 
-  const existing = await engine.getPage(slug);
+  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
   if (!opts.force && existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0 };
   }
@@ -486,7 +513,7 @@ export async function importCodeFile(
   // OpenAI API. Order matters: our chunk_index is semantic (tree-sitter
   // order), so a matching (chunk_index, text_hash) means a verbatim
   // preserved symbol.
-  const existingChunks = existing ? await engine.getChunks(slug) : [];
+  const existingChunks = existing ? await engine.getChunks(slug, sourceId ? { sourceId } : undefined) : [];
   const existingByKey = new Map<string, typeof existingChunks[number]>();
   for (const ec of existingChunks) {
     existingByKey.set(`${ec.chunk_index}:${ec.chunk_text}`, ec);
@@ -519,9 +546,11 @@ export async function importCodeFile(
     }
   }
 
-  // Store
+  // Store. Every per-page tx call carries `txOpts.sourceId` so multi-source
+  // brains write to the correct (source_id, slug) row instead of duplicating
+  // under the schema DEFAULT.
   await engine.transaction(async (tx) => {
-    if (existing) await tx.createVersion(slug);
+    if (existing) await tx.createVersion(slug, txOpts);
 
     await tx.putPage(slug, {
       type: 'code' as PageType,
@@ -531,15 +560,15 @@ export async function importCodeFile(
       timeline: '',
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
-    });
+    }, txOpts);
 
-    await tx.addTag(slug, 'code');
-    await tx.addTag(slug, lang);
+    await tx.addTag(slug, 'code', txOpts);
+    await tx.addTag(slug, lang, txOpts);
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks);
+      await tx.upsertChunks(slug, chunks, txOpts);
     } else {
-      await tx.deleteChunks(slug);
+      await tx.deleteChunks(slug, txOpts);
     }
   });
 
@@ -550,7 +579,7 @@ export async function importCodeFile(
   // chunk IDs are stable.
   if (extractedEdges.length > 0 && chunks.length > 0) {
     try {
-      const persistedChunks = await engine.getChunks(slug);
+      const persistedChunks = await engine.getChunks(slug, sourceId ? { sourceId } : undefined);
       const byIndex = new Map<number, { id?: number; symbol_name_qualified?: string | null; start_line?: number | null; end_line?: number | null }>();
       for (const pc of persistedChunks) {
         byIndex.set(pc.chunk_index, pc);

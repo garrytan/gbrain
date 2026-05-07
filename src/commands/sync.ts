@@ -483,12 +483,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // strategy=markdown) deletes the actual code-slug page, not a ghost
   // markdown-slug that never existed.
   const unsyncableModified = manifest.modified.filter(p => !isSyncable(p, syncOpts));
+  // v0.18.0+ multi-source: scope getPage + deletePage to opts.sourceId so
+  // unsyncable cleanup in source A doesn't accidentally sweep same-slug
+  // pages in sources B/C/D.
+  const pageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   for (const path of unsyncableModified) {
     const slug = resolveSlugForPath(path);
     try {
-      const existing = await engine.getPage(slug);
+      const existing = await engine.getPage(slug, pageOpts);
       if (existing) {
-        await engine.deletePage(slug);
+        await engine.deletePage(slug, pageOpts);
         console.log(`  Deleted un-syncable page: ${slug}`);
       }
     } catch { /* ignore */ }
@@ -550,11 +554,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // Process deletes first (prevents slug conflicts). SP-5: resolveSlugForPath
   // dispatches to the right slug shape so code file deletes hit the real page.
+  // v0.18.0+ multi-source: scope deletePage so we only delete the source-A
+  // row, not every same-slug row across all sources.
+  const deleteOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   if (filtered.deleted.length > 0) {
     progress.start('sync.deletes', filtered.deleted.length);
     for (const path of filtered.deleted) {
       const slug = resolveSlugForPath(path);
-      await engine.deletePage(slug);
+      await engine.deletePage(slug, deleteOpts);
       pagesAffected.push(slug);
       progress.tick(1, slug);
     }
@@ -567,18 +574,22 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // all resolve to the right slug shape for each side.
   if (filtered.renamed.length > 0) {
     progress.start('sync.renames', filtered.renamed.length);
+    // v0.18.0+ multi-source: scope updateSlug so the rename only touches the
+    // source-A row, not every same-slug row across sources (which would
+    // either sweep them all OR violate (source_id, slug) UNIQUE).
+    const renameOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
     for (const { from, to } of filtered.renamed) {
       const oldSlug = resolveSlugForPath(from);
       const newSlug = resolveSlugForPath(to);
       try {
-        await engine.updateSlug(oldSlug, newSlug);
+        await engine.updateSlug(oldSlug, newSlug, renameOpts);
       } catch {
         // Slug doesn't exist or collision, treat as add
       }
       // Reimport at new path (picks up content changes)
       const filePath = join(repoPath, to);
       if (existsSync(filePath)) {
-        const result = await importFile(engine, filePath, to, { noEmbed });
+        const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId });
         if (result.status === 'imported') chunksCreated += result.chunks;
       }
       pagesAffected.push(newSlug);
@@ -633,7 +644,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         return;
       }
       try {
-        const result = await importFile(eng, filePath, path, { noEmbed });
+        // v0.18.0+ multi-source: thread `opts.sourceId` so per-page tx writes
+        // (putPage / getTags / addTag / removeTag / deleteChunks / upsertChunks
+        // / addLink) target (sourceId, slug). Pre-fix the schema DEFAULT
+        // 'default' was applied even for non-default sources, fabricating
+        // duplicate rows that crashed bare-slug subqueries with Postgres 21000.
+        const result = await importFile(eng, filePath, path, { noEmbed, sourceId: opts.sourceId });
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
@@ -803,19 +819,32 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     summary: `Sync: +${filtered.added.length} ~${filtered.modified.length} -${filtered.deleted.length} R${filtered.renamed.length}, ${chunksCreated} chunks, ${elapsed}ms`,
   });
 
-  // Auto-extract links + timeline (always, extraction is cheap CPU)
+  // Auto-extract links + timeline (always, extraction is cheap CPU).
+  // Thread opts.sourceId so the extract phase reconciles edges + timeline
+  // entries against the right source — pre-fix (Data R1 HIGH 1) this phase
+  // bypassed sourceId entirely and the bare-slug subquery in addTimelineEntry
+  // (Data R1 HIGH 2) crashed with 21000 in multi-source brains.
+  const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   if (!opts.noExtract && pagesAffected.length > 0) {
     try {
       const { extractLinksForSlugs, extractTimelineForSlugs } = await import('./extract.ts');
-      const linksCreated = await extractLinksForSlugs(engine, repoPath, pagesAffected);
-      const timelineCreated = await extractTimelineForSlugs(engine, repoPath, pagesAffected);
+      const linksCreated = await extractLinksForSlugs(engine, repoPath, pagesAffected, extractOpts);
+      const timelineCreated = await extractTimelineForSlugs(engine, repoPath, pagesAffected, extractOpts);
       if (linksCreated > 0 || timelineCreated > 0) {
         console.log(`  Extracted: ${linksCreated} links, ${timelineCreated} timeline entries`);
       }
     } catch { /* extraction is best-effort */ }
   }
 
-  // Auto-embed (skip for large syncs — embedding calls OpenAI)
+  // Auto-embed (skip for large syncs — embedding calls OpenAI).
+  // TODO(multi-source): runEmbed → src/commands/embed.ts:175 + :418 call
+  // upsertChunks defaulting to source='default'. For non-default-source syncs
+  // the page row lives at (sourceId, slug) so this fails with "Page not found"
+  // OR (when a same-slug 'default' row coexists) updates the wrong source's
+  // chunks. Data R1 MED 2 — deferred to a follow-up PR; threading sourceId
+  // through embed.ts is a larger refactor than this fix's scope. The current
+  // try/catch swallows the failure as best-effort, so the sync result still
+  // reports `embedded: 0` for the right reason.
   let embedded = 0;
   if (!noEmbed && pagesAffected.length > 0 && pagesAffected.length <= 100) {
     try {
