@@ -2,6 +2,115 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.28.11] - 2026-05-07
+
+**Mix providers: OpenAI for text, Voyage for images. One brain, two embedding pipelines.**
+**Multimodal model routing finally has its own knob.**
+
+v0.28.9 shipped multimodal image embeddings via Voyage, but the gateway hardcoded
+`embedMultimodal()` to the brain's primary `embedding_model`. Brains using OpenAI
+`text-embedding-3-large` (1536-dim) for text could not use Voyage `voyage-multimodal-3`
+(1024-dim) for images without flipping the entire pipeline. The dual-column schema
+already supported different dimensions per touchpoint; the routing was the missing piece.
+
+You can now set a separate model just for multimodal:
+
+```bash
+gbrain config set embedding_multimodal true
+gbrain config set embedding_multimodal_model voyage:voyage-multimodal-3
+export VOYAGE_API_KEY=...
+gbrain sync
+```
+
+Text embeddings go to OpenAI (1536-dim, `embedding` column). Image embeddings go to
+Voyage (1024-dim, `embedding_image` column). Same brain, side by side.
+
+When unset, `embedMultimodal()` falls back to `embedding_model` so existing
+single-provider setups keep working unchanged.
+
+### Hardening from review
+
+The /codex outside-voice review on the original PR caught a real footgun the
+recipe-level validation missed: Voyage shares `supports_multimodal: true` across
+all 12 of its embedding models, but only `voyage-multimodal-3` accepts image input
+at `/multimodalembeddings`. Pointing the new key at any other Voyage model would
+have failed at the endpoint with HTTP 400, which the gateway misclassified as
+transient and retried indefinitely.
+
+This release closes the gap with model-level validation. `EmbeddingTouchpoint`
+gains an optional `multimodal_models?: string[]` allow-list. Voyage declares
+`['voyage-multimodal-3']`. `embedMultimodal()` validates the resolved model
+against the allow-list and throws `AIConfigError` with the supported model in
+the fix hint, before any HTTP call. The 4xx-misclassified-as-transient bug is
+filed as a separate TODO under v0.28.x.
+
+### Itemized changes
+
+#### Added
+- `embedding_multimodal_model` config key (env: `GBRAIN_EMBEDDING_MULTIMODAL_MODEL`,
+  DB: `gbrain config set embedding_multimodal_model <provider>:<model>`). Standard
+  env > file > DB > undefined precedence via `loadConfigWithEngine` (#719).
+- `EmbeddingTouchpoint.multimodal_models?: string[]` model-level allow-list for
+  recipes that mix text-only and multimodal models under the same touchpoint
+  (#719, hardening from /codex review).
+- `getMultimodalModel()` gateway accessor mirroring `getEmbeddingModel` /
+  `getChatModel` (#719).
+
+#### Changed
+- `connectEngine()` in `src/cli.ts` now extracts a file-local
+  `buildGatewayConfig(c: GBrainConfig)` helper. Both pre-connect and
+  post-DB-merge `configureGateway` call sites pass through the helper, so adding
+  a new gateway-relevant config field touches one place (#719).
+- The post-DB-merge `configureGateway` call is no longer gated on a specific
+  field name. Re-config now always fires when `loadConfigWithEngine` returns
+  non-null. Removes temporal coupling between the trigger and the field set so
+  future DB-mutable gateway fields auto-flow without remembering to update the
+  gate (#719).
+- `embedMultimodal()` enforces model-level multimodal capability when the
+  recipe declares `multimodal_models`. Recipe-level `supports_multimodal` stays
+  as a fast-fail for non-multimodal providers (Anthropic, OpenAI today) (#719).
+
+#### Tests
+- 4 new cases in `test/loadConfig-merge.test.ts` for env > file > DB precedence
+  on `embedding_multimodal_model`.
+- 4 new cases in `test/voyage-multimodal.test.ts` for model preference
+  (multimodal_model over embedding_model), fallback regression, AIConfigError on
+  cross-recipe non-multimodal pointer, AIConfigError on Voyage text-only model
+  (the /codex F1 model-level validation gap).
+- New `test/cli-multimodal-integration.test.ts` (3 cases) covering the cli.ts
+  re-config glue itself via PGLite. Closes the "mechanical glue" gap that unit
+  tests of the surrounding APIs leave behind.
+
+#### Documentation
+- 3 new TODOs filed: `gbrain doctor` warns for misconfigured multimodal
+  setups; reclassify Voyage HTTP 4xx as `AIConfigError` (closes the
+  retry-storm-on-config-bug class); `gbrain config unset <key>` so users can
+  clear DB-set keys without direct SQL.
+
+## To take advantage of v0.28.11
+
+`gbrain upgrade` should do this automatically. To use the new routing on an
+existing brain:
+
+1. **Configure the multimodal model:**
+   ```bash
+   gbrain config set embedding_multimodal true
+   gbrain config set embedding_multimodal_model voyage:voyage-multimodal-3
+   export VOYAGE_API_KEY=$(... your key ...)
+   ```
+2. **Verify the gateway sees it:**
+   ```bash
+   gbrain config get embedding_multimodal_model
+   ```
+3. **Drop an image into your brain repo and sync:**
+   ```bash
+   gbrain sync
+   ```
+   The image lands in `content_chunks.embedding_image` (1024-dim) via Voyage;
+   text content keeps using your primary `embedding_model`.
+4. **If anything misconfigures,** the gateway throws `AIConfigError` with a
+   clear fix hint before any HTTP call. No silent retry storms.
+
 ## [0.28.10] - 2026-05-07
 
 **`/health` stops being slow. Stops triggering restart cascades.**
