@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunks_page ON content_chunks(page_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+__EMBEDDING_INDEX__
 -- v0.19.0: partial indexes for code chunk lookups.
 CREATE INDEX IF NOT EXISTS idx_chunks_symbol_name ON content_chunks(symbol_name) WHERE symbol_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE language IS NOT NULL;
@@ -538,10 +538,15 @@ export function getPGLiteSchema(dims: number = 1536, model: string = 'text-embed
   if (!Number.isInteger(parsedDims) || parsedDims <= 0) {
     throw new Error(`Invalid embedding dimensions: ${dims}`);
   }
+  const embeddingIndex = parsedDims <= 2000
+    ? 'CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);'
+    : '-- HNSW index skipped: embedding dimensions exceed PGLite 2000-dim limit. Sequential scan used.';
+
   const sanitizedModel = String(model).replace(/'/g, "''");
   return applyChunkEmbeddingIndexPolicy(PGLITE_SCHEMA_SQL_TEMPLATE, parsedDims)
     .replace(/__EMBEDDING_DIMS__/g, String(parsedDims))
-    .replace(/__EMBEDDING_MODEL__/g, sanitizedModel);
+    .replace(/__EMBEDDING_MODEL__/g, sanitizedModel)
+    .replace(/__EMBEDDING_INDEX__/g, embeddingIndex);;
 }
 
 /** Back-compat: pre-computed default-1536 schema for existing callers. */
