@@ -15,6 +15,7 @@ import { litellmProxy } from './litellm-proxy.ts';
 import { deepseek } from './deepseek.ts';
 import { groq } from './groq.ts';
 import { together } from './together.ts';
+import { openaiCodex } from './openai-codex.ts';
 
 const ALL: Recipe[] = [
   openai,
@@ -26,6 +27,7 @@ const ALL: Recipe[] = [
   deepseek,
   groq,
   together,
+  openaiCodex,
 ];
 
 /** Map from `provider:id` key to recipe. */
