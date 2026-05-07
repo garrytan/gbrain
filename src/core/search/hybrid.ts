@@ -18,7 +18,7 @@ import { autoDetectDetail } from './intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { buildVisibilityClause } from './sql-ranking.ts';
 
-const RRF_K = 60;
+const RRF_K = 20;
 const COMPILED_TRUTH_BOOST = 2.0;
 /**
  * Graph-hop rerank: after dedup, extract `[text](slug)` markdown wikilinks
