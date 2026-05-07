@@ -5,6 +5,8 @@ installSigchldHandler();
 
 import { readFileSync } from 'fs';
 import { loadConfig, loadConfigWithEngine, toEngineConfig } from './core/config.ts';
+import type { GBrainConfig } from './core/config.ts';
+import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
@@ -702,6 +704,24 @@ async function handleCliOnly(command: string, args: string[]) {
   }
 }
 
+// Build the AIGatewayConfig payload from a GBrainConfig. File-local; not
+// exported. Both configureGateway sites in connectEngine() pass through this
+// helper so adding a new field touches one place. Adding a field to one site
+// but not the other previously required remembering to mirror the change;
+// the helper makes that structural.
+function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
+  return {
+    embedding_model: c.embedding_model,
+    embedding_dimensions: c.embedding_dimensions,
+    embedding_multimodal_model: c.embedding_multimodal_model,
+    expansion_model: c.expansion_model,
+    chat_model: c.chat_model,
+    chat_fallback_chain: c.chat_fallback_chain,
+    base_urls: c.provider_base_urls,
+    env: { ...process.env },
+  };
+}
+
 async function connectEngine(): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
@@ -712,16 +732,7 @@ async function connectEngine(): Promise<BrainEngine> {
   // Configure the AI gateway BEFORE engine connect — initSchema needs embedding dims.
   // Env is read once here; the gateway never reads process.env at call time (Codex C3).
   const { configureGateway } = await import('./core/ai/gateway.ts');
-  configureGateway({
-    embedding_model: config.embedding_model,
-    embedding_dimensions: config.embedding_dimensions,
-    embedding_multimodal_model: config.embedding_multimodal_model,
-    expansion_model: config.expansion_model,
-    chat_model: config.chat_model,
-    chat_fallback_chain: config.chat_fallback_chain,
-    base_urls: config.provider_base_urls,
-    env: { ...process.env },
-  });
+  configureGateway(buildGatewayConfig(config));
 
   const { createEngine } = await import('./core/engine-factory.ts');
   const engine = await createEngine(toEngineConfig(config));
@@ -756,11 +767,10 @@ async function connectEngine(): Promise<BrainEngine> {
   try {
     const merged = await loadConfigWithEngine(engine, config);
     if (merged) {
-      // Only re-configure when a runtime-relevant DB flag actually overrode
-      // a pre-connect default. Today the only consumer is the import-image
-      // path; the gateway itself doesn't read these flags. The stash on
-      // process.env preserves the contract for downstream readers without
-      // changing the gateway's signature.
+      // Stash gate flags on process.env for downstream readers (import-file.ts
+      // dispatches on GBRAIN_EMBEDDING_MULTIMODAL, OCR consumer reads
+      // GBRAIN_EMBEDDING_IMAGE_OCR_*). The gateway itself doesn't read these
+      // flags; this preserves the contract without changing the gateway shape.
       if (merged.embedding_multimodal !== undefined) {
         process.env.GBRAIN_EMBEDDING_MULTIMODAL = String(merged.embedding_multimodal);
       }
@@ -770,21 +780,12 @@ async function connectEngine(): Promise<BrainEngine> {
       if (merged.embedding_image_ocr_model !== undefined) {
         process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL = merged.embedding_image_ocr_model;
       }
-      // Re-configure gateway when multimodal model was set via DB config.
-      // Without this, embedMultimodal() falls through to the primary
-      // embedding_model which may not support multimodal (e.g. OpenAI).
-      if (merged.embedding_multimodal_model) {
-        configureGateway({
-          embedding_model: merged.embedding_model ?? config.embedding_model,
-          embedding_dimensions: merged.embedding_dimensions ?? config.embedding_dimensions,
-          embedding_multimodal_model: merged.embedding_multimodal_model,
-          expansion_model: merged.expansion_model ?? config.expansion_model,
-          chat_model: merged.chat_model ?? config.chat_model,
-          chat_fallback_chain: merged.chat_fallback_chain ?? config.chat_fallback_chain,
-          base_urls: config.provider_base_urls,
-          env: { ...process.env },
-        });
-      }
+      // Always re-configure with merged values when DB merge succeeded. The
+      // trigger used to be field-name-gated (only when embedding_multimodal_model
+      // was set); that coupled the gate to the field set and would silently
+      // miss future DB-mutable gateway fields. One extra cache+shrinkState
+      // clear per startup is microseconds, no hot path.
+      configureGateway(buildGatewayConfig(merged));
     }
   } catch {
     // Non-fatal. Pre-v39 brains may not have a usable config table yet.
