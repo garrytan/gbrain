@@ -118,7 +118,9 @@ async function phaseBBackfill(
       return {
         name: 'backfill',
         status: 'complete',
-        detail: `queued extract-takes job #${job.id} (idempotency_key=migration:0.28.0:extract-takes:db)`,
+        detail:
+          `queued extract-takes job #${job.id} (idempotency_key=migration:0.28.0:extract-takes:db); ` +
+          `run 'gbrain jobs work' if no worker daemon is active`,
       };
     }
 

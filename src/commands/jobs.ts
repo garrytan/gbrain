@@ -178,7 +178,8 @@ HANDLER TYPES (built in)
   lint              Run page linter; --params '{"dir":"...","fix":true}'
   import            Bulk import markdown; --params '{"dir":"..."}'
   extract           Extract links + timeline entries; '{"mode":"all"}'
-  extract-takes     Backfill typed takes from fenced markdown; '{"source":"db"}'
+  extract-takes     Backfill typed takes from fenced markdown; '{"source":"db","rebuild":true}'
+                    For fs source, pass '{"source":"fs","repoPath":"..."}'
   backlinks         Check or fix back-links; '{"action":"fix"}'
   autopilot-cycle   One autopilot pass (sync+extract+embed+backlinks)
   shell             Run a command or argv. Requires GBRAIN_ALLOW_SHELL_JOBS=1
