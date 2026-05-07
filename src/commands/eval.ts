@@ -37,6 +37,14 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalReplay } = await import('./eval-replay.ts');
     return runEvalReplay(engine, args.slice(1));
   }
+  if (sub === 'cross-modal') {
+    // No-DB sub-subcommand. The cli.ts dispatcher routes the user-facing
+    // path before connectEngine, so this branch only fires when callers
+    // already have an engine and re-enter via runEvalCommand. Engine is
+    // intentionally unused.
+    const { runEvalCrossModal } = await import('./eval-cross-modal.ts');
+    process.exit(await runEvalCrossModal(args.slice(1)));
+  }
 
   const opts = parseArgs(args);
 

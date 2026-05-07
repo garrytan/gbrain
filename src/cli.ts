@@ -452,6 +452,16 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // `eval cross-modal` is a pure API-call command — no DB, no brain. Bypass
+  // connectEngine entirely so first-run users (no `gbrain init` yet) can
+  // run the quality gate. Mirrors the dream/doctor no-DB pattern but
+  // doesn't even attempt the connect (T3=A in plans/radiant-napping-lerdorf.md).
+  // The handler self-configures the AI gateway from loadConfig() + process.env.
+  if (command === 'eval' && args[0] === 'cross-modal') {
+    const { runEvalCrossModal } = await import('./commands/eval-cross-modal.ts');
+    process.exit(await runEvalCrossModal(args.slice(1)));
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
