@@ -588,10 +588,14 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     const available = isAvailable('embedding');
 
     if (!available) {
+      // Per v0.28.5 plan P1: silently skipped when no API key is configured.
+      // Doctor must stay green on CI / local-only / offline environments where
+      // a full provider probe isn't possible. The skipped status is still
+      // visible in --json output so operators can see it ran.
       checks.push({
         name: 'embedding_provider',
-        status: 'fail',
-        message: `Embedding provider not available. Model: ${configuredModel}. Check API keys.`,
+        status: 'ok',
+        message: `Skipped (no provider credentials). Model: ${configuredModel}.`,
       });
     } else {
       // Live embed test
@@ -632,9 +636,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       }
     }
   } catch (e: any) {
+    // Per v0.28.5 plan P1: non-fatal on network failure. The probe surfaces
+    // the issue but doesn't fail doctor — common cases (rate limit, transient
+    // 5xx, DNS blip, expired key) shouldn't take down a CI run.
     checks.push({
       name: 'embedding_provider',
-      status: 'fail',
+      status: 'warn',
       message: `Embedding provider probe failed: ${e.message?.slice(0, 200) ?? e}`,
     });
   }
