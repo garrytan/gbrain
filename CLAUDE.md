@@ -531,8 +531,12 @@ E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_U
 - Tier 2 (`skills.test.ts`) requires OpenClaw + API keys, runs nightly in CI
 - If `.env.testing` doesn't exist in this directory, check sibling worktrees for one:
   `find ../  -maxdepth 2 -name .env.testing -print -quit` and copy it here if found.
-- Always run E2E tests when they exist. Do not skip them just because DATABASE_URL
-  is not set. Start the test DB, run the tests, then tear it down.
+- **Run E2E tests without asking permission.** When you want to verify behavior,
+  there's a relevant E2E test, or you're shipping touching anything covered by an
+  E2E suite — just spin up the test DB, run the tests, and tear down. Don't ask,
+  don't propose it, don't defer. The lifecycle is short (~2-30s startup, sub-minute
+  tests, instant teardown) and the gate value is high. Skipping with "DATABASE_URL
+  unset" is silent regression, not caution.
 
 ### API keys and running ALL tests
 
@@ -554,7 +558,8 @@ When asked to "run all E2E tests" or "run tests", that means ALL tiers:
 ### E2E test DB lifecycle (ALWAYS follow this)
 
 You are responsible for spinning up and tearing down the test Postgres container.
-Do not leave containers running after tests. Do not skip E2E tests.
+Do not leave containers running after tests. Do not skip E2E tests, do not ask
+permission to run them — see the "run without asking" rule above.
 
 1. **Check for `.env.testing`** — if missing, copy from sibling worktree.
    Read it to get the DATABASE_URL (it has the port number).
@@ -569,9 +574,21 @@ Do not leave containers running after tests. Do not skip E2E tests.
      -p PORT:5432 pgvector/pgvector:pg16
    ```
    Wait for ready: `docker exec gbrain-test-pg pg_isready -U postgres`
-4. **Run E2E tests:**
+4. **Bootstrap the schema** (required — fresh containers have no `oauth_clients`,
+   `mcp_request_log`, `pages` etc.; tests like `serve-http-oauth.test.ts` will fail
+   with `relation "oauth_clients" does not exist` if you skip this):
+   ```bash
+   DATABASE_URL=postgresql://postgres:postgres@localhost:PORT/gbrain_test \
+     bun run src/cli.ts doctor --json > /dev/null 2>&1
+   ```
+   `gbrain doctor` triggers `initSchema()` on first connect, which is the canonical
+   way to bring a fresh DB to head. `apply-migrations --yes` alone does NOT seed
+   the base schema — it runs ALTER-style migrations on top of `initSchema`. Tests
+   that bypass the engine (raw `execSync`-spawned `auth register-client`) hit the
+   schema directly and need this step to have run first.
+5. **Run E2E tests:**
    `DATABASE_URL=postgresql://postgres:postgres@localhost:PORT/gbrain_test bun run test:e2e`
-5. **Tear down immediately after tests finish (pass or fail):**
+6. **Tear down immediately after tests finish (pass or fail):**
    `docker stop gbrain-test-pg && docker rm gbrain-test-pg`
 
 Never leave `gbrain-test-pg` running. If you find a stale one from a previous run,
