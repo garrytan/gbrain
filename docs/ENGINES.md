@@ -162,6 +162,7 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 - pgvector HNSW index for cosine similarity vector search (same as Postgres)
 - tsvector + ts_rank for full-text search (same as Postgres)
 - pg_trgm for fuzzy slug resolution (same as Postgres)
+- **Embedding dimension limit:** HNSW indexes are limited to 2000 dimensions. For high-dimensional models (e.g. 4096d), the HNSW index is skipped automatically and sequential scan is used. Performance impact is negligible for small brains (< 1000 pages). See [`docs/guides/custom-embedding-models.md`](guides/custom-embedding-models.md).
 
 **When to use PGLite vs Postgres:**
 
