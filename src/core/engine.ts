@@ -14,6 +14,42 @@ import type {
   EvalCaptureFailure, EvalCaptureFailureReason,
 } from './types.ts';
 
+/**
+ * v0.27.1: file row for binary-asset metadata. Mirrors the `files` table
+ * shape on both engines (Postgres has had it since v0.18; PGLite gets it
+ * via migration v36).
+ */
+export interface FileRow {
+  id: number;
+  source_id: string;
+  page_slug: string | null;
+  page_id: number | null;
+  filename: string;
+  storage_path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  content_hash: string;
+  metadata: Record<string, unknown>;
+  created_at: Date;
+}
+
+/**
+ * v0.27.1: spec for upsertFile. Identity is (source_id, storage_path).
+ * Re-upserting the same identity with a different content_hash updates the
+ * row in place (image was replaced); same content_hash is a no-op.
+ */
+export interface FileSpec {
+  source_id?: string;
+  page_slug?: string | null;
+  page_id?: number | null;
+  filename: string;
+  storage_path: string;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  content_hash: string;
+  metadata?: Record<string, unknown>;
+}
+
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
 export interface LinkBatchInput {
   from_slug: string;
@@ -412,6 +448,13 @@ export interface BrainEngine {
   // Raw data
   putRawData(slug: string, source: string, data: object): Promise<void>;
   getRawData(slug: string, source?: string): Promise<RawData[]>;
+
+  // Files (v0.27.1: binary asset metadata + storage_path. Image bytes never
+  // enter the DB; storage_path references a path inside the brain repo or an
+  // external store).
+  upsertFile(spec: FileSpec): Promise<{ id: number; created: boolean }>;
+  getFile(sourceId: string, storagePath: string): Promise<FileRow | null>;
+  listFilesForPage(pageId: number): Promise<FileRow[]>;
 
   // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis evidence

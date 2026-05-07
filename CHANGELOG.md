@@ -119,6 +119,84 @@ in this release.
   `requireAdmin` middleware instead, eliminating the proxy dependency
   and fixing the migration story in one move.
 
+## [0.28.9] - 2026-05-07
+
+**Multimodal ingestion lands on master.**
+**Voyage multimodal embeddings, image pages, `--image` search.**
+
+v0.28.9 ships the v0.27.1 multimodal feature on top of v0.28.7's adaptive embed batching
+and v0.28.6's takes + think + unified model config. Brings together: image ingestion
+(PNG/JPG/HEIC/AVIF) with `gbrain import` materializing `image`-type pages,
+`voyage-multimodal-3` embeddings into a new `embedding_image vector(1024)` column with
+partial HNSW index, `gbrain query --image <path>` for image-to-image and image-to-text
+search, OCR pass via the configured expansion model with prompt-injection mitigation,
+and PGLite parity for the `files` table that v0.18 deferred.
+
+### To take advantage of v0.28.9
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
+warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Set up Voyage** (only if you want to use multimodal):
+   ```bash
+   export VOYAGE_API_KEY=...   # https://dash.voyageai.com/api-keys
+   gbrain config set embedding_multimodal true
+   ```
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+4. **If any step fails**, file an issue at https://github.com/garrytan/gbrain/issues
+   with the output of `gbrain doctor` and contents of `~/.gbrain/upgrade-errors.jsonl`.
+
+### Itemized changes
+
+- **Multimodal embedding pipeline** — `src/core/ai/gateway.ts` adds
+  `embedMultimodal()` routing through Voyage's `/multimodalembeddings` endpoint
+  (32-input batches, 20MB per-image cap). New `MultimodalInput` discriminated
+  union type. Voyage recipe declares `supports_multimodal: true` for
+  `voyage-multimodal-3`.
+- **Schema migration v39** (`multimodal_dual_column_v0_27_1`) — adds
+  `content_chunks.modality TEXT NOT NULL DEFAULT 'text'`, `embedding_image
+  vector(1024)`, partial HNSW index `idx_chunks_embedding_image WHERE
+  embedding_image IS NOT NULL`, widens `pages.page_kind` CHECK to admit
+  `'image'`. PGLite gains the `files` table (parity catch-up). Pre-flight
+  refuses if pgvector < 0.5.0 with an actionable upgrade hint.
+- **`PageType` gains `'image'`** plus `ALL_PAGE_TYPES` const + `assertNever`
+  exhaustiveness helper. CI guard `scripts/check-pagetype-exhaustive.sh`
+  prevents silent default-branch fall-through on union growth.
+- **`gbrain query --image <path>`** — new CLI flag for image-to-X search via
+  the multimodal vector index. New tests in `test/cli-query-image.test.ts` +
+  `test/query-image-flag.serial.test.ts` + `test/search-image-column.test.ts`.
+- **OCR pass** — `gateway.generateOcrText()` extracts visible text from
+  ingested images via the configured expansion model, with explicit
+  system-prompt mitigation against OCR-as-prompt-injection. Opt-in via
+  `gbrain config set embedding_image_ocr true`.
+- **Image decoder bundle** — `src/types/image-decoders.d.ts` types the
+  embedded decoder set. CI guard `scripts/check-image-decoders-embedded.sh`
+  enforces every supported format ships in the binary.
+- **Test coverage** — 9 new test files covering import-image-file pipeline,
+  multimodal-postgres E2E, voyage-multimodal recipe, engine.upsertFile API,
+  loadConfig DB-plane merge, page-type exhaustiveness, schema-bootstrap
+  coverage extension. ~1.5K lines of new test code.
+
+### For contributors
+
+- `BrainEngine` gains `upsertFile`, `getFile`, `listFilesForPage`. `FileSpec` /
+  `FileRow` types exported from `src/core/engine.ts`.
+- `src/core/embedding.ts` re-exports `embedMultimodal` and `MultimodalInput`
+  for callers that want to pull both text and image embedding APIs from the
+  same module.
+- Multimodal migration is `v39` (renumbered from the original v34 / v36
+  on the embedding-providers branch — master had claimed those slots for
+  `destructive_guard_columns` (v34), `auto_rls_event_trigger` (v35), and
+  `subagent_provider_neutral_persistence_v0_27` (v36)).
+
 ## [0.28.7] - 2026-05-06
 
 ## **Voyage backfill no longer infinite-loops on dense payloads. Adaptive sizing, per-recipe tokenizer density, and a self-tightening cache.**

@@ -5,7 +5,47 @@
 // (e.g. "attended meetings" vs "received emails").
 // `code` (v0.19.0): tree-sitter-chunked source files; consumed by code-def /
 // code-refs / code-callers / code-callees + Cathedral II two-pass retrieval.
-export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media' | 'writing' | 'analysis' | 'guide' | 'hardware' | 'architecture' | 'meeting' | 'note' | 'email' | 'slack' | 'calendar-event' | 'code' | 'synthesis';
+// `image` (v0.27.1): multimodal-embedded images (PNG/JPG/HEIC/AVIF). One page
+// per image; chunk lives in content_chunks with modality='image' +
+// embedding_image vector(1024). Bytes never enter the DB; the brain repo
+// holds the file and `files.storage_path` references it.
+// `synthesis` (v0.28): think-generated provenance pages.
+export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media' | 'writing' | 'analysis' | 'guide' | 'hardware' | 'architecture' | 'meeting' | 'note' | 'email' | 'slack' | 'calendar-event' | 'code' | 'image' | 'synthesis';
+
+/**
+ * Canonical list of every PageType value. Kept in sync with the union above.
+ * Used by the v0.27.1 page-type-exhaustive contract test to walk every value
+ * through public surfaces (serialize, slug registry, frontmatter validate)
+ * and assert no surprise. Adding a value to PageType MUST also add it here —
+ * the contract test enforces parity.
+ */
+export const ALL_PAGE_TYPES: readonly PageType[] = [
+  'person', 'company', 'deal', 'yc', 'civic', 'project', 'concept',
+  'source', 'media', 'writing', 'analysis', 'guide', 'hardware',
+  'architecture', 'meeting', 'note', 'email', 'slack', 'calendar-event',
+  'code', 'image', 'synthesis',
+] as const;
+
+/**
+ * Exhaustiveness helper. Use in the default branch of any `switch (x.type)`
+ * to force the TypeScript compiler to error if the union grows. The CI guard
+ * scripts/check-pagetype-exhaustive.sh enforces that any new switch on a
+ * PageType-shaped discriminator imports and uses this helper in default.
+ *
+ *   switch (page.type) {
+ *     case 'person': return ...;
+ *     case 'company': return ...;
+ *     // ... every other PageType ...
+ *     default: return assertNever(page.type);
+ *   }
+ *
+ * If a new PageType is added without a corresponding case, `assertNever`
+ * fails to type-check (the parameter is no longer `never`), preventing the
+ * silent default-branch fall-through that bit gbrain v0.20 / v0.22.
+ */
+export function assertNever(x: never): never {
+  throw new Error(`Unhandled discriminant: ${JSON.stringify(x)}`);
+}
 
 export interface Page {
   id: number;
@@ -26,7 +66,8 @@ export interface Page {
   deleted_at?: Date | null;
 }
 
-export type PageKind = 'markdown' | 'code';
+// `image` (v0.27.1): multimodal ingestion path, parallel to markdown + code.
+export type PageKind = 'markdown' | 'code' | 'image';
 
 export interface PageInput {
   type: PageType;
@@ -117,10 +158,22 @@ export interface StaleChunkRow {
 export interface ChunkInput {
   chunk_index: number;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code';
+  /**
+   * 'image_asset' added in v0.27.1. Image chunks live in content_chunks
+   * alongside text/code chunks; modality='image' rows are filtered out of
+   * searchKeyword by default so OCR text doesn't drown text-page search.
+   */
+  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'image_asset';
   embedding?: Float32Array;
   model?: string;
   token_count?: number;
+  /**
+   * v0.27.1 multimodal. modality 'image' carries its 1024-dim Voyage vector
+   * in embedding_image (not embedding). Markdown + code chunks omit both
+   * fields and inherit modality='text' via column DEFAULT.
+   */
+  modality?: 'text' | 'image';
+  embedding_image?: Float32Array;
   /**
    * v0.19.0: optional code-chunk metadata. Populated by importCodeFile from
    * the tree-sitter AST; NULL for markdown chunks. Drives `query --lang`,
@@ -208,6 +261,15 @@ export interface SearchOpts {
    * undefined to search all sources.
    */
   sourceId?: string;
+  /**
+   * v0.27.1: target column for vector search. 'embedding' (default) hits
+   * the brain's primary text-embedding column. 'embedding_image' targets
+   * the multimodal column populated by importImageFile. The two columns
+   * may live in different dim spaces (e.g. OpenAI 1536 + Voyage 1024)
+   * which is why the dual-column schema landed in v0.27.1. searchKeyword
+   * is unaffected — modality filtering on the keyword path is independent.
+   */
+  embeddingColumn?: 'embedding' | 'embedding_image';
 }
 
 /**
