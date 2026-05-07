@@ -26,7 +26,7 @@ if (skip) {
 }
 
 // Migration v35 lives at index 34 (0-based) in MIGRATIONS.
-const v35 = MIGRATIONS.find(m => m.version === 34);
+const v35 = MIGRATIONS.find(m => m.version === 39);
 const v35Sql = (v35?.sqlFor as any)?.postgres ?? '';
 
 describeE2E('migration v35: auto_rls_event_trigger', () => {

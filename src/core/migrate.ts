@@ -1222,7 +1222,7 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 30,
+    version: 34,
     name: 'dream_verdicts_table',
     // v0.23 synthesize phase: cache for "is this transcript worth processing?"
     // verdict from the cheap Haiku judge. Distinct from raw_data (page-scoped);
@@ -1250,7 +1250,7 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 31,
+    version: 35,
     name: 'eval_capture_tables',
     // v0.25.0 — BrainBench-Real session capture substrate.
     // Two tables:
@@ -1271,7 +1271,7 @@ export const MIGRATIONS: Migration[] = [
     // operator fixes the role instead of silently bumping schema_version.
     // PGLite ignores RLS; sqlFor carries the table+index DDL only.
     //
-    // Renumbered v30→v31 on merge with master's v0.23.0 (dream_verdicts) which
+    // Renumbered v30→v35 on merge with master's v0.23.0 (dream_verdicts) which
     // claimed v30 first. Pre-existing brains that applied our v30 will see
     // version 31 as new on next initSchema and run the IF NOT EXISTS DDL —
     // the CREATE TABLE statements are idempotent so the rename is safe.
@@ -1283,7 +1283,7 @@ export const MIGRATIONS: Migration[] = [
         BEGIN
           SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
           IF NOT has_bypass THEN
-            RAISE EXCEPTION 'v31 eval_capture_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+            RAISE EXCEPTION 'v35 eval_capture_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
           END IF;
 
           CREATE TABLE IF NOT EXISTS eval_candidates (
@@ -1315,7 +1315,7 @@ export const MIGRATIONS: Migration[] = [
           CREATE INDEX IF NOT EXISTS idx_eval_capture_failures_ts ON eval_capture_failures (ts DESC);
           ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY;
 
-          RAISE NOTICE 'v31: eval_capture tables ready (role % has BYPASSRLS)', current_user;
+          RAISE NOTICE 'v35: eval_capture tables ready (role % has BYPASSRLS)', current_user;
         END $$;
       `,
       pglite: `
@@ -1350,11 +1350,11 @@ export const MIGRATIONS: Migration[] = [
     sql: '',
   },
   {
-    version: 32,
+    version: 36,
     name: 'oauth_infrastructure',
     // v0.26 OAuth 2.1 tables for `gbrain serve --http`. Supports client credentials,
     // authorization code + PKCE, and refresh token rotation. Renumbered from v30
-    // → v32 on merge with master's v0.23 (dream_verdicts at v30) + v0.25
+    // → v36 on merge with master's v0.23 (dream_verdicts at v30) + v0.25
     // (eval_capture_tables at v31). OAuth is independent of those chains so
     // ordering doesn't matter beyond version ledger correctness. CREATE TABLE
     // statements are idempotent so brains that previously applied this at v30
@@ -1412,7 +1412,7 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 33,
+    version: 37,
     name: 'admin_dashboard_columns_v0_26_3',
     // v0.26.3 admin dashboard expansion. Adds 5 columns referenced by
     // src/commands/serve-http.ts and src/core/oauth-provider.ts that landed
@@ -1456,7 +1456,7 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 34,
+    version: 38,
     name: 'destructive_guard_columns',
     // v0.26.5 — soft-delete + recovery window for sources AND pages.
     // Renumbered v33→v34 on master merge: master's v33 (admin_dashboard_columns_v0_26_3)
@@ -1543,7 +1543,7 @@ export const MIGRATIONS: Migration[] = [
     transaction: false,
   },
   {
-    version: 34,
+    version: 39,
     name: 'auto_rls_event_trigger',
     sql: '', // engine-specific via sqlFor
     // v0.26.7 — Postgres event trigger that auto-enables RLS on every new public.*
@@ -1625,7 +1625,7 @@ export const MIGRATIONS: Migration[] = [
           IF NOT has_bypass THEN
             -- Same posture as v24: raise to abort the migration so the runner
             -- leaves config.version unbumped and retries on the next call.
-            RAISE EXCEPTION 'v34 auto_rls_event_trigger backfill: role % does not have BYPASSRLS — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role).', current_user;
+            RAISE EXCEPTION 'v39 auto_rls_event_trigger backfill: role % does not have BYPASSRLS — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role).', current_user;
           END IF;
 
           FOR r IN
@@ -1639,7 +1639,7 @@ export const MIGRATIONS: Migration[] = [
               AND (d.description IS NULL OR d.description !~ '^GBRAIN:RLS_EXEMPT\\s+reason=\\S.{3,}')
           LOOP
             EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', r.schema_name, r.table_name);
-            RAISE NOTICE 'v34: backfilled RLS on %.%', r.schema_name, r.table_name;
+            RAISE NOTICE 'v39: backfilled RLS on %.%', r.schema_name, r.table_name;
           END LOOP;
         END $$;
       `,
@@ -1647,7 +1647,7 @@ export const MIGRATIONS: Migration[] = [
     },
   },
   {
-    version: 35,
+    version: 40,
     name: 'oauth_clients_permissions',
     // v0.29 fork — add JSONB permissions column to oauth_clients table so
     // lookupTakesHolders() in serve-http.ts can store per-client takes_holders.
