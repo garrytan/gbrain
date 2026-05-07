@@ -378,6 +378,35 @@ export interface BrainEngine {
    */
   getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
   /**
+   * v0.27.0: for a list of slugs, return their updated_at timestamps (or created_at fallback).
+   * Used by hybrid search recency boost. Single SQL query, not N+1.
+   * Slugs with no timestamp get no entry in the map.
+   *
+   * @deprecated v0.29.1: prefer getEffectiveDates (composite-keyed, multi-source-safe).
+   * Kept for back-compat with PR #618 callers.
+   */
+  getPageTimestamps(slugs: string[]): Promise<Map<string, Date>>;
+  /**
+   * v0.29.1: for a list of (slug, source_id) refs, return COALESCE(effective_date,
+   * updated_at) per ref. Single SQL query. Composite-keyed map (key format:
+   * `${source_id}::${slug}`) so multi-source brains don't conflate pages with
+   * the same slug across sources (codex pass-1 finding #3).
+   *
+   * Drives the new applyRecencyBoost post-fusion stage. Returns NULL for refs
+   * with no row; map omits them.
+   */
+  getEffectiveDates(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, Date>>;
+  /**
+   * v0.29.1: for a list of (slug, source_id) refs, return the salience score
+   * (emotional_weight × 5 + ln(1 + take_count)) per ref. Single SQL query.
+   * Composite-keyed (`${source_id}::${slug}`) like getEffectiveDates.
+   *
+   * Drives the new applySalienceBoost post-fusion stage. Pages with no row
+   * (or zero emotional_weight + zero takes) get score = 0; the boost stage
+   * skips them.
+   */
+  getSalienceScores(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, number>>;
+  /**
    * Return every page with no inbound links (from any source).
    * Domain comes from the frontmatter `domain` field (null if unset).
    * The caller filters pseudo-pages + derives display domain.

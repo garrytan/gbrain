@@ -22,7 +22,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -628,6 +628,16 @@ async function handleCliOnly(command: string, args: string[]) {
         const { runReindexCodeCli } = await import('./commands/reindex-code.ts');
         await runReindexCodeCli(engine, args);
         break;
+      }
+      case 'reindex-frontmatter': {
+        // v0.29.1: recovery / explicit-rebuild path for pages.effective_date.
+        // Mirror of reindex-code shape. Wraps the shared library function in
+        // src/core/backfill-effective-date.ts (same code path the v0.29.1
+        // migration orchestrator uses). The orchestrator runs once on
+        // upgrade; this command is for after-the-fact frontmatter edits.
+        const { reindexFrontmatterCli } = await import('./commands/reindex-frontmatter.ts');
+        await reindexFrontmatterCli(args);
+        return; // reindexFrontmatterCli handles its own engine lifecycle
       }
       case 'code-callers': {
         // v0.20.0 Cathedral II Layer 10 (C4): "who calls <symbol>?"
