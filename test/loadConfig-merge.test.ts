@@ -107,4 +107,47 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
     expect(merged?.embedding_multimodal).toBe(false);
     expect(merged?.embedding_image_ocr).toBe(false);
   });
+
+  // v0.28.11 (PR #719): embedding_multimodal_model precedence parity with the
+  // sibling embedding_image_ocr_model field. Confirms the new key participates
+  // in the same env > file > DB > undefined merge contract so that
+  // embedMultimodal() routes correctly regardless of which plane set it.
+  describe('embedding_multimodal_model precedence', () => {
+    test('DB value fills in when file/env did not set it', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({
+        embedding_multimodal_model: 'voyage:voyage-multimodal-3',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.embedding_multimodal_model).toBe('voyage:voyage-multimodal-3');
+    });
+
+    test('file value wins over DB value', async () => {
+      const base: GBrainConfig = {
+        engine: 'pglite',
+        embedding_multimodal_model: 'voyage:voyage-multimodal-3',
+      };
+      const engine = makeEngine({
+        embedding_multimodal_model: 'voyage:voyage-3-large',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.embedding_multimodal_model).toBe('voyage:voyage-multimodal-3');
+    });
+
+    test('all unset stays undefined', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({});
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.embedding_multimodal_model).toBeUndefined();
+    });
+
+    test('null/empty DB string is ignored (does not clobber)', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({
+        embedding_multimodal_model: '',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.embedding_multimodal_model).toBeUndefined();
+    });
+  });
 });

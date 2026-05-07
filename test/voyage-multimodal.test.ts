@@ -281,3 +281,77 @@ describe('gateway.embedMultimodal — error paths', () => {
     expect((err as AIConfigError).message).toMatch(/does not support multimodal|not implemented/i);
   });
 });
+
+// v0.28.11 (PR #719): embedding_multimodal_model override + model-level
+// validation. Confirms the gateway's two-layer multimodal gate:
+//   1. recipe.touchpoints.embedding.supports_multimodal (recipe scope)
+//   2. recipe.touchpoints.embedding.multimodal_models[] (model scope)
+describe('gateway.embedMultimodal — multimodal_model override + model-level validation', () => {
+  test('prefers embedding_multimodal_model over embedding_model when both set', async () => {
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      embedding_multimodal_model: 'voyage:voyage-multimodal-3',
+      env: { VOYAGE_API_KEY: 'voyage-key', OPENAI_API_KEY: 'sk-test' },
+    });
+    let capturedUrl = '';
+    let capturedBody: { model?: string } = {};
+    fetchHandler = async (url, init) => {
+      capturedUrl = url;
+      capturedBody = JSON.parse(init.body as string);
+      return fakeVoyageResponse(1);
+    };
+    const out = await embedMultimodal([makeImage()]);
+    expect(out.length).toBe(1);
+    expect(capturedUrl).toContain('/multimodalembeddings');
+    expect(capturedBody.model).toBe('voyage-multimodal-3');
+  });
+
+  test('falls back to embedding_model when embedding_multimodal_model is unset', async () => {
+    // Regression guard for the existing single-model setup.
+    configureVoyageMultimodal();
+    fetchHandler = async () => fakeVoyageResponse(1);
+    const out = await embedMultimodal([makeImage()]);
+    expect(out.length).toBe(1);
+  });
+
+  test('embedding_multimodal_model pointing at non-multimodal recipe → AIConfigError', async () => {
+    configureGateway({
+      embedding_model: 'voyage:voyage-multimodal-3', // would normally work
+      embedding_multimodal_model: 'openai:text-embedding-3-large', // override breaks it
+      embedding_dimensions: 1536,
+      env: { VOYAGE_API_KEY: 'voyage-key', OPENAI_API_KEY: 'sk-test' },
+    });
+    let err: unknown;
+    try {
+      await embedMultimodal([makeImage()]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(AIConfigError);
+    expect((err as AIConfigError).message).toMatch(/does not support multimodal/i);
+  });
+
+  test('embedding_multimodal_model pointing at Voyage text-only model → AIConfigError (D4 / Codex F1)', async () => {
+    // Voyage shares supports_multimodal: true across all 12 models in the
+    // recipe. Without the model-level multimodal_models gate, voyage-3-large
+    // would pass validation locally and fail at /multimodalembeddings with
+    // HTTP 400 — which gateway.ts:626 misclassifies as transient. Change 3
+    // closes this gap.
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      embedding_multimodal_model: 'voyage:voyage-3-large', // text-only Voyage
+      env: { VOYAGE_API_KEY: 'voyage-key', OPENAI_API_KEY: 'sk-test' },
+    });
+    let err: unknown;
+    try {
+      await embedMultimodal([makeImage()]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(AIConfigError);
+    expect((err as AIConfigError).message).toMatch(/voyage-3-large.*not.*multimodal/i);
+    expect((err as AIConfigError).fix ?? '').toMatch(/voyage:voyage-multimodal-3/);
+  });
+});
