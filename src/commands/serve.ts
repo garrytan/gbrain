@@ -22,8 +22,15 @@ export async function runServe(engine: BrainEngine, args: string[] = []) {
     const publicUrlIdx = args.indexOf('--public-url');
     const publicUrl = publicUrlIdx >= 0 ? args[publicUrlIdx + 1] : undefined;
 
+    // F8 escape hatch: --log-full-params writes raw payloads to mcp_request_log
+    // and the admin SSE feed instead of redacted summaries. Off by default
+    // (privacy-first); operators running gbrain on their own laptop can flip
+    // it on for debug visibility. Loud startup warning fires in serve-http.ts
+    // when set so the posture change is visible in stderr.
+    const logFullParams = args.includes('--log-full-params');
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams });
   } else {
     console.error('Starting GBrain MCP server (stdio)...');
     await startMcpServer(engine);

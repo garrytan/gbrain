@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 
+import { installSigchldHandler } from './core/zombie-reap.ts';
+installSigchldHandler();
+
 import { readFileSync } from 'fs';
 import { loadConfig, toEngineConfig } from './core/config.ts';
 import type { BrainEngine } from './core/engine.ts';
@@ -19,7 +22,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -290,6 +293,12 @@ async function handleCliOnly(command: string, args: string[]) {
     await runIntegrations(args);
     return;
   }
+  if (command === 'providers') {
+    const { runProviders } = await import('./commands/providers.ts');
+    const [sub, ...rest] = args;
+    await runProviders(sub, rest);
+    return;
+  }
   if (command === 'auth') {
     const { runAuth } = await import('./commands/auth.ts');
     await runAuth(args);
@@ -444,6 +453,16 @@ async function handleCliOnly(command: string, args: string[]) {
       if (eng) await eng.disconnect();
     }
     return;
+  }
+
+  // `eval cross-modal` is a pure API-call command — no DB, no brain. Bypass
+  // connectEngine entirely so first-run users (no `gbrain init` yet) can
+  // run the quality gate. Mirrors the dream/doctor no-DB pattern but
+  // doesn't even attempt the connect (T3=A in plans/radiant-napping-lerdorf.md).
+  // The handler self-configures the AI gateway from loadConfig() + process.env.
+  if (command === 'eval' && args[0] === 'cross-modal') {
+    const { runEvalCrossModal } = await import('./commands/eval-cross-modal.ts');
+    process.exit(await runEvalCrossModal(args.slice(1)));
   }
 
   // All remaining CLI-only commands need a DB connection
@@ -646,12 +665,45 @@ async function connectEngine(): Promise<BrainEngine> {
     console.error('No brain configured. Run: gbrain init');
     process.exit(1);
   }
+
+  // Configure the AI gateway BEFORE engine connect — initSchema needs embedding dims.
+  // Env is read once here; the gateway never reads process.env at call time (Codex C3).
+  const { configureGateway } = await import('./core/ai/gateway.ts');
+  configureGateway({
+    embedding_model: config.embedding_model,
+    embedding_dimensions: config.embedding_dimensions,
+    expansion_model: config.expansion_model,
+    chat_model: config.chat_model,
+    chat_fallback_chain: config.chat_fallback_chain,
+    base_urls: config.provider_base_urls,
+    env: { ...process.env },
+  });
+
   const { createEngine } = await import('./core/engine-factory.ts');
   const engine = await createEngine(toEngineConfig(config));
   const noRetry = process.argv.includes('--no-retry-connect') ||
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');
   await connectWithRetry(engine, toEngineConfig(config), { noRetry });
+
+  // Auto-apply pending schema migrations on connect (#651). Cheap probe
+  // first so already-migrated brains don't pay the bootstrap-probe +
+  // SCHEMA_SQL replay + ledger-check cost on every short-lived CLI call.
+  // This is the conditional version of #652 (oyi77's investigation):
+  // same correctness, no perf regression on the hot path.
+  try {
+    const { hasPendingMigrations } = await import('./core/migrate.ts');
+    if (await hasPendingMigrations(engine)) {
+      await engine.initSchema();
+    }
+  } catch (err) {
+    // Non-fatal: if probe or initSchema fails, surface a hint and continue
+    // with the connected engine. Subsequent operations will surface the
+    // real schema error in context.
+    console.warn(`  Schema probe/migrate failed: ${(err as Error).message}`);
+    console.warn('  Try: gbrain init --migrate-only');
+  }
+
   return engine;
 }
 

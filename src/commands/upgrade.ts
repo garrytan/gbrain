@@ -1,7 +1,9 @@
 import { execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync, lstatSync } from 'fs';
+import { join, dirname } from 'path';
 import { VERSION } from '../version.ts';
+
+const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
 
 export async function runUpgrade(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
@@ -17,6 +19,18 @@ export async function runUpgrade(args: string[]) {
 
   let upgraded = false;
   switch (method) {
+    case 'bun-link':
+      // v0.28.5: bun-link installs are source clones. Pull + bun install
+      // is the upgrade path; npm/bun's update mechanism doesn't apply.
+      console.log('Upgrading via bun-link source clone...');
+      console.log('  cd into your gbrain checkout, then run:');
+      console.log('    git pull');
+      console.log('    bun install');
+      console.log('    bun link');
+      console.log('');
+      console.log('  (auto-detect can\'t do this for you because it doesn\'t know which checkout to update.)');
+      break;
+
     case 'bun':
       console.log('Upgrading via bun...');
       try {
@@ -218,6 +232,37 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     console.error('Run `gbrain apply-migrations --yes` manually to retry.');
   }
 
+  // v0.28.5 (X1): explicitly apply pending schema migrations.
+  // apply-migrations runs orchestrator migrations and only WARNs about
+  // schema-version drift (apply-migrations.ts:296-302). Without this hook,
+  // `gbrain upgrade` leaves wedged brains wedged — the user has to read
+  // the WARN and run `gbrain init --migrate-only` themselves. We've shipped
+  // 11 wedge incidents asking users to read warnings; close the loop here.
+  // A1's hasPendingMigrations probe in connectEngine is belt-and-suspenders
+  // for any path that bypasses upgrade (autopilot, direct CLI on stale brain).
+  try {
+    const { loadConfig: lcSchema, toEngineConfig: toCfgSchema } = await import('../core/config.ts');
+    const { createEngine } = await import('../core/engine-factory.ts');
+    const cfgSchema = lcSchema();
+    if (cfgSchema) {
+      const engine = await createEngine(toCfgSchema(cfgSchema));
+      try {
+        await engine.connect(toCfgSchema(cfgSchema));
+        await engine.initSchema();
+        console.log('  Schema up to date.');
+      } finally {
+        try { await engine.disconnect(); } catch { /* best-effort */ }
+      }
+    }
+  } catch (e) {
+    // Non-fatal: connection or DDL failure here falls back to the existing
+    // user-facing WARN. apply-migrations.ts:296-302 already surfaces the
+    // hint to run `gbrain init --migrate-only`.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`\nSchema auto-apply skipped: ${msg}`);
+    console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
+  }
+
   // v0.25.1: agent-readable advisory listing recommended skills the
   // workspace hasn't installed yet. No-op when everything is installed.
   try {
@@ -244,11 +289,25 @@ function isNewerThan(version: string, baseline: string): boolean {
   return false;
 }
 
-export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'unknown' {
+export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'clawhub' | 'unknown' {
   const execPath = process.execPath || '';
 
-  // Check if running from node_modules (bun/npm install)
+  // v0.28.5 cluster D: bun-link signal first.
+  // bun link puts a symlink at ~/.bun/bin/gbrain → either the source's bin
+  // entry (compiled CLI) OR src/cli.ts directly. Either way, realpath
+  // resolves into a directory we can walk up from to find a .git/config
+  // pointing at our repo.
+  const bunLinkResult = detectBunLink();
+  if (bunLinkResult === 'bun-link') return 'bun-link';
+
+  // Check if running from node_modules (bun/npm install). Could be canonical
+  // (we publish under garrytan/gbrain) OR the squatter (npm `gbrain@1.3.x`).
+  // Sub-classify and warn loudly on suspect installs (#658).
   if (execPath.includes('node_modules') || process.argv[1]?.includes('node_modules')) {
+    const verdict = classifyBunInstall();
+    if (verdict === 'suspect') {
+      printSquatterRecovery();
+    }
     return 'bun';
   }
 
@@ -266,4 +325,132 @@ export function detectInstallMethod(): 'bun' | 'binary' | 'clawhub' | 'unknown' 
   }
 
   return 'unknown';
+}
+
+/**
+ * v0.28.5 cluster D, signal 1 — bun-link detection (closes #656).
+ *
+ * argv[1] is what `bun /path/to/cli.ts` was invoked with. When `bun link`
+ * is in play, that path is typically a symlink (~/.bun/bin/gbrain) to
+ * either the source repo's compiled binary or src/cli.ts directly.
+ * Walk up from the realpath looking for a `.git/config` whose remote
+ * url contains `garrytan/gbrain` (case-insensitive substring).
+ *
+ * Returns 'bun-link' when we're confident; null otherwise (caller falls
+ * through to the existing detection chain). Best-effort: forks, tarball
+ * installs, detached source trees, and `.git`-less installs all fall
+ * through, which is acceptable per codex's plan-review feedback.
+ */
+function detectBunLink(): 'bun-link' | null {
+  try {
+    const argv1 = process.argv[1];
+    if (!argv1) return null;
+
+    // Symlink check first: `bun link` always creates one.
+    let isSymlink = false;
+    try {
+      isSymlink = lstatSync(argv1).isSymbolicLink();
+    } catch {
+      return null;
+    }
+    if (!isSymlink) return null;
+
+    const resolved = realpathSync(argv1);
+    let dir = dirname(resolved);
+    // Walk up at most 6 levels looking for .git/config.
+    for (let i = 0; i < 6; i++) {
+      const gitConfigPath = join(dir, '.git', 'config');
+      if (existsSync(gitConfigPath)) {
+        try {
+          const cfg = readFileSync(gitConfigPath, 'utf-8');
+          // Loose substring match: covers https://, git@, ssh://, fork URLs
+          // that mention upstream in [remote "upstream"], and case variants.
+          if (cfg.toLowerCase().includes(GBRAIN_GITHUB_REPO.toLowerCase())) {
+            return 'bun-link';
+          }
+        } catch { /* unreadable config — not our case */ }
+        return null; // found .git/config but no match → not our repo
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break; // reached filesystem root
+      dir = parent;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * v0.28.5 cluster D, signal 2 — bun install authenticity check (closes #658).
+ *
+ * When `bun add -g gbrain` (or `npm install -g gbrain`) installs from
+ * npm, the package is the squatter — an unrelated `gbrain@1.3.x` that
+ * silently overwrites our binary. This function reads the install
+ * directory's package.json and checks two non-spoofable signals:
+ *   - `repository.url` contains `garrytan/gbrain` (case-insensitive)
+ *   - the install dir contains a `src/cli.ts` file (squatter ships
+ *     compiled binary, not source)
+ *
+ * If neither matches, returns 'suspect' and the caller surfaces a loud
+ * recovery message. Codex's plan-review noted these signals are spoofable
+ * by a determined squatter — accepted; this is best-effort warning, not
+ * an assertion. The right structural fix is publishing under a scoped
+ * name like `@garrytan/gbrain` (tracked v0.29 follow-up).
+ */
+function classifyBunInstall(): 'canonical' | 'suspect' {
+  try {
+    const argv1 = process.argv[1];
+    if (!argv1) return 'suspect';
+
+    // Walk up from argv1 looking for the package.json that owns this install.
+    let dir = dirname(realpathSync(argv1));
+    for (let i = 0; i < 6; i++) {
+      const pkgPath = join(dir, 'package.json');
+      if (existsSync(pkgPath)) {
+        try {
+          const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+          const repoUrl = (typeof pkg.repository === 'string'
+            ? pkg.repository
+            : pkg.repository?.url) ?? '';
+          if (repoUrl.toLowerCase().includes(GBRAIN_GITHUB_REPO.toLowerCase())) {
+            return 'canonical';
+          }
+          // Source-marker fallback: our published-as-source install always
+          // ships src/cli.ts next to package.json. The squatter ships dist/.
+          if (existsSync(join(dir, 'src', 'cli.ts'))) {
+            return 'canonical';
+          }
+          return 'suspect';
+        } catch {
+          return 'suspect';
+        }
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    return 'suspect';
+  } catch {
+    return 'suspect';
+  }
+}
+
+function printSquatterRecovery(): void {
+  console.warn('');
+  console.warn('  WARNING: gbrain install does not appear to be from garrytan/gbrain.');
+  console.warn('  This is likely the npm-name collision tracked in issue #658:');
+  console.warn('    https://www.npmjs.com/package/gbrain (an unrelated package).');
+  console.warn('');
+  console.warn('  Recovery options:');
+  console.warn('    1. Install from source:');
+  console.warn('         bun remove -g gbrain');
+  console.warn('         git clone https://github.com/garrytan/gbrain.git');
+  console.warn('         cd gbrain && bun install && bun link');
+  console.warn('');
+  console.warn('    2. Download a release binary:');
+  console.warn('         https://github.com/garrytan/gbrain/releases');
+  console.warn('');
+  console.warn('  See docs/INSTALL_FOR_AGENTS.md for the canonical install paths.');
+  console.warn('');
 }

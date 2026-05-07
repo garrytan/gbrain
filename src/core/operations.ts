@@ -35,7 +35,8 @@ export type ErrorCode =
   | 'storage_error'
   | 'bucket_not_found'
   | 'database_error'
-  | 'permission_denied';
+  | 'permission_denied'
+  | 'unknown_transport'; // v0.28.1: whoami fail-closed for ambiguous transport
 
 export class OperationError extends Error {
   constructor(
@@ -222,9 +223,12 @@ export interface OperationContext {
    * confinement when remote=true and allow unrestricted local-filesystem access
    * when remote=false.
    *
-   * When unset, operations MUST default to the stricter (remote=true) behavior.
+   * REQUIRED as of the F7b hardening — the type system is the first line of defense.
+   * Every transport (CLI / stdio MCP / HTTP MCP / subagent dispatcher) sets this
+   * explicitly. Consumers still treat anything that isn't strictly `false` as
+   * remote/untrusted (defense in depth in case the type is bypassed via cast).
    */
-  remote?: boolean;
+  remote: boolean;
   /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
@@ -301,7 +305,17 @@ export interface Operation {
   params: Record<string, ParamDef>;
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   mutating?: boolean;
-  scope?: 'read' | 'write' | 'admin';
+  /**
+   * Capability scope required to invoke this op over an authenticated
+   * transport. v0.28 added `sources_admin` (manage federated sources) and
+   * `users_admin` (reserved). The hierarchy lives in src/core/scope.ts —
+   * `admin` implies all, `write` implies `read`, the two `*_admin` scopes
+   * are siblings (different axes; neither implies the other).
+   *
+   * Local CLI callers (ctx.remote === false) bypass scope enforcement
+   * because the trust boundary there is the OS, not OAuth scopes.
+   */
+  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin';
   localOnly?: boolean;
   cliHints?: {
     name?: string;
@@ -396,11 +410,11 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    // Skip embedding when no OpenAI key is configured. importFromContent's existing
-    // try/catch around embed only catches; without a key the OpenAI client would
-    // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
-    // giving up. Detect early.
-    const noEmbed = !process.env.OPENAI_API_KEY;
+    // Skip embedding when the AI gateway has no embedding provider configured.
+    // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
+    // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
+    const { isAvailable } = await import('./ai/gateway.ts');
+    const noEmbed = !isAvailable('embedding');
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
@@ -429,7 +443,7 @@ const put_page: Operation = {
     const trustedWorkspace = ctx.viaSubagent === true
       && Array.isArray(ctx.allowedSlugPrefixes)
       && ctx.allowedSlugPrefixes.length > 0;
-    if (ctx.remote === true && !trustedWorkspace) {
+    if (ctx.remote !== false && !trustedWorkspace) {
       autoLinks = { skipped: 'remote' };
       autoTimeline = { skipped: 'remote' };
     } else if (result.parsedPage) {
@@ -1536,16 +1550,19 @@ const submit_job: Operation = {
     // GBRAIN_ALLOW_SHELL_JOBS env flag — even if that flag is on, MCP callers
     // cannot submit protected-type jobs.
     const { isProtectedJobName } = await import('./minions/protected-names.ts');
-    if (ctx.remote && isProtectedJobName(name)) {
+    // F7b fail-closed: anything that is not strictly false (i.e., remote=true OR
+    // the field somehow leaks in undefined despite the required type) rejects
+    // protected job submissions. Closes the HTTP MCP shell-job RCE that surfaced
+    // when the HTTP transport's OperationContext literal forgot to set remote.
+    if (ctx.remote !== false && isProtectedJobName(name)) {
       throw new OperationError('permission_denied', `'${name}' jobs cannot be submitted over MCP (CLI-only for security)`);
     }
 
     const { MinionQueue } = await import('./minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    // Trusted flag set only when this is a local (non-remote) submission. When
-    // remote=true, the guard above has already thrown for protected names, so
-    // passing undefined here is safe for any non-protected name that slips by.
-    const trusted = !ctx.remote && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
+    // Trusted flag fires ONLY for an explicit local CLI submission of a protected
+    // name. Strict `=== false` so an untyped/cast context can't escalate.
+    const trusted = ctx.remote === false && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
     return queue.add(name, (p.data as Record<string, unknown>) || {}, {
       queue: (p.queue as string) || 'default',
       priority: (p.priority as number) || 0,
@@ -1824,6 +1841,209 @@ const get_recent_transcripts: Operation = {
   cliHints: { name: 'transcripts', hidden: true },
 };
 
+// --- v0.28: whoami + sources management ---
+
+const whoami: Operation = {
+  name: 'whoami',
+  description:
+    'Introspect the calling identity. Returns one of three transport shapes: ' +
+    '{transport: "oauth", client_id, client_name, scopes, expires_at}, ' +
+    '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
+    '{transport: "local", scopes: []}. Throws unknown_transport when the ' +
+    'context is ambiguous (remote=true without auth) — fail-closed posture ' +
+    'mirroring the v0.26.9 trust-boundary contract.',
+  params: {},
+  scope: 'read',
+  handler: async (ctx) => {
+    // Trust boundary: ctx.remote === false is the trusted local CLI surface.
+    // Returning OAuth-shaped scopes here would resurrect the v0.26.9 footgun
+    // where code conditionally trusted on `scopes.includes('admin')` instead
+    // of `ctx.remote === false`. Empty scopes array forces clients to
+    // special-case `transport: 'local'` explicitly.
+    if (ctx.remote === false) {
+      return { transport: 'local', scopes: [] };
+    }
+    if (!ctx.auth) {
+      throw new OperationError(
+        'unknown_transport',
+        'whoami called over a remote transport that did not thread ctx.auth. ' +
+          'This is a transport bug — every remote call site must populate ctx.auth ' +
+          'or set ctx.remote === false.',
+      );
+    }
+    // OAuth tokens have client_id starting with 'gbrain_cl_'; legacy
+    // access_tokens reuse `name` as both clientId and clientName (verifyAccessToken
+    // at oauth-provider.ts:417-430). Detect by inspecting the prefix.
+    const isOauth = ctx.auth.clientId.startsWith('gbrain_cl_');
+    if (isOauth) {
+      return {
+        transport: 'oauth',
+        client_id: ctx.auth.clientId,
+        client_name: ctx.auth.clientName ?? ctx.auth.clientId,
+        scopes: ctx.auth.scopes,
+        expires_at: ctx.auth.expiresAt ?? null,
+      };
+    }
+    return {
+      transport: 'legacy',
+      token_name: ctx.auth.clientName ?? ctx.auth.clientId,
+      scopes: ctx.auth.scopes,
+      expires_at: null,
+    };
+  },
+  cliHints: { name: 'whoami' },
+};
+
+const sources_add: Operation = {
+  name: 'sources_add',
+  description:
+    'Register a new source. Supports either --path (existing v0.17 behavior) ' +
+    'or --url (v0.28 federated remote-clone path: parses the URL through the ' +
+    'SSRF gate, clones into $GBRAIN_HOME/clones/<id>/ via temp-dir + rename ' +
+    'atomicity, and stores remote_url in sources.config). Pre-flight collision ' +
+    'check on id; rollback on either-side failure.',
+  params: {
+    id: {
+      type: 'string',
+      required: true,
+      description: 'Source id ([a-z0-9-]{1,32}). Immutable citation key.',
+    },
+    name: { type: 'string', description: 'Display name (defaults to id).' },
+    path: { type: 'string', description: 'Local path. Mutually optional with url.' },
+    url: {
+      type: 'string',
+      description:
+        'HTTPS git URL. Cloned into $GBRAIN_HOME/clones/<id>/. SSRF-guarded.',
+    },
+    federated: {
+      type: 'boolean',
+      description: 'true → cross-source default search. false → isolated.',
+    },
+    clone_dir: {
+      type: 'string',
+      description:
+        'Override clone destination (only valid with url). Default: $GBRAIN_HOME/clones/<id>/.',
+    },
+  },
+  mutating: true,
+  scope: 'sources_admin',
+  handler: async (ctx, p) => {
+    const { addSource } = await import('./sources-ops.ts');
+
+    // v0.28.1 codex finding (CRITICAL + HIGH): a `sources_admin` token over
+    // HTTP MCP must not be able to plant content at arbitrary host paths.
+    //
+    // - `path` lets a remote caller register `/etc/` (or any host dir) as a
+    //   "source"; later `gbrain sync --all` walks every sources.local_path,
+    //   which exfiltrates host content into the brain.
+    // - `clone_dir` lets a remote caller name the destination directly;
+    //   addSource's renameSync places the cloned tree there with no
+    //   confinement, AND validateRepoState's degraded-state recovery later
+    //   does rm -rf on src.local_path, so the same primitive doubles as
+    //   arbitrary-delete.
+    //
+    // Both fields are CLI-only (the operator runs `gbrain sources add --path
+    // /home/me/notes`). For HTTP MCP, ignore overrides — clone_dir defaults
+    // to $GBRAIN_HOME/clones/<id>/ and path is rejected. Local CLI callers
+    // (ctx.remote === false, per F7b fail-closed contract) keep the override.
+    const isLocal = ctx.remote === false;
+    const remotePath = isLocal ? (p.path as string | undefined) ?? null : null;
+    const remoteCloneDir = isLocal ? (p.clone_dir as string | undefined) : undefined;
+    if (!isLocal && (p.path !== undefined || p.clone_dir !== undefined)) {
+      ctx.logger.warn(
+        '[sources_add] ignoring path/clone_dir overrides on HTTP MCP transport ' +
+          '(remote callers can only register a remote --url; the clone path is ' +
+          'fixed under $GBRAIN_HOME/clones/).',
+      );
+    }
+
+    const row = await addSource(ctx.engine, {
+      id: p.id as string,
+      name: p.name as string | undefined,
+      localPath: remotePath,
+      remoteUrl: p.url as string | undefined,
+      federated:
+        p.federated === undefined ? null : (p.federated as boolean),
+      cloneDir: remoteCloneDir,
+    });
+    return row;
+  },
+  cliHints: { name: 'sources_add', hidden: true },
+};
+
+const sources_list: Operation = {
+  name: 'sources_list',
+  description:
+    'List registered sources with page counts and remote_url. v0.28 surfaces ' +
+    'the new remote_url field so a remote MCP caller can confirm a source is ' +
+    'managed by clone+pull rather than user-supplied path.',
+  params: {
+    include_archived: { type: 'boolean', description: 'Include soft-deleted sources.' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { listSources } = await import('./sources-ops.ts');
+    return {
+      sources: await listSources(ctx.engine, {
+        includeArchived: (p.include_archived as boolean) === true,
+      }),
+    };
+  },
+  cliHints: { name: 'sources_list', hidden: true },
+};
+
+const sources_remove: Operation = {
+  name: 'sources_remove',
+  description:
+    'Hard-remove a source (cascades pages/chunks/embeddings). Refuses to ' +
+    'delete the auto-managed clone dir unless its resolved path is confined ' +
+    'under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most ' +
+    'workflows prefer sources_archive for the soft-delete path.',
+  params: {
+    id: { type: 'string', required: true },
+    confirm_destructive: {
+      type: 'boolean',
+      description:
+        'Required when the source has data (pages, chunks). Without it the op refuses.',
+    },
+    dry_run: { type: 'boolean', description: 'Preview impact without side effects.' },
+    keep_storage: {
+      type: 'boolean',
+      description: 'Skip clone-dir cleanup even when the source is auto-managed.',
+    },
+  },
+  mutating: true,
+  scope: 'sources_admin',
+  handler: async (ctx, p) => {
+    const { removeSource } = await import('./sources-ops.ts');
+    return removeSource(ctx.engine, {
+      id: p.id as string,
+      confirmDestructive: (p.confirm_destructive as boolean) === true,
+      dryRun: (p.dry_run as boolean) === true || ctx.dryRun,
+      keepStorage: (p.keep_storage as boolean) === true,
+    });
+  },
+  cliHints: { name: 'sources_remove', hidden: true },
+};
+
+const sources_status: Operation = {
+  name: 'sources_status',
+  description:
+    'Per-source diagnostic. Returns clone_state ("healthy" | "missing" | ' +
+    '"not-a-dir" | "no-git" | "url-drift" | "corrupted" | "not-applicable") ' +
+    'so a remote MCP caller can diagnose whether the on-disk clone is ' +
+    'syncable without SSH access to the brain host.',
+  params: {
+    id: { type: 'string', required: true },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { getSourceStatus } = await import('./sources-ops.ts');
+    return getSourceStatus(ctx.engine, p.id as string);
+  },
+  cliHints: { name: 'sources_status', hidden: true },
+};
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -1858,6 +2078,8 @@ export const operations: Operation[] = [
   find_orphans,
   // v0.28: Takes + think
   takes_list, takes_search, think,
+  // v0.28: whoami + scoped sources management
+  whoami, sources_add, sources_list, sources_remove, sources_status,
   // v0.29: Salience + anomalies + recent transcripts
   get_recent_salience, find_anomalies, get_recent_transcripts,
 ];

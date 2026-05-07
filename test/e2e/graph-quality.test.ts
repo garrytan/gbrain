@@ -40,6 +40,9 @@ function makeContext(): OperationContext {
     config: { engine: 'pglite' } as any,
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
+    // E2E graph quality simulates local-CLI writes (auto-link / timeline run).
+    // After F7b made `remote` required this needs to be explicit.
+    remote: false,
   };
 }
 

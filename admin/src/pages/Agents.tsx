@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
+import { ALLOWED_SCOPES_LIST, type Scope } from '../lib/scope-constants';
 
 function timeAgo(date: Date): string {
   const s = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -249,7 +250,12 @@ function RegisterModal({ onClose, onRegistered }: {
   onRegistered: (creds: { clientId: string; clientSecret: string; name: string }) => void;
 }) {
   const [name, setName] = useState('');
-  const [scopes, setScopes] = useState({ read: true, write: false, admin: false });
+  // v0.28: scope set sourced from admin/src/lib/scope-constants.ts (mirror
+  // of src/core/scope.ts). CI drift check at scripts/check-admin-scope-drift.sh
+  // fails the build if these diverge.
+  const [scopes, setScopes] = useState<Record<Scope, boolean>>(() =>
+    Object.fromEntries(ALLOWED_SCOPES_LIST.map(s => [s, s === 'read'])) as Record<Scope, boolean>,
+  );
   const [ttl, setTtl] = useState('86400'); // 24h default
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -298,7 +304,7 @@ function RegisterModal({ onClose, onRegistered }: {
         <div style={{ marginBottom: 16 }}>
           <label>Scopes</label>
           <div className="checkbox-group">
-            {(['read', 'write', 'admin'] as const).map(s => (
+            {ALLOWED_SCOPES_LIST.map(s => (
               <label key={s} className="checkbox-label">
                 <input type="checkbox" checked={scopes[s]} onChange={e => setScopes(p => ({ ...p, [s]: e.target.checked }))} />
                 {s}

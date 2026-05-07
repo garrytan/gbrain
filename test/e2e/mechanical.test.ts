@@ -972,15 +972,25 @@ describeE2E('E2E: RLS Verification', () => {
     const conn = getConn();
     const tbl = `gbrain_rls_regression_${suffix}`;
     try {
-      await conn.unsafe(`CREATE TABLE public.${tbl} (id int)`);
-      // Make sure RLS is actually off; CREATE TABLE default is off but be explicit.
-      await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
-
-      // Init (idempotent) so the CLI has a config to read.
+      // Init first so all migrations (including v35's auto-RLS event trigger
+      // and one-time backfill) are applied. AFTER migrations run, simulate
+      // the post-v35 escape route: operator drops the auto-RLS trigger
+      // (e.g. while debugging) and creates a public table without RLS.
+      // doctor's existing rls check must still flag it. The new
+      // rls_event_trigger check warns separately about the missing trigger.
       Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
         cwd: cliCwd, env: cliEnv(), timeout: 15_000,
       });
+
+      // Drop the trigger so CREATE TABLE doesn't auto-enable RLS, then create
+      // the test table without RLS. ALTER TABLE … DISABLE is a belt-and-
+      // suspenders no-op in this path but matches what an operator would do
+      // if they had toggled RLS off manually after the trigger ran.
+      await conn.unsafe(`DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table`);
+      await conn.unsafe(`CREATE TABLE public.${tbl} (id int)`);
+      await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
+
       const result = Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
         cwd: cliCwd, env: cliEnv(), timeout: 20_000,
@@ -995,6 +1005,11 @@ describeE2E('E2E: RLS Verification', () => {
       expect(result.exitCode).toBe(1);
     } finally {
       await conn.unsafe(`DROP TABLE IF EXISTS public.${tbl}`);
+      // Restore the trigger via a no-op v35 replay so subsequent tests in
+      // this file (which expect the post-init steady state) don't see drift.
+      const { MIGRATIONS } = await import('../../src/core/migrate.ts');
+      const v35sql = (MIGRATIONS.find(m => m.version === 35)?.sqlFor as any)?.postgres;
+      if (v35sql) await conn.unsafe(v35sql);
     }
   }, 60_000);
 

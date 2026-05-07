@@ -622,7 +622,13 @@ CREATE TABLE IF NOT EXISTS subagent_messages (
   job_id              BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
   message_idx         INTEGER     NOT NULL,
   role                TEXT        NOT NULL,
+  -- v0.27+ stores provider-neutral ChatBlock[] when schema_version=2; legacy
+  -- Anthropic-shape blocks when schema_version=1 (pre-v0.27 jobs replay).
   content_blocks      JSONB       NOT NULL,
+  schema_version      INTEGER     NOT NULL DEFAULT 1,
+  -- Recipe id of the provider that produced this turn (e.g. 'anthropic',
+  -- 'openai', 'deepseek'). NULL on legacy v1 rows; set on v2.
+  provider_id         TEXT,
   tokens_in           INTEGER,
   tokens_out          INTEGER,
   tokens_cache_read   INTEGER,
@@ -633,22 +639,25 @@ CREATE TABLE IF NOT EXISTS subagent_messages (
   CONSTRAINT chk_subagent_messages_role CHECK (role IN ('user','assistant'))
 );
 CREATE INDEX IF NOT EXISTS idx_subagent_messages_job ON subagent_messages (job_id, message_idx);
+CREATE INDEX IF NOT EXISTS idx_subagent_messages_provider ON subagent_messages (job_id, provider_id);
 
 -- Two-phase tool execution ledger. Before tool call: INSERT status='pending'.
 -- After success: UPDATE to 'complete' + output. On failure: 'failed' + error.
 -- Replay re-runs 'pending' rows only if the tool is idempotent.
 CREATE TABLE IF NOT EXISTS subagent_tool_executions (
-  id           BIGSERIAL PRIMARY KEY,
-  job_id       BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
-  message_idx  INTEGER     NOT NULL,
-  tool_use_id  TEXT        NOT NULL,
-  tool_name    TEXT        NOT NULL,
-  input        JSONB       NOT NULL,
-  status       TEXT        NOT NULL,
-  output       JSONB,
-  error        TEXT,
-  started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  ended_at     TIMESTAMPTZ,
+  id              BIGSERIAL PRIMARY KEY,
+  job_id          BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  message_idx     INTEGER     NOT NULL,
+  tool_use_id     TEXT        NOT NULL,
+  tool_name       TEXT        NOT NULL,
+  input           JSONB       NOT NULL,
+  status          TEXT        NOT NULL,
+  output          JSONB,
+  error           TEXT,
+  schema_version  INTEGER     NOT NULL DEFAULT 1,
+  provider_id     TEXT,
+  started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ended_at        TIMESTAMPTZ,
   CONSTRAINT uniq_subagent_tools_use_id UNIQUE (job_id, tool_use_id),
   CONSTRAINT chk_subagent_tools_status CHECK (status IN ('pending','complete','failed'))
 );
