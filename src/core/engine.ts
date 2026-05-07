@@ -153,9 +153,10 @@ export interface BrainEngine {
    */
   getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
   /**
-   * For a list of slugs, return the numeric `boost` value from frontmatter (if set).
-   * Used by hybrid search to apply per-page priority multipliers.
-   * Slugs with no boost are absent from the map (caller defaults to 1.0).
+   * For a list of slugs, return the composite score multiplier from frontmatter.
+   * Combines explicit `boost` field with source weighting:
+   *   original → 1.3x, external → 0.8x, unset → 1.0x.
+   * Slugs with no relevant frontmatter are absent (caller defaults to 1.0).
    */
   getFrontmatterBoosts(slugs: string[]): Promise<Map<string, number>>;
   /**

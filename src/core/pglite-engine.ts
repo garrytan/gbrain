@@ -659,14 +659,23 @@ export class PGLiteEngine implements BrainEngine {
     const result = new Map<string, number>();
     if (slugs.length === 0) return result;
     const { rows } = await this.db.query(
-      `SELECT slug, (frontmatter->>'boost')::float AS boost
+      `SELECT slug,
+         COALESCE((frontmatter->>'boost')::float, 1.0) *
+         CASE frontmatter->>'source'
+           WHEN 'original' THEN 1.3
+           WHEN 'external' THEN 0.8
+           ELSE 1.0
+         END AS composite
        FROM pages
        WHERE slug = ANY($1::text[])
-         AND frontmatter->>'boost' IS NOT NULL`,
+         AND (
+           frontmatter->>'boost' IS NOT NULL
+           OR frontmatter->>'source' IN ('original', 'external')
+         )`,
       [slugs]
     );
-    for (const r of rows as { slug: string; boost: number }[]) {
-      const v = Number(r.boost);
+    for (const r of rows as { slug: string; composite: number }[]) {
+      const v = Number(r.composite);
       if (Number.isFinite(v) && v > 0) result.set(r.slug, v);
     }
     return result;

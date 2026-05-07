@@ -745,14 +745,24 @@ export class PostgresEngine implements BrainEngine {
     const result = new Map<string, number>();
     if (slugs.length === 0) return result;
     const sql = this.sql;
+    // Composite: explicit boost * source multiplier (original=1.3x, external=0.8x)
     const rows = await sql`
-      SELECT slug, (frontmatter->>'boost')::float AS boost
+      SELECT slug,
+        COALESCE((frontmatter->>'boost')::float, 1.0) *
+        CASE frontmatter->>'source'
+          WHEN 'original' THEN 1.3
+          WHEN 'external' THEN 0.8
+          ELSE 1.0
+        END AS composite
       FROM pages
       WHERE slug = ANY(${slugs}::text[])
-        AND frontmatter->>'boost' IS NOT NULL
+        AND (
+          frontmatter->>'boost' IS NOT NULL
+          OR frontmatter->>'source' IN ('original', 'external')
+        )
     `;
-    for (const r of rows as unknown as { slug: string; boost: number }[]) {
-      const v = Number(r.boost);
+    for (const r of rows as unknown as { slug: string; composite: number }[]) {
+      const v = Number(r.composite);
       if (Number.isFinite(v) && v > 0) result.set(r.slug, v);
     }
     return result;
