@@ -886,19 +886,6 @@ iteration's residuals.
 
 **Depends on:** PGLite engine shipping (to have a real use case for the PR).
 
-### ChatGPT MCP support (OAuth 2.1)
-**What:** Add OAuth 2.1 with Dynamic Client Registration to the self-hosted MCP server so ChatGPT can connect.
-
-**Why:** ChatGPT requires OAuth 2.1 for MCP connectors. Bearer token auth is NOT supported. This is the only major AI client that can't use GBrain remotely.
-
-**Pros:** Completes the "every AI client" promise. ChatGPT has the largest user base.
-
-**Cons:** OAuth 2.1 is a significant implementation: authorization endpoint, token endpoint, PKCE flow, dynamic client registration. Estimated CC: ~3-4 hours.
-
-**Context:** Discovered during DX review (2026-04-10). All other clients (Claude Desktop/Code/Cowork, Perplexity) work with bearer tokens. The Edge Function deployment was removed in v0.8.0. OAuth needs to be added to the self-hosted HTTP MCP server (or `gbrain serve --http` when implemented).
-
-**Depends on:** `gbrain serve --http` (not yet implemented).
-
 ### Runtime MCP access control
 **What:** Add sender identity checking to MCP operations. Brain ops return filtered data based on access tier (Full/Work/Family/None).
 
@@ -936,6 +923,22 @@ iteration's residuals.
 
 ### ~~Constrained health_check DSL for third-party recipes~~
 **Completed:** v0.9.3 (2026-04-12). Typed DSL with 4 check types (`http`, `env_exists`, `command`, `any_of`). All 7 first-party recipes migrated. String health checks accepted with deprecation warning + metachar validation for non-embedded recipes.
+
+## P1 (new from v0.18.0 — test flakiness)
+
+### beforeAll hook timeouts under parallel test runner
+**What:** 17 tests across 9 files (dream, orphans, brain-allowlist, extract-db, multi-source-integration, core/cycle, migrations-v0_12_2, migrations-v0_13_1, oauth) fail with `beforeEach/afterEach hook timed out for this test` at the 7-10 second threshold when run via `bun run test` (parallel). Every test passes in isolation (`bun test path/to/file.test.ts` → 0 fail). Root cause is PGLite schema init racing under concurrent test files.
+
+**Why:** `bun run test` is the pre-ship gate and reports these as failures, forcing manual triage on every /ship. The tests themselves are correct — the runner is stressing PGLite boot. Bumping the hook timeout or running E2E-like tests with `--bail` or serial execution would clear the 18 false positives.
+
+**Fix options:**
+1. Bump per-test hook timeout to 30s in `bunfig.toml` (quick fix, low risk)
+2. Move PGLite-init-heavy tests to `test/e2e/` so they run serially via `scripts/run-e2e.sh` (follows existing pattern)
+3. Share a module-scoped PGLite instance across describe blocks within a file (biggest win — most fixture setup is identical)
+
+**Effort:** 30 min for option 1, ~2 hours for option 3.
+
+**Context:** Noticed during /ship merge wave on `garrytan/mcp-key-mgmt` (2026-04-16 branch merge of v0.18.0). Failure set stayed exactly 17-18 tests across multiple /ship runs, confirming deterministic flakes rather than real regressions. Blocking workaround: run the specific test file to verify after any suite change.
 
 ## P1 (new from v0.11.0 — Minions)
 
@@ -1166,6 +1169,9 @@ iteration's residuals.
 **Depends on:** Nothing.
 
 ## Completed
+
+### ChatGPT MCP support (OAuth 2.1)
+**Completed:** v0.26.0 (2026-04-25) — `gbrain serve --http` ships full OAuth 2.1 via MCP SDK's `mcpAuthRouter` + `OAuthServerProvider`. Authorization code flow with PKCE unblocks ChatGPT. Client credentials flow unblocks Perplexity/Claude. Dynamic Client Registration available behind `--enable-dcr` flag (off by default). See `docs/mcp/CHATGPT.md` for connector setup. Closed the P0 that had been blocking the "every AI client" promise since v0.6.
 
 ### Implement AWS Signature V4 for S3 storage backend
 **Completed:** v0.6.0 (2026-04-10) — replaced with @aws-sdk/client-s3 for proper SigV4 signing.

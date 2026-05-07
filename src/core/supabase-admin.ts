@@ -79,32 +79,3 @@ export async function discoverPoolerUrl(
   return `postgresql://postgres.${projectRef}:[YOUR-PASSWORD]@aws-0-${region}.pooler.supabase.com:6543/postgres`;
 }
 
-/**
- * Verify RLS is enabled on all gbrain tables.
- * Returns list of tables without RLS.
- */
-export async function checkRls(token: string, projectRef: string): Promise<string[]> {
-  const sql = `
-    SELECT tablename FROM pg_tables
-    WHERE schemaname = 'public'
-      AND tablename IN ('pages','content_chunks','links','tags','raw_data',
-                         'page_versions','timeline_entries','ingest_log','config','files')
-      AND NOT rowsecurity
-  `;
-
-  const res = await fetch(
-    `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query: sql }),
-    },
-  );
-
-  if (!res.ok) return []; // Non-fatal: skip if API doesn't support this endpoint
-  const data = await res.json() as { result?: { tablename: string }[] };
-  return (data.result || []).map(r => r.tablename);
-}

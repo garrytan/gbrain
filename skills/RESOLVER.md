@@ -100,6 +100,7 @@ When multiple skills could match:
 These apply to ALL brain-writing skills:
 - `skills/conventions/quality.md` — citations, back-links, notability gate
 - `skills/conventions/brain-first.md` — check brain before external APIs
+- `skills/conventions/brain-routing.md` — which brain (DB) and which source (repo) to target; cross-brain federation is latent-space only
 - `skills/conventions/subagent-routing.md` — when to use Minions vs inline work
 - `skills/_brain-filing-rules.md` — where files go
 - `skills/_output-rules.md` — output quality standards

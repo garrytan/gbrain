@@ -154,4 +154,24 @@ describe('doctor command', () => {
     // requirement to write a real justification, not just the prefix.
     expect(rlsBlock).toMatch(/reason=/);
   });
+
+  // v0.26.7 — rls_event_trigger check (post-install drift detector for v35).
+  // Lives AFTER `// 6. Schema version` so the existing `// 5. RLS` slice
+  // tests stay intact (codex correction).
+  test('rls_event_trigger check exists, scoped after schema_version, healthy on (O,A) only', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const idx7 = source.indexOf('// 7. RLS event trigger');
+    const idx8 = source.indexOf('// 8. Embedding health');
+    expect(idx7).toBeGreaterThan(0);
+    expect(idx8).toBeGreaterThan(idx7);
+    const block = source.slice(idx7, idx8);
+    expect(block).toContain("name: 'rls_event_trigger'");
+    // Healthy set is origin (`O`) or always (`A`). `R` is replica-only and
+    // would not fire in normal sessions; `D` is disabled. Both are warn states.
+    expect(block).toMatch(/evtenabled\s*!==\s*'O'[\s\S]*?evtenabled\s*!==\s*'A'/);
+    // PGLite skip path is required (no event triggers there).
+    expect(block).toMatch(/engine\.kind\s*===\s*'pglite'/);
+    // Recovery command names the migration version explicitly.
+    expect(block).toContain('--force-retry 35');
+  });
 });
