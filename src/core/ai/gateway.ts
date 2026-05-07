@@ -175,6 +175,16 @@ export function getEmbeddingDimensions(): number {
   return requireConfig().embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
 }
 
+/**
+ * v0.28.11: returns the configured multimodal embedding model when set,
+ * or undefined if the brain falls back to `embedding_model` for multimodal
+ * routing. Mirrors the other gateway accessors so doctor/tests can read the
+ * gateway state without poking at private `_config`.
+ */
+export function getMultimodalModel(): string | undefined {
+  return requireConfig().embedding_multimodal_model;
+}
+
 export function getExpansionModel(): string {
   return requireConfig().expansion_model ?? DEFAULT_EXPANSION_MODEL;
 }
@@ -554,6 +564,17 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
       `Recipe ${recipe.id} (${parsed.modelId}) does not support multimodal embedding.`,
       `Set embedding_multimodal_model to route multimodal separately from text embeddings.\n` +
       `Today: voyage:voyage-multimodal-3. OpenAI / Cohere multimodal support is on the roadmap.`,
+    );
+  }
+  // v0.28.11: model-level validation. supports_multimodal is recipe-scoped, so
+  // a recipe like Voyage that mixes text-only models with one multimodal model
+  // would otherwise let `voyage:voyage-3-large` through and fail at the
+  // /multimodalembeddings endpoint. When the recipe declares an explicit
+  // multimodal_models allow-list, enforce it pre-flight.
+  if (touchpoint.multimodal_models && !touchpoint.multimodal_models.includes(parsed.modelId)) {
+    throw new AIConfigError(
+      `${recipe.id}:${parsed.modelId} is not a multimodal-capable model.`,
+      `Use one of: ${touchpoint.multimodal_models.map(m => `${recipe.id}:${m}`).join(', ')}.`,
     );
   }
 

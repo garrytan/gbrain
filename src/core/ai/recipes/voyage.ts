@@ -42,6 +42,14 @@ export const voyage: Recipe = {
       chars_per_token: 1,
       safety_factor: 0.5,
       supports_multimodal: true,
+      // v0.28.11: only voyage-multimodal-3 is valid at /multimodalembeddings.
+      // The 11 text-only Voyage models above share supports_multimodal: true
+      // at the recipe level (Codex F1 from PR #719 review). Without this
+      // explicit list, embedMultimodal() would let `voyage:voyage-3-large`
+      // through local validation and Voyage would reject it with HTTP 400 —
+      // which gateway.ts:626 misclassifies as transient (TODO: reclassify
+      // 4xx).
+      multimodal_models: ['voyage-multimodal-3'],
     },
   },
   setup_hint: 'Get an API key at https://dash.voyageai.com/api-keys, then `export VOYAGE_API_KEY=...`',

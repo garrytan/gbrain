@@ -60,6 +60,18 @@ export interface EmbeddingTouchpoint {
    * Text-only providers leave this undefined.
    */
   supports_multimodal?: boolean;
+  /**
+   * v0.28.11: explicit list of models in this recipe that accept multimodal
+   * input. Required when the recipe mixes text-only and multimodal models
+   * under the same touchpoint (e.g. Voyage). embedMultimodal() validates
+   * `parsed.modelId` against this list AFTER `supports_multimodal` is true,
+   * pre-flighting the HTTP 400 a non-multimodal-capable model would otherwise
+   * trigger at the endpoint. When omitted, every model in `models` is
+   * treated as multimodal-capable (back-compat for providers where the whole
+   * recipe is multimodal). The check fires only inside embedMultimodal();
+   * text embedding paths ignore it.
+   */
+  multimodal_models?: string[];
 }
 
 /**
