@@ -2,6 +2,123 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.28.10] - 2026-05-07
+
+**`/health` stops being slow. Stops triggering restart cascades.**
+**Liveness is liveness; stats moved where they belong.**
+
+v0.28.10 makes `/health` a one-query liveness probe and moves the heavy
+engine-stats payload behind admin auth. On any brain large enough to
+matter (think 96K+ pages through PgBouncer), the old `/health` ran six
+`count(*)` queries that routinely exceeded the 3-second probe window.
+Fly.io / k8s / cron orchestrators saw 503, restarted the otherwise-healthy
+server, and each crashed startup left a Postgres advisory-lock waiter on
+the migration lock. Production observed six stacked waiters before the
+server became permanently stuck and the locks had to be cleared by hand.
+New installs: nothing to do. Existing operators whose monitors scraped
+`page_count` from `/health` migrate to `/admin/api/full-stats`
+(admin-cookie auth). `/admin/api/health-indicators` is unchanged.
+
+### The numbers that matter
+
+Measured against a 96K-page production brain through PgBouncer (Supabase,
+port 6543) on the branch this release ships from.
+
+| Probe path | Before | After |
+|---|---|---|
+| `/health` latency on 96K-page brain | timed out at 3000ms | <10ms |
+| `count(*)` queries per `/health` request | 6 | 0 |
+| Restart-cascade reachability via `/health` | yes (orchestrator → 503 → restart loop → lock pile-up) | no |
+| Full-stats endpoint | `/health` (unauthenticated) | `/admin/api/full-stats` (admin cookie) |
+| Tests covering the route surface | 3 unit (probeHealth only) | 7 unit + 3 new E2E (`probeLiveness` + body-shape regression + admin-auth happy/401) |
+
+**What this means for you**: orchestrator restart loops stop. The server
+stays up under load. Dashboards that actually need `page_count` log into
+`/admin/` and call a real authenticated endpoint instead of pulling
+admin-grade stats off a public route. The original PR's `?full=true`
+query-param escape hatch was withdrawn after outside-voice review flagged
+it as a back-door to the same DoS surface; the shipped design routes
+through the existing `requireAdmin` middleware that's already protecting
+seven other admin endpoints.
+
+## To take advantage of v0.28.10
+
+`gbrain upgrade` should do this automatically. There is no schema migration
+in this release.
+
+1. **Verify the upgrade landed**:
+   ```bash
+   curl -s http://localhost:3131/health | jq .
+   # expect: {"status":"ok","version":"0.28.10","engine":"postgres"}
+   curl -s http://localhost:3131/admin/api/full-stats
+   # expect: {"error":"Admin authentication required"} with HTTP 401
+   ```
+2. **If your monitoring stack scrapes `page_count` / `chunk_count` /
+   `embedded_count` / `link_count` / `tag_count` / `timeline_entry_count`
+   from `GET /health`**, those fields are gone. Move the scraper to
+   `GET /admin/api/full-stats` with the `gbrain_admin` session cookie.
+   `/admin/api/health-indicators` continues to return only
+   `{expiring_soon, error_rate}` and is unchanged.
+3. **If `gbrain doctor` reports anything unexpected**, please file an issue
+   at https://github.com/garrytan/gbrain/issues with the doctor output and
+   what monitoring stack you're using.
+
+### Itemized changes
+
+#### What's new
+
+- **`GET /admin/api/full-stats`** (new route, behind `requireAdmin`).
+  Returns the same body shape `/health` used to expose:
+  `{status, version, engine, page_count, chunk_count, embedded_count,
+  link_count, tag_count, timeline_entry_count}`. Reuses the existing
+  `probeHealth()` helper, including its 3-second timeout race against
+  `engine.getStats()`. Sibling to `/admin/api/stats` and
+  `/admin/api/health-indicators`.
+- **`probeLiveness(sql, engineName, version, timeoutMs)`** (new exported
+  helper in `src/commands/serve-http.ts`). Mirror of `probeHealth()`'s
+  shape: races `sql\`SELECT 1\`` against `HEALTH_TIMEOUT_MS`, returns the
+  same `ProbeHealthResult` tagged-union, single finally-block
+  `clearTimeout` discipline.
+
+#### Behavior changes
+
+- **`GET /health` is now liveness-only.** Body shape:
+  `{status, version, engine}`. `getStats()` is no longer called on this
+  route. Status code semantics are unchanged: 200 on probe success, 503
+  on timeout or DB error.
+- **`?full=true` query param removed.** Operators who relied on
+  `curl localhost:3131/health?full=true` for full stats migrate to
+  admin-auth + `/admin/api/full-stats`.
+
+#### Tests
+
+- `test/serve-http-health.test.ts` — 4 new `probeLiveness` cases:
+  happy-path body-shape regression (asserts the body has exactly
+  `{status, version, engine}` and no `page_count` / `chunk_count`),
+  timeout path, db-error path, timer-cleanup under 100 concurrent probes.
+- `test/e2e/serve-http-oauth.test.ts` — 3 new cases: `/health` returns
+  liveness-only body (no engine stats), `/admin/api/full-stats` without
+  cookie returns 401, `/admin/api/full-stats` with a magic-link-derived
+  admin cookie returns the full `getStats()` body.
+- The previous `'health endpoint returns OK without auth'` E2E case that
+  asserted `data.page_count` was a number is updated to the
+  liveness-only shape — that assertion would have silently passed against
+  the original `?full=true` PR while letting the heavy probe leak into
+  the public route.
+
+#### For contributors
+
+- The original PR (#701, by @garrytan-agents) added `?full=true` as a
+  debug escape hatch and the plan-eng review proposed gating it to
+  loopback IPs. Outside-voice review (Codex) flagged that the loopback
+  gate's correctness depended on `app.set('trust proxy', 'loopback')`
+  semantics holding under proxy/XFF misconfiguration, and that the PR's
+  own comment misidentified `/admin/api/health-indicators` as a
+  full-stats endpoint when it actually returns only
+  `{expiring_soon, error_rate}`. The shipped design uses the existing
+  `requireAdmin` middleware instead, eliminating the proxy dependency
+  and fixing the migration story in one move.
+
 ## [0.28.6] - 2026-05-06
 
 **The brain finally captures what you BELIEVE, not just what's true.**
