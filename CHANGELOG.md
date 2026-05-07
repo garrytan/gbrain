@@ -56,6 +56,7 @@ If your Voyage backfill stalled mid-corpus: re-run `gbrain embed --stale --limit
 
 #### Added
 
+- **Windows x64 binary target in `build:all`.** The aggregate local build now emits `bin/gbrain-windows-x64.exe` via `bun-windows-x64` alongside the existing macOS arm64 and Linux x64 outputs, so downstream desktop clients can validate a Windows gbrain daemon artifact from the same build command.
 - **`EmbeddingTouchpoint.chars_per_token` + `safety_factor` (per-recipe batching policy).** Each embedding recipe can now declare its own tokenizer density and budget-utilization ceiling. Defaults: 4 chars/token (OpenAI) and 0.8 utilization. Voyage declares 1 + 0.5. Both fields are optional and only consulted when `max_batch_tokens` is also set.
 - **`__setEmbedTransportForTests(fn)` test seam on the gateway.** Replaces the AI SDK's `embedMany` with an injected stub for tests. Tests run through the public `embed()` function instead of probing private helpers. `resetGateway()` restores the real SDK.
 - **Adaptive shrink-on-miss cache.** Module-scoped `Map<recipeId, {factor, consecutiveSuccesses}>`. On token-limit miss, the recipe's effective `safety_factor` halves (floor 0.05). After 10 consecutive batch successes, the factor heals back toward the recipe-declared ceiling at ×1.5 per cycle.
