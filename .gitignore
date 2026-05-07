@@ -11,6 +11,8 @@ bin/
 .gstack/
 supabase/.temp/
 .claude/skills/
+admin/dist/
+admin/node_modules/
 .idea
 eval/reports/
 eval/data/world-v1/world.html

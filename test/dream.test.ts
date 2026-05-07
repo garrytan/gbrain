@@ -55,10 +55,10 @@ describe('runDream — brainDir resolution', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  }, 60_000);
+  }, 60_000); // OAuth v25 + git init; needs breathing room under full-suite load
 
   afterEach(async () => {
-    await engine.disconnect();
+    if (engine) await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
   }, 60_000);
 
@@ -112,10 +112,10 @@ describe('runDream — --phase <name> restricts the cycle', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  }, 60_000);
+  }, 60_000); // OAuth v25 + git init; needs breathing room under full-suite load
 
   afterEach(async () => {
-    await engine.disconnect();
+    if (engine) await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
   }, 60_000);
 
@@ -160,10 +160,10 @@ describe('runDream — output format', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  }, 60_000);
+  }, 60_000); // OAuth v25 + git init; needs breathing room under full-suite load
 
   afterEach(async () => {
-    await engine.disconnect();
+    if (engine) await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
   }, 60_000);
 
@@ -198,10 +198,10 @@ describe('runDream — dry-run propagates through to runCycle', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  }, 60_000);
+  }, 60_000); // OAuth v25 + git init; needs breathing room under full-suite load
 
   afterEach(async () => {
-    await engine.disconnect();
+    if (engine) await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
   }, 60_000);
 
@@ -227,10 +227,10 @@ describe('runDream — exit-code semantics', () => {
   beforeEach(async () => {
     repo = makeGitRepo();
     engine = await makePGLite();
-  }, 60_000);
+  }, 60_000); // OAuth v25 + git init; needs breathing room under full-suite load
 
   afterEach(async () => {
-    await engine.disconnect();
+    if (engine) await engine.disconnect();
     rmSync(repo, { recursive: true, force: true });
   }, 60_000);
 

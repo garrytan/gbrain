@@ -1,6 +1,20 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult } from './types.ts';
 import type { Take, TakeKind } from './engine.ts';
+
+/**
+ * SHA-256 hash a token/secret for storage. Never store plaintext tokens.
+ */
+export function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+/**
+ * Generate a cryptographically random token with a prefix.
+ */
+export function generateToken(prefix: string): string {
+  return `${prefix}${randomBytes(32).toString('hex')}`;
+}
 
 /**
  * Validate and normalize a slug. Slugs are lowercased repo-relative paths.

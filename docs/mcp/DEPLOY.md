@@ -1,17 +1,21 @@
 # Deploy GBrain Remote MCP Server
 
-> **v0.22.7+:** Use `gbrain serve --http` for remote access. It includes built-in
-> bearer token auth, default-deny CORS, two-bucket rate limiting, body cap, and
-> per-request audit log. **Postgres-only** (PGLite is local-only by design).
-> See [SECURITY.md](../../SECURITY.md) for env vars and tunable defaults.
+> **v0.26.0+:** `gbrain serve --http` ships full OAuth 2.1 (client credentials,
+> auth code + PKCE, refresh rotation, optional DCR), an embedded React admin
+> dashboard at `/admin`, scoped operations, and a live SSE activity feed.
+> Pre-v0.26 legacy bearer tokens still work — `verifyAccessToken` falls back
+> to the `access_tokens` table and grandfathers tokens to `read+write+admin`.
+> Postgres-only for the legacy fallback (the `access_tokens` table is Postgres-only);
+> OAuth tables work on both PGLite and Postgres. See [SECURITY.md](../../SECURITY.md)
+> for env vars and tunable defaults.
 
-Access your brain from any device, any AI client. GBrain's MCP server runs locally
-via `gbrain serve` (stdio). For remote access, expose it via the built-in HTTP
-transport behind a public tunnel.
+Access your brain from any device, any AI client. GBrain ships two transports:
+`gbrain serve` (stdio) for local agents, and `gbrain serve --http` (v0.26.0+)
+for remote clients over OAuth 2.1.
 
-## Two Paths
+## Three Paths
 
-### Local (zero setup)
+### Local stdio (zero setup)
 
 ```bash
 gbrain serve
@@ -20,7 +24,30 @@ gbrain serve
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
 No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
 
-### Remote (any device, any AI client) — Postgres only
+### Remote over OAuth 2.1 (recommended, v0.26.0+)
+
+```bash
+gbrain serve --http --port 3131
+ngrok http 3131 --url your-brain.ngrok.app
+gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
+```
+
+Built-in HTTP transport with OAuth 2.1, scoped operations, an admin dashboard
+at `/admin`, and a live SSE activity feed. Zero external dependencies. This is
+the only path that works with ChatGPT (OAuth 2.1 + PKCE is required by the
+ChatGPT MCP connector). Pass `--public-url` whenever the server is reachable
+at anything other than `http://localhost:<port>` so the OAuth issuer in
+discovery metadata matches what clients hit (RFC 8414 §3.3).
+
+Supported clients:
+- **ChatGPT** — requires OAuth 2.1 + PKCE. Works natively with `--http`.
+- **Claude Desktop / Cowork** — OAuth 2.1 or legacy bearer tokens.
+- **Perplexity** — OAuth 2.1 client credentials grant.
+- **Claude Code, Cursor, Windsurf** — can use OAuth or legacy bearer.
+
+See the [OAuth 2.1 setup](#oauth-21-setup-v100) section below.
+
+### Remote with legacy bearer tokens (pre-v0.26 deployments) — Postgres only
 
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
@@ -36,7 +63,6 @@ This requires:
 3. A public tunnel (ngrok, Tailscale, or cloud host)
 4. A bearer token created via `gbrain auth create <name>`
 
-## Remote Setup
 Pre-v1.0 tokens are grandfathered as `read+write+admin` scopes when you upgrade
 to the HTTP server, so no migration is required.
 
@@ -58,15 +84,6 @@ Open http://localhost:3131/admin and paste it to log in.
 Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
 and per-client config export.
-
-> **v0.26.9+:** `mcp_request_log.params` and the live SSE activity feed default
-> to a redacted summary `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`.
-> Declared param keys are kept (intersected against the operation's spec); unknown
-> keys are counted but never named, and byte sizes round up to 1KB so size-probe
-> attacks can't binary-search secret content. Operators on a personal laptop who
-> want raw payloads back can pass `gbrain serve --http --log-full-params` (loud
-> stderr warning fires at startup). Multi-tenant deployments should leave it on
-> the redacted default.
 
 ### 2. Register OAuth clients
 
@@ -164,6 +181,7 @@ if compromised. Tokens are stored SHA-256 hashed in your database.
 
 ### 3. Connect your AI client
 
+- **ChatGPT:** [setup guide](CHATGPT.md) (OAuth 2.1 + PKCE, requires `gbrain serve --http`)
 - **Claude Code:** [setup guide](CLAUDE_CODE.md)
 - **Claude Desktop:** [setup guide](CLAUDE_DESKTOP.md) (must use GUI, not JSON config)
 - **Claude Cowork:** [setup guide](CLAUDE_COWORK.md)
@@ -220,7 +238,8 @@ Remote servers must be added via Settings > Integrations, NOT
 | put_page | 100-500ms | Write + trigger search_vector update |
 | get_stats | < 100ms | Aggregate query |
 
-**Note:** `gbrain serve --http` (built-in HTTP transport) is planned but not yet
-implemented. Currently, remote MCP requires a custom HTTP wrapper. See the
-production deployment pattern in the [voice recipe](../../recipes/twilio-voice-brain.md)
-for a reference implementation.
+**Note:** `gbrain serve --http` shipped in v0.26.0 with OAuth 2.1 + admin
+dashboard baked into the binary. The custom HTTP wrapper pattern (see
+[voice recipe](../../recipes/twilio-voice-brain.md)) is still supported for
+teams that need bespoke middleware, but for most remote deployments the
+built-in server is the recommended path.

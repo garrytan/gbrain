@@ -135,10 +135,10 @@ beforeAll(async () => {
   sharedEngine = new PGLiteEngine();
   await sharedEngine.connect({});
   await sharedEngine.initSchema();
-}, 60_000);
+}, 60_000); // OAuth v25 + full migration chain needs breathing room
 
 afterAll(async () => {
-  await sharedEngine.disconnect();
+  if (sharedEngine) await sharedEngine.disconnect();
 }, 60_000);
 
 beforeEach(() => {

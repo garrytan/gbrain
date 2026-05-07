@@ -503,7 +503,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // 7. Embedding health
   progress.heartbeat('embeddings');
   try {
-    const health = await engine.getHealth(allPages);
+    const health = await engine.getHealth();
     const pct = (health.embed_coverage * 100).toFixed(0);
     if (health.embed_coverage >= 0.9) {
       checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing` });
@@ -520,7 +520,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
   progress.heartbeat('graph_coverage');
   try {
-    const health = await engine.getHealth(allPages);
+    const health = await engine.getHealth();
     const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
     const timelinePct = ((health.timeline_coverage ?? 0) * 100).toFixed(0);
     if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {

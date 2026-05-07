@@ -27,10 +27,10 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({ type: 'pglite' } as never);
   await engine.initSchema();
-}, 60_000);
+}, 60_000); // OAuth v25 + full migration chain needs breathing room
 
 afterAll(async () => {
-  await engine.disconnect();
+  if (engine) await engine.disconnect();
 }, 60_000);
 
 describe('v0.18.0 — sources table seeded with default row on fresh PGLite', () => {

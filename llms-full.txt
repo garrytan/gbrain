@@ -31,7 +31,13 @@ start here.
 1. `./AGENTS.md` (this file) — install + operating protocol.
 2. [`./CLAUDE.md`](./CLAUDE.md) — architecture reference, key files, trust boundaries,
    test layout.
-3. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+3. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
+   — the two-axis mental model (brain = which DB, source = which repo in the DB). Every
+   query routes on both axes. Read before writing anything that touches brain ops.
+4. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
+   agent-facing decision table: when to switch brain, when to switch source, how
+   cross-brain federation works (latent-space only; the agent decides).
+5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
 
 ## Trust boundary (critical)
 
@@ -98,6 +104,24 @@ suggests Supabase for 1000+ files. GStack teaches agents how to code. GBrain tea
 agents everything else: brain ops, signal detection, content ingestion, enrichment,
 cron scheduling, reports, identity, and access control.
 
+## Two organizational axes (read this first)
+
+GBrain knowledge is organized along two orthogonal axes. Users AND agents must
+understand both, or queries misroute silently.
+
+- **Brain** — WHICH DATABASE. Your personal brain is `host`. You can mount
+  additional brains (team-published, each with their own DB and access policy)
+  via `gbrain mounts add` (v0.19+). Routing: `--brain`, `GBRAIN_BRAIN_ID`,
+  `.gbrain-mount` dotfile.
+- **Source** — WHICH REPO INSIDE THE DATABASE. A brain can hold many sources
+  (wiki, gstack, openclaw, essays). Slugs scope per source. Routing:
+  `--source`, `GBRAIN_SOURCE`, `.gbrain-source` dotfile.
+
+Both axes follow the same 6-tier resolution pattern. Read
+`docs/architecture/brains-and-sources.md` for topology diagrams (personal, team
+mount, CEO-class with multiple team brains) and
+`skills/conventions/brain-routing.md` for the agent-facing decision table.
+
 ## Architecture
 
 Contract-first: `src/core/operations.ts` defines ~41 shared operations (adds `find_orphans` in v0.12.3). CLI and MCP
@@ -113,14 +137,13 @@ strict behavior when unset.
 
 ## Key files
 
-- `src/core/operations.ts` — Contract-first operation definitions (the foundation). Also exports upload validators: `validateUploadPath`, `validatePageSlug`, `validateFilename`, plus `matchesSlugAllowList(slug, prefixes)` (v0.23 glob matcher: `<prefix>/*` matches recursive children; bare `<prefix>` matches exact only). `OperationContext.remote` flags untrusted callers; `OperationContext.allowedSlugPrefixes` (v0.23) is the trusted-workspace allow-list set by the dream cycle. `put_page` enforces: when `viaSubagent` and `allowedSlugPrefixes` is set, slug must match the allow-list; else the legacy `wiki/agents/<id>/...` namespace check applies. Auto-link enabled for trusted-workspace writes (skipped only when `remote=true && !trustedWorkspace`).
-- `src/core/operations.ts` — Contract-first operation definitions (the foundation). Also exports upload validators: `validateUploadPath`, `validatePageSlug`, `validateFilename`, plus `matchesSlugAllowList(slug, prefixes)` (v0.23 glob matcher: `<prefix>/*` matches recursive children; bare `<prefix>` matches exact only). `OperationContext.remote` flags untrusted callers; `OperationContext.allowedSlugPrefixes` (v0.23) is the trusted-workspace allow-list set by the dream cycle. `put_page` enforces: when `viaSubagent` and `allowedSlugPrefixes` is set, slug must match the allow-list; else the legacy `wiki/agents/<id>/...` namespace check applies. Auto-link enabled for trusted-workspace writes (skipped only when `remote=true && !trustedWorkspace`). As of v0.26.0, every `Operation` also carries `scope?: 'read' | 'write' | 'admin'` + `localOnly?: boolean`. All ops are annotated; `sync_brain`, `file_upload`, `file_list`, and `file_url` are `admin + localOnly` (rejected over HTTP). `OperationContext.auth?: AuthInfo` is threaded through HTTP dispatch for scope enforcement in `serve-http.ts` before the op runs. **v0.26.9 (D12 + F7b):** `OperationContext.remote` is now a REQUIRED field in the TypeScript type — the compiler is the first defense against transports that forget to set it. Four trust-boundary call sites (`put_page` allowlist, file_upload trust-narrowing, submit_job protected-name guard, auto-link skip) flipped from falsy-default (`!ctx.remote`) to fail-closed semantics (`ctx.remote === false` for "trusted-only" sites and `ctx.remote !== false` for "untrust unless explicit-false"). Anything that isn't strictly `false` is now treated as remote. Closed an HTTP MCP shell-job RCE: a `read+write`-scoped OAuth token could submit `shell` jobs because the HTTP request handler's literal context skipped `remote: true` and `submit_job`'s protected-name guard saw a falsy undefined. Stdio MCP set the field correctly via dispatch.ts; HTTP inlined a parallel context-builder for several releases and lost it.
+- `src/core/operations.ts` — Contract-first operation definitions (the foundation). Also exports upload validators: `validateUploadPath`, `validatePageSlug`, `validateFilename`, plus `matchesSlugAllowList(slug, prefixes)` (v0.23 glob matcher: `<prefix>/*` matches recursive children; bare `<prefix>` matches exact only). `OperationContext.remote` flags untrusted callers; `OperationContext.allowedSlugPrefixes` (v0.23) is the trusted-workspace allow-list set by the dream cycle. `put_page` enforces: when `viaSubagent` and `allowedSlugPrefixes` is set, slug must match the allow-list; else the legacy `wiki/agents/<id>/...` namespace check applies. Auto-link enabled for trusted-workspace writes (skipped only when `remote=true && !trustedWorkspace`). As of v0.26.0, every `Operation` also carries `scope?: 'read' | 'write' | 'admin'` + `localOnly?: boolean`. All ops are annotated; `sync_brain`, `file_upload`, `file_list`, and `file_url` are `admin + localOnly` (rejected over HTTP). `OperationContext.auth?: AuthInfo` is threaded through HTTP dispatch for scope enforcement in `serve-http.ts` before the op runs.
 - `src/core/engine.ts` — Pluggable engine interface (BrainEngine). `clampSearchLimit(limit, default, cap)` takes an explicit cap so per-operation caps can be tighter than `MAX_SEARCH_LIMIT`. Exports `LinkBatchInput` / `TimelineBatchInput` for the v0.12.1 bulk-insert API (`addLinksBatch` / `addTimelineEntriesBatch`). As of v0.13.1, `BrainEngine` has a `readonly kind: 'postgres' | 'pglite'` discriminator so migrations (`src/core/migrate.ts`) and other consumers can branch on engine without `instanceof` + dynamic imports.
 - `src/core/engine-factory.ts` — Engine factory with dynamic imports (`'pglite'` | `'postgres'`)
 - `src/core/pglite-engine.ts` — PGLite (embedded Postgres 17.5 via WASM) implementation, all 40 BrainEngine methods. `addLinksBatch` / `addTimelineEntriesBatch` use multi-row `unnest()` with manual `$N` placeholders. As of v0.13.1, `connect()` wraps `PGlite.create()` in a try/catch that emits an actionable error naming the macOS 26.3 WASM bug (#223) and pointing at `gbrain doctor`; the lock is released on failure so the next process can retry cleanly. v0.22.0: `searchKeyword` and `searchKeywordChunks` multiply `ts_rank` by the source-factor CASE expression at the chunk-grain level; `searchVector` becomes a two-stage CTE — inner CTE keeps `ORDER BY cc.embedding <=> vec` so HNSW stays usable, outer SELECT re-ranks by `raw_score * source_factor`. Inner LIMIT scales with offset to preserve pagination contract. As of v0.22.6.1, `initSchema()` calls `applyForwardReferenceBootstrap()` BEFORE replaying SCHEMA_SQL — probes for the specific forward-referenced state the embedded schema blob needs (`pages.source_id`, `links.link_source`, `links.origin_page_id`, `content_chunks.symbol_name`, `content_chunks.language`, `sources` FK target table) and adds only what's missing. Closes the upgrade-wedge bug class that bit users 10+ times across 6 schema versions over 2 years (#239/#243/#266/#357/#366/#374/#375/#378/#395/#396). No-op on fresh installs and modern brains.
 - `src/core/pglite-schema.ts` — PGLite-specific DDL (pgvector, pg_trgm, triggers)
 - `src/core/postgres-engine.ts` — Postgres + pgvector implementation (Supabase / self-hosted). `addLinksBatch` / `addTimelineEntriesBatch` use `INSERT ... SELECT FROM unnest($1::text[], ...) JOIN pages ON CONFLICT DO NOTHING RETURNING 1` — 4-5 array params regardless of batch size, sidesteps the 65535-parameter cap. As of v0.12.3, `searchKeyword` / `searchVector` scope `statement_timeout` via `sql.begin` + `SET LOCAL` so the GUC dies with the transaction instead of leaking across the pooled postgres.js connection (contributed by @garagon). `getEmbeddingsByChunkIds` uses `tryParseEmbedding` so one corrupt row skips+warns instead of killing the query. v0.22.0: `searchKeyword`, `searchKeywordChunks`, and `searchVector` apply source-aware ranking by inlining the source-factor CASE and `NOT (col LIKE …)` hard-exclude clause from `src/core/search/sql-ranking.ts`. `searchVector` switches to a two-stage CTE (HNSW-safe inner ORDER BY, source-boost re-rank in the outer SELECT) and carries `p.source_id` through inner→outer for v0.18 multi-source callers. v0.22.1 (#406): `_savedConfig` retains the connect config; `reconnect()` tears down + recreates the pool from saved config (called by supervisor watchdog after 3 consecutive health-check failures). `executeRaw` is a single-statement passthrough — no per-call retry (D3 dropped that as unsound for non-idempotent statements; recovery is supervisor-driven). v0.22.1 (#363, contributed by @orendi84): `connect()` applies `resolveSessionTimeouts()` from `db.ts` as connection-time startup parameters (`statement_timeout`, `idle_in_transaction_session_timeout`) so orphan pgbouncer backends can't hold locks for hours. v0.22.1 (#409, contributed by @atrevino47): `countStaleChunks()` + `listStaleChunks()` server-side-filter on `embedding IS NULL` for `embed --stale`, eliminating ~76 MB/call client-side pull on a fully-embedded brain; `upsertChunks()` resets both `embedding` AND `embedded_at` to NULL when chunk_text changes without a new embedding (consistency). As of v0.22.6.1, `initSchema()` calls `applyForwardReferenceBootstrap()` BEFORE replaying SCHEMA_SQL on the same forward-reference probe set as the PGLite engine, so old Postgres brains pinned at v0.13/v0.18/v0.19 walk forward cleanly instead of wedging on `column "..." does not exist`.
-- `src/core/utils.ts` — Shared SQL utilities extracted from postgres-engine.ts. Exports `parseEmbedding(value)` (throws on unknown input, used by migration + ingest paths where data integrity matters) and as of v0.12.3 `tryParseEmbedding(value)` (returns `null` + warns once per process, used by search/rescore paths where availability matters more than strictness). **v0.26.9 (D14):** adds `isUndefinedColumnError(err)` predicate — pattern-matches Postgres SQLSTATE 42703 / "column ... does not exist" with engine-driver shape variation tolerated. Replaces bare `catch {}` blocks in `oauth-provider.ts` so genuine errors (lock timeout, network blip, permission denied) propagate while column-missing falls through to the legacy fallback path. Reusable from any future code that needs the same column-existence probe semantics.
+- `src/core/utils.ts` — Shared SQL utilities extracted from postgres-engine.ts. Exports `parseEmbedding(value)` (throws on unknown input, used by migration + ingest paths where data integrity matters) and as of v0.12.3 `tryParseEmbedding(value)` (returns `null` + warns once per process, used by search/rescore paths where availability matters more than strictness).
 - `src/core/db.ts` — Connection management, schema initialization. v0.22.1 (#363, contributed by @orendi84): `resolveSessionTimeouts()` returns `statement_timeout` + `idle_in_transaction_session_timeout` (defaults: 5min each, env-overridable via `GBRAIN_STATEMENT_TIMEOUT` / `GBRAIN_IDLE_TX_TIMEOUT` / `GBRAIN_CLIENT_CHECK_INTERVAL`). Both `connect()` (module singleton) and `PostgresEngine.connect()` (worker pool) consume the result via postgres.js's `connection` option, sending GUCs as startup parameters that survive PgBouncer transaction mode (unlike the prior `setSessionDefaults` post-pool SET, kept as a back-compat no-op shim).
 - `src/commands/migrate-engine.ts` — Bidirectional engine migration (`gbrain migrate --to supabase/pglite`)
 - `src/core/import-file.ts` — importFromFile + importFromContent (chunk + embed + tags)
@@ -200,16 +223,12 @@ strict behavior when unset.
 - `src/commands/features.ts` — `gbrain features --json --auto-fix`: usage scan + feature adoption salesman
 - `src/commands/autopilot.ts` — `gbrain autopilot --install`: self-maintaining brain daemon (sync+extract+embed)
 - `src/mcp/server.ts` — MCP stdio server (generated from operations). v0.22.7: tool-call handler delegates to `dispatchToolCall` from `src/mcp/dispatch.ts` so stdio + HTTP transports share one validation, context-build, and error-format path.
-- `src/mcp/dispatch.ts` (v0.22.7) — Shared tool-call dispatch consumed by both stdio (`server.ts`) and HTTP (`http-transport.ts`). Exports `dispatchToolCall(engine, name, params, opts)`, `buildOperationContext(engine, params, opts)`, and `validateParams(op, params)`. Single source of truth for `(ctx, params)` handler arg order and the 5-field `OperationContext` shape (engine + config + logger + dryRun + remote). Defaults to `remote: true` (untrusted); local CLI callers pass `remote: false`. Closed F1 (reversed handler args) + F2 (incomplete OperationContext) + F3 (no param validation) drift bugs in the original v0.22.5 HTTP transport.
-- `src/mcp/rate-limit.ts` (v0.22.7) — Bounded-LRU token-bucket limiter for `gbrain serve --http`. `buildDefaultLimiters()` returns the two-bucket pipeline used by http-transport: pre-auth IP (default 30/60s, fires BEFORE the DB lookup so brute-force load against `access_tokens` is actually capped) + post-auth token-id (default 60/60s). Tracks `lastTouchedMs` separately from `lastRefillMs` so an exhausted key can't be reset by hammering past the TTL. LRU cap (default 10K keys) bounds memory under attacker-controlled key growth; TTL prune at 2× window evicts abandoned buckets.
-- `src/mcp/http-transport.ts` (v0.22.7, rewrite) — `gbrain serve --http` HTTP transport. Postgres-only — fails fast at startup on PGLite (the `access_tokens` table only exists on Postgres). Bearer auth against SHA-256 hashes in `access_tokens`. CORS default-deny via `GBRAIN_HTTP_CORS_ORIGIN` allowlist. Body cap stream-counted (1 MiB default via `GBRAIN_HTTP_MAX_BODY_BYTES`) so chunked transfers without Content-Length still hit the cap. `last_used_at` SQL-level debounce (one UPDATE per token per 60s). Per-request audit row in `mcp_request_log` with token_name + operation + status + latency. Optional `GBRAIN_HTTP_TRUST_PROXY=1` honors `X-Forwarded-For` — only safe when bound to a private interface AND the proxy strips client-supplied XFF (otherwise enables IP spoofing past the pre-auth rate limit). `/health` does `SELECT 1` against Postgres and returns 503 + `status:unhealthy` when the DB is unreachable so orchestration doesn't see green pods while clients get misleading 401s. Replaces the standalone OAuth wrapper that was vulnerable to unauthenticated client registration.
-- `src/commands/auth.ts` — Token management for the HTTP transport. `gbrain auth create/list/revoke/test`. As of v0.22.7 wired into the main CLI (`src/cli.ts`); also runs standalone via `bun run src/commands/auth.ts ...` for environments without a compiled binary. Tokens stored as SHA-256 hashes in `access_tokens` (Postgres-only).
-- `src/mcp/dispatch.ts` (v0.22.7) — Shared tool-call dispatch consumed by both stdio (`server.ts`) and HTTP transports. Exports `dispatchToolCall(engine, name, params, opts)`, `buildOperationContext(engine, params, opts)`, and `validateParams(op, params)`. Single source of truth for `(ctx, params)` handler arg order and the 5-field `OperationContext` shape (engine + config + logger + dryRun + remote). Defaults to `remote: true` (untrusted); local CLI callers pass `remote: false`. Closed F1/F2/F3 drift bugs in the original v0.22.5 HTTP transport. **v0.26.9 (F8):** adds `summarizeMcpParams(opName, params)` — privacy-preserving redactor for `mcp_request_log` and the admin SSE feed. Returns `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`. Intersects submitted top-level keys against the operation's declared `params` allow-list (declared keys preserved as a sorted array for debug visibility; unknown keys counted but never named, closing the attacker-controlled-key-name leak). Byte counts bucketed up to nearest 1KB so an attacker can't binary-search secret-content sizes via repeated probes. Operators on a personal laptop who want raw payload visibility opt back in with `gbrain serve --http --log-full-params` (loud stderr warning at startup). Canonical helper — new logging code paths route through it rather than `JSON.stringify(params)`.
+- `src/mcp/dispatch.ts` (v0.22.7) — Shared tool-call dispatch consumed by both stdio (`server.ts`) and HTTP transports. Exports `dispatchToolCall(engine, name, params, opts)`, `buildOperationContext(engine, params, opts)`, and `validateParams(op, params)`. Single source of truth for `(ctx, params)` handler arg order and the 5-field `OperationContext` shape (engine + config + logger + dryRun + remote). Defaults to `remote: true` (untrusted); local CLI callers pass `remote: false`. Closed F1/F2/F3 drift bugs in the original v0.22.5 HTTP transport.
 - `src/mcp/rate-limit.ts` (v0.22.7) — Bounded-LRU token-bucket limiter. `buildDefaultLimiters()` returns the two-bucket pipeline: pre-auth IP (30/60s, fires BEFORE the DB lookup so brute-force load against `access_tokens` is actually capped) + post-auth token-id (60/60s). Tracks `lastTouchedMs` separately from `lastRefillMs` so an exhausted key can't be reset by hammering past the TTL. LRU cap bounds memory under attacker-controlled key growth.
-- `src/commands/serve-http.ts` (v0.26.0) — Express 5 HTTP MCP server with OAuth 2.1, admin dashboard, and SSE live activity feed. Started via `gbrain serve --http [--port N] [--token-ttl N] [--enable-dcr] [--public-url URL] [--log-full-params]`. Supersedes the v0.22.7 `src/mcp/http-transport.ts` simple bearer-auth path. Combines MCP SDK's `mcpAuthRouter` (authorize / token / register / revoke endpoints), a custom `client_credentials` handler (SDK's token endpoint throws `UnsupportedGrantTypeError` for CC; the custom handler runs BEFORE the router and falls through for `auth_code` / `refresh_token`), `requireBearerAuth` middleware for `/mcp` with scope enforcement before op dispatch, `localOnly` rejection, and `express-rate-limit` at 50 req / 15 min on `/token`. Serves the built admin SPA from `admin/dist/` with SPA fallback. `/admin/events` SSE endpoint broadcasts every MCP request to connected admin browsers. `cookie-parser` middleware wired (Express 5 has no built-in). Startup logging prints port, engine, configured issuer URL (honors `--public-url`), registered-client count, DCR status, and admin bootstrap token. **v0.26.9 hardening pass:** F7 sets `remote: true` explicitly on the `/mcp` request handler's OperationContext literal (closes the HTTP shell-job RCE — without this, `submit_job`'s protected-name guard at `operations.ts:1391` saw a falsy undefined and skipped, letting a `read+write`-scoped OAuth token submit `shell` jobs). F8 wires `summarizeMcpParams` from `src/mcp/dispatch.ts` into both `mcp_request_log` writes and the admin SSE feed by default (raw payloads opt-in via `--log-full-params` with stderr warning). F9 sets cookie `Secure` flag when behind HTTPS or a public-URL proxy. F10 caps the magic-link nonce store with an LRU bound. F12 routes DCR disable through the `GBrainOAuthProvider` constructor's `dcrDisabled` option instead of the prior monkey-patch on the express router. F14 wraps `transport.handleRequest` in try/catch so SDK throws return a JSON-RPC 500 envelope instead of express's default HTML error page. F15 unifies OperationError + unexpected exceptions through `buildError` / `serializeError` so `/mcp` always returns the same envelope shape.
-- `src/core/oauth-provider.ts` (v0.26.0) — `GBrainOAuthProvider` implementing the MCP SDK's `OAuthServerProvider` + `OAuthRegisteredClientsStore` interfaces. Backed by raw SQL (works on both PGLite and Postgres — OAuth is infrastructure, not a BrainEngine concern). Full OAuth 2.1 spec: `authorize` + `exchangeAuthorizationCode` with PKCE (for ChatGPT), `client_credentials` (for Perplexity / Claude), `refresh_token` with rotation, `revokeToken`, `registerClient` (DCR path validates redirect_uri must be `https://` or loopback per RFC 6749 §3.1.2.1). All tokens + client secrets SHA-256 hashed before storage. Auth codes single-use with 10-minute TTL via atomic `DELETE...RETURNING` (closes RFC 6749 §10.5 TOCTOU race). Refresh rotation also `DELETE...RETURNING` (closes §10.4 stolen-token detection bypass). `pgArray()` escapes commas/quotes/braces in elements so a comma-bearing redirect_uri can't smuggle a second array element. Legacy `access_tokens` fallback in `verifyAccessToken` grandfathers pre-v0.26 bearer tokens as `read+write+admin`. `sweepExpiredTokens()` runs on startup wrapped in try/catch. **v0.26.9 RFC 6749/7009 hardening pass:** F1+F2 fold `client_id` atomically into the `DELETE WHERE` clauses for both auth-code exchange and refresh rotation — pre-fix the post-hoc client compare burned the row on wrong-client paths so the legitimate client couldn't retry. F3 enforces refresh-scope-subset against the original grant on the row (RFC 6749 §6), not the client's currently-allowed scopes — fixes the case where revoking a scope from a client wouldn't shrink the agent's existing refresh tokens. F4 binds `client_id` on `revokeToken` so a client can only revoke its own tokens (RFC 7009 §2.1). F7c validates the `/token` request's `redirect_uri` against the value stored at `/authorize` (RFC 6749 §4.1.3) — empty-string treated as missing rather than wildcard match (adversarial-review fix). F5 swaps bare `catch {}` blocks in `verifyAccessToken` and `getClient` for `isUndefinedColumnError` from `src/core/utils.ts` — only SQLSTATE 42703 falls through to legacy fallback; lock timeouts and network blips throw and surface. F6 makes `sweepExpiredTokens()` actually return the count via `RETURNING 1` + array length, not a fire-and-forget zero. F12 adds `dcrDisabled` constructor option so `serve-http.ts` can disable the `/register` endpoint without monkey-patching the router. **v0.26.2:** module-private `coerceTimestamp()` boundary helper at the top of the file normalizes postgres-driver-as-string BIGINT columns to JS numbers at every read site (5 call sites: `getClient` L112+L113 for DCR `/register` RFC 7591 §3.2.1 numeric timestamps, `exchangeRefreshToken` L274 + `verifyAccessToken` L296+L303 for the SDK's `typeof === 'number'` bearerAuth check). Throws on non-finite input (NaN/Infinity) so corrupt rows fail loud at the boundary instead of riding through as `expiresAt: NaN`; returns undefined for SQL NULL so callers decide NULL semantics explicitly (refresh + access token paths treat NULL as expired). Helper intentionally NOT promoted to `src/core/utils.ts` — codex review flagged repo-wide BIGINT precision-loss risk for a generic helper.
+- `src/commands/serve-http.ts` (v0.26.0) — Express 5 HTTP MCP server with OAuth 2.1, admin dashboard, and SSE live activity feed. Started via `gbrain serve --http [--port N] [--token-ttl N] [--enable-dcr] [--public-url URL]`. Supersedes the v0.22.7 `src/mcp/http-transport.ts` simple bearer-auth path. Combines MCP SDK's `mcpAuthRouter` (authorize / token / register / revoke endpoints), a custom `client_credentials` handler (SDK's token endpoint throws `UnsupportedGrantTypeError` for CC; the custom handler runs BEFORE the router and falls through for `auth_code` / `refresh_token`), `requireBearerAuth` middleware for `/mcp` with scope enforcement before op dispatch, `localOnly` rejection, and `express-rate-limit` at 50 req / 15 min on `/token`. Serves the built admin SPA from `admin/dist/` with SPA fallback. `/admin/events` SSE endpoint broadcasts every MCP request to connected admin browsers. `cookie-parser` middleware wired (Express 5 has no built-in). Startup logging prints port, engine, configured issuer URL (honors `--public-url`), registered-client count, DCR status, and admin bootstrap token.
+- `src/core/oauth-provider.ts` (v0.26.0) — `GBrainOAuthProvider` implementing the MCP SDK's `OAuthServerProvider` + `OAuthRegisteredClientsStore` interfaces. Backed by raw SQL (works on both PGLite and Postgres — OAuth is infrastructure, not a BrainEngine concern). Full OAuth 2.1 spec: `authorize` + `exchangeAuthorizationCode` with PKCE (for ChatGPT), `client_credentials` (for Perplexity / Claude), `refresh_token` with rotation, `revokeToken`, `registerClient` (DCR path validates redirect_uri must be `https://` or loopback per RFC 6749 §3.1.2.1). All tokens + client secrets SHA-256 hashed before storage. Auth codes single-use with 10-minute TTL via atomic `DELETE...RETURNING` (closes RFC 6749 §10.5 TOCTOU race). Refresh rotation also `DELETE...RETURNING` (closes §10.4 stolen-token detection bypass). `pgArray()` escapes commas/quotes/braces in elements so a comma-bearing redirect_uri can't smuggle a second array element. Legacy `access_tokens` fallback in `verifyAccessToken` grandfathers pre-v0.26 bearer tokens as `read+write+admin`. `sweepExpiredTokens()` runs on startup wrapped in try/catch.
 - `admin/` (v0.26.0) — React 19 + Vite + TypeScript admin SPA embedded in the binary via `admin/dist/` served by `serve-http.ts`. 7 screens: Login (bootstrap token → session cookie), Dashboard (metrics + SSE feed + token health), Agents (sortable table + sparklines + Register button), Register (modal with scope checkboxes + grant type selector), Credentials reveal (full-screen modal with Copy + Download JSON + yellow one-time-only warning), Request Log (filterable paginated), Agent Detail drawer (Details / Activity / Config Export tabs + Revoke). Design tokens: `#0a0a0f` bg, Inter for UI, JetBrains Mono for data, 4-32px spacing scale, rounded pill badges. HTTP-only SameSite=Strict cookie auth. 65KB gzip. Build: `cd admin && bun install && bun run build`; output at `admin/dist/` is committed for self-contained binaries.
-- `src/commands/auth.ts` — Token management. `gbrain auth create/list/revoke/test` for legacy bearer tokens (v0.22.7 wired as a first-class CLI subcommand) plus `gbrain auth register-client` (v0.26.0) and `gbrain auth revoke-client <client_id>` (v0.26.2) for OAuth 2.1 client lifecycle. `revoke-client` runs an atomic `DELETE...RETURNING` on `oauth_clients`; FK `ON DELETE CASCADE` on `oauth_tokens.client_id` and `oauth_codes.client_id` purges every active token + authorization code in a single transaction. `process.exit(1)` on no-such-client (idempotent — re-running on the same id produces the same exit-1 message). Legacy tokens stored as SHA-256 hashes in `access_tokens`; OAuth clients in `oauth_clients`. As of v0.26.0, legacy tokens grandfather to `read+write+admin` scopes on the OAuth HTTP server, so pre-v0.26 deployments keep working with no migration.
+- `src/commands/auth.ts` — Token management. `gbrain auth create/list/revoke/test` for legacy bearer tokens (v0.22.7 wired as a first-class CLI subcommand) plus `gbrain auth register-client` (v0.26.0) for OAuth 2.1 client registration. Legacy tokens stored as SHA-256 hashes in `access_tokens`; OAuth clients in `oauth_clients`. As of v0.26.0, legacy tokens grandfather to `read+write+admin` scopes on the OAuth HTTP server, so pre-v0.26 deployments keep working with no migration.
 - `src/commands/upgrade.ts` — Self-update CLI. `runPostUpgrade()` enumerates migrations from the TS registry (src/commands/migrations/index.ts) and tail-calls `runApplyMigrations(['--yes', '--non-interactive'])` so the mechanical side of every outstanding migration runs unconditionally.
 - `src/commands/migrations/` — TS migration registry (compiled into the binary; no filesystem walk of `skills/migrations/*.md` needed at runtime). `index.ts` lists migrations in semver order. `v0_11_0.ts` = Minions adoption orchestrator (8 phases). `v0_12_0.ts` = Knowledge Graph auto-wire orchestrator (5 phases: schema → config check → backfill links → backfill timeline → verify). `phaseASchema` has a 600s timeout (bumped from 60s in v0.12.1 for duplicate-heavy brains). `v0_12_2.ts` = JSONB double-encode repair orchestrator (4 phases: schema → repair-jsonb → verify → record). `v0_14_0.ts` = shell-jobs + autopilot cooperative (2 phases: schema ALTER minion_jobs.max_stalled SET DEFAULT 3 — superseded by v0.14.3's schema-level DEFAULT 5 + UPDATE backfill; pending-host-work ping for skills/migrations/v0.14.0.md). All orchestrators are idempotent and resumable from `partial` status. As of v0.14.2 (Bug 3), the RUNNER owns all ledger writes — orchestrators return `OrchestratorResult` and `apply-migrations.ts` persists a canonical `{version, status, phases}` shape after return. Orchestrators no longer call `appendCompletedMigration` directly. `statusForVersion` prefers `complete` over `partial` (never regresses). 3 consecutive partials → wedged → `--force-retry <version>` writes a `'retry'` reset marker. v0.14.3 (fix wave) ships schema-only migrations v14 (`pages_updated_at_index`) + v15 (`minion_jobs_max_stalled_default_5` with UPDATE backfill) via the `MIGRATIONS` array in `src/core/migrate.ts` — no orchestrator phases needed.
 - `src/commands/repair-jsonb.ts` — `gbrain repair-jsonb [--dry-run] [--json]`: rewrites `jsonb_typeof='string'` rows in place across 5 affected columns (pages.frontmatter, raw_data.data, ingest_log.pages_updated, files.metadata, page_versions.frontmatter). Fixes v0.12.0 double-encode bug on Postgres; PGLite no-ops. Idempotent.
@@ -344,15 +363,15 @@ Key commands added in v0.14.2:
 - `GBRAIN_POOL_SIZE` env var — honored by both the singleton pool (`src/core/db.ts`) and the parallel-import worker pool (`src/commands/import.ts`). Default is 10; lower to 2 for Supabase transaction pooler to avoid MaxClients crashes during `gbrain upgrade` subprocess spawns. Read at call time via `resolvePoolSize()`.
 - `gbrain doctor` gains two new checks: `sync_failures` (surfaces unacknowledged parse failures with exact paths + fix hints) and `brain_score` (renders the 5-component breakdown when score < 100: embed coverage / 35, link density / 25, timeline coverage / 15, orphans / 15, dead links / 10 — sum equals total).
 
-
 Key commands added in v0.26.0 (OAuth 2.1 + HTTP server + admin dashboard):
-- `gbrain serve --http [--port 3131] [--token-ttl 3600] [--enable-dcr] [--log-full-params]` — HTTP MCP server with OAuth 2.1, admin dashboard at `/admin`, SSE activity feed at `/admin/events`, health check at `/health`. Prints admin bootstrap token on first start. Alongside (not replacing) stdio `gbrain serve`. As of v0.26.9, `mcp_request_log.params` and the SSE feed default to a redacted summary (`{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`); pass `--log-full-params` to log raw payloads on a personal laptop with a startup warning.
+- `gbrain serve --http [--port 3131] [--token-ttl 3600] [--enable-dcr]` — HTTP MCP server with OAuth 2.1, admin dashboard at `/admin`, SSE activity feed at `/admin/events`, health check at `/health`. Prints admin bootstrap token on first start. Alongside (not replacing) stdio `gbrain serve`.
 - **OAuth client registration** — three paths:
   1. CLI: `gbrain auth register-client <name> --grant-types <types> --scopes <scopes>` (wired into `src/commands/auth.ts` as a thin wrapper over `GBrainOAuthProvider.registerClientManual`). Default grant types: `client_credentials`. Default scopes: `read`.
   2. Admin dashboard: Register client modal → credential reveal with Copy + Download JSON.
   3. SDK: `oauthProvider.registerClientManual(name, grantTypes, scopes, redirectUris)` for programmatic wrappers.
   `--enable-dcr` on `serve --http` opens the `/register` endpoint for RFC 7591 self-service registration (off by default).
 - `gbrain auth create|list|revoke|test` — legacy bearer tokens still work and grandfather to `read+write+admin` scopes on the OAuth server. `auth` is wired as a first-class `gbrain` subcommand in v0.26.0 (previously only invokable via `bun run src/commands/auth.ts`). No migration required to keep pre-v0.26 clients working.
+
 Key commands added in v0.14.3 (fix wave):
 - `gbrain doctor --index-audit` — opt-in Postgres-only check reporting zero-scan indexes from `pg_stat_user_indexes`. Informational only; never auto-drops.
 - `gbrain doctor` schema_version check fails loudly when `version=0` — catches `bun install -g github:...` postinstall failures (#218) and routes users to `gbrain apply-migrations --yes`.
@@ -374,118 +393,6 @@ Key commands added in v0.22.16 (claw-test friction loop):
 - `GBRAIN_HOME` env override is now honored uniformly across every gbrain write site (config, audit, friction, sync-failures, import checkpoint, integrity log, integrations heartbeat, migration rollback, etc.) — `gbrainPath(...)` from `src/core/config.ts` is the canonical helper. Read-side host-fingerprint detection (`~/.claude`/`~/.openclaw` etc.) intentionally NOT confined in v1; that's a v1.1 follow-up.
 
 ## Testing
-
-### Test command tiers (v0.26.4 — parallel fast loop)
-
-Five tiers of test commands, each with a clear scope:
-
-| Command | What it runs | Wallclock | When to use |
-|---|---|---|---|
-| `bun run test` | Parallel unit-test fast loop. 8-shard fan-out via `scripts/run-unit-parallel.sh`, then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. | ~85s on a Mac dev box (3650+ tests) | Inner edit loop. Default. |
-| `bun run verify` | CI's authoritative pre-test gate set: `check:privacy && check:jsonb && check:progress && check:wasm && bun run typecheck`. The 4 checks `.github/workflows/test.yml` runs on shard 1 + typecheck. Single source of truth — CI literally calls `bun run verify`. | ~12s (wasm-compile dominates) | Before pushing; before `/ship`. |
-| `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. The local equivalent of "everything CI runs." Smart e2e: runs e2e only when `DATABASE_URL` is set; else loud skip notice to stderr. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
-| `bun run test:slow` | Just the `*.slow.test.ts` set (intentional cold-path correctness checks). | seconds-to-minutes | When touching slow-path code. |
-| `bun run test:serial` | Just the `*.serial.test.ts` set (cross-file-contention quarantine; runs at `--max-concurrency=1`). | ~1s per quarantined file | Debugging a specific quarantined file. |
-| `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential (template-DB parallelization is a v0.27+ TODO). | ~5-10min | Pre-ship; nightly. |
-| `bun run check:all` | All 7 historical pre-checks (privacy + jsonb + progress + no-legacy-getconnection + trailing-newline + wasm + exports-count). Superset of `verify`. | ~10s | Local-only sweep. The 4 not in `verify` are nice-to-haves. |
-
-### CI vs local: intentionally divergent file sets
-
-- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` 4-way, which uses FNV-1a hash bucketing and INCLUDES `*.slow.test.ts`. CI is the ground truth for "did everything pass."
-- **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses round-robin-by-index sharding and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Local trades coverage for inner-loop speed; CI catches what local skips.
-
-This divergence is intentional. Don't try to make them equal — the two scripts deliberately solve different problems. The regression test at `test/scripts/run-unit-shard.test.ts` pins what the local fast loop should and shouldn't include.
-
-### Failure-first logging
-
-When `bun run test` finds any failure, the wrapper:
-
-1. Writes failure blocks (each prefixed with `--- shard N: <test name> ---`) to `.context/test-failures.log` (workspace-local, gitignored). On systems without a writable `.context/`, falls back to `/tmp/gbrain-test-failures.log`.
-2. Prints a loud stderr banner with the absolute log path, plus the last 30 lines of the failure log inlined. Banner survives `| head` / `| tail` / agent-side log truncation.
-3. Writes a one-line-per-shard summary to `.context/test-summary.txt` (`shard N/M: pass=X fail=Y skip=Z rc=W`).
-4. Exits non-zero. Empty failure log + non-zero exit = infrastructure problem (wedged shard, killed child); the banner says so.
-
-If a shard wedges (per-shard `GBRAIN_TEST_SHARD_TIMEOUT` cap, default 600s), the wrapper writes `--- shard N: WEDGED after ${SHARD_TIMEOUT}s ---` to the failure log, includes the last 50 lines of the shard log, and proceeds with other shards' results.
-
-### File taxonomy
-
-- `*.test.ts` → fast loop (parallel 8-shard fan-out).
-- `*.slow.test.ts` → run via `bun run test:slow` only (intentional cold-path tests; would dominate the fast loop's wallclock).
-- `*.serial.test.ts` → run via `bun run test:serial` after the parallel pass completes; uses `--max-concurrency=1`. Quarantine for tests that share file-wide state and race when run alongside other files in the same `bun test` process. Currently: `test/brain-registry.serial.test.ts`, `test/reconcile-links.serial.test.ts`, `test/core/cycle.serial.test.ts`, `test/embed.serial.test.ts` (the latter two added in v0.26.7 — they use `mock.module(...)` which leaks across files in the shard process). **Do not put the parallelism back on a serial file unless you've fixed the contention root cause** (it just re-introduces the flake).
-- `test/e2e/*.test.ts` → real-Postgres E2E. Skipped when `DATABASE_URL` is unset.
-
-The intra-file parallelism project (turn `bun test` into `bun test --concurrent` after sweeping shared-state contention sites) is sliced across v0.26.7 (foundation), v0.26.8 (env-mutation sweep), and v0.26.9 (PGLite sweep + codemod + measurement). v0.26.4 ships file-level parallelism only.
-
-### Test-isolation lint and helpers (v0.26.7)
-
-The cross-file flake class is enforced statically by `scripts/check-test-isolation.sh`, wired into `bun run verify` and `bun run check:all`. Rules (non-serial unit files only; `*.serial.test.ts` and `test/e2e/*` are skipped):
-
-| Rule | What it bans | Fix |
-|---|---|---|
-| **R1** | `process.env.X = ...`, bracket assignment, `delete process.env.X`, `Object.assign(process.env, ...)`, `Reflect.set(process.env, ...)` | Use `withEnv()` from `test/helpers/with-env.ts`, OR rename file to `*.serial.test.ts` |
-| **R2** | `mock.module(...)` anywhere in the file | Rename file to `*.serial.test.ts` (no DI on production code for testability) |
-| **R3** | `new PGLiteEngine(` outside ~50 lines after a `beforeAll(` line | Use the canonical block (below) inside `beforeAll(` |
-| **R4** | Files creating `new PGLiteEngine(` without `engine.disconnect(` inside an `afterAll(` block | Add `afterAll(() => engine.disconnect())` |
-
-Files that violated these rules at the v0.26.7 baseline are listed in `scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over time** — never add new entries. v0.26.8 (env sweep) and v0.26.9 (PGLite sweep) remove entries as files get fixed.
-
-#### Canonical PGLite block (R3 + R4 compliant)
-
-Every test file that needs a PGLite engine should use this exact pattern:
-
-```ts
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { resetPgliteState } from './helpers/reset-pglite.ts';
-
-let engine: PGLiteEngine;
-
-beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
-});
-
-afterAll(async () => {
-  await engine.disconnect();
-});
-
-beforeEach(async () => {
-  await resetPgliteState(engine);
-});
-```
-
-Why this exact shape: `beforeAll` creates a single engine per file (PGLite WASM cold-start + initSchema is ~20s); `beforeEach` truncates user data via `resetPgliteState` ("two orders of magnitude faster" than fresh-engine-per-test); `afterAll` disconnects so the engine doesn't leak across file boundaries within a shard process.
-
-#### `withEnv` pattern (R1 fix)
-
-```ts
-import { withEnv } from './helpers/with-env.ts';
-
-test('reads OPENAI_API_KEY', async () => {
-  await withEnv({ OPENAI_API_KEY: 'sk-test' }, async () => {
-    expect(loadConfig().openai_key).toBe('sk-test');
-  });
-});
-
-// Delete a var (override is undefined):
-await withEnv({ GBRAIN_HOME: undefined }, fn);
-
-// Multiple keys:
-await withEnv({ A: '1', B: '2', C: undefined }, fn);
-```
-
-`withEnv` saves the prior value of every key it touches and restores via try/finally — including when the callback throws. **It is cross-test safe but NOT intra-file concurrent-safe.** `process.env` is process-global; two `test.concurrent()` calls in the same file both touching the same key will race. Files using `withEnv` stay outside the future `test.concurrent()` codemod's eligibility filter.
-
-#### When to quarantine instead of fix
-
-Rename to `*.serial.test.ts` when:
-- The file uses `mock.module(...)` (R2 — there's no clean fix without changing production code).
-- The file is genuinely env-coupled (e.g. `gbrain-home-isolation.test.ts`, `claw-test-cli.test.ts`) — module-load env readers + ESM caching defeat dynamic-import-after-env tricks.
-- The file's tests intentionally share state across `it()` boundaries.
-
-Quarantine count cap: 10 (informational). Beyond that, push back on the design.
-
-### Inventory (legacy)
 
 `bun test` runs all tests. After the v0.12.1 release: ~75 unit test files + 8 E2E test files (1412 unit pass, 119 E2E when `DATABASE_URL` is set — skip gracefully otherwise). Unit tests run
 without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
@@ -546,10 +453,7 @@ parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config redac
 `test/doctor.test.ts` (doctor command + v0.12.3 assertions that `jsonb_integrity` scans the four v0.12.0 write sites and `markdown_body_completeness` is present),
 `test/utils.test.ts` (shared SQL utilities + `tryParseEmbedding` null-return and single-warn semantics),
 `test/build-llms.test.ts` (llms.txt/llms-full.txt generator: path resolution, idempotence, spec shape, regen-drift guard, content contract, AGENTS.md install-path mirror, size-budget enforcement — 7 cases),
-
-`test/oauth.test.ts` (v0.26.0 OAuth 2.1 provider — 27 cases: register, getClient, `client_credentials` grant exchange, `authorization_code` flow with PKCE challenge / verifier, refresh token rotation, `verifyAccessToken` with both OAuth + legacy `access_tokens` fallback, `revokeToken`, `sweepExpiredTokens`, and a contract test asserting `scope` + `localOnly` annotations are set correctly on all 30 operations; **v0.26.2** adds 5 `coerceTimestamp` unit cases (null/undefined/string/number/throw-on-NaN), NULL-`expires_at`-as-expired contract tests for both refresh + access token paths, and a cascade-delete contract test asserting `revoke-client` purges `oauth_tokens` + `oauth_codes` rows via FK CASCADE; **v0.26.9** adds 14 cases pinning the F1/F2/F3/F4/F5/F6/F7c/F12 invariants, including the F1/F4 cross-client isolation pattern (wrong-client attempt MUST reject AND rightful owner MUST still succeed atomically afterward) and the empty-string `redirect_uri` bypass guard surfaced during adversarial review),
-`test/mcp-dispatch-summarize.test.ts` (v0.26.9 — 7 cases pinning F8 `summarizeMcpParams` invariants: declared-keys allow-list intersection, attacker-key-name leak guard (unknown keys counted not named), 1KB byte bucketing for size-probe defense, missing op falls through to fully-redacted shape, declared-keys sorted for deterministic output),
-`test/trust-boundary-contract.test.ts` (v0.26.9 — 4 cases pinning F7b fail-closed semantics under cast bypass: `ctx.remote === undefined` treated as remote/untrusted at every flipped call site, `as any` and `Partial<>` spreads can't downgrade trust by accident),
+`test/oauth.test.ts` (v0.26.0 OAuth 2.1 provider — 27 cases: register, getClient, `client_credentials` grant exchange, `authorization_code` flow with PKCE challenge / verifier, refresh token rotation, `verifyAccessToken` with both OAuth + legacy `access_tokens` fallback, `revokeToken`, `sweepExpiredTokens`, and a contract test asserting `scope` + `localOnly` annotations are set correctly on all 30 operations),
 `test/check-resolvable-cli.test.ts` (v0.19 CLI wrapper: exit codes, JSON envelope shape, AGENTS.md fallback chain),
 `test/regression-v0_16_4.test.ts` (findRepoRoot regression guard — hermetic startDir parameterization),
 `test/filing-audit.test.ts` (v0.19 Check 6: `writes_pages` / `writes_to` frontmatter, filing-rules JSON validation),
@@ -576,8 +480,6 @@ E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_U
 - `test/e2e/engine-parity.test.ts` (v0.22.0) — Postgres ↔ PGLite top-result and result-set parity for `searchKeyword` + `searchVector`. Codex flagged that Postgres ranks pages then picks best chunk while PGLite returns chunks directly — without parity coverage the source-boost fix could pass on PGLite and fail on Postgres. Skips gracefully when `DATABASE_URL` is unset.
 - `test/e2e/postgres-bootstrap.test.ts` (v0.22.6.1) — exercises `PostgresEngine.initSchema()` directly against a fresh real Postgres database. Asserts the bootstrap path is no-op on fresh installs and that SCHEMA_SQL replays cleanly through the engine path (not via the standalone `db.initSchema` from `src/core/db.ts`, which would have produced false-positive coverage). Codex caught the E2E-shape gap during plan review.
 - `test/e2e/http-transport.test.ts` (v0.22.7) — 8 cases against real Postgres covering `gbrain serve --http` end-to-end: bearer auth round-trip, `last_used_at` SQL-level debounce semantics, `mcp_request_log` row insertion on success and auth_failed paths, `/health` DB-down → 503 (DB-probing health check), and the F1+F2+F3 dispatch round-trip with a real operation. Skips gracefully when `DATABASE_URL` is unset.
-
-- `test/e2e/serve-http-oauth.test.ts` (v0.26.0, expanded v0.26.2, expanded v0.26.9) — real-Postgres E2E against `gbrain serve --http` with full OAuth 2.1. Spawns a subprocess server, registers a client via the CLI, mints `client_credentials` tokens, exercises the `/mcp` JSON-RPC pipeline. **v0.26.2 adds:** real DCR `/register` HTTP-level response-shape test (asserts `typeof body.client_id_issued_at === 'number'` over the wire — RFC 7591 §3.2.1 spec compliance, not just internal-store shape); real CLI subprocess test for `revoke-client` (registers → mints token → revokes via `execSync` → asserts token rejected at `/mcp` → asserts re-run exits 1); server fixture flips on `--enable-dcr` so `/register` is reachable. **bun execSync env-inheritance fix:** bun's `execSync` does NOT inherit env mutations done via `process.env.X = ...`, only OS-level env from before bun started. helpers.ts loads `.env.testing` and sets `DATABASE_URL` via `process.env` mutation, which is invisible to subprocesses unless `env: { ...process.env }` is passed explicitly — every subprocess call in this file passes `env: { ...process.env }` for that reason. Reference fix for the next maintainer hitting the same failure mode in sibling sync/cycle/dream/claw-test E2Es. `afterAll` cleanup is guarded on `clientId` (won't throw if `beforeAll` failed before registration); cleanup errors surface to stderr without throwing so real test failures aren't masked. Tracks DCR-registered clients alongside the manual one. **v0.26.9** adds 2 regressions for the F7 trust-boundary fix: an HTTP MCP `submit_job` for `name: "shell"` MUST reject with a permission error (proving the request handler now sets `remote: true` and `submit_job`'s protected-name guard fires), and the same guard rejects subagent submission. Closes the OAuth-token-to-RCE escalation path. Skips gracefully when `DATABASE_URL` is unset.
 - `test/e2e/sync-parallel.test.ts` (v0.22.13 PR #490) — DATABASE_URL-gated. T2: 60-file Postgres sync at concurrency=4 imports all + no connection leak (probes `pg_stat_activity` before/after to confirm worker engines disconnected). P4: 120-file serial-vs-parallel benchmark prints `SYNC_PARALLEL_BENCH N files | serial=Xms | parallel(4)=Yms | speedup=Zx` for CHANGELOG quoting. Asserts parallel ≤ serial × 1.5 (CI-noise tolerant; not a strict speedup gate).
 - Tier 2 (`skills.test.ts`) requires OpenClaw + API keys, runs nightly in CI
 - If `.env.testing` doesn't exist in this directory, check sibling worktrees for one:
@@ -1501,6 +1403,7 @@ When multiple skills could match:
 These apply to ALL brain-writing skills:
 - `skills/conventions/quality.md` — citations, back-links, notability gate
 - `skills/conventions/brain-first.md` — check brain before external APIs
+- `skills/conventions/brain-routing.md` — which brain (DB) and which source (repo) to target; cross-brain federation is latent-space only
 - `skills/conventions/subagent-routing.md` — when to use Minions vs inline work
 - `skills/_brain-filing-rules.md` — where files go
 - `skills/_output-rules.md` — output quality standards
@@ -1614,16 +1517,36 @@ GBrain exposes 30+ MCP tools via stdio:
 
 Add to `~/.claude/server.json` (Claude Code), Settings > MCP Servers (Cursor), or your client's MCP config.
 
-### Remote MCP (Claude Desktop, Cowork, Perplexity)
+### Remote MCP with OAuth 2.1 (ChatGPT, Claude Desktop, Cowork, Perplexity)
+
+`gbrain serve --http` starts a production-grade OAuth 2.1 server with an embedded admin dashboard. Zero external infrastructure. Every major AI client connects, every request is scoped, every action is logged.
 
 ```bash
-gbrain auth create "claude-desktop"            # tokens via the existing CLI
-gbrain serve --http --port 8787                 # built-in HTTP transport (Postgres-only)
-ngrok http 8787 --url your-brain.ngrok.app      # any tunnel works
+# Start the HTTP server (prints admin bootstrap token on first start)
+gbrain serve --http --port 3131
+
+# Open the admin dashboard, paste the bootstrap token, register a client
+open http://localhost:3131/admin
+
+# Expose publicly (set --public-url so the OAuth issuer matches)
+ngrok http 3131 --url your-brain.ngrok.app
+gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
+
+# ChatGPT and other OAuth-aware clients can also connect:
 claude mcp add gbrain -t http https://your-brain.ngrok.app/mcp -H "Authorization: Bearer TOKEN"
 ```
 
-Per-client guides: [`docs/mcp/`](docs/mcp/DEPLOY.md). Hardening defaults, env vars, and threat model: [SECURITY.md](SECURITY.md). ChatGPT requires OAuth 2.1 (not yet implemented).
+Register OAuth clients from the `/admin` dashboard — click **Register client**,
+pick scopes, save the credentials shown once in the reveal modal. Programmatic
+registration via `oauthProvider.registerClientManual(...)` and the
+`gbrain auth register-client` CLI are also available.
+
+- **OAuth 2.1 via the MCP SDK** — client credentials (machine-to-machine: Perplexity, Claude), authorization code + PKCE (browser-based: ChatGPT), refresh token rotation, revocation, protected resource metadata. Optional Dynamic Client Registration behind `--enable-dcr` (DCR redirect_uris must be `https://` or loopback per RFC 6749 §3.1.2.1).
+- **Scoped operations** — 30 operations tagged `read | write | admin`. `sync_brain` and `file_upload` are `localOnly`, rejected over HTTP.
+- **React admin dashboard** — 7 screens baked into the binary (~65KB gzip). Live SSE activity feed, agents table, credential reveal, filterable request log, per-client config export.
+- **Legacy bearer tokens still work** — pre-v0.26 `gbrain auth create` tokens continue to authenticate as `read+write+admin`. v0.22.7's simpler `src/mcp/http-transport.ts` path stays compiled in for backward compat callers; v0.26+ deployments use the OAuth-aware `serve-http.ts`.
+
+Per-client guides: [`docs/mcp/`](docs/mcp/DEPLOY.md). Hardening defaults, env vars, and threat model: [SECURITY.md](SECURITY.md).
 
 ### Using gbrain with GStack
 
@@ -2242,17 +2165,13 @@ ADMIN
   gbrain doctor --locks                 List idle-in-tx backends (57014 diagnostic, Postgres only)
   gbrain stats                          Brain statistics
   gbrain serve                          MCP server (stdio)
-gbrain serve --http --port 8787       MCP server (HTTP, Postgres-only, bearer auth)
-  gbrain auth create|list|revoke|test   Token management for the HTTP transport
-gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
+  gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
                                         [--token-ttl 3600] [--enable-dcr]
-                                        [--public-url URL] [--log-full-params]
+                                        [--public-url URL]
   gbrain auth create|list|revoke|test   Legacy bearer token management
   gbrain auth register-client <name>    Register an OAuth 2.1 client
         --grant-types client_credentials,authorization_code
         --scopes "read write admin"
-  gbrain auth revoke-client <client_id> Revoke an OAuth 2.1 client (cascade purges
-                                        active tokens + auth codes via FK CASCADE)
   # OAuth 2.1 clients can also be registered from the /admin dashboard or
   # programmatically via oauthProvider.registerClientManual() for host-repo wrappers.
   gbrain integrations                   Integration recipe dashboard
@@ -2304,7 +2223,7 @@ The skills in this repo are those patterns, generalized. What took 11 days to bu
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Run `bun run test` for the parallel unit-test fast loop (~85s on a Mac dev box, 3700+ tests) or `bun run verify` for the pre-push gate (privacy + jsonb + progress + test-isolation + wasm + admin-build + typecheck). For the full local CI gate (gitleaks + unit + all 29 E2E files in Docker, the same checks GH Actions runs), use `bun run ci:local` ... or `bun run ci:local:diff` for the diff-aware subset during fast iteration.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Run `bun test` for unit tests. For the full local CI gate (gitleaks + unit + all 29 E2E files in Docker, the same checks GH Actions runs), use `bun run ci:local` ... or `bun run ci:local:diff` for the diff-aware subset during fast iteration.
 
 If you're working on retrieval or any of the search/embedding/ranking surface, set `GBRAIN_CONTRIBUTOR_MODE=1` in your shell rc and use `gbrain eval replay` to gate your changes against a snapshot of real captured queries — the dev loop is documented in [`docs/eval-bench.md`](docs/eval-bench.md). Capture is **off by default** for production users (no surprise data accumulation); the env var is the contributor opt-in.
 
@@ -4441,18 +4360,22 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY
 
 # Deploy GBrain Remote MCP Server
 
-> **v0.22.7+:** Use `gbrain serve --http` for remote access. It includes built-in
-> bearer token auth, default-deny CORS, two-bucket rate limiting, body cap, and
-> per-request audit log. **Postgres-only** (PGLite is local-only by design).
-> See [SECURITY.md](../../SECURITY.md) for env vars and tunable defaults.
+> **v0.26.0+:** `gbrain serve --http` ships full OAuth 2.1 (client credentials,
+> auth code + PKCE, refresh rotation, optional DCR), an embedded React admin
+> dashboard at `/admin`, scoped operations, and a live SSE activity feed.
+> Pre-v0.26 legacy bearer tokens still work — `verifyAccessToken` falls back
+> to the `access_tokens` table and grandfathers tokens to `read+write+admin`.
+> Postgres-only for the legacy fallback (the `access_tokens` table is Postgres-only);
+> OAuth tables work on both PGLite and Postgres. See [SECURITY.md](../../SECURITY.md)
+> for env vars and tunable defaults.
 
-Access your brain from any device, any AI client. GBrain's MCP server runs locally
-via `gbrain serve` (stdio). For remote access, expose it via the built-in HTTP
-transport behind a public tunnel.
+Access your brain from any device, any AI client. GBrain ships two transports:
+`gbrain serve` (stdio) for local agents, and `gbrain serve --http` (v0.26.0+)
+for remote clients over OAuth 2.1.
 
-## Two Paths
+## Three Paths
 
-### Local (zero setup)
+### Local stdio (zero setup)
 
 ```bash
 gbrain serve
@@ -4461,7 +4384,30 @@ gbrain serve
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
 No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
 
-### Remote (any device, any AI client) — Postgres only
+### Remote over OAuth 2.1 (recommended, v0.26.0+)
+
+```bash
+gbrain serve --http --port 3131
+ngrok http 3131 --url your-brain.ngrok.app
+gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
+```
+
+Built-in HTTP transport with OAuth 2.1, scoped operations, an admin dashboard
+at `/admin`, and a live SSE activity feed. Zero external dependencies. This is
+the only path that works with ChatGPT (OAuth 2.1 + PKCE is required by the
+ChatGPT MCP connector). Pass `--public-url` whenever the server is reachable
+at anything other than `http://localhost:<port>` so the OAuth issuer in
+discovery metadata matches what clients hit (RFC 8414 §3.3).
+
+Supported clients:
+- **ChatGPT** — requires OAuth 2.1 + PKCE. Works natively with `--http`.
+- **Claude Desktop / Cowork** — OAuth 2.1 or legacy bearer tokens.
+- **Perplexity** — OAuth 2.1 client credentials grant.
+- **Claude Code, Cursor, Windsurf** — can use OAuth or legacy bearer.
+
+See the [OAuth 2.1 setup](#oauth-21-setup-v100) section below.
+
+### Remote with legacy bearer tokens (pre-v0.26 deployments) — Postgres only
 
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
@@ -4477,7 +4423,6 @@ This requires:
 3. A public tunnel (ngrok, Tailscale, or cloud host)
 4. A bearer token created via `gbrain auth create <name>`
 
-## Remote Setup
 Pre-v1.0 tokens are grandfathered as `read+write+admin` scopes when you upgrade
 to the HTTP server, so no migration is required.
 
@@ -4499,15 +4444,6 @@ Open http://localhost:3131/admin and paste it to log in.
 Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
 and per-client config export.
-
-> **v0.26.9+:** `mcp_request_log.params` and the live SSE activity feed default
-> to a redacted summary `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`.
-> Declared param keys are kept (intersected against the operation's spec); unknown
-> keys are counted but never named, and byte sizes round up to 1KB so size-probe
-> attacks can't binary-search secret content. Operators on a personal laptop who
-> want raw payloads back can pass `gbrain serve --http --log-full-params` (loud
-> stderr warning fires at startup). Multi-tenant deployments should leave it on
-> the redacted default.
 
 ### 2. Register OAuth clients
 
@@ -4605,6 +4541,7 @@ if compromised. Tokens are stored SHA-256 hashed in your database.
 
 ### 3. Connect your AI client
 
+- **ChatGPT:** [setup guide](CHATGPT.md) (OAuth 2.1 + PKCE, requires `gbrain serve --http`)
 - **Claude Code:** [setup guide](CLAUDE_CODE.md)
 - **Claude Desktop:** [setup guide](CLAUDE_DESKTOP.md) (must use GUI, not JSON config)
 - **Claude Cowork:** [setup guide](CLAUDE_COWORK.md)
@@ -4661,10 +4598,11 @@ Remote servers must be added via Settings > Integrations, NOT
 | put_page | 100-500ms | Write + trigger search_vector update |
 | get_stats | < 100ms | Aggregate query |
 
-**Note:** `gbrain serve --http` (built-in HTTP transport) is planned but not yet
-implemented. Currently, remote MCP requires a custom HTTP wrapper. See the
-production deployment pattern in the [voice recipe](../../recipes/twilio-voice-brain.md)
-for a reference implementation.
+**Note:** `gbrain serve --http` shipped in v0.26.0 with OAuth 2.1 + admin
+dashboard baked into the binary. The custom HTTP wrapper pattern (see
+[voice recipe](../../recipes/twilio-voice-brain.md)) is still supported for
+teams that need bespoke middleware, but for most remote deployments the
+built-in server is the recommended path.
 
 ---
 

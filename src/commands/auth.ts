@@ -264,6 +264,37 @@ async function test(url: string, token: string) {
   console.log(`\n🧠 Your brain is live! (${elapsed}s)`);
 }
 
+async function registerClient(name: string, args: string[]) {
+  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S]'); process.exit(1); }
+  const grantsIdx = args.indexOf('--grant-types');
+  const scopesIdx = args.indexOf('--scopes');
+  const grantTypes = grantsIdx >= 0 && args[grantsIdx + 1]
+    ? args[grantsIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
+    : ['client_credentials'];
+  const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
+
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
+    const provider = new GBrainOAuthProvider({ sql: sql as any });
+    const { clientId, clientSecret } = await provider.registerClientManual(
+      name, grantTypes, scopes, [],
+    );
+    console.log(`OAuth client registered: "${name}"\n`);
+    console.log(`  Client ID:     ${clientId}`);
+    console.log(`  Client Secret: ${clientSecret}\n`);
+    console.log(`  Grant types: ${grantTypes.join(', ')}`);
+    console.log(`  Scopes:      ${scopes}\n`);
+    console.log('Save the client secret — it will not be shown again.');
+    console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  } finally {
+    await sql.end();
+  }
+}
+
 /**
  * Entry point for the `gbrain auth` CLI subcommand. Also reused by the
  * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
@@ -289,6 +320,7 @@ export async function runAuth(args: string[]): Promise<void> {
       await permissions(rest[0] || '', rest[1] || '', rest[2]);
       return;
     }
+    case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');
       const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
@@ -310,6 +342,13 @@ Usage:
   gbrain auth permissions <name> set-takes-holders <h1,h2,h3>
                                       Update visibility for an existing token
   gbrain auth test <url> --token <t>  Smoke-test a remote MCP server
+  gbrain auth create <name>                                Create a legacy bearer token
+  gbrain auth list                                         List all tokens
+  gbrain auth revoke <name>                                Revoke a legacy token
+  gbrain auth register-client <name> [options]            Register an OAuth 2.1 client
+     --grant-types <client_credentials,authorization_code> (default: client_credentials)
+     --scopes "<read write admin>"                         (default: read)
+  gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);
   }
 }

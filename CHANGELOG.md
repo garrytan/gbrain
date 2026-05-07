@@ -19,8 +19,7 @@ The OAuth provider in `src/core/oauth-provider.ts` got a parallel hardening pass
 Smaller hardening: admin cookies set `Secure` when behind HTTPS or a public-URL proxy (F9), magic-link nonces are bounded by an LRU cap (F10), `/mcp` wraps `transport.handleRequest` in try/catch so SDK throws hit a JSON-RPC 500 instead of express's default HTML error page (F14), and OperationError + unexpected exceptions both route through the unified `buildError`/`serializeError` envelope (F15). DCR disable became a constructor option on the provider rather than a serve-http monkey-patch (F12 — cleanup, not security).
 
 To take advantage of v0.26.9
-============================
-
+=====================
 `gbrain upgrade` is a one-step upgrade. There is no migration; all changes are application-layer.
 
 1. **Upgrade.** `gbrain upgrade`. Confirm `gbrain --version` shows `0.26.9`.
@@ -509,6 +508,38 @@ incrementally so the contracts are stable for SDK callers from day one.
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain
 doctor` warns about an incomplete migration:
+=======
+## [0.26.0] - 2026-04-25
+
+## **Multi-agent MCP is real. OAuth 2.1, HTTP server, React admin dashboard. Ship once, every AI client connects.**
+## **`gbrain serve --http` starts a production-grade OAuth server with embedded admin UI. Zero external dependencies.**
+
+This is GBrain as an organizational knowledge layer. Multiple AI agents, authenticated with scoped tokens, hitting the same brain over the wire. Perplexity Computer writes research. Claude queries for context. ChatGPT calls tools. Every request authenticated, every scope enforced, every action logged. One binary, zero infrastructure.
+
+OAuth 2.1 via the MCP SDK's built-in infrastructure (`mcpAuthRouter` + `OAuthServerProvider`). Full spec compliance: client credentials for machine-to-machine (Perplexity, Claude), authorization code with PKCE for browser-based clients (ChatGPT), token refresh with rotation, dynamic client registration (default off behind `--enable-dcr` flag), token revocation, protected resource metadata. 30 operations tagged with `scope: 'read' | 'write' | 'admin'`, enforced in the HTTP transport before dispatch. `sync_brain` and `file_upload` are `localOnly` ... admin-scoped AND excluded from HTTP, so remote agents cannot reach local filesystem surface area.
+
+React admin dashboard baked into the binary. Seven screens designed through Steve Krug's "Don't Make Me Think" lens: login, dashboard with live activity SSE feed, agents table with sparklines, register agent modal with scope checkboxes, credentials reveal with copy buttons and JSON download, filterable request log with pagination, agent detail drawer with per-client config export. Dark theme, JetBrains Mono for data, Inter for UI. Dense utilitarian layout. HTTP-only SameSite=Strict cookie auth with bootstrap token printed to the terminal on first start. 65KB gzipped.
+
+### The numbers that matter
+
+7 bisectable commits on this branch before the merge. 27 dedicated OAuth tests, all pass. Full suite: 2068 pass / 18 pre-existing master timeouts (unchanged from the merge). Typecheck clean.
+
+| Metric | BEFORE v0.26 | AFTER v0.26 | Δ |
+|---|---|---|---|
+| Auth mechanism | static bearer tokens | OAuth 2.1 + legacy fallback | protocol-compliant |
+| Concurrent agents | 1 (stdio only) | many (HTTP) | unbounded |
+| ChatGPT support | impossible (needs OAuth + PKCE) | native | unblocked |
+| Admin surface | CLI-only | /admin dashboard | +7 screens |
+| Scoped operations | 0 | 30 (all) | +30 |
+| New tests | ... | 27 (oauth.test.ts) | +27 |
+
+### What this means for agents
+
+`gbrain auth register-client perplexity --grant-types client_credentials --scopes "read write"` gives you credentials. `gbrain serve --http --port 3131` starts the server, prints the admin bootstrap token. Open `localhost:3131/admin`, paste the token, watch the live feed. Every Perplexity search, every Claude query, every ChatGPT tool call streams into the dashboard in real time. You see who's connected, what they're doing, and where the errors are. The thing actually works, this isn't a stepping stone, it's the production surface.
+
+## To take advantage of v0.26.0
+
+`gbrain upgrade` should run the schema migration automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
 
 1. **Run the orchestrator manually:**
    ```bash
@@ -540,6 +571,20 @@ doctor` warns about an incomplete migration:
 
 6. **If any step fails or the numbers look wrong,** please file an issue:
    https://github.com/garrytan/gbrain/issues with:
+2. **Verify OAuth tables exist:**
+   ```bash
+   gbrain doctor
+   ```
+3. **Register your first OAuth agent:**
+   ```bash
+   gbrain auth register-client perplexity --grant-types client_credentials --scopes "read write"
+   ```
+4. **Start the HTTP server:**
+   ```bash
+   gbrain serve --http --port 3131
+   ```
+   The terminal prints the admin bootstrap token. Open `http://localhost:3131/admin` and paste it to access the dashboard.
+5. **If any step fails,** please file an issue: https://github.com/garrytan/gbrain/issues with:
    - output of `gbrain doctor`
    - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
    - which step broke
@@ -609,6 +654,64 @@ doctor` warns about an incomplete migration:
   gracefully.
 - **Auto-think + drift phases deferred**: opt-in dream-cycle phases for
   autonomous belief evolution. Land in v0.28.x; no schema migration needed.
+**Security hardening (post-/cso pass):**
+- Auth code exchange + refresh token rotation now use atomic `DELETE...RETURNING` instead of SELECT-then-DELETE. The earlier non-atomic pattern let two concurrent token requests with the same auth code both succeed, issuing two valid token pairs from one code (RFC 6749 §10.5 violation). Same shape applied to refresh tokens (RFC 6749 §10.4 detection of stolen tokens depends on second-use failure). New regression tests fire 10 concurrent requests with the same code/refresh and assert exactly one succeeds.
+- `pgArray()` now escapes commas, braces, quotes, and backslashes inside array elements. The earlier no-escape join could be exploited (with `--enable-dcr` on) to smuggle a second redirect_uri into a registered client's array, enabling auth code redirection to an attacker-controlled domain.
+- Dynamic Client Registration now enforces RFC 6749 §3.1.2.1: every `redirect_uri` must be `https://` or loopback (`http://localhost`, `http://127.0.0.1`). Plaintext non-loopback `http://` is rejected at registration time.
+- `serve --http` now accepts `--public-url URL` to set the OAuth issuer in discovery metadata. Required for production deployments behind reverse proxies, ngrok tunnels, or any non-loopback URL — the issuer claim must match the discovery URL clients hit (RFC 8414 §3.3).
+- `cookie-parser` middleware now wired in. The admin dashboard auth was silently broken in the original v0.22 ship: `/admin/login` set the cookie, but every subsequent admin API call returned 401 because Express 5 has no built-in cookie parsing. Direct dep added: `cookie-parser@^1.4.7`.
+
+**OAuth 2.1 (new):**
+- `src/core/oauth-provider.ts` (404 lines) ... `GBrainOAuthProvider` implementing MCP SDK's `OAuthServerProvider` + `OAuthRegisteredClientsStore` interfaces. Backed by raw SQL (works on both PGLite and Postgres).
+- All tokens + client secrets SHA-256 hashed before storage. Auth codes single-use with 10-minute TTL. Refresh tokens rotate on use. Client credentials grant issues access token only (no refresh per RFC 6749 §4.4.3).
+- Legacy `access_tokens` fallback: pre-v0.26 bearer tokens continue working, grandfathered as `read+write+admin` scopes.
+- `sweepExpiredTokens()` runs on startup wrapped in try/catch ... server boots even if the sweep fails.
+- `hashToken()` and `generateToken()` extracted to `src/core/utils.ts` (DRY across auth surfaces).
+
+**HTTP server (new):**
+- `src/commands/serve-http.ts` ... Express 5 server with `mcpAuthRouter` + custom client_credentials handler (SDK's token endpoint throws `UnsupportedGrantTypeError` for CC; our handler runs BEFORE the router, falls through to SDK for auth_code/refresh).
+- Rate limiting on `/token` (50 requests / 15 min per IP via `express-rate-limit`).
+- Admin dashboard served from `admin/dist/` via Express static + SPA fallback.
+- SSE endpoint at `/admin/events` broadcasts every MCP request to connected admin browsers.
+- CORS: `/mcp` + `/token` open, `/admin` same-origin.
+- Startup logging prints port, engine type, registered client count, DCR status, issuer URL, admin bootstrap token.
+
+**Schema (new tables):**
+- `oauth_clients` (client_id, hashed secret, grant_types array, scope, redirect_uris, timestamps)
+- `oauth_tokens` (token hash, type=access|refresh, client_id, scopes, expires_at, resource)
+- `oauth_codes` (code hash, client_id, scopes, PKCE challenge, redirect_uri, state, expires_at)
+- Composite index on `mcp_request_log(created_at, token_name)` for the admin dashboard's time-range queries.
+- Migration v30 (`oauth_infrastructure`) creates everything idempotently. PGLite schema updated to include auth infrastructure because `serve --http` makes it network-accessible.
+
+**Operation contract:**
+- `Operation.scope?: 'read' | 'write' | 'admin'` ... added to interface, annotated on all 30 operations plus 11 new Minion ops via per-op audit (not derived from `mutating` flag).
+- `Operation.localOnly?: boolean` ... marks operations rejected over HTTP. `sync_brain`, `file_upload`, `file_list`, `file_url` all `admin + localOnly`.
+- `OperationContext.auth?: AuthInfo` ... threaded through HTTP dispatch for scope enforcement.
+
+**React admin dashboard (new `admin/`):**
+- Vite + React 19, TypeScript, 65KB gzipped.
+- 7 screens: Login, Dashboard (metrics + SSE feed + token health), Agents (sortable table + sparklines + Register button), Register (modal with scope checkboxes), Credentials (full-screen modal with Copy + Download JSON + yellow warning), Request Log (filterable paginated table), Agent Detail (drawer with Details/Activity/Config Export tabs + Revoke).
+- Design tokens: `#0a0a0f` bg, Inter for UI, JetBrains Mono for data, 4-32px spacing scale, rounded pill badges.
+- Interaction states: empty state CTAs, SSE reconnection messaging, credential-reveal warning ("Save this secret now. It will not be shown again.").
+- Design lens: Steve Krug "Don't Make Me Think" ... zero happy talk, mindless choices, scannable tables, billboard-speed comprehension.
+
+**CLI:**
+- `gbrain serve --http [--port 3131] [--token-ttl 3600] [--enable-dcr] [--public-url URL]` ... new HTTP transport alongside existing stdio `gbrain serve`.
+- `gbrain auth register-client <name> --grant-types <types> --scopes <scopes>` ... manual OAuth client registration.
+- Existing `auth create/list/revoke` kept for backward compatibility.
+
+**Dependencies:**
+- `express@^5.1.0`, `express-rate-limit@^7.5.0`, `cors@^2.8.5`, `cookie-parser@^1.4.7` as direct deps.
+- `@modelcontextprotocol/sdk` pinned to exact `1.29.0` (was `^1.0.0`).
+- `@types/express`, `@types/cors`, `@types/cookie-parser` as dev deps for typecheck.
+
+**Tests:**
+- `test/oauth.test.ts` ... 34 test cases covering provider: register, getClient, client_credentials exchange, auth_code flow with PKCE, refresh rotation, verifyAccessToken (OAuth + legacy fallback), revokeToken, sweepExpiredTokens, scope annotations on all 30 operations. Plus the post-/cso security-fix regressions: 10-concurrent auth code exchange (only 1 wins), 10-concurrent refresh rotation (only 1 wins), redirect_uri HTTPS-or-loopback gate, and pgArray comma-element round-trip (1 element in → 1 element out).
+
+
+
+
+
 ## [0.25.1] - 2026-05-01
 
 ## **Your brain can now read books with you. Nine new skills land at once.**
