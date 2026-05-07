@@ -32,6 +32,66 @@ import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 
+/**
+ * /health endpoint timeout. 3s rather than 5s: Fly.io's default
+ * health-check timeout is 5s, so returning 503 right at the orchestrator
+ * deadline races with the orchestrator recording the request as a timeout.
+ * 3s leaves 2s of headroom for TCP, response framing, and clock skew.
+ */
+export const HEALTH_TIMEOUT_MS = 3000;
+
+export type ProbeHealthResult =
+  | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
+  | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
+
+/**
+ * Pure async health probe. Races `engine.getStats()` against a timeout,
+ * returns a tagged result. No Express coupling — easy to unit-test with a
+ * mock engine. The /health route handler is a thin wrapper around this.
+ */
+export async function probeHealth(
+  engine: BrainEngine,
+  engineName: string,
+  version: string,
+  timeoutMs: number = HEALTH_TIMEOUT_MS,
+): Promise<ProbeHealthResult> {
+  // Capture the handle so we can clearTimeout when getStats() wins. Without
+  // this, every fast /health request leaves a 3s pending timer in the event
+  // loop until it fires — under high probe rates this builds up a rolling
+  // backlog of timers and avoidable wakeups. Both adversarial reviewers
+  // (Claude + Codex) flagged this independently.
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const stats = await Promise.race([
+      engine.getStats(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('health_timeout')), timeoutMs);
+      }),
+    ]);
+    return {
+      ok: true,
+      status: 200,
+      body: { status: 'ok', version, engine: engineName, ...stats },
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'unknown';
+    return {
+      ok: false,
+      status: 503,
+      body: {
+        error: 'service_unavailable',
+        error_description: msg === 'health_timeout'
+          ? 'Health check timed out (database pool may be saturated)'
+          : 'Database connection failed',
+      },
+    };
+  } finally {
+    // Clear the timer regardless of which branch won the race. No-op when
+    // the timer already fired (we're in the timeout-rejection catch block).
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
 interface ServeHttpOptions {
   port: number;
   tokenTtl: number;
@@ -225,12 +285,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Health check
   // ---------------------------------------------------------------------------
   app.get('/health', async (_req, res) => {
-    try {
-      const stats = await engine.getStats();
-      res.json({ status: 'ok', version: VERSION, engine: config.engine, ...stats });
-    } catch {
-      res.status(503).json({ error: 'service_unavailable', error_description: 'Database connection failed' });
-    }
+    const result = await probeHealth(engine, config.engine || 'pglite', VERSION);
+    res.status(result.status).json(result.body);
   });
 
   // ---------------------------------------------------------------------------

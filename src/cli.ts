@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 
+import { installSigchldHandler } from './core/zombie-reap.ts';
+installSigchldHandler();
+
 import { readFileSync } from 'fs';
 import { loadConfig, toEngineConfig } from './core/config.ts';
 import type { BrainEngine } from './core/engine.ts';

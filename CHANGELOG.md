@@ -108,6 +108,77 @@ issue with the doctor output and we will look.
    - output of `gbrain --version`
    - which step broke
 
+## [0.28.1] - 2026-05-06
+
+## **Long-running deployments stop drowning in zombie processes. /health stops racing the orchestrator. Pool slots free immediately on shutdown.**
+## **Three independent fixes, one production cascade. The worker reaps its own children. /health returns 503 fast enough that Fly.io sees it. Engine ownership is fixed so tests don't fight the worker over engine lifecycle.**
+
+The zombie-process cascade was the bug class that turned a slow query into a dead server. Children spawned by the worker (shell jobs, embed batches, sub-agents) became zombies on exit because Bun (like Node) only auto-reaps when a SIGCHLD listener is registered. Phantom zombies held PgBouncer connection slots, the pool saturated, `getStats()` hung indefinitely, `/health` timed out beyond the orchestrator's deadline, and Fly.io concluded the server was dead. The fix is a layered defense in depth: an in-process SIGCHLD reaper for JS-spawned children, tini-as-PID-1 wrapping the worker subtree for native-addon spawns, AlphaClaw's container-level tini for the case where Bun itself crashes hard.
+
+### What you can now do that you couldn't before
+
+- **Run gbrain as a long-lived worker without leaking zombies.** `gbrain jobs work` and the supervisor both wrap the worker in tini when it's on `PATH`. Without tini, the new in-process SIGCHLD handler still reaps anything spawned through Bun's event loop. Zero-config: works whether tini is installed or not.
+- **Trust `/health` to return fast under DB pressure.** The probe now races `engine.getStats()` against a 3s timeout (down from 5s, giving Fly.io's 5s health-check timeout 2s of headroom for TCP, response framing, and clock skew). When the pool is saturated, `/health` returns 503 with `Health check timed out (database pool may be saturated)` instead of hanging until the orchestrator times the request out.
+- **Restart `gbrain jobs work` and free pool slots immediately.** The CLI handler now disconnects the engine in a try/finally around `worker.start()`, releasing PgBouncer slots on the same shutdown that previously waited for TCP keepalive to expire.
+
+### The numbers that matter
+
+| Failure mode | Before (v0.27.0) | After (v0.28.1) |
+|---|---|---|
+| Zombie children from shell jobs | accumulated in PID table | reaped via SIGCHLD or tini |
+| `/health` under saturated pool | hung indefinitely | 503 within 3s |
+| `gbrain jobs work` shutdown | TCP keepalive (~minutes) to free slots | immediate engine.disconnect() |
+| Fly.io health-check race | timeout at 5s exactly | 2s headroom |
+
+### What this means for your deployment
+
+If you were running `gbrain serve --http` or `gbrain jobs work` long enough that workers piled up zombies, the cascade is closed. If you're on Fly.io or any orchestrator with a 5s health-check timeout, your saturated-pool 503s now arrive in time to be observed. If your container image doesn't already have tini-as-PID-1, install tini in your image and gbrain auto-wraps the worker. If you have AlphaClaw's tini setup, this branch composes correctly with it — three layers, no overlap, no redundancy.
+
+### Itemized changes
+
+#### Added
+- `src/core/zombie-reap.ts` — idempotent `installSigchldHandler()` so JS-spawned children get reaped via Bun's internal `waitpid()`. Cross-file leak guard via `_uninstallSigchldHandlerForTests()` for tests.
+- `src/core/minions/spawn-helpers.ts` — pure `detectTini()` + `buildSpawnInvocation()` helpers consumed by both `supervisor.ts` and `autopilot.ts`. Resolves the DRY violation between the two spawn sites and makes the tini wrapping testable without `mock.module()`.
+- `HEALTH_TIMEOUT_MS = 3000` exported from `src/commands/serve-http.ts` plus `probeHealth()` as a pure async function.
+- `MinionSupervisor.isTiniDetected` read-only accessor for tests.
+- `_connectionStyle` field on `PostgresEngine` so `disconnect()` is fully idempotent.
+- Test coverage: 14 unit tests across 5 files (zombie-reap, spawn-helpers, serve-http-health, supervisor-tini, worker-shutdown-disconnect) + 3 E2E tests (zombie-reaping real-binary reproduction, postgres-engine-disconnect-idempotency × 2). All parallel-safe, no `mock.module()`, `scripts/check-test-isolation.sh` passes without new allow-list entries.
+
+#### Changed
+- `src/cli.ts` calls `installSigchldHandler()` at module load (with Windows platform guard — SIGCHLD doesn't exist on Windows).
+- `src/commands/autopilot.ts` resolves tini once at startup instead of per worker respawn.
+- `src/commands/serve-http.ts` `/health` route is now a one-line wrapper around `probeHealth()`.
+- `MinionWorker.start()` no longer calls `engine.disconnect()`. The CLI handler in `src/commands/jobs.ts case 'work'` owns engine lifecycle via try/finally with loud error logging on disconnect failure.
+- `PostgresEngine.disconnect()` is now idempotent — second call on an instance-pool engine is a no-op rather than falling through to `db.disconnect()` and clobbering the module-level singleton.
+
+#### Fixed
+- Zombie process accumulation in long-running worker deployments.
+- `/health` hang when PgBouncer pool is saturated (cascading orchestrator timeout → false-positive server-down).
+- `PostgresEngine.disconnect()` non-idempotent behavior that broke any test sharing an engine across multiple worker.start() / worker.stop() cycles.
+- `probeHealth()` race timer leak — `clearTimeout` in the finally block prevents pending-timer pile-up under high probe rates.
+- `detectTini()` env-snapshot bug where Bun's `execFileSync` didn't see runtime PATH mutations (passes `env: process.env` explicitly now).
+- Engine-ownership invariant violation where the worker disconnected an engine it didn't own.
+
+### For contributors
+- Adversarial review found 19 issues across two reviewers (Claude + Codex). 2 auto-fixed (clearTimeout, Windows platform guard); rest informational or pre-existing.
+- Test-isolation lint at `scripts/check-test-isolation.sh` rule R2 (no `mock.module()` in non-serial unit tests) drove the pure-helper extraction. Trying to test the spawn flow with `mock.module()` would have forced 5 quarantine entries.
+- `test/worker-shutdown-disconnect.test.ts` pins the engine-ownership invariant so a future refactor can't silently re-introduce `engine.disconnect()` to `worker.start()`. The test asserts the inverse: `disconnectSpy).not.toHaveBeenCalled()`.
+
+## To take advantage of v0.28.1
+
+`gbrain upgrade` should do this automatically. If it didn't, no manual action is needed — the fixes are runtime-only, no schema migration.
+
+1. **Verify tini is installed (recommended for long-running deployments):**
+   ```bash
+   which tini
+   ```
+   If empty, install via `apk add tini` (Alpine), `apt-get install tini` (Debian/Ubuntu), or `brew install tini` (macOS dev). gbrain will auto-detect on next supervisor/autopilot start.
+2. **Verify the SIGCHLD reaper is wired:**
+   ```bash
+   gbrain --version  # should print 0.28.1+
+   ```
+3. **If `gbrain doctor` warns about anything:** please file an issue: https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` and contents of `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
 ## [0.27.0] - 2026-04-28
 
 ## **GBrain runs on any embedding stack. OpenAI, Google Gemini, Ollama, Voyage, or anything via LiteLLM — one config line away.**
