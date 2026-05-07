@@ -1212,6 +1212,35 @@ const get_health: Operation = {
   cliHints: { name: 'health' },
 };
 
+/**
+ * Multi-topology v1 (Tier B): structured doctor report for remote callers.
+ *
+ * First read-only diagnostic op exposed over HTTP MCP. Wraps the focused
+ * thin-client check set in `src/commands/doctor.ts:doctorReportRemote()` and
+ * returns the structured `DoctorReport` JSON verbatim. The matching client-
+ * side renderer lives in `src/commands/remote.ts` (used by `gbrain remote
+ * doctor`). Local doctor is unchanged — operators on the host still get the
+ * full check set.
+ *
+ * scope=admin because some checks expose system-state (queue depth, schema
+ * version) that read-only consumers don't need. localOnly=false so HTTP
+ * callers can invoke it. No mutation; safe to call repeatedly.
+ *
+ * Precedent: doctor only. Generalizing to lint/integrity/orphans is filed as
+ * follow-up work pending demand.
+ */
+const run_doctor: Operation = {
+  name: 'run_doctor',
+  description: 'Run brain health checks and return a structured DoctorReport (thin-client doctor surface).',
+  params: {},
+  handler: async (ctx) => {
+    const { doctorReportRemote } = await import('../commands/doctor.ts');
+    return doctorReportRemote(ctx.engine);
+  },
+  scope: 'admin',
+  localOnly: false,
+};
+
 const get_versions: Operation = {
   name: 'get_versions',
   description: 'Page version history',
@@ -1940,7 +1969,7 @@ export const operations: Operation[] = [
   // Timeline
   add_timeline_entry, get_timeline,
   // Admin
-  get_stats, get_health, get_versions, revert_version,
+  get_stats, get_health, run_doctor, get_versions, revert_version,
   // Sync
   sync_brain,
   // Raw data
