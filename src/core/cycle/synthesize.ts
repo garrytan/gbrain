@@ -459,6 +459,21 @@ async function collectChildPutPageSlugs(
   childIds: number[],
 ): Promise<string[]> {
   if (childIds.length === 0) return [];
+
+  // Self-healing: fix any double-encoded jsonb string values in the input
+  // column from pre-v0.23.1 runs. JSON.stringify() + ::jsonb produced
+  // jsonb strings instead of jsonb objects — input->>'slug' returned null.
+  // This one-time fixup per batch is cheap and idempotent.
+  await engine.executeRaw(
+    `UPDATE subagent_tool_executions
+        SET input = (input #>> '{}')::jsonb
+      WHERE job_id = ANY($1::int[])
+        AND jsonb_typeof(input) = 'string'
+        AND (input #>> '{}') IS NOT NULL
+        AND left(input #>> '{}', 1) = '{'`,
+    [childIds],
+  );
+
   const rows = await engine.executeRaw<{ slug: string }>(
     `SELECT DISTINCT input->>'slug' AS slug
        FROM subagent_tool_executions
