@@ -119,6 +119,81 @@ in this release.
   `requireAdmin` middleware instead, eliminating the proxy dependency
   and fixing the migration story in one move.
 
+## [0.28.7] - 2026-05-06
+
+## **Voyage backfill no longer infinite-loops on dense payloads. Adaptive sizing, per-recipe tokenizer density, and a self-tightening cache.**
+## **What was a 26%-of-corpus stuck-at-stale becomes a clean run that recovers from a missed batch and remembers the lesson.**
+
+`/v0.27` shipped pluggable embedding providers. Voyage's tokenizer turns out to be roughly 3-4x denser than OpenAI's tiktoken on mixed content (code, JSON, CJK), so a backfill that fit fine under tiktoken's accounting blew Voyage's hard 120K-tokens-per-batch cap. The job kept retrying the same `WHERE embedding IS NULL ORDER BY id LIMIT 50` slice, looped forever, and left ~26% of the corpus un-embedded with no operator-visible signal that anything was wrong.
+
+This release puts the batching policy where it belongs: on the recipe. Voyage declares its own `chars_per_token` (1) and `safety_factor` (0.5), so the gateway pre-splits at a 60K-character budget. A token-limit miss now does three things at once: halves the current batch and retries (recursive halving), shrinks the recipe's effective safety factor by 50% (so the next `embed()` call pre-splits even tighter), and floors at 0.05 to prevent runaway shrinkage. Ten consecutive batch successes heal the factor back toward the recipe-declared ceiling. A new startup warning fires once per process for any embedding recipe missing `max_batch_tokens`, so the next Cohere/Mistral/Jina recipe that forgets the field can't quietly re-create the v0.27 Voyage trap.
+
+### The numbers that matter
+
+Source: real Voyage 4 backfill that triggered the original bug, plus the rewritten `test/ai/adaptive-embed-batch.test.ts` (23 cases through the public `embed()` seam, no private-function probing).
+
+| Metric                                            | Before v0.28.7     | After v0.28.7      |
+|---------------------------------------------------|--------------------|--------------------|
+| Voyage backfill on 68K dense chunks               | infinite loop, 26% un-embedded | **completes** |
+| Provider tokenizer density configurable per recipe| no (global 1:1)    | **yes**            |
+| Repeated misses on same shape                     | log2(N) recursion every time | **cache tightens, then heals** |
+| Recipe forgets `max_batch_tokens`                 | silent (next bug)  | **stderr warning at startup** |
+| OpenAI BATCH_SIZE penalty from Voyage guard       | 50 (2x round-trips)| **100 (pre-PR throughput)** |
+| Test seam for adaptive batching                   | re-implemented helpers locally | **public `embed()` with stubbed transport** |
+
+The single most load-bearing change is the per-recipe `safety_factor` plus shrink-on-miss cache. The first miss costs 3 calls instead of 1 (one fail + two halves). The second miss costs the same, but the next batch starts pre-split tighter, so most subsequent batches don't trigger recursion at all. By the third or fourth miss, the run is paying near-zero halving tax even on adversarially dense input.
+
+### What this means for you
+
+If your Voyage backfill stalled mid-corpus: re-run `gbrain embed --stale --limit N`. The job completes instead of looping. If you maintain a custom embedding recipe (Cohere, Jina, your own openai-compatible endpoint), declare `max_batch_tokens` plus `chars_per_token` and `safety_factor` if your provider's tokenizer is denser than tiktoken. The startup warning will tell you when you forgot. Existing OpenAI embedding workflows keep their pre-PR throughput — the BATCH_SIZE=50 guard from the original PR draft was reverted to 100 once the gateway-level pre-split obviated it.
+
+## To take advantage of v0.28.7
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` flags anything:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **No agent action needed.** This release is purely runtime. No schema changes, no config migration.
+3. **Verify the outcome:**
+   ```bash
+   # If you were stuck on a Voyage backfill, retry:
+   gbrain embed --stale --limit 200
+   # OpenAI users: throughput should match pre-PR baseline:
+   gbrain embed --stale --limit 1000
+   gbrain doctor
+   ```
+4. **If something looks off,** please file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - the recipe id (voyage / openai / custom) and which `embed --stale` invocation hit the issue
+   - any `[ai.gateway] recipe "..." declares an embedding touchpoint without max_batch_tokens` lines from stderr
+
+### Itemized changes
+
+#### Added
+
+- **`EmbeddingTouchpoint.chars_per_token` + `safety_factor` (per-recipe batching policy).** Each embedding recipe can now declare its own tokenizer density and budget-utilization ceiling. Defaults: 4 chars/token (OpenAI) and 0.8 utilization. Voyage declares 1 + 0.5. Both fields are optional and only consulted when `max_batch_tokens` is also set.
+- **`__setEmbedTransportForTests(fn)` test seam on the gateway.** Replaces the AI SDK's `embedMany` with an injected stub for tests. Tests run through the public `embed()` function instead of probing private helpers. `resetGateway()` restores the real SDK.
+- **Adaptive shrink-on-miss cache.** Module-scoped `Map<recipeId, {factor, consecutiveSuccesses}>`. On token-limit miss, the recipe's effective `safety_factor` halves (floor 0.05). After 10 consecutive batch successes, the factor heals back toward the recipe-declared ceiling at ×1.5 per cycle.
+- **Startup warning for recipes missing `max_batch_tokens`.** `configureGateway` walks every registered recipe at construction time. Any embedding touchpoint without the field (excluding the canonical OpenAI fast-path recipe) emits a one-time stderr warning. Once-per-process per recipe to keep tests quiet.
+- **ASCII flow diagram in `embed()` JSDoc.** Documents the routing decision, recursion + halving, and shrinkState lifecycle inline.
+
+#### Changed
+
+- **`splitByTokenBudget` + `isTokenLimitError` exported as `@internal`.** Pure functions; the test file imports the real exports rather than re-implementing the algorithm. `splitByTokenBudget` accepts `chars_per_token` as the third parameter (default 4); zero or negative ratios fall back to the default.
+- **`createGateway` transport seam.** The function the gateway calls to embed is now a module-level `_embedTransport`, defaulting to the AI SDK's `embedMany`. Production code never sees the seam.
+- **`embedSubBatch` records success/failure into `shrinkState`.** Every successful batch bumps the win counter; every token-limit miss tightens the factor immediately, then halves the current batch.
+- **`BATCH_SIZE` in `src/core/embedding.ts` reverted 50 → 100.** The original PR's safety guard halved OpenAI throughput on every page. With the gateway owning per-recipe pre-split + recursive halving + adaptive shrink-on-miss, the outer paginator goes back to its actual purpose: progress-callback granularity.
+
+#### Tests
+
+- **Full rewrite of `test/ai/adaptive-embed-batch.test.ts` (23 cases).** Pure-helper coverage including chars_per_token threading and non-Error throwables. Recursion through real `embed()` with stubbed transport (halving, order preservation across boundaries via slot-0 sentinel encoding, terminal MIN_SUB_BATCH=1 throws normalized error). OpenAI fast path asserts transport called once with no partition. Shrink-on-miss covers first-miss halving, floor at 0.05 under repeated misses, healing after 10 wins, healing capped at recipe ceiling. Startup warning idempotency.
+
+#### For contributors
+
+The codex outside-voice review of the original PR plan caught the load-bearing test design issue: the original D2 proposed DI on the private `embedSubBatch`, but D3 asserted via the public `embed()` seam, which was unbuildable as written. The fix was to drop private-function DI and route through the gateway-level transport seam. Tests are now strictly through the public API.
+
 ## [0.28.6] - 2026-05-06
 
 **The brain finally captures what you BELIEVE, not just what's true.**
