@@ -1,16 +1,16 @@
 import { readFileSync, statSync, lstatSync } from 'fs';
-import { basename } from 'path';
+import { basename, extname } from 'path';
 import { createHash } from 'crypto';
 import { marked } from 'marked';
-import type { BrainEngine } from './engine.ts';
+import type { BrainEngine, FileSpec } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
-import { extractCodeRefs } from './link-extraction.ts';
-import { embedBatch } from './embedding.ts';
+import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
+import { embedBatch, embedMultimodal } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
-import type { ChunkInput, PageType } from './types.ts';
+import type { ChunkInput, PageInput, PageType } from './types.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -575,3 +575,411 @@ export async function importCodeFile(
 // Backward compat
 export const importFile = importFromFile;
 export type ImportFileResult = ImportResult;
+
+// ============================================================
+// v0.27.1 multimodal: image-file ingestion (Phase 8 / Sec5 / F2 / Eng-1C)
+// ============================================================
+
+/**
+ * v0.27.1: image extension allow-list. PNG/JPG/JPEG/GIF/WEBP are universal
+ * codecs that don't need decoding before embedding (we send raw bytes).
+ * HEIC/HEIF/AVIF need WASM decode to JPEG before Voyage will accept them.
+ *
+ * Other variants (BMP, TIFF, etc.) intentionally left out — they're rare in
+ * the kinds of brains gbrain serves and adding them would expand the WASM
+ * decode surface meaningfully.
+ */
+export const SUPPORTED_IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.heif', '.avif'] as const;
+
+/** Voyage caps each multimodal input at 20MB. We honor that as the size limit. */
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+
+/** Extensions that need WASM decode before Voyage embedding. */
+const NEEDS_DECODE = new Set(['.heic', '.heif', '.avif']);
+
+/**
+ * Phase 8 / Sec5 (DRY refactor): shared transaction wrapper for the markdown
+ * + image import paths. Idempotent on content_hash (the caller skips when
+ * existing.content_hash === hash, before calling here).
+ *
+ * Does NOT include type-specific work (tag reconciliation for markdown,
+ * code-ref edges, EXIF auto-link for images). Callers compose those on top
+ * via the optional `after` callback, which runs INSIDE the same transaction.
+ */
+export interface ImportTransactionSpec {
+  slug: string;
+  hadExisting: boolean;
+  page: PageInput;
+  /** When undefined, no chunk write happens. When [], deletes any prior chunks. */
+  chunks?: ChunkInput[];
+  /** Optional file-row insert (image ingest). Page link injected automatically. */
+  file?: FileSpec;
+  /** Inside-transaction hook for type-specific work (tags, links). */
+  after?: (tx: BrainEngine) => Promise<void>;
+}
+
+export async function withImportTransaction(
+  engine: BrainEngine,
+  spec: ImportTransactionSpec,
+): Promise<void> {
+  await engine.transaction(async (tx) => {
+    if (spec.hadExisting) await tx.createVersion(spec.slug);
+    await tx.putPage(spec.slug, spec.page);
+    if (spec.file) {
+      // page_id resolution after putPage so the new row's id is available.
+      const stored = await tx.getPage(spec.slug);
+      await tx.upsertFile({
+        ...spec.file,
+        page_slug: spec.slug,
+        page_id: stored?.id ?? null,
+      });
+    }
+    if (spec.chunks !== undefined) {
+      if (spec.chunks.length > 0) {
+        await tx.upsertChunks(spec.slug, spec.chunks);
+      } else {
+        await tx.deleteChunks(spec.slug);
+      }
+    }
+    if (spec.after) await spec.after(tx);
+  });
+}
+
+/**
+ * Eng-1C: pure-JS p-limit semaphore so OCR calls run with bounded
+ * concurrency without pulling in a new dep. Returns a function that, when
+ * called, returns a Promise that resolves when the wrapped function resolves
+ * AND the semaphore slot has been released.
+ *
+ * Used by importImageFile to parallelize OCR (typically ~2s/image) at
+ * concurrency 8. Without this, 100 images = 200s wall time of sequential OCR.
+ * With this, 100 images = ~25s.
+ */
+export function pLimit(concurrency: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  function next() {
+    if (active >= concurrency) return;
+    const run = queue.shift();
+    if (run) {
+      active++;
+      run();
+    }
+  }
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    return new Promise<T>((resolve, reject) => {
+      queue.push(() => {
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            next();
+          });
+      });
+      next();
+    });
+  };
+}
+
+/**
+ * Decode HEIC/AVIF bytes to a re-encoded JPEG buffer that Voyage accepts.
+ * Pre-loads the WASM via the bun-compile-safe pattern proven in Phase 1's
+ * scripts/check-image-decoders-embedded.sh. PNG/JPG/JPEG/GIF/WEBP pass
+ * through unchanged.
+ */
+async function decodeIfNeeded(ext: string, buf: Buffer): Promise<{ buf: Buffer; mime: string }> {
+  if (ext === '.heic' || ext === '.heif') {
+    // heic-decode bundles libheif via base64 — works in bun --compile
+    // out of the box. Returns RGBA pixel buffer + dims.
+    const heicDecode = (await import('heic-decode')).default;
+    const decoded = await heicDecode({ buffer: buf });
+    const encodePng = (await import('@jsquash/png/encode.js')).default;
+    const pngBytes = await encodePng({
+      data: new Uint8ClampedArray(decoded.data),
+      width: decoded.width,
+      height: decoded.height,
+    });
+    return { buf: Buffer.from(pngBytes), mime: 'image/png' };
+  }
+  if (ext === '.avif') {
+    // @jsquash/avif loads its WASM relative to its own JS file, which fails
+    // inside a bun --compile VFS. Pre-init via the path imported with
+    // `with { type: 'file' }` (proven in scripts/check-image-decoders-embedded.sh).
+    const avifWasmModule = await import('@jsquash/avif/codec/dec/avif_dec.wasm', { with: { type: 'file' } });
+    const avifMod = await import('@jsquash/avif/decode.js');
+    const wasmBytes = readFileSync((avifWasmModule as { default: string }).default);
+    // WebAssembly.compile expects ArrayBuffer; Buffer.buffer is ArrayBufferLike
+    // (Bun typing). Slice gives a fresh ArrayBuffer view.
+    const wasmAB = wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength) as ArrayBuffer;
+    const wasmModule = await WebAssembly.compile(wasmAB);
+    await avifMod.init(wasmModule);
+    // @jsquash/avif's decode is typed against ArrayBuffer.
+    const inputAB = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+    const decoded = await avifMod.default(inputAB);
+    if (!decoded) {
+      throw new Error('avif decode returned null');
+    }
+    const encodePng = (await import('@jsquash/png/encode.js')).default;
+    const pngBytes = await encodePng({
+      data: new Uint8ClampedArray(decoded.data),
+      width: decoded.width,
+      height: decoded.height,
+    });
+    return { buf: Buffer.from(pngBytes), mime: 'image/png' };
+  }
+  // Universal codecs: pass-through.
+  const mimeMap: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+  };
+  return { buf, mime: mimeMap[ext] ?? 'application/octet-stream' };
+}
+
+/** EXIF metadata stamped onto image-page frontmatter (cherry-2). */
+async function readExifSafe(buf: Buffer): Promise<Record<string, unknown>> {
+  try {
+    const exifr = (await import('exifr')).default;
+    const data = (await exifr.parse(buf)) as Record<string, unknown> | undefined;
+    if (!data) return {};
+    const out: Record<string, unknown> = {};
+    if (data.DateTimeOriginal instanceof Date) {
+      out.captured_at = data.DateTimeOriginal.toISOString();
+    } else if (typeof data.CreateDate === 'string') {
+      out.captured_at = data.CreateDate;
+    }
+    if (typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+      out.gps = { lat: data.latitude, lon: data.longitude };
+    }
+    if (typeof data.Make === 'string' || typeof data.Model === 'string') {
+      out.camera = `${data.Make ?? ''} ${data.Model ?? ''}`.trim();
+    }
+    if (typeof data.ExifImageWidth === 'number' && typeof data.ExifImageHeight === 'number') {
+      out.dims = { w: data.ExifImageWidth, h: data.ExifImageHeight };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Cherry-1 OCR: optional gpt-4o-mini pass extracting visible text from an
+ * image. Returns '' when:
+ * - the embedding_image_ocr config flag is off (default)
+ * - the configured expansion model is unavailable (no API key)
+ * - the OCR call itself fails (logged once per session)
+ *
+ * Eng-1B: per-call result is reflected in counters the doctor `ocr_health`
+ * check reads. Counter writes are best-effort; never fail the import.
+ *
+ * The system prompt explicitly tells the model not to follow instructions
+ * embedded in the image (mitigation for the OCR-as-prompt-injection vector).
+ */
+let _ocrWarnedThisSession = false;
+async function maybeOcr(
+  engine: BrainEngine,
+  imgBuf: Buffer,
+  mime: string,
+): Promise<string> {
+  const opt = process.env.GBRAIN_EMBEDDING_IMAGE_OCR;
+  if (opt !== 'true') return '';
+
+  // Counter helpers — quiet failure if config table is unavailable.
+  async function bump(key: string) {
+    try {
+      const cur = parseInt((await engine.getConfig(key)) ?? '0', 10);
+      await engine.setConfig(key, String((Number.isFinite(cur) ? cur : 0) + 1));
+    } catch { /* non-fatal */ }
+  }
+
+  await bump('ocr_attempted');
+  try {
+    const { isAvailable, generateOcrText } = await import('./ai/gateway.ts');
+    if (!isAvailable('expansion')) {
+      if (!_ocrWarnedThisSession) {
+        console.warn('[gbrain] OCR opt-in is true but expansion model is unavailable; skipping OCR for this session');
+        _ocrWarnedThisSession = true;
+      }
+      await bump('ocr_failed_no_key');
+      return '';
+    }
+    const text = await generateOcrText(imgBuf, mime);
+    await bump('ocr_succeeded');
+    return text;
+  } catch (err) {
+    if (!_ocrWarnedThisSession) {
+      console.warn(`[gbrain] OCR call failed (continuing without OCR text): ${err instanceof Error ? err.message : String(err)}`);
+      _ocrWarnedThisSession = true;
+    }
+    await bump('ocr_failed_other');
+    return '';
+  }
+}
+
+export interface ImportImageOptions {
+  /** Override default OCR concurrency for tests. */
+  ocrConcurrency?: number;
+  /** Skip the embed call (for tests that want fast metadata-only inserts). */
+  noEmbed?: boolean;
+}
+
+/** Module-level limiter so concurrent imports across files share the budget. */
+const _ocrLimiter = pLimit(8);
+
+/**
+ * Phase 8 (cherry-1+2+3 in scope, F2 walker hook): import a single image file
+ * by path. Lives alongside importFromFile + importCodeFile in the dispatcher
+ * (extended in import.ts to recognize image extensions when
+ * embedding_multimodal is on).
+ */
+export async function importImageFile(
+  engine: BrainEngine,
+  filePath: string,
+  relativePath: string,
+  opts: ImportImageOptions = {},
+): Promise<ImportResult> {
+  // Defense-in-depth: reject symlinks before reading bytes.
+  const lstat = lstatSync(filePath);
+  if (lstat.isSymbolicLink()) {
+    return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: `Skipping symlink: ${filePath}` };
+  }
+  const stat = statSync(filePath);
+  if (stat.size > MAX_IMAGE_BYTES) {
+    return {
+      slug: slugifyPath(relativePath),
+      status: 'skipped',
+      chunks: 0,
+      error: `Image too large (${stat.size} bytes, max ${MAX_IMAGE_BYTES}). Voyage multimodal caps at 20MB per input.`,
+    };
+  }
+
+  const ext = extname(relativePath).toLowerCase();
+  const slug = slugifyPath(relativePath); // strips .md/.mdx; for images ext stays in path
+  // Image slug includes the extension (otherwise foo.png and foo.jpg collide
+  // and slugifyPath would already preserve it). Recompute with the file
+  // extension preserved so the page slug is stable + collision-free.
+  const imageSlug = relativePath.replace(/[\\\/]/g, '/').toLowerCase();
+  const buf = readFileSync(filePath);
+  const hash = createHash('sha256').update(buf).digest('hex');
+
+  const existing = await engine.getPage(imageSlug);
+  if (existing?.content_hash === hash) {
+    return { slug: imageSlug, status: 'skipped', chunks: 0 };
+  }
+
+  // Decode HEIC/AVIF; pass-through for universal codecs.
+  let decoded: { buf: Buffer; mime: string };
+  try {
+    decoded = await decodeIfNeeded(ext, buf);
+  } catch (err) {
+    return {
+      slug: imageSlug,
+      status: 'error',
+      chunks: 0,
+      error: `Decode failed for ${relativePath}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // EXIF metadata (cherry-2). Pure JS, sub-ms; no concurrency knob needed.
+  const exif = await readExifSafe(buf);
+
+  // OCR opt-in (cherry-1). Runs through the per-process limiter so 100
+  // images first-import doesn't serialize into 200s of OCR latency.
+  const ocrText: string = opts.noEmbed
+    ? ''
+    : await _ocrLimiter(() => maybeOcr(engine, decoded.buf, decoded.mime));
+
+  // Multimodal embed.
+  let embedding: Float32Array | null = null;
+  if (!opts.noEmbed) {
+    try {
+      const [vec] = await embedMultimodal([
+        { kind: 'image_base64', data: decoded.buf.toString('base64'), mime: decoded.mime },
+      ]);
+      embedding = vec;
+    } catch (err) {
+      return {
+        slug: imageSlug,
+        status: 'error',
+        chunks: 0,
+        error: `embedMultimodal failed for ${relativePath}: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  const filename = basename(relativePath);
+  const frontmatter: Record<string, unknown> = {
+    type: 'image',
+    title: filename,
+    mime_type: decoded.mime,
+    bytes: stat.size,
+    ...exif,
+  };
+
+  // Single chunk per image. chunk_text holds OCR text or filename so
+  // searchKeyword has something useful to match when image rows are opted in.
+  // chunk_source='image_asset' joins the v0.20 chunk_source allowlist.
+  const chunk: ChunkInput & { modality?: string; embedding_image?: Float32Array } = {
+    chunk_index: 0,
+    chunk_text: ocrText || filename,
+    chunk_source: 'image_asset',
+    modality: 'image',
+    ...(embedding ? { embedding_image: embedding } : {}),
+  };
+
+  const fileSpec: FileSpec = {
+    filename,
+    storage_path: relativePath.replace(/[\\\/]/g, '/'),
+    mime_type: decoded.mime,
+    size_bytes: stat.size,
+    content_hash: hash,
+  };
+
+  await withImportTransaction(engine, {
+    slug: imageSlug,
+    hadExisting: !!existing,
+    page: {
+      type: 'image',
+      page_kind: 'image',
+      title: filename,
+      compiled_truth: ocrText || '',
+      timeline: '',
+      frontmatter,
+      content_hash: hash,
+    },
+    chunks: [chunk],
+    file: fileSpec,
+    after: async (tx) => {
+      // Cherry-3: path-proximity auto-link to a sibling text page. The first
+      // matching candidate gets an image_of edge. Best-effort — addLink
+      // throws when the target doesn't exist; we silently skip for now and
+      // let `gbrain reconcile-links` pick up later additions.
+      for (const candidate of imageOfCandidates(imageSlug)) {
+        const sibling = await tx.getPage(candidate);
+        if (sibling) {
+          try {
+            await tx.addLink(
+              imageSlug, candidate,
+              filename,
+              'image_of', 'manual', imageSlug, 'frontmatter',
+            );
+          } catch { /* sibling vanished mid-tx; skip */ }
+          break; // one canonical link per image
+        }
+      }
+    },
+  });
+
+  return { slug: imageSlug, status: 'imported', chunks: 1 };
+}
+
+/** Used by sync.isSyncable + import.ts walker. */
+export function isImageFilePath(relativePath: string): boolean {
+  const ext = extname(relativePath).toLowerCase();
+  return (SUPPORTED_IMAGE_EXTS as readonly string[]).includes(ext);
+}
+// Re-export for sync.ts consumers (import-file is the single source of truth).
+void NEEDS_DECODE;

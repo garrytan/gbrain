@@ -1,6 +1,6 @@
 # TODOS
 
-## LongMemEval benchmark follow-ups (v0.28.8)
+## LongMemEval benchmark follow-ups (v0.28.12)
 
 ### Closed: full 500-question 4-adapter run published
 
@@ -106,6 +106,43 @@ curve.
 
 **Depends on:** v0.27 pluggable embedding provider work (already shipped,
 verify Voyage adapter integration in `src/core/ai/recipes/voyage.ts`).
+## multimodal embedding follow-ups (v0.28.11 / PR #719)
+
+### `gbrain doctor`: warn on misconfigured multimodal model
+**Priority:** P2
+
+**What:** Add two checks in `src/commands/doctor.ts`. (1) When `embedding_multimodal_model` is set, verify the recipe's required API key is present in the env. (2) When `embedding_multimodal: true` is set but no `embedding_multimodal_model` AND the primary `embedding_model` recipe doesn't declare `supports_multimodal`, surface that gap.
+
+**Why:** Today these misconfigurations surface only on first image ingest, after the user has already pushed image content into the brain. Doctor catching them at install/upgrade time saves a round of confusion.
+
+**Pros:** Both checks are read-only and cheap (one env probe + one recipe lookup). Same pattern as existing doctor checks. Surfaces problems before they ship.
+**Cons:** Doctor's check list grows; needs a `--fast` opt-out path if added to the default scan. ~40 lines.
+**Context:** PR #719 added the multimodal_model routing key. The recipe-level + model-level validation in `embedMultimodal()` already throws clear errors at runtime, but only when image content hits the gateway. v0.28.x candidate.
+**Depends on:** None.
+
+### Reclassify Voyage HTTP 4xx as `AIConfigError` (Codex F2 from PR #719 review)
+**Priority:** P2
+
+**What:** `src/core/ai/gateway.ts:626` currently throws `AITransientError` for any non-401/403 4xx response from Voyage's /multimodalembeddings endpoint. Replace with a 4xx-non-429 → `AIConfigError` branch matching `normalizeAIError`'s contract at `src/core/ai/errors.ts:54`.
+
+**Why:** A config bug (malformed body, unsupported field, model the caller forgot to add to `multimodal_models`) currently presents to the caller as transient and triggers retry storms. PR #719's Change 3 closes the specific wrong-multimodal-model case locally via the `multimodal_models` allow-list, but other 4xx reasons still misclassify.
+
+**Pros:** Aligns the embedMultimodal error classifier with `normalizeAIError`. Eliminates retry-on-permanent-bug behavior. ~10 lines + 1 test.
+**Cons:** Changes runtime error class for some failures; existing callers that catch `AITransientError` for these codes now must catch `AIConfigError`. Search before merging.
+**Context:** Pre-existing in v0.27.1; surfaced because PR #719's new key makes the misclass more reachable. v0.28.x candidate.
+**Depends on:** None.
+
+### `gbrain config unset <key>` subcommand (Codex F6 from PR #719 review)
+**Priority:** P3
+
+**What:** Add `unset` action alongside `show|get|set` in `src/commands/config.ts`. Calls `engine.setConfig(key, '')` (loadConfigWithEngine treats empty string as undefined) so a user who set a key by mistake can clear it. Empty-string write is the minimum-diff implementation; a real DELETE would be cleaner if the engine grows one.
+
+**Why:** Once a user runs `gbrain config set X val`, there's no normal CLI path to clear it. Empty string is rejected by the current `set` validator (`action === 'set' && key && value` where value is truthy). PR #719 added another DB-merge key (`embedding_multimodal_model`) and surfaces this UX gap.
+
+**Pros:** Closes a pre-existing UX hole that applies to every DB-merge key (`embedding_multimodal`, `embedding_image_ocr*`, now `embedding_multimodal_model`). Trivial implementation, ~15 lines.
+**Cons:** Need to decide whether `unset` is a real DELETE (cleaner) or empty-string write (simpler).
+**Context:** Pre-existing in v0.27.x. Worth doing alongside the doctor checks above so users have a working escape hatch.
+**Depends on:** None.
 
 ## cross-modal-eval (v0.27.x follow-ups from PR #674 plan)
 
