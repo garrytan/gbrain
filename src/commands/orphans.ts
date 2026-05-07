@@ -50,10 +50,23 @@ const DENY_PREFIXES = [
   'scripts/',
   'templates/',
   'openclaw/config/',
+  'archive/chatgpt-exports/',
+  'knowledge/_graph/',
+  'whatsapp/entities/',
 ];
 
 /** First slug segments where no inbound links is expected */
-const FIRST_SEGMENT_EXCLUSIONS = new Set(['scratch', 'thoughts', 'catalog', 'entities']);
+const FIRST_SEGMENT_EXCLUSIONS = new Set([
+  'scratch',
+  'thoughts',
+  'catalog',
+  'entities',
+  'journals',
+  'skills',
+  'optional-skills',
+  'website',
+  'venv',
+]);
 
 // --- Filter logic ---
 

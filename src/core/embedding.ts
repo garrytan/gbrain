@@ -10,7 +10,7 @@
 import OpenAI from 'openai';
 
 const MODEL = 'text-embedding-3-large';
-const DIMENSIONS = 1536;
+const DIMENSIONS = 768;
 const MAX_CHARS = 8000;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 4000;

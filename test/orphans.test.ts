@@ -70,6 +70,18 @@ describe('shouldExclude', () => {
     expect(shouldExclude('openclaw/config/agent')).toBe(true);
   });
 
+  test('excludes deny-prefix: archive/chatgpt-exports/', () => {
+    expect(shouldExclude('archive/chatgpt-exports/chatgpt/2023-03-17/thread')).toBe(true);
+  });
+
+  test('excludes deny-prefix: knowledge/_graph/', () => {
+    expect(shouldExclude('knowledge/_graph/groups/example')).toBe(true);
+  });
+
+  test('excludes deny-prefix: whatsapp/entities/', () => {
+    expect(shouldExclude('whatsapp/entities/groups/example')).toBe(true);
+  });
+
   test('excludes first-segment: scratch', () => {
     expect(shouldExclude('scratch/idea-dump')).toBe(true);
   });
@@ -84,6 +96,26 @@ describe('shouldExclude', () => {
 
   test('excludes first-segment: entities', () => {
     expect(shouldExclude('entities/product-hunt')).toBe(true);
+  });
+
+  test('excludes first-segment: journals', () => {
+    expect(shouldExclude('journals/2026/05-may/2026-05-05')).toBe(true);
+  });
+
+  test('excludes first-segment: skills', () => {
+    expect(shouldExclude('skills/devops/gbrain-ops/skill')).toBe(true);
+  });
+
+  test('excludes first-segment: optional-skills', () => {
+    expect(shouldExclude('optional-skills/mlops/guidance/skill')).toBe(true);
+  });
+
+  test('excludes first-segment: website', () => {
+    expect(shouldExclude('website/docs/getting-started/quickstart')).toBe(true);
+  });
+
+  test('excludes first-segment: venv', () => {
+    expect(shouldExclude('venv/lib/python3.11/site-packages/pkg')).toBe(true);
   });
 
   test('does NOT exclude a normal content page', () => {

@@ -32,6 +32,12 @@ describe('lintContent', () => {
     expect(issues.some(i => i.rule === 'code-fence-wrap')).toBe(true);
   });
 
+  test('does not flag normal internal markdown code fences as page wrappers', () => {
+    const content = '---\ntitle: Test\ntype: note\ncreated: 2026-04-11\n---\n\n# Test\n\n```markdown\n# Example\n```\n\nContent after the example.';
+    const issues = lintContent(content, 'test.md');
+    expect(issues.some(i => i.rule === 'code-fence-wrap')).toBe(false);
+  });
+
   test('detects placeholder dates', () => {
     const content = '---\ntitle: Test\ntype: person\ncreated: YYYY-MM-DD\n---\n\n# Test';
     const issues = lintContent(content, 'test.md');

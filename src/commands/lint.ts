@@ -95,8 +95,10 @@ export function lintContent(content: string, filePath: string): LintIssue[] {
     }
   }
 
-  // Rule: Wrapping code fences (```markdown ... ```)
-  if (content.match(/^```(?:markdown|md)\s*\n/m) && content.match(/\n```\s*$/m)) {
+  // Rule: Wrapping code fences (```markdown ... ```) around the entire page.
+  // Use a whole-document regex, not multiline anchors, so ordinary fenced
+  // markdown snippets inside docs do not get reported as page wrappers.
+  if (content.match(/^```(?:markdown|md)\s*\n[\s\S]*\n```\s*$/)) {
     issues.push({
       file: filePath, line: 1, rule: 'code-fence-wrap',
       message: 'Page wrapped in ```markdown code fences (LLM artifact)',
@@ -205,12 +207,23 @@ export function fixContent(content: string): string {
   return fixed.trim() + '\n';
 }
 
-/** Collect markdown files from a directory */
+const LINT_EXCLUDED_DIRS = new Set([
+  'node_modules',
+  'venv',
+  '.venv',
+  'dist',
+  'build',
+  '.next',
+  '.turbo',
+  'coverage',
+]);
+
+/** Collect markdown files from a directory, excluding dependency/build trees. */
 function collectPages(dir: string): string[] {
   const pages: string[] = [];
   function walk(d: string) {
     for (const entry of readdirSync(d)) {
-      if (entry.startsWith('.') || entry.startsWith('_')) continue;
+      if (entry.startsWith('.') || entry.startsWith('_') || LINT_EXCLUDED_DIRS.has(entry)) continue;
       const full = join(d, entry);
       if (lstatSync(full).isDirectory()) walk(full);
       else if (entry.endsWith('.md')) pages.push(full);
