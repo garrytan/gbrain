@@ -374,9 +374,18 @@ export function serializeFrontmatter(fm: InferredFrontmatter): string {
 
   const lines: string[] = ['---'];
 
-  // Title — quote if it contains special YAML chars
-  const needsQuote = /[:"'#\[\]{}|>&*!?,]/.test(fm.title);
-  lines.push(`title: ${needsQuote ? JSON.stringify(fm.title) : fm.title}`);
+  // Title — quote if it contains special YAML chars OR if it would be parsed
+  // as a non-string YAML scalar (date, number, bool, null). The previous
+  // regex missed YAML's implicit-type resolution: an unquoted `title: 2026-05-01`
+  // round-trips to a JS Date and crashes downstream callers that pass it as a
+  // PG TEXT param ("Invalid input for string type"). Quoting any title that
+  // could be coerced to a non-string is the right defense.
+  const looksLikeYamlScalar =
+    /[:"'#\[\]{}|>&*!?,]/.test(fm.title) ||
+    /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?)?$/.test(fm.title) || // ISO date / datetime
+    /^-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?$/.test(fm.title) ||                  // number
+    /^(?:true|false|yes|no|on|off|null|~)$/i.test(fm.title);                // bool / null
+  lines.push(`title: ${looksLikeYamlScalar ? JSON.stringify(fm.title) : fm.title}`);
 
   lines.push(`type: ${fm.type}`);
 
