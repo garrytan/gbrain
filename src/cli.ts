@@ -715,6 +715,7 @@ async function connectEngine(): Promise<BrainEngine> {
   configureGateway({
     embedding_model: config.embedding_model,
     embedding_dimensions: config.embedding_dimensions,
+    embedding_multimodal_model: config.embedding_multimodal_model,
     expansion_model: config.expansion_model,
     chat_model: config.chat_model,
     chat_fallback_chain: config.chat_fallback_chain,
@@ -768,6 +769,21 @@ async function connectEngine(): Promise<BrainEngine> {
       }
       if (merged.embedding_image_ocr_model !== undefined) {
         process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL = merged.embedding_image_ocr_model;
+      }
+      // Re-configure gateway when multimodal model was set via DB config.
+      // Without this, embedMultimodal() falls through to the primary
+      // embedding_model which may not support multimodal (e.g. OpenAI).
+      if (merged.embedding_multimodal_model) {
+        configureGateway({
+          embedding_model: merged.embedding_model ?? config.embedding_model,
+          embedding_dimensions: merged.embedding_dimensions ?? config.embedding_dimensions,
+          embedding_multimodal_model: merged.embedding_multimodal_model,
+          expansion_model: merged.expansion_model ?? config.expansion_model,
+          chat_model: merged.chat_model ?? config.chat_model,
+          chat_fallback_chain: merged.chat_fallback_chain ?? config.chat_fallback_chain,
+          base_urls: config.provider_base_urls,
+          env: { ...process.env },
+        });
       }
     }
   } catch {

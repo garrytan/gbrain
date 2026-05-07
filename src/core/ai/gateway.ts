@@ -86,6 +86,7 @@ export function configureGateway(config: AIGatewayConfig): void {
   _config = {
     embedding_model: config.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
     embedding_dimensions: config.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
+    embedding_multimodal_model: config.embedding_multimodal_model,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
     chat_fallback_chain: config.chat_fallback_chain,
@@ -540,14 +541,19 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
   if (!inputs || inputs.length === 0) return [];
 
   const cfg = requireConfig();
-  const modelStr = cfg.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+  // Prefer embedding_multimodal_model when set, so brains using OpenAI for
+  // text embeddings can route multimodal to Voyage without changing the
+  // primary embedding_model. Falls back to embedding_model for single-model setups.
+  const modelStr = cfg.embedding_multimodal_model
+    ?? cfg.embedding_model
+    ?? DEFAULT_EMBEDDING_MODEL;
   const { parsed, recipe } = resolveRecipe(modelStr);
   const touchpoint = recipe.touchpoints.embedding;
   if (!touchpoint?.supports_multimodal) {
     throw new AIConfigError(
       `Recipe ${recipe.id} (${parsed.modelId}) does not support multimodal embedding.`,
-      `Switch to a multimodal-capable model. Today: voyage:voyage-multimodal-3.\n` +
-      `OpenAI / Cohere multimodal support is on the v0.28+ roadmap.`,
+      `Set embedding_multimodal_model to route multimodal separately from text embeddings.\n` +
+      `Today: voyage:voyage-multimodal-3. OpenAI / Cohere multimodal support is on the roadmap.`,
     );
   }
 

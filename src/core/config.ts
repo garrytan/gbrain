@@ -79,6 +79,8 @@ export interface GBrainConfig {
    * still win as the operator escape hatch.
    */
   embedding_multimodal?: boolean;
+  /** Model override for multimodal embeddings (e.g. "voyage:voyage-multimodal-3"). */
+  embedding_multimodal_model?: string;
   embedding_image_ocr?: boolean;
   embedding_image_ocr_model?: string;
 }
@@ -121,6 +123,9 @@ export function loadConfig(): GBrainConfig | null {
       : {}),
     ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR
       ? { embedding_image_ocr: process.env.GBRAIN_EMBEDDING_IMAGE_OCR === 'true' }
+      : {}),
+    ...(process.env.GBRAIN_EMBEDDING_MULTIMODAL_MODEL
+      ? { embedding_multimodal_model: process.env.GBRAIN_EMBEDDING_MULTIMODAL_MODEL }
       : {}),
     ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL
       ? { embedding_image_ocr_model: process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL }
@@ -172,6 +177,7 @@ export async function loadConfigWithEngine(
   }
 
   const dbMultimodal = await dbBool('embedding_multimodal');
+  const dbMultimodalModel = await dbStr('embedding_multimodal_model');
   const dbOcr = await dbBool('embedding_image_ocr');
   const dbOcrModel = await dbStr('embedding_image_ocr_model');
 
@@ -181,6 +187,9 @@ export async function loadConfigWithEngine(
   const merged: GBrainConfig = { ...fileConfig };
   if (merged.embedding_multimodal === undefined && dbMultimodal !== undefined) {
     merged.embedding_multimodal = dbMultimodal;
+  }
+  if (merged.embedding_multimodal_model === undefined && dbMultimodalModel !== undefined) {
+    merged.embedding_multimodal_model = dbMultimodalModel;
   }
   if (merged.embedding_image_ocr === undefined && dbOcr !== undefined) {
     merged.embedding_image_ocr = dbOcr;

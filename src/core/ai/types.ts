@@ -142,6 +142,12 @@ export interface AIGatewayConfig {
   embedding_model?: string;
   /** Target embedding dims. Gateway asserts returned embeddings match this. */
   embedding_dimensions?: number;
+  /**
+   * Separate model for multimodal embeddings (e.g. "voyage:voyage-multimodal-3").
+   * When set, embedMultimodal() routes to this model instead of embedding_model.
+   * Allows brains using OpenAI for text to use Voyage for image embeddings.
+   */
+  embedding_multimodal_model?: string;
   /** Current expansion model as "provider:modelId". */
   expansion_model?: string;
   /** Default chat model for `gateway.chat()` callers (subagent default). */
