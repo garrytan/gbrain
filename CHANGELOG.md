@@ -2,6 +2,130 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.29.1] - 2026-05-05
+
+**Recency and salience as two orthogonal options. Agent in charge.**
+**Two ranking knobs, smart heuristic, no default behavior change for existing callers.**
+
+v0.29 made the brain tell you what's hot. v0.29.1 lets the agent ask for
+recency or salience independently — two orthogonal axes on the regular
+`query` op, both opt-in, both with smart auto-detection from query text.
+"What's going on with widget-co" auto-fires both. "Who is widget-ceo"
+keeps both off. The agent overrides per query.
+
+The two axes:
+
+- **`salience: 'off' | 'on' | 'strong'`** — boost pages with high
+  `emotional_weight` + many active takes. NO time component. Use for
+  "what matters about X."
+- **`recency: 'off' | 'on' | 'strong'`** — per-prefix age decay. NO
+  mattering signal. `concepts/`, `originals/`, `writing/` stay
+  evergreen; `daily/`, `media/x/`, `chat/` decay aggressively. Use for
+  "what's new on X."
+
+Plus `since` / `until` date filters (replacing PR #618's `afterDate` /
+`beforeDate` with proper PGLite parity), a new `pages.effective_date`
+column populated from frontmatter precedence (immune to auto-link
+`updated_at` churn), and `gbrain reindex-frontmatter` for explicit
+recompute. Existing callers (no new params) get UNCHANGED behavior.
+
+### What this means for you
+
+A v0.29.0 caller upgrading to v0.29.1 with no code changes gets
+identical query results. The new axes are pure opt-in. The agent
+reads the new tool descriptions on every `tools/list` poll and learns
+when to pass each value.
+
+Pass `salience='on'` for meeting prep, conversation recall, "what's
+going on with X." Pass `recency='on'` for "latest" / "this week" /
+"recent updates." Pass `recency='strong'` for "today" / "right now."
+Omit and gbrain auto-detects via the layered classifier in
+`src/core/search/query-intent.ts` (canonical patterns win over
+current-state EXCEPT when explicit temporal bounds like "today" /
+"this week" / "since X" are present).
+
+### Itemized changes
+
+**Schema** (additive only, NDJSON schema_version stays at 1):
+- Migration v38 adds 4 nullable columns to `pages`: `effective_date`,
+  `effective_date_source`, `import_filename`, `salience_touched_at`.
+- Migration v39 adds 7 nullable columns to `eval_candidates` for
+  agent-explicit recency capture (replay reproducibility per D11).
+- Expression index `pages_coalesce_date_idx` for `since`/`until` filters.
+
+**Engine methods** (composite-keyed for multi-source isolation):
+- `getEffectiveDates(refs)` returns `COALESCE(effective_date,
+  updated_at, created_at)`. Map keyed by `${source_id}::${slug}`.
+- `getSalienceScores(refs)` returns `emotional_weight × 5 + ln(1 +
+  take_count)`. Same composite key.
+
+**Search pipeline**:
+- New `runPostFusionStages` wrapper consolidates backlink + salience +
+  recency. Called from ALL THREE `hybridSearch` return paths so
+  keyless installs and embed failures get the same boost surface.
+- `applySalienceBoost` — pure mattering. `applyRecencyBoost` — pure
+  age decay. Truly orthogonal.
+- `buildRecencyComponentSql` shared SQL builder with typed `NowExpr`
+  enum (no SQL injection).
+
+**Query op**: gains `salience`, `recency`, `since`, `until` with
+load-bearing tool descriptions. `get_recent_salience` gains
+`recency_bias: 'flat' | 'on'` (default `'flat'` = v0.29.0 verbatim).
+
+**Back-compat**: `afterDate`/`beforeDate`/`recencyBoost` from PR #618
+remain as deprecated aliases. Stderr warning fires once per process.
+Removed in v0.30.
+
+**Heuristic**: `query-intent.ts` replaces `intent.ts`. Single regex
+pass returning `{intent, suggestedDetail, suggestedSalience,
+suggestedRecency}`. Canonical-wins + narrow temporal-bound exception.
+English-only in v0.29.1.
+
+**Doctor**: `effective_date_health` + `salience_health` checks. Both
+gracefully skip on pre-v0.29.1 brains.
+
+**CLI**: `gbrain reindex-frontmatter` — recovery / explicit-rebuild
+path mirroring `gbrain reindex-code`.
+
+**Tests**: `test/effective-date.test.ts` (21 cases),
+`test/recency-decay.test.ts` (25 cases), `test/query-intent.test.ts`
+(21 cases).
+
+### To take advantage of v0.29.1
+
+`gbrain upgrade` runs the full migration chain automatically. Verify:
+
+1. **Confirm upgrade**:
+   ```bash
+   gbrain --version    # 0.29.1
+   ```
+
+2. **Recompute emotional weights** (one-time after upgrade):
+   ```bash
+   gbrain dream --phase recompute_emotional_weight
+   ```
+
+3. **Verify health checks**:
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.name == "salience_health" or .name == "effective_date_health")'
+   ```
+
+4. **Try the new axes**:
+   ```bash
+   gbrain query "what's been going on with X" --explain --json | jq '._resolved'
+   # expected: salience='on', recency='on'
+
+   gbrain query "who is X" --explain --json | jq '._resolved'
+   # expected: salience='off', recency='off'
+   ```
+
+5. **If anything looks wrong** — `gbrain doctor --json` output and
+   `~/.gbrain/upgrade-errors.jsonl` (if present) on a Github issue:
+   https://github.com/garrytan/gbrain/issues
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Wintermute <wintermute@garrytan.com>
+
 ## [0.29.0] - 2026-05-03
 
 **The brain tells you what's hot without being asked.**

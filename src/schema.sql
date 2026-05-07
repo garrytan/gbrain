@@ -88,6 +88,17 @@ CREATE TABLE IF NOT EXISTS pages (
   -- where deleted_at < now() - 72h. Search and `get_page` filter
   -- `WHERE deleted_at IS NULL` by default; `include_deleted: true` opts in.
   deleted_at    TIMESTAMPTZ,
+  -- v0.29.1: salience-and-recency, additive opt-in. All NULL by default;
+  -- only consulted when a caller passes `salience='on'` / `recency='on'` or
+  -- the new `since`/`until` filter. effective_date_source is a sentinel for
+  -- the doctor's effective_date_health check (values: 'event_date' | 'date'
+  -- | 'published' | 'filename' | 'fallback'). salience_touched_at is bumped
+  -- by recompute_emotional_weight when emotional_weight changes so the
+  -- salience window picks up newly-salient old pages.
+  effective_date        TIMESTAMPTZ,
+  effective_date_source TEXT,
+  import_filename       TEXT,
+  salience_touched_at   TIMESTAMPTZ,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -105,6 +116,12 @@ CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 -- stays low. Don't add a regular `(deleted_at)` index without measuring.
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
+-- v0.29.1: expression index used by since/until date-range filters that read
+-- COALESCE(effective_date, updated_at). A partial index on effective_date
+-- alone would NOT help — the planner can't use it for the negative side of
+-- the COALESCE. Expression index is what actually accelerates the filter.
+CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
+  ON pages ((COALESCE(effective_date, updated_at)));
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -746,7 +763,16 @@ CREATE TABLE IF NOT EXISTS eval_candidates (
   remote                BOOLEAN      NOT NULL,
   job_id                INTEGER,
   subagent_id           INTEGER,
-  created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  -- v0.29.1 — agent-explicit recency + salience capture for replay reproducibility.
+  -- All nullable + additive. NDJSON schema_version stays at 1; consumers ignore unknown fields.
+  as_of_ts              TIMESTAMPTZ,
+  salience_param        TEXT,
+  recency_param         TEXT,
+  salience_resolved     TEXT,
+  recency_resolved      TEXT,
+  salience_source       TEXT,
+  recency_source        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_eval_candidates_created_at ON eval_candidates(created_at DESC);
 

@@ -1820,6 +1820,121 @@ export const MIGRATIONS: Migration[] = [
         ADD COLUMN IF NOT EXISTS emotional_weight REAL NOT NULL DEFAULT 0.0;
     `,
   },
+  {
+    version: 38,
+    name: 'pages_recency_columns',
+    sql: '',
+    // v0.29.1 — Salience-and-Recency, additive opt-in.
+    //
+    // Four new pages columns (all nullable, additive only, no behavior change
+    // in the default search path; only consulted when a caller opts into
+    // `salience='on'` / `recency='on'` or the new `since`/`until` filter):
+    //
+    //   effective_date         — content date (event_date / date / published /
+    //                            filename-date / fallback). Read by the new
+    //                            recency boost and date-filter paths only.
+    //                            Auto-link doesn't touch it (immune to
+    //                            updated_at churn).
+    //   effective_date_source  — sentinel for the doctor's effective_date_health
+    //                            check ('event_date' | 'date' | 'published' |
+    //                            'filename' | 'fallback'). The 'fallback' value
+    //                            is what surfaces "page that fell back to
+    //                            updated_at when frontmatter was unparseable".
+    //   import_filename        — basename without extension, captured at import.
+    //                            computeEffectiveDate uses it for filename-date
+    //                            precedence (daily/, meetings/ prefixes). Older
+    //                            rows leave it NULL; backfill falls through.
+    //   salience_touched_at    — bumped by recompute_emotional_weight when
+    //                            emotional_weight changes. Salience window
+    //                            uses GREATEST(updated_at, salience_touched_at)
+    //                            so newly-salient old pages enter the recent
+    //                            salience query.
+    //
+    // Plus an expression index used by since/until filters that read
+    // COALESCE(effective_date, updated_at). Partial-index claim from earlier
+    // plan iterations was wrong (codex pass-2 #15) — the planner won't use a
+    // partial index for the negative side of a COALESCE; expression index does.
+    //
+    // CONCURRENTLY + pre-drop guard (mirror of v34) on Postgres; plain CREATE
+    // INDEX on PGLite via the handler branching on engine.kind.
+    handler: async (engine) => {
+      // 1. ADD COLUMN x4. ALTER TABLE ADD COLUMN IF NOT EXISTS is idempotent.
+      //    No defaults, all nullable, all metadata-only on PG 11+ and PGLite.
+      await engine.runMigration(38, `
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS effective_date        TIMESTAMPTZ;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS effective_date_source TEXT;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS import_filename       TEXT;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS salience_touched_at   TIMESTAMPTZ;
+      `);
+
+      // 2. Expression index for since/until date-range filters.
+      if (engine.kind === 'postgres') {
+        // Pre-drop any invalid index from a prior CONCURRENTLY failure.
+        await engine.runMigration(38, `
+          DO $$ BEGIN
+            IF EXISTS (
+              SELECT 1 FROM pg_index i
+              JOIN pg_class c ON c.oid = i.indexrelid
+              WHERE c.relname = 'pages_coalesce_date_idx' AND NOT i.indisvalid
+            ) THEN
+              EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_coalesce_date_idx';
+            END IF;
+          END $$;
+        `);
+        await engine.runMigration(38, `
+          CREATE INDEX CONCURRENTLY IF NOT EXISTS pages_coalesce_date_idx
+            ON pages ((COALESCE(effective_date, updated_at)));
+        `);
+      } else {
+        await engine.runMigration(38, `
+          CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
+            ON pages ((COALESCE(effective_date, updated_at)));
+        `);
+      }
+    },
+    // CONCURRENTLY on Postgres requires no surrounding transaction.
+    transaction: false,
+  },
+  {
+    version: 39,
+    name: 'eval_candidates_recency_capture',
+    // v0.29.1 — capture agent-explicit recency + salience choices for replay
+    // reproducibility (D11 codex resolution).
+    //
+    // Without these fields, `gbrain eval replay` cannot reproduce a captured
+    // run: the live behavior depends on the resolved {salience, recency}
+    // values, which are absent from v0.29.0's eval_candidates schema. Replays
+    // of agent-explicit choices drift the same way as_of_ts replays drifted
+    // before being captured.
+    //
+    // All columns are nullable + additive. Pre-v0.29.1 rows stay valid. The
+    // NDJSON `schema_version` STAYS at 1 — the new fields are optional, and
+    // gbrain-evals consumers that don't know about them ignore them
+    // (standard permissive deserialization). No cross-repo coordination
+    // required (codex pass-1 #C2 dissolved).
+    //
+    //   as_of_ts            — brain's logical NOW at capture (replay uses
+    //                         this instead of wall-clock so old captures
+    //                         reproduce identically against today's brain).
+    //   salience_param      — what the caller passed (or NULL if omitted).
+    //   recency_param       — same for recency.
+    //   salience_resolved   — final value applied ('off' / 'on' / 'strong').
+    //   recency_resolved    — same for recency.
+    //   salience_source     — 'caller' or 'auto_heuristic'.
+    //   recency_source      — same for recency.
+    //
+    // ADD COLUMN with no DEFAULT is metadata-only on PG 11+ and PGLite —
+    // instant on tables of any size.
+    sql: `
+      ALTER TABLE eval_candidates ADD COLUMN IF NOT EXISTS as_of_ts          TIMESTAMPTZ;
+      ALTER TABLE eval_candidates ADD COLUMN IF NOT EXISTS salience_param    TEXT;
+      ALTER TABLE eval_candidates ADD COLUMN IF NOT EXISTS recency_param     TEXT;
+      ALTER TABLE eval_candidates ADD COLUMN IF NOT EXISTS salience_resolved TEXT;
+      ALTER TABLE eval_candidates ADD COLUMN IF NOT EXISTS recency_resolved  TEXT;
+      ALTER TABLE eval_candidates ADD COLUMN IF NOT EXISTS salience_source   TEXT;
+      ALTER TABLE eval_candidates ADD COLUMN IF NOT EXISTS recency_source    TEXT;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
