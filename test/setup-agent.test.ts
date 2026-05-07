@@ -105,6 +105,9 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('MBRAIN:RULES:START');
     expect(result.stdout).toContain('Read First When MBrain Is Relevant');
     expect(result.stdout).toContain('lightweight scan for durable knowledge signals');
+    expect(result.stdout).toContain('retrieve_context');
+    expect(result.stdout).toContain('read_context');
+    expect(result.stdout).toContain('chunks are not answer evidence');
     expect(result.stdout).toContain('Write Back Durable Knowledge');
     expect(result.stdout).toContain('Backlinks And Sync');
     expect(result.stdout).toContain('sync_brain');
@@ -114,7 +117,7 @@ describe('setup-agent', () => {
     expect(result.stdout).not.toContain('On EVERY inbound message');
 
     const wordCount = result.stdout.trim().split(/\s+/).length;
-    expect(wordCount).toBeLessThan(650);
+    expect(wordCount).toBeLessThan(720);
   });
 
   test('setup-agent --claude installs the Claude stop hook assets and registration', async () => {
@@ -125,6 +128,9 @@ describe('setup-agent', () => {
 
     const claudeMd = readFileSync(join(tempHome, '.claude', 'CLAUDE.md'), 'utf-8');
     expect(claudeMd).toContain('MBRAIN:RULES:START');
+    expect(claudeMd).toContain('retrieve_context');
+    expect(claudeMd).toContain('read_context');
+    expect(claudeMd).toContain('chunks are not answer evidence');
 
     expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh'))).toBe(true);
     expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh'))).toBe(true);
@@ -136,6 +142,21 @@ describe('setup-agent', () => {
 
     expect(mbrainHook).toBeDefined();
     expect(mbrainHook.hooks[0].command).toBe('bash "$HOME/.claude/scripts/hooks/stop-mbrain-check.sh"');
+  });
+
+  test('setup-agent --codex installs canonical retrieval rules into AGENTS.md', async () => {
+    mkdirSync(join(tempHome, '.codex'), { recursive: true });
+
+    const result = await runSetupAgent(['--codex', '--skip-mcp']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe('');
+
+    const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
+    expect(agentsMd).toContain('MBRAIN:RULES:START');
+    expect(agentsMd).toContain('retrieve_context');
+    expect(agentsMd).toContain('read_context');
+    expect(agentsMd).toContain('chunks are not answer evidence');
   });
 
   test('setup-agent explains Claude stop hook UX after installing it', async () => {

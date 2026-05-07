@@ -5,7 +5,7 @@ import { VERSION } from '../version.ts';
 
 export async function runUpgrade(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: mbrain upgrade\n\nSelf-update the CLI.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.');
+    console.log('Usage: mbrain upgrade\n\nSelf-update the CLI.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, refreshes detected Claude/Codex agent rules, shows what\'s new, and offers to set up new features.');
     return;
   }
 

@@ -14,6 +14,7 @@ describe('upgrade command', () => {
     const exitCode = await proc.exited;
     expect(stdout).toContain('Usage: mbrain upgrade');
     expect(stdout).toContain('Detects install method');
+    expect(stdout).toContain('refreshes detected Claude/Codex agent rules');
     expect(exitCode).toBe(0);
   });
 

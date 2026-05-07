@@ -1,4 +1,4 @@
-<!-- mbrain-agent-rules-version: 0.5.4 -->
+<!-- mbrain-agent-rules-version: 0.5.5 -->
 <!-- source: https://raw.githubusercontent.com/meghendra6/mbrain/master/docs/MBRAIN_AGENT_RULES.md -->
 # MBrain Agent Rules
 
@@ -31,9 +31,23 @@ only use MBrain when one of the triggers above is present.
 
 Use the lightest lookup that can answer the question:
 
-1. `mbrain search "name"` - fast keyword lookup.
-2. `mbrain query "what do we know about name"` - hybrid search when embeddings help.
-3. `mbrain get <slug>` - direct page read when the slug is known.
+1. `retrieve_context` / `mbrain retrieve-context "question"` - agent probe.
+   It finds candidates, applies route/scope context, and returns
+   `required_reads`.
+2. `read_context` / `mbrain read-context --selectors '<json>'` - evidence
+   boundary. Use the probe's `required_reads` before answering factual
+   questions.
+3. `search` / `mbrain search "name"` - fast keyword candidate discovery for
+   exact names, slugs, dates, and terms.
+4. `query` / `mbrain query "conceptual question"` - semantic candidate
+   discovery when keyword search misses likely pages.
+5. `get_page` / `mbrain get <slug>` - full-page canonical read when the slug is
+   known or a bounded read is insufficient.
+
+`search` and `query` chunks are not answer evidence. Treat them as candidate
+pointers, then call `retrieve_context` or `read_context` before making factual
+claims. For exact known selectors or slugs, skip fuzzy discovery and go directly
+to `read_context` or `get_page`.
 
 Stop once you have enough context. Use web search, external APIs, or codebase
 search only for gaps MBrain cannot answer.
