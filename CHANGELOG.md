@@ -2,6 +2,112 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.28.5] - 2026-05-06
+
+## **`gbrain upgrade` is finally self-healing. Wedged brains, blocked binaries, and the `bun add -g` foot-gun all fixed in one wave.**
+## **Nine community PRs landed together. Real users who could not upgrade since v0.27 land — and we close the structural gap that produced the wedge in the first place.**
+
+This is a fix wave. v0.27 shipped pluggable embedding providers and immediately
+exposed three independent failure modes. The ones in this release are not
+features. They are unstucks.
+
+If you are wedged on a v0.18-to-v0.27 upgrade, hit a `permission denied` on a
+freshly bun-linked install, accidentally typed `bun add -g gbrain` and got a
+mystery binary, or saw `--embedding-dimensions 768` create a 1536-d column
+anyway, this release is for you. Run `gbrain upgrade` and you walk away with
+a healthy brain on the other side.
+
+### The numbers that matter
+
+Source: production deployment plus the `test/schema-bootstrap-coverage.test.ts`
+and `test/embedding-dim-check.test.ts` regression suites added in this wave.
+
+| Metric                                  | Before v0.28.5     | After v0.28.5      |
+|-----------------------------------------|--------------------|--------------------|
+| `gbrain upgrade` auto-applies migrations| no (WARN only)     | **yes**            |
+| `connectEngine` perf cost on hot path   | full schema replay | single ledger row  |
+| Bootstrap coverage drift detection      | hand-maintained    | **auto-derived**   |
+| `--embedding-dimensions 768` honored    | no (silent 1536)   | **yes**            |
+| Existing brain dim mismatch             | silent corruption  | **hard error + recipe** |
+| `bun-link` install detected             | "unknown"          | **'bun-link'**     |
+| Squatter `gbrain@1.3.x` warned about    | no                 | **yes**            |
+| `src/cli.ts` git-tracked as executable  | 100644 (broken)    | **100755 + CI guard** |
+
+The single most load-bearing change is the post-upgrade auto-apply of pending
+schema migrations (X1). Until v0.28.5, `gbrain upgrade` warned about pending
+migrations and asked the user to run `gbrain init --migrate-only` themselves.
+Eleven wedge incidents over two years prove that does not happen. The hook in
+`runPostUpgrade()` now closes the loop in one process.
+
+### What this means for you
+
+If you have not been able to upgrade since v0.27 dropped: the canonical path is
+back. `gbrain upgrade` walks away with a working brain. If you were stuck on
+a `bun add -g gbrain` install: the warning fires on every upgrade and tells you
+exactly how to recover. If you were silently embedding at the wrong dimension:
+init refuses, doctor flags it, and `docs/embedding-migrations.md` has the full
+ALTER recipe. The structural gap that produced the v0.27 wedge in the first
+place — a hand-maintained array that humans were supposed to remember to update
+— is now an auto-derived parser that fails the build the next time someone
+forgets.
+
+Run `gbrain upgrade` and run `gbrain doctor`. If anything looks off, file an
+issue with the doctor output and we will look.
+
+### Itemized changes
+
+#### Cluster A — PGLite upgrade wedge (closes #670, #661, #657, #651, #625, #615, #609)
+
+- **`applyForwardReferenceBootstrap` now covers v0.20 + v0.26.3 + v0.27 columns** in both PGLite and Postgres engines. Builds on contributor PRs from @brandonlipman (#682), @mdcruz88 (#668), @ChenyqThu (#627), and @alan-mathison-enigma (#610). Adds explicit probes for `content_chunks.search_vector / parent_symbol_path / doc_comment / symbol_name_qualified` (v0.20 Cathedral II), `mcp_request_log.agent_name / params / error_message` (v0.26.3), and `subagent_messages.provider_id` (v0.27). Older brains pinned at any version v0.13+ now upgrade cleanly to current master.
+- **`gbrain upgrade` auto-applies pending schema migrations.** `runPostUpgrade()` now calls `engine.initSchema()` after the orchestrator migration pass. Wrapped in try/catch so connection failures fall back to the existing WARN message. The headline outcome ("run upgrade, brain works") is now literally true for cluster A. Codex outside-voice review forced this pivot during plan-stage review.
+- **`hasPendingMigrations()` probe in `connectEngine`.** Replaces the unconditional `engine.initSchema()` from PR #652 (oyi77's investigation) with a conditional probe: a single `getConfig('version')` SELECT, defensive `true` on probe failure. Already-migrated brains skip the bootstrap-probe + SCHEMA_SQL replay + ledger-check on every short-lived `gbrain stats` / `query` / `doctor` call.
+- **`REQUIRED_BOOTSTRAP_COVERAGE` array replaced with a SQL-parser-backed contract.** A new helper extracts every `(table, column)` pair referenced by a `CREATE INDEX` in `PGLITE_SCHEMA_SQL` — including composite-index second and third columns — and asserts each one is either declared in CREATE TABLE or added by `applyForwardReferenceBootstrap`. Codex caught the original codex regression: the v0.27 wedge was a composite-index second column (`provider_id` in `(job_id, provider_id)`) that any first-col-only extractor would miss. Future column-with-index drift now fails the build at PR time, no human required.
+
+#### Cluster B — Embedding dimensions actually take effect (closes #673, #672, #666, #640)
+
+- **Schema templating cascade fixed.** Cherry-picks #641 from @100yenadmin (Eva). `getPostgresSchema(dims, model)` is the runtime substitution wrapper used by every `SCHEMA_SQL` consumer; `applyChunkEmbeddingIndexPolicy()` skips HNSW when dims > 2000 (Voyage 4 Large fits, just falls back to exact scans). `--embedding-dimensions 768` now templates `vector(768)` end-to-end.
+- **`gbrain doctor` 8b live embedding-provider probe.** Cherry-picks #665. Checks dim parity across config, live provider response, and the `content_chunks.embedding` column type. Surfaces silent corruption loud at doctor-run time. Refactored to use the shared `readContentChunksEmbeddingDim` helper so it works on both PGLite and Postgres.
+- **Adaptive embed batch sizing for Voyage's 120K-token limit.** Cherry-picks #680. Voyage's tokenizer runs 3-4× denser than tiktoken, so previous batch sizing routinely tripped the 120K cap and stalled secondary backfill. Adaptive splitting recovers automatically; previously 26% of corpus could go un-embedded on Voyage 4 Large.
+- **`gbrain init` hard-errors on existing-brain dim mismatch (A4).** New behavior: when a fresh init flag conflicts with the existing column type, init exits 1 with an inline four-step ALTER recipe. The recipe explicitly drops the HNSW index, alters the column, wipes stale embeddings, and conditionally reindexes only when dims ≤ 2000 (codex finding #8 — recipes that miss the conditional reindex create a new wedge for Voyage 4 Large users). Loud failure beats silent corruption.
+- **`docs/embedding-migrations.md`.** Full guide for switching embedding models or dimensions on an existing brain. Linked from doctor 8b and init's error message.
+- **Misleading dim-mismatch error fixed (#672).** Previous error suggested `gbrain migrate --embedding-model … --embedding-dimensions …`, but `gbrain migrate` only handles engine migration. New error inlines the actual recipe and points at the docs.
+
+#### Cluster C — CLI executable bit (closes #683 / dupes #655)
+
+- **`src/cli.ts` shipped with mode `100644`.** Bun-link installs symlink directly to it, so `gbrain --version` failed with `permission denied` on the very first invocation. Cherry-picks #683 from @brandonlipman; #655 from @abkrim is a byte-identical duplicate, closed with credit.
+- **CI guard against future regression.** New `scripts/check-cli-executable.sh` asserts `git ls-files --stage src/cli.ts` returns `100755`. Wired into `bun run verify`. Failure prints the exact recovery command (`chmod +x src/cli.ts && git add --chmod=+x src/cli.ts`).
+
+#### Cluster D — `bun add -g gbrain` foot-gun (closes #656, #658)
+
+- **`detectInstallMethod()` rewritten with three layered signals.** bun-link installs now classify as `'bun-link'` (closes #656) when argv[1] resolves through a symlink into a checkout whose `.git/config` contains `garrytan/gbrain`. Canonical bun installs verify against `package.json.repository.url` plus a `src/cli.ts` source-marker fallback (the npm squatter ships compiled binary, not source). On 'suspect', `gbrain upgrade` prints a loud-red recovery message naming both the source-clone path AND the release-binary path so users without a local clone can recover.
+- **README updated.** New "DO NOT use `bun add -g gbrain`" callout names the npm-name collision (`gbrain@1.3.x`) and the v0.29 plan to publish under `@garrytan/gbrain` (the only structural fix).
+
+### For contributors
+
+- New `test/schema-bootstrap-coverage.test.ts` parser helpers (`parseBaseTableColumns`, `parseIndexColumnReferences`, `parseAlterAddColumns`) replace the hand-maintained `REQUIRED_BOOTSTRAP_COVERAGE` array. Add a new column-with-index to `PGLITE_SCHEMA_SQL`, forget to extend bootstrap, and the test fails loud at PR time.
+- New `src/core/embedding-dim-check.ts` exports `readContentChunksEmbeddingDim` (engine-portable column-dim probe) and `embeddingMismatchMessage` (the four-step recipe). Used by both init and doctor 8b — single source of truth for the recipe.
+- 5 community-author commits preserve attribution (`Author:` line on each cherry-pick) so contributor work is visible in `git log`.
+
+## To take advantage of v0.28.5
+
+`gbrain upgrade` should do this automatically. If it does not, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   gbrain init --migrate-only
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+3. **If anything fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - output of `gbrain --version`
+   - which step broke
+
 ## [0.27.0] - 2026-04-28
 
 ## **GBrain runs on any embedding stack. OpenAI, Google Gemini, Ollama, Voyage, or anything via LiteLLM — one config line away.**
