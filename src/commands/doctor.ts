@@ -20,6 +20,175 @@ export interface Check {
 }
 
 /**
+ * Structured doctor report. Stable shape consumed by:
+ *   - gbrain doctor --json (CLI)
+ *   - run_doctor MCP op (remote callers)
+ *   - gbrain remote doctor (renders this from the MCP op response)
+ *
+ * schema_version=2 was set when --json output stabilized; bump only for
+ * breaking field changes.
+ */
+export interface DoctorReport {
+  schema_version: 2;
+  status: 'healthy' | 'warnings' | 'unhealthy';
+  health_score: number;
+  checks: Check[];
+}
+
+/**
+ * Compute the {status, health_score} headline from a list of checks.
+ * Mirrors the calculation in outputResults() so remote callers and the
+ * existing CLI front-end agree on what "healthy" means.
+ */
+export function computeDoctorReport(checks: Check[]): DoctorReport {
+  const hasFail = checks.some(c => c.status === 'fail');
+  const hasWarn = checks.some(c => c.status === 'warn');
+  let score = 100;
+  for (const c of checks) {
+    if (c.status === 'fail') score -= 20;
+    else if (c.status === 'warn') score -= 5;
+  }
+  score = Math.max(0, score);
+  const status: DoctorReport['status'] = hasFail ? 'unhealthy' : hasWarn ? 'warnings' : 'healthy';
+  return { schema_version: 2, status, health_score: score, checks };
+}
+
+/**
+ * Focused doctor for `run_doctor` MCP op + `gbrain remote doctor` CLI.
+ *
+ * Runs five checks scoped to "what does a remote operator need to know about
+ * this brain right now?":
+ *   - connection (engine reachable + page count)
+ *   - schema_version (current vs latest)
+ *   - brain_score (the 5-component health composite)
+ *   - sync_failures (unacked parse failures)
+ *   - queue_health (Postgres-only: stalled-forever active jobs)
+ *
+ * Deliberately a focused subset of the local doctor surface, NOT a full
+ * mirror. Generalizing to lint/integrity/orphans is filed as follow-up work
+ * pending demand. Local doctor is unchanged — operators on the host machine
+ * still get the full check set.
+ */
+export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
+  const checks: Check[] = [];
+
+  // 1. Connection
+  let pageCount = 0;
+  try {
+    const stats = await engine.getStats();
+    pageCount = stats.page_count ?? 0;
+    checks.push({
+      name: 'connection',
+      status: 'ok',
+      message: `Connected, ${pageCount} pages`,
+    });
+  } catch (e) {
+    checks.push({
+      name: 'connection',
+      status: 'fail',
+      message: e instanceof Error ? e.message : String(e),
+    });
+    // Without a connection, every other check is meaningless — short-circuit.
+    return computeDoctorReport(checks);
+  }
+
+  // 2. Schema version. Uses engine.getConfig('version') — the same engine-
+  // agnostic API the local doctor uses, works on both Postgres and PGLite.
+  try {
+    const versionStr = await engine.getConfig('version');
+    const version = parseInt(versionStr || '0', 10);
+    if (version >= LATEST_VERSION) {
+      checks.push({ name: 'schema_version', status: 'ok', message: `Version ${version} (latest: ${LATEST_VERSION})` });
+    } else if (version === 0) {
+      checks.push({
+        name: 'schema_version',
+        status: 'fail',
+        message: `No schema version recorded. Migrations never ran. Run \`gbrain apply-migrations --yes\` on the host.`,
+      });
+    } else {
+      checks.push({
+        name: 'schema_version',
+        status: 'warn',
+        message: `Version ${version}, latest is ${LATEST_VERSION}. Run \`gbrain apply-migrations --yes\` on the host.`,
+      });
+    }
+  } catch {
+    checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
+  }
+
+  // 3. Brain score
+  try {
+    const health = await engine.getHealth();
+    const score = health.brain_score ?? 0;
+    checks.push({
+      name: 'brain_score',
+      status: score >= 70 ? 'ok' : score >= 50 ? 'warn' : 'fail',
+      message: `Brain score ${score}/100`,
+    });
+  } catch (e) {
+    checks.push({
+      name: 'brain_score',
+      status: 'warn',
+      message: `Could not compute: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 4. Sync failures (file-plane state, not in-DB; see src/core/sync.ts).
+  // Read the JSONL file directly at the canonical path; cheap and engine-agnostic.
+  try {
+    const { readFileSync, existsSync } = await import('fs');
+    const { gbrainPath } = await import('../core/config.ts');
+    const path = gbrainPath('sync-failures.jsonl');
+    let unacked = 0;
+    if (existsSync(path)) {
+      const lines = readFileSync(path, 'utf-8').split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line) as { acknowledged_at?: string | null };
+          if (!entry.acknowledged_at) unacked++;
+        } catch { /* skip malformed line */ }
+      }
+    }
+    checks.push({
+      name: 'sync_failures',
+      status: unacked === 0 ? 'ok' : 'warn',
+      message: unacked === 0
+        ? 'No unacked failures'
+        : `${unacked} unacked failure(s) — run \`gbrain sync --skip-failed\` on the host to acknowledge`,
+    });
+  } catch {
+    checks.push({ name: 'sync_failures', status: 'ok', message: 'No failures recorded' });
+  }
+
+  // 5. Queue health (Postgres-only). PGLite has no minion_jobs in the same
+  // shape; skip the check there with an informational message.
+  if (engine.kind === 'postgres') {
+    try {
+      const rows = await engine.executeRaw<{ stalled: string | number }>(
+        `SELECT COUNT(*) AS stalled FROM minion_jobs
+          WHERE state = 'active'
+            AND started_at IS NOT NULL
+            AND started_at < NOW() - INTERVAL '1 hour'`,
+      );
+      const stalled = Number(rows[0]?.stalled ?? 0);
+      checks.push({
+        name: 'queue_health',
+        status: stalled === 0 ? 'ok' : 'warn',
+        message: stalled === 0
+          ? 'No stalled active jobs'
+          : `${stalled} active job(s) stalled > 1h — \`gbrain jobs cancel <id>\` or \`gbrain jobs retry <id>\` on the host`,
+      });
+    } catch {
+      checks.push({ name: 'queue_health', status: 'ok', message: 'No queue activity' });
+    }
+  } else {
+    checks.push({ name: 'queue_health', status: 'ok', message: 'PGLite — no queue to check' });
+  }
+
+  return computeDoctorReport(checks);
+}
+
+/**
  * Run doctor with filesystem-first, DB-second architecture.
  * Filesystem checks (resolver, conformance) run without engine.
  * DB checks run only if engine is provided.
