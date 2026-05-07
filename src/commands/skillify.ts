@@ -2,15 +2,17 @@
  * gbrain skillify <scaffold|check> — W4 CLI namespace.
  *
  * `scaffold`: creates 5 stub files for a new skill. Mechanical only.
- * `check`:    10-item audit of an existing skill. Promoted from
- *             `scripts/skillify-check.ts` (D-CX-2). The legacy script
- *             remains as a thin shim that invokes this subcommand.
+ * `check`:    11-item audit of an existing skill (item 11, cross-modal
+ *             eval, is informational; T7=C in plans/radiant-napping-lerdorf.md).
+ *             Promoted from `scripts/skillify-check.ts` (D-CX-2). The
+ *             legacy script remains as a thin shim that invokes this
+ *             subcommand.
  *
  * The markdown skill at `skills/skillify/SKILL.md` orchestrates the
- * full 10-step loop (essay's "skillify it!"): scaffold → fill in the
- * body → run check → run check-resolvable → run tests → commit.
- * The CLI primitives do the mechanical steps; the skill carries the
- * judgment steps.
+ * full 11-step loop (essay's "skillify it!"): scaffold → fill in the
+ * body → run cross-modal eval → run check → run check-resolvable →
+ * run tests → commit. The CLI primitives do the mechanical steps;
+ * the skill carries the judgment steps.
  */
 
 import { isAbsolute, resolve as resolvePath } from 'path';

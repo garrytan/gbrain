@@ -714,7 +714,21 @@ HANDLER TYPES (built in)
         : '';
       console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote})`);
       console.log(`Registered handlers: ${worker.registeredNames.join(', ')}`);
-      await worker.start();
+      try {
+        await worker.start();
+      } finally {
+        // Release the DB connection pool immediately on shutdown so
+        // PgBouncer slots are freed rather than waiting for TCP keepalive
+        // (~minutes). Disconnect failure is best-effort but logged loudly:
+        // a silent shutdown disconnect error is exactly the bug class the
+        // v0.26.9 D14 direction (isUndefinedColumnError, oauth-provider)
+        // was created to surface. The CLI is the engine owner here, not
+        // the worker — keeping disconnect at this layer preserves the
+        // "engine ownership stays with the creator" invariant that broke
+        // tests in earlier waves of this branch.
+        try { await engine.disconnect(); }
+        catch (e) { console.error('[gbrain jobs work] engine disconnect failed during shutdown:', e); }
+      }
       break;
     }
 

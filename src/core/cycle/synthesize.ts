@@ -273,8 +273,18 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const meetingTranscriptsDir = await engine.getConfig('dream.synthesize.meeting_transcripts_dir');
   const minCharsStr = await engine.getConfig('dream.synthesize.min_chars');
   const excludeStr = await engine.getConfig('dream.synthesize.exclude_patterns');
-  const model = (await engine.getConfig('dream.synthesize.model')) || 'claude-sonnet-4-6';
-  const verdictModel = (await engine.getConfig('dream.synthesize.verdict_model')) || 'claude-haiku-4-5-20251001';
+  // v0.28: resolveModel() unifies CLI flag > new key > deprecated key > models.default > env > fallback
+  const { resolveModel } = await import('../model-config.ts');
+  const model = await resolveModel(engine, {
+    configKey: 'models.dream.synthesize',
+    deprecatedConfigKey: 'dream.synthesize.model',
+    fallback: 'sonnet',
+  });
+  const verdictModel = await resolveModel(engine, {
+    configKey: 'models.dream.synthesize_verdict',
+    deprecatedConfigKey: 'dream.synthesize.verdict_model',
+    fallback: 'haiku',
+  });
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');
 
   let excludePatterns: string[] = ['medical', 'therapy'];

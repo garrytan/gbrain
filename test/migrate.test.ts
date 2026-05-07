@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
-import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers } from '../src/core/migrate.ts';
+import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers, hasPendingMigrations } from '../src/core/migrate.ts';
 import type { IdleBlocker } from '../src/core/migrate.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -18,6 +18,49 @@ describe('migrate', () => {
 
   // Integration tests for actual migration execution require DATABASE_URL
   // and are covered in the E2E suite (test/e2e/mechanical.test.ts)
+});
+
+// v0.28.5 — A1: cheap probe used by `connectEngine` to gate `initSchema()`
+// so already-migrated brains don't pay the schema-replay cost on every
+// short-lived CLI invocation. Closes #651 in cooperation with X1's
+// post-upgrade auto-apply, without #652's perf regression.
+describe('hasPendingMigrations', () => {
+  test('returns false on a fully-migrated brain (version === LATEST)', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema(); // applies all migrations through LATEST_VERSION
+      expect(await hasPendingMigrations(engine)).toBe(false);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('returns true when version config is behind LATEST_VERSION', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      // Simulate an older brain by rewinding the version row.
+      await engine.setConfig('version', '1');
+      expect(await hasPendingMigrations(engine)).toBe(true);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('returns true when version config is missing entirely (defensive default)', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      // Don't call initSchema. Probe against an empty PGlite — getConfig should
+      // either return null (treated as version=1) or throw on missing config
+      // table; either way the probe must say "yes pending."
+      expect(await hasPendingMigrations(engine)).toBe(true);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
 });
 
 // ─────────────────────────────────────────────────────────────────

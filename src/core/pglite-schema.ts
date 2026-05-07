@@ -21,6 +21,8 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
+import { applyChunkEmbeddingIndexPolicy } from './vector-index.ts';
+
 const PGLITE_SCHEMA_SQL_TEMPLATE = `
 -- GBrain PGLite schema (local embedded Postgres)
 
@@ -254,8 +256,8 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
   ('engine', 'pglite'),
-  ('embedding_model', 'text-embedding-3-large'),
-  ('embedding_dimensions', '1536'),
+  ('embedding_model', '__EMBEDDING_MODEL__'),
+  ('embedding_dimensions', '__EMBEDDING_DIMS__'),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
 
@@ -574,9 +576,14 @@ DROP FUNCTION IF EXISTS update_page_search_vector_from_timeline();
  * Defaults preserve v0.13 behavior (1536d + text-embedding-3-large).
  */
 export function getPGLiteSchema(dims: number = 1536, model: string = 'text-embedding-3-large'): string {
-  return PGLITE_SCHEMA_SQL_TEMPLATE
-    .replace(/__EMBEDDING_DIMS__/g, String(dims))
-    .replace(/__EMBEDDING_MODEL__/g, model);
+  const parsedDims = Number(dims);
+  if (!Number.isInteger(parsedDims) || parsedDims <= 0) {
+    throw new Error(`Invalid embedding dimensions: ${dims}`);
+  }
+  const sanitizedModel = String(model).replace(/'/g, "''");
+  return applyChunkEmbeddingIndexPolicy(PGLITE_SCHEMA_SQL_TEMPLATE, parsedDims)
+    .replace(/__EMBEDDING_DIMS__/g, String(parsedDims))
+    .replace(/__EMBEDDING_MODEL__/g, sanitizedModel);
 }
 
 /** Back-compat: pre-computed default-1536 schema for existing callers. */

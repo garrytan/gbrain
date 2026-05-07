@@ -422,6 +422,17 @@ export class MinionWorker extends EventEmitter {
         ]);
       }
 
+      // The worker does NOT disconnect the engine: it doesn't own the
+      // engine's lifecycle. The caller (CLI handler at src/commands/jobs.ts
+      // case 'work', or a test fixture) is responsible for disconnect when
+      // it has finished using the engine. Earlier wave's experiment of
+      // calling engine.disconnect() here violated ownership and broke
+      // every test that shared a single engine across multiple
+      // worker.start() / worker.stop() cycles (PGLiteEngine kills its
+      // single _db connection; PostgresEngine.disconnect was non-idempotent
+      // and clobbered the global db singleton on the second call). The
+      // pool-slot-release intent is now handled in the CLI handler which
+      // does own the engine.
       console.log('Minion worker stopped.');
     }
   }

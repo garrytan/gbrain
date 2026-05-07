@@ -418,3 +418,45 @@ describe('applyScaffold', () => {
     expect(agents).toContain('`skills/openclaw-demo/SKILL.md`');
   });
 });
+
+describe('11-item scaffold contract (T9 + Phase 3 cross-modal eval)', () => {
+  it('scaffolded SKILL.md teaches the cross-modal eval Phase 3', () => {
+    // T9 (plans/radiant-napping-lerdorf.md): non-mutating verification of
+    // the 11-item contract bump. Calls planScaffold + applyScaffold against
+    // an in-memory tempdir, then asserts the produced SKILL.md mentions
+    // cross-modal eval. No `gbrain skillify scaffold demo-eleven` shell-out
+    // (which would mutate the real repo and require --description).
+    const { root, skillsDir } = scratchRepo();
+    const plan = planScaffold({
+      skillsDir,
+      vars: {
+        name: 'phase-three-demo',
+        description: 'demo skill that verifies Phase 3 lands in scaffold output',
+        triggers: ['phase three demo'],
+        writesTo: [],
+        writesPages: false,
+        mutating: false,
+      },
+    });
+    applyScaffold(plan);
+
+    const skillMdPath = join(skillsDir, 'phase-three-demo', 'SKILL.md');
+    const body = readFileSync(skillMdPath, 'utf-8');
+
+    expect(body).toContain('## Phase 3: Cross-modal eval');
+    expect(body).toContain('gbrain eval cross-modal');
+    expect(body).toContain('skills/phase-three-demo/SKILL.md');
+    // Receipts naming convention is documented in the scaffold so the
+    // implementer knows where to look.
+    expect(body).toContain('eval-receipts');
+    expect(body).toContain('<sha8>');
+    // Pass criterion is documented in the scaffold (Q2 floor + Q3 floor).
+    expect(body).toMatch(/dim mean\s*>=\s*7/i);
+    expect(body).toMatch(/no model scored any dim\s*<\s*5/i);
+    // Resolver row is appended once and only once — the verification step
+    // does not need any cleanup beyond the tempdir afterEach drops.
+    const resolverContent = readFileSync(join(skillsDir, 'RESOLVER.md'), 'utf-8');
+    const occurrences = resolverContent.split('skills/phase-three-demo/SKILL.md').length - 1;
+    expect(occurrences).toBe(1);
+  });
+});

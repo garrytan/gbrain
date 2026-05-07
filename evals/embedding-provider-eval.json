@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "description": "Embedding provider smoke test — verifies semantic search returns expected results for known brain content. Run after any embedding model change or migration.",
+  "queries": [
+    {
+      "id": "yc-labs-strategy",
+      "query": "YC Labs strategy and product team",
+      "relevant": [
+        "originals/yc-labs-internal-team",
+        "originals/harj-yc-labs-strategy-2026-05"
+      ]
+    },
+    {
+      "id": "garry-tan-person",
+      "query": "Who is Garry Tan",
+      "relevant": [
+        "people/garry-tan"
+      ]
+    },
+    {
+      "id": "gstack-project",
+      "query": "GStack open source AI coding framework",
+      "relevant": [
+        "projects/gstack/gstackbrain"
+      ]
+    },
+    {
+      "id": "yc-carry-compensation",
+      "query": "GP carry and compensation structure at YC",
+      "relevant": [
+        "originals/harj-yc-labs-strategy-2026-05"
+      ]
+    },
+    {
+      "id": "meeting-search",
+      "query": "recent office hours meeting notes",
+      "relevant": []
+    }
+  ]
+}

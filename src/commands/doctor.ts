@@ -278,6 +278,53 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // Best-effort. A broken JSONL should not stop doctor.
   }
 
+  // 3c. Orphan clone temp dirs (v0.28 P1). `gbrain sources add --url` clones
+  // into $GBRAIN_HOME/clones/.tmp/<id>-<rand>/ and renames atomically; if the
+  // process is SIGKILL'd between clone-finish and rename, the temp dir
+  // orphans. Surface entries older than 24h so operators notice before the
+  // disk fills. The autopilot purge phase nukes these on its cadence; this
+  // check just makes the state visible.
+  try {
+    const fs = await import('fs');
+    const cfg = await import('../core/config.ts');
+    const tmpRoot = cfg.gbrainPath('clones', '.tmp');
+    if (fs.existsSync(tmpRoot)) {
+      const STALE_MS = 24 * 3600 * 1000;
+      const now = Date.now();
+      const stale: { name: string; ageHours: number }[] = [];
+      for (const ent of fs.readdirSync(tmpRoot, { withFileTypes: true })) {
+        const full = join(tmpRoot, ent.name);
+        try {
+          const st = fs.lstatSync(full);
+          const age = now - st.mtimeMs;
+          if (age > STALE_MS) {
+            stale.push({ name: ent.name, ageHours: Math.floor(age / 3600_000) });
+          }
+        } catch {
+          /* skip unreadable */
+        }
+      }
+      if (stale.length === 0) {
+        checks.push({
+          name: 'orphan_clones',
+          status: 'ok',
+          message: `No stale clone temp dirs in ${tmpRoot}.`,
+        });
+      } else {
+        checks.push({
+          name: 'orphan_clones',
+          status: 'warn',
+          message:
+            `${stale.length} stale clone temp dir(s) in ${tmpRoot}: ` +
+            stale.map(s => `${s.name} (${s.ageHours}h)`).join(', ') +
+            `. Run \`gbrain sources purge-orphan-clones\` or wait for the autopilot purge phase.`,
+        });
+      }
+    }
+  } catch {
+    // Filesystem read failure is non-fatal.
+  }
+
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {
@@ -570,6 +617,80 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   } catch {
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
+  }
+
+  // 8b. Embedding provider eval — live smoke test of the configured provider.
+  //     Verifies: correct model, API key works, dimensions match config, DB column matches.
+  progress.heartbeat('embedding_provider');
+  try {
+    const {
+      getEmbeddingModel,
+      getEmbeddingDimensions,
+      embedOne,
+      isAvailable,
+    } = await import('../core/ai/gateway.ts');
+
+    const configuredModel = getEmbeddingModel();
+    const configuredDims = getEmbeddingDimensions();
+    const available = isAvailable('embedding');
+
+    if (!available) {
+      // Per v0.28.5 plan P1: silently skipped when no API key is configured.
+      // Doctor must stay green on CI / local-only / offline environments where
+      // a full provider probe isn't possible. The skipped status is still
+      // visible in --json output so operators can see it ran.
+      checks.push({
+        name: 'embedding_provider',
+        status: 'ok',
+        message: `Skipped (no provider credentials). Model: ${configuredModel}.`,
+      });
+    } else {
+      // Live embed test
+      const start = Date.now();
+      const vec = await embedOne('gbrain doctor embedding smoke test');
+      const ms = Date.now() - start;
+      const actualDims = vec.length;
+
+      const issues: string[] = [];
+
+      // Check dimensions match config
+      if (actualDims !== configuredDims) {
+        issues.push(`Dimension mismatch: provider returned ${actualDims} but config expects ${configuredDims}`);
+      }
+
+      // Check DB column dimensions match (engine-portable; works on both
+      // Postgres and PGLite via the shared dim-check helper added in v0.28.5).
+      try {
+        const { readContentChunksEmbeddingDim } = await import('../core/embedding-dim-check.ts');
+        const colDim = await readContentChunksEmbeddingDim(engine);
+        if (colDim.exists && colDim.dims !== null && colDim.dims !== actualDims) {
+          issues.push(`DB dimension mismatch: column is vector(${colDim.dims}) but provider returns ${actualDims}-dim. See docs/embedding-migrations.md for the manual ALTER recipe.`);
+        }
+      } catch { /* column or table missing — fresh brain, fine */ }
+
+      if (issues.length > 0) {
+        checks.push({
+          name: 'embedding_provider',
+          status: 'warn',
+          message: `${configuredModel} responds (${ms}ms, ${actualDims} dims) but: ${issues.join('; ')}`,
+        });
+      } else {
+        checks.push({
+          name: 'embedding_provider',
+          status: 'ok',
+          message: `${configuredModel} ✓ ${ms}ms, ${actualDims} dims, DB aligned`,
+        });
+      }
+    }
+  } catch (e: any) {
+    // Per v0.28.5 plan P1: non-fatal on network failure. The probe surfaces
+    // the issue but doesn't fail doctor — common cases (rate limit, transient
+    // 5xx, DNS blip, expired key) shouldn't take down a CI run.
+    checks.push({
+      name: 'embedding_provider',
+      status: 'warn',
+      message: `Embedding provider probe failed: ${e.message?.slice(0, 200) ?? e}`,
+    });
   }
 
   // 9. Graph health (link + timeline coverage on entity pages).

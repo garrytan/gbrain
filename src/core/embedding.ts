@@ -32,11 +32,12 @@ export interface EmbedBatchOptions {
 }
 
 /**
- * Embed a batch of texts via the gateway. Sub-batches of 100 so upstream
+ * Embed a batch of texts via the gateway. Sub-batches of 50 so upstream
  * progress callbacks fire incrementally on large imports. The gateway
- * handles truncation, retries, and provider dispatch.
+ * handles truncation, retries, provider dispatch, and adaptive batch
+ * splitting for providers with token-per-batch limits (e.g. Voyage).
  */
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 50;
 export async function embedBatch(
   texts: string[],
   options: EmbedBatchOptions = {},

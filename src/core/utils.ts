@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult } from './types.ts';
+import type { Take, TakeKind } from './engine.ts';
 
 /**
  * SHA-256 hash a token/secret for storage. Never store plaintext tokens.
@@ -203,4 +204,46 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
     result.source_id = row.source_id;
   }
   return result;
+}
+
+/**
+ * Convert a takes-table SQL row (joined with pages.slug AS page_slug) to the
+ * `Take` shape. Handles Date → ISO string conversion for timestamp/date columns.
+ */
+export function takeRowToTake(row: Record<string, unknown>): Take {
+  const isoOrNull = (v: unknown): string | null => {
+    if (v == null) return null;
+    if (v instanceof Date) return v.toISOString();
+    return String(v);
+  };
+  // since/until_date are TEXT (since v0.28 — DATE was too restrictive for
+  // partial dates like '2017-01' that the spec uses).
+  const dateOrNull = (v: unknown): string | null => {
+    if (v == null) return null;
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    return String(v);
+  };
+  return {
+    id: Number(row.id),
+    page_id: Number(row.page_id),
+    page_slug: String(row.page_slug ?? ''),
+    row_num: Number(row.row_num),
+    claim: String(row.claim),
+    kind: row.kind as TakeKind,
+    holder: String(row.holder),
+    weight: Number(row.weight),
+    since_date: dateOrNull(row.since_date),
+    until_date: dateOrNull(row.until_date),
+    source: row.source == null ? null : String(row.source),
+    superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
+    active: Boolean(row.active),
+    resolved_at: isoOrNull(row.resolved_at),
+    resolved_outcome: row.resolved_outcome == null ? null : Boolean(row.resolved_outcome),
+    resolved_value: row.resolved_value == null ? null : Number(row.resolved_value),
+    resolved_unit: row.resolved_unit == null ? null : String(row.resolved_unit),
+    resolved_source: row.resolved_source == null ? null : String(row.resolved_source),
+    resolved_by: row.resolved_by == null ? null : String(row.resolved_by),
+    created_at: isoOrNull(row.created_at) ?? '',
+    updated_at: isoOrNull(row.updated_at) ?? '',
+  };
 }

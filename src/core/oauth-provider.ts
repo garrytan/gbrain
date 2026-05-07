@@ -23,6 +23,7 @@ import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprot
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
+import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -162,6 +163,12 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     for (const uri of client.redirect_uris || []) {
       validateRedirectUri(String(uri));
     }
+
+    // v0.28: ALLOWED_SCOPES allowlist. RFC 6749 §5.2 invalid_scope. The DCR
+    // path is reachable by any unauthenticated network caller when --enable-dcr
+    // is on, so this is the security-relevant gate (manual CLI registration
+    // is operator-trusted).
+    assertAllowedScopes(parseScopeString(client.scope));
 
     const clientId = generateToken('gbrain_cl_');
     const clientSecret = generateToken('gbrain_cs_');
@@ -361,8 +368,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // grant), NOT against the client's currently-allowed scopes (which can
     // expand later). Omitted scope (`undefined`) inherits the original grant
     // verbatim and stays distinct from an explicit empty array.
+    //
+    // v0.28: hasScope replaces exact-string-match so an `admin` grant CAN
+    // refresh down to `sources_admin` (admin implies all). Without this,
+    // gstack /setup-gbrain Path 4 — which mints a sources_admin-scoped
+    // refresh — would fail when the brain admin's bootstrap token was
+    // issued at the `admin` tier.
     const grantedScopes = (row.scopes as string[]) || [];
-    if (scopes && scopes.some(s => !grantedScopes.includes(s))) {
+    if (scopes && scopes.some(s => !hasScope(grantedScopes, s))) {
       throw new Error('Requested scope exceeds refresh token grant');
     }
     const tokenScopes = scopes ?? grantedScopes;
@@ -492,10 +505,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const secretHash = hashToken(clientSecret);
     if (client.client_secret !== secretHash) throw new Error('Invalid client secret');
 
-    // Determine scopes
-    const allowedScopes = (client.scope || '').split(' ').filter(Boolean);
-    const requestedScopes = requestedScope ? requestedScope.split(' ').filter(Boolean) : allowedScopes;
-    const grantedScopes = requestedScopes.filter(s => allowedScopes.includes(s));
+    // Determine scopes. v0.28 swaps exact-string-match for hasScope so a
+    // client whose grant is `admin` can mint tokens that include implied
+    // scopes like `sources_admin` (admin implies all). Tokens are still
+    // capped by what the client was registered for — this only changes how
+    // the cap is computed.
+    const allowedScopes = parseScopeString(client.scope);
+    const requestedScopes = requestedScope ? parseScopeString(requestedScope) : allowedScopes;
+    const grantedScopes = requestedScopes.filter(s => hasScope(allowedScopes, s));
 
     // Per-client TTL override (stored in oauth_clients.token_ttl)
     // Column may not exist on PGLite/older schemas — graceful fallback
@@ -542,6 +559,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     scopes: string,
     redirectUris: string[] = [],
   ): Promise<{ clientId: string; clientSecret: string }> {
+    // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
+    // at registration so meaningless scope strings can't pile up in the DB.
+    // Pre-allowlist clients keep working (allowlist is registration-time;
+    // existing rows aren't re-validated).
+    assertAllowedScopes(parseScopeString(scopes));
+
     const clientId = generateToken('gbrain_cl_');
     const clientSecret = generateToken('gbrain_cs_');
     const secretHash = hashToken(clientSecret);

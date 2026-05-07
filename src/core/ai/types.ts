@@ -30,6 +30,14 @@ export interface EmbeddingTouchpoint {
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
   /**
+   * Maximum tokens per batch for this provider's embedding endpoint.
+   * When set, the gateway auto-splits large batches to stay under this
+   * limit.  Uses a conservative chars-to-tokens ratio (1 char ≈ 1 token)
+   * since tokenizer density varies widely across providers (e.g. Voyage
+   * tokenizes ~3-4× denser than OpenAI tiktoken on mixed content).
+   */
+  max_batch_tokens?: number;
+  /**
    * v0.27.1: when true, at least one model in this recipe accepts image
    * inputs via a multimodal embedding endpoint (e.g. Voyage's
    * /v1/multimodalembeddings). Drives gateway.embedMultimodal() routing.

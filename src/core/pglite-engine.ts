@@ -2,7 +2,15 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
-import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection, DreamVerdict, DreamVerdictInput, FileSpec, FileRow } from './engine.ts';
+import type {
+  BrainEngine,
+  LinkBatchInput, TimelineBatchInput,
+  ReservedConnection,
+  DreamVerdict, DreamVerdictInput,
+  FileSpec, FileRow,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeResolution, SynthesisEvidenceInput,
+} from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
@@ -21,7 +29,8 @@ import type {
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, takeRowToTake } from './utils.ts';
+import { GBrainError } from './types.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause } from './search/sql-ranking.ts';
 
@@ -217,7 +226,14 @@ export class PGLiteEngine implements BrainEngine {
    *   - `links.origin_page_id` column (indexed by `idx_links_origin`) — v0.13
    *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
    *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
+   *   - `content_chunks.search_vector` + `parent_symbol_path` + `doc_comment`
+   *     + `symbol_name_qualified` columns (indexed by `idx_chunks_search_vector`
+   *     and `idx_chunks_symbol_qualified`) — v0.20 Cathedral II
    *   - `pages.deleted_at` column (indexed by `pages_deleted_at_purge_idx`) — v0.26.5
+   *   - `mcp_request_log.agent_name` + `params` + `error_message` columns
+   *     (indexed by `idx_mcp_log_agent_time`) — v0.26.3
+   *   - `subagent_messages.provider_id` column (indexed by
+   *     `idx_subagent_messages_provider`) — v0.27
    *
    * **Maintenance contract:** when a future migration adds a column-with-index
    * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
@@ -247,7 +263,17 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='content_chunks' AND column_name='language') AS language_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='embedding_image') AS embedding_image_exists
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='search_vector') AS search_vector_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='content_chunks' AND column_name='embedding_image') AS embedding_image_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='mcp_request_log') AS mcp_log_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='mcp_request_log' AND column_name='agent_name') AS agent_name_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='subagent_messages') AS subagent_messages_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='subagent_messages' AND column_name='provider_id') AS subagent_provider_id_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -259,21 +285,32 @@ export class PGLiteEngine implements BrainEngine {
       chunks_exists: boolean;
       symbol_name_exists: boolean;
       language_exists: boolean;
+      search_vector_exists: boolean;
       embedding_image_exists: boolean;
+      mcp_log_exists: boolean;
+      agent_name_exists: boolean;
+      subagent_messages_exists: boolean;
+      subagent_provider_id_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
     const needsLinksBootstrap = probe.links_exists
       && (!probe.link_source_exists || !probe.origin_page_id_exists);
     const needsChunksBootstrap = probe.chunks_exists
-      && (!probe.symbol_name_exists || !probe.language_exists);
+      && (!probe.symbol_name_exists || !probe.language_exists || !probe.search_vector_exists);
     const needsPagesDeletedAt = probe.pages_exists && !probe.deleted_at_exists;
     // v0.27.1 — partial HNSW idx_chunks_embedding_image references this column.
     const needsChunksEmbeddingImage = probe.chunks_exists && !probe.embedding_image_exists;
+    // v0.26.3 (v33): idx_mcp_log_agent_time in PGLITE_SCHEMA_SQL needs agent_name col.
+    const needsMcpLogBootstrap = probe.mcp_log_exists && !probe.agent_name_exists;
+    // v0.27 (v36): idx_subagent_messages_provider in PGLITE_SCHEMA_SQL needs
+    // provider_id (the SECOND column in the composite index `(job_id, provider_id)`).
+    const needsSubagentProviderId = probe.subagent_messages_exists && !probe.subagent_provider_id_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
-        && !needsPagesDeletedAt && !needsChunksEmbeddingImage) return;
+        && !needsPagesDeletedAt && !needsChunksEmbeddingImage
+        && !needsMcpLogBootstrap && !needsSubagentProviderId) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -311,14 +348,19 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     if (needsChunksBootstrap) {
-      // v26 (content_chunks_code_metadata) adds the full code-chunk metadata
-      // surface (language, symbol_name, symbol_type, start_line, end_line).
-      // The bootstrap only adds the two columns the schema blob's partial
-      // indexes reference (idx_chunks_symbol_name, idx_chunks_language).
-      // v26 runs later via runMigrations and adds the rest idempotently.
+      // v26 (content_chunks_code_metadata) adds symbol_name + language; v27
+      // (Cathedral II) adds parent_symbol_path + doc_comment +
+      // symbol_name_qualified + search_vector. PGLITE_SCHEMA_SQL has indexes
+      // (idx_chunks_search_vector, idx_chunks_symbol_qualified) that need the
+      // v27 columns to exist before they run. v26 + v27 run later via
+      // runMigrations and are idempotent.
       await this.db.exec(`
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS language TEXT;
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS parent_symbol_path TEXT[];
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS doc_comment TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name_qualified TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
       `);
     }
 
@@ -333,14 +375,39 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     if (needsChunksEmbeddingImage) {
-      // v36 (multimodal_dual_column_v0_27_1) adds modality + embedding_image
+      // v39 (multimodal_dual_column_v0_27_1) adds modality + embedding_image
       // columns to content_chunks plus the partial HNSW index that references
       // the column. Bootstrap mirrors enough for PGLITE_SCHEMA_SQL's
       // `CREATE INDEX idx_chunks_embedding_image ... WHERE embedding_image IS NOT NULL`
-      // not to crash. v36 runs later via runMigrations and is idempotent.
+      // not to crash. v39 runs later via runMigrations and is idempotent.
       await this.db.exec(`
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS modality TEXT NOT NULL DEFAULT 'text';
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_image vector(1024);
+      `);
+    }
+
+    if (needsMcpLogBootstrap) {
+      // v33 (admin_dashboard_columns_v0_26_3) adds agent_name + params +
+      // error_message to mcp_request_log. PGLITE_SCHEMA_SQL's
+      // `CREATE INDEX idx_mcp_log_agent_time ON mcp_request_log(agent_name,...)`
+      // crashes without agent_name. v33 runs later via runMigrations and is
+      // idempotent (and also handles backfill).
+      await this.db.exec(`
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS agent_name TEXT;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS params JSONB;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_message TEXT;
+      `);
+    }
+
+    if (needsSubagentProviderId) {
+      // v36 (subagent_provider_neutral_persistence_v0_27) adds provider_id +
+      // schema_version on subagent_messages and subagent_tool_executions.
+      // PGLITE_SCHEMA_SQL's `CREATE INDEX idx_subagent_messages_provider ON
+      // subagent_messages (job_id, provider_id)` crashes without provider_id
+      // (composite-index second column). v36 runs later via runMigrations and
+      // is idempotent.
+      await this.db.exec(`
+        ALTER TABLE subagent_messages ADD COLUMN IF NOT EXISTS provider_id TEXT;
       `);
     }
   }
@@ -1487,6 +1554,300 @@ export class PGLiteEngine implements BrainEngine {
          judged_at = now()`,
       [filePath, contentHash, verdict.worth_processing, JSON.stringify(verdict.reasons)]
     );
+  }
+
+  // ============================================================
+  // v0.28: Takes (typed/weighted/attributed claims) + synthesis_evidence
+  // ============================================================
+
+  async addTakesBatch(rowsIn: TakeBatchInput[]): Promise<number> {
+    if (rowsIn.length === 0) return 0;
+    let weightClamped = 0;
+    const pageIds   = rowsIn.map(r => r.page_id);
+    const rowNums   = rowsIn.map(r => r.row_num);
+    const claims    = rowsIn.map(r => r.claim);
+    const kinds     = rowsIn.map(r => r.kind);
+    const holders   = rowsIn.map(r => r.holder);
+    const weights   = rowsIn.map(r => {
+      const w = r.weight ?? 0.5;
+      if (w < 0 || w > 1) { weightClamped++; return Math.max(0, Math.min(1, w)); }
+      return w;
+    });
+    const sinces    = rowsIn.map(r => r.since_date ?? null);
+    const untils    = rowsIn.map(r => r.until_date ?? null);
+    const sources   = rowsIn.map(r => r.source ?? null);
+    const supersededBys = rowsIn.map(r => r.superseded_by ?? null);
+    const actives   = rowsIn.map(r => r.active ?? true);
+    if (weightClamped > 0) {
+      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: ${weightClamped} row(s) had weight outside [0,1]; clamped\n`);
+    }
+    const result = await this.db.query(
+      `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
+       SELECT v.page_id::int, v.row_num::int, v.claim, v.kind, v.holder, v.weight::real,
+              v.since_date::text, v.until_date::text, v.source, v.superseded_by::int, v.active::boolean
+       FROM unnest($1::int[], $2::int[], $3::text[], $4::text[], $5::text[], $6::real[],
+                   $7::text[], $8::text[], $9::text[], $10::int[], $11::boolean[])
+         AS v(page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
+       ON CONFLICT (page_id, row_num) DO UPDATE SET
+         claim         = EXCLUDED.claim,
+         kind          = EXCLUDED.kind,
+         holder        = EXCLUDED.holder,
+         weight        = EXCLUDED.weight,
+         since_date    = EXCLUDED.since_date,
+         until_date    = EXCLUDED.until_date,
+         source        = EXCLUDED.source,
+         superseded_by = EXCLUDED.superseded_by,
+         active        = EXCLUDED.active,
+         updated_at    = now()
+       RETURNING 1`,
+      [pageIds, rowNums, claims, kinds, holders, weights, sinces, untils, sources, supersededBys, actives]
+    );
+    return result.rows.length;
+  }
+
+  async listTakes(opts: TakesListOpts = {}): Promise<Take[]> {
+    const limit = clampSearchLimit(opts.limit, 100, 500);
+    const offset = Math.max(0, Math.floor(opts.offset ?? 0));
+    const active = opts.active ?? true;
+    const sortBy = opts.sortBy ?? 'created_at';
+    const { rows } = await this.db.query(
+      `SELECT t.*, p.slug AS page_slug
+       FROM takes t
+       JOIN pages p ON p.id = t.page_id
+       WHERE 1=1
+         AND ($1::int   IS NULL OR t.page_id = $1::int)
+         AND ($2::text  IS NULL OR p.slug    = $2::text)
+         AND ($3::text  IS NULL OR t.holder  = $3::text)
+         AND ($4::text  IS NULL OR t.kind    = $4::text)
+         AND ($5::boolean IS NULL OR t.active = $5::boolean)
+         AND (
+           $6::boolean IS NULL
+           OR ($6::boolean = true  AND t.resolved_at IS NOT NULL)
+           OR ($6::boolean = false AND t.resolved_at IS NULL)
+         )
+         AND ($7::text[] IS NULL OR t.holder = ANY($7::text[]))
+       ORDER BY
+         CASE WHEN $8 = 'weight'      THEN t.weight     END DESC NULLS LAST,
+         CASE WHEN $8 = 'since_date'  THEN t.since_date END DESC NULLS LAST,
+         CASE WHEN $8 = 'created_at'  THEN t.created_at END DESC NULLS LAST
+       LIMIT $9 OFFSET $10`,
+      [
+        opts.page_id ?? null,
+        opts.page_slug ?? null,
+        opts.holder ?? null,
+        opts.kind ?? null,
+        active,
+        opts.resolved === undefined ? null : opts.resolved,
+        opts.takesHoldersAllowList ?? null,
+        sortBy,
+        limit,
+        offset,
+      ]
+    );
+    return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
+  }
+
+  async searchTakes(
+    query: string,
+    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+  ): Promise<TakeHit[]> {
+    const limit = clampSearchLimit(opts.limit, 30, 100);
+    const { rows } = await this.db.query(
+      `SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
+              t.claim, t.kind, t.holder, t.weight,
+              similarity(t.claim, $1)::real AS score
+       FROM takes t
+       JOIN pages p ON p.id = t.page_id
+       WHERE t.active
+         AND t.claim % $1
+         AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+       ORDER BY score DESC, t.weight DESC
+       LIMIT $3`,
+      [query, opts.takesHoldersAllowList ?? null, limit]
+    );
+    return rows as unknown as TakeHit[];
+  }
+
+  async searchTakesVector(
+    embedding: Float32Array,
+    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+  ): Promise<TakeHit[]> {
+    const limit = clampSearchLimit(opts.limit, 30, 100);
+    const vec = `[${Array.from(embedding).join(',')}]`;
+    const { rows } = await this.db.query(
+      `SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
+              t.claim, t.kind, t.holder, t.weight,
+              (1 - (t.embedding <=> $1::vector))::real AS score
+       FROM takes t
+       JOIN pages p ON p.id = t.page_id
+       WHERE t.active
+         AND t.embedding IS NOT NULL
+         AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+       ORDER BY t.embedding <=> $1::vector
+       LIMIT $3`,
+      [vec, opts.takesHoldersAllowList ?? null, limit]
+    );
+    return rows as unknown as TakeHit[];
+  }
+
+  async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
+    if (ids.length === 0) return new Map();
+    const { rows } = await this.db.query(
+      `SELECT id, embedding FROM takes WHERE id = ANY($1::bigint[]) AND embedding IS NOT NULL`,
+      [ids]
+    );
+    const out = new Map<number, Float32Array>();
+    for (const r of rows as Array<{ id: number; embedding: unknown }>) {
+      const v = r.embedding;
+      if (typeof v === 'string') {
+        const trimmed = v.replace(/^\[|\]$/g, '');
+        const arr = trimmed.split(',').map(parseFloat).filter(n => !Number.isNaN(n));
+        out.set(Number(r.id), new Float32Array(arr));
+      } else if (Array.isArray(v)) {
+        out.set(Number(r.id), new Float32Array(v as number[]));
+      }
+    }
+    return out;
+  }
+
+  async countStaleTakes(): Promise<number> {
+    const { rows } = await this.db.query(
+      `SELECT count(*)::int AS count FROM takes WHERE active AND embedding IS NULL`
+    );
+    return Number((rows[0] as { count?: number } | undefined)?.count ?? 0);
+  }
+
+  async listStaleTakes(): Promise<StaleTakeRow[]> {
+    const { rows } = await this.db.query(
+      `SELECT t.id AS take_id, p.slug AS page_slug, t.row_num, t.claim
+       FROM takes t
+       JOIN pages p ON p.id = t.page_id
+       WHERE t.active AND t.embedding IS NULL
+       ORDER BY t.id
+       LIMIT 100000`
+    );
+    return rows as unknown as StaleTakeRow[];
+  }
+
+  async updateTake(
+    pageId: number,
+    rowNum: number,
+    fields: { weight?: number; since_date?: string; source?: string },
+  ): Promise<void> {
+    let weight = fields.weight;
+    if (weight !== undefined && (weight < 0 || weight > 1)) {
+      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → [0,1]\n`);
+      weight = Math.max(0, Math.min(1, weight));
+    }
+    const result = await this.db.query(
+      `UPDATE takes SET
+         weight     = COALESCE($3::real, weight),
+         since_date = COALESCE($4::text, since_date),
+         source     = COALESCE($5::text, source),
+         updated_at = now()
+       WHERE page_id = $1 AND row_num = $2
+       RETURNING 1`,
+      [pageId, rowNum, weight ?? null, fields.since_date ?? null, fields.source ?? null]
+    );
+    if (result.rows.length === 0) {
+      throw new GBrainError(
+        'TAKE_ROW_NOT_FOUND',
+        `take not found at page_id=${pageId} row=${rowNum}`,
+        'list takes for this page with `gbrain takes <slug>` to see valid row numbers',
+      );
+    }
+  }
+
+  async supersedeTake(
+    pageId: number,
+    oldRow: number,
+    newRow: Omit<TakeBatchInput, 'page_id' | 'row_num' | 'superseded_by'>,
+  ): Promise<{ oldRow: number; newRow: number }> {
+    return await this.db.transaction(async (tx) => {
+      const existingRes = await tx.query(
+        `SELECT resolved_at FROM takes WHERE page_id = $1 AND row_num = $2`,
+        [pageId, oldRow]
+      );
+      const existing = existingRes.rows[0] as { resolved_at?: unknown } | undefined;
+      if (!existing) {
+        throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${oldRow}`, 'list takes with `gbrain takes <slug>`');
+      }
+      if (existing.resolved_at) {
+        throw new GBrainError('TAKE_RESOLVED_IMMUTABLE', `take ${pageId}#${oldRow} is resolved`, 'resolved bets are immutable; add a new take instead');
+      }
+      const maxRowRes = await tx.query(
+        `SELECT COALESCE(MAX(row_num), 0) + 1 AS next FROM takes WHERE page_id = $1`,
+        [pageId]
+      );
+      const newRowNum = Number((maxRowRes.rows[0] as { next?: number })?.next ?? 1);
+      const w = Math.max(0, Math.min(1, newRow.weight ?? 0.5));
+      await tx.query(
+        `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::text, $8::text, $9, $10)`,
+        [
+          pageId, newRowNum, newRow.claim, newRow.kind, newRow.holder, w,
+          newRow.since_date ?? null, newRow.until_date ?? null, newRow.source ?? null,
+          newRow.active ?? true,
+        ]
+      );
+      await tx.query(
+        `UPDATE takes SET active = false, superseded_by = $3, updated_at = now()
+         WHERE page_id = $1 AND row_num = $2`,
+        [pageId, oldRow, newRowNum]
+      );
+      return { oldRow, newRow: newRowNum };
+    });
+  }
+
+  async resolveTake(pageId: number, rowNum: number, resolution: TakeResolution): Promise<void> {
+    const existingRes = await this.db.query(
+      `SELECT resolved_at FROM takes WHERE page_id = $1 AND row_num = $2`,
+      [pageId, rowNum]
+    );
+    const existing = existingRes.rows[0] as { resolved_at?: unknown } | undefined;
+    if (!existing) {
+      throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${rowNum}`, 'list takes with `gbrain takes <slug>`');
+    }
+    if (existing.resolved_at) {
+      throw new GBrainError('TAKE_ALREADY_RESOLVED', `take ${pageId}#${rowNum} already resolved`, 'resolution is immutable; add a new take to record a new outcome');
+    }
+    await this.db.query(
+      `UPDATE takes SET
+         resolved_at      = now(),
+         resolved_outcome = $3,
+         resolved_value   = $4::real,
+         resolved_unit    = $5::text,
+         resolved_source  = $6::text,
+         resolved_by      = $7,
+         updated_at       = now()
+       WHERE page_id = $1 AND row_num = $2`,
+      [
+        pageId, rowNum,
+        resolution.outcome,
+        resolution.value ?? null,
+        resolution.unit ?? null,
+        resolution.source ?? null,
+        resolution.resolvedBy,
+      ]
+    );
+  }
+
+  async addSynthesisEvidence(rowsIn: SynthesisEvidenceInput[]): Promise<number> {
+    if (rowsIn.length === 0) return 0;
+    const synthesisIds = rowsIn.map(r => r.synthesis_page_id);
+    const takePageIds  = rowsIn.map(r => r.take_page_id);
+    const takeRowNums  = rowsIn.map(r => r.take_row_num);
+    const citationIxs  = rowsIn.map(r => r.citation_index);
+    const result = await this.db.query(
+      `INSERT INTO synthesis_evidence (synthesis_page_id, take_page_id, take_row_num, citation_index)
+       SELECT v.synthesis_page_id::int, v.take_page_id::int, v.take_row_num::int, v.citation_index::int
+       FROM unnest($1::int[], $2::int[], $3::int[], $4::int[])
+         AS v(synthesis_page_id, take_page_id, take_row_num, citation_index)
+       ON CONFLICT (synthesis_page_id, take_page_id, take_row_num) DO NOTHING
+       RETURNING 1`,
+      [synthesisIds, takePageIds, takeRowNums, citationIxs]
+    );
+    return result.rows.length;
   }
 
   // Versions

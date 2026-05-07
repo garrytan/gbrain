@@ -195,6 +195,32 @@ async function initPGLite(opts: {
   const engine = await createEngine({ engine: 'pglite' });
   try {
     await engine.connect({ database_path: dbPath, engine: 'pglite' });
+
+    // v0.28.5 (A4): refuse to silently re-template an existing brain with a
+    // mismatched embedding dimension. Loud failure beats the v0.27 silent-
+    // corruption pattern that surfaced as #673.
+    if (opts.aiOpts?.embedding_dimensions) {
+      const { readContentChunksEmbeddingDim, embeddingMismatchMessage } = await import('../core/embedding-dim-check.ts');
+      const existing = await readContentChunksEmbeddingDim(engine);
+      if (existing.exists && existing.dims !== null && existing.dims !== opts.aiOpts.embedding_dimensions) {
+        console.error('\n' + embeddingMismatchMessage({
+          currentDims: existing.dims,
+          requestedDims: opts.aiOpts.embedding_dimensions,
+          requestedModel: opts.aiOpts.embedding_model,
+          source: 'init',
+        }) + '\n');
+        if (opts.jsonOutput) {
+          console.log(JSON.stringify({
+            status: 'error',
+            reason: 'embedding_dim_mismatch',
+            current_dims: existing.dims,
+            requested_dims: opts.aiOpts.embedding_dimensions,
+          }));
+        }
+        process.exit(1);
+      }
+    }
+
     await engine.initSchema();
 
     const config: GBrainConfig = {
@@ -302,6 +328,30 @@ async function initPostgres(opts: {
       }
     } catch {
       // Non-fatal
+    }
+
+    // v0.28.5 (A4): refuse to silently re-template an existing brain with a
+    // mismatched embedding dimension (mirror of the PGLite path above).
+    if (opts.aiOpts?.embedding_dimensions) {
+      const { readContentChunksEmbeddingDim, embeddingMismatchMessage } = await import('../core/embedding-dim-check.ts');
+      const existing = await readContentChunksEmbeddingDim(engine);
+      if (existing.exists && existing.dims !== null && existing.dims !== opts.aiOpts.embedding_dimensions) {
+        console.error('\n' + embeddingMismatchMessage({
+          currentDims: existing.dims,
+          requestedDims: opts.aiOpts.embedding_dimensions,
+          requestedModel: opts.aiOpts.embedding_model,
+          source: 'init',
+        }) + '\n');
+        if (opts.jsonOutput) {
+          console.log(JSON.stringify({
+            status: 'error',
+            reason: 'embedding_dim_mismatch',
+            current_dims: existing.dims,
+            requested_dims: opts.aiOpts.embedding_dimensions,
+          }));
+        }
+        process.exit(1);
+      }
     }
 
     console.log('Running schema migration...');

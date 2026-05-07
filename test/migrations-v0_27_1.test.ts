@@ -1,4 +1,4 @@
-// Phase 5 + Eng-3C: migration v36 (multimodal_dual_column_v0_27_1) contract.
+// Phase 5 + Eng-3C: migration v39 (multimodal_dual_column_v0_27_1) contract.
 //
 // Verifies:
 // - SQL shape: modality column with DEFAULT 'text', embedding_image vector(1024),
@@ -24,9 +24,9 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
-describe('migration v36 (multimodal dual-column + PGLite files)', () => {
-  test('SQL shape: present in MIGRATIONS array as version 36', () => {
-    const m = MIGRATIONS.find(x => x.version === 36);
+describe('migration v39 (multimodal dual-column + PGLite files)', () => {
+  test('SQL shape: present in MIGRATIONS array as version 39', () => {
+    const m = MIGRATIONS.find(x => x.version === 39);
     expect(m).toBeDefined();
     expect(m!.name).toBe('multimodal_dual_column_v0_27_1');
     // Handler-driven: empty `sql`, populated `handler`.
@@ -35,8 +35,8 @@ describe('migration v36 (multimodal dual-column + PGLite files)', () => {
   });
 
   test('handler is idempotent — running twice on a clean brain does not error', async () => {
-    const m = MIGRATIONS.find(x => x.version === 36)!;
-    // The PGLite engine ran v36 during initSchema in beforeAll. Re-running
+    const m = MIGRATIONS.find(x => x.version === 39)!;
+    // The PGLite engine ran v39 during initSchema in beforeAll. Re-running
     // the handler should be a true no-op thanks to ADD COLUMN IF NOT EXISTS
     // + CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS.
     await m.handler!(engine);
@@ -106,7 +106,7 @@ describe('migration v36 (multimodal dual-column + PGLite files)', () => {
   });
 
   test('Eng-3C: handler text mentions pgvector >= 0.5 in error message', async () => {
-    const m = MIGRATIONS.find(x => x.version === 36)!;
+    const m = MIGRATIONS.find(x => x.version === 39)!;
     // The error message string is the user-facing fix hint. Pin its presence
     // via toString() inspection of the handler — looking for the version
     // requirement so future refactors don't accidentally drop it.
