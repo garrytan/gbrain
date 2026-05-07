@@ -44,6 +44,20 @@ export function applyBacklinkBoost(results: SearchResult[], counts: Map<string, 
   }
 }
 
+/**
+ * Apply per-page frontmatter boost multipliers. Mutates scores in place.
+ * Caller fetches boosts via engine.getFrontmatterBoosts.
+ * Pages with no boost field default to 1.0 (unchanged).
+ */
+export function applyFrontmatterBoost(results: SearchResult[], boosts: Map<string, number>): void {
+  for (const r of results) {
+    const multiplier = boosts.get(r.slug);
+    if (multiplier != null) {
+      r.score *= multiplier;
+    }
+  }
+}
+
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
   expandFn?: (query: string) => Promise<string[]>;
@@ -86,6 +100,8 @@ export async function hybridSearch(
         const slugs = Array.from(new Set(keywordResults.map(r => r.slug)));
         const counts = await engine.getBacklinkCounts(slugs);
         applyBacklinkBoost(keywordResults, counts);
+        const fmBoosts = await engine.getFrontmatterBoosts(slugs);
+        applyFrontmatterBoost(keywordResults, fmBoosts);
         keywordResults.sort((a, b) => b.score - a.score);
       } catch {
         // Boost failure is non-fatal: keep unboosted ranking.
@@ -140,8 +156,12 @@ export async function hybridSearch(
   if (fused.length > 0) {
     try {
       const slugs = Array.from(new Set(fused.map(r => r.slug)));
-      const counts = await engine.getBacklinkCounts(slugs);
+      const [counts, fmBoosts] = await Promise.all([
+        engine.getBacklinkCounts(slugs),
+        engine.getFrontmatterBoosts(slugs),
+      ]);
       applyBacklinkBoost(fused, counts);
+      applyFrontmatterBoost(fused, fmBoosts);
       fused.sort((a, b) => b.score - a.score);
     } catch {
       // Boost failure is non-fatal: keep blended cosine ranking.

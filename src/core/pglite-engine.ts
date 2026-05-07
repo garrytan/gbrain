@@ -655,6 +655,23 @@ export class PGLiteEngine implements BrainEngine {
     return result;
   }
 
+  async getFrontmatterBoosts(slugs: string[]): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (slugs.length === 0) return result;
+    const { rows } = await this.db.query(
+      `SELECT slug, (frontmatter->>'boost')::float AS boost
+       FROM pages
+       WHERE slug = ANY($1::text[])
+         AND frontmatter->>'boost' IS NOT NULL`,
+      [slugs]
+    );
+    for (const r of rows as { slug: string; boost: number }[]) {
+      const v = Number(r.boost);
+      if (Number.isFinite(v) && v > 0) result.set(r.slug, v);
+    }
+    return result;
+  }
+
   async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
     const { rows } = await this.db.query(
       `SELECT

@@ -741,6 +741,23 @@ export class PostgresEngine implements BrainEngine {
     return result;
   }
 
+  async getFrontmatterBoosts(slugs: string[]): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (slugs.length === 0) return result;
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT slug, (frontmatter->>'boost')::float AS boost
+      FROM pages
+      WHERE slug = ANY(${slugs}::text[])
+        AND frontmatter->>'boost' IS NOT NULL
+    `;
+    for (const r of rows as unknown as { slug: string; boost: number }[]) {
+      const v = Number(r.boost);
+      if (Number.isFinite(v) && v > 0) result.set(r.slug, v);
+    }
+    return result;
+  }
+
   async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
     const sql = this.sql;
     const rows = await sql`

@@ -153,6 +153,12 @@ export interface BrainEngine {
    */
   getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
   /**
+   * For a list of slugs, return the numeric `boost` value from frontmatter (if set).
+   * Used by hybrid search to apply per-page priority multipliers.
+   * Slugs with no boost are absent from the map (caller defaults to 1.0).
+   */
+  getFrontmatterBoosts(slugs: string[]): Promise<Map<string, number>>;
+  /**
    * Return every page with no inbound links (from any source).
    * Domain comes from the frontmatter `domain` field (null if unset).
    * The caller filters pseudo-pages + derives display domain.
