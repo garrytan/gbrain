@@ -29,6 +29,7 @@ These are integration recipes your agent can set up for you. Run
 | Recipe | Category | Requires | What It Does | Setup Time |
 |--------|----------|----------|-------------|------------|
 | [ngrok-tunnel](../../recipes/ngrok-tunnel.md) | Infra | — | Fixed public URL for MCP + voice ($8/mo) | 10 min |
+| [tailscale-setup](../../recipes/tailscale-setup.md) | Infra | — | Stable tailnet-only HTTPS URL for GBrain MCP | 20 min |
 | [credential-gateway](../../recipes/credential-gateway.md) | Infra | — | Gmail + Calendar access (ClawVisor or Google OAuth) | 15 min |
 | [voice-to-brain](../../recipes/twilio-voice-brain.md) | Sense | ngrok-tunnel | Phone calls create brain pages via Twilio + OpenAI Realtime | 30 min |
 | [email-to-brain](../../recipes/email-to-brain.md) | Sense | credential-gateway | Gmail messages flow into entity pages via deterministic collector | 20 min |
