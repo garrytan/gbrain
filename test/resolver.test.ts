@@ -89,14 +89,14 @@ describe("RESOLVER.md trigger round-trip (D5/C)", () => {
       expect(existsSync(skillFullPath)).toBe(true);
 
       const skillContent = readFileSync(skillFullPath, "utf-8");
-      const fmMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
+      const fmMatch = skillContent.match(/^---\r?\n([\s\S]*?)\r?\n---/);
       if (!fmMatch) {
         throw new Error(`No YAML frontmatter in ${row.skillPath}`);
       }
       const frontmatter = fmMatch[1];
       // Parse frontmatter triggers: list. Match "..." OR '...' items separately
       // so apostrophes inside double-quoted values don't truncate the capture.
-      const triggersBlock = frontmatter.match(/triggers:\s*\n((?:\s*-\s*(?:"[^"]*"|'[^']*')\s*\n?)+)/);
+      const triggersBlock = frontmatter.match(/triggers:\s*\r?\n((?:\s*-\s*(?:"[^"]*"|'[^']*')\s*(?:\r?\n|$))+)/);
       const declaredTriggers = triggersBlock
         ? Array.from(triggersBlock[1].matchAll(/-\s*(?:"([^"]*)"|'([^']*)')/g))
             .map(m => m[1] ?? m[2])
@@ -186,7 +186,7 @@ describe("Skill example-name validator (D13)", () => {
     test(`${rel}: every name="<word>" reference resolves to a real op or handler`, () => {
       const content = readFileSync(skillFile, "utf-8");
       // Strip YAML frontmatter so `name: <skillname>` isn't mis-captured.
-      const body = content.replace(/^---\n[\s\S]*?\n---\n/, "");
+      const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
       // Match only `name=` (with equals, not colon) to avoid YAML false positives
       // if the frontmatter strip ever breaks. Captures quoted word values.
       const refs = Array.from(body.matchAll(/name\s*=\s*["']([a-z_][a-z_0-9]*)["']/gi))

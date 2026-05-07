@@ -34,8 +34,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env.GBRAIN_HOME = ORIG_HOME;
+  if (ORIG_HOME !== undefined) process.env.GBRAIN_HOME = ORIG_HOME;
+  else delete process.env.GBRAIN_HOME;
   if (ORIG_RUN_ID !== undefined) process.env.GBRAIN_FRICTION_RUN_ID = ORIG_RUN_ID;
+  else delete process.env.GBRAIN_FRICTION_RUN_ID;
   rmSync(tmp, { recursive: true, force: true });
   process.stdout.write = origStdoutWrite;
   console.log = origConsoleLog;

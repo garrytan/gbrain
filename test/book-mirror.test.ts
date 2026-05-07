@@ -24,8 +24,10 @@
 import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 
-const REPO_ROOT = new URL('..', import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+const bunExe = process.execPath;
 
 async function runCli(args: string[]): Promise<{
   stdout: string;
@@ -33,7 +35,7 @@ async function runCli(args: string[]): Promise<{
   exit: number;
 }> {
   const proc = Bun.spawn(
-    ['bun', 'run', 'src/cli.ts', 'book-mirror', ...args],
+    [bunExe, 'run', 'src/cli.ts', 'book-mirror', ...args],
     {
       cwd: REPO_ROOT,
       stdout: 'pipe',

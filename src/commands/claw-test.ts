@@ -38,8 +38,13 @@ interface HarnessOpts {
   keepTempdir: boolean;
   listAgents: boolean;
   help: boolean;
-  /** Path to the gbrain binary used to invoke child commands. Defaults to argv[0]. */
-  gbrainBin?: string;
+  /** Command used to invoke child gbrain phases. Defaults to the current executable. */
+  gbrainCommand?: GbrainCommand;
+}
+
+interface GbrainCommand {
+  bin: string;
+  prefixArgs: string[];
 }
 
 interface PhaseOutcome {
@@ -189,7 +194,12 @@ async function runScripted(
   const allStderr: string[] = [];
   const outcomes: PhaseOutcome[] = [];
   for (const phase of phases) {
-    const outcome = await invokeGbrain(opts.gbrainBin ?? 'gbrain', phase.argv, ctx.runRoot, childEnv);
+    const outcome = await invokeGbrain(
+      opts.gbrainCommand ?? { bin: 'gbrain', prefixArgs: [] },
+      phase.argv,
+      ctx.runRoot,
+      childEnv,
+    );
     outcome.phase = phase.name;
     outcomes.push(outcome);
     allStderr.push(outcome.stderrTail);
@@ -309,14 +319,19 @@ async function runLive(
 // ---------------------------------------------------------------------------
 
 function invokeGbrain(
-  bin: string,
+  command: GbrainCommand,
   argv: string[],
   cwd: string,
   env: Record<string, string>,
 ): Promise<PhaseOutcome> {
   return new Promise((resolve) => {
     const start = Date.now();
-    const child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+    const child = spawn(command.bin, [...command.prefixArgs, ...argv], {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
+    });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout?.on('data', (b: Buffer) => stdout.push(b));
@@ -363,7 +378,7 @@ function parseArgs(args: string[]): HarnessOpts {
     keepTempdir: false,
     listAgents: false,
     help: args.includes('--help') || args.includes('-h'),
-    gbrainBin: process.env.GBRAIN_BIN_OVERRIDE || process.execPath,
+    gbrainCommand: resolveGbrainCommand(),
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -374,6 +389,22 @@ function parseArgs(args: string[]): HarnessOpts {
     else if (a === '--agent') out.agent = args[++i] ?? out.agent;
   }
   return out;
+}
+
+function resolveGbrainCommand(): GbrainCommand {
+  const bin = process.env.GBRAIN_BIN_OVERRIDE || process.execPath;
+  const prefixArgsRaw = process.env.GBRAIN_BIN_ARGS_JSON;
+  if (!prefixArgsRaw) return { bin, prefixArgs: [] };
+
+  try {
+    const parsed = JSON.parse(prefixArgsRaw);
+    if (Array.isArray(parsed) && parsed.every((v) => typeof v === 'string')) {
+      return { bin, prefixArgs: parsed };
+    }
+  } catch {
+    // Fall through to the explicit error below.
+  }
+  throw new Error('GBRAIN_BIN_ARGS_JSON must be a JSON array of strings');
 }
 
 function newRunId(agent: string): string {

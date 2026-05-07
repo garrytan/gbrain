@@ -118,6 +118,31 @@ export function expandVars(s: string): string {
   return s.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => process.env[name] || '');
 }
 
+/**
+ * Child processes on Windows need OS bootstrap variables even when callers run
+ * with a trimmed or test-mutated environment.
+ */
+function childProcessEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  if (process.platform === 'win32') {
+    const systemRoot = env.SystemRoot || env.WINDIR || env.windir || 'C:\\Windows';
+    env.SystemRoot = systemRoot;
+    env.windir = env.windir || systemRoot;
+    env.ComSpec = env.ComSpec || `${systemRoot}\\System32\\cmd.exe`;
+  }
+  return env;
+}
+
+function isSpawnTimeout(result: { status: number | null; signal: NodeJS.Signals | null; error?: Error }): boolean {
+  const error = result.error as (Error & { code?: string }) | undefined;
+  return error?.code === 'ETIMEDOUT'
+    || (result.status === null && result.signal === 'SIGTERM' && error?.message.includes('ETIMEDOUT') === true);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // --- SSRF Protection ---
 
 /** Parse an IPv4 octet from decimal, hex (0x prefix), or octal (leading 0) notation. */
@@ -265,7 +290,7 @@ export async function executeHealthCheck(
       return { ...base, status: 'blocked', output: 'Blocked: contains unsafe shell characters. Migrate to typed health_check DSL.' };
     }
     try {
-      const output = execSync(check, { timeout: 10000, encoding: 'utf-8', env: process.env }).trim();
+      const output = execSync(check, { timeout: 10000, encoding: 'utf-8', env: childProcessEnv() }).trim();
       return { ...base, status: output.includes('FAIL') ? 'fail' : 'ok', output };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -369,14 +394,30 @@ export async function executeHealthCheck(
       }
       try {
         const { spawnSync } = await import('child_process');
-        const result = spawnSync(check.argv[0], check.argv.slice(1), {
+        let result = spawnSync(check.argv[0], check.argv.slice(1), {
           timeout: 10000,
           encoding: 'utf-8',
-          env: process.env,
+          env: childProcessEnv(),
         });
+        if (isSpawnTimeout(result)) {
+          await sleep(50);
+          result = spawnSync(check.argv[0], check.argv.slice(1), {
+            timeout: 10000,
+            encoding: 'utf-8',
+            env: childProcessEnv(),
+          });
+        }
         const ok = result.status === 0;
-        const output = (result.stdout || '').trim() || (ok ? 'OK' : 'FAIL');
-        return { ...base, status: ok ? 'ok' : 'fail', output: `${check.label || check.argv[0]}: ${output}` };
+        const stdout = (result.stdout || '').trim();
+        const stderr = (result.stderr || '').trim();
+        const failureDetail = [
+          result.status === null ? 'status=null' : `status=${result.status}`,
+          result.signal ? `signal=${result.signal}` : '',
+          result.error ? `error=${result.error.message}` : '',
+          stderr ? `stderr=${stderr}` : '',
+        ].filter(Boolean).join(' ');
+        const output = stdout || (ok ? 'OK' : failureDetail || 'FAIL');
+        return { ...base, status: ok ? 'ok' : isSpawnTimeout(result) ? 'timeout' : 'fail', output: `${check.label || check.argv[0]}: ${output}` };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         return { ...base, status: 'fail', output: `${check.label || check.argv[0]}: ${msg}` };

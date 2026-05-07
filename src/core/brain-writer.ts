@@ -15,7 +15,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync, copyFileSync, writeFileSync, mkdirSync, lstatSync } from 'fs';
-import { join, relative, resolve, dirname } from 'path';
+import { join, relative, resolve, dirname, isAbsolute, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 import type { ProgressReporter } from './progress.ts';
 import {
@@ -204,7 +204,8 @@ export function writeBrainPage(
 ): { fixes: AuditFix[] } {
   const resolvedSource = resolve(opts.sourcePath);
   const resolvedTarget = resolve(filePath);
-  if (resolvedTarget !== resolvedSource && !resolvedTarget.startsWith(resolvedSource + '/')) {
+  const relToSource = relative(resolvedSource, resolvedTarget);
+  if (relToSource !== '' && (relToSource === '..' || relToSource.startsWith(`..${sep}`) || isAbsolute(relToSource))) {
     throw new BrainWriterError(
       'PATH_OUTSIDE_SOURCE',
       `writeBrainPage: ${filePath} is not under ${opts.sourcePath}`,

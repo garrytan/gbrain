@@ -68,12 +68,15 @@ describe('loadPreferences', () => {
 });
 
 describe('savePreferences', () => {
-  test('writes file with 0o600 perms', () => {
+  test('writes file with private POSIX perms when supported', () => {
     savePreferences({ minion_mode: 'pain_triggered' });
     const path = preferencesPaths.file();
     expect(existsSync(path)).toBe(true);
-    const mode = statSync(path).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== 'win32') {
+      const mode = statSync(path).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
+    expect(loadPreferences().minion_mode).toBe('pain_triggered');
   });
 
   test('round-trip preserves unknown keys for forward-compat', () => {

@@ -15,6 +15,7 @@
 
 import { execSync } from 'child_process';
 import { statSync } from 'fs';
+import { isAbsolute } from 'path';
 import type { AgentRunner, DetectResult, InvokeOpts, InvokeResult } from '../agent-runner.ts';
 import { spawnWithCapture } from '../transcript-capture.ts';
 
@@ -41,7 +42,7 @@ export class OpenClawRunner implements AgentRunner {
       try {
         const out = execSync('which openclaw', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
         const found = out.trim();
-        if (!found || !found.startsWith('/')) {
+        if (!found || !isAbsolute(found)) {
           return { available: false, reason: 'openclaw not on PATH' };
         }
         binPath = found;
@@ -92,7 +93,7 @@ export class OpenClawRunner implements AgentRunner {
 }
 
 function validateAbsolutePath(p: string): string | null {
-  if (!p.startsWith('/')) return `OPENCLAW_BIN must be absolute; got ${p}`;
-  if (p.split('/').includes('..')) return `OPENCLAW_BIN must not contain '..' segments; got ${p}`;
+  if (!isAbsolute(p)) return `OPENCLAW_BIN must be absolute; got ${p}`;
+  if (p.split(/[\\/]/).includes('..')) return `OPENCLAW_BIN must not contain '..' segments; got ${p}`;
   return null;
 }

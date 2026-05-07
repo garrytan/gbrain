@@ -140,11 +140,17 @@ function walkFiles(absDir: string, prefix: string, out: BundleEntry[], sharedDep
       continue;
     }
     if (stat.isDirectory()) {
-      walkFiles(abs, join(prefix, e), out, sharedDep);
+      walkFiles(abs, bundleRel(prefix, e), out, sharedDep);
     } else if (stat.isFile()) {
-      out.push({ source: abs, relTarget: join(prefix, e), sharedDep });
+      out.push({ source: abs, relTarget: bundleRel(prefix, e), sharedDep });
     }
   }
+}
+
+function bundleRel(...parts: string[]): string {
+  return parts
+    .filter(part => part.length > 0)
+    .join('/');
 }
 
 export interface EnumerateOptions {

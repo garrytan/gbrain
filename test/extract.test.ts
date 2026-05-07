@@ -42,6 +42,15 @@ describe('extractLinksFromFile', () => {
     expect(links[0].to_slug).toBe('people/pedro');
   });
 
+  it('canonicalizes Windows separators before resolving slugs', async () => {
+    const content = 'See [Brex](..\\companies\\brex.md).';
+    const allSlugs = new Set(['people/pedro', 'companies/brex']);
+    const links = await extractLinksFromFile(content, 'people\\pedro.md', allSlugs);
+    expect(links).toHaveLength(1);
+    expect(links[0].from_slug).toBe('people/pedro');
+    expect(links[0].to_slug).toBe('companies/brex');
+  });
+
   it('skips links to non-existent pages', async () => {
     const content = 'See [Ghost](../people/ghost.md).';
     const allSlugs = new Set(['deals/test']);

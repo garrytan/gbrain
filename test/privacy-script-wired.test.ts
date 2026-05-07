@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { resolve } from 'path';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -24,9 +24,18 @@ const PRIVACY_SCRIPT = resolve(REPO_ROOT, 'scripts/check-privacy.sh');
 const TEST_WORKFLOW = resolve(REPO_ROOT, '.github/workflows/test.yml');
 
 describe('check-privacy.sh CI wiring', () => {
-  it('scripts/check-privacy.sh exists and is executable', () => {
+  it('scripts/check-privacy.sh exists and is executable where mode bits are meaningful', () => {
     expect(existsSync(PRIVACY_SCRIPT)).toBe(true);
-    const stat = require('fs').statSync(PRIVACY_SCRIPT);
+
+    if (process.platform === 'win32') {
+      // Windows does not preserve POSIX executable bits reliably; package scripts
+      // run this guard through bash, so preserve the shell-script contract here.
+      expect(readFileSync(PRIVACY_SCRIPT, 'utf-8').startsWith('#!/bin/bash')).toBe(true);
+      return;
+    }
+
+    const stat = statSync(PRIVACY_SCRIPT);
+    // Mode has user-exec bit set.
     // eslint-disable-next-line no-bitwise
     expect((stat.mode & 0o100) !== 0).toBe(true);
   });

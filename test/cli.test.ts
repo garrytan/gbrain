@@ -1,8 +1,11 @@
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 // Read cli.ts source for structural checks
 const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
+const bunExe = process.execPath;
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 describe('CLI structure', () => {
   test('imports operations from operations.ts', () => {
@@ -47,8 +50,8 @@ describe('ask alias', () => {
   });
 
   test('ask does NOT appear in --tools-json output', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', '--tools-json'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -62,8 +65,8 @@ describe('ask alias', () => {
 
 describe('CLI dispatch integration', () => {
   test('--version outputs version', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--version'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', '--version'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -73,8 +76,8 @@ describe('CLI dispatch integration', () => {
   });
 
   test('unknown command prints error and exits 1', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'notacommand'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'notacommand'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -85,8 +88,8 @@ describe('CLI dispatch integration', () => {
   });
 
   test('per-command --help prints usage without DB connection', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'get', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'get', '--help'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -97,8 +100,8 @@ describe('CLI dispatch integration', () => {
   });
 
   test('upgrade --help prints usage without running upgrade', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'upgrade', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'upgrade', '--help'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -109,8 +112,8 @@ describe('CLI dispatch integration', () => {
   });
 
   test('--help prints global help', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', '--help'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -122,8 +125,8 @@ describe('CLI dispatch integration', () => {
   });
 
   test('--tools-json outputs valid JSON with operations', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', '--tools-json'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });

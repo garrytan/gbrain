@@ -167,8 +167,8 @@ describe('isTrustDialogVisible', () => {
 
 describe('resolveBinary', () => {
   it('honors override when the file exists', () => {
-    // /bin/sh exists everywhere unix-y this test runs.
-    expect(resolveBinary('any-name', '/bin/sh')).toBe('/bin/sh');
+    const override = process.execPath;
+    expect(resolveBinary('any-name', override)).toBe(override);
   });
 
   it('returns null for a definitely-missing binary', () => {

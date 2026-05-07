@@ -8,8 +8,12 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import { fileURLToPath } from 'url';
 import { VERSION } from '../../src/version.ts';
 import { isMinorOrMajorBump } from '../../src/commands/check-update.ts';
+
+const bunExe = process.execPath;
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 // Check if we can reach GitHub
 async function hasNetwork(): Promise<boolean> {
@@ -30,8 +34,8 @@ if (skip) {
 
 describeE2E('E2E: Check-Update', () => {
   test('check-update --json returns valid JSON with current version', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--json'], {
-      cwd: new URL('../..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'check-update', '--json'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -47,8 +51,8 @@ describeE2E('E2E: Check-Update', () => {
   });
 
   test('check-update without --json prints human-readable output', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update'], {
-      cwd: new URL('../..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'check-update'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -60,8 +64,8 @@ describeE2E('E2E: Check-Update', () => {
   });
 
   test('check-update --help prints usage', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--help'], {
-      cwd: new URL('../..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'check-update', '--help'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -74,8 +78,8 @@ describeE2E('E2E: Check-Update', () => {
   });
 
   test('handles no-releases gracefully (current repo state)', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--json'], {
-      cwd: new URL('../..', import.meta.url).pathname,
+    const proc = Bun.spawn([bunExe, 'run', 'src/cli.ts', 'check-update', '--json'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });

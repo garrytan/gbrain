@@ -112,10 +112,13 @@ describeE2E('E2E: v0.11.0 orchestrator against live Postgres', () => {
     expect(result.version).toBe('0.11.0');
     expect(['complete', 'partial']).toContain(result.status);
 
-    // Phase D: preferences.json exists with 0o600 + mode=pain_triggered.
+    // Phase D: preferences.json exists with private POSIX perms where
+    // supported + mode=pain_triggered.
     const prefsPath = join(tmp, '.gbrain', 'preferences.json');
     expect(existsSync(prefsPath)).toBe(true);
-    expect(statSync(prefsPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') {
+      expect(statSync(prefsPath).mode & 0o777).toBe(0o600);
+    }
     const prefs = loadPreferences();
     expect(prefs.minion_mode).toBe('pain_triggered');
     expect(prefs.set_at).toBeTruthy();

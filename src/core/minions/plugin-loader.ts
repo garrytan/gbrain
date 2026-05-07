@@ -3,9 +3,10 @@
  *
  * Your OpenClaw (and future downstream agents) ship custom subagent defs
  * from their own repos. gbrain discovers them at worker startup via
- * GBRAIN_PLUGIN_PATH = colon-separated absolute paths (like $PATH). Each
- * path must contain a gbrain.plugin.json manifest describing the plugin
- * and a subagents/ subdirectory holding `*.md` definition files.
+ * GBRAIN_PLUGIN_PATH = absolute paths separated like the host PATH
+ * (`:` on POSIX, `;` on Windows). Each path must contain a
+ * gbrain.plugin.json manifest describing the plugin and a subagents/
+ * subdirectory holding `*.md` definition files.
  *
  * Path policy is strict on purpose:
  *   - ABSOLUTE paths only. Relative paths and `~` prefixes are rejected
@@ -80,7 +81,7 @@ export interface LoadOpts {
 /** Public entry point: load every plugin directory from GBRAIN_PLUGIN_PATH. */
 export function loadPluginsFromEnv(opts: LoadOpts = {}): PluginLoadResult {
   const raw = opts.envPath ?? process.env.GBRAIN_PLUGIN_PATH ?? '';
-  const paths = raw.split(':').map(s => s.trim()).filter(Boolean);
+  const paths = raw.split(path.delimiter).map(s => s.trim()).filter(Boolean);
   const result: PluginLoadResult = { plugins: [], warnings: [] };
 
   // Left-wins collision tracking.

@@ -47,7 +47,7 @@ const STDERR_TAIL_MAX_BYTES = 16 * 1024;
 const KILL_GRACE_MS = 5000;
 
 export interface ShellJobParams {
-  /** Shell command. Spawned via `/bin/sh -c cmd`. Exactly one of cmd or argv is required. */
+  /** Shell command. Spawned via the platform shell. Exactly one of cmd or argv is required. */
   cmd?: string;
   /** Argv vector. Spawned directly without a shell. Exactly one of cmd or argv is required. */
   argv?: string[];
@@ -64,6 +64,21 @@ export interface ShellJobResult {
   stderr_tail: string;
   duration_ms: number;
   pid: number;
+}
+
+function getPlatformShell(cmd: string): { file: string; args: string[] } {
+  if (process.platform === 'win32') {
+    const systemRoot = process.env.SystemRoot && path.isAbsolute(process.env.SystemRoot)
+      ? process.env.SystemRoot
+      : 'C:\\Windows';
+    const comSpec = process.env.ComSpec;
+    const file = comSpec && path.isAbsolute(comSpec)
+      ? comSpec
+      : path.join(systemRoot, 'System32', 'cmd.exe');
+    return { file, args: ['/d', '/s', '/c', cmd] };
+  }
+
+  return { file: '/bin/sh', args: ['-c', cmd] };
 }
 
 /** Validate and narrow `job.data` to ShellJobParams. Throws UnrecoverableError
@@ -224,9 +239,10 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
   let proc: ChildProcess;
   try {
     if (params.cmd) {
-      // Absolute /bin/sh — not 'sh' — so a caller-supplied env with a poisoned
-      // PATH can't redirect to a different shell binary.
-      proc = spawn('/bin/sh', ['-c', params.cmd], {
+      // Use an absolute platform shell, not a PATH lookup, so caller-supplied
+      // env cannot redirect to a different shell binary.
+      const shell = getPlatformShell(params.cmd);
+      proc = spawn(shell.file, shell.args, {
         cwd: params.cwd,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],

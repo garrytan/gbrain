@@ -21,7 +21,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, lstatSync, statSync, realpathSync } from 'fs';
-import { join, resolve, dirname } from 'path';
+import { join, resolve, dirname, relative, isAbsolute, sep } from 'path';
 import { execSync } from 'child_process';
 import { childGlobalFlags } from '../../core/cli-options.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
@@ -154,8 +154,11 @@ function safeReadHostFile(path: string): { content: string; skipReason?: string 
     if (stats.isSymbolicLink()) {
       const resolved = realpathSync(path);
       // Skip if the symlink target escapes the scoped roots.
-      const scopedRoots = [join(home(), '.claude'), join(home(), '.openclaw')];
-      if (!scopedRoots.some(root => resolved.startsWith(root))) {
+      const scopedRoots = [join(home(), '.claude'), join(home(), '.openclaw')].map(root => resolve(root));
+      if (!scopedRoots.some(root => {
+        const relToRoot = relative(root, resolved);
+        return relToRoot === '' || (!relToRoot.startsWith(`..${sep}`) && relToRoot !== '..' && !isAbsolute(relToRoot));
+      })) {
         return { content: '', skipReason: `symlink target outside scoped root: ${resolved}` };
       }
     }

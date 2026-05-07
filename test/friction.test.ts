@@ -8,7 +8,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, existsSync, readFileSync, appendFileSync } from 'fs';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import {
   logFriction, readFriction, listRuns, renderReport, renderSummary,
@@ -27,8 +27,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env.GBRAIN_HOME = ORIG_HOME;
+  if (ORIG_HOME !== undefined) process.env.GBRAIN_HOME = ORIG_HOME;
+  else delete process.env.GBRAIN_HOME;
   if (ORIG_RUN_ID !== undefined) process.env.GBRAIN_FRICTION_RUN_ID = ORIG_RUN_ID;
+  else delete process.env.GBRAIN_FRICTION_RUN_ID;
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -179,7 +181,7 @@ describe('renderer', () => {
   });
 
   test('redact strips homedir and cwd from message + cwd field', () => {
-    const home = process.env.HOME ?? '';
+    const home = homedir();
     const fakeCwd = process.cwd();
     logFriction({
       runId: 'run-red',
@@ -193,7 +195,7 @@ describe('renderer', () => {
   });
 
   test('--no-redact path preserves homedir', () => {
-    const home = process.env.HOME ?? '/tmp/none';
+    const home = homedir();
     logFriction({ runId: 'run-noredact', phase: 'p', message: `at ${home}/foo` });
     const md = renderReport('run-noredact', { format: 'md', redact: false });
     expect(md).toContain(home);
@@ -220,7 +222,7 @@ describe('summary', () => {
 
 describe('redactEntry pure function', () => {
   test('replaces homedir occurrences', () => {
-    const home = process.env.HOME ?? '/x';
+    const home = homedir();
     const e: FrictionEntry = {
       schema_version: '1', ts: 'now', run_id: 'r', phase: 'p', kind: 'friction',
       message: `${home}/secret/file.txt`, source: 'claw', cwd: '/cwd', gbrain_version: 'test',

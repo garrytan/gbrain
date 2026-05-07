@@ -4,8 +4,8 @@
  * Invokes the harness via `bun run src/cli.ts` (NOT a compiled binary —
  * `bun build --compile` doesn't bundle PGLite's runtime assets like
  * pglite.data, so a compiled gbrain can't init a fresh PGLite brain).
- * Uses a tiny shim script that the harness can spawn as if it were the
- * gbrain binary.
+ * Passes a binary plus prefix args to the harness so child phases can invoke
+ * the source tree without relying on platform-specific shell shims.
  *
  * Asserts:
  *   - exit code 0 on a clean tree
@@ -18,40 +18,50 @@
 
 import { describe, test, expect, beforeAll } from 'bun:test';
 import { execFileSync, spawnSync } from 'child_process';
-import { mkdirSync, existsSync, mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync, chmodSync } from 'fs';
-import { tmpdir } from 'os';
+import { mkdirSync, existsSync, mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync } from 'fs';
+import { homedir, tmpdir } from 'os';
 import { join, resolve } from 'path';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const BIN_CACHE = join(REPO_ROOT, 'test', '.cache');
-const BIN_PATH = join(BIN_CACHE, 'gbrain.sh');
+const CLI_PATH = join(REPO_ROOT, 'src', 'cli.ts');
+const CLI_PREFIX_ARGS = ['run', CLI_PATH];
 const SCENARIOS_DIR = join(REPO_ROOT, 'test', 'fixtures', 'claw-test-scenarios');
 
 beforeAll(() => {
   if (!existsSync(BIN_CACHE)) mkdirSync(BIN_CACHE, { recursive: true });
-  // Shim that delegates to `bun run src/cli.ts` so PGLite assets resolve from
-  // the source tree (bun --compile doesn't bundle them). Marked executable so
-  // child_process.spawn can run it directly.
-  const shim = `#!/bin/sh\nexec bun run "${join(REPO_ROOT, 'src', 'cli.ts')}" "$@"\n`;
-  writeFileSync(BIN_PATH, shim, 'utf-8');
-  chmodSync(BIN_PATH, 0o755);
 }, 30_000);
+
+function sourceTreeEnv(env: NodeJS.ProcessEnv = process.env, prefixArgs = CLI_PREFIX_ARGS): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    GBRAIN_BIN_OVERRIDE: process.execPath,
+    GBRAIN_BIN_ARGS_JSON: JSON.stringify(prefixArgs),
+    GBRAIN_CLAW_SCENARIOS_DIR: SCENARIOS_DIR,
+  };
+}
+
+function spawnGbrain(args: string[], env: NodeJS.ProcessEnv, timeout: number) {
+  return spawnSync(process.execPath, [...CLI_PREFIX_ARGS, ...args], {
+    cwd: REPO_ROOT,
+    env,
+    encoding: 'utf-8',
+    timeout,
+  });
+}
 
 describe('gbrain claw-test --scenario fresh-install (scripted)', () => {
   test('runs end-to-end clean and produces zero error/blocker friction', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-fresh-'));
     try {
-      const result = spawnSync(BIN_PATH, ['claw-test', '--scenario', 'fresh-install', '--keep-tempdir'], {
-        cwd: REPO_ROOT,
-        env: {
+      const result = spawnGbrain(
+        ['claw-test', '--scenario', 'fresh-install', '--keep-tempdir'],
+        sourceTreeEnv({
           ...process.env,
           GBRAIN_HOME: tmp,
-          GBRAIN_BIN_OVERRIDE: BIN_PATH,
-          GBRAIN_CLAW_SCENARIOS_DIR: join(REPO_ROOT, 'test', 'fixtures', 'claw-test-scenarios'),
-        },
-        encoding: 'utf-8',
-        timeout: 120_000,
-      });
+        }),
+        120_000,
+      );
       if (result.status !== 0) {
         console.error('STDOUT:', result.stdout);
         console.error('STDERR:', result.stderr);
@@ -77,28 +87,36 @@ describe('gbrain claw-test --scenario fresh-install (scripted)', () => {
   }, 180_000);
 
   test('break path: an invented command produces an error friction entry and exits non-zero', () => {
-    // We do this by setting GBRAIN_BIN_OVERRIDE to a script that pretends to be gbrain
-    // and rejects the `import` subcommand specifically.
+    // Use a Bun module as the child command prefix target so the break path stays
+    // portable while rejecting the `import` subcommand specifically.
     const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-break-'));
-    const fakeBin = join(tmp, 'fake-gbrain');
+    const fakeBin = join(tmp, 'fake-gbrain.mjs');
     try {
-      // Write a shim that delegates to real gbrain but rejects 'import' to simulate breakage.
-      const shimContent = `#!/bin/sh\nif [ "$1" = "import" ]; then echo "fake import error" >&2; exit 17; fi\nexec "${BIN_PATH}" "$@"\n`;
-      const { writeFileSync, chmodSync } = require('fs');
+      // Delegate to source gbrain for every command except the simulated failure.
+      const shimContent = `const args = process.argv.slice(2);
+if (args[0] === 'import') {
+  console.error('fake import error');
+  process.exit(17);
+}
+const proc = Bun.spawn([process.execPath, 'run', ${JSON.stringify(CLI_PATH)}, ...args], {
+  cwd: process.cwd(),
+  env: process.env,
+  stdout: 'inherit',
+  stderr: 'inherit',
+});
+process.exit(await proc.exited);
+`;
+      const { writeFileSync } = require('fs');
       writeFileSync(fakeBin, shimContent, 'utf-8');
-      chmodSync(fakeBin, 0o755);
 
-      const result = spawnSync(BIN_PATH, ['claw-test', '--scenario', 'fresh-install', '--keep-tempdir'], {
-        cwd: REPO_ROOT,
-        env: {
+      const result = spawnGbrain(
+        ['claw-test', '--scenario', 'fresh-install', '--keep-tempdir'],
+        sourceTreeEnv({
           ...process.env,
           GBRAIN_HOME: tmp,
-          GBRAIN_BIN_OVERRIDE: fakeBin,
-          GBRAIN_CLAW_SCENARIOS_DIR: join(REPO_ROOT, 'test', 'fixtures', 'claw-test-scenarios'),
-        },
-        encoding: 'utf-8',
-        timeout: 60_000,
-      });
+        }, ['run', fakeBin]),
+        60_000,
+      );
       expect(result.status).not.toBe(0);
 
       // The friction log should have an error-severity entry for the 'import' phase.
@@ -118,11 +136,11 @@ describe('gbrain friction render integration', () => {
   test('render produces a markdown report with the redact placeholder', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'claw-test-e2e-render-'));
     try {
-      // Log a friction entry with $HOME embedded, then render --redact md
-      const home = process.env.HOME ?? '/tmp';
-      const env = { ...process.env, GBRAIN_HOME: tmp, GBRAIN_FRICTION_RUN_ID: 'render-e2e' };
-      execFileSync(BIN_PATH, ['friction', 'log', '--phase', 'p', '--message', `error at ${home}/.gbrain/x`], { env, encoding: 'utf-8' });
-      const out = execFileSync(BIN_PATH, ['friction', 'render', '--run-id', 'render-e2e'], { env, encoding: 'utf-8' });
+      // Log a friction entry with the OS home directory embedded, then render --redact md.
+      const home = homedir();
+      const env = sourceTreeEnv({ ...process.env, GBRAIN_HOME: tmp, GBRAIN_FRICTION_RUN_ID: 'render-e2e' });
+      execFileSync(process.execPath, [...CLI_PREFIX_ARGS, 'friction', 'log', '--phase', 'p', '--message', `error at ${home}/.gbrain/x`], { env, encoding: 'utf-8' });
+      const out = execFileSync(process.execPath, [...CLI_PREFIX_ARGS, 'friction', 'render', '--run-id', 'render-e2e'], { env, encoding: 'utf-8' });
       expect(out).toContain('# Friction report');
       expect(out).toContain('<HOME>');
       // --redact is the default for md, so home itself should not appear.

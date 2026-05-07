@@ -9,6 +9,10 @@ GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \
 # → exit_code: 0, stdout_tail: "hello\n", duration_ms: 43
 ```
 
+The examples use POSIX paths. On Windows, `cwd` must still be absolute, for
+example `C:\\Users\\you\\brain`, and `cmd` is interpreted by `cmd.exe` rather
+than `/bin/sh`.
+
 That's it. Your cron scripts now have a home with retry, backoff, DLQ, and
 `gbrain jobs list` visibility, without each one booting a full LLM session.
 
@@ -46,8 +50,9 @@ pass:
 **What the env allowlist does AND does not do.** Shell jobs run with a minimal
 env: `PATH, HOME, USER, LANG, TZ, NODE_ENV`. Your secrets like `OPENAI_API_KEY`
 and `DATABASE_URL` are NOT passed to the child. You opt-in additional keys per
-job via `env: { ... }`. This stops accidental `$OPENAI_API_KEY` interpolation in
-a user-authored script. It does **not** sandbox filesystem reads: a shell
+job via `env: { ... }`. This stops accidental `$OPENAI_API_KEY` /
+`%OPENAI_API_KEY%` interpolation in a user-authored script. It does **not**
+sandbox filesystem reads: a shell
 script can `cat ~/.env` or any file the worker process can read. The operator
 picks a safe `cwd`. That is the trust boundary.
 
@@ -117,6 +122,10 @@ gbrain jobs submit shell \
   --follow
 ```
 
+`cmd` uses the host platform shell: `/bin/sh -c` on POSIX hosts and
+`cmd.exe /d /s /c` on Windows. If the command should behave identically across
+hosts, prefer `argv`.
+
 ---
 
 ## Debug a failed job
@@ -158,7 +167,7 @@ gbrain jobs list --status waiting --name shell
 | Error | What it means | Fix |
 |---|---|---|
 | `shell: specify exactly one of cmd or argv` | `cmd` and `argv` are mutually exclusive. Both absent is also invalid. | Choose one. `cmd` for shell-interpolated strings; `argv` for structured args. |
-| `shell: cwd is required and must be an absolute path` | `cwd` must be a string starting with `/`. | Set `cwd` in `--params` to an absolute path. |
+| `shell: cwd is required and must be an absolute path` | `cwd` must be absolute for the current host (`/data` on POSIX, `C:\\data` on Windows). | Set `cwd` in `--params` to an absolute path. |
 | `shell: argv must be an array of strings` | `argv` has a non-string entry or isn't an array. | Pass `argv: ["bin","arg1","arg2"]`. |
 | `shell: env values must all be strings` | `env` has a number/bool/object value. | Stringify: `"env":{"COUNT":"3"}` not `"env":{"COUNT":3}`. |
 | `permission_denied: shell jobs cannot be submitted over MCP` | An MCP client tried to submit a shell job. By design CLI-only. | Submit from CLI or via a trusted operation handler (`ctx.remote === false`). |

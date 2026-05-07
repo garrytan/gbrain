@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'bun:test';
-import { existsSync, readFileSync, writeFileSync, unlinkSync, chmodSync, mkdirSync, rmSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, rmSync } from 'fs';
 import { spawn } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -17,27 +17,26 @@ afterEach(() => {
 interface IntegrationHarness {
   pidFile: string;
   auditDir: string;
-  workerScript: string;
+  workerCwd: string;
   envOutFile: string;
   cleanup: () => void;
 }
 
-/** Create per-test temp files + a fake worker shell script. */
+/** Create per-test temp files + a fake Bun worker entrypoint. */
 function makeHarness(name: string, workerBody: string): IntegrationHarness {
   const tmpRoot = join(tmpdir(), `gbrain-sup-test-${name}-${process.pid}-${Date.now()}`);
   mkdirSync(tmpRoot, { recursive: true });
   const pidFile = join(tmpRoot, 'supervisor.pid');
   const auditDir = join(tmpRoot, 'audit');
-  const workerScript = join(tmpRoot, 'worker.sh');
+  const workerScript = join(tmpRoot, 'jobs');
   const envOutFile = join(tmpRoot, 'env-out.txt');
 
-  writeFileSync(workerScript, `#!/bin/sh\n${workerBody}\n`, 'utf8');
-  chmodSync(workerScript, 0o755);
+  writeFileSync(workerScript, `${workerBody}\n`, 'utf8');
 
   return {
     pidFile,
     auditDir,
-    workerScript,
+    workerCwd: tmpRoot,
     envOutFile,
     cleanup: () => { try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* noop */ } },
   };
@@ -51,7 +50,8 @@ function spawnSupervisor(h: IntegrationHarness, overrides: Record<string, string
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     SUP_PID_FILE: h.pidFile,
-    SUP_CLI_PATH: h.workerScript,
+    SUP_CLI_PATH: process.execPath,
+    SUP_WORKER_CWD: h.workerCwd,
     SUP_AUDIT_DIR: h.auditDir,
     SUP_BACKOFF_FLOOR_MS: '5',
     SUP_MAX_CRASHES: '3',
@@ -195,7 +195,7 @@ describe('MinionSupervisor', () => {
     it('respawns the worker after a crash and eventually exits with max-crashes code=1', async () => {
       // Worker always exits with code 1; supervisor should respawn it 3 times,
       // hit max-crashes, then exit via shutdown() with code 1.
-      const h = makeHarness('max-crashes', 'exit 1');
+      const h = makeHarness('max-crashes', 'process.exit(1);');
       try {
         const sup = spawnSupervisor(h, { SUP_MAX_CRASHES: '3' });
         const { code } = await sup.exited;
@@ -227,10 +227,12 @@ describe('MinionSupervisor', () => {
   });
 
   describe('integration: graceful SIGTERM during backoff', () => {
-    it('receives SIGTERM while sleeping between crashes and exits 0 cleanly', async () => {
+    it.skipIf(process.platform === 'win32')('receives SIGTERM while sleeping between crashes and exits 0 cleanly', async () => {
+      // Windows does not provide POSIX SIGTERM delivery semantics to child
+      // processes, so this contract is only meaningful on POSIX hosts.
       // Worker always exits with code 1; supervisor has a high max-crashes
       // and a long-enough backoff floor that we can reliably catch it mid-sleep.
-      const h = makeHarness('sigterm-backoff', 'exit 1');
+      const h = makeHarness('sigterm-backoff', 'process.exit(1);');
       try {
         const sup = spawnSupervisor(h, {
           SUP_MAX_CRASHES: '100',
@@ -282,7 +284,7 @@ describe('MinionSupervisor', () => {
       const outFile = join(tmpdir(), `gbrain-sup-env-${process.pid}-${Date.now()}.txt`);
       try { unlinkSync(outFile); } catch { /* may not exist */ }
 
-      const h = makeHarness('env-strip-outfile', `printf '%s\\n' "\${GBRAIN_ALLOW_SHELL_JOBS-UNSET}" > "$OUT_FILE" ; exit 0`);
+      const h = makeHarness('env-strip-outfile', `await Bun.write(process.env.OUT_FILE!, (process.env.GBRAIN_ALLOW_SHELL_JOBS ?? 'UNSET') + '\\n'); process.exit(0);`);
 
       try {
         const sup = spawnSupervisor(h, {
@@ -308,7 +310,7 @@ describe('MinionSupervisor', () => {
       const outFile = join(tmpdir(), `gbrain-sup-env-ok-${process.pid}-${Date.now()}.txt`);
       try { unlinkSync(outFile); } catch { /* may not exist */ }
 
-      const h = makeHarness('env-pass-on-opt-in', `printf '%s\\n' "\${GBRAIN_ALLOW_SHELL_JOBS-UNSET}" > "$OUT_FILE" ; exit 0`);
+      const h = makeHarness('env-pass-on-opt-in', `await Bun.write(process.env.OUT_FILE!, (process.env.GBRAIN_ALLOW_SHELL_JOBS ?? 'UNSET') + '\\n'); process.exit(0);`);
 
       try {
         const sup = spawnSupervisor(h, {
@@ -333,7 +335,7 @@ describe('MinionSupervisor', () => {
       const outFile = join(tmpdir(), `gbrain-sup-supervised-${process.pid}-${Date.now()}.txt`);
       try { unlinkSync(outFile); } catch { /* may not exist */ }
 
-      const h = makeHarness('supervised-env', `printf '%s\n' "\${GBRAIN_SUPERVISED-UNSET}" > "$OUT_FILE" ; exit 0`);
+      const h = makeHarness('supervised-env', `await Bun.write(process.env.OUT_FILE!, (process.env.GBRAIN_SUPERVISED ?? 'UNSET') + '\\n'); process.exit(0);`);
 
       try {
         const sup = spawnSupervisor(h, {
@@ -372,7 +374,7 @@ describe('MinionSupervisor', () => {
     // window before max-crashes fires. We assert the basic completion path
     // and let CI's wall-clock detect any pathological CPU spike.
     it('completes a normal supervise lifecycle with healthInterval=0', async () => {
-      const h = makeHarness('health-interval-zero', 'exit 0');
+      const h = makeHarness('health-interval-zero', 'process.exit(0);');
 
       try {
         const sup = spawnSupervisor(h, {
@@ -409,7 +411,7 @@ describe('MinionSupervisor', () => {
       // Worker logs its argv to OUT_FILE so the test can assert --max-rss 2048
       // landed there. spawnOnce in supervisor.ts builds:
       //   ['jobs', 'work', '--concurrency', '1', '--queue', 'default', '--max-rss', '2048']
-      const h = makeHarness('maxrss-default', `printf '%s\\n' "$*" > "$OUT_FILE" ; exit 0`);
+      const h = makeHarness('maxrss-default', `await Bun.write(process.env.OUT_FILE!, Bun.argv.slice(2).join(' ') + '\\n'); process.exit(0);`);
 
       try {
         const sup = spawnSupervisor(h, {

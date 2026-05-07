@@ -82,6 +82,10 @@ function runWrapper(extraArgs: string[] = []): { code: number; stdout: string; s
   };
 }
 
+function bashPwd(cwd: string): string {
+  return spawnSync('bash', ['-lc', 'pwd'], { cwd, encoding: 'utf-8' }).stdout.trim();
+}
+
 describe('run-unit-parallel.sh exit-code propagation (a)', () => {
   it('exits non-zero when any shard contains a failing test', () => {
     const r = runWrapper();
@@ -124,7 +128,7 @@ describe('run-unit-parallel.sh failure-log contract (d)', () => {
     expect(r.code).not.toBe(0);
     expect(r.stderr).toContain('TEST FAILURES');
     // Banner includes the absolute path so users can `cat` it directly.
-    expect(r.stderr).toContain(join(TMPROOT, '.context', 'test-failures.log'));
+    expect(r.stderr.replace(/\\/g, '/')).toContain(`${bashPwd(TMPROOT)}/.context/test-failures.log`);
   });
 
   it('clears .context/test-failures.log to empty when all shards pass', () => {

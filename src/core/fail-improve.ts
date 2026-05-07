@@ -75,6 +75,7 @@ function isAbortError(err: unknown): boolean {
 
 export class FailImproveLoop {
   private logDir: string;
+  private entryCounts = new Map<string, number>();
 
   constructor(logDir?: string) {
     this.logDir = logDir || getLogDir();
@@ -154,7 +155,10 @@ export class FailImproveLoop {
     this.ensureDir(filePath);
     const line = JSON.stringify(entry) + '\n';
     appendFileSync(filePath, line, 'utf-8');
-    this.rotateIfNeeded(entry.operation);
+    const count = this.incrementEntryCount(entry.operation, filePath);
+    if (count > MAX_ENTRIES) {
+      this.rotateIfNeeded(entry.operation);
+    }
   }
 
   /** Read all failures for an operation. */
@@ -266,6 +270,25 @@ export class FailImproveLoop {
     catch { return { total: 0, deterministic: 0 }; }
   }
 
+  private incrementEntryCount(operation: string, filePath: string): number {
+    let count = this.entryCounts.get(operation);
+    if (count === undefined) {
+      try {
+        count = existsSync(filePath)
+          ? readFileSync(filePath, 'utf-8').split('\n').filter(Boolean).length - 1
+          : 0;
+      } catch {
+        count = 0;
+      }
+      // logFailure already appended the current entry before the first count.
+      count = Math.max(0, count + 1);
+    } else {
+      count += 1;
+    }
+    this.entryCounts.set(operation, count);
+    return count;
+  }
+
   private getImprovements(operation: string): Array<{ timestamp: string; description: string }> {
     const filePath = join(this.logDir, operation, 'improvements.json');
     if (!existsSync(filePath)) return [];
@@ -282,6 +305,7 @@ export class FailImproveLoop {
       // Keep last MAX_ENTRIES entries
       const kept = lines.slice(-MAX_ENTRIES);
       writeFileSync(filePath, kept.join('\n') + '\n', 'utf-8');
+      this.entryCounts.set(operation, kept.length);
     }
   }
 }

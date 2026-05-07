@@ -196,10 +196,10 @@ describe('loadPluginsFromEnv', () => {
     expect(r.warnings).toEqual([]);
   });
 
-  test('multi-path: colon-separated PATH loads both', () => {
+  test('multi-path: host PATH delimiter loads both', () => {
     const a = writePlugin('a', { subagents: { 'x.md': `---\nname: x\n---\nbody` } });
     const b = writePlugin('b', { subagents: { 'y.md': `---\nname: y\n---\nbody` } });
-    const r = loadPluginsFromEnv({ envPath: `${a}:${b}` });
+    const r = loadPluginsFromEnv({ envPath: `${a}${path.delimiter}${b}` });
     expect(r.plugins.length).toBe(2);
     expect(r.plugins[0]!.manifest.name).toBe('a');
     expect(r.plugins[1]!.manifest.name).toBe('b');
@@ -208,7 +208,7 @@ describe('loadPluginsFromEnv', () => {
   test('collision: left-wins with a warning', () => {
     const left = writePlugin('left', { subagents: { 'shared.md': `---\nname: shared\n---\nleft body` } });
     const right = writePlugin('right', { subagents: { 'shared.md': `---\nname: shared\n---\nright body` } });
-    const r = loadPluginsFromEnv({ envPath: `${left}:${right}` });
+    const r = loadPluginsFromEnv({ envPath: `${left}${path.delimiter}${right}` });
     expect(r.plugins.length).toBe(2);
     // Only the left plugin contributes the `shared` subagent.
     const leftSubs = r.plugins[0]!.subagents.map(s => s.name);

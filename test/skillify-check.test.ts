@@ -11,7 +11,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { join } from 'path';
+import { delimiter, join } from 'path';
 
 const REPO = join(__dirname, '..');
 const SCRIPT = join(REPO, 'scripts', 'skillify-check.ts');
@@ -144,17 +144,22 @@ describe('skillify-check ↔ gbrain check-resolvable wiring', () => {
   test('happy path: synthetic gbrain on PATH returns ok=true, gate passes', () => {
     const fakeBinDir = mkdtempSync(join(tmpdir(), 'fake-gbrain-'));
     created.push(fakeBinDir);
-    const fakeBin = join(fakeBinDir, 'gbrain');
-    writeFileSync(
-      fakeBin,
-      `#!/bin/sh
+    const fakeBin = process.platform === 'win32'
+      ? join(fakeBinDir, 'gbrain.cmd')
+      : join(fakeBinDir, 'gbrain');
+    const fakeScript = process.platform === 'win32'
+      ? `@echo off\r\necho {"ok":true,"skillsDir":"/fake","report":{"ok":true,"issues":[],"summary":{"total_skills":0,"reachable":0,"unreachable":0,"overlaps":0,"gaps":0}},"autoFix":null,"deferred":[{"check":5,"name":"trigger_routing_eval","issue":""},{"check":6,"name":"brain_filing","issue":""}],"error":null,"message":null}\r\n`
+      : `#!/bin/sh
 cat <<'JSON'
 {"ok":true,"skillsDir":"/fake","report":{"ok":true,"issues":[],"summary":{"total_skills":0,"reachable":0,"unreachable":0,"overlaps":0,"gaps":0}},"autoFix":null,"deferred":[{"check":5,"name":"trigger_routing_eval","issue":""},{"check":6,"name":"brain_filing","issue":""}],"error":null,"message":null}
 JSON
-`,
+`;
+    writeFileSync(
+      fakeBin,
+      fakeScript,
     );
     chmodSync(fakeBin, 0o755);
-    const r = runWithPath({ path: `${fakeBinDir}:${process.env.PATH}` });
+    const r = runWithPath({ path: `${fakeBinDir}${delimiter}${process.env.PATH}` });
     // No silent-pass warning.
     expect(r.stderr).not.toContain('gbrain check-resolvable not runnable');
     const parsed = JSON.parse(r.stdout);

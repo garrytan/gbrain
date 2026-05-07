@@ -194,9 +194,12 @@ function normalizeOnePath(raw: string, field: 'scan_paths' | 'deny_paths'): stri
     );
   }
 
-  // Normalize: resolve any tail and ensure trailing slash for unambiguous
-  // prefix-matching. resolve() strips trailing slash; we re-add it.
-  const resolved = resolvePath(expanded);
+  return normalizeAbsolutePrefix(expanded);
+}
+
+function normalizeAbsolutePrefix(p: string): string {
+  // Use forward slashes for stable prefix comparisons across Windows and POSIX.
+  const resolved = resolvePath(p).replace(/\\/g, '/');
   return resolved.endsWith('/') ? resolved : resolved + '/';
 }
 
@@ -276,8 +279,7 @@ export function isPathAllowed(
 ): boolean {
   const expanded = expandHome(candidate);
   if (!isAbsolute(expanded)) return false;
-  const resolved = resolvePath(expanded);
-  const prefix = resolved.endsWith('/') ? resolved : resolved + '/';
+  const prefix = normalizeAbsolutePrefix(expanded);
 
   // Must be inside at least one scan_path.
   const allowed = config.scan_paths.some((sp) => prefix.startsWith(sp));

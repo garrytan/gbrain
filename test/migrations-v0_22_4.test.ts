@@ -131,7 +131,8 @@ describe('v0.22.4 migration (B11)', () => {
         expect(e.command).toContain('--fix');
       }
     } finally {
-      process.env.HOME = origHome;
+      if (origHome !== undefined) process.env.HOME = origHome;
+      else delete process.env.HOME;
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });

@@ -3,6 +3,7 @@ import { writeFileSync, mkdirSync, rmSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { importFile, importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { canCreateFileSymlink } from './helpers/symlink.ts';
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
 
@@ -149,7 +150,7 @@ Content.
     expect(result.slug).toBe('concepts/from-path');
   });
 
-  test('skips symlinks in importFromFile (defense-in-depth)', async () => {
+  test.skipIf(!canCreateFileSymlink())('skips symlinks in importFromFile (defense-in-depth)', async () => {
     // Even if the walker somehow passes a symlink through, importFromFile
     // should catch it and return skipped.
     const realFile = join(TMP, 'real-target.md');
@@ -162,7 +163,7 @@ Content.
 `);
     const linkPath = join(TMP, 'symlink-file.md');
     try { rmSync(linkPath); } catch { /* may not exist */ }
-    symlinkSync(realFile, linkPath);
+    symlinkSync(realFile, linkPath, 'file');
 
     const engine = mockEngine();
     const result = await importFile(engine, linkPath, 'symlink-file.md', { noEmbed: true });

@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, symlinkSync, rmSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { collectMarkdownFiles } from '../src/commands/import.ts';
+import { canCreateDirSymlink, canCreateFileSymlink } from './helpers/symlink.ts';
 
 // These tests exercise the filesystem walker that feeds `gbrain import`.
 // They target L002 (report/findings.md): a malicious symlink inside a shared
@@ -34,7 +35,7 @@ describe('collectMarkdownFiles — symlink containment', () => {
     expect(files).toContain(join(root, 'notes', 'other.md'));
   });
 
-  test('skips a symlink file pointing outside the brain root', () => {
+  test.skipIf(!canCreateFileSymlink())('skips a symlink file pointing outside the brain root', () => {
     // Plant a real secret outside the brain root
     const secretFile = join(secretDir, 'secret.md');
     writeFileSync(secretFile, '# secret — must not be ingested\n');
@@ -44,7 +45,7 @@ describe('collectMarkdownFiles — symlink containment', () => {
     // a regular file, so it ended up in the walker's output and got
     // fed to importFile — chunked, embedded, and indexed in the brain.
     writeFileSync(join(root, 'legit.md'), '# legit\n');
-    symlinkSync(secretFile, join(root, 'innocent.md'));
+    symlinkSync(secretFile, join(root, 'innocent.md'), 'file');
 
     const files = collectMarkdownFiles(root);
     expect(files).toContain(join(root, 'legit.md'));
@@ -54,7 +55,7 @@ describe('collectMarkdownFiles — symlink containment', () => {
     expect(files).not.toContain(secretFile);
   });
 
-  test('does not descend into a symlinked directory', () => {
+  test.skipIf(!canCreateDirSymlink())('does not descend into a symlinked directory', () => {
     // Create a directory outside the root with a markdown file inside it.
     const outsideSub = join(secretDir, 'sub');
     mkdirSync(outsideSub);
@@ -65,7 +66,7 @@ describe('collectMarkdownFiles — symlink containment', () => {
     // With lstatSync, stat.isSymbolicLink() is true and we refuse
     // to descend — this also blocks circular-symlink DoS as a side effect.
     writeFileSync(join(root, 'legit.md'), '# legit\n');
-    symlinkSync(outsideSub, join(root, 'linked-notes'));
+    symlinkSync(outsideSub, join(root, 'linked-notes'), 'dir');
 
     const files = collectMarkdownFiles(root);
     expect(files).toContain(join(root, 'legit.md'));
@@ -73,14 +74,14 @@ describe('collectMarkdownFiles — symlink containment', () => {
     expect(files).not.toContain(join(outsideSub, 'external.md'));
   });
 
-  test('skips broken symlinks without crashing', () => {
+  test.skipIf(!canCreateFileSymlink())('skips broken symlinks without crashing', () => {
     // A dangling symlink — the target never existed. Pre-existing behavior
     // (PR #26 / PR #38) handled this via try/catch around statSync. The
     // L002 fix must not regress it: lstatSync succeeds on a dangling link
     // (it reports on the link itself, not the target), so we reach the
     // isSymbolicLink() branch and skip cleanly, no throw.
     writeFileSync(join(root, 'legit.md'), '# legit\n');
-    symlinkSync('/nonexistent/path/to/nowhere', join(root, 'dangling.md'));
+    symlinkSync(join(root, 'missing-target.md'), join(root, 'dangling.md'), 'file');
 
     const files = collectMarkdownFiles(root);
     expect(files).toContain(join(root, 'legit.md'));

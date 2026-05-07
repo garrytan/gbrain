@@ -45,6 +45,10 @@ if (process.env.SUP_AUDIT_DIR) {
   process.env.GBRAIN_AUDIT_DIR = process.env.SUP_AUDIT_DIR;
 }
 
+if (process.env.SUP_WORKER_CWD) {
+  process.chdir(process.env.SUP_WORKER_CWD);
+}
+
 const supervisorPid = process.pid;
 
 const supervisor = new MinionSupervisor(mockEngine as BrainEngine, {

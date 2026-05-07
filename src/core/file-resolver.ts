@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve, relative, isAbsolute, sep } from 'path';
 import { parse as parseYaml } from './yaml-lite.ts';
 import type { StorageBackend } from './storage.ts';
 
@@ -53,10 +53,10 @@ export async function resolveFile(
   storage?: StorageBackend,
 ): Promise<ResolvedFile> {
   // Validate filePath stays within brainRoot (prevents MCP callers from reading arbitrary files)
-  const { resolve: resolvePath } = await import('path');
-  const resolvedRoot = resolvePath(brainRoot);
-  const resolvedFull = resolvePath(brainRoot, filePath);
-  if (!resolvedFull.startsWith(resolvedRoot + '/') && resolvedFull !== resolvedRoot) {
+  const resolvedRoot = resolve(brainRoot);
+  const resolvedFull = resolve(brainRoot, filePath);
+  const relToRoot = relative(resolvedRoot, resolvedFull);
+  if (relToRoot !== '' && (relToRoot === '..' || relToRoot.startsWith(`..${sep}`) || isAbsolute(relToRoot))) {
     throw new Error(`Path traversal blocked: ${filePath} resolves outside brain root`);
   }
 
