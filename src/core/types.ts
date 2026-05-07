@@ -48,6 +48,7 @@ export interface PageFilters {
   type?: PageType;
   tag?: string;
   limit?: number;
+  /** Skip the first N rows after stable slug-ascending ordering. */
   offset?: number;
   /** ISO date string (YYYY-MM-DD or full ISO timestamp). Filter to pages updated_at > value. */
   updated_after?: string;

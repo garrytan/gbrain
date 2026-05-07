@@ -555,7 +555,7 @@ export class PGLiteEngine implements BrainEngine {
 
     const { rows } = await this.db.query(
       `SELECT p.* FROM pages p ${tagJoin} ${whereSql}
-       ORDER BY p.updated_at DESC ${limitSql}`,
+       ORDER BY p.slug ASC ${limitSql}`,
       params
     );
 

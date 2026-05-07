@@ -728,11 +728,12 @@ const purge_deleted_pages: Operation = {
 
 const list_pages: Operation = {
   name: 'list_pages',
-  description: 'List pages with optional filters. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated.',
+  description: 'List pages with optional filters. Results are stable ascending by slug ASC. Pagination snapshots at request time; concurrent writes during pagination may produce skip/duplicate. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated.',
   params: {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
     limit: { type: 'number', description: 'Max results (default 50)' },
+    offset: { type: 'number', description: 'Skip first N results (default 0)' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
   },
   handler: async (ctx, p) => {
@@ -740,6 +741,7 @@ const list_pages: Operation = {
       type: p.type as any,
       tag: p.tag as string,
       limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      offset: Math.max(0, Math.floor((p.offset as number | undefined) ?? 0)),
       includeDeleted: (p.include_deleted as boolean) === true,
     });
     return pages.map(pg => ({

@@ -525,7 +525,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT p.* FROM pages p
       ${tagJoin}
       WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${deletedCondition}
-      ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
+      ORDER BY p.slug ASC LIMIT ${limit} OFFSET ${offset}
     `;
 
     return rows.map(rowToPage);

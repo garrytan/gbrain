@@ -275,8 +275,8 @@ export interface BrainEngine {
   resolveSlugs(partial: string): Promise<string[]>;
   /**
    * Returns the slug of every page in the brain. Used by batch commands as a
-   * mutation-immune iteration source (alternative to listPages OFFSET pagination,
-   * which is unstable when ordering by updated_at and writes are happening).
+   * mutation-immune iteration source when callers need a full snapshot that
+   * cannot skip/duplicate under concurrent writes.
    */
   getAllSlugs(): Promise<Set<string>>;
 
