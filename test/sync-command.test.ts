@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { mkdirSync, mkdtempSync, rmSync, renameSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { performSync } from '../src/commands/sync.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+import { SUBBRAIN_REGISTRY_CONFIG_KEY } from '../src/core/subbrains.ts';
+import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../src/core/services/note-manifest-service.ts';
 
 const tempDirs: string[] = [];
 
@@ -230,5 +232,216 @@ describe('performSync incremental safety', () => {
       expect(await engine.listPages({ limit: 10 })).toEqual([]);
       expect(await engine.getConfig('sync.last_commit')).toBeNull();
     });
+  });
+
+  test('subbrain full sync imports with prefix and records scoped checkpoint', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    writeFileSync(join(repoPath, 'people', 'alice.md'), [
+      '---',
+      'title: Alice',
+      '---',
+      '',
+      'Alice belongs to the personal sub-brain.',
+    ].join('\n'));
+    const headCommit = commitAll(repoPath, 'seed personal alice');
+
+    await withSqliteEngine(async (engine) => {
+      await engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+        subbrains: {
+          personal: { id: 'personal', path: repoPath, prefix: 'personal', default: true },
+        },
+      }));
+
+      const result = await performSync(engine, {
+        subbrain: 'personal',
+        noPull: true,
+      });
+
+      expect(result.status).toBe('first_sync');
+      expect(await engine.getPage('personal/people/alice')).not.toBeNull();
+      expect(await engine.getPage('people/alice')).toBeNull();
+      expect(await engine.getConfig('sync.subbrains.personal.last_commit')).toBe(headCommit);
+      expect(await engine.getConfig('sync.last_commit')).toBeNull();
+      expect(await engine.getConfig('sync.repo_path')).toBeNull();
+      expect(await engine.getConfig('markdown.repo_path')).toBeNull();
+    });
+  });
+
+  test('all-subbrains sync keeps checkpoints independent', async () => {
+    const personalRepo = makeRepo();
+    mkdirSync(join(personalRepo, 'people'), { recursive: true });
+    writeFileSync(join(personalRepo, 'people', 'alice.md'), '# Alice\n');
+    const personalHead = commitAll(personalRepo, 'seed personal');
+
+    const officeRepo = makeRepo();
+    mkdirSync(join(officeRepo, 'people'), { recursive: true });
+    writeFileSync(join(officeRepo, 'people', 'alice.md'), '# Office Alice\n');
+    const officeHead = commitAll(officeRepo, 'seed office');
+
+    await withSqliteEngine(async (engine) => {
+      await engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+        subbrains: {
+          personal: { id: 'personal', path: personalRepo, prefix: 'personal' },
+          office: { id: 'office', path: officeRepo, prefix: 'office' },
+        },
+      }));
+
+      const result = await performSync(engine, {
+        allSubbrains: true,
+        noPull: true,
+      });
+
+      expect(result.status).toBe('synced');
+      expect(result.added).toBe(2);
+      expect(result.pagesAffected).toEqual(expect.arrayContaining([
+        'personal/people/alice',
+        'office/people/alice',
+      ]));
+      expect(await engine.getConfig('sync.subbrains.personal.last_commit')).toBe(personalHead);
+      expect(await engine.getConfig('sync.subbrains.office.last_commit')).toBe(officeHead);
+      expect(await engine.getPage('personal/people/alice')).not.toBeNull();
+      expect(await engine.getPage('office/people/alice')).not.toBeNull();
+    });
+  });
+
+  test('all-subbrains sync reports up_to_date when every target is already synced', async () => {
+    const personalRepo = makeRepo();
+    writeFileSync(join(personalRepo, 'alice.md'), '# Alice\n');
+    commitAll(personalRepo, 'seed personal');
+
+    const officeRepo = makeRepo();
+    writeFileSync(join(officeRepo, 'alice.md'), '# Office Alice\n');
+    commitAll(officeRepo, 'seed office');
+
+    await withSqliteEngine(async (engine) => {
+      await engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+        subbrains: {
+          personal: { id: 'personal', path: personalRepo, prefix: 'personal' },
+          office: { id: 'office', path: officeRepo, prefix: 'office' },
+        },
+      }));
+
+      await performSync(engine, { allSubbrains: true, noPull: true });
+      const result = await performSync(engine, { allSubbrains: true, noPull: true });
+
+      expect(result.status).toBe('up_to_date');
+      expect(result.targets?.map(target => [target.id, target.status])).toEqual([
+        ['office', 'up_to_date'],
+        ['personal', 'up_to_date'],
+      ]);
+    });
+  });
+
+  test('content-identical subbrain renames refresh note manifest path and slug', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    const content = [
+      '---',
+      'title: Alice',
+      '---',
+      '',
+      'Alice belongs to the personal sub-brain.',
+    ].join('\n');
+    writeFileSync(join(repoPath, 'people', 'alice.md'), content);
+    commitAll(repoPath, 'seed alice');
+
+    await withSqliteEngine(async (engine) => {
+      await engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+        subbrains: {
+          personal: { id: 'personal', path: repoPath, prefix: 'personal' },
+        },
+      }));
+
+      await performSync(engine, { subbrain: 'personal', noPull: true });
+
+      renameSync(join(repoPath, 'people', 'alice.md'), join(repoPath, 'people', 'alice-renamed.md'));
+      commitAll(repoPath, 'rename alice');
+
+      await performSync(engine, { subbrain: 'personal', noPull: true });
+
+      expect(await engine.getPage('personal/people/alice')).toBeNull();
+      expect(await engine.getPage('personal/people/alice-renamed')).not.toBeNull();
+      expect(await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, 'personal/people/alice')).toBeNull();
+      const manifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, 'personal/people/alice-renamed');
+      expect(manifest?.path).toBe('people/alice-renamed.md');
+    });
+  });
+
+  test('subbrain full sync removes stale pages missing from the repo before advancing checkpoint', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    writeFileSync(join(repoPath, 'people', 'alice.md'), '# Alice\n');
+    commitAll(repoPath, 'seed alice');
+
+    await withSqliteEngine(async (engine) => {
+      await engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+        subbrains: {
+          personal: { id: 'personal', path: repoPath, prefix: 'personal' },
+        },
+      }));
+
+      await performSync(engine, { subbrain: 'personal', noPull: true });
+      expect(await engine.getPage('personal/people/alice')).not.toBeNull();
+
+      unlinkSync(join(repoPath, 'people', 'alice.md'));
+      const headCommit = commitAll(repoPath, 'delete alice');
+
+      const result = await performSync(engine, { subbrain: 'personal', full: true, noPull: true });
+
+      expect(result.deleted).toBe(1);
+      expect(result.pagesAffected).toContain('personal/people/alice');
+      expect(await engine.getPage('personal/people/alice')).toBeNull();
+      expect(await engine.getConfig('sync.subbrains.personal.last_commit')).toBe(headCommit);
+    });
+  });
+
+  test('incremental subbrain dry-run reports prefixed slugs without advancing checkpoints', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    writeFileSync(join(repoPath, 'people', 'alice.md'), '# Alice\n');
+    const firstCommit = commitAll(repoPath, 'seed alice');
+
+    await withSqliteEngine(async (engine) => {
+      await engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+        subbrains: {
+          personal: { id: 'personal', path: repoPath, prefix: 'personal' },
+        },
+      }));
+      await performSync(engine, { subbrain: 'personal', noPull: true });
+
+      writeFileSync(join(repoPath, 'people', 'bob.md'), '# Bob\n');
+      commitAll(repoPath, 'add bob');
+
+      const result = await performSync(engine, { subbrain: 'personal', noPull: true, dryRun: true });
+
+      expect(result.status).toBe('dry_run');
+      expect(result.pagesAffected).toEqual(['personal/people/bob']);
+      expect(await engine.getPage('personal/people/bob')).toBeNull();
+      expect(await engine.getConfig('sync.subbrains.personal.last_commit')).toBe(firstCommit);
+    });
+  });
+
+  test('rejects combining explicit repo path with subbrain target', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    writeFileSync(join(repoPath, 'people', 'alice.md'), '# Alice\n');
+    commitAll(repoPath, 'seed alice');
+
+    const { engine } = makeSyncEngine({
+      config: {
+        [SUBBRAIN_REGISTRY_CONFIG_KEY]: JSON.stringify({
+          subbrains: {
+            personal: { id: 'personal', path: repoPath, prefix: 'personal' },
+          },
+        }),
+      },
+    });
+
+    await expect(performSync(engine, {
+      repoPath,
+      subbrain: 'personal',
+      noPull: true,
+    })).rejects.toThrow('Cannot combine --repo with --subbrain or --all-subbrains');
   });
 });

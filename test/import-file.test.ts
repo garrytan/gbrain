@@ -104,6 +104,29 @@ This is the compiled truth.
     expect(chunkCall).toBeTruthy();
   });
 
+  test('imports with a slug prefix while preserving repo-relative manifest path', async () => {
+    const filePath = join(TMP, 'prefixed-page.md');
+    writeFileSync(filePath, `---
+title: Prefixed Page
+---
+
+Sub-brain prefixed import body.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'people/alice.md', { slugPrefix: 'personal' });
+
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('personal/people/alice');
+
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    const manifestCall = calls.find((c: any) => c.method === 'upsertNoteManifestEntry');
+    expect(putCall.args[0]).toBe('personal/people/alice');
+    expect(manifestCall.args[0].slug).toBe('personal/people/alice');
+    expect(manifestCall.args[0].path).toBe('people/alice.md');
+  });
+
   test('timestamp-only frontmatter changes do not get skipped', async () => {
     const engine = new SQLiteEngine();
     await engine.connect({ engine: 'sqlite', database_path: ':memory:' });

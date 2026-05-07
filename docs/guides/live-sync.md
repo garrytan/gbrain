@@ -36,14 +36,27 @@ mbrain sync --repo /path/to/brain && mbrain embed --stale
 ```
 
 - `mbrain sync --repo <path>` -- one-shot incremental sync. Detects changes via
-  `git diff`, imports only what changed. For small changesets (<= 100 files),
-  embeddings are generated inline during import.
+  `git diff`, imports only what changed, and leaves embedding backfill to
+  `mbrain embed --stale`.
+- `mbrain sync --all-subbrains` -- one-shot sync for every registered
+  git-backed sub-brain. Use this when `/path/to/brain` is a non-git container
+  with child repos such as `personal/` and `office/`.
 - `mbrain embed --stale` -- backfill embeddings for any chunks that don't have
   them. Safety net for large syncs (>100 files) or prior `--no-embed` runs.
 - `mbrain sync --watch --repo <path>` -- foreground polling loop, every 60s
-  (configurable with `--interval N`). Embeds inline for small changesets. Exits
-  after 5 consecutive failures, so run under a process manager or pair with a
-  cron fallback.
+  (configurable with `--interval N`). Exits after 5 consecutive failures, so
+  run under a process manager or pair with a cron fallback that also runs
+  `mbrain embed --stale`.
+- `mbrain sync --watch --all-subbrains` -- polling loop over every registered
+  sub-brain.
+
+For a sub-brain layout:
+
+```bash
+mbrain subbrain add personal /data/brain/personal --prefix personal --default
+mbrain subbrain add office /data/brain/office --prefix office
+mbrain sync --all-subbrains && mbrain embed --stale
+```
 
 ### Approach 1: Cron Job (recommended)
 
@@ -51,6 +64,12 @@ Run every 5-30 minutes. Works with any cron scheduler.
 
 ```bash
 mbrain sync --repo /data/brain && mbrain embed --stale
+```
+
+For registered sub-brains:
+
+```bash
+mbrain sync --all-subbrains && mbrain embed --stale
 ```
 
 **OpenClaw:**

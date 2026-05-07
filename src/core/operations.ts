@@ -11,6 +11,12 @@ import type { MBrainConfig } from './config.ts';
 import { importFromContent, importFromFile, MAX_MARKDOWN_IMPORT_BYTES } from './import-file.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
 import { slugifyPath } from './sync.ts';
+import {
+  findSubbrainBySlugPrefix,
+  loadSubbrainRegistry,
+  stripSubbrainPrefix,
+  type SubbrainConfig,
+} from './subbrains.ts';
 import { findSlugQualityIssues } from './slug-quality.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
@@ -1158,12 +1164,34 @@ export function formatResult(
     }
     case 'sync_brain': {
       const sync = result as any;
+      if (Array.isArray(sync.targets)) {
+        const lines = [
+          sync.status === 'dry_run'
+            ? 'Sub-brain sync dry run:'
+            : sync.status === 'up_to_date'
+              ? 'Sub-brain sync complete: already up to date'
+              : 'Sub-brain sync complete:',
+        ];
+        for (const target of sync.targets) {
+          lines.push(
+            `  ${target.id}: ${target.status} @ ${String(target.toCommit ?? '').slice(0, 8) || '?'}` +
+            ` (+${target.added} ~${target.modified} -${target.deleted} R${target.renamed}, ${target.chunksCreated} chunks)`,
+          );
+        }
+        lines.push(
+          `Total: +${sync.added} added, ~${sync.modified} modified, -${sync.deleted} deleted, R${sync.renamed} renamed`,
+          `${sync.chunksCreated} chunks created`,
+        );
+        return lines.join('\n') + '\n';
+      }
       switch (sync.status) {
         case 'up_to_date':
           return 'Already up to date.\n';
         case 'synced':
           return [
-            `Synced ${sync.fromCommit?.slice(0, 8)}..${sync.toCommit.slice(0, 8)}:`,
+            sync.fromCommit
+              ? `Synced ${sync.fromCommit.slice(0, 8)}..${sync.toCommit.slice(0, 8)}:`
+              : `Synced to ${sync.toCommit.slice(0, 8)}:`,
             `  +${sync.added} added, ~${sync.modified} modified, -${sync.deleted} deleted, R${sync.renamed} renamed`,
             `  ${sync.chunksCreated} chunks created`,
           ].join('\n') + '\n';
@@ -1720,18 +1748,85 @@ function putPageExpectedContentHash(value: unknown): string | undefined {
   return expected.toLowerCase();
 }
 
-async function resolvePutPageMarkdownRepoPath(engine: BrainEngine, value: unknown): Promise<string | null> {
+async function resolvePutPageMarkdownTarget(
+  engine: BrainEngine,
+  slug: string,
+  value: unknown,
+): Promise<PutPageMarkdownTarget | null> {
   const explicit = optionalPutPageString('repo', value);
-  const repoPath = explicit
-    ?? await engine.getConfig('markdown.repo_path')
+  if (explicit) {
+    const subbrain = await findRegisteredSubbrainForRepo(engine, explicit);
+    if (subbrain && slugStartsWithSubbrainPrefix(subbrain, slug)) {
+      let relativeSlug: string;
+      try {
+        relativeSlug = stripSubbrainPrefix(subbrain, slug);
+      } catch (error) {
+        throw new OperationError('invalid_params', error instanceof Error ? error.message : String(error));
+      }
+      return putPageMarkdownTarget(subbrain.path, relativeSlug, subbrain.prefix);
+    }
+    return putPageMarkdownTarget(explicit, slug);
+  }
+
+  const registry = await loadSubbrainRegistry(engine);
+  const registeredSubbrains = Object.values(registry.subbrains);
+  if (registeredSubbrains.length > 0) {
+    const subbrain = findSubbrainBySlugPrefix(registry, slug);
+    if (!subbrain) {
+      throw new OperationError('invalid_params', `Slug does not match any registered sub-brain prefix: ${slug}`);
+    }
+    let relativeSlug: string;
+    try {
+      relativeSlug = stripSubbrainPrefix(subbrain, slug);
+    } catch (error) {
+      throw new OperationError('invalid_params', error instanceof Error ? error.message : String(error));
+    }
+    return putPageMarkdownTarget(subbrain.path, relativeSlug, subbrain.prefix);
+  }
+
+  const repoPath = await engine.getConfig('markdown.repo_path')
     ?? await engine.getConfig('sync.repo_path');
-  return repoPath ?? null;
+  return repoPath ? putPageMarkdownTarget(repoPath, slug) : null;
+}
+
+async function findRegisteredSubbrainForRepo(
+  engine: BrainEngine,
+  rawRepoPath: string,
+): Promise<SubbrainConfig | null> {
+  const explicitRepoPath = maybeRealDirectoryPath(rawRepoPath);
+  if (!explicitRepoPath) return null;
+
+  const registry = await loadSubbrainRegistry(engine);
+  for (const subbrain of Object.values(registry.subbrains)) {
+    const registeredPath = maybeRealDirectoryPath(subbrain.path);
+    if (registeredPath === explicitRepoPath) {
+      return subbrain;
+    }
+  }
+  return null;
+}
+
+function maybeRealDirectoryPath(rawPath: string): string | null {
+  try {
+    const requested = resolve(rawPath);
+    if (!existsSync(requested) || !statSync(requested).isDirectory()) {
+      return null;
+    }
+    return realpathSync(requested);
+  } catch {
+    return null;
+  }
+}
+
+function slugStartsWithSubbrainPrefix(subbrain: SubbrainConfig, slug: string): boolean {
+  return slug === subbrain.prefix || slug.startsWith(`${subbrain.prefix}/`);
 }
 
 interface PutPageMarkdownTarget {
   repoPath: string;
   relativePath: string;
   filePath: string;
+  slugPrefix?: string;
 }
 
 interface PutPageMarkdownSnapshot {
@@ -1740,7 +1835,7 @@ interface PutPageMarkdownSnapshot {
   isSymlink: boolean;
 }
 
-function putPageMarkdownTarget(repoPath: string, slug: string): PutPageMarkdownTarget {
+function putPageMarkdownTarget(repoPath: string, slug: string, slugPrefix?: string): PutPageMarkdownTarget {
   const requestedRepoRoot = resolve(repoPath);
   if (!existsSync(requestedRepoRoot) || !statSync(requestedRepoRoot).isDirectory()) {
     throw new OperationError(
@@ -1757,7 +1852,7 @@ function putPageMarkdownTarget(repoPath: string, slug: string): PutPageMarkdownT
     throw new OperationError('invalid_params', `put_page markdown path escapes repo for slug: ${slug}`);
   }
 
-  const target = { repoPath: repoRoot, relativePath, filePath };
+  const target = { repoPath: repoRoot, relativePath, filePath, slugPrefix };
   assertPutPageMarkdownParentIsSafe(target);
   return target;
 }
@@ -1767,8 +1862,11 @@ function hashMarkdownPageContent(slug: string, content: string, relativePath?: s
 }
 
 function assertPutPageMarkdownContentMatchesTarget(content: string, target: PutPageMarkdownTarget): void {
+  if (!hasExplicitFrontmatterSlug(content)) return;
+
   const parsed = parseMarkdown(content, target.relativePath);
-  const expectedSlug = slugifyPath(target.relativePath);
+  let expectedSlug = slugifyPath(target.relativePath);
+  if (target.slugPrefix) expectedSlug = `${target.slugPrefix}/${expectedSlug}`;
   let canonicalParsedSlug: string;
   try {
     canonicalParsedSlug = slugifyPath(validateSlug(parsed.slug));
@@ -1782,6 +1880,16 @@ function assertPutPageMarkdownContentMatchesTarget(content: string, target: PutP
       `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expectedSlug}" (from ${target.relativePath}). Remove the frontmatter "slug:" line or move the file.`,
     );
   }
+}
+
+function hasExplicitFrontmatterSlug(content: string): boolean {
+  const lines = content.split('\n');
+  if (lines[0]?.trim() !== '---') return false;
+  for (const line of lines.slice(1)) {
+    if (line.trim() === '---') return false;
+    if (/^slug\s*:/.test(line.trim())) return true;
+  }
+  return false;
 }
 
 function assertPutPageMarkdownParentIsSafe(target: PutPageMarkdownTarget): void {
@@ -1820,10 +1928,17 @@ function readMarkdownTargetSnapshot(target: PutPageMarkdownTarget): PutPageMarkd
   if (!existsSync(target.filePath)) {
     return { existed: false, content: null, isSymlink: false };
   }
+  const stat = lstatSync(target.filePath);
+  if (stat.isSymbolicLink()) {
+    throw new OperationError(
+      'invalid_params',
+      `put_page markdown target must not be a symlink: ${target.relativePath}`,
+    );
+  }
   return {
     existed: true,
     content: readFileSync(target.filePath, 'utf-8'),
-    isSymlink: lstatSync(target.filePath).isSymbolicLink(),
+    isSymlink: false,
   };
 }
 
@@ -1856,10 +1971,13 @@ function restoreMarkdownTargetSnapshot(target: PutPageMarkdownTarget, snapshot: 
 
 function hashMarkdownTargetSnapshot(target: PutPageMarkdownTarget, snapshot: PutPageMarkdownSnapshot): string | null {
   if (!snapshot.existed || snapshot.content === null) return null;
+  const canonicalRelativePath = target.slugPrefix
+    ? `${target.slugPrefix}/${target.relativePath}`
+    : target.relativePath;
   return hashMarkdownPageContent(
-    target.relativePath.replace(/\.md$/i, ''),
+    canonicalRelativePath.replace(/\.md$/i, ''),
     snapshot.content,
-    target.relativePath,
+    canonicalRelativePath,
   );
 }
 
@@ -2122,8 +2240,7 @@ const put_page: Operation = {
     const content = putPageContent(p.content);
     assertWritableSlugQuality(slug);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
-    const markdownRepoPath = await resolvePutPageMarkdownRepoPath(ctx.engine, p.repo);
-    const markdownTarget = markdownRepoPath ? putPageMarkdownTarget(markdownRepoPath, slug) : null;
+    const markdownTarget = await resolvePutPageMarkdownTarget(ctx.engine, slug, p.repo);
     if (markdownTarget) {
       assertPutPageMarkdownContentMatchesTarget(content, markdownTarget);
     }
@@ -2244,7 +2361,9 @@ const put_page: Operation = {
               atomicWriteMarkdownTarget(markdownTarget, content);
               markdownFileWritten = true;
             }
-            return importFromFile(tx, markdownTarget.filePath, markdownTarget.relativePath);
+            return importFromFile(tx, markdownTarget.filePath, markdownTarget.relativePath, {
+              slugPrefix: markdownTarget.slugPrefix,
+            });
           })()
           : importFromContent(tx, slug, content));
         if (result.status === 'imported') {
@@ -2626,6 +2745,8 @@ const sync_brain: Operation = {
   description: 'Sync git repo to brain (incremental)',
   params: {
     repo: { type: 'string', description: 'Path to git repo (optional if configured)' },
+    subbrain: { type: 'string', description: 'Registered sub-brain id to sync' },
+    all_subbrains: { type: 'boolean', description: 'Sync every registered sub-brain' },
     dry_run: { type: 'boolean', description: 'Preview changes without applying' },
     full: { type: 'boolean', description: 'Full re-sync (ignore checkpoint)' },
     no_pull: { type: 'boolean', description: 'Skip git pull' },
@@ -2637,6 +2758,8 @@ const sync_brain: Operation = {
     const { performSync } = await runtimeImport('../commands/sync.ts');
     return performSync(ctx.engine, {
       repoPath: p.repo as string | undefined,
+      subbrain: p.subbrain as string | undefined,
+      allSubbrains: (p.all_subbrains as boolean) || false,
       dryRun: ctx.dryRun || (p.dry_run as boolean) || false,
       noPull: (p.no_pull as boolean) || false,
       noEmbed: (p.no_embed as boolean) || false,

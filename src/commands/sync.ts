@@ -10,9 +10,27 @@ import {
 } from '../core/services/import-service.ts';
 import { buildSyncManifest, isSyncable, pathToSlug } from '../core/sync.ts';
 import type { SyncManifest } from '../core/sync.ts';
+import {
+  loadSubbrainRegistry,
+  type SubbrainConfig,
+} from '../core/subbrains.ts';
 
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run';
+  fromCommit: string | null;
+  toCommit: string;
+  added: number;
+  modified: number;
+  deleted: number;
+  renamed: number;
+  chunksCreated: number;
+  pagesAffected: string[];
+  targets?: SyncTargetSummary[];
+}
+
+export interface SyncTargetSummary {
+  id: string;
+  status: SyncResult['status'];
   fromCommit: string | null;
   toCommit: string;
   added: number;
@@ -25,6 +43,8 @@ export interface SyncResult {
 
 export interface SyncOpts {
   repoPath?: string;
+  subbrain?: string;
+  allSubbrains?: boolean;
   dryRun?: boolean;
   full?: boolean;
   noPull?: boolean;
@@ -36,6 +56,13 @@ interface SyncFailure {
   message: string;
 }
 
+interface SyncTarget {
+  id: string | null;
+  repoPath: string;
+  slugPrefix?: string;
+  legacy: boolean;
+}
+
 function git(repoPath: string, ...args: string[]): string {
   return execFileSync('git', ['-C', repoPath, ...args], {
     encoding: 'utf-8',
@@ -43,14 +70,25 @@ function git(repoPath: string, ...args: string[]): string {
   }).trim();
 }
 
-async function recordSyncRepoPaths(engine: BrainEngine, repoPath: string): Promise<void> {
-  await engine.setConfig('sync.repo_path', repoPath);
-  await engine.setConfig('markdown.repo_path', repoPath);
+async function recordSyncRepoPaths(engine: BrainEngine, target: SyncTarget): Promise<void> {
+  if (!target.legacy) return;
+  await engine.setConfig('sync.repo_path', target.repoPath);
+  await engine.setConfig('markdown.repo_path', target.repoPath);
 }
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
+  validateSyncTargetOptions(opts);
+  if (opts.allSubbrains) {
+    return performAllSubbrainSync(engine, opts);
+  }
+
+  const target = await resolveSyncTarget(engine, opts);
+  return performSyncTarget(engine, opts, target);
+}
+
+async function performSyncTarget(engine: BrainEngine, opts: SyncOpts, target: SyncTarget): Promise<SyncResult> {
   // Resolve repo path
-  const repoPath = opts.repoPath || await engine.getConfig('sync.repo_path');
+  const repoPath = target.repoPath;
   if (!repoPath) {
     throw new Error('No repo path specified. Use --repo or run mbrain init with --repo first.');
   }
@@ -83,7 +121,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   }
 
   // Read sync state
-  const lastCommit = opts.full ? null : await engine.getConfig('sync.last_commit');
+  const lastCommit = opts.full ? null : await engine.getConfig(lastCommitKey(target));
 
   // Ancestry validation: if lastCommit exists, verify it's still in history
   if (lastCommit) {
@@ -91,7 +129,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       git(repoPath, 'cat-file', '-t', lastCommit);
     } catch {
       console.error(`Sync anchor commit ${lastCommit.slice(0, 8)} missing (force push?). Running full reimport.`);
-      return performFullSync(engine, repoPath, headCommit, opts);
+      return performFullSync(engine, target, headCommit, opts);
     }
 
     // Verify ancestry
@@ -99,19 +137,19 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       git(repoPath, 'merge-base', '--is-ancestor', lastCommit, headCommit);
     } catch {
       console.error(`Sync anchor ${lastCommit.slice(0, 8)} is not an ancestor of HEAD. Running full reimport.`);
-      return performFullSync(engine, repoPath, headCommit, opts);
+      return performFullSync(engine, target, headCommit, opts);
     }
   }
 
   // First sync
   if (!lastCommit) {
-    return performFullSync(engine, repoPath, headCommit, opts);
+    return performFullSync(engine, target, headCommit, opts);
   }
 
   // No changes
   if (lastCommit === headCommit) {
     if (!opts.dryRun) {
-      await recordSyncRepoPaths(engine, repoPath);
+      await recordSyncRepoPaths(engine, target);
     }
     return {
       status: 'up_to_date',
@@ -132,7 +170,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   const renamedSyncableToSyncable = manifest.renamed.filter(r => isSyncable(r.from) && isSyncable(r.to));
   const staleUnsyncableModified: string[] = [];
   for (const path of manifest.modified.filter(p => !isSyncable(p))) {
-    const slug = pathToSlug(path);
+    const slug = pathToSlug(path, target.slugPrefix);
     try {
       const existing = await engine.getPage(slug);
       if (existing) staleUnsyncableModified.push(path);
@@ -161,11 +199,12 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
 
   // Dry run
   if (opts.dryRun) {
+    const dryRunPagesAffected = changedPagesForDryRun(filtered, target.slugPrefix);
     console.log(`Sync dry run: ${lastCommit.slice(0, 8)}..${headCommit.slice(0, 8)}`);
-    if (filtered.added.length) console.log(`  Added: ${filtered.added.join(', ')}`);
-    if (filtered.modified.length) console.log(`  Modified: ${filtered.modified.join(', ')}`);
-    if (filtered.deleted.length) console.log(`  Deleted: ${filtered.deleted.join(', ')}`);
-    if (filtered.renamed.length) console.log(`  Renamed: ${filtered.renamed.map(r => `${r.from} -> ${r.to}`).join(', ')}`);
+    if (filtered.added.length) console.log(`  Added: ${filtered.added.map(path => pathToSlug(path, target.slugPrefix)).join(', ')}`);
+    if (filtered.modified.length) console.log(`  Modified: ${filtered.modified.map(path => pathToSlug(path, target.slugPrefix)).join(', ')}`);
+    if (filtered.deleted.length) console.log(`  Deleted: ${filtered.deleted.map(path => pathToSlug(path, target.slugPrefix)).join(', ')}`);
+    if (filtered.renamed.length) console.log(`  Renamed: ${filtered.renamed.map(r => `${pathToSlug(r.from, target.slugPrefix)} -> ${pathToSlug(r.to, target.slugPrefix)}`).join(', ')}`);
     if (totalChanges === 0) console.log(`  No syncable changes.`);
     return {
       status: 'dry_run',
@@ -176,15 +215,15 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       deleted: filtered.deleted.length,
       renamed: filtered.renamed.length,
       chunksCreated: 0,
-      pagesAffected: [],
+      pagesAffected: dryRunPagesAffected,
     };
   }
 
   if (totalChanges === 0) {
     // Update sync state even with no syncable changes (git advanced)
-    await engine.setConfig('sync.last_commit', headCommit);
-    await engine.setConfig('sync.last_run', new Date().toISOString());
-    await recordSyncRepoPaths(engine, repoPath);
+    await engine.setConfig(lastCommitKey(target), headCommit);
+    await engine.setConfig(lastRunKey(target), new Date().toISOString());
+    await recordSyncRepoPaths(engine, target);
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -233,15 +272,15 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   await engine.transaction(async (tx) => {
     // Process deletes first (prevents slug conflicts)
     for (const path of filtered.deleted) {
-      const slug = pathToSlug(path);
+      const slug = pathToSlug(path, target.slugPrefix);
       await tx.deletePage(slug);
       addPageAffected(slug);
     }
 
     // Process renames (updateSlug preserves page_id, chunks, embeddings)
     for (const { from, to } of filtered.renamed) {
-      const oldSlug = pathToSlug(from);
-      const newSlug = pathToSlug(to);
+      const oldSlug = pathToSlug(from, target.slugPrefix);
+      const newSlug = pathToSlug(to, target.slugPrefix);
       try {
         await tx.updateSlug(oldSlug, newSlug);
       } catch {
@@ -251,7 +290,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       const filePath = join(repoPath, to);
       if (existsSync(filePath)) {
         try {
-          const result = await importFile(tx, filePath, to);
+          const result = await importFile(tx, filePath, to, { slugPrefix: target.slugPrefix });
           recordImportResult(to, result);
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -266,7 +305,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       const filePath = join(repoPath, path);
       if (!existsSync(filePath)) continue;
       try {
-        const result = await importFile(tx, filePath, path);
+        const result = await importFile(tx, filePath, path, { slugPrefix: target.slugPrefix });
         recordImportResult(path, result);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -281,9 +320,9 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     const elapsed = Date.now() - start;
 
     // Update sync state AFTER all changes succeed.
-    await tx.setConfig('sync.last_commit', headCommit);
-    await tx.setConfig('sync.last_run', new Date().toISOString());
-    await recordSyncRepoPaths(tx, repoPath);
+    await tx.setConfig(lastCommitKey(target), headCommit);
+    await tx.setConfig(lastRunKey(target), new Date().toISOString());
+    await recordSyncRepoPaths(tx, target);
 
     // Log ingest only after checkpoint update is safe.
     await tx.logIngest({
@@ -322,13 +361,17 @@ function formatSyncFailures(failures: SyncFailure[]): string {
 
 async function performFullSync(
   engine: BrainEngine,
-  repoPath: string,
+  target: SyncTarget,
   headCommit: string,
   opts: SyncOpts,
 ): Promise<SyncResult> {
+  const repoPath = target.repoPath;
   if (opts.dryRun) {
     const files = collectMarkdownFiles(repoPath);
-    const pagesAffected = files.map(file => pathToSlug(relative(repoPath, file).replace(/\\/g, '/')));
+    const pagesAffected = files.map(file => pathToSlug(
+      relative(repoPath, file).replace(/\\/g, '/'),
+      target.slugPrefix,
+    ));
     console.log(`Sync dry run: full import of ${repoPath} at ${headCommit.slice(0, 8)}`);
     if (pagesAffected.length) console.log(`  Added: ${pagesAffected.join(', ')}`);
     else console.log(`  No syncable files.`);
@@ -351,6 +394,8 @@ async function performFullSync(
     noEmbed: opts.noEmbed,
     fresh: Boolean(opts.full),
     workers: 1,
+    slugPrefix: target.slugPrefix,
+    updateSyncMetadata: target.legacy,
   });
 
   if (summary.errors > 0) {
@@ -360,12 +405,25 @@ async function performFullSync(
     );
   }
 
-  await engine.logIngest({
-    source_type: 'git_sync',
-    source_ref: `${repoPath} @ ${headCommit.slice(0, 8)}`,
-    pages_updated: summary.importedSlugs,
-    summary: `Full sync: ${summary.imported} pages imported, ${summary.skipped} skipped, ${summary.chunksCreated} chunks`,
+  let staleDeletedSlugs: string[] = [];
+  const currentSlugs = target.legacy ? new Set<string>() : collectCurrentRepoSlugs(repoPath, target.slugPrefix);
+  await engine.transaction(async (tx) => {
+    staleDeletedSlugs = target.legacy ? [] : await deleteStaleSubbrainPages(tx, target, currentSlugs);
+    const pagesUpdated = uniqueStrings([...summary.importedSlugs, ...staleDeletedSlugs]);
+    await tx.logIngest({
+      source_type: 'git_sync',
+      source_ref: `${repoPath} @ ${headCommit.slice(0, 8)}`,
+      pages_updated: pagesUpdated,
+      summary: `Full sync: ${summary.imported} pages imported, ${summary.skipped} skipped, ${staleDeletedSlugs.length} deleted, ${summary.chunksCreated} chunks`,
+    });
+
+    if (!target.legacy) {
+      await tx.setConfig(lastCommitKey(target), headCommit);
+      await tx.setConfig(lastRunKey(target), new Date().toISOString());
+    }
   });
+
+  const pagesAffected = uniqueStrings([...summary.importedSlugs, ...staleDeletedSlugs]);
 
   return {
     status: 'first_sync',
@@ -373,15 +431,172 @@ async function performFullSync(
     toCommit: headCommit,
     added: summary.imported,
     modified: 0,
-    deleted: 0,
+    deleted: staleDeletedSlugs.length,
     renamed: 0,
     chunksCreated: summary.chunksCreated,
-    pagesAffected: summary.importedSlugs,
+    pagesAffected,
+  };
+}
+
+function changedPagesForDryRun(manifest: SyncManifest, slugPrefix?: string): string[] {
+  return uniqueStrings([
+    ...manifest.added.map(path => pathToSlug(path, slugPrefix)),
+    ...manifest.modified.map(path => pathToSlug(path, slugPrefix)),
+    ...manifest.deleted.map(path => pathToSlug(path, slugPrefix)),
+    ...manifest.renamed.flatMap(rename => [
+      pathToSlug(rename.from, slugPrefix),
+      pathToSlug(rename.to, slugPrefix),
+    ]),
+  ]);
+}
+
+function collectCurrentRepoSlugs(repoPath: string, slugPrefix?: string): Set<string> {
+  return new Set(
+    collectMarkdownFiles(repoPath).map(file => pathToSlug(
+      relative(repoPath, file).replace(/\\/g, '/'),
+      slugPrefix,
+    )),
+  );
+}
+
+async function deleteStaleSubbrainPages(
+  engine: BrainEngine,
+  target: SyncTarget,
+  currentSlugs: Set<string>,
+): Promise<string[]> {
+  if (!target.slugPrefix) return [];
+
+  const staleSlugs: string[] = [];
+  const prefix = `${target.slugPrefix}/`;
+  const limit = 500;
+  let offset = 0;
+  while (true) {
+    const batch = await engine.listPages({ limit, offset });
+    if (batch.length === 0) break;
+    for (const page of batch) {
+      if (!page.slug.startsWith(prefix)) continue;
+      if (currentSlugs.has(page.slug)) continue;
+      staleSlugs.push(page.slug);
+    }
+    if (batch.length < limit) break;
+    offset += limit;
+  }
+
+  for (const slug of staleSlugs) {
+    await engine.deletePage(slug);
+  }
+  return staleSlugs;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function validateSyncTargetOptions(opts: SyncOpts): void {
+  if (opts.repoPath && (opts.subbrain || opts.allSubbrains)) {
+    throw new Error('Cannot combine --repo with --subbrain or --all-subbrains');
+  }
+  if (opts.subbrain && opts.allSubbrains) {
+    throw new Error('Cannot combine --subbrain with --all-subbrains');
+  }
+}
+
+async function resolveSyncTarget(engine: BrainEngine, opts: SyncOpts): Promise<SyncTarget> {
+  if (opts.subbrain) {
+    const registry = await loadSubbrainRegistry(engine);
+    const subbrain = registry.subbrains[opts.subbrain];
+    if (!subbrain) {
+      throw new Error(`Unknown sub-brain: ${opts.subbrain}`);
+    }
+    return subbrainSyncTarget(subbrain);
+  }
+
+  const repoPath = opts.repoPath || await engine.getConfig('sync.repo_path');
+  if (!repoPath) {
+    throw new Error('No repo path specified. Use --repo or run mbrain init with --repo first.');
+  }
+  return { id: null, repoPath, legacy: true };
+}
+
+async function performAllSubbrainSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
+  const registry = await loadSubbrainRegistry(engine);
+  const subbrains = Object.values(registry.subbrains).sort((a, b) => a.id.localeCompare(b.id));
+  if (subbrains.length === 0) {
+    throw new Error('No sub-brains registered. Run: mbrain subbrain add <id> <path>.');
+  }
+
+  const results: Array<{ id: string; result: SyncResult }> = [];
+  const failures: Array<{ id: string; message: string }> = [];
+  for (const subbrain of subbrains) {
+    try {
+      results.push({ id: subbrain.id, result: await performSyncTarget(engine, opts, subbrainSyncTarget(subbrain)) });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({ id: subbrain.id, message });
+      console.error(`Sub-brain sync failed for ${subbrain.id}: ${message}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Sub-brain sync failed for ${failures.map(f => f.id).join(', ')}; checkpoint was not advanced for failed sub-brain(s).`);
+  }
+
+  return aggregateSyncResults(results, opts);
+}
+
+function subbrainSyncTarget(subbrain: SubbrainConfig): SyncTarget {
+  return {
+    id: subbrain.id,
+    repoPath: subbrain.path,
+    slugPrefix: subbrain.prefix,
+    legacy: false,
+  };
+}
+
+function lastCommitKey(target: SyncTarget): string {
+  return target.legacy ? 'sync.last_commit' : `sync.subbrains.${target.id}.last_commit`;
+}
+
+function lastRunKey(target: SyncTarget): string {
+  return target.legacy ? 'sync.last_run' : `sync.subbrains.${target.id}.last_run`;
+}
+
+function aggregateSyncResults(results: Array<{ id: string; result: SyncResult }>, opts: SyncOpts): SyncResult {
+  const targetSummaries = results.map(({ id, result }) => ({
+    id,
+    status: result.status,
+    fromCommit: result.fromCommit,
+    toCommit: result.toCommit,
+    added: result.added,
+    modified: result.modified,
+    deleted: result.deleted,
+    renamed: result.renamed,
+    chunksCreated: result.chunksCreated,
+    pagesAffected: result.pagesAffected,
+  }));
+  const childResults = results.map(({ result }) => result);
+  return {
+    status: opts.dryRun
+      ? 'dry_run'
+      : targetSummaries.every(target => target.status === 'up_to_date')
+        ? 'up_to_date'
+        : 'synced',
+    fromCommit: null,
+    toCommit: childResults.map(r => r.toCommit.slice(0, 8)).join(','),
+    added: childResults.reduce((sum, r) => sum + r.added, 0),
+    modified: childResults.reduce((sum, r) => sum + r.modified, 0),
+    deleted: childResults.reduce((sum, r) => sum + r.deleted, 0),
+    renamed: childResults.reduce((sum, r) => sum + r.renamed, 0),
+    chunksCreated: childResults.reduce((sum, r) => sum + r.chunksCreated, 0),
+    pagesAffected: childResults.flatMap(r => r.pagesAffected),
+    targets: targetSummaries,
   };
 }
 
 export async function runSync(engine: BrainEngine, args: string[]) {
   const repoPath = args.find((a, i) => args[i - 1] === '--repo') || undefined;
+  const subbrain = args.find((a, i) => args[i - 1] === '--subbrain') || undefined;
+  const allSubbrains = args.includes('--all-subbrains');
   const watch = args.includes('--watch');
   const intervalStr = args.find((a, i) => args[i - 1] === '--interval');
   const interval = intervalStr ? parseInt(intervalStr, 10) : 60;
@@ -390,7 +605,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   const noPull = args.includes('--no-pull');
   const noEmbed = args.includes('--no-embed');
 
-  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed };
+  const opts: SyncOpts = { repoPath, subbrain, allSubbrains, dryRun, full, noPull, noEmbed };
 
   if (!watch) {
     const result = await performSync(engine, opts);

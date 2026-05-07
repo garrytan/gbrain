@@ -6,6 +6,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { OperationError, operations } from '../src/core/operations.ts';
 import type { Operation, OperationContext } from '../src/core/operations.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+import { SUBBRAIN_REGISTRY_CONFIG_KEY } from '../src/core/subbrains.ts';
 
 const STALE_HASH = 'a'.repeat(64);
 const MISSING_HASH = 'b'.repeat(64);
@@ -516,6 +517,103 @@ describe('put_page content hash preconditions and mutation ledger', () => {
     });
   });
 
+  test('put_page writes prefixed slugs to the matching registered subbrain repo', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const personalRepo = mkdtempSync(join(tmpdir(), 'mbrain-put-page-personal-subbrain-'));
+      const slug = 'personal/concepts/subbrain-write';
+      const content = pageContent(
+        'Subbrain Write',
+        'Sub-brain write-back should strip the prefix for the physical path.',
+        '- 2026-05-07 | Sub-brain write-back evidence.',
+      );
+
+      try {
+        await ctx.engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+          subbrains: {
+            personal: { id: 'personal', path: personalRepo, prefix: 'personal', default: true },
+          },
+        }));
+
+        await put.handler(ctx, {
+          slug,
+          content,
+          session_id: 'put-page-subbrain-write-session',
+          source_refs: ['Source: subbrain write-back test'],
+        });
+
+        expect(readFileSync(join(personalRepo, 'concepts', 'subbrain-write.md'), 'utf-8')).toBe(content);
+        expect(existsSync(join(personalRepo, 'personal', 'concepts', 'subbrain-write.md'))).toBe(false);
+        const page = await ctx.engine.getPage(slug);
+        expect(page?.title).toBe('Subbrain Write');
+        const manifest = await ctx.engine.getNoteManifestEntry('workspace:default', slug);
+        expect(manifest?.path).toBe('concepts/subbrain-write.md');
+      } finally {
+        rmSync(personalRepo, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('put_page rejects a prefix-only subbrain slug', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const personalRepo = mkdtempSync(join(tmpdir(), 'mbrain-put-page-prefix-only-'));
+
+      try {
+        await ctx.engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+          subbrains: {
+            personal: { id: 'personal', path: personalRepo, prefix: 'personal' },
+          },
+        }));
+
+        await expect(put.handler(ctx, {
+          slug: 'personal',
+          content: pageContent(
+            'Prefix Only',
+            'This write should be rejected before mutation.',
+            '- 2026-05-07 | Prefix-only write attempt.',
+          ),
+          session_id: 'put-page-prefix-only-session',
+          source_refs: ['Source: prefix-only subbrain write test'],
+        })).rejects.toThrow(/missing path after prefix/i);
+
+        expect(await ctx.engine.getPage('personal')).toBeNull();
+      } finally {
+        rmSync(personalRepo, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('put_page rejects unknown prefixes when a subbrain registry is active and repo is omitted', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const personalRepo = mkdtempSync(join(tmpdir(), 'mbrain-put-page-unknown-prefix-'));
+
+      try {
+        await ctx.engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+          subbrains: {
+            personal: { id: 'personal', path: personalRepo, prefix: 'personal' },
+          },
+        }));
+
+        await expect(put.handler(ctx, {
+          slug: 'office/concepts/unknown',
+          content: pageContent(
+            'Unknown Prefix',
+            'This write has no registered sub-brain prefix.',
+            '- 2026-05-07 | Unknown prefix write attempt.',
+          ),
+          session_id: 'put-page-unknown-prefix-session',
+          source_refs: ['Source: unknown subbrain prefix test'],
+        })).rejects.toThrow(/does not match any registered sub-brain prefix/i);
+
+        expect(await ctx.engine.getPage('office/concepts/unknown')).toBeNull();
+      } finally {
+        rmSync(personalRepo, { recursive: true, force: true });
+      }
+    });
+  });
+
   test('put_page rejects markdown targets whose parent path escapes through a symlink', async () => {
     await withSqliteEngine(async (ctx) => {
       const put = getOperation('put_page');
@@ -542,6 +640,115 @@ describe('put_page content hash preconditions and mutation ledger', () => {
       } finally {
         rmSync(repoPath, { recursive: true, force: true });
         rmSync(outsidePath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('put_page rejects markdown targets whose final file is a symlink', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-file-symlink-repo-'));
+      const outsidePath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-file-symlink-outside-'));
+
+      try {
+        writeFileSync(join(outsidePath, 'target.md'), 'outside');
+        symlinkSync(join(outsidePath, 'target.md'), join(repoPath, 'linked.md'));
+
+        await expect(put.handler(ctx, {
+          slug: 'linked',
+          content: pageContent(
+            'Linked',
+            'This write must not read or overwrite a symlink target.',
+            '- 2026-05-07 | Final symlink write attempt.',
+          ),
+          repo: repoPath,
+          session_id: 'put-page-file-symlink-session',
+          source_refs: ['Source: final symlink escape test'],
+        })).rejects.toThrow(/symlink/i);
+
+        expect(readFileSync(join(outsidePath, 'target.md'), 'utf-8')).toBe('outside');
+        expect(await ctx.engine.getPage('linked')).toBeNull();
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+        rmSync(outsidePath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('put_page hashes existing subbrain markdown with the prefixed canonical slug', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-prefix-hash-repo-'));
+      const content = [
+        '---',
+        'title: Prefix Hash',
+        '---',
+        '',
+        'This page relies on path-inferred type under the systems prefix.',
+        '',
+        '---',
+        '',
+        `- 2026-05-07 | Prefix hash fixture. ${DEFAULT_PAGE_SOURCE}`,
+        '',
+      ].join('\n');
+
+      try {
+        await ctx.engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+          subbrains: {
+            systems: { id: 'systems', path: repoPath, prefix: 'systems' },
+          },
+        }));
+
+        await put.handler(ctx, {
+          slug: 'systems/foo',
+          content,
+          session_id: 'put-page-prefix-hash-seed',
+          source_refs: ['Source: prefix hash seed test'],
+        });
+
+        const result = await put.handler(ctx, {
+          slug: 'systems/foo',
+          content,
+          session_id: 'put-page-prefix-hash-repeat',
+          source_refs: ['Source: prefix hash repeat test'],
+        }) as any;
+
+        expect(result.status).toBe('skipped');
+        expect(await ctx.engine.getPage('systems/foo')).not.toBeNull();
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('put_page strips a registered prefix when explicit repo points at the matching subbrain repo', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-put-page-explicit-subbrain-repo-'));
+
+      try {
+        await ctx.engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+          subbrains: {
+            personal: { id: 'personal', path: repoPath, prefix: 'personal' },
+          },
+        }));
+
+        await put.handler(ctx, {
+          slug: 'personal/people/alice',
+          content: pageContent(
+            'Alice',
+            'This write uses an explicit repo that matches the registered sub-brain.',
+            '- 2026-05-07 | Explicit repo subbrain write.',
+          ),
+          repo: repoPath,
+          session_id: 'put-page-explicit-subbrain-repo-session',
+          source_refs: ['Source: explicit subbrain repo test'],
+        });
+
+        expect(existsSync(join(repoPath, 'people', 'alice.md'))).toBe(true);
+        expect(existsSync(join(repoPath, 'personal', 'people', 'alice.md'))).toBe(false);
+      } finally {
+        rmSync(repoPath, { recursive: true, force: true });
       }
     });
   });

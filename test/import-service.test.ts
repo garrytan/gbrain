@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, relative } from 'path';
 import {
@@ -155,6 +155,42 @@ describe('import service', () => {
     expect(existsSync(checkpointPath)).toBe(false);
   });
 
+  test('runImportService does not delete another root checkpoint after a successful sibling import', async () => {
+    const failedRoot = makeTempDir('mbrain-import-failed-root-');
+    const successfulRoot = makeTempDir('mbrain-import-successful-root-');
+    const checkpointDir = makeTempDir('mbrain-import-shared-checkpoint-');
+    const checkpointPath = join(checkpointDir, 'import-checkpoint.json');
+    writeFileSync(join(failedRoot, 'bad.md'), '# bad\n');
+    writeFileSync(join(successfulRoot, 'good.md'), '# good\n');
+    const engine = {
+      setConfig: async () => undefined,
+    } as any;
+
+    const failedSummary = await runImportService(
+      engine,
+      { rootDir: failedRoot, workers: 1, checkpointPath },
+      importDeps({
+        importFile: async () => {
+          throw new Error('boom');
+        },
+      }),
+    );
+    expect(failedSummary.errors).toBe(1);
+    expect(JSON.parse(readFileSync(checkpointPath, 'utf-8')).dir).toBe(failedRoot);
+
+    const successfulSummary = await runImportService(
+      engine,
+      { rootDir: successfulRoot, workers: 1, checkpointPath },
+      importDeps({
+        importFile: async () => ({ slug: 'good', status: 'imported' as const, chunks: 1 }),
+      }),
+    );
+
+    expect(successfulSummary.errors).toBe(0);
+    expect(existsSync(checkpointPath)).toBe(true);
+    expect(JSON.parse(readFileSync(checkpointPath, 'utf-8')).dir).toBe(failedRoot);
+  });
+
   test('runImportService does not advance sync.last_commit when a git-backed import fails', async () => {
     const rootDir = makeTempDir('mbrain-import-git-failure-');
     writeFileSync(join(rootDir, 'note.md'), '# note\n');
@@ -209,6 +245,42 @@ describe('import service', () => {
     expect(summary.errors).toBe(0);
     expect(setConfigCalls).toContainEqual(['markdown.repo_path', rootDir]);
     expect(setConfigCalls.some(([key]) => key === 'sync.repo_path')).toBe(false);
+  });
+
+  test('runImportService forwards slugPrefix and can skip sync metadata updates', async () => {
+    const rootDir = makeTempDir('mbrain-import-prefixed-');
+    mkdirSync(join(rootDir, 'people'), { recursive: true });
+    writeFileSync(join(rootDir, 'people', 'alice.md'), '# Alice\n');
+
+    const importCalls: Array<{ relativePath: string; options: Record<string, unknown> | undefined }> = [];
+    const setConfigCalls: Array<[string, unknown]> = [];
+    const engine = {
+      setConfig: async (key: string, value: unknown) => {
+        setConfigCalls.push([key, value]);
+      },
+    } as any;
+
+    const summary = await runImportService(
+      engine,
+      {
+        rootDir,
+        workers: 1,
+        slugPrefix: 'personal',
+        updateSyncMetadata: false,
+      },
+      importDeps({
+        importFile: async (_engine, _filePath, relativePath, options) => {
+          importCalls.push({ relativePath, options });
+          return { slug: 'personal/people/alice', status: 'imported' as const, chunks: 1 };
+        },
+      }),
+    );
+
+    expect(summary.errors).toBe(0);
+    expect(importCalls).toEqual([
+      { relativePath: 'people/alice.md', options: { noEmbed: undefined, slugPrefix: 'personal' } },
+    ]);
+    expect(setConfigCalls).toEqual([]);
   });
 
   test('runImportService uses staged local concurrency for prepare work but commits in file order', async () => {

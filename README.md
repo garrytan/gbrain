@@ -409,6 +409,19 @@ mbrain embed --stale
 After `import` or `sync` records the markdown repo path, `put_page` / `mbrain put`
 writes the matching `<slug>.md` file first and then refreshes the database index.
 
+For a non-git `brain/` container with multiple git-backed sub-brains, register
+each child repo explicitly and sync them as one indexed brain:
+
+```bash
+mbrain subbrain add personal ~/brain/personal --prefix personal --default
+mbrain subbrain add office ~/brain/office --prefix office
+mbrain sync --all-subbrains
+mbrain embed --stale
+```
+
+Registered sub-brains use prefixed slugs, so `~/brain/personal/people/alice.md`
+indexes as `personal/people/alice` and writes back to the `personal` repo.
+
 Links, tags, timelines, versions:
 
 ```bash

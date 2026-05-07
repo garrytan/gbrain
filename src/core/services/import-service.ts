@@ -16,9 +16,9 @@ import { createConnectedEngine, supportsParallelWorkers } from '../engine-factor
 import { getEngineCapabilities } from '../engine-capabilities.ts';
 import { buildPageChunks, importFile } from '../import-file.ts';
 import { parseMarkdown, type ParsedMarkdown } from '../markdown.ts';
-import { buildNoteManifestEntry } from './note-manifest-service.ts';
+import { buildNoteManifestEntry, DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import { buildNoteSectionEntries } from './note-section-service.ts';
-import { isSyncable, slugifyPath } from '../sync.ts';
+import { isSyncable, pathToSlug, slugifyPath } from '../sync.ts';
 import type { ChunkInput } from '../types.ts';
 import { importContentHash, validateSlug } from '../utils.ts';
 
@@ -27,6 +27,8 @@ export interface ImportRunOptions {
   noEmbed?: boolean;
   workers?: number;
   fresh?: boolean;
+  slugPrefix?: string;
+  updateSyncMetadata?: boolean;
   checkpointPath?: string;
   logger?: Pick<Console, 'log' | 'warn' | 'error'>;
 }
@@ -106,6 +108,7 @@ const MAX_FILE_SIZE = 5_000_000;
 async function prepareImportFile(
   filePath: string,
   relativePath: string,
+  slugPrefix?: string,
 ): Promise<PreparedImport> {
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {
@@ -125,15 +128,9 @@ async function prepareImportFile(
 
   const content = readFileSync(filePath, 'utf-8');
   const parsed = parseMarkdown(content, relativePath);
-  const expectedSlug = slugifyPath(relativePath);
-  let canonicalParsedSlug: string;
-  try {
-    canonicalParsedSlug = slugifyPath(validateSlug(parsed.slug));
-  } catch {
-    canonicalParsedSlug = parsed.slug;
-  }
+  const expectedSlug = pathToSlug(relativePath, slugPrefix);
 
-  if (canonicalParsedSlug !== expectedSlug) {
+  if (hasExplicitFrontmatterSlug(content) && canonicalParsedSlug(parsed.slug) !== expectedSlug) {
     return {
       status: 'skipped',
       filePath,
@@ -171,6 +168,34 @@ async function commitPreparedImport(
 
   const existing = await engine.getPage(prepared.slug);
   if (existing?.content_hash === prepared.hash) {
+    const existingManifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, prepared.slug);
+    if (existingManifest?.path === prepared.relativePath) {
+      return { slug: prepared.slug, status: 'skipped', chunks: 0 };
+    }
+
+    await engine.transaction(async (tx) => {
+      const tags = await tx.getTags(prepared.slug);
+      const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
+        page_id: existing.id,
+        slug: existing.slug,
+        path: prepared.relativePath,
+        tags,
+        content_hash: prepared.hash,
+        page: existing,
+      }));
+      await tx.replaceNoteSectionEntries(
+        manifest.scope_id,
+        manifest.slug,
+        buildNoteSectionEntries({
+          scope_id: manifest.scope_id,
+          page_id: existing.id,
+          page_slug: existing.slug,
+          page_path: manifest.path,
+          page: existing,
+          manifest,
+        }),
+      );
+    });
     return { slug: prepared.slug, status: 'skipped', chunks: 0 };
   }
 
@@ -462,7 +487,10 @@ export async function runImportService(
   const processFile = async (activeEngine: BrainEngine, filePath: string, fileIndex: number) => {
     const relativePath = relative(options.rootDir, filePath);
     try {
-      const result = await deps.importFile(activeEngine, filePath, relativePath, { noEmbed: options.noEmbed });
+      const result = await deps.importFile(activeEngine, filePath, relativePath, {
+        noEmbed: options.noEmbed,
+        slugPrefix: options.slugPrefix,
+      });
       finalizeImportResult(fileIndex, relativePath, result);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -510,7 +538,7 @@ export async function runImportService(
               const filePath = batchFiles[index];
               const relativePath = relative(options.rootDir, filePath);
               try {
-                preparedResults[index] = await deps.prepareImportFile(filePath, relativePath);
+                preparedResults[index] = await deps.prepareImportFile(filePath, relativePath, options.slugPrefix);
               } catch (error: unknown) {
                 const message = error instanceof Error ? error.message : String(error);
                 preparedResults[index] = {
@@ -569,7 +597,8 @@ export async function runImportService(
     }
   }
 
-  if (errors === 0 && existsSync(checkpointPath)) {
+  const finalCheckpoint = readImportCheckpoint(checkpointPath);
+  if (errors === 0 && finalCheckpoint?.dir === options.rootDir && existsSync(checkpointPath)) {
     try {
       unlinkSync(checkpointPath);
     } catch {
@@ -582,7 +611,9 @@ export async function runImportService(
     }
   }
 
-  await updateImportGitState(engine, options.rootDir, { advanceCommit: errors === 0 });
+  if (options.updateSyncMetadata !== false) {
+    await updateImportGitState(engine, options.rootDir, { advanceCommit: errors === 0 });
+  }
 
   return {
     durationSeconds: Number(((Date.now() - startTime) / 1000).toFixed(1)),
@@ -618,6 +649,24 @@ async function updateImportGitState(
     await engine.setConfig('sync.last_commit', head);
   } catch {
     // Not a git repo or git not available, skip sync metadata.
+  }
+}
+
+function hasExplicitFrontmatterSlug(content: string): boolean {
+  const lines = content.split('\n');
+  if (lines[0]?.trim() !== '---') return false;
+  for (const line of lines.slice(1)) {
+    if (line.trim() === '---') return false;
+    if (/^slug\s*:/.test(line.trim())) return true;
+  }
+  return false;
+}
+
+function canonicalParsedSlug(slug: string): string {
+  try {
+    return slugifyPath(validateSlug(slug));
+  } catch {
+    return slug;
   }
 }
 

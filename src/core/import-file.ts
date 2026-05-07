@@ -3,9 +3,9 @@ import type { BrainEngine } from './engine.ts';
 import { buildFrontmatterSearchText, parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { estimateTokenCount } from './embedding.ts';
-import { buildNoteManifestEntry } from './services/note-manifest-service.ts';
+import { buildNoteManifestEntry, DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './services/note-manifest-service.ts';
 import { buildNoteSectionEntries } from './services/note-section-service.ts';
-import { slugifyPath } from './sync.ts';
+import { pathToSlug, slugifyPath } from './sync.ts';
 import type { ChunkInput } from './types.ts';
 import { importContentHash, validateSlug } from './utils.ts';
 
@@ -44,13 +44,41 @@ export async function importFromContent(
 
   const hash = importContentHash(parsed);
 
+  const manifestPath = options?.path ?? `${validateSlug(slug)}.md`;
   const existing = await engine.getPage(slug);
   if (existing?.content_hash === hash) {
+    const existingManifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug);
+    if (existingManifest?.path === manifestPath || !canRefreshDerivedStorage(existing)) {
+      return { slug, status: 'skipped', chunks: 0 };
+    }
+
+    await engine.transaction(async (tx) => {
+      const tags = await tx.getTags(slug);
+      const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
+        page_id: existing.id,
+        slug: existing.slug,
+        path: manifestPath,
+        tags,
+        content_hash: hash,
+        page: existing,
+      }));
+      await tx.replaceNoteSectionEntries(
+        manifest.scope_id,
+        manifest.slug,
+        buildNoteSectionEntries({
+          scope_id: manifest.scope_id,
+          page_id: existing.id,
+          page_slug: existing.slug,
+          page_path: manifest.path,
+          page: existing,
+          manifest,
+        }),
+      );
+    });
     return { slug, status: 'skipped', chunks: 0 };
   }
 
   const chunks = buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter);
-  const manifestPath = options?.path ?? `${validateSlug(slug)}.md`;
 
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
@@ -116,6 +144,29 @@ export async function importFromContent(
   return { slug, status: 'imported', chunks: chunks.length };
 }
 
+function canRefreshDerivedStorage(page: unknown): page is {
+  id: number;
+  slug: string;
+  type: ReturnType<typeof parseMarkdown>['type'];
+  title: string;
+  compiled_truth: string;
+  timeline: string;
+  frontmatter: Record<string, unknown>;
+  content_hash: string;
+} {
+  if (!page || typeof page !== 'object') return false;
+  const candidate = page as Record<string, unknown>;
+  return typeof candidate.id === 'number'
+    && typeof candidate.slug === 'string'
+    && typeof candidate.type === 'string'
+    && typeof candidate.title === 'string'
+    && typeof candidate.compiled_truth === 'string'
+    && typeof candidate.timeline === 'string'
+    && typeof candidate.frontmatter === 'object'
+    && candidate.frontmatter !== null
+    && typeof candidate.content_hash === 'string';
+}
+
 /**
  * Import from a file path. Validates size, reads content, delegates to importFromContent.
  */
@@ -123,7 +174,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  _options?: { noEmbed?: boolean },
+  options?: { noEmbed?: boolean; slugPrefix?: string },
 ): Promise<ImportResult> {
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {
@@ -137,15 +188,9 @@ export async function importFromFile(
 
   const content = readFileSync(filePath, 'utf-8');
   const parsed = parseMarkdown(content, relativePath);
-  const expectedSlug = slugifyPath(relativePath);
-  let canonicalParsedSlug: string;
-  try {
-    canonicalParsedSlug = slugifyPath(validateSlug(parsed.slug));
-  } catch {
-    canonicalParsedSlug = parsed.slug;
-  }
+  const expectedSlug = pathToSlug(relativePath, options?.slugPrefix);
 
-  if (canonicalParsedSlug !== expectedSlug) {
+  if (hasExplicitFrontmatterSlug(content) && canonicalParsedSlug(parsed.slug) !== expectedSlug) {
     return {
       slug: expectedSlug,
       status: 'skipped',
@@ -157,6 +202,24 @@ export async function importFromFile(
   }
 
   return importFromContent(engine, expectedSlug, content, { path: relativePath });
+}
+
+function hasExplicitFrontmatterSlug(content: string): boolean {
+  const lines = content.split('\n');
+  if (lines[0]?.trim() !== '---') return false;
+  for (const line of lines.slice(1)) {
+    if (line.trim() === '---') return false;
+    if (/^slug\s*:/.test(line.trim())) return true;
+  }
+  return false;
+}
+
+function canonicalParsedSlug(slug: string): string {
+  try {
+    return slugifyPath(validateSlug(slug));
+  } catch {
+    return slug;
+  }
 }
 
 // Backward compat

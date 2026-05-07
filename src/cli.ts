@@ -60,6 +60,8 @@ const SYNC_CLI_SPEC: Operation = {
   description: 'Sync git repo to brain (incremental). CLI also supports a watch-mode extension for repeated polling.',
   params: {
     repo: { type: 'string', description: 'Path to git repo (optional if configured)' },
+    subbrain: { type: 'string', description: 'Registered sub-brain id to sync' },
+    all_subbrains: { type: 'boolean', description: 'Sync every registered sub-brain' },
     dry_run: { type: 'boolean', description: 'Preview changes without applying' },
     full: { type: 'boolean', description: 'Full re-sync (ignore checkpoint)' },
     no_pull: { type: 'boolean', description: 'Skip git pull' },
@@ -108,6 +110,7 @@ const DIRECT_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
   config: async () => (await import('./commands/config.ts')).runConfig,
   doctor: async () => (await import('./commands/doctor.ts')).runDoctor,
   migrate: async () => (await import('./commands/migrate-engine.ts')).runMigrateEngine,
+  subbrain: async () => (await import('./commands/subbrain.ts')).runSubbrain,
 };
 
 const CLI_ONLY = new Set([
@@ -276,6 +279,10 @@ function normalizeSyncCliExtensionArgs(params: Record<string, unknown>): string[
   if (typeof params.repo === 'string' && params.repo.length > 0) {
     args.push('--repo', params.repo);
   }
+  if (typeof params.subbrain === 'string' && params.subbrain.length > 0) {
+    args.push('--subbrain', params.subbrain);
+  }
+  if (params.all_subbrains === true) args.push('--all-subbrains');
   if (params.dry_run === true) args.push('--dry-run');
   if (params.full === true) args.push('--full');
   if (params.no_pull === true) args.push('--no-pull');
@@ -459,6 +466,7 @@ ADMIN
   history <slug>                     Page version history
   revert <slug> <version-id>         Revert to version
   config [show|get|set] <key> [val]  Brain config
+  subbrain <add|list|remove>          Manage registered git-backed sub-brains
   serve                              MCP server (stdio)
   call <tool> '<json>'               Raw tool invocation
   version                            Version info

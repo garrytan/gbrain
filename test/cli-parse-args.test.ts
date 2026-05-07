@@ -255,6 +255,53 @@ describe('formatResult — list_pages truncation indicator', () => {
   });
 });
 
+describe('formatResult — all-subbrains sync output', () => {
+  test('renders per-subbrain statuses without an undefined commit range', () => {
+    const output = formatResult('sync_brain', {
+      status: 'synced',
+      fromCommit: null,
+      toCommit: '11111111,22222222',
+      added: 1,
+      modified: 0,
+      deleted: 0,
+      renamed: 0,
+      chunksCreated: 2,
+      pagesAffected: ['personal/people/alice'],
+      targets: [
+        {
+          id: 'office',
+          status: 'up_to_date',
+          fromCommit: '2222222222222222222222222222222222222222',
+          toCommit: '2222222222222222222222222222222222222222',
+          added: 0,
+          modified: 0,
+          deleted: 0,
+          renamed: 0,
+          chunksCreated: 0,
+          pagesAffected: [],
+        },
+        {
+          id: 'personal',
+          status: 'first_sync',
+          fromCommit: null,
+          toCommit: '1111111111111111111111111111111111111111',
+          added: 1,
+          modified: 0,
+          deleted: 0,
+          renamed: 0,
+          chunksCreated: 2,
+          pagesAffected: ['personal/people/alice'],
+        },
+      ],
+    });
+
+    expect(output).toContain('Sub-brain sync complete:');
+    expect(output).toContain('office: up_to_date');
+    expect(output).toContain('personal: first_sync');
+    expect(output).not.toContain('undefined');
+  });
+});
+
 // --- Meta: contract/help text consistency ---------------------------------
 
 describe('operations contract — help ↔ aliases consistency', () => {
