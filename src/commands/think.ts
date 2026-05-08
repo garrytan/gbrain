@@ -7,6 +7,8 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { runThink, persistSynthesis } from '../core/think/index.ts';
+import { loadConfig, isThinClient } from '../core/config.ts';
+import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -72,19 +74,41 @@ the gather phase still runs and prints what would have been the input.
     process.exit(1);
   }
 
-  const result = await runThink(engine, {
-    question, anchor, rounds, save, take, model, since, until,
-    // Local CLI: no MCP allow-list filter — operator owns the brain.
-  });
-
-  // Persist if --save (the runThink path doesn't auto-persist; CLI does it explicitly)
+  // v0.31.1 (Issue #734): on thin-client installs, route through MCP. The
+  // server's `think` handler intentionally ignores --save and --take for
+  // remote callers (operations.ts:1103-1135 trust-boundary gate). Document
+  // here loudly so users get a clear warning instead of silent loss.
+  let result: any;
   let savedSlug: string | undefined;
   let evidenceInserted = 0;
-  if (save) {
-    const persisted = await persistSynthesis(engine, result);
-    savedSlug = persisted.slug;
-    evidenceInserted = persisted.evidenceInserted;
-    for (const w of persisted.warnings) result.warnings.push(w);
+  const cfg = loadConfig();
+  if (isThinClient(cfg)) {
+    if (save || take) {
+      console.error(
+        '[thin-client] --save and --take are server-gated for remote callers ' +
+        '(trust-boundary policy). Run on the host or use the MCP `think` tool ' +
+        'with the `viaSubagent` context if you need persistence.',
+      );
+    }
+    const raw = await callRemoteTool(cfg!, 'think', {
+      question, anchor, rounds, model, since, until,
+      // save/take intentionally NOT forwarded — server would ignore them;
+      // we surface the intent above so users know what they lose.
+    }, { timeoutMs: 180_000 });
+    result = unpackToolResult<any>(raw);
+  } else {
+    result = await runThink(engine, {
+      question, anchor, rounds, save, take, model, since, until,
+      // Local CLI: no MCP allow-list filter — operator owns the brain.
+    });
+
+    // Persist if --save (the runThink path doesn't auto-persist; CLI does it explicitly)
+    if (save) {
+      const persisted = await persistSynthesis(engine, result);
+      savedSlug = persisted.slug;
+      evidenceInserted = persisted.evidenceInserted;
+      for (const w of persisted.warnings) result.warnings.push(w);
+    }
   }
 
   if (json) {
