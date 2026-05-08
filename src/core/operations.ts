@@ -17,6 +17,7 @@ import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import * as db from './db.ts';
+import { VERSION } from '../version.ts';
 import {
   GET_RECENT_SALIENCE_DESCRIPTION,
   FIND_ANOMALIES_DESCRIPTION,
@@ -1372,6 +1373,37 @@ const get_health: Operation = {
 };
 
 /**
+ * v0.31.1 (Issue #734): lightweight identity packet for the thin-client
+ * banner. Read-scope so any authenticated client can surface "thin-client →
+ * <host> · brain: 102k pages, 265k chunks · v0.31.1" without needing admin.
+ *
+ * Reuses engine.getStats() for counters (banner cache TTL bounds frequency
+ * to ≤1/60s per CLI process; well below the Fly.io health-check cadence
+ * that motivated the `getStats` cost warning in CLAUDE.md).
+ *
+ * No CLI surface (no cliHints) — this op exists only for thin-client banner
+ * data. `last_sync_iso` deferred (no canonical source field today; would
+ * need autopilot cycle to write a config key — TODO in v0.31.x).
+ */
+const get_brain_identity: Operation = {
+  name: 'get_brain_identity',
+  description: 'Brain identity + counters for thin-client banner. Returns version, engine kind, and page/chunk counts. Read-scope.',
+  params: {},
+  handler: async (ctx) => {
+    const stats = await ctx.engine.getStats();
+    return {
+      version: VERSION,
+      engine: ctx.engine.kind,
+      page_count: stats.page_count,
+      chunk_count: stats.chunk_count,
+      last_sync_iso: null as string | null,
+    };
+  },
+  scope: 'read',
+  // intentionally no cliHints — banner-only op
+};
+
+/**
  * Multi-topology v1 (Tier B): structured doctor report for remote callers.
  *
  * First read-only diagnostic op exposed over HTTP MCP. Wraps the focused
@@ -2235,6 +2267,8 @@ export const operations: Operation[] = [
   add_timeline_entry, get_timeline,
   // Admin
   get_stats, get_health, run_doctor, get_versions, revert_version,
+  // v0.31.1 (Issue #734): thin-client banner identity packet (read-scope, banner-only)
+  get_brain_identity,
   // Sync
   sync_brain,
   // Raw data
