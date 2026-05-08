@@ -4,6 +4,7 @@ import { join, relative } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
+import { isCodeFilePath } from '../core/sync.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -28,7 +29,11 @@ export interface RunImportResult {
   failures: Array<{ path: string; error: string }>;
 }
 
-export async function runImport(engine: BrainEngine, args: string[], opts: { commit?: string } = {}): Promise<RunImportResult> {
+export async function runImport(
+  engine: BrainEngine,
+  args: string[],
+  opts: { commit?: string; strategy?: 'markdown' | 'code' | 'auto' } = {},
+): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
@@ -56,9 +61,16 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
 
-  // Collect all .md files
-  const allFiles = collectMarkdownFiles(dir);
-  console.log(`Found ${allFiles.length} markdown files`);
+  // Collect files per strategy. Default 'markdown' preserves pre-strategy
+  // behavior; sync.ts:performFullSync now passes strategy through so
+  // `gbrain sync --strategy code` actually walks code files on first sync.
+  const walkStrategy = opts.strategy || 'markdown';
+  const allFiles = walkStrategy === 'code'
+    ? collectCodeFiles(dir)
+    : walkStrategy === 'auto'
+      ? collectFilesAuto(dir)
+      : collectMarkdownFiles(dir);
+  console.log(`Found ${allFiles.length} ${walkStrategy} file(s)`);
 
   // Resume from checkpoint if available
   const checkpointPath = gbrainPath('import-checkpoint.json');
@@ -292,7 +304,28 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
 }
 
 export function collectMarkdownFiles(dir: string): string[] {
+  return collectFiles(dir, 'markdown');
+}
+
+/**
+ * Collect every code file under `dir` per `isCodeFilePath`. Mirrors
+ * `collectMarkdownFiles`'s symlink-skip security guard. Used by
+ * `runImport` when invoked with `strategy: 'code'`.
+ */
+export function collectCodeFiles(dir: string): string[] {
+  return collectFiles(dir, 'code');
+}
+
+/** Collect markdown + code (+ images when multimodal). */
+export function collectFilesAuto(dir: string): string[] {
+  return collectFiles(dir, 'auto');
+}
+
+type WalkStrategy = 'markdown' | 'code' | 'auto';
+
+function collectFiles(dir: string, strategy: WalkStrategy): string[] {
   const files: string[] = [];
+  const multimodalEnabled = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
 
   function walk(d: string) {
     for (const entry of readdirSync(d)) {
@@ -328,17 +361,23 @@ export function collectMarkdownFiles(dir: string): string[] {
 
       if (stat.isDirectory()) {
         walk(full);
-      } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
+        continue;
+      }
+
+      const isMarkdown = entry.endsWith('.md') || entry.endsWith('.mdx');
+      const isCode = isCodeFilePath(entry);
+      const isImage = multimodalEnabled && isImageFilePath(entry);
+
+      if (strategy === 'markdown' && (isMarkdown || isImage)) {
         files.push(full);
-      } else if (multimodalEnabled && isImageFilePath(entry)) {
-        // v0.27.1 (F2): images join the walker only when multimodal is on.
-        // Pre-v0.27.1 brains keep their existing markdown-only walk.
+      } else if (strategy === 'code' && (isCode || isImage)) {
+        files.push(full);
+      } else if (strategy === 'auto' && (isMarkdown || isCode || isImage)) {
         files.push(full);
       }
     }
   }
 
-  const multimodalEnabled = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
   walk(dir);
   return files.sort();
 }
