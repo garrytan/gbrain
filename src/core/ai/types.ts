@@ -29,7 +29,62 @@ export interface EmbeddingTouchpoint {
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
+  /**
+   * Maximum tokens per batch for this provider's embedding endpoint.
+   * When set, the gateway pre-splits batches at
+   * `max_batch_tokens × safety_factor / chars_per_token` characters and
+   * recursively halves on token-limit errors at runtime. When unset, the
+   * gateway makes a single embedMany() call with no safety net (OpenAI fast
+   * path).
+   */
+  max_batch_tokens?: number;
+  /**
+   * Expected character density for this provider's tokenizer (chars per
+   * token). OpenAI tiktoken averages ~4 on English text; Voyage averages
+   * ~1 on mixed content (code/JSON/CJK). Defaults to 4 if omitted.
+   * Only consulted when `max_batch_tokens` is also set.
+   */
+  chars_per_token?: number;
+  /**
+   * Budget-utilization ceiling in (0, 1]. The gateway pre-splits at
+   * `safety_factor × max_batch_tokens` to leave headroom for tokenizer
+   * variance. Defaults to 0.8. Voyage-style providers with dense payloads
+   * should pin this lower (e.g. 0.5). Only consulted when
+   * `max_batch_tokens` is also set.
+   */
+  safety_factor?: number;
+  /**
+   * v0.27.1: when true, at least one model in this recipe accepts image
+   * inputs via a multimodal embedding endpoint (e.g. Voyage's
+   * /v1/multimodalembeddings). Drives gateway.embedMultimodal() routing.
+   * Text-only providers leave this undefined.
+   */
+  supports_multimodal?: boolean;
+  /**
+   * v0.28.11: explicit list of models in this recipe that accept multimodal
+   * input. Required when the recipe mixes text-only and multimodal models
+   * under the same touchpoint (e.g. Voyage). embedMultimodal() validates
+   * `parsed.modelId` against this list AFTER `supports_multimodal` is true,
+   * pre-flighting the HTTP 400 a non-multimodal-capable model would otherwise
+   * trigger at the endpoint. When omitted, every model in `models` is
+   * treated as multimodal-capable (back-compat for providers where the whole
+   * recipe is multimodal). The check fires only inside embedMultimodal();
+   * text embedding paths ignore it.
+   */
+  multimodal_models?: string[];
 }
+
+/**
+ * v0.27.1: input shape for gateway.embedMultimodal(). Discriminated union;
+ * today the only kind is image_base64 (raw bytes encoded by the caller).
+ * Future kinds (image_url, video_keyframe) extend the union without
+ * widening callers because the discriminator is exhaustive.
+ *
+ * No image_url variant: SSRF surface. Callers must read the bytes and
+ * base64-encode them; the gateway never fetches external URLs.
+ */
+export type MultimodalInput =
+  | { kind: 'image_base64'; data: string; mime: string };
 
 export interface ExpansionTouchpoint {
   models: string[];
@@ -99,6 +154,12 @@ export interface AIGatewayConfig {
   embedding_model?: string;
   /** Target embedding dims. Gateway asserts returned embeddings match this. */
   embedding_dimensions?: number;
+  /**
+   * Separate model for multimodal embeddings (e.g. "voyage:voyage-multimodal-3").
+   * When set, embedMultimodal() routes to this model instead of embedding_model.
+   * Allows brains using OpenAI for text to use Voyage for image embeddings.
+   */
+  embedding_multimodal_model?: string;
   /** Current expansion model as "provider:modelId". */
   expansion_model?: string;
   /** Default chat model for `gateway.chat()` callers (subagent default). */

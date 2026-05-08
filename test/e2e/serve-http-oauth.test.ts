@@ -43,8 +43,17 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     // via process.env mutation, which is invisible to subprocesses unless we
     // explicitly re-pass process.env. Same pattern applies to every execSync
     // in this file.
+    // v0.28.10: register with admin scope so the F7 protected-name guard
+    // tests can mint admin-scoped tokens that actually exercise the guard
+    // at operations.ts:1527. Without admin in the client's allowed scopes,
+    // submit_job for a protected name (`shell`, `subagent`) gets rejected
+    // by hasScope() in serve-http.ts BEFORE reaching the F7 guard, so the
+    // test was validating scope enforcement instead of the RCE protection.
+    // Other tests that mint specific subsets ('read', 'read write') still
+    // get the subset they ask for — adding admin to the client's allowed
+    // ceiling does not auto-grant it to every minted token.
     const regOutput = execSync(
-      'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write"',
+      'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write admin"',
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
     );
     const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
@@ -213,6 +222,21 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(meta.scopes_supported).toContain('admin');
   });
 
+  // T2 (eng-review): scopes_supported advertises the full ALLOWED_SCOPES_LIST
+  // so MCP clients (Claude Desktop, ChatGPT, Perplexity) can discover the
+  // v0.28 sources_admin and users_admin scopes via standard discovery.
+  // Pre-v0.28 the list was hardcoded to ['read','write','admin'] in
+  // serve-http.ts:195 and this assertion would have failed.
+  test('OAuth metadata advertises all 5 v0.28 scopes (sources_admin + users_admin)', async () => {
+    const res = await fetch(`${BASE}/.well-known/oauth-authorization-server`);
+    const meta = await res.json() as any;
+    expect(meta.scopes_supported).toContain('sources_admin');
+    expect(meta.scopes_supported).toContain('users_admin');
+    expect(meta.scopes_supported).toEqual(
+      expect.arrayContaining(['admin', 'read', 'sources_admin', 'users_admin', 'write']),
+    );
+  });
+
   // =========================================================================
   // Fix 3: Express 5 compatibility
   // =========================================================================
@@ -271,21 +295,77 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }, 15_000);
 
   // =========================================================================
-  // Health endpoint (no auth required)
+  // Health endpoint (no auth required) — v0.28.10 made /health liveness-only;
+  // engine stats moved to /admin/api/full-stats behind requireAdmin so a
+  // saturated pool can't pin /health and trigger orchestrator restart cascades.
   // =========================================================================
 
-  test('health endpoint returns OK without auth', async () => {
+  test('v0.28.10: /health returns liveness-only body (no engine stats)', async () => {
     const res = await fetch(`${BASE}/health`);
     expect(res.ok).toBe(true);
     const data = await res.json() as any;
     expect(data.status).toBe('ok');
     expect(data.version).toBeDefined();
-    // page_count: the endpoint must return a non-negative integer. The exact
-    // value depends on the deployment's brain state and is not what this test
-    // is checking — pre-v0.26.2 this asserted `> 0` and broke on fresh schemas.
-    expect(typeof data.page_count).toBe('number');
-    expect(data.page_count).toBeGreaterThanOrEqual(0);
+    expect(data.engine).toBeDefined();
+    // Regression: pre-v0.28.10 /health spread getStats() (page_count,
+    // chunk_count, etc.) into the body. The whole point of the v0.28.10
+    // split is that /health stops touching those tables. If page_count
+    // ever reappears here, the heavy probe leaked back into the public
+    // route and the original DoS surface is back.
+    expect(data.page_count).toBeUndefined();
+    expect(data.chunk_count).toBeUndefined();
+    expect(data.embedded_count).toBeUndefined();
+    // Body shape is exactly {status, version, engine}.
+    expect(Object.keys(data).sort()).toEqual(['engine', 'status', 'version']);
   });
+
+  test('v0.28.10: /admin/api/full-stats without admin cookie returns 401', async () => {
+    const res = await fetch(`${BASE}/admin/api/full-stats`);
+    expect(res.status).toBe(401);
+    const data = await res.json() as any;
+    expect(data.error).toBe('Admin authentication required');
+  });
+
+  test('v0.28.10: /admin/api/full-stats with valid admin cookie returns getStats() body', async () => {
+    // Same magic-link cookie dance the existing single-use test uses.
+    // Skip gracefully if the bootstrap token isn't extractable — the 401
+    // case above pins the auth gate; this test pins the happy path.
+    const stderrBuf = (serverProcess as any)?._stderrBuffer || '';
+    const tokenMatch = String(stderrBuf).match(/Admin Token[\s\S]*?([a-f0-9]{32,64})/);
+    if (!tokenMatch) {
+      console.warn('[e2e] skipped /admin/api/full-stats happy path: could not extract bootstrap token');
+      return;
+    }
+    const bootstrapToken = tokenMatch[1];
+
+    const issueRes = await fetch(`${BASE}/admin/api/issue-magic-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bootstrapToken}` },
+      body: '{}',
+    });
+    expect(issueRes.ok).toBe(true);
+    const { url } = await issueRes.json() as any;
+
+    const click = await fetch(url, { redirect: 'manual' });
+    expect(click.status).toBe(302);
+    const setCookie = click.headers.get('set-cookie') || '';
+    const cookieMatch = setCookie.match(/gbrain_admin=([^;]+)/);
+    expect(cookieMatch).toBeTruthy();
+    const cookieValue = cookieMatch![1];
+
+    const statsRes = await fetch(`${BASE}/admin/api/full-stats`, {
+      headers: { Cookie: `gbrain_admin=${cookieValue}` },
+    });
+    expect(statsRes.ok).toBe(true);
+    const stats = await statsRes.json() as any;
+    expect(stats.status).toBe('ok');
+    expect(stats.version).toBeDefined();
+    expect(stats.engine).toBeDefined();
+    // The full-stats body is probeHealth's spread of getStats() — page_count
+    // is the canonical signal that we're hitting the heavy path here.
+    expect(typeof stats.page_count).toBe('number');
+    expect(stats.page_count).toBeGreaterThanOrEqual(0);
+  }, 15_000);
 
   // =========================================================================
   // Token lifecycle
@@ -461,8 +541,9 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       expect(okRes.status).not.toBe(401);
 
       // Trigger an error path so the error_message column gets a value too.
-      // Request a tool that doesn't exist — server returns an MCP error in
-      // the body but the underlying handler logs status='error' to mcp_request_log.
+      // Request a tool that doesn't exist — v0.28.10 logs unknown-op attempts
+      // with operation = the attempted name and error_message starting with
+      // 'unknown_operation:'.
       await mcpCall(access_token, 'tools/call', { name: 'this_tool_does_not_exist', arguments: {} });
 
       // Allow async best-effort INSERT to flush.
@@ -483,18 +564,26 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
         expect(row.agent_name).toBe('e2e-oauth-test');
       }
 
-      // params persisted as JSONB (postgres-js returns object form).
-      // The params field is non-null on tools/call (carries the call args)
-      // and on tools/list (carries an empty {} or undefined depending on payload).
-      const callRow = rows.find(r => r.operation === 'tools/call');
+      // v0.28.10: tools/list logs as operation='tools/list' (the JSON-RPC
+      // method name). tools/call success/error logs as operation=<inner
+      // tool name> (the convention preserved from pre-v0.28.10 dispatch
+      // logging — agents querying mcp_request_log filter by tool name, not
+      // by JSON-RPC method).
+      const listRow = rows.find(r => r.operation === 'tools/list');
+      expect(listRow).toBeDefined();
+      expect(listRow!.status).toBe('success');
+
+      // The unknown-op call shows up with operation = the attempted name.
+      const callRow = rows.find(r => r.operation === 'this_tool_does_not_exist');
       expect(callRow).toBeDefined();
-      expect(callRow!.params).toBeDefined();
+      expect(callRow!.status).toBe('error');
 
       // error_message populated on the failed call.
       const errorRow = rows.find(r => r.status === 'error');
       expect(errorRow).toBeDefined();
       expect(errorRow!.error_message).toBeTruthy();
       expect(typeof errorRow!.error_message).toBe('string');
+      expect(errorRow!.error_message as string).toContain('unknown_operation');
     } finally {
       await sql.end();
     }
@@ -743,7 +832,12 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // Together they close the path even if either layer regresses alone.
 
   test('F7: HTTP MCP cannot submit shell jobs (RCE regression)', async () => {
-    const { access_token } = await mintToken('read write');
+    // v0.28.10: must mint admin scope. submit_job's required scope is
+    // 'admin'; without it, hasScope() rejects with insufficient_scope BEFORE
+    // the F7 protected-name guard at operations.ts:1527 fires. To validate
+    // the actual RCE protection (the protected-name guard), the token has
+    // to clear the scope check first.
+    const { access_token } = await mintToken('admin');
     const res = await mcpCall(access_token, 'tools/call', {
       name: 'submit_job',
       arguments: { name: 'shell', data: { cmd: 'id' } },
@@ -767,7 +861,8 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }, 15_000);
 
   test('F7: HTTP MCP cannot submit subagent jobs (protected name)', async () => {
-    const { access_token } = await mintToken('read write');
+    // Same admin-scope requirement as the shell-job sibling test above.
+    const { access_token } = await mintToken('admin');
     const res = await mcpCall(access_token, 'tools/call', {
       name: 'submit_job',
       arguments: { name: 'subagent', data: { prompt: 'noop' } },

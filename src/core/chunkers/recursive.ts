@@ -31,19 +31,31 @@ export interface TextChunk {
   index: number;
 }
 
+// v0.28: import takes-fence stripper as a pre-processing pass. Takes content
+// lives in the takes table only; duplicating it inside content_chunks would
+// bypass the per-token MCP allow-list (Codex P0 #3 privacy fix).
+import { stripTakesFence } from '../takes-fence.ts';
+
 export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
 
   if (!text || text.trim().length === 0) return [];
 
-  const wordCount = countWords(text);
+  // v0.28: strip fenced takes blocks BEFORE chunking. Takes are retrieval-
+  // accessible only via the takes table; their content must not appear in
+  // content_chunks where the per-token allow-list cannot reach. The
+  // takes_fence_chunk_leak doctor check verifies this invariant.
+  const stripped = stripTakesFence(text);
+  if (!stripped || stripped.trim().length === 0) return [];
+
+  const wordCount = countWords(stripped);
   if (wordCount <= chunkSize) {
-    return [{ text: text.trim(), index: 0 }];
+    return [{ text: stripped.trim(), index: 0 }];
   }
 
   // Recursively split, then greedily merge to target size
-  const pieces = recursiveSplit(text, 0, chunkSize);
+  const pieces = recursiveSplit(stripped, 0, chunkSize);
   const merged = greedyMerge(pieces, chunkSize);
   const withOverlap = applyOverlap(merged, chunkOverlap);
 

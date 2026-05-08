@@ -27,7 +27,8 @@ export type ErrorCode =
   | 'storage_error'
   | 'bucket_not_found'
   | 'database_error'
-  | 'permission_denied';
+  | 'permission_denied'
+  | 'unknown_transport'; // v0.28.1: whoami fail-closed for ambiguous transport
 
 export class OperationError extends Error {
   constructor(
@@ -257,9 +258,23 @@ export interface OperationContext {
    */
   cliOpts?: { quiet: boolean; progressJson: boolean; progressInterval: number };
   /**
-   * Connected-gbrains brain id (v0.19+). Identifies which brain this op is
-   * targeting. 'host' for the default brain configured in ~/.gbrain/config.json;
-   * otherwise a mount id registered in ~/.gbrain/mounts.json.
+   * v0.28: per-token allow-list for the holder field on `takes`. Threaded
+   * by the MCP HTTP/stdio dispatch layer from `access_tokens.permissions.takes_holders`.
+   *
+   * When set (i.e., this OperationContext came from an MCP-bound token),
+   * `takes_list`, `takes_search`, and `query` (when it returns takes) MUST
+   * apply `WHERE holder = ANY($takesHoldersAllowList)`. This is the
+   * server-side filter that backs the v0.28 visibility model.
+   *
+   * Default behavior when unset: local CLI callers see all holders. v0.28
+   * MCP dispatch sets it to `['world']` for tokens with no permissions row
+   * (default-deny on private hunches).
+   */
+  takesHoldersAllowList?: string[];
+  /**
+   * Connected-gbrains brain id (v0.19+ / v0.26 mounts). Identifies which brain
+   * this op is targeting. 'host' for the default brain configured in
+   * ~/.gbrain/config.json; otherwise a mount id registered in ~/.gbrain/mounts.json.
    *
    * `ctx.engine` is the resolved BrainEngine for this id (populated by
    * BrainRegistry at dispatch time). `brainId` exists alongside for:
@@ -282,7 +297,17 @@ export interface Operation {
   params: Record<string, ParamDef>;
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   mutating?: boolean;
-  scope?: 'read' | 'write' | 'admin';
+  /**
+   * Capability scope required to invoke this op over an authenticated
+   * transport. v0.28 added `sources_admin` (manage federated sources) and
+   * `users_admin` (reserved). The hierarchy lives in src/core/scope.ts —
+   * `admin` implies all, `write` implies `read`, the two `*_admin` scopes
+   * are siblings (different axes; neither implies the other).
+   *
+   * Local CLI callers (ctx.remote === false) bypass scope enforcement
+   * because the trust boundary there is the OS, not OAuth scopes.
+   */
+  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin';
   localOnly?: boolean;
   cliHints?: {
     name?: string;
@@ -781,7 +806,17 @@ const query: Operation = {
   name: 'query',
   description: 'Hybrid search with vector + keyword + multi-query expansion',
   params: {
-    query: { type: 'string', required: true },
+    // v0.27.1: `query` is no longer strictly required — `--image <path>`
+    // is the alternative entry point for image-similarity search. The CLI
+    // validator at src/cli.ts honors `cliHints.altRequired` and admits the
+    // image-only invocation. MCP / programmatic callers must still pass
+    // `query` OR `image` (handler refuses if both are absent).
+    query: { type: 'string', required: false },
+    /** v0.27.1: image-similarity search. Path resolved on the CLI side
+     *  before the op fires (the op receives raw bytes neither side; the
+     *  CLI loads the file, base64-encodes, and passes through `image`). */
+    image: { type: 'string', description: 'Base64-encoded image bytes for image-similarity search (CLI: --image <path>).' },
+    image_mime: { type: 'string', description: 'MIME type for the image bytes (auto-derived from path on CLI; required when calling op directly).' },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
@@ -797,7 +832,29 @@ const query: Operation = {
     const startedAt = Date.now();
     const expand = p.expand !== false;
     const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
-    const queryText = p.query as string;
+    const queryText = p.query as string | undefined;
+    const imageData = p.image as string | undefined;
+    const imageMime = (p.image_mime as string) || 'image/jpeg';
+
+    // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
+    // text-only); embeds the image via embedMultimodal and runs a direct
+    // vector search against the embedding_image column.
+    if (imageData) {
+      const { embedMultimodal } = await import('./ai/gateway.ts');
+      const [vec] = await embedMultimodal([
+        { kind: 'image_base64', data: imageData, mime: imageMime },
+      ]);
+      const results = await ctx.engine.searchVector(vec, {
+        limit: (p.limit as number) || 20,
+        offset: (p.offset as number) || 0,
+        embeddingColumn: 'embedding_image',
+      });
+      return results;
+    }
+
+    if (!queryText) {
+      throw new Error('query requires either `query` (text) or `image` (base64 bytes).');
+    }
 
     // v0.25.0 — capture meta side-channel. hybridSearch's return contract
     // stays SearchResult[] (Cathedral II callers depend on that); meta
@@ -847,6 +904,110 @@ const query: Operation = {
   },
   scope: 'read',
   cliHints: { name: 'query', positional: ['query'] },
+};
+
+// --- v0.28: Takes ---
+
+const takes_list: Operation = {
+  name: 'takes_list',
+  description: 'List takes (typed/weighted/attributed claims) filtered by holder/kind/active/etc.',
+  scope: 'read',
+  params: {
+    page_slug: { type: 'string', description: 'Filter to this page' },
+    holder: { type: 'string', description: 'Filter to this holder (world|garry|brain|<slug>)' },
+    kind: { type: 'string', description: 'Filter to this kind (fact|take|bet|hunch)' },
+    active: { type: 'boolean', description: 'Active rows only (default true)' },
+    resolved: { type: 'boolean', description: 'true → only resolved bets; false → only unresolved' },
+    sort_by: { type: 'string', description: 'weight | since_date | created_at (default created_at)' },
+    limit: { type: 'number', description: 'Max rows (default 100, cap 500)' },
+    offset: { type: 'number', description: 'Skip first N rows' },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.listTakes({
+      page_slug: p.page_slug as string | undefined,
+      holder: p.holder as string | undefined,
+      kind: p.kind as never,
+      active: p.active as boolean | undefined,
+      resolved: p.resolved as boolean | undefined,
+      sortBy: p.sort_by as never,
+      limit: p.limit as number | undefined,
+      offset: p.offset as number | undefined,
+      // Per-token allow-list — server-side filter for MCP-bound calls.
+      // Local CLI callers leave takesHoldersAllowList unset and see all holders.
+      takesHoldersAllowList: ctx.takesHoldersAllowList,
+    });
+  },
+  cliHints: { name: 'takes-list' },
+};
+
+const takes_search: Operation = {
+  name: 'takes_search',
+  description: 'Keyword search across takes (pg_trgm similarity over claim text)',
+  scope: 'read',
+  params: {
+    query: { type: 'string', required: true },
+    limit: { type: 'number', description: 'Max results (default 30, cap 100)' },
+  },
+  handler: async (ctx, p) => {
+    return ctx.engine.searchTakes(p.query as string, {
+      limit: p.limit as number | undefined,
+      takesHoldersAllowList: ctx.takesHoldersAllowList,
+    });
+  },
+  cliHints: { name: 'takes-search', positional: ['query'] },
+};
+
+const think: Operation = {
+  name: 'think',
+  description: 'Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis.',
+  scope: 'write',
+  params: {
+    question: { type: 'string', required: true, description: 'The question to think about' },
+    anchor: { type: 'string', description: 'Pull the entity subgraph around this slug' },
+    rounds: { type: 'number', description: 'Multi-pass: 1 (default). Round-loop scaffolding is in place; gap-driven retrieval ships in v0.29.' },
+    save: { type: 'boolean', description: 'Persist a synthesis page (local-CLI only; ignored for MCP)' },
+    take: { type: 'boolean', description: 'Append a take row to the anchor page (requires anchor)' },
+    model: { type: 'string', description: 'Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus.' },
+    since: { type: 'string', description: 'Start of temporal window (YYYY-MM-DD or YYYY-MM)' },
+    until: { type: 'string', description: 'End of temporal window' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    const remote = ctx.remote ?? true;
+    // Codex P1 #7 + privacy: remote callers cannot persist via MCP.
+    const safeSave = remote ? false : Boolean(p.save);
+    const safeTake = remote ? false : Boolean(p.take);
+    const { runThink, persistSynthesis } = await import('./think/index.ts');
+    const result = await runThink(ctx.engine, {
+      question: String(p.question),
+      anchor: p.anchor ? String(p.anchor) : undefined,
+      rounds: typeof p.rounds === 'number' ? (p.rounds as number) : undefined,
+      save: safeSave,
+      take: safeTake,
+      model: p.model ? String(p.model) : undefined,
+      since: p.since ? String(p.since) : undefined,
+      until: p.until ? String(p.until) : undefined,
+      takesHoldersAllowList: ctx.takesHoldersAllowList,
+    });
+
+    // Persist if --save was passed locally
+    let savedSlug: string | undefined;
+    let evidenceInserted = 0;
+    if (safeSave) {
+      const persisted = await persistSynthesis(ctx.engine, result);
+      savedSlug = persisted.slug;
+      evidenceInserted = persisted.evidenceInserted;
+      for (const w of persisted.warnings) result.warnings.push(w);
+    }
+
+    return {
+      ...result,
+      saved_slug: savedSlug ?? null,
+      evidence_inserted: evidenceInserted,
+      remote_persisted_blocked: remote && (Boolean(p.save) || Boolean(p.take)),
+    };
+  },
+  cliHints: { name: 'think', positional: ['question'] },
 };
 
 // --- Tags ---
@@ -1592,6 +1753,209 @@ const find_orphans: Operation = {
   cliHints: { name: 'orphans', hidden: true },
 };
 
+// --- v0.28: whoami + sources management ---
+
+const whoami: Operation = {
+  name: 'whoami',
+  description:
+    'Introspect the calling identity. Returns one of three transport shapes: ' +
+    '{transport: "oauth", client_id, client_name, scopes, expires_at}, ' +
+    '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
+    '{transport: "local", scopes: []}. Throws unknown_transport when the ' +
+    'context is ambiguous (remote=true without auth) — fail-closed posture ' +
+    'mirroring the v0.26.9 trust-boundary contract.',
+  params: {},
+  scope: 'read',
+  handler: async (ctx) => {
+    // Trust boundary: ctx.remote === false is the trusted local CLI surface.
+    // Returning OAuth-shaped scopes here would resurrect the v0.26.9 footgun
+    // where code conditionally trusted on `scopes.includes('admin')` instead
+    // of `ctx.remote === false`. Empty scopes array forces clients to
+    // special-case `transport: 'local'` explicitly.
+    if (ctx.remote === false) {
+      return { transport: 'local', scopes: [] };
+    }
+    if (!ctx.auth) {
+      throw new OperationError(
+        'unknown_transport',
+        'whoami called over a remote transport that did not thread ctx.auth. ' +
+          'This is a transport bug — every remote call site must populate ctx.auth ' +
+          'or set ctx.remote === false.',
+      );
+    }
+    // OAuth tokens have client_id starting with 'gbrain_cl_'; legacy
+    // access_tokens reuse `name` as both clientId and clientName (verifyAccessToken
+    // at oauth-provider.ts:417-430). Detect by inspecting the prefix.
+    const isOauth = ctx.auth.clientId.startsWith('gbrain_cl_');
+    if (isOauth) {
+      return {
+        transport: 'oauth',
+        client_id: ctx.auth.clientId,
+        client_name: ctx.auth.clientName ?? ctx.auth.clientId,
+        scopes: ctx.auth.scopes,
+        expires_at: ctx.auth.expiresAt ?? null,
+      };
+    }
+    return {
+      transport: 'legacy',
+      token_name: ctx.auth.clientName ?? ctx.auth.clientId,
+      scopes: ctx.auth.scopes,
+      expires_at: null,
+    };
+  },
+  cliHints: { name: 'whoami' },
+};
+
+const sources_add: Operation = {
+  name: 'sources_add',
+  description:
+    'Register a new source. Supports either --path (existing v0.17 behavior) ' +
+    'or --url (v0.28 federated remote-clone path: parses the URL through the ' +
+    'SSRF gate, clones into $GBRAIN_HOME/clones/<id>/ via temp-dir + rename ' +
+    'atomicity, and stores remote_url in sources.config). Pre-flight collision ' +
+    'check on id; rollback on either-side failure.',
+  params: {
+    id: {
+      type: 'string',
+      required: true,
+      description: 'Source id ([a-z0-9-]{1,32}). Immutable citation key.',
+    },
+    name: { type: 'string', description: 'Display name (defaults to id).' },
+    path: { type: 'string', description: 'Local path. Mutually optional with url.' },
+    url: {
+      type: 'string',
+      description:
+        'HTTPS git URL. Cloned into $GBRAIN_HOME/clones/<id>/. SSRF-guarded.',
+    },
+    federated: {
+      type: 'boolean',
+      description: 'true → cross-source default search. false → isolated.',
+    },
+    clone_dir: {
+      type: 'string',
+      description:
+        'Override clone destination (only valid with url). Default: $GBRAIN_HOME/clones/<id>/.',
+    },
+  },
+  mutating: true,
+  scope: 'sources_admin',
+  handler: async (ctx, p) => {
+    const { addSource } = await import('./sources-ops.ts');
+
+    // v0.28.1 codex finding (CRITICAL + HIGH): a `sources_admin` token over
+    // HTTP MCP must not be able to plant content at arbitrary host paths.
+    //
+    // - `path` lets a remote caller register `/etc/` (or any host dir) as a
+    //   "source"; later `gbrain sync --all` walks every sources.local_path,
+    //   which exfiltrates host content into the brain.
+    // - `clone_dir` lets a remote caller name the destination directly;
+    //   addSource's renameSync places the cloned tree there with no
+    //   confinement, AND validateRepoState's degraded-state recovery later
+    //   does rm -rf on src.local_path, so the same primitive doubles as
+    //   arbitrary-delete.
+    //
+    // Both fields are CLI-only (the operator runs `gbrain sources add --path
+    // /home/me/notes`). For HTTP MCP, ignore overrides — clone_dir defaults
+    // to $GBRAIN_HOME/clones/<id>/ and path is rejected. Local CLI callers
+    // (ctx.remote === false, per F7b fail-closed contract) keep the override.
+    const isLocal = ctx.remote === false;
+    const remotePath = isLocal ? (p.path as string | undefined) ?? null : null;
+    const remoteCloneDir = isLocal ? (p.clone_dir as string | undefined) : undefined;
+    if (!isLocal && (p.path !== undefined || p.clone_dir !== undefined)) {
+      ctx.logger.warn(
+        '[sources_add] ignoring path/clone_dir overrides on HTTP MCP transport ' +
+          '(remote callers can only register a remote --url; the clone path is ' +
+          'fixed under $GBRAIN_HOME/clones/).',
+      );
+    }
+
+    const row = await addSource(ctx.engine, {
+      id: p.id as string,
+      name: p.name as string | undefined,
+      localPath: remotePath,
+      remoteUrl: p.url as string | undefined,
+      federated:
+        p.federated === undefined ? null : (p.federated as boolean),
+      cloneDir: remoteCloneDir,
+    });
+    return row;
+  },
+  cliHints: { name: 'sources_add', hidden: true },
+};
+
+const sources_list: Operation = {
+  name: 'sources_list',
+  description:
+    'List registered sources with page counts and remote_url. v0.28 surfaces ' +
+    'the new remote_url field so a remote MCP caller can confirm a source is ' +
+    'managed by clone+pull rather than user-supplied path.',
+  params: {
+    include_archived: { type: 'boolean', description: 'Include soft-deleted sources.' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { listSources } = await import('./sources-ops.ts');
+    return {
+      sources: await listSources(ctx.engine, {
+        includeArchived: (p.include_archived as boolean) === true,
+      }),
+    };
+  },
+  cliHints: { name: 'sources_list', hidden: true },
+};
+
+const sources_remove: Operation = {
+  name: 'sources_remove',
+  description:
+    'Hard-remove a source (cascades pages/chunks/embeddings). Refuses to ' +
+    'delete the auto-managed clone dir unless its resolved path is confined ' +
+    'under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most ' +
+    'workflows prefer sources_archive for the soft-delete path.',
+  params: {
+    id: { type: 'string', required: true },
+    confirm_destructive: {
+      type: 'boolean',
+      description:
+        'Required when the source has data (pages, chunks). Without it the op refuses.',
+    },
+    dry_run: { type: 'boolean', description: 'Preview impact without side effects.' },
+    keep_storage: {
+      type: 'boolean',
+      description: 'Skip clone-dir cleanup even when the source is auto-managed.',
+    },
+  },
+  mutating: true,
+  scope: 'sources_admin',
+  handler: async (ctx, p) => {
+    const { removeSource } = await import('./sources-ops.ts');
+    return removeSource(ctx.engine, {
+      id: p.id as string,
+      confirmDestructive: (p.confirm_destructive as boolean) === true,
+      dryRun: (p.dry_run as boolean) === true || ctx.dryRun,
+      keepStorage: (p.keep_storage as boolean) === true,
+    });
+  },
+  cliHints: { name: 'sources_remove', hidden: true },
+};
+
+const sources_status: Operation = {
+  name: 'sources_status',
+  description:
+    'Per-source diagnostic. Returns clone_state ("healthy" | "missing" | ' +
+    '"not-a-dir" | "no-git" | "url-drift" | "corrupted" | "not-applicable") ' +
+    'so a remote MCP caller can diagnose whether the on-disk clone is ' +
+    'syncable without SSH access to the brain host.',
+  params: {
+    id: { type: 'string', required: true },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { getSourceStatus } = await import('./sources-ops.ts');
+    return getSourceStatus(ctx.engine, p.id as string);
+  },
+  cliHints: { name: 'sources_status', hidden: true },
+};
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -1624,6 +1988,10 @@ export const operations: Operation[] = [
   pause_job, resume_job, replay_job, send_job_message,
   // Orphans
   find_orphans,
+  // v0.28: Takes + think
+  takes_list, takes_search, think,
+  // v0.28: whoami + scoped sources management
+  whoami, sources_add, sources_list, sources_remove, sources_status,
 ];
 
 export const operationsByName = Object.fromEntries(

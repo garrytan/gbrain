@@ -516,15 +516,24 @@ describe('operation scope annotations', () => {
     const { operations } = require('../src/core/operations.ts');
     for (const op of operations) {
       expect(op.scope, `${op.name} missing scope`).toBeDefined();
-      expect(['read', 'write', 'admin']).toContain(op.scope);
+      // v0.28 added sources_admin and users_admin to the union.
+      expect([
+        'read', 'write', 'admin', 'sources_admin', 'users_admin',
+      ]).toContain(op.scope);
     }
   });
 
-  test('mutating operations are write or admin scoped', () => {
+  test('mutating operations are write/admin/sources_admin/users_admin scoped', () => {
     const { operations } = require('../src/core/operations.ts');
     for (const op of operations) {
       if (op.mutating) {
-        expect(['write', 'admin'], `${op.name} is mutating but not write/admin`).toContain(op.scope);
+        // v0.28: sources_admin permits sources_add / sources_remove (mutating
+        // sources, not pages); read scope is the only thing too narrow for
+        // any mutating op.
+        expect(
+          ['write', 'admin', 'sources_admin', 'users_admin'],
+          `${op.name} is mutating but not a write-axis scope`,
+        ).toContain(op.scope);
       }
     }
   });
@@ -766,6 +775,128 @@ describe('F2/F3 refresh hardening', () => {
     await expect(
       provider.exchangeRefreshToken(client, tokens.refresh_token!, ['read', 'write']),
     ).rejects.toThrow(/scope/i);
+  });
+
+  // T1 (eng-review): admin grant must be refreshable down to sources_admin
+  // via hasScope. Pre-v0.28 the F3 check was exact-string-match, so an
+  // admin grant could not refresh down to sources_admin even though admin
+  // implies it. gstack /setup-gbrain Path 4 needs this to work.
+  test('admin grant CAN refresh down to sources_admin (hasScope hierarchy)', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'admin-down-test', ['authorization_code'], 'admin',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['admin'],
+    }, mockRes);
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+
+    // Refresh requesting only sources_admin — admin implies it, so this
+    // must succeed and the new token must carry only the requested subset.
+    const rotated = await provider.exchangeRefreshToken(
+      client, tokens.refresh_token!, ['sources_admin'],
+    );
+    expect(rotated.access_token).toBeDefined();
+    expect(rotated.scope).toBe('sources_admin');
+
+    // The original refresh token must be dead (single-use rotation).
+    await expect(
+      provider.exchangeRefreshToken(client, tokens.refresh_token!),
+    ).rejects.toThrow();
+
+    // Note: rotated.refresh_token's grant is now sources_admin, not admin.
+    // Refreshing it up to users_admin would correctly fail (sibling
+    // non-implication) — that constraint is exercised in the F3 sibling
+    // test below. To prove "admin implies users_admin too" we'd need a
+    // fresh authorize round trip, which the existing F2 hardening tests
+    // already cover. One direction at a time.
+  });
+
+  test('admin grant CAN refresh down to users_admin (different axis)', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'admin-down-users-test', ['authorization_code'], 'admin',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['admin'],
+    }, mockRes);
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+
+    const rotated = await provider.exchangeRefreshToken(
+      client, tokens.refresh_token!, ['users_admin'],
+    );
+    expect(rotated.scope).toBe('users_admin');
+  });
+
+  // T1 sibling: write grant cannot refresh up to sources_admin (different axis)
+  test('write grant CANNOT refresh to sources_admin (sibling non-implication)', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'write-not-sources-admin-test', ['authorization_code'], 'write',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['write'],
+    }, mockRes);
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+
+    await expect(
+      provider.exchangeRefreshToken(client, tokens.refresh_token!, ['sources_admin']),
+    ).rejects.toThrow(/scope/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.28 — ALLOWED_SCOPES allowlist at registration time
+// ---------------------------------------------------------------------------
+
+describe('v0.28 ALLOWED_SCOPES allowlist', () => {
+  test('registerClientManual rejects unknown scope strings', async () => {
+    await expect(
+      provider.registerClientManual('bad-scope', ['client_credentials'], 'read flying-unicorn'),
+    ).rejects.toThrow(/Unknown scope/);
+  });
+
+  test('registerClientManual accepts every canonical scope', async () => {
+    for (const scope of ['read', 'write', 'admin', 'sources_admin', 'users_admin']) {
+      const { clientId } = await provider.registerClientManual(
+        `accept-${scope}`, ['client_credentials'], scope,
+      );
+      const client = await provider.clientsStore.getClient(clientId);
+      expect(client?.scope).toBe(scope);
+    }
+  });
+
+  test('registerClient (DCR) rejects unknown scope strings', async () => {
+    await expect(
+      provider.clientsStore.registerClient!({
+        client_name: 'dcr-bad-scope',
+        redirect_uris: ['https://example.com/cb'],
+        grant_types: ['authorization_code'],
+        scope: 'read bogus_scope',
+        token_endpoint_auth_method: 'client_secret_post',
+      } as any),
+    ).rejects.toThrow(/Unknown scope/);
   });
 });
 

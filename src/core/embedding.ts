@@ -12,6 +12,12 @@ import {
   getEmbeddingDimensions as gatewayGetDims,
 } from './ai/gateway.ts';
 
+// v0.27.1: re-export multimodal embedding so callers can pull both text and
+// image embedding APIs from `src/core/embedding`. import-image-file consumes
+// embedMultimodal directly.
+export { embedMultimodal } from './ai/gateway.ts';
+export type { MultimodalInput } from './ai/types.ts';
+
 /** Embed one text. */
 export async function embed(text: string): Promise<Float32Array> {
   return gatewayEmbedOne(text);
@@ -27,8 +33,9 @@ export interface EmbedBatchOptions {
 
 /**
  * Embed a batch of texts via the gateway. Sub-batches of 100 so upstream
- * progress callbacks fire incrementally on large imports. The gateway
- * handles truncation, retries, and provider dispatch.
+ * progress callbacks fire incrementally on large imports. The gateway owns
+ * adaptive batch splitting and per-recipe token-budget logic; this paginator
+ * is purely about progress-callback granularity.
  */
 const BATCH_SIZE = 100;
 export async function embedBatch(

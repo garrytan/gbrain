@@ -1,9 +1,18 @@
 import postgres from 'postgres';
-import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection, DreamVerdict, DreamVerdictInput } from './engine.ts';
+import type {
+  BrainEngine,
+  LinkBatchInput, TimelineBatchInput,
+  ReservedConnection,
+  DreamVerdict, DreamVerdictInput,
+  FileSpec, FileRow,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeResolution, SynthesisEvidenceInput,
+} from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
+import { applyChunkEmbeddingIndexPolicy } from './vector-index.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow,
@@ -20,9 +29,25 @@ import type {
 } from './types.ts';
 import { GBrainError } from './types.ts';
 import * as db from './db.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause } from './search/sql-ranking.ts';
+
+function escapeSqlStringLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+export function getPostgresSchema(dims: number = 1536, model: string = 'text-embedding-3-large'): string {
+  const parsedDims = Number(dims);
+  if (!Number.isInteger(parsedDims) || parsedDims <= 0) {
+    throw new Error(`Invalid embedding dimensions: ${dims}`);
+  }
+  const sanitizedModel = escapeSqlStringLiteral(String(model));
+  return applyChunkEmbeddingIndexPolicy(SCHEMA_SQL, parsedDims)
+    .replace(/vector\(1536\)/g, `vector(${parsedDims})`)
+    .replace(/'text-embedding-3-large'/g, `'${sanitizedModel}'`)
+    .replace(/\('embedding_dimensions', '1536'\)/g, `('embedding_dimensions', '${parsedDims}')`);
+}
 
 // CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
 // executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
@@ -41,6 +66,15 @@ export class PostgresEngine implements BrainEngine {
   private _savedConfig: (EngineConfig & { poolSize?: number }) | null = null;
   /** Whether a reconnect is in progress (prevents concurrent reconnects). */
   private _reconnecting = false;
+  /**
+   * Tracks which connection path this engine is using so disconnect() is
+   * idempotent. 'instance' = own _sql pool (poolSize was set);
+   * 'module' = the module-level db singleton (backward compat path).
+   * null = never connected, or already disconnected. Without this, a second
+   * disconnect() on an instance-pool engine would fall through to
+   * db.disconnect() and clobber the unrelated module-level connection.
+   */
+  private _connectionStyle: 'instance' | 'module' | null = null;
 
   // Instance connection (for workers) or fall back to module global (backward compat)
   get sql(): ReturnType<typeof postgres> {
@@ -83,9 +117,11 @@ export class PostgresEngine implements BrainEngine {
       this._sql = postgres(url, opts);
       await this._sql`SELECT 1`;
       await db.setSessionDefaults(this._sql);
+      this._connectionStyle = 'instance';
     } else {
       // Module-level singleton (backward compat for CLI main engine)
       await db.connect(config);
+      this._connectionStyle = 'module';
     }
   }
 
@@ -93,9 +129,16 @@ export class PostgresEngine implements BrainEngine {
     if (this._sql) {
       await this._sql.end();
       this._sql = null;
-    } else {
-      await db.disconnect();
+      // After this point, _connectionStyle stays 'instance' so a second
+      // disconnect() is a no-op rather than falling through and clearing
+      // the unrelated module-level db singleton.
+      return;
     }
+    if (this._connectionStyle === 'module') {
+      await db.disconnect();
+      this._connectionStyle = null;
+    }
+    // else: nothing to disconnect (already done or never connected)
   }
 
   async initSchema(): Promise<void> {
@@ -110,9 +153,7 @@ export class PostgresEngine implements BrainEngine {
       model = gw.getEmbeddingModel().split(':').slice(1).join(':') || model;
     } catch { /* gateway not yet configured — use defaults */ }
 
-    const sql = SCHEMA_SQL
-      .replace(/vector\(1536\)/g, `vector(${dims})`)
-      .replace(/'text-embedding-3-large'/g, `'${model}'`);
+    const sql = getPostgresSchema(dims, model);
 
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock).
@@ -161,7 +202,14 @@ export class PostgresEngine implements BrainEngine {
    *   - `links.origin_page_id` column (indexed by `idx_links_origin`) — v0.13
    *   - `content_chunks.symbol_name` column (indexed by `idx_chunks_symbol_name`) — v0.19
    *   - `content_chunks.language` column (indexed by `idx_chunks_language`) — v0.19
+   *   - `content_chunks.search_vector` + `parent_symbol_path` + `doc_comment`
+   *     + `symbol_name_qualified` columns (indexed by `idx_chunks_search_vector`
+   *     and `idx_chunks_symbol_qualified`) — v0.20 Cathedral II
    *   - `pages.deleted_at` column (indexed by `pages_deleted_at_purge_idx`) — v0.26.5
+   *   - `mcp_request_log.agent_name` + `params` + `error_message` columns
+   *     (indexed by `idx_mcp_log_agent_time`) — v0.26.3
+   *   - `subagent_messages.provider_id` column (indexed by
+   *     `idx_subagent_messages_provider`) — v0.27
    *
    * Keep this in sync with the PGLite version; covered by
    * `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
@@ -183,6 +231,11 @@ export class PostgresEngine implements BrainEngine {
       chunks_exists: boolean;
       symbol_name_exists: boolean;
       language_exists: boolean;
+      search_vector_exists: boolean;
+      mcp_log_exists: boolean;
+      agent_name_exists: boolean;
+      subagent_messages_exists: boolean;
+      subagent_provider_id_exists: boolean;
     }[]>`
       SELECT
         EXISTS (SELECT 1 FROM information_schema.tables
@@ -202,7 +255,17 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'symbol_name') AS symbol_name_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'search_vector') AS search_vector_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log') AS mcp_log_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'mcp_request_log' AND column_name = 'agent_name') AS agent_name_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'subagent_messages') AS subagent_messages_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'subagent_messages' AND column_name = 'provider_id') AS subagent_provider_id_exists
     `;
     const probe = probeRows[0]!;
 
@@ -210,12 +273,17 @@ export class PostgresEngine implements BrainEngine {
     const needsLinksBootstrap = probe.links_exists
       && (!probe.link_source_exists || !probe.origin_page_id_exists);
     const needsChunksBootstrap = probe.chunks_exists
-      && (!probe.symbol_name_exists || !probe.language_exists);
+      && (!probe.symbol_name_exists || !probe.language_exists || !probe.search_vector_exists);
     // v0.26.5: pages_deleted_at_purge_idx in SCHEMA_SQL crashes if the column
     // doesn't exist yet. Migration v34 also adds it, but bootstrap runs first.
     const needsPagesDeletedAt = probe.pages_exists && !probe.deleted_at_exists;
+    // v0.26.3 (v33): idx_mcp_log_agent_time in SCHEMA_SQL needs agent_name col.
+    const needsMcpLogBootstrap = probe.mcp_log_exists && !probe.agent_name_exists;
+    // v0.27 (v36): idx_subagent_messages_provider in SCHEMA_SQL needs provider_id
+    // (the SECOND column in the composite index `(job_id, provider_id)`).
+    const needsSubagentProviderId = probe.subagent_messages_exists && !probe.subagent_provider_id_exists;
 
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt) return;
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -253,13 +321,19 @@ export class PostgresEngine implements BrainEngine {
     }
 
     if (needsChunksBootstrap) {
-      // v26 (content_chunks_code_metadata) adds the full code-chunk metadata
-      // surface. The bootstrap only adds the two columns the schema blob's
-      // partial indexes reference (idx_chunks_symbol_name, idx_chunks_language).
-      // v26 runs later via runMigrations and adds the rest idempotently.
+      // v26 (content_chunks_code_metadata) adds symbol_name + language; v27
+      // (Cathedral II) adds parent_symbol_path + doc_comment +
+      // symbol_name_qualified + search_vector. The schema blob has indexes
+      // (idx_chunks_search_vector line 141, idx_chunks_symbol_qualified
+      // line 142) that need the v27 columns to exist before they run.
+      // v26 + v27 run later via runMigrations and are idempotent.
       await conn.unsafe(`
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS language TEXT;
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS parent_symbol_path TEXT[];
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS doc_comment TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name_qualified TEXT;
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
       `);
     }
 
@@ -270,6 +344,31 @@ export class PostgresEngine implements BrainEngine {
       // not to crash. v34 runs later via runMigrations and is idempotent.
       await conn.unsafe(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsMcpLogBootstrap) {
+      // v33 (admin_dashboard_columns_v0_26_3) adds agent_name + params +
+      // error_message to mcp_request_log. SCHEMA_SQL's
+      // `CREATE INDEX idx_mcp_log_agent_time ON mcp_request_log(agent_name,...)`
+      // crashes without agent_name. v33 runs later via runMigrations and is
+      // idempotent (and also handles backfill).
+      await conn.unsafe(`
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS agent_name TEXT;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS params JSONB;
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_message TEXT;
+      `);
+    }
+
+    if (needsSubagentProviderId) {
+      // v36 (subagent_provider_neutral_persistence_v0_27) adds provider_id +
+      // schema_version on subagent_messages and subagent_tool_executions.
+      // SCHEMA_SQL's `CREATE INDEX idx_subagent_messages_provider ON
+      // subagent_messages (job_id, provider_id)` crashes without provider_id
+      // (composite-index second column). v36 runs later via runMigrations and
+      // is idempotent.
+      await conn.unsafe(`
+        ALTER TABLE subagent_messages ADD COLUMN IF NOT EXISTS provider_id TEXT;
       `);
     }
   }
@@ -545,6 +644,10 @@ export class PostgresEngine implements BrainEngine {
           ${symbolKindClause}
           ${hardExcludeClause}
           ${visibilityClause}
+          -- v0.27.1: hide image rows from text-keyword search so OCR text
+          -- doesn't drown text-page hits. Image search runs a separate
+          -- vector path on embedding_image.
+          AND cc.modality = 'text'
         ORDER BY score DESC
         LIMIT ${innerLimitParam}
       ),
@@ -725,16 +828,20 @@ export class PostgresEngine implements BrainEngine {
     // wasting candidate slots on hidden rows.
     const visibilityClause = buildVisibilityClause('p', 's');
 
+    // v0.27.1: column routing. See pglite-engine.ts searchVector for rationale.
+    const col = opts?.embeddingColumn === 'embedding_image' ? 'embedding_image' : 'embedding';
+    const modalityFilter = col === 'embedding_image' ? `AND cc.modality = 'image'` : `AND cc.modality = 'text'`;
+
     const rawQuery = `
       WITH hnsw_candidates AS (
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          1 - (cc.embedding <=> $1::vector) AS raw_score
+          1 - (cc.${col} <=> $1::vector) AS raw_score
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
-        WHERE cc.embedding IS NOT NULL
+        WHERE cc.${col} IS NOT NULL ${modalityFilter}
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${typeClause}
           ${excludeSlugsClause}
@@ -742,7 +849,7 @@ export class PostgresEngine implements BrainEngine {
           ${symbolKindClause}
           ${hardExcludeClause}
           ${visibilityClause}
-        ORDER BY cc.embedding <=> $1::vector
+        ORDER BY cc.${col} <=> $1::vector
         LIMIT ${innerLimitParam}
       )
       SELECT
@@ -803,7 +910,9 @@ export class PostgresEngine implements BrainEngine {
     // v0.20.0 Cathedral II Layer 6: adds parent_symbol_path / doc_comment /
     // symbol_name_qualified so nested-chunk emission (A3) can round-trip
     // scope metadata through upserts.
-    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified)';
+    // v0.27.1 (Phase 8): added `modality` + `embedding_image` to the column
+    // list. Image chunks pass embedding=null + embedding_image=Float32Array.
+    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)';
     const rows: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -812,29 +921,37 @@ export class PostgresEngine implements BrainEngine {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
         : null;
+      const embeddingImageStr = chunk.embedding_image
+        ? '[' + Array.from(chunk.embedding_image).join(',') + ']'
+        : null;
       const parentPath = chunk.parent_symbol_path && chunk.parent_symbol_path.length > 0
         ? chunk.parent_symbol_path
         : null;
+      const modality = chunk.modality ?? 'text';
 
-      if (embeddingStr) {
-        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now(), $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
-        params.push(
-          pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-          embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null,
-          chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
-          chunk.start_line ?? null, chunk.end_line ?? null,
-          parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
-        );
-      } else {
-        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
-        params.push(
-          pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-          chunk.model || 'text-embedding-3-large', chunk.token_count || null,
-          chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
-          chunk.start_line ?? null, chunk.end_line ?? null,
-          parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
-        );
-      }
+      const embeddingPh = embeddingStr ? `$${paramIdx++}::vector` : 'NULL';
+      const embeddedAtPh = embeddingStr ? 'now()' : 'NULL';
+      const embeddingImagePh = embeddingImageStr ? `$${paramIdx++}::vector` : 'NULL';
+
+      rows.push(
+        `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
+        `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ` +
+        `$${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
+        `$${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++}, ` +
+        `$${paramIdx++}, ${embeddingImagePh})`,
+      );
+
+      // Param push order MUST match placeholder allocation order.
+      if (embeddingStr) params.push(embeddingStr);
+      if (embeddingImageStr) params.push(embeddingImageStr);
+      params.push(
+        pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
+        chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+        chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
+        chunk.start_line ?? null, chunk.end_line ?? null,
+        parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
+        modality,
+      );
     }
 
     // Single statement upsert: preserves existing embeddings via COALESCE when new value is NULL.
@@ -863,7 +980,9 @@ export class PostgresEngine implements BrainEngine {
          end_line = EXCLUDED.end_line,
          parent_symbol_path = EXCLUDED.parent_symbol_path,
          doc_comment = EXCLUDED.doc_comment,
-         symbol_name_qualified = EXCLUDED.symbol_name_qualified`,
+         symbol_name_qualified = EXCLUDED.symbol_name_qualified,
+         modality = EXCLUDED.modality,
+         embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)`,
       params as Parameters<typeof sql.unsafe>[1],
     );
   }
@@ -1406,6 +1525,53 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as RawData[];
   }
 
+  // Files (v0.27.1): binary asset metadata. Image bytes never touch the DB
+  // (storage_path references a path inside the brain repo). Identity is
+  // (source_id, storage_path); re-upsert with same content_hash is a no-op,
+  // different content_hash overwrites in place.
+  async upsertFile(spec: FileSpec): Promise<{ id: number; created: boolean }> {
+    const sql = this.sql;
+    const sourceId = spec.source_id ?? 'default';
+    const metadata = (spec.metadata ?? {}) as Parameters<typeof sql.json>[0];
+    const rows = await sql<Array<{ id: number; created: boolean }>>`
+      INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+      VALUES (${sourceId}, ${spec.page_slug ?? null}, ${spec.page_id ?? null}, ${spec.filename}, ${spec.storage_path}, ${spec.mime_type ?? null}, ${spec.size_bytes ?? null}, ${spec.content_hash}, ${sql.json(metadata)})
+      ON CONFLICT (storage_path) DO UPDATE SET
+        page_slug = EXCLUDED.page_slug,
+        page_id = EXCLUDED.page_id,
+        filename = EXCLUDED.filename,
+        mime_type = EXCLUDED.mime_type,
+        size_bytes = EXCLUDED.size_bytes,
+        content_hash = EXCLUDED.content_hash,
+        metadata = EXCLUDED.metadata
+      RETURNING id, (xmax = 0) AS created
+    `;
+    if (rows.length === 0) throw new Error(`upsertFile returned no rows for ${spec.storage_path}`);
+    return { id: rows[0].id, created: !!rows[0].created };
+  }
+
+  async getFile(sourceId: string, storagePath: string): Promise<FileRow | null> {
+    const sql = this.sql;
+    const rows = await sql<Array<FileRow>>`
+      SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
+      FROM files
+      WHERE source_id = ${sourceId} AND storage_path = ${storagePath}
+      LIMIT 1
+    `;
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  async listFilesForPage(pageId: number): Promise<FileRow[]> {
+    const sql = this.sql;
+    const rows = await sql<Array<FileRow>>`
+      SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
+      FROM files
+      WHERE page_id = ${pageId}
+      ORDER BY created_at ASC
+    `;
+    return rows as FileRow[];
+  }
+
   // Dream-cycle significance verdict cache (v0.23).
   async getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null> {
     const sql = this.sql;
@@ -1437,6 +1603,269 @@ export class PostgresEngine implements BrainEngine {
         reasons = EXCLUDED.reasons,
         judged_at = now()
     `;
+  }
+
+  // ============================================================
+  // v0.28: Takes (typed/weighted/attributed claims) + synthesis_evidence
+  // ============================================================
+
+  async addTakesBatch(rowsIn: TakeBatchInput[]): Promise<number> {
+    if (rowsIn.length === 0) return 0;
+    const sql = this.sql;
+    let weightClamped = 0;
+    const pageIds   = rowsIn.map(r => r.page_id);
+    const rowNums   = rowsIn.map(r => r.row_num);
+    const claims    = rowsIn.map(r => r.claim);
+    const kinds     = rowsIn.map(r => r.kind);
+    const holders   = rowsIn.map(r => r.holder);
+    const weights   = rowsIn.map(r => {
+      const w = r.weight ?? 0.5;
+      if (w < 0 || w > 1) { weightClamped++; return Math.max(0, Math.min(1, w)); }
+      return w;
+    });
+    const sinces    = rowsIn.map(r => r.since_date ?? null);
+    const untils    = rowsIn.map(r => r.until_date ?? null);
+    const sources   = rowsIn.map(r => r.source ?? null);
+    const supersededBys = rowsIn.map(r => r.superseded_by ?? null);
+    // postgres-js needs boolean arrays passed as text[] then SQL-cast to boolean[],
+    // otherwise the driver mis-detects element type. Same pattern as how the
+    // existing batch methods handle bools.
+    const actives   = rowsIn.map(r => (r.active ?? true) ? 'true' : 'false');
+    if (weightClamped > 0) {
+      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: ${weightClamped} row(s) had weight outside [0,1]; clamped\n`);
+    }
+    const result = await sql`
+      INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
+      SELECT v.page_id::int, v.row_num::int, v.claim, v.kind, v.holder, v.weight::real,
+             v.since_date::text, v.until_date::text, v.source, v.superseded_by::int, v.active::boolean
+      FROM unnest(
+        ${pageIds}::int[], ${rowNums}::int[], ${claims}::text[], ${kinds}::text[],
+        ${holders}::text[], ${weights}::real[], ${sinces}::text[], ${untils}::text[],
+        ${sources}::text[], ${supersededBys}::int[], ${actives}::text[]::boolean[]
+      ) AS v(page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active)
+      ON CONFLICT (page_id, row_num) DO UPDATE SET
+        claim         = EXCLUDED.claim,
+        kind          = EXCLUDED.kind,
+        holder        = EXCLUDED.holder,
+        weight        = EXCLUDED.weight,
+        since_date    = EXCLUDED.since_date,
+        until_date    = EXCLUDED.until_date,
+        source        = EXCLUDED.source,
+        superseded_by = EXCLUDED.superseded_by,
+        active        = EXCLUDED.active,
+        updated_at    = now()
+      RETURNING 1
+    `;
+    return result.length;
+  }
+
+  async listTakes(opts: TakesListOpts = {}): Promise<Take[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts.limit, 100, 500);
+    const offset = Math.max(0, Math.floor(opts.offset ?? 0));
+    const active = opts.active ?? true;
+    const rows = await sql`
+      SELECT t.*, p.slug AS page_slug
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE 1=1
+        AND (${opts.page_id ?? null}::int   IS NULL OR t.page_id = ${opts.page_id ?? null}::int)
+        AND (${opts.page_slug ?? null}::text IS NULL OR p.slug   = ${opts.page_slug ?? null}::text)
+        AND (${opts.holder ?? null}::text   IS NULL OR t.holder  = ${opts.holder ?? null}::text)
+        AND (${opts.kind ?? null}::text     IS NULL OR t.kind    = ${opts.kind ?? null}::text)
+        AND (${active}::boolean IS NULL OR t.active = ${active}::boolean)
+        AND (
+          ${opts.resolved === undefined ? null : opts.resolved}::boolean IS NULL
+          OR (${opts.resolved === undefined ? null : opts.resolved}::boolean = true  AND t.resolved_at IS NOT NULL)
+          OR (${opts.resolved === undefined ? null : opts.resolved}::boolean = false AND t.resolved_at IS NULL)
+        )
+        AND (
+          ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+          OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+        )
+      ORDER BY
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date'  THEN t.since_date END DESC NULLS LAST,
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'created_at'  THEN t.created_at END DESC NULLS LAST
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
+  }
+
+  async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[] } = {}): Promise<TakeHit[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts.limit, 30, 100);
+    const rows = await sql`
+      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
+             t.claim, t.kind, t.holder, t.weight,
+             similarity(t.claim, ${query})::real AS score
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE t.active
+        AND t.claim % ${query}
+        AND (
+          ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+          OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+        )
+      ORDER BY score DESC, t.weight DESC
+      LIMIT ${limit}
+    `;
+    return rows as unknown as TakeHit[];
+  }
+
+  async searchTakesVector(
+    embedding: Float32Array,
+    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
+  ): Promise<TakeHit[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts.limit, 30, 100);
+    const vec = `[${Array.from(embedding).join(',')}]`;
+    const rows = await sql`
+      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
+             t.claim, t.kind, t.holder, t.weight,
+             (1 - (t.embedding <=> ${vec}::vector))::real AS score
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE t.active
+        AND t.embedding IS NOT NULL
+        AND (
+          ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+          OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+        )
+      ORDER BY t.embedding <=> ${vec}::vector
+      LIMIT ${limit}
+    `;
+    return rows as unknown as TakeHit[];
+  }
+
+  async getTakeEmbeddings(ids: number[]): Promise<Map<number, Float32Array>> {
+    if (ids.length === 0) return new Map();
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id, embedding FROM takes WHERE id = ANY(${ids}::bigint[]) AND embedding IS NOT NULL
+    `;
+    const out = new Map<number, Float32Array>();
+    for (const r of rows as unknown as Array<{ id: number; embedding: unknown }>) {
+      const parsed = tryParseEmbedding(r.embedding);
+      if (parsed) out.set(Number(r.id), parsed);
+    }
+    return out;
+  }
+
+  async countStaleTakes(): Promise<number> {
+    const sql = this.sql;
+    const [row] = await sql`
+      SELECT count(*)::int AS count FROM takes WHERE active AND embedding IS NULL
+    `;
+    return Number((row as { count?: number } | undefined)?.count ?? 0);
+  }
+
+  async listStaleTakes(): Promise<StaleTakeRow[]> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT t.id AS take_id, p.slug AS page_slug, t.row_num, t.claim
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE t.active AND t.embedding IS NULL
+      ORDER BY t.id
+      LIMIT 100000
+    `;
+    return rows as unknown as StaleTakeRow[];
+  }
+
+  async updateTake(
+    pageId: number,
+    rowNum: number,
+    fields: { weight?: number; since_date?: string; source?: string },
+  ): Promise<void> {
+    const sql = this.sql;
+    let weight = fields.weight;
+    if (weight !== undefined && (weight < 0 || weight > 1)) {
+      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → [0,1]\n`);
+      weight = Math.max(0, Math.min(1, weight));
+    }
+    const result = await sql`
+      UPDATE takes SET
+        weight     = COALESCE(${weight ?? null}::real, weight),
+        since_date = COALESCE(${fields.since_date ?? null}::text, since_date),
+        source     = COALESCE(${fields.source ?? null}::text, source),
+        updated_at = now()
+      WHERE page_id = ${pageId} AND row_num = ${rowNum}
+      RETURNING 1
+    `;
+    if (result.length === 0) {
+      throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${rowNum}`, 'list takes for this page with `gbrain takes <slug>` to see valid row numbers');
+    }
+  }
+
+  async supersedeTake(
+    pageId: number,
+    oldRow: number,
+    newRow: Omit<TakeBatchInput, 'page_id' | 'row_num' | 'superseded_by'>,
+  ): Promise<{ oldRow: number; newRow: number }> {
+    const conn = this._sql || db.getConnection();
+    return await conn.begin(async (tx) => {
+      const [existing] = await tx`
+        SELECT resolved_at FROM takes WHERE page_id = ${pageId} AND row_num = ${oldRow}
+      `;
+      if (!existing) throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${oldRow}`, 'list takes with `gbrain takes <slug>`');
+      if ((existing as { resolved_at?: unknown }).resolved_at) {
+        throw new GBrainError('TAKE_RESOLVED_IMMUTABLE', `take ${pageId}#${oldRow} is resolved`, 'resolved bets are immutable; add a new take instead');
+      }
+      const [maxRow] = await tx`SELECT COALESCE(MAX(row_num), 0) + 1 AS next FROM takes WHERE page_id = ${pageId}`;
+      const newRowNum = Number((maxRow as { next?: number })?.next ?? 1);
+      const wClamped = Math.max(0, Math.min(1, newRow.weight ?? 0.5));
+      await tx`
+        INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, active)
+        VALUES (${pageId}, ${newRowNum}, ${newRow.claim}, ${newRow.kind}, ${newRow.holder}, ${wClamped},
+                ${newRow.since_date ?? null}::text, ${newRow.until_date ?? null}::text,
+                ${newRow.source ?? null}, ${newRow.active ?? true})
+      `;
+      await tx`
+        UPDATE takes SET active = false, superseded_by = ${newRowNum}, updated_at = now()
+        WHERE page_id = ${pageId} AND row_num = ${oldRow}
+      `;
+      return { oldRow, newRow: newRowNum };
+    }) as { oldRow: number; newRow: number };
+  }
+
+  async resolveTake(pageId: number, rowNum: number, resolution: TakeResolution): Promise<void> {
+    const sql = this.sql;
+    const [existing] = await sql`SELECT resolved_at FROM takes WHERE page_id = ${pageId} AND row_num = ${rowNum}`;
+    if (!existing) throw new GBrainError('TAKE_ROW_NOT_FOUND', `take not found at page_id=${pageId} row=${rowNum}`, 'list takes for this page with `gbrain takes <slug>` to see valid row numbers');
+    if ((existing as { resolved_at?: unknown }).resolved_at) {
+      throw new GBrainError('TAKE_ALREADY_RESOLVED', `take ${pageId}#${rowNum} already resolved`, 'resolution is immutable; add a new take to record a new outcome');
+    }
+    await sql`
+      UPDATE takes SET
+        resolved_at      = now(),
+        resolved_outcome = ${resolution.outcome},
+        resolved_value   = ${resolution.value ?? null}::real,
+        resolved_unit    = ${resolution.unit ?? null}::text,
+        resolved_source  = ${resolution.source ?? null}::text,
+        resolved_by      = ${resolution.resolvedBy},
+        updated_at       = now()
+      WHERE page_id = ${pageId} AND row_num = ${rowNum}
+    `;
+  }
+
+  async addSynthesisEvidence(rowsIn: SynthesisEvidenceInput[]): Promise<number> {
+    if (rowsIn.length === 0) return 0;
+    const sql = this.sql;
+    const synthesisIds = rowsIn.map(r => r.synthesis_page_id);
+    const takePageIds  = rowsIn.map(r => r.take_page_id);
+    const takeRowNums  = rowsIn.map(r => r.take_row_num);
+    const citationIxs  = rowsIn.map(r => r.citation_index);
+    const result = await sql`
+      INSERT INTO synthesis_evidence (synthesis_page_id, take_page_id, take_row_num, citation_index)
+      SELECT v.synthesis_page_id::int, v.take_page_id::int, v.take_row_num::int, v.citation_index::int
+      FROM unnest(
+        ${synthesisIds}::int[], ${takePageIds}::int[], ${takeRowNums}::int[], ${citationIxs}::int[]
+      ) AS v(synthesis_page_id, take_page_id, take_row_num, citation_index)
+      ON CONFLICT (synthesis_page_id, take_page_id, take_row_num) DO NOTHING
+      RETURNING 1
+    `;
+    return result.length;
   }
 
   // Versions

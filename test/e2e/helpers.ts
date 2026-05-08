@@ -35,6 +35,9 @@ const FIXTURES_DIR = resolve(import.meta.dir, 'fixtures');
 let engine: PostgresEngine | null = null;
 
 const ALL_TABLES = [
+  // v0.28: takes + synthesis_evidence MUST come BEFORE pages because they FK pages.id
+  'synthesis_evidence',
+  'takes',
   'content_chunks',
   'links',
   'tags',
@@ -73,10 +76,17 @@ export async function setupDB(): Promise<PostgresEngine> {
   await db.connect({ database_url: DATABASE_URL });
   await db.initSchema();
 
-  // Truncate all data tables (preserves schema + extensions)
+  // Truncate all data tables (preserves schema + extensions).
+  // Some tables (e.g. v0.28 takes/synthesis_evidence) only exist after
+  // migrations run via engine.connect() below, so skip non-existent tables.
   const conn = db.getConnection();
   for (const table of ALL_TABLES) {
-    await conn.unsafe(`TRUNCATE ${table} CASCADE`);
+    try {
+      await conn.unsafe(`TRUNCATE ${table} CASCADE`);
+    } catch (e: unknown) {
+      const code = (e as { code?: string })?.code;
+      if (code !== '42P01') throw e; // 42P01 = undefined_table; ignore those
+    }
   }
 
   // Re-seed config (initSchema inserts default config rows)
@@ -87,6 +97,11 @@ export async function setupDB(): Promise<PostgresEngine> {
 
   engine = new PostgresEngine();
   await engine.connect({ database_url: DATABASE_URL });
+  // Apply MIGRATIONS via the engine path. db.initSchema above only runs the
+  // embedded SCHEMA_SQL baseline; migrations like v31 (takes) live in the
+  // MIGRATIONS array and only run when engine.initSchema() executes them.
+  // Idempotent: re-running migrations on an already-migrated DB is a no-op.
+  await engine.initSchema();
   return engine;
 }
 

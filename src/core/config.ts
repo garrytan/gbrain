@@ -67,6 +67,22 @@ export interface GBrainConfig {
     /** false disables PII scrubbing before insert. Defaults to true. */
     scrub_pii?: boolean;
   };
+
+  /**
+   * v0.27.1 — multimodal ingestion flags. Default off; opt-in.
+   *
+   * Unlike `embedding_model` / `embedding_dimensions` (which size the
+   * schema and must be set before initSchema), these flags only affect
+   * runtime behavior. They live in the DB plane primarily — `gbrain config
+   * set embedding_multimodal true` flips the gate without touching the file.
+   * loadConfigWithEngine() merges DB config on top of file/env. Env vars
+   * still win as the operator escape hatch.
+   */
+  embedding_multimodal?: boolean;
+  /** Model override for multimodal embeddings (e.g. "voyage:voyage-multimodal-3"). */
+  embedding_multimodal_model?: string;
+  embedding_image_ocr?: boolean;
+  embedding_image_ocr_model?: string;
 }
 
 /**
@@ -102,8 +118,86 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN
       ? { chat_fallback_chain: process.env.GBRAIN_CHAT_FALLBACK_CHAIN.split(',').map(s => s.trim()).filter(Boolean) }
       : {}),
+    ...(process.env.GBRAIN_EMBEDDING_MULTIMODAL
+      ? { embedding_multimodal: process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true' }
+      : {}),
+    ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR
+      ? { embedding_image_ocr: process.env.GBRAIN_EMBEDDING_IMAGE_OCR === 'true' }
+      : {}),
+    ...(process.env.GBRAIN_EMBEDDING_MULTIMODAL_MODEL
+      ? { embedding_multimodal_model: process.env.GBRAIN_EMBEDDING_MULTIMODAL_MODEL }
+      : {}),
+    ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL
+      ? { embedding_image_ocr_model: process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL }
+      : {}),
   };
   return merged as GBrainConfig;
+}
+
+/**
+ * v0.27.1 — async config loader that overlays DB-plane config on top of the
+ * file/env config. Used by `gbrain` CLI's connectEngine() AFTER engine.connect()
+ * so flags written via `gbrain config set` actually take effect. Unlike the
+ * sync loadConfig(), this needs an engine handle to read the config table.
+ *
+ * Precedence: env > file > DB > defaults. Env stays the operator escape hatch;
+ * file is the durable per-machine config; DB is the user-mutable runtime knob.
+ *
+ * Today only the v0.27.1 multimodal flags participate in DB-merge. Existing
+ * fields (embedding_model, etc.) keep their file/env-only loading because they
+ * size the schema and must be stable across engine connect.
+ */
+export async function loadConfigWithEngine(
+  engine: { getConfig(key: string): Promise<string | null | undefined> },
+  base?: GBrainConfig | null,
+): Promise<GBrainConfig | null> {
+  const fileConfig = base !== undefined ? base : loadConfig();
+  if (!fileConfig) return null;
+
+  // DB-plane reads. Quiet failures — if the config table doesn't exist yet
+  // (pre-v36 brain mid-migration), treat as null and let file/env defaults
+  // win. The migration runner reads file/env directly anyway.
+  async function dbBool(key: string): Promise<boolean | undefined> {
+    try {
+      const v = await engine.getConfig(key);
+      if (v === undefined || v === null || v === '') return undefined;
+      return v === 'true';
+    } catch {
+      return undefined;
+    }
+  }
+  async function dbStr(key: string): Promise<string | undefined> {
+    try {
+      const v = await engine.getConfig(key);
+      if (v === undefined || v === null || v === '') return undefined;
+      return v;
+    } catch {
+      return undefined;
+    }
+  }
+
+  const dbMultimodal = await dbBool('embedding_multimodal');
+  const dbMultimodalModel = await dbStr('embedding_multimodal_model');
+  const dbOcr = await dbBool('embedding_image_ocr');
+  const dbOcrModel = await dbStr('embedding_image_ocr_model');
+
+  // DB applies only when env did NOT win. Env presence is detected by the
+  // sync loadConfig() already setting the field. For each flag, prefer the
+  // existing fileConfig value when defined; otherwise fall through to DB.
+  const merged: GBrainConfig = { ...fileConfig };
+  if (merged.embedding_multimodal === undefined && dbMultimodal !== undefined) {
+    merged.embedding_multimodal = dbMultimodal;
+  }
+  if (merged.embedding_multimodal_model === undefined && dbMultimodalModel !== undefined) {
+    merged.embedding_multimodal_model = dbMultimodalModel;
+  }
+  if (merged.embedding_image_ocr === undefined && dbOcr !== undefined) {
+    merged.embedding_image_ocr = dbOcr;
+  }
+  if (merged.embedding_image_ocr_model === undefined && dbOcrModel !== undefined) {
+    merged.embedding_image_ocr_model = dbOcrModel;
+  }
+  return merged;
 }
 
 export function saveConfig(config: GBrainConfig): void {

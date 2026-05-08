@@ -1,7 +1,12 @@
 #!/usr/bin/env bun
 
+import { installSigchldHandler } from './core/zombie-reap.ts';
+installSigchldHandler();
+
 import { readFileSync } from 'fs';
-import { loadConfig, toEngineConfig } from './core/config.ts';
+import { loadConfig, loadConfigWithEngine, toEngineConfig } from './core/config.ts';
+import type { GBrainConfig } from './core/config.ts';
+import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
@@ -19,7 +24,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -81,9 +86,33 @@ async function main() {
   try {
     const params = parseOpArgs(op, subArgs);
 
-    // Validate required params before calling handler
+    // v0.27.1 (`gbrain query --image <path>`): swap the `image` param from
+    // a filesystem path into base64 bytes + mime. The op accepts base64; the
+    // CLI accepts a path. Helper is exported so tests can exercise the
+    // transform without spawning a subprocess.
+    if (op.name === 'query' && typeof params.image === 'string' && params.image.length > 0) {
+      try {
+        const { path, base64, mime } = resolveQueryImage(
+          params.image as string,
+          (params.image_mime as string) || undefined,
+        );
+        params.image = base64;
+        params.image_mime = mime;
+        void path;
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    }
+
+    // Validate required params before calling handler. v0.27.1: the
+    // `query` op's positional `query` is required only when --image is
+    // NOT supplied. The runtime altRequired check below overrides the
+    // generic required-flag check for that op.
+    const queryHasAlt = op.name === 'query' && typeof params.image === 'string' && params.image.length > 0;
     for (const [key, def] of Object.entries(op.params)) {
       if (def.required && params[key] === undefined) {
+        if (queryHasAlt && key === 'query') continue;
         const cliName = op.cliHints?.name || op.name;
         const positional = op.cliHints?.positional || [];
         const usage = positional.map(p => `<${p}>`).join(' ');
@@ -107,6 +136,41 @@ async function main() {
   } finally {
     await engine.disconnect();
   }
+}
+
+/**
+ * v0.27.1: shared transform for `gbrain query --image <path>` (and any future
+ * CLI surface that takes an image path). Reads the file, base64-encodes,
+ * derives MIME from the extension, enforces the 20MB cap. Exported so tests
+ * can verify the transform without spawning a subprocess.
+ *
+ * Throws Error on any failure (file missing, oversized, etc.). Caller is
+ * responsible for routing to process.exit(1) with a user-facing message.
+ */
+export function resolveQueryImage(
+  imagePath: string,
+  explicitMime?: string,
+): { path: string; base64: string; mime: string } {
+  const bytes = readFileSync(imagePath);
+  if (bytes.length > 20 * 1024 * 1024) {
+    throw new Error(`Error: image too large (${bytes.length} bytes, max 20MB).`);
+  }
+  const base64 = bytes.toString('base64');
+  let mime = explicitMime;
+  if (!mime) {
+    const lower = imagePath.toLowerCase();
+    const mimeFromExt: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.heic': 'image/heic', '.heif': 'image/heif',
+      '.avif': 'image/avif',
+    };
+    const ext = Object.keys(mimeFromExt).find(e => lower.endsWith(e));
+    mime = ext ? mimeFromExt[ext] : 'image/jpeg';
+  }
+  return { path: imagePath, base64, mime };
 }
 
 function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
@@ -452,6 +516,16 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // `eval cross-modal` is a pure API-call command — no DB, no brain. Bypass
+  // connectEngine entirely so first-run users (no `gbrain init` yet) can
+  // run the quality gate. Mirrors the dream/doctor no-DB pattern but
+  // doesn't even attempt the connect (T3=A in plans/radiant-napping-lerdorf.md).
+  // The handler self-configures the AI gateway from loadConfig() + process.env.
+  if (command === 'eval' && args[0] === 'cross-modal') {
+    const { runEvalCrossModal } = await import('./commands/eval-cross-modal.ts');
+    process.exit(await runEvalCrossModal(args.slice(1)));
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
@@ -556,6 +630,16 @@ async function handleCliOnly(command: string, args: string[]) {
         await runOrphans(engine, args);
         break;
       }
+      case 'takes': {
+        const { runTakes } = await import('./commands/takes.ts');
+        await runTakes(engine, args);
+        break;
+      }
+      case 'think': {
+        const { runThinkCli } = await import('./commands/think.ts');
+        await runThinkCli(engine, args);
+        break;
+      }
       case 'sources': {
         const { runSources } = await import('./commands/sources.ts');
         await runSources(engine, args);
@@ -620,6 +704,24 @@ async function handleCliOnly(command: string, args: string[]) {
   }
 }
 
+// Build the AIGatewayConfig payload from a GBrainConfig. File-local; not
+// exported. Both configureGateway sites in connectEngine() pass through this
+// helper so adding a new field touches one place. Adding a field to one site
+// but not the other previously required remembering to mirror the change;
+// the helper makes that structural.
+function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
+  return {
+    embedding_model: c.embedding_model,
+    embedding_dimensions: c.embedding_dimensions,
+    embedding_multimodal_model: c.embedding_multimodal_model,
+    expansion_model: c.expansion_model,
+    chat_model: c.chat_model,
+    chat_fallback_chain: c.chat_fallback_chain,
+    base_urls: c.provider_base_urls,
+    env: { ...process.env },
+  };
+}
+
 async function connectEngine(): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
@@ -630,15 +732,7 @@ async function connectEngine(): Promise<BrainEngine> {
   // Configure the AI gateway BEFORE engine connect — initSchema needs embedding dims.
   // Env is read once here; the gateway never reads process.env at call time (Codex C3).
   const { configureGateway } = await import('./core/ai/gateway.ts');
-  configureGateway({
-    embedding_model: config.embedding_model,
-    embedding_dimensions: config.embedding_dimensions,
-    expansion_model: config.expansion_model,
-    chat_model: config.chat_model,
-    chat_fallback_chain: config.chat_fallback_chain,
-    base_urls: config.provider_base_urls,
-    env: { ...process.env },
-  });
+  configureGateway(buildGatewayConfig(config));
 
   const { createEngine } = await import('./core/engine-factory.ts');
   const engine = await createEngine(toEngineConfig(config));
@@ -646,6 +740,57 @@ async function connectEngine(): Promise<BrainEngine> {
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');
   await connectWithRetry(engine, toEngineConfig(config), { noRetry });
+
+  // Auto-apply pending schema migrations on connect (#651). Cheap probe
+  // first so already-migrated brains don't pay the bootstrap-probe +
+  // SCHEMA_SQL replay + ledger-check cost on every short-lived CLI call.
+  // This is the conditional version of #652 (oyi77's investigation):
+  // same correctness, no perf regression on the hot path.
+  try {
+    const { hasPendingMigrations } = await import('./core/migrate.ts');
+    if (await hasPendingMigrations(engine)) {
+      await engine.initSchema();
+    }
+  } catch (err) {
+    // Non-fatal: if probe or initSchema fails, surface a hint and continue
+    // with the connected engine. Subsequent operations will surface the
+    // real schema error in context.
+    console.warn(`  Schema probe/migrate failed: ${(err as Error).message}`);
+    console.warn('  Try: gbrain init --migrate-only');
+  }
+
+  // v0.27.1 (F3 fix): re-merge DB-plane config now that the engine is up.
+  // Flags like `embedding_multimodal` are user-mutable via `gbrain config set`
+  // (DB plane) and need to flow into the gateway after connect. Schema-sizing
+  // fields (embedding_dimensions etc.) keep their pre-connect file/env values
+  // — those drove initSchema and the merged config respects file/env first.
+  try {
+    const merged = await loadConfigWithEngine(engine, config);
+    if (merged) {
+      // Stash gate flags on process.env for downstream readers (import-file.ts
+      // dispatches on GBRAIN_EMBEDDING_MULTIMODAL, OCR consumer reads
+      // GBRAIN_EMBEDDING_IMAGE_OCR_*). The gateway itself doesn't read these
+      // flags; this preserves the contract without changing the gateway shape.
+      if (merged.embedding_multimodal !== undefined) {
+        process.env.GBRAIN_EMBEDDING_MULTIMODAL = String(merged.embedding_multimodal);
+      }
+      if (merged.embedding_image_ocr !== undefined) {
+        process.env.GBRAIN_EMBEDDING_IMAGE_OCR = String(merged.embedding_image_ocr);
+      }
+      if (merged.embedding_image_ocr_model !== undefined) {
+        process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL = merged.embedding_image_ocr_model;
+      }
+      // Always re-configure with merged values when DB merge succeeded. The
+      // trigger used to be field-name-gated (only when embedding_multimodal_model
+      // was set); that coupled the gate to the field set and would silently
+      // miss future DB-mutable gateway fields. One extra cache+shrinkState
+      // clear per startup is microseconds, no hot path.
+      configureGateway(buildGatewayConfig(merged));
+    }
+  } catch {
+    // Non-fatal. Pre-v39 brains may not have a usable config table yet.
+  }
+
   return engine;
 }
 

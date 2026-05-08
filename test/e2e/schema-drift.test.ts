@@ -51,11 +51,15 @@ delete process.env.GBRAIN_PGLITE_SNAPSHOT;
  * Tables that exist in src/schema.sql but are intentionally absent from
  * src/core/pglite-schema.ts (and from the migrations chain on the PGLite
  * side). Whenever something is added to this list, add an inline reason.
+ *
+ * v0.27.1: `files` removed from this list — multimodal ingestion needed
+ * binary-asset metadata on PGLite, and migration v36 adds the table on
+ * the PGLite side mirroring the Postgres v0.18 shape verbatim. Now a
+ * parity-required table on both engines.
  */
 const PG_ONLY_TABLES = [
-  // Legacy file-storage tables. PGLite brains never adopted the embedded
-  // `files` table; storage tiering on PGLite is filesystem-only.
-  'files',
+  // file_migration_ledger drives the v0.18 storage-object rewrite on
+  // Postgres. PGLite never had blob storage so the ledger has no consumer.
   'file_migration_ledger',
 ];
 

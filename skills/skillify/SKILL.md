@@ -1,16 +1,12 @@
 ---
 name: skillify
-version: 1.0.0
+version: 1.1.0
 description: |
-  The meta skill. Turn any raw feature or script into a properly-skilled,
-  tested, resolvable, evaled unit of agent-visible capability. Use when
-  the user says "skillify this", "is this a skill?", "make this proper",
-  or after a new feature is built without the full skill infrastructure.
-
-  Paired with `gbrain check-resolvable`, skillify gives a user-controllable
-  equivalent of Hermes' auto-skill-creation: you build, skillify checks the
-  checklist, check-resolvable verifies nothing is orphaned. The human keeps
-  judgment; the tooling keeps the checklist honest.
+  The meta skill. Turn any raw feature into a properly-skilled, tested,
+  resolvable unit of agent capability. Cross-modal eval is the recommended
+  Phase 3 quality gate: 3 frontier models from different providers critique
+  the output, you iterate to quality, THEN write tests that lock in the
+  proven-good behavior.
 triggers:
   - "skillify this"
   - "skillify"
@@ -19,167 +15,296 @@ triggers:
   - "add tests and evals for this"
   - "check skill completeness"
 tools:
-  - search
-  - list_pages
-mutating: false
+  - exec
+  - read
+  - write
+mutating: true
 ---
 
 # Skillify — The Meta Skill
 
+> **Relationship to `/cross-modal-review`:** That skill is the manual mid-flow
+> "second opinion" gate (one model reviews work product before commit). This
+> skill's Phase 3 below uses `gbrain eval cross-modal` instead — three
+> different-provider frontier models score-and-iterate on a documented
+> dimension list *before* tests cement behavior. Use `/cross-modal-review`
+> for ad-hoc second opinions; use Phase 3 here when skillifying a feature.
+
 ## Contract
 
-A feature is "properly skilled" when all ten checklist items are present:
+A feature is "properly skilled" when all 11 checklist items pass. Item 3
+(cross-modal eval) is informational in v1.1.0 — it does not gate the
+skillpack-check audit, but a missing or stale receipt is surfaced so the
+user knows where the gate stands.
 
-1. `SKILL.md` — skill file with YAML frontmatter, triggers, contract, phases.
-2. Code — deterministic script if applicable.
-3. Unit tests — cover every branch of deterministic logic.
-4. Integration tests — exercise live endpoints, not just in-memory shape.
-5. LLM evals — quality/correctness cases if the feature includes any LLM call.
-6. Resolver trigger — `skills/RESOLVER.md` entry with the trigger patterns
-   the user actually types.
-7. Resolver trigger eval — test that feeds trigger phrases to the resolver
-   and asserts they route to this skill, not the old pre-skillify path.
-8. Check-resolvable — `gbrain check-resolvable` passes (skill is reachable,
-   MECE against its siblings, no DRY violations).
-9. E2E test — exercises the full pipeline from user turn to side effect.
-10. Brain filing — if the feature writes brain pages, `brain/RESOLVER.md`
-    has an entry for the directory so the pages aren't orphaned.
+## The Checklist
 
-## Trigger
-
-- "skillify this" / "skillify" / "is this a skill?" / "make this proper"
-- "add tests and evals for this"
-- After building any new feature that touches user-facing behavior
-- When you grep the repo and notice a script with no SKILL.md next to it
-
-## Phases
-
-### Phase 1: Audit what exists
-
-For the feature being skillified, answer:
-
-- **Feature name**: what does it do in one line?
-- **Code path**: where does the implementation live (file path)?
-- **Checklist status**: run `gbrain skillify check <path>` (preferred)
-  or the legacy `scripts/skillify-check.ts <path>` shim. Both produce
-  the same 10-item scorecard. Note which items are missing.
-
-### Phase 2: Create missing pieces in order
-
-**Fast path — brand-new skill:** run `gbrain skillify scaffold <name>
---description "..." [--triggers "p1,p2,p3"] [--writes-pages --writes-to
-"people/,companies/"]`. This creates all 5 stub files atomically and
-appends an idempotent resolver row. Every scaffolded file carries the
-`SKILLIFY_STUB` sentinel; `gbrain check-resolvable --strict` will fail
-CI until you replace the stubs with real content.
-
-**Manual path — extending an existing skill:** work the list top-down.
-Each earlier item constrains what later items look like (the SKILL.md
-contract determines what tests assert; tests determine what evals gate;
-the resolver entry determines what trigger-eval checks).
-
-1. Write `SKILL.md` first. Frontmatter must include `name`, `version`,
-   `description`, `triggers[]`, `tools[]`, `mutating`. Body has at minimum
-   Contract, Phases, and Output Format sections.
-2. Extract deterministic code into a script if applicable (scripts/*.ts
-   for gbrain; host projects may use .mjs / .py / whatever their runtime
-   uses).
-3. Write unit tests for every branch of the script. Mock external calls
-   (LLM, DB, network) so tests run fast and deterministic.
-4. Add integration tests that hit real endpoints. These catch bugs the
-   unit tests' mocks hide (see the `files-test-reimplements-production`
-   learning: reimplementation in tests lets production vulnerabilities
-   slip through).
-5. Add LLM evals if the feature includes any LLM call. Even a three-case
-   eval (happy / edge / adversarial) is cheap insurance against prompt
-   regressions.
-6. Add the resolver trigger to `skills/RESOLVER.md`. Use the trigger
-   patterns the user ACTUALLY types, not what you think they should type.
-7. Add a resolver trigger eval that feeds those patterns in and asserts
-   they route to the new skill.
-8. Run `gbrain check-resolvable` (auto-detects skill trees) or
-   `gbrain check-resolvable --skills-dir <path>` for custom locations.
-   OpenClaw workspaces are auto-detected from
-   `~/.openclaw/workspace/skills/`. The check validates reachability (is
-   the skill mentioned from RESOLVER.md?), MECE overlap (does it duplicate
-   an existing skill's trigger?), gap detection (are there user intents
-   that fall through the resolver with no match?), and DRY. If it fails,
-   fix the skill (or extend an existing one instead of creating a
-   duplicate).
-9. Add an E2E smoke test. For gbrain: submit a Minion job or run a CLI
-   invocation end-to-end against a fixture brain; assert side effects.
-10. Update `brain/RESOLVER.md` if the skill writes brain pages. Orphaned
-    brain pages are worse than no brain pages.
-
-### Phase 3: Verify
-
-Run each of these and confirm green:
-
-```bash
-# Unit tests
-bun test test/<skill-name>.test.ts
-
-# Integration tests (when applicable)
-bun run test:e2e
-
-# Resolver reachability + MECE + DRY
-gbrain check-resolvable
-
-# Conformance tests (skill YAML + required sections)
-bun test test/skills-conformance.test.ts
+```
+□ 1.  SKILL.md           — skill file with frontmatter + contract + phases
+□ 2.  Code               — deterministic script if applicable
+□ 3.  Cross-modal eval   — 3 frontier models from 3 providers; informational
+□ 4.  Unit tests         — cover every branch of deterministic logic
+□ 5.  Integration tests  — exercise live endpoints
+□ 6.  LLM evals          — quality/correctness cases for LLM-involving steps
+□ 7.  Resolver trigger   — entry in skills/RESOLVER.md with real user trigger phrases
+□ 8.  Resolver eval      — test that triggers route to this skill
+□ 9.  Check-resolvable   — DRY + MECE audit, no orphans
+□ 10. E2E test           — smoke test: trigger → side effect
+□ 11. Brain filing       — if it writes pages, entry in brain/RESOLVER.md
 ```
 
-## Quality gates
+## Phase 0: Should This Be a Skill?
 
-A feature is NOT properly skilled until:
+Before skillifying, check:
+- Will this be invoked 2+ times? (One-off work ≠ skill)
+- Is there >20 lines of logic? (Trivial helpers don't need full infrastructure)
+- Does it have a clear trigger phrase a user would actually say?
 
-- All tests pass (unit + integration + evals).
-- It appears in `skills/RESOLVER.md` with accurate trigger patterns.
-- The resolver trigger eval confirms patterns route to the new skill.
-- `gbrain check-resolvable` shows no orphaned skills, no MECE overlaps,
-  no DRY violations.
-- If it writes brain pages, `brain/RESOLVER.md` has the directory.
+If no to all three, it's a script, not a skill. Move on.
 
-## Anti-Patterns
+## Phase 1: Audit
 
-- ❌ Code with no SKILL.md — invisible to the resolver; the agent will
-  never run it.
-- ❌ SKILL.md with no tests — untested contract; one prompt change
-  regresses silently.
-- ❌ Tests that reimplement production code — the reimplementation's
-  bugs don't catch production's bugs (the `files-test-reimplements-
-  production` lesson).
-- ❌ Resolver entry that uses internal jargon the user never types —
-  trigger patterns must mirror real user language.
-- ❌ Feature that writes to brain without a `brain/RESOLVER.md` entry —
-  orphaned pages the agent will never find.
-- ❌ Deterministic logic in LLM space — should be a script.
-- ❌ LLM judgment in deterministic space — should be an eval.
+```
+Feature: [name]
+Code: [path]
+Missing items: [check each of the 11]
+```
 
-## Why skillify + check-resolvable is the right pair
+## Phase 2: Write SKILL.md + Code (items 1-2)
 
-Hermes and similar agent frameworks auto-create skills as a background
-behavior. That's fine until you don't know what the agent shipped —
-checklists decay, tests drift, resolver entries get stale.
+### SKILL.md frontmatter template (copy-paste):
 
-Gbrain ships the same capability as two user-controlled tools:
+```yaml
+---
+name: my-skill
+version: 1.0.0
+description: |
+  One paragraph. What it does, when to use it.
+triggers:
+  - "trigger phrase users actually say"
+  - "another real trigger"
+tools:
+  - exec
+  - read
+  - write
+mutating: false  # true if it writes to brain/disk
+---
+```
 
-- `/skillify` builds the checklist and helps you fill in the gaps.
-- `gbrain check-resolvable` validates the whole skill tree: reachability,
-  MECE, DRY, gap detection, orphaned skills.
+Body must include: **Contract** (what it guarantees), **Phases** (step-by-step), **Output Format** (what it produces).
 
-You decide when and what. The human keeps judgment. The tooling keeps the
-checklist honest. In practice this combo produces zero orphaned skills,
-every feature with tests + evals + resolver triggers + evals of the
-triggers.
+Extract deterministic code into `scripts/*.ts`.
+
+## Phase 3: Cross-Modal Eval (item 3) — THE QUALITY GATE
+
+### Why this comes before tests
+
+Tests lock in behavior. If the behavior is mediocre, tests lock in mediocrity.
+Cross-modal eval proves the quality bar FIRST, then tests cement it.
+
+### Step 1: Pick a representative input
+
+Choose the input that exercises the skill's hardest documented use case. If
+unsure: use the primary trigger example from SKILL.md, or the most complex
+real-world input from the last 7 days of memory files.
+
+### Step 2: Run the skill, capture output
+
+Run the skill on the representative input. The OUTPUT FILE is what gets
+evaluated.
+
+### Step 3: Run the eval gate
+
+```bash
+gbrain eval cross-modal \
+  --task "What this skill is supposed to accomplish" \
+  --output skills/<slug>/SKILL.md
+```
+
+The command runs 3 frontier models from 3 different providers in parallel,
+scores the OUTPUT against the TASK on 5 documented dimensions, and writes a
+receipt under `~/.gbrain/.gbrain/eval-receipts/<slug>-<sha8>.json` (the
+sha-8 binds the receipt to the current SKILL.md content — re-running after
+edits writes a new receipt).
+
+**Default models** (override per slot via `--slot-a-model`, `--slot-b-model`,
+`--slot-c-model`):
+
+| Slot | Default | Provider |
+|------|---------|----------|
+| A | `openai:gpt-4o` | OpenAI |
+| B | `anthropic:claude-opus-4-7` | Anthropic |
+| C | `google:gemini-1.5-pro` | Google |
+
+**These MUST be frontier models from DIFFERENT providers.** Using a single
+provider's family or budget models defeats the purpose — different families
+have less correlated blind spots. Refresh the list when a new model
+generation ships.
+
+**Pass criteria (BOTH must be true):**
+
+1. Every dimension's mean across successful models ≥ 7.
+2. No single model scored any dimension < 5 (the floor).
+
+**Inconclusive:** fewer than 2 of 3 models returned parseable scores.
+Receipt is still written (forensics) but the gate is not authoritative.
+Exit code 2; CI wrappers should treat this as "did not run cleanly", not
+"failed quality gate".
+
+### Step 4: Cycle until you pass (≤3 cycles)
+
+```
+CYCLE 1:
+  Eval → scores + top 10 improvements
+  IF pass: → done, write tests
+  ELSE:
+    Apply top 10 improvements to the actual file
+    Log: which improvements applied, what changed
+
+CYCLE 2:
+  Re-eval the FIXED output (same 3 models, same dimensions)
+  Compare: before/after scores per dimension (track delta)
+  IF pass: → done, write tests
+  ELSE: apply remaining improvements + new ones
+
+CYCLE 3 (final):
+  Re-eval
+  IF pass: → ship
+  ELSE: → ship with KNOWN_GAPS section listing:
+    - Which dimensions are still below 7
+    - Which improvements couldn't be resolved
+    - Why (e.g., "would require architectural change")
+```
+
+### Cycles + cost guardrails
+
+- Default `--cycles 3` in TTY, `--cycles 1` in non-TTY (limits scripted
+  bulk spend in CI loops).
+- The command prints an estimated max-cost-per-cycle from a small pricing
+  constant before each run. Real cost varies with prompt size; treat the
+  estimate as a ceiling for default `--max-tokens 4000`.
+- A `--budget-usd N` hard cap is a v0.27.x follow-up TODO.
+
+### Provider configuration
+
+Models resolve through the gbrain AI gateway. Configure once with:
+
+```bash
+gbrain providers test    # see what's configured
+gbrain config            # set keys
+```
+
+Or set env vars: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GOOGLE_GENERATIVE_AI_API_KEY`, `TOGETHER_API_KEY`, etc. The gateway reads
+from `~/.gbrain/config.json` plus `process.env`.
+
+### Cost expectations
+
+3 cycles × 3 models = 9 frontier calls max per run. With Opus-class +
+GPT-4o-class + Gemini-1.5-Pro, expect $1–3 per full run on default
+`--max-tokens 4000`. Receipts include the per-call model identifiers so
+you can audit retroactively.
+
+### Skip cross-modal eval when:
+
+- Output is < 200 tokens (trivial — not worth 9 API calls).
+- The skill is a thin wrapper around a single API call (one cycle is enough).
+
+## Phase 4: Tests (items 4-6)
+
+NOW that eval has proven quality, write tests that lock it in:
+
+**Unit tests** — every branch of deterministic logic. Mock external calls.
+**Integration tests** — hit real endpoints. Catch bugs mocks hide.
+**LLM evals** — quality/correctness for LLM steps. Lighter than cross-modal eval — test specific behaviors.
+
+## Phase 5: Resolver + Check-Resolvable (items 7-9)
+
+1. Add to skills/RESOLVER.md with trigger phrases users ACTUALLY type
+2. Resolver eval: feed triggers, assert correct routing
+3. Check-resolvable:
+   - Skill reachable from skills/RESOLVER.md (not orphaned)
+   - No MECE overlap with other skills
+   - No DRY violations (shared logic in lib/, not copy-pasted)
+   - No ambiguous trigger routing
+
+## Phase 6: E2E + Brain Filing (items 10-11)
+
+- E2E smoke: full pipeline from trigger to side effect
+- Brain filing: add to brain/RESOLVER.md if the skill writes brain pages
+
+## Phase 7: Verify
+
+```bash
+bun test test/<skill>.test.ts                    # unit tests
+gbrain skillify check skills/<slug>/scripts/<slug>.mjs --json | \
+  jq '.[] | .items[] | select(.name | contains("Cross-modal"))'
+ls ~/.gbrain/.gbrain/eval-receipts/              # receipt landed
+gbrain check-resolvable --json | jq .ok          # resolver clean
+```
+
+## Worked Example: Skillifying a "summarize-pr" Feature
+
+```
+Phase 0: Yes — invoked weekly, 50+ lines, clear trigger "summarize this PR"
+Phase 1: Audit → SKILL.md missing, no tests, no resolver entry. Score: 1/11
+Phase 2: Write SKILL.md + extract script to scripts/summarize-pr.ts
+Phase 3: Cross-modal eval cycle 1 →
+  GPT-4o: goal=6, depth=5, specificity=4 → "misses file-level diffs"
+  Opus 4.7: goal=7, depth=6, specificity=5 → "no test plan in summary"
+  Gemini 1.5 Pro: goal=6, depth=5, specificity=5 → "template feels generic"
+  Aggregate: goal=6.3 FAIL, depth=5.3 FAIL
+  Top improvements: add file-level changes, include test plan, use PR context
+  → Apply fixes → Cycle 2: goal=8, depth=7.5, specificity=7 → PASS
+Phase 4: Write 12 unit tests locking in the improved behavior
+Phase 5: Add "summarize this PR" trigger to skills/RESOLVER.md
+Phase 6: E2E test: feed a real PR URL → verify brain page created
+Phase 7: All green. Score: 11/11
+```
+
+## Quality Gates
+
+NOT properly skilled until:
+
+- All required items pass (1-2, 4-10; 11 only when applicable).
+- Cross-modal eval (item 3) has a current receipt OR is explicitly waived
+  with rationale (item 3 is informational; not blocking, but a missing
+  receipt is visible in the audit).
+- All tests pass (unit + integration + LLM evals).
+- Resolver entry exists with real trigger phrases.
+- Check-resolvable shows no orphans, overlaps, or DRY violations.
+- Brain filing if applicable.
 
 ## Output Format
 
-A skillify run produces, in order:
+Skillify produces three durable artifacts per skill:
 
-1. An audit printout listing which of the 10 items exist and which are
-   missing for the target feature.
-2. The files created to close each gap (SKILL.md, test files, resolver
-   entries).
-3. The final `gbrain check-resolvable` output confirming reachability.
-4. A one-line summary of the resulting skill completeness score (N/10).
+1. **The skill tree on disk.** `skills/<slug>/SKILL.md`, `scripts/<slug>.mjs`,
+   `routing-eval.jsonl`, plus a `test/<slug>.test.ts` skeleton. Generated by
+   `gbrain skillify scaffold <name>` and refined by the human/agent into a
+   real implementation.
+2. **A cross-modal eval receipt** at
+   `~/.gbrain/.gbrain/eval-receipts/<slug>-<sha8>.json`. The sha-8 binds the
+   receipt to the current `SKILL.md` content. `gbrain skillify check`
+   surfaces the status (`found` / `stale` / `missing`) as informational.
+3. **An audit verdict** from `gbrain skillify check`: `properly skilled` |
+   `close — create: <missing items>` | `needs skillify — run /skillify on
+   <target>`. Score is `<passed>/<total>`. Required items gate the verdict;
+   item 11 (cross-modal eval) is informational and never blocks PASS.
+
+JSON output (`gbrain skillify check --json`) includes the same fields plus
+the per-item detail string, so agents can route on the structured envelope
+without parsing prose.
+
+## Anti-Patterns
+
+- ❌ Writing tests before cross-modal eval (locks in mediocrity)
+- ❌ Using budget models for eval (C student grading A student)
+- ❌ Using a single provider's family for all 3 slots (correlated blind spots)
+- ❌ Skipping eval "because the output looks fine" (your judgment isn't 3 models)
+- ❌ Eval without fix cycle (vanity metrics)
+- ❌ Code with no SKILL.md (invisible to resolver)
+- ❌ Tests that reimplement production code (masks real bugs)
+- ❌ Resolver entry with internal jargon (must mirror real user language)
+- ❌ Two skills doing the same thing (merge or kill one)
+- ❌ Running cross-modal eval on trivial outputs (< 200 tokens, not worth 9 API calls)

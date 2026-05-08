@@ -70,6 +70,40 @@ export function skillMdTemplate(v: ScaffoldVars): string {
   lines.push(
     `Run the deterministic script: \`bun scripts/${v.name}.mjs\` (or whatever your harness prefix is).`,
   );
+  lines.push('');
+  // 11-item contract (T7=C in plans/radiant-napping-lerdorf.md): the new
+  // Phase 3 cross-modal eval is informational. The scaffold tells the
+  // implementer where the gate lives without forcing it as a blocker.
+  lines.push('## Phase 3: Cross-modal eval (informational)');
+  lines.push('');
+  lines.push(
+    `Once the SKILL.md body and \`scripts/${v.name}.mjs\` are real, run the cross-modal`,
+  );
+  lines.push(
+    'eval gate against the SKILL.md output before locking behavior in tests:',
+  );
+  lines.push('');
+  lines.push('```bash');
+  lines.push('gbrain eval cross-modal \\');
+  lines.push(`  --task "What this skill is supposed to accomplish" \\`);
+  lines.push(`  --output skills/${v.name}/SKILL.md`);
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    'Three frontier models (different providers) score the output on 5 dimensions.',
+  );
+  lines.push(
+    'Pass criteria: every dim mean >=7 AND no model scored any dim <5. Receipts',
+  );
+  lines.push(
+    'land at `~/.gbrain/.gbrain/eval-receipts/<slug>-<sha8>.json` (sha-8 of SKILL.md',
+  );
+  lines.push(
+    'content). `gbrain skillify check` surfaces the receipt status as informational.',
+  );
+  lines.push(
+    'See `skills/skillify/SKILL.md` Phase 3 for the full 11-item checklist.',
+  );
   return lines.join('\n') + '\n';
 }
 

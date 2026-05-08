@@ -61,8 +61,8 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(timeoutMatches.length).toBeGreaterThanOrEqual(2); // bun + clawhub detection at minimum
   });
 
-  test('return type is bun | binary | clawhub | unknown', () => {
-    expect(source).toContain("'bun' | 'binary' | 'clawhub' | 'unknown'");
+  test('return type includes bun-link variant (v0.28.5 cluster D)', () => {
+    expect(source).toContain("'bun' | 'bun-link' | 'binary' | 'clawhub' | 'unknown'");
   });
 
   test('does not reference npm in case labels or messages', () => {
@@ -70,6 +70,32 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(source).not.toContain("case 'npm'");
     expect(source).not.toContain('via npm');
     expect(source).not.toContain('npm upgrade');
+  });
+
+  // v0.28.5 cluster D: 3-signal layered detection.
+  test('bun-link signal walks .git/config for garrytan/gbrain match', () => {
+    // detectBunLink reads .git/config and matches our repo name as a
+    // case-insensitive substring. Confirm both the function exists and
+    // that it does the loose substring check (not a strict URL parse).
+    expect(source).toContain('function detectBunLink');
+    expect(source).toContain('GBRAIN_GITHUB_REPO');
+    expect(source).toContain('toLowerCase()');
+  });
+
+  test('classifyBunInstall checks repository.url AND src/cli.ts marker', () => {
+    // Codex feedback: repository.url alone is spoofable by future squatter
+    // updates; the source-marker fallback (src/cli.ts presence) is
+    // belt-and-suspenders.
+    expect(source).toContain('function classifyBunInstall');
+    expect(source).toContain('pkg.repository');
+    expect(source).toContain("'src', 'cli.ts'");
+  });
+
+  test('squatter recovery message names both source-clone AND release-binary paths', () => {
+    expect(source).toContain('printSquatterRecovery');
+    expect(source).toContain('git clone');
+    expect(source).toContain('releases');
+    expect(source).toContain('#658');
   });
 });
 

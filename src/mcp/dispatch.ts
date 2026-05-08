@@ -21,6 +21,14 @@ export interface DispatchOpts {
   remote?: boolean;
   /** Override the default stderr logger (e.g. CLI uses console.* directly). */
   logger?: OperationContext['logger'];
+  /**
+   * v0.28: per-token allow-list for the takes.holder field. Threaded by
+   * the HTTP/stdio transport from `access_tokens.permissions.takes_holders`.
+   * When set, takes_list / takes_search / query (when it returns takes)
+   * MUST filter `WHERE holder = ANY($takesHoldersAllowList)`. Local CLI
+   * callers leave this unset (no filter — they own the brain).
+   */
+  takesHoldersAllowList?: string[];
 }
 
 /**
@@ -154,6 +162,7 @@ export function buildOperationContext(
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
+    takesHoldersAllowList: opts.takesHoldersAllowList,
   };
 }
 
