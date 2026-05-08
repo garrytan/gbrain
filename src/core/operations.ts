@@ -16,6 +16,7 @@ import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { stripTakesFence } from './takes-fence.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -350,7 +351,19 @@ const get_page: Operation = {
     }
 
     const tags = await ctx.engine.getTags(page.slug);
-    return { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) };
+    // Privacy boundary for the per-token takes-holder allow-list (v0.28.6).
+    // takes_list / takes_search / think.gather filter rows by holder at the
+    // SQL layer, but takes are also rendered as a markdown table inside the
+    // page body between TAKES_FENCE markers — `extract-takes.ts` ("markdown
+    // is canonical, the takes table is a derived index"). A read-only token
+    // restricted to e.g. `world` could call `get_page <slug>` and recover
+    // every non-`world` claim verbatim from the body. Strip the fence here
+    // when the caller carries an allow-list (i.e. the remote MCP path).
+    // Local CLI callers leave takesHoldersAllowList unset and see the fence.
+    const visibleBody = ctx.takesHoldersAllowList
+      ? { ...page, compiled_truth: stripTakesFence(page.compiled_truth) }
+      : page;
+    return { ...visibleBody, tags, ...(resolved_slug ? { resolved_slug } : {}) };
   },
   scope: 'read',
   cliHints: { name: 'get', positional: ['slug'] },
@@ -1251,7 +1264,13 @@ const get_versions: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getVersions(p.slug as string);
+    const versions = await ctx.engine.getVersions(p.slug as string);
+    // Same takes-allow-list privacy boundary as get_page. Snapshots persist
+    // historical compiled_truth verbatim, including the takes fence, so
+    // a remote token bypassing get_page via /history would re-introduce
+    // the same leak across every prior version.
+    if (!ctx.takesHoldersAllowList) return versions;
+    return versions.map(v => ({ ...v, compiled_truth: stripTakesFence(v.compiled_truth) }));
   },
   scope: 'read',
   cliHints: { name: 'history', positional: ['slug'] },
