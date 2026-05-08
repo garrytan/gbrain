@@ -620,11 +620,15 @@ async function persistToolExecPending(
   toolName: string,
   input: unknown,
 ): Promise<void> {
+  // Serialize to JSON string for the ::jsonb cast. When `input` is already a
+  // string (e.g. pre-serialized), avoid double-encoding which produces a jsonb
+  // scalar string instead of a jsonb object — breaking `input->>'key'` lookups.
+  const jsonStr = typeof input === 'string' ? input : JSON.stringify(input);
   await engine.executeRaw(
     `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
      VALUES ($1, $2, $3, $4, $5::jsonb, 'pending')
      ON CONFLICT (job_id, tool_use_id) DO NOTHING`,
-    [jobId, messageIdx, toolUseId, toolName, JSON.stringify(input)],
+    [jobId, messageIdx, toolUseId, toolName, jsonStr],
   );
 }
 
@@ -638,7 +642,7 @@ async function persistToolExecComplete(
     `UPDATE subagent_tool_executions
         SET status = 'complete', output = $3::jsonb, ended_at = now()
       WHERE job_id = $1 AND tool_use_id = $2`,
-    [jobId, toolUseId, JSON.stringify(output)],
+    [jobId, toolUseId, typeof output === 'string' ? output : JSON.stringify(output)],
   );
 }
 
@@ -658,7 +662,7 @@ async function persistToolExecFailed(
      VALUES ($1, $2, $3, $4, $5::jsonb, 'failed', $6, now())
      ON CONFLICT (job_id, tool_use_id) DO UPDATE
        SET status = 'failed', error = EXCLUDED.error, ended_at = now()`,
-    [jobId, messageIdx, toolUseId, toolName, JSON.stringify(input), error],
+    [jobId, messageIdx, toolUseId, toolName, typeof input === 'string' ? input : JSON.stringify(input), error],
   );
 }
 
