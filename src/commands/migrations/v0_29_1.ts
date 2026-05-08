@@ -48,7 +48,9 @@ async function phaseBBackfill(opts: OrchestratorOpts): Promise<OrchestratorPhase
     const { backfillEffectiveDate } = await import('../../core/backfill-effective-date.ts');
     const cfg = loadConfig();
     if (!cfg) throw new Error('No gbrain config; run `gbrain init` first.');
-    const engine = await createEngine(toEngineConfig(cfg));
+    const engineConfig = toEngineConfig(cfg);
+    const engine = await createEngine(engineConfig);
+    await engine.connect(engineConfig);
 
     let totalExamined = 0;
     let totalUpdated = 0;
@@ -82,7 +84,9 @@ async function phaseCVerify(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
     const { loadConfig, toEngineConfig } = await import('../../core/config.ts');
     const cfg = loadConfig();
     if (!cfg) throw new Error('No gbrain config; run `gbrain init` first.');
-    const engine = await createEngine(toEngineConfig(cfg));
+    const engineConfig = toEngineConfig(cfg);
+    const engine = await createEngine(engineConfig);
+    await engine.connect(engineConfig);
     // Count rows where effective_date is still NULL but frontmatter HAS a
     // parseable date — those are the rows the backfill should have touched
     // but didn't. (Rows that fall through to 'fallback' have non-null
