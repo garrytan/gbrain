@@ -1,5 +1,111 @@
 # TODOS
 
+## LongMemEval benchmark follow-ups (v0.28.12)
+
+### Closed: full 500-question 4-adapter run published
+
+The full 500-question, 4-adapter LongMemEval `_s` benchmark landed in
+[gbrain-evals#main:ced01f0](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-07-longmemeval-s.md).
+gbrain-hybrid: 97.60% R@5, beating MemPal raw 96.6% by 1.0pt on the same
+dataset, K, and n with no LLM in the retrieval loop. Honest null result on
+query expansion (97.60% with vs without). Closing this entry; remaining
+follow-ups below.
+
+### Timeline-aware retrieval signal for temporal-reasoning questions
+**Priority:** P2
+
+**What:** gbrain's `links` table + `gbrain extract timeline` already build a
+graph of dated events. Feed that signal into `searchKeyword` / `searchVector`
+ranking so questions like "what was the FIRST issue I had after my new
+car's first service?" get a temporal boost on session ordering.
+
+**Why:** LongMemEval temporal-reasoning is the only question type where MemPal-raw
+beats gbrain-hybrid (96.2% vs 94.7%, -1.5pt). Embeddings carry topic
+similarity; "first" / "before" / "last week" need ordering signal that
+vector cosine doesn't surface. We have the data infrastructure to fix this
+(the timeline extraction code), just don't pipe it into search ranking.
+
+**Pros:** Closes the only categorical loss to MemPal on the public benchmark.
+Generalizes beyond LongMemEval — every personal-knowledge agent gets
+temporal questions and most fail them. This is a structural advantage.
+
+**Cons:** Requires a new SQL ranking factor in `src/core/search/sql-ranking.ts`
+and signal-extraction work in the query-time path (parsing temporal hints
+from the question). Maybe ~200 lines + a benchmark line on the gbrain-evals
+report once it ships.
+
+**Context:** Per-type breakdown in
+`gbrain-evals/docs/benchmarks/2026-05-07-longmemeval-s.md` shows we tie
+or beat MemPal-raw on 5 of 6 types and lose temporal by 1.5pt. Also:
+`src/core/link-extraction.ts` already extracts dated timeline entries via
+`parseTimelineEntries`. They land in `timeline_entries` table but aren't
+used during retrieval ranking.
+
+**Depends on:** Nothing blocking.
+
+### Per-question batch consolidation (latency optimization)
+**Priority:** P3
+
+**What:** `importFromContent` calls `embedBatch` once per page. Each LongMemEval
+question imports ~50 sessions = 50 separate API calls. Pre-chunk all sessions
+for a question, embed in one OpenAI call, then bulk-write.
+
+**Why:** Drops per-question latency from ~14s to ~3s on a cold cache.
+Currently the runner ships a 700MB SQLite warm-cache to avoid this; a faster
+cold path would let CI run the benchmark daily without a fixture.
+
+**Pros:** Daily benchmark CI gate becomes practical. Cuts cold-cache cost by
+~10x. Faster iteration when tuning ranking parameters.
+
+**Cons:** ~80 lines of batch-consolidation code that lives in the runner, not
+gbrain core. Touches `eval/runner/longmemeval.ts:run()` per-question loop.
+Less generalizable than the timeline-aware ranker work.
+
+**Context:** Right now the warm-cache mitigates this in practice (subsequent
+runs are sub-1-min). The optimization matters only when re-running with a
+different gbrain version that re-keys the cache.
+
+**Depends on:** Nothing blocking.
+
+### LongMemEval `_m` split (200 distractor sessions per haystack)
+**Priority:** P3
+
+**What:** Run the existing 4-adapter benchmark against the harder `_m` split
+where each haystack has ~200 distractor sessions instead of ~50.
+
+**Why:** Pushes retrieval into the regime where gbrain's pipeline either
+holds up or doesn't. MemPal hasn't published `_m` numbers; we'd have a
+clean head-to-head once we run it. Also stresses the noise-rejection
+(source-boost / hard-exclude) layer of gbrain harder than `_s` does.
+
+**Pros:** Differentiated benchmark line. Forces signal-vs-noise behavior we
+can't measure on `_s`. Free with our existing runner.
+
+**Cons:** ~$10-20 in OpenAI embeddings (4x more chunks per question). Cache
+file grows to ~3GB. ~6-8 hours wall time for the embedding-heavy runs even
+parallel-3.
+
+**Depends on:** Nothing blocking. Could ship same shape as `_s` report.
+
+### Cheaper embedding-model recipe for benchmarks
+**Priority:** P4
+
+**What:** Pin `text-embedding-3-small` (or Voyage-3-lite via the v0.27
+pluggable provider stack) as a benchmark-only embedding model so the
+cold-cache cost drops 10x. Compare recall against `text-embedding-3-large`
+and publish the recall-cost tradeoff curve.
+
+**Why:** "What's the cheapest embedding model that still wins this
+benchmark?" is a real builder question. We'd publish the answer.
+
+**Pros:** Useful tradeoff line for users picking gbrain in a cost-sensitive
+deployment. Validates the v0.27 pluggable-provider work end-to-end.
+
+**Cons:** Multiple full-benchmark runs ($30+ in API spend) to chart the
+curve.
+
+**Depends on:** v0.27 pluggable embedding provider work (already shipped,
+verify Voyage adapter integration in `src/core/ai/recipes/voyage.ts`).
 ## multimodal embedding follow-ups (v0.28.11 / PR #719)
 
 ### `gbrain doctor`: warn on misconfigured multimodal model

@@ -526,6 +526,15 @@ async function handleCliOnly(command: string, args: string[]) {
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
 
+  // v0.28.8: longmemeval brings its own in-memory PGLite. Bypassing
+  // connectEngine here keeps `gbrain eval longmemeval --help` and benchmark
+  // runs working on machines that have no `~/.gbrain/config.json` configured.
+  if (command === 'eval' && args[0] === 'longmemeval') {
+    const { runEvalLongMemEval } = await import('./commands/eval-longmemeval.ts');
+    await runEvalLongMemEval(args.slice(1));
+    return;
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
