@@ -175,7 +175,24 @@ export async function runPhaseSynthesize(
 
     const queue = new MinionQueue(engine);
     const childIds: number[] = [];
+    
+    // Split oversized transcripts into chunks
+    const processable: Array<{ transcript: DiscoveredTranscript; chunkIndex?: number }> = [];
     for (const t of worthProcessing) {
+      const estimatedTokens = Math.ceil(t.content.length / 3.5);
+      if (estimatedTokens <= config.maxPromptTokens) {
+        processable.push({ transcript: t });
+      } else {
+        // Split at natural boundaries
+        const chunks = splitTranscriptAtBoundaries(t.content, config.maxPromptTokens);
+        for (let i = 0; i < chunks.length; i++) {
+          const chunked = { ...t, content: chunks[i] };
+          processable.push({ transcript: chunked, chunkIndex: i });
+        }
+      }
+    }
+    
+    for (const { transcript: t, chunkIndex } of processable) {
       const childData: SubagentHandlerData = {
         prompt: buildSynthesisPrompt(t),
         model: config.model,
@@ -185,7 +202,9 @@ export async function runPhaseSynthesize(
       const submitOpts: Partial<MinionJobInput> = {
         max_stalled: 3,
         on_child_fail: 'continue',
-        idempotency_key: `dream:synth:${t.filePath}:${t.contentHash.slice(0, 16)}`,
+        idempotency_key: chunkIndex !== undefined 
+          ? `dream:synth:${t.filePath}:${t.contentHash.slice(0, 16)}:chunk${chunkIndex}`
+          : `dream:synth:${t.filePath}:${t.contentHash.slice(0, 16)}`,
         timeout_ms: 30 * 60 * 1000, // 30 min per transcript
       };
       const child = await queue.add(
@@ -269,6 +288,7 @@ interface SynthConfig {
   model: string;
   verdictModel: string;
   cooldownHours: number;
+  maxPromptTokens: number;
 }
 
 async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -290,6 +310,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     fallback: 'haiku',
   });
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');
+  const maxPromptTokensStr = await engine.getConfig('dream.synthesize.max_prompt_tokens');
 
   let excludePatterns: string[] = ['medical', 'therapy'];
   if (excludeStr) {
@@ -308,6 +329,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     model,
     verdictModel,
     cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 12) : 12,
+    maxPromptTokens: maxPromptTokensStr ? Math.max(100_000, parseInt(maxPromptTokensStr, 10) || 800_000) : 800_000,
   };
 }
 
@@ -619,6 +641,49 @@ function loadAdHocTranscript(
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function splitTranscriptAtBoundaries(content: string, maxTokens: number): string[] {
+  const maxChars = maxTokens * 3.5; // rough token-to-char ratio
+  if (content.length <= maxChars) return [content];
+  
+  const chunks: string[] = [];
+  let remaining = content;
+  
+  while (remaining.length > maxChars) {
+    // Find a natural break point: topic separator, hour boundary, or ---
+    let splitAt = maxChars;
+    
+    // Look for topic separators (## Topic: ...) near the boundary
+    const topicRegex = /\n## Topic:/g;
+    let lastGoodSplit = -1;
+    let match;
+    while ((match = topicRegex.exec(remaining)) !== null) {
+      if (match.index <= maxChars && match.index > maxChars * 0.5) {
+        lastGoodSplit = match.index;
+      }
+      if (match.index > maxChars) break;
+    }
+    
+    if (lastGoodSplit > 0) {
+      splitAt = lastGoodSplit;
+    } else {
+      // Fall back to --- separators
+      const hrIdx = remaining.lastIndexOf('\n---\n', maxChars);
+      if (hrIdx > maxChars * 0.5) splitAt = hrIdx;
+      else {
+        // Last resort: split at nearest newline
+        const nlIdx = remaining.lastIndexOf('\n', maxChars);
+        if (nlIdx > maxChars * 0.5) splitAt = nlIdx;
+      }
+    }
+    
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt);
+  }
+  
+  if (remaining.length > 0) chunks.push(remaining);
+  return chunks;
 }
 
 function ok(summary: string, details: Record<string, unknown> = {}): PhaseResult {
