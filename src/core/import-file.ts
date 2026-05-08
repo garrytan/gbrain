@@ -886,6 +886,12 @@ export interface ImportImageOptions {
   ocrConcurrency?: number;
   /** Skip the embed call (for tests that want fast metadata-only inserts). */
   noEmbed?: boolean;
+  /**
+   * v0.30.x follow-up to PR #707: route image-page writes to a named source.
+   * Mirrors importFromContent's threading; without this, runImport callers
+   * with sourceId would TS-error on the importImageFile branch.
+   */
+  sourceId?: string;
 }
 
 /** Module-level limiter so concurrent imports across files share the budget. */

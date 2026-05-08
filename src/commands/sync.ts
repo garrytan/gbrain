@@ -918,7 +918,10 @@ async function performFullSync(
   const importArgs = [repoPath];
   if (opts.noEmbed) importArgs.push('--no-embed');
   if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
-  const result = await runImport(engine, importArgs, { commit: headCommit });
+  // v0.30.x follow-up to PR #707: thread sourceId through runImport's opts
+  // so performFullSync routes pages to the named source (the incremental
+  // sync path in this same file already does this on lines 581/641).
+  const result = await runImport(engine, importArgs, { commit: headCommit, sourceId: opts.sourceId });
 
   // Bug 9 — gate the full-sync bookmark on success. runImport already
   // writes its own sync.last_commit conditionally (import.ts), but
