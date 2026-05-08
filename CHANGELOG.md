@@ -95,7 +95,7 @@ https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` and
 - New flag: `--quality correct|incorrect|partial` on `gbrain takes resolve`. Primary input.
 - New flag: `--evidence "..."` on `gbrain takes resolve` — semantic alias for `--source`.
 - New MCP ops: `takes_scorecard` (read scope) + `takes_calibration` (read scope), both honoring per-token allow-list.
-- Schema migration v40 (`takes_resolved_quality_and_drift_decisions`):
+- Schema migration v43 (`takes_resolved_quality_and_drift_decisions`):
   - `takes.resolved_quality TEXT` with CHECK `(IN ('correct','incorrect','partial'))`.
   - `takes_resolution_consistency` CHECK constraint enforces (quality, outcome) tuple consistency at the DB layer.
   - Backfill: legacy `resolved_outcome=true` → `resolved_quality='correct'`; `false` → `'incorrect'`.
@@ -113,12 +113,17 @@ https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` and
 - `cmdResolve` mirrors resolution metadata into the takes-fence on disk via the page-lock-aware path. Round-trip preservation keeps resolution data intact across unrelated edits.
 
 #### Tests
-- 11 new cases in `test/takes-fence.test.ts` for v0.30 resolution columns, round-trip preservation (the codex F3 regression gate), narrow-shape preservation, partial rendering, `upsertTakeRow` and `supersedeRow` resolution preservation.
-- 16 new cases in `test/takes-resolution.test.ts` for `deriveResolutionTuple` and `finalizeScorecard` Brier math (n=0, hand-calculated 4-bet reference at Brier=0.205, partial-exclusion contract, partial_rate threshold).
-- 7 new cases in `test/takes-engine.test.ts` for v0.30 quality semantics on PGLite, contradictory-input rejection, scorecard hand-calc against the same 4-bet fixture, n=0 handling, SQL-level allow-list privacy filter (hidden-holder rows contribute zero).
+53 new cases (34 unit + 19 E2E):
+- 11 cases in `test/takes-fence.test.ts` for v0.30 resolution columns, round-trip preservation (the codex F3 regression gate), narrow-shape preservation, partial rendering, `upsertTakeRow` and `supersedeRow` resolution preservation.
+- 16 cases in `test/takes-resolution.test.ts` for `deriveResolutionTuple` and `finalizeScorecard` Brier math (n=0, hand-calculated 4-bet reference at Brier=0.205, partial-exclusion contract, partial_rate threshold).
+- 7 cases in `test/takes-engine.test.ts` for v0.30 quality semantics on PGLite, contradictory-input rejection, scorecard hand-calc against the same 4-bet fixture, n=0 handling, SQL-level allow-list privacy filter.
+- 11 cases in `test/e2e/takes-scorecard-parity.test.ts` (NEW) — same fixture into Postgres + PGLite, asserts `getScorecard` and `getCalibrationCurve` return byte-identical results across engines, and that the SQL-level allow-list filter strictly subtracts hidden-holder rows on both engines.
+- 8 cases extended in `test/e2e/takes-postgres.test.ts` — `--quality correct/partial/back-compat` writes the expected (quality, outcome) tuple on real PG; the `takes_resolution_consistency` CHECK constraint actively rejects contradictory raw `UPDATE`s; scorecard + calibration coherent shape; PRIVACY allow-list filter on real PG; MCP dispatch path for `takes_scorecard` + `takes_calibration`.
+
+The E2E parity test caught two real bugs PGLite tolerated: postgres.js was sending `${bucketSize}` as a string and `FLOOR(weight / '0.1')` was throwing `invalid input syntax for type integer`; even after the type cast, IEEE 754 made `FLOOR(0.7 / 0.1)` return 6 on real PG and 7 on PGLite, so calibration buckets diverged at boundaries. Both fixed with `weight::numeric / $N::numeric` (exact decimal arithmetic, engine-agnostic).
 
 #### Migration ordering
-- All wave schema (resolved_quality, CHECK, partial index, drift_decisions table) bundled into migration v43 in v0.30.0 (renumbered from v40 on master merge — master claimed v40-v42 with the v0.29 + v0.29.1 salience-and-recency wave). Slices A2/B1/C1 add no migrations of their own.
+- All wave schema (resolved_quality, CHECK, partial index, drift_decisions table) bundled into migration v43 in v0.30.0 (renumbered from v40 on master merge — master claimed v40-v42 with the v0.29 + v0.29.1 salience-and-recency wave). Migration runner sorts by version number, so the rename is mechanical — no semantic change. Slices A2/B1/C1 (trajectory + annual-review, meeting extraction CLI, drift judge) add no migrations of their own.
 
 ## [0.29.1] - 2026-05-05
 
