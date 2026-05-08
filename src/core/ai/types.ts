@@ -20,6 +20,7 @@ export type TouchpointKind =
 export type Implementation =
   | 'native-openai'
   | 'native-google'
+  | 'native-google-vertex'
   | 'native-anthropic'
   | 'openai-compatible';
 

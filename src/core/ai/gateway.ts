@@ -25,6 +25,7 @@ import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createVertex } from '@ai-sdk/google-vertex';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
@@ -270,6 +271,20 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       );
       const client = createGoogleGenerativeAI({ apiKey });
       return (client as any).textEmbeddingModel
+        ? (client as any).textEmbeddingModel(modelId)
+        : (client as any).embedding(modelId);
+    }
+    case 'native-google-vertex': {
+      const project = cfg.env.GBRAIN_VERTEX_PROJECT;
+      if (!project) throw new AIConfigError(
+        `Vertex AI embedding requires GBRAIN_VERTEX_PROJECT.`,
+        recipe.setup_hint,
+      );
+      const location = cfg.env.GBRAIN_VERTEX_LOCATION ?? 'us-central1';
+      const client = createVertex({ project, location });
+      return (client as any).embeddingModel
+        ? (client as any).embeddingModel(modelId)
+        : (client as any).textEmbeddingModel
         ? (client as any).textEmbeddingModel(modelId)
         : (client as any).embedding(modelId);
     }

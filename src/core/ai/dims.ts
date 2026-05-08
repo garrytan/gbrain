@@ -48,6 +48,19 @@ export function dimsProviderOptions(
       }
       return undefined;
     }
+    case 'native-google-vertex': {
+      // @ai-sdk/google-vertex@4.x providerOptions namespaces (parseProviderOptions
+      // tries each in order):
+      //   primary: 'vertex'  (fallback: 'google')
+      // v5 canary uses 'googleVertex' — add when v5 lands stable.
+      if (modelId.startsWith('gemini-embedding')) {
+        return {
+          vertex: { outputDimensionality: dims },
+          google: { outputDimensionality: dims },
+        };
+      }
+      return undefined;
+    }
     case 'native-anthropic':
       // Anthropic has no embedding model.
       return undefined;
