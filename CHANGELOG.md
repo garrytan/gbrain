@@ -2,6 +2,73 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.30.1] - 2026-05-08
+
+**Operational hardening: gbrain upgrade just works on Supabase. DDL stops timing out on the pooler. Migrations stop wedging. HNSW rebuilds stop nuking your search. Backfills stop being bespoke scripts.**
+
+Twelve releases in a weekend taught us where the cracks are: every Supabase upgrade required Garry at the keyboard. Statement timeouts on the pooler. Wedged migrations after three partial runs. 3.5-hour HNSW rebuilds. The v0.27 → v0.29.1 walk through 12 versions made the operational story unshippable. v0.30.1 fixes the substrate.
+
+### What you can now do
+
+**`gbrain backfill <kind>`** — first-class bulk operations. Three registered backfills (`effective_date`, `emotional_weight`, `embedding_voyage`) with keyset pagination, automatic checkpoint persistence in the `config` table, adaptive batch halving on statement timeout, connection-drop reconnect, and pinned-backend semantics so `SET LOCAL statement_timeout` actually persists across the BEGIN/UPDATE/COMMIT cycle. Run `gbrain backfill list` to see what's registered.
+
+```bash
+gbrain backfill effective_date
+gbrain backfill emotional_weight --concurrency 2
+gbrain backfill list
+```
+
+**`gbrain apply-migrations --force-schema` / `--force-orchestrator` / `--force`** — namespaced wedge recovery. `--force-retry vX.Y.Z` still resets a single orchestrator wedge. New flags reset whole ledgers in one shot. `--force-schema` re-runs `runMigrations()` against the current `config.version`. `--force` does both.
+
+**`gbrain doctor` zombie HNSW sweep** — on every engine connect, drops `indisvalid=false` indexes left over from crashed `CREATE INDEX CONCURRENTLY` calls. Guarded against in-progress builds via `pg_stat_activity` so it can't compete with Supabase auto-maintenance.
+
+### How it works under the hood
+
+**Connection routing** — `ConnectionManager` auto-detects Supabase via hostname `pooler.supabase.com` or port 6543. `read()` goes to the pooler (fast, 10 conns); `ddl()` and `bulk()` go to a direct connection (port 5432, 30-min statement_timeout, capped at 3 conns, `maintenance_work_mem='256MB'`). Override the direct URL with `GBRAIN_DIRECT_DATABASE_URL`. Disable the split with `GBRAIN_DISABLE_DIRECT_POOL=1` (kill-switch, falls back to single-pool legacy). Worker engines (cycle, sync) inherit kill-switch state from their parent ConnectionManager.
+
+**Migration retry + verify hooks** — every migration retries 3 times on statement_timeout (5s/15s/45s backoff), with `getIdleBlockers()` logged before each retry. On retry exhaustion, the error envelope names the most recent blocker by PID and prints the `pg_terminate_backend(<pid>)` recovery command. `Migration.verify` lets a migration declare a post-condition probe; if verify returns false on an idempotent migration, the runner re-runs it once. On non-idempotent migrations, `MigrationDriftError` requires `--skip-verify` to force.
+
+**HNSW atomic-swap rebuild** — `dropAndRebuild` builds a new index with a temp name, swaps atomically via `DROP INDEX old; ALTER INDEX temp RENAME TO old`. If the rebuild fails, the old index is intact and search keeps serving queries. No more "production-degraded silent failure" mode.
+
+**Upgrade-checkpoint primitive** — every step of `gbrain post-upgrade` (pull → install → schema → features → backfills → verify) writes to `~/.gbrain/upgrade-checkpoint.json` with a brain-identity hash (`sha256(database_url)`). Cross-brain checkpoint application is refused. Foundation for `gbrain upgrade --resume` (the CLI plumbing lands in v0.30.2).
+
+### For contributors
+
+40 substantive scope decisions across 4 review rounds (CEO + plan-eng + 2 codex outside-voice passes) before any code shipped. The plan file at `.context/v0.30.1-plan.md` documents the complete decision history including codex's 16 findings (4 plan-breaking, 8 spec-tightening, 4 minor) — every one adopted as a plan correction before implementation began. See the per-lane commits for the bisect-friendly trail:
+
+- Lane A: connection-manager foundation + X1 initSchema routing (1237 LOC)
+- Lane B: migration runner retry + verify hooks + namespaced --force flags (583 LOC)
+- Lane C: backfill primitive + registry + X4 + X5 (999 LOC)
+- Lane D: HNSW lifecycle manager + A3 atomic-swap (462 LOC)
+- Lane E: upgrade pipeline checkpoint + brain_id binding + get_health migrations (405 LOC)
+- E2E + serial quarantine: integration smoke + test-isolation hygiene (212 LOC)
+
+Test count grew by 146 (132 unit + 14 integration). Three test files quarantined to `*.serial.test.ts` because they mutate `process.env`.
+
+### Out of scope (deferred to v0.30.2)
+
+- `gbrain upgrade --resume` / `--status` CLI flags (substrate shipped + tested; CLI plumbing follows)
+- Three new doctor checks: `connection_routing`, `migration_wedge`, `hnsw_health` (substrate shipped; doctor wiring follows)
+- `BrainEngine.getHealth()` populating the new `migrations: {schema, orchestrator}` field (type contract committed; engine impls land alongside multi-column embedding)
+- Multi-column embedding schema migration (`embedding_voyage vector(1024)`) — backfill primitive already plumbs `--column` flag
+
+### To take advantage of v0.30.1
+
+`gbrain upgrade` will pull and run schema migrations automatically. v44 (`pages_emotional_weight_recomputed_at` column) lands as a metadata-only ALTER (instant on tables of any size).
+
+If you're on Supabase and want the dual-pool routing immediately:
+```bash
+# Optional explicit override (otherwise auto-derived from your pooler URL):
+export GBRAIN_DIRECT_DATABASE_URL="postgresql://postgres.<ref>:<password>@db.<ref>.supabase.co:5432/postgres"
+gbrain doctor   # verifies connection-manager mode
+```
+
+If `gbrain upgrade` ever wedges:
+```bash
+gbrain apply-migrations --force          # resets every wedged ledger
+gbrain doctor                            # confirms schema_version + zombie sweep
+```
+
 ## [0.30.0] - 2026-05-07
 
 **Calibration scorecards land. Find out if your bets are actually as good as you think.**
