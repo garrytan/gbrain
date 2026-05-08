@@ -917,6 +917,16 @@ export class PostgresEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
+    // Resolve default chunk model from gateway (v0.14+) so chunks record the
+    // actually-configured embedding model instead of the v0.13 hardcoded
+    // 'text-embedding-3-large'. Falls back only if the gateway hasn't been
+    // configured (e.g. init-time before configureGateway()).
+    let defaultModel = 'text-embedding-3-large';
+    try {
+      const gw = await import('./ai/gateway.ts');
+      defaultModel = gw.getEmbeddingModel().split(':').slice(1).join(':') || defaultModel;
+    } catch { /* gateway not configured — use v0.13 default */ }
+
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
@@ -946,7 +956,7 @@ export class PostgresEngine implements BrainEngine {
       if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-        chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+        chunk.model || defaultModel, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
