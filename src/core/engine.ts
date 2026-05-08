@@ -238,6 +238,92 @@ export interface DreamVerdictInput {
   reasons: string[];
 }
 
+// ============================================================
+// v0.31 Hot Memory: facts table + recall surface
+// ============================================================
+
+/** Allowed `facts.kind` values. Different decay halflives apply per kind. */
+export type FactKind = 'event' | 'preference' | 'commitment' | 'belief' | 'fact';
+
+export const ALL_FACT_KINDS: readonly FactKind[] = [
+  'event', 'preference', 'commitment', 'belief', 'fact',
+] as const;
+
+/** Visibility tier on a fact row. Mirrors takes' world-default ACL contract (D21). */
+export type FactVisibility = 'private' | 'world';
+
+/** Status returned by insertFact. */
+export type FactInsertStatus = 'inserted' | 'duplicate' | 'superseded';
+
+/** A fact row read from the facts table. */
+export interface FactRow {
+  id: number;
+  source_id: string;
+  entity_slug: string | null;
+  fact: string;
+  kind: FactKind;
+  visibility: FactVisibility;
+  context: string | null;
+  valid_from: Date;
+  valid_until: Date | null;
+  expired_at: Date | null;
+  superseded_by: number | null;
+  consolidated_at: Date | null;
+  consolidated_into: number | null;
+  source: string;
+  source_session: string | null;
+  confidence: number;
+  embedding: Float32Array | null;
+  embedded_at: Date | null;
+  created_at: Date;
+}
+
+/** Input for insertFact. source_id supplied via the ctx arg. */
+export interface NewFact {
+  fact: string;
+  kind?: FactKind;                     // default 'fact'
+  entity_slug?: string | null;
+  visibility?: FactVisibility;          // default 'private'
+  context?: string | null;
+  valid_from?: Date;                   // default now()
+  valid_until?: Date | null;
+  source: string;                       // 'mcp:put_page' | 'mcp:extract_facts' | 'cli:think' | etc
+  source_session?: string | null;
+  confidence?: number;                  // [0,1], default 1.0
+  embedding?: Float32Array | null;     // pre-computed; if null, insertFact computes via gateway
+}
+
+/** Options shared by list-facts methods. */
+export interface FactListOpts {
+  /** Hide expired_at IS NOT NULL rows. Default true. */
+  activeOnly?: boolean;
+  limit?: number;
+  offset?: number;
+  /** Restrict to specific kinds. Default: all kinds. */
+  kinds?: FactKind[];
+  /**
+   * Visibility filter. When undefined, returns all. When set, only matches
+   * are returned. Remote (untrusted) callers must supply ['world'].
+   */
+  visibility?: FactVisibility[];
+}
+
+/** Per-source operational health snapshot consumed by `gbrain doctor`. */
+export interface FactsHealth {
+  source_id: string;
+  total_active: number;          // facts where expired_at IS NULL
+  total_today: number;           // created in last 24h
+  total_week: number;            // created in last 7d
+  total_expired: number;         // expired_at IS NOT NULL
+  total_consolidated: number;    // consolidated_at IS NOT NULL
+  top_entities: Array<{ entity_slug: string; count: number }>;
+  /** Optional counters fed by the queue / classifier — populated when those modules report. */
+  drop_counter?: number;
+  classifier_fail_counter?: number;
+  p50_latency_ms?: number;
+  p99_latency_ms?: number;
+}
+
 /** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */
 export const MAX_SEARCH_LIMIT = 100;
 
@@ -539,6 +625,88 @@ export interface BrainEngine {
   // page-scoped — transcripts being judged aren't pages yet.
   getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null>;
   putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void>;
+
+  // ============================================================
+  // v0.31 Hot memory — facts table operations
+  // ============================================================
+  /**
+   * Insert a fact into the per-source hot memory. The handler:
+   *   1. canonicalizes entity_slug against pages (caller may pre-canonicalize)
+   *   2. queries findCandidateDuplicates (entity-prefiltered, k=5 cap)
+   *   3. cosine ≥0.95 fast-path → mark duplicate, skip classifier
+   *   4. else classifier (caller's job; this engine method handles the
+   *      DB-side INSERT/UPDATE only). On insert.status === 'duplicate' or
+   *      'superseded' the engine returns the existing/superseding row id.
+   * Per-entity advisory lock on Postgres serializes the dedup window.
+   * PGLite no-op for the lock (single-process).
+   *
+   * `status` reflects what the engine wrote:
+   *   'inserted'   → row inserted
+   *   'duplicate'  → no new row (returns the matching candidate id)
+   *   'superseded' → new row inserted; old row got expired_at + superseded_by
+   */
+  insertFact(
+    input: NewFact,
+    ctx: { source_id: string; supersedeId?: number },
+  ): Promise<{ id: number; status: FactInsertStatus }>;
+
+  /**
+   * Mark a fact expired. Never DELETE. Returns true iff a row was updated.
+   * Idempotent-as-false (already expired returns false without changing state).
+   */
+  expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean>;
+
+  /** List active facts about an entity within a source, newest first. */
+  listFactsByEntity(
+    source_id: string,
+    entitySlug: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]>;
+
+  /** List facts created since a given timestamp within a source. */
+  listFactsSince(
+    source_id: string,
+    since: Date,
+    opts?: FactListOpts & { entitySlug?: string },
+  ): Promise<FactRow[]>;
+
+  /** List facts captured under a session id within a source. */
+  listFactsBySession(
+    source_id: string,
+    sessionId: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]>;
+
+  /**
+   * Audit log: facts that were superseded (expired_at + superseded_by both set),
+   * newest first. Drives `gbrain recall --supersessions`.
+   */
+  listSupersessions(
+    source_id: string,
+    opts?: { since?: Date; limit?: number },
+  ): Promise<FactRow[]>;
+
+  /**
+   * Find candidate duplicates for a new fact within a source+entity bucket.
+   * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
+   * radius). Hard cap k=5 by default. Embedding-cosine when both sides have
+   * embeddings; recency fallback otherwise.
+   */
+  findCandidateDuplicates(
+    source_id: string,
+    entitySlug: string,
+    factText: string,
+    opts?: { k?: number; embedding?: Float32Array },
+  ): Promise<FactRow[]>;
+
+  /**
+   * Mark a fact as consolidated into a take. Sets consolidated_at + consolidated_into.
+   * Never DELETE — facts stay as audit trail.
+   */
+  consolidateFact(id: number, takeId: number): Promise<void>;
+
+  /** Per-source operational metrics for `gbrain doctor` facts_health check. */
+  getFactsHealth(source_id: string): Promise<FactsHealth>;
 
   // Versions
   createVersion(slug: string): Promise<PageVersion>;
