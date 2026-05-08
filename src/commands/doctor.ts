@@ -949,6 +949,114 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
+  // 11a-2. effective_date_health (v0.29.1).
+  //
+  // Detects pages where computeEffectiveDate fell back to updated_at even
+  // though parseable frontmatter dates are present (codex pass-1 #5
+  // resolution: the sentinel column lets us catch "wrong but populated"
+  // rows that look healthy at first glance).
+  //
+  // Sample 1000 random rows by default to keep the check fast on 200K-page
+  // brains. The expression index pages_coalesce_date_idx makes the future-
+  // date and pre-1990 scans cheap; the parseable-fm-date scan reads
+  // frontmatter JSONB and is the slow path.
+  progress.heartbeat('effective_date_health');
+  try {
+    const result = await engine.executeRaw<{ kind: string; count: string }>(
+      `WITH sample AS (
+         SELECT slug, frontmatter, effective_date, effective_date_source
+           FROM pages
+          ORDER BY id DESC
+          LIMIT 1000
+       )
+       SELECT 'fallback_with_fm_date' AS kind, COUNT(*)::text AS count
+         FROM sample
+        WHERE effective_date_source = 'fallback'
+          AND (frontmatter ? 'event_date' OR frontmatter ? 'date' OR frontmatter ? 'published')
+       UNION ALL
+       SELECT 'future_dated', COUNT(*)::text FROM sample
+        WHERE effective_date IS NOT NULL AND effective_date > NOW() + INTERVAL '1 year'
+       UNION ALL
+       SELECT 'pre_1990', COUNT(*)::text FROM sample
+        WHERE effective_date IS NOT NULL AND effective_date < TIMESTAMPTZ '1990-01-01'`,
+    );
+    const counts = new Map(result.map(r => [r.kind, Number(r.count)]));
+    const fallbackWithFm = counts.get('fallback_with_fm_date') ?? 0;
+    const future = counts.get('future_dated') ?? 0;
+    const pre1990 = counts.get('pre_1990') ?? 0;
+    if (fallbackWithFm > 0 || future > 0 || pre1990 > 0) {
+      const parts: string[] = [];
+      if (fallbackWithFm > 0) parts.push(`${fallbackWithFm} fell back to updated_at despite parseable frontmatter date`);
+      if (future > 0) parts.push(`${future} dated > NOW() + 1y`);
+      if (pre1990 > 0) parts.push(`${pre1990} pre-1990`);
+      checks.push({
+        name: 'effective_date_health',
+        status: 'warn',
+        message: `${parts.join('; ')} (sample of last 1000 pages). Run \`gbrain reindex-frontmatter\` to recompute.`,
+      });
+    } else {
+      checks.push({
+        name: 'effective_date_health',
+        status: 'ok',
+        message: 'Sample of last 1000 pages clean (no fallback-with-parseable-fm-date, no future-dated, no pre-1990)',
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42703') {
+      // column doesn't exist — pre-v0.29.1 brain
+      checks.push({ name: 'effective_date_health', status: 'ok', message: 'Skipped (effective_date column unavailable — run gbrain apply-migrations)' });
+    } else {
+      checks.push({ name: 'effective_date_health', status: 'warn', message: `Could not read pages: ${(err as Error)?.message ?? String(err)}` });
+    }
+  }
+
+  // 11a-3. salience_health (v0.29.1).
+  //
+  // Detects pages with active takes (so emotional_weight should be > 0)
+  // whose recompute_emotional_weight phase hasn't yet run, plus the
+  // brain-average emotional_weight as an informational signal.
+  progress.heartbeat('salience_health');
+  try {
+    const result = await engine.executeRaw<{ kind: string; n: string }>(
+      `SELECT 'zero_weight_with_takes' AS kind, COUNT(DISTINCT p.id)::text AS n
+         FROM pages p
+         JOIN takes t ON t.page_id = p.id AND t.active = TRUE
+        WHERE COALESCE(p.emotional_weight, 0) = 0
+       UNION ALL
+       SELECT 'nonzero_weight', COUNT(*)::text FROM pages WHERE COALESCE(emotional_weight, 0) > 0`,
+    );
+    const counts = new Map(result.map(r => [r.kind, Number(r.n)]));
+    const zeroWithTakes = counts.get('zero_weight_with_takes') ?? 0;
+    const nonzero = counts.get('nonzero_weight') ?? 0;
+    if (zeroWithTakes > 0) {
+      checks.push({
+        name: 'salience_health',
+        status: 'warn',
+        message: `${zeroWithTakes} pages with active takes have emotional_weight=0. Run \`gbrain dream --phase recompute_emotional_weight\` to populate. Brain has ${nonzero} pages with non-zero emotional_weight.`,
+      });
+    } else if (nonzero === 0) {
+      checks.push({
+        name: 'salience_health',
+        status: 'ok',
+        message: 'Skipped (no pages have emotional_weight > 0; either fresh install or recompute hasn\'t run yet)',
+      });
+    } else {
+      checks.push({
+        name: 'salience_health',
+        status: 'ok',
+        message: `${nonzero} pages have non-zero emotional_weight; no take/weight mismatches detected`,
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42703' || code === '42P01') {
+      checks.push({ name: 'salience_health', status: 'ok', message: 'Skipped (emotional_weight or takes table unavailable — pre-v0.29 brain)' });
+    } else {
+      checks.push({ name: 'salience_health', status: 'warn', message: `Could not read pages: ${(err as Error)?.message ?? String(err)}` });
+    }
+  }
+
   // 11b. Queue health (v0.19.1 queue-resilience wave).
   // Postgres-only because PGLite has no multi-process worker surface. Two
   // subchecks, both cheap (single SELECT each, status-index-covered):

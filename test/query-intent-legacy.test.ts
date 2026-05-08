@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { classifyQueryIntent, autoDetectDetail } from '../src/core/search/intent.ts';
+import { classifyQueryIntent, autoDetectDetail } from '../src/core/search/query-intent.ts';
 
 describe('classifyQueryIntent', () => {
   describe('entity queries', () => {

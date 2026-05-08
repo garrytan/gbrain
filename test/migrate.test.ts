@@ -1146,6 +1146,40 @@ describe('migration v31 — eval_capture_tables', () => {
   });
 });
 
+describe('migration v40 — pages_emotional_weight (v0.29)', () => {
+  // v0.29 ships off master. Master is at v39 (multimodal_dual_column_v0_27_1);
+  // v0.29 lands at v40. Idempotent ADD COLUMN IF NOT EXISTS, so brains that
+  // applied this at any prior number on a feature branch see v40 as new and
+  // run cleanly.
+  test('exists with the expected name', () => {
+    const v40 = MIGRATIONS.find(m => m.version === 40);
+    expect(v40).toBeDefined();
+    expect(v40?.name).toBe('pages_emotional_weight');
+  });
+
+  test('adds emotional_weight REAL NOT NULL DEFAULT 0.0 to pages', () => {
+    const v40 = MIGRATIONS.find(m => m.version === 40);
+    const sql = v40!.sql || '';
+    expect(sql).toContain('ALTER TABLE pages');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS emotional_weight');
+    expect(sql).toContain('REAL');
+    expect(sql).toContain('NOT NULL DEFAULT 0.0');
+  });
+
+  test('does NOT create an idx_pages_emotional_weight index (eng review D6)', () => {
+    // Salience query orders by computed score, not raw weight; the index
+    // would never be used. Adding it later requires a separate migration.
+    const v40 = MIGRATIONS.find(m => m.version === 40);
+    const sql = v40!.sql || '';
+    expect(sql).not.toContain('idx_pages_emotional_weight');
+    expect(sql).not.toContain('CREATE INDEX');
+  });
+
+  test('LATEST_VERSION caught up to 40', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(40);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // PR #363 regression guards — session timeouts via startup parameters
 // resolveSessionTimeouts — GBRAIN_*_TIMEOUT env overrides

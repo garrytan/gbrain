@@ -29,12 +29,15 @@ import type {
   EngineConfig,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
+  SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
+  EmotionalWeightInputRow, EmotionalWeightWriteRow,
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, takeRowToTake } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
-import { GBrainError } from './types.ts';
+import { GBrainError, PAGE_SORT_SQL } from './types.ts';
+import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
 
 type PGLiteDB = PGlite;
 
@@ -463,15 +466,20 @@ export class PGLiteEngine implements BrainEngine {
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
-    // v0.18.0 Step 2: source_id relies on the schema DEFAULT 'default' so
-    // existing callers still target the default source without threading
-    // a parameter. ON CONFLICT target becomes (source_id, slug) since the
-    // global UNIQUE(slug) was dropped in migration v17. Step 5+ will
-    // surface an explicit sourceId param on putPage for multi-source sync.
+    // v0.18.0 Step 2: source_id relies on the schema DEFAULT 'default'.
+    // ON CONFLICT target is (source_id, slug); global UNIQUE(slug) dropped in v17.
     const pageKind = page.page_kind || 'markdown';
+    // v0.29.1 — additive opt-in columns. COALESCE(EXCLUDED.x, pages.x)
+    // preserves existing values when caller omits them (auto-link path,
+    // code reindex, etc.). Mirrors postgres-engine.ts.
+    const effectiveDate = page.effective_date instanceof Date
+      ? page.effective_date.toISOString()
+      : (page.effective_date ?? null);
+    const effectiveDateSource = page.effective_date_source ?? null;
+    const importFilename = page.import_filename ?? null;
     const { rows } = await this.db.query(
-      `INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, now())
+      `INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, now(), $9::timestamptz, $10, $11)
        ON CONFLICT (source_id, slug) DO UPDATE SET
          type = EXCLUDED.type,
          page_kind = EXCLUDED.page_kind,
@@ -480,9 +488,12 @@ export class PGLiteEngine implements BrainEngine {
          timeline = EXCLUDED.timeline,
          frontmatter = EXCLUDED.frontmatter,
          content_hash = EXCLUDED.content_hash,
-         updated_at = now()
-       RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at`,
-      [slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash]
+         updated_at = now(),
+         effective_date        = COALESCE(EXCLUDED.effective_date,        pages.effective_date),
+         effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source),
+         import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename)
+       RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename`,
+      [slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename]
     );
     return rowToPage(rows[0] as Record<string, unknown>);
   }
@@ -575,9 +586,13 @@ export class PGLiteEngine implements BrainEngine {
     params.push(limit, offset);
     const limitSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
 
+    // v0.29: ORDER BY threading via PAGE_SORT_SQL whitelist (no SQL injection).
+    const sortKey = filters?.sort && PAGE_SORT_SQL[filters.sort] ? filters.sort : 'updated_desc';
+    const orderBy = PAGE_SORT_SQL[sortKey];
+
     const { rows } = await this.db.query(
       `SELECT p.* FROM pages p ${tagJoin} ${whereSql}
-       ORDER BY p.updated_at DESC ${limitSql}`,
+       ORDER BY ${orderBy} ${limitSql}`,
       params
     );
 
@@ -648,6 +663,18 @@ export class PGLiteEngine implements BrainEngine {
     if (opts?.symbolKind) {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
+    }
+    // v0.29.1 — since/until date filter (Postgres parity, codex pass-1 #10).
+    // Reads against COALESCE(effective_date, updated_at) so date filtering
+    // matches user intent (a meeting was on its event_date, not when it
+    // got reimported). Same param shape as Postgres engine.
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
 
     // v0.26.5: visibility filter (soft-deleted + archived-source).
@@ -725,6 +752,15 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
     }
+    // v0.29.1 since/until parity (codex pass-1 #10).
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
 
     // v0.26.5: visibility filter for the chunk-grain anchor primitive.
     const visibilityClause = buildVisibilityClause('p', 's');
@@ -784,6 +820,17 @@ export class PGLiteEngine implements BrainEngine {
     if (opts?.symbolKind) {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
+    }
+    // v0.29.1 since/until parity (codex pass-1 #10). Filter applied INSIDE
+    // the inner CTE so HNSW's candidate pool already excludes out-of-range
+    // pages — preserves pagination contract.
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
 
     // v0.26.5: visibility filter applied in the inner CTE so HNSW sees the
@@ -1314,6 +1361,58 @@ export class PGLiteEngine implements BrainEngine {
       result.set(r.slug, Number(r.cnt));
     }
     return result;
+  }
+
+  async getPageTimestamps(slugs: string[]): Promise<Map<string, Date>> {
+    if (slugs.length === 0) return new Map();
+    const { rows } = await this.db.query(
+      `SELECT slug, COALESCE(updated_at, created_at) as ts
+       FROM pages WHERE slug = ANY($1::text[])`,
+      [slugs]
+    );
+    return new Map(rows.map((r: any) => [r.slug as string, new Date(r.ts as string)]));
+  }
+
+  async getEffectiveDates(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, Date>> {
+    if (refs.length === 0) return new Map();
+    const slugs = refs.map(r => r.slug);
+    const sourceIds = refs.map(r => r.source_id);
+    const { rows } = await this.db.query(
+      `SELECT p.slug, p.source_id, COALESCE(p.effective_date, p.updated_at, p.created_at) AS ts
+         FROM pages p
+         JOIN unnest($1::text[], $2::text[]) AS u(slug, source_id)
+           ON p.slug = u.slug AND p.source_id = u.source_id`,
+      [slugs, sourceIds],
+    );
+    const out = new Map<string, Date>();
+    for (const r of rows as Array<{slug: string; source_id: string; ts: string | Date}>) {
+      const key = `${r.source_id}::${r.slug}`;
+      out.set(key, r.ts instanceof Date ? r.ts : new Date(r.ts));
+    }
+    return out;
+  }
+
+  async getSalienceScores(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, number>> {
+    if (refs.length === 0) return new Map();
+    const slugs = refs.map(r => r.slug);
+    const sourceIds = refs.map(r => r.source_id);
+    const { rows } = await this.db.query(
+      `SELECT p.slug, p.source_id,
+              (COALESCE(p.emotional_weight, 0) * 5
+               + ln(1 + COUNT(DISTINCT t.id))) AS score
+         FROM pages p
+         JOIN unnest($1::text[], $2::text[]) AS u(slug, source_id)
+           ON p.slug = u.slug AND p.source_id = u.source_id
+         LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
+        GROUP BY p.id`,
+      [slugs, sourceIds],
+    );
+    const out = new Map<string, number>();
+    for (const r of rows as Array<{slug: string; source_id: string; score: number | string}>) {
+      const key = `${r.source_id}::${r.slug}`;
+      out.set(key, Number(r.score));
+    }
+    return out;
   }
 
   async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
@@ -2401,6 +2500,240 @@ export class PGLiteEngine implements BrainEngine {
       [since]
     );
     return rows as unknown as EvalCaptureFailure[];
+  }
+
+  // ============================================================
+  // v0.29 — Salience + Anomaly Detection
+  // ============================================================
+
+  async batchLoadEmotionalInputs(slugs?: string[]): Promise<EmotionalWeightInputRow[]> {
+    // Two CTEs avoid the N×M cartesian product (codex C4#4).
+    const baseSql = `
+      WITH page_tags AS (
+        SELECT page_id, array_agg(DISTINCT tag) AS tags
+          FROM tags GROUP BY page_id
+      ),
+      page_takes AS (
+        SELECT page_id, json_agg(json_build_object(
+                 'holder', holder, 'weight', weight, 'kind', kind, 'active', active
+               )) AS takes
+          FROM takes WHERE active = TRUE GROUP BY page_id
+      )
+      SELECT p.slug, p.source_id,
+             COALESCE(pt.tags, ARRAY[]::text[]) AS tags,
+             COALESCE(pk.takes, '[]'::json) AS takes
+        FROM pages p
+        LEFT JOIN page_tags pt  ON pt.page_id = p.id
+        LEFT JOIN page_takes pk ON pk.page_id = p.id
+    `;
+    const { rows } = slugs
+      ? await this.db.query(`${baseSql} WHERE p.slug = ANY($1::text[])`, [slugs])
+      : await this.db.query(baseSql);
+    return (rows as Record<string, unknown>[]).map(r => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      tags: (r.tags as string[]) ?? [],
+      takes: (r.takes as EmotionalWeightInputRow['takes']) ?? [],
+    }));
+  }
+
+  async setEmotionalWeightBatch(rows: EmotionalWeightWriteRow[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    const slugs = rows.map(r => r.slug);
+    const sourceIds = rows.map(r => r.source_id);
+    const weights = rows.map(r => r.weight);
+    // Composite-keyed UPDATE FROM unnest (codex C4#3).
+    // v0.29.1: bump salience_touched_at when emotional_weight actually changes
+    // so the salience query window picks up newly-salient old pages. Mirror
+    // of postgres-engine.ts.
+    const result = await this.db.query(
+      `UPDATE pages
+          SET emotional_weight = u.weight,
+              salience_touched_at = CASE
+                WHEN pages.emotional_weight IS DISTINCT FROM u.weight THEN now()
+                ELSE pages.salience_touched_at
+              END
+         FROM unnest($1::text[], $2::text[], $3::real[])
+           AS u(slug, source_id, weight)
+        WHERE pages.slug = u.slug AND pages.source_id = u.source_id
+        RETURNING 1`,
+      [slugs, sourceIds, weights]
+    );
+    return result.rows.length;
+  }
+
+  async getRecentSalience(opts: SalienceOpts): Promise<SalienceResult[]> {
+    const days = Math.max(0, opts.days ?? 14);
+    const limit = clampSearchLimit(opts.limit, 20, 100);
+    const slugPrefix = opts.slugPrefix;
+    const boundaryIso = new Date(Date.now() - days * 86400000).toISOString();
+
+    const params: unknown[] = [boundaryIso];
+    let prefixCondition = '';
+    if (slugPrefix) {
+      const escaped = slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+      params.push(escaped);
+      prefixCondition = `AND p.slug LIKE $${params.length} ESCAPE '\\'`;
+    }
+    params.push(limit);
+    const limitParam = `$${params.length}`;
+
+    // v0.29.1: third score term via buildRecencyComponentSql. Default
+    // 'flat' = v0.29.0 behavior. 'on' opts into per-prefix decay.
+    const recencyBias = opts.recency_bias ?? 'flat';
+    let recencySql: string;
+    if (recencyBias === 'on') {
+      const { resolveRecencyDecayMap, DEFAULT_FALLBACK } = await import('./search/recency-decay.ts');
+      recencySql = buildRecencyComponentSql({
+        slugColumn: 'p.slug',
+        dateExpr: 'COALESCE(p.effective_date, p.updated_at)',
+        decayMap: resolveRecencyDecayMap(),
+        fallback: DEFAULT_FALLBACK,
+      });
+    } else {
+      recencySql = buildRecencyComponentSql({
+        slugColumn: 'p.slug',
+        dateExpr: 'p.updated_at',
+        decayMap: {},
+        fallback: { halflifeDays: 1, coefficient: 1.0 },
+      });
+    }
+    const { rows } = await this.db.query(
+      `SELECT p.slug, p.source_id, p.title, p.type, p.updated_at, p.emotional_weight,
+              COUNT(DISTINCT t.id) AS take_count,
+              COALESCE(AVG(t.weight), 0) AS take_avg_weight,
+              (p.emotional_weight * 5)
+                + ln(1 + COUNT(DISTINCT t.id))
+                + ${recencySql}
+                AS score
+         FROM pages p
+         LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
+        WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= $1::timestamptz
+          ${prefixCondition}
+        GROUP BY p.id
+        ORDER BY score DESC
+        LIMIT ${limitParam}`,
+      params
+    );
+    return (rows as Record<string, unknown>[]).map(r => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      title: String(r.title ?? ''),
+      type: r.type as SalienceResult['type'],
+      updated_at: r.updated_at as Date,
+      emotional_weight: Number(r.emotional_weight ?? 0),
+      take_count: Number(r.take_count ?? 0),
+      take_avg_weight: Number(r.take_avg_weight ?? 0),
+      score: Number(r.score ?? 0),
+    }));
+  }
+
+  async findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]> {
+    const sigma = opts.sigma ?? 3.0;
+    const lookbackDays = Math.max(1, opts.lookback_days ?? 30);
+    const sinceIso = (opts.since ?? new Date().toISOString().slice(0, 10));
+    const sinceDate = new Date(sinceIso + 'T00:00:00Z');
+    const sinceEnd = new Date(sinceDate.getTime() + 86400000);
+    const baselineStart = new Date(sinceDate.getTime() - lookbackDays * 86400000);
+
+    const tagBaselineRes = await this.db.query(
+      `WITH days AS (
+         SELECT day::date FROM generate_series(
+           $1::date, $2::date - 1, '1 day'::interval
+         ) AS day
+       ),
+       cohort_keys AS (
+         SELECT DISTINCT t.tag FROM tags t JOIN pages p ON p.id = t.page_id
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+       ),
+       touched AS (
+         SELECT t.tag,
+                date_trunc('day', p.updated_at)::date AS day,
+                COUNT(DISTINCT p.id) AS cnt
+           FROM tags t JOIN pages p ON p.id = t.page_id
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+          GROUP BY 1, 2
+       )
+       SELECT cd.tag AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
+         FROM cohort_keys cd CROSS JOIN days d
+         LEFT JOIN touched t ON t.tag = cd.tag AND t.day = d.day`,
+      [baselineStart.toISOString(), sinceDate.toISOString()]
+    );
+
+    const typeBaselineRes = await this.db.query(
+      `WITH days AS (
+         SELECT day::date FROM generate_series(
+           $1::date, $2::date - 1, '1 day'::interval
+         ) AS day
+       ),
+       cohort_keys AS (
+         SELECT DISTINCT p.type FROM pages p
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+       ),
+       touched AS (
+         SELECT p.type,
+                date_trunc('day', p.updated_at)::date AS day,
+                COUNT(DISTINCT p.id) AS cnt
+           FROM pages p
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+          GROUP BY 1, 2
+       )
+       SELECT cd.type AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
+         FROM cohort_keys cd CROSS JOIN days d
+         LEFT JOIN touched t ON t.type = cd.type AND t.day = d.day`,
+      [baselineStart.toISOString(), sinceDate.toISOString()]
+    );
+
+    const tagTodayRes = await this.db.query(
+      `SELECT t.tag AS cohort_value,
+              COUNT(DISTINCT p.id)::int AS count,
+              array_agg(DISTINCT p.slug) AS slugs
+         FROM tags t JOIN pages p ON p.id = t.page_id
+        WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+        GROUP BY 1`,
+      [sinceIso, sinceEnd.toISOString()]
+    );
+
+    const typeTodayRes = await this.db.query(
+      `SELECT p.type AS cohort_value,
+              COUNT(DISTINCT p.id)::int AS count,
+              array_agg(DISTINCT p.slug) AS slugs
+         FROM pages p
+        WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+        GROUP BY 1`,
+      [sinceIso, sinceEnd.toISOString()]
+    );
+
+    const baseline = [
+      ...(tagBaselineRes.rows as Record<string, unknown>[]).map(r => ({
+        cohort_kind: 'tag' as const,
+        cohort_value: String(r.cohort_value),
+        day: String(r.day),
+        count: Number(r.count),
+      })),
+      ...(typeBaselineRes.rows as Record<string, unknown>[]).map(r => ({
+        cohort_kind: 'type' as const,
+        cohort_value: String(r.cohort_value),
+        day: String(r.day),
+        count: Number(r.count),
+      })),
+    ];
+    const today = [
+      ...(tagTodayRes.rows as Record<string, unknown>[]).map(r => ({
+        cohort_kind: 'tag' as const,
+        cohort_value: String(r.cohort_value),
+        count: Number(r.count),
+        page_slugs: (r.slugs as string[]) ?? [],
+      })),
+      ...(typeTodayRes.rows as Record<string, unknown>[]).map(r => ({
+        cohort_kind: 'type' as const,
+        cohort_value: String(r.cohort_value),
+        count: Number(r.count),
+        page_slugs: (r.slugs as string[]) ?? [],
+      })),
+    ];
+
+    return computeAnomaliesFromBuckets(baseline, today, sigma);
   }
 }
 

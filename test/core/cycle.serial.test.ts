@@ -377,8 +377,9 @@ describe('runCycle — yieldBetweenPhases hook', () => {
         hookCalls++;
       },
     });
-    // v0.26.5: 9 phases (added `purge`) → 9 yield calls (one after each).
-    expect(hookCalls).toBe(9);
+    // v0.26.5: 9 phases (added `purge`).
+    // v0.29:   10 phases (added `recompute_emotional_weight`) → 10 yield calls.
+    expect(hookCalls).toBe(10);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -388,8 +389,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
         throw new Error('synthetic hook error');
       },
     });
-    // Cycle still completed all phases (v0.26.5: 9 with the new purge phase).
-    expect(report.phases.length).toBe(9);
+    // Cycle still completed all phases (v0.29: 10 with recompute_emotional_weight).
+    expect(report.phases.length).toBe(10);
   });
 });
 

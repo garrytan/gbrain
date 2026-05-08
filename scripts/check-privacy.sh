@@ -121,6 +121,13 @@ ALLOW_LIST=(
   # walkthrough; it explains the privacy-guard extension to the
   # operating agent and references the banned literals while doing so.
   'skills/migrations/v0.25.1.md'
+  # v0.29.1: the recency-decay default-map test asserts that
+  # DEFAULT_RECENCY_DECAY's keys do NOT include fork-specific path
+  # prefixes. The test must name the banned tokens to assert their
+  # absence — same exception status as scripts/check-privacy.sh,
+  # CHANGELOG.md, and CLAUDE.md (meta-rule enforcement requires
+  # mentioning what the rule forbids).
+  'test/recency-decay.test.ts'
 )
 
 is_allowed() {

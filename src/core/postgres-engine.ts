@@ -28,12 +28,15 @@ import type {
   EngineConfig,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
+  SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
+  EmotionalWeightInputRow, EmotionalWeightWriteRow,
 } from './types.ts';
-import { GBrainError } from './types.ts';
+import { GBrainError, PAGE_SORT_SQL } from './types.ts';
+import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -431,12 +434,19 @@ export class PostgresEngine implements BrainEngine {
 
     // v0.18.0 Step 2: source_id relies on schema DEFAULT 'default'. ON
     // CONFLICT target becomes (source_id, slug) since global UNIQUE(slug)
-    // was dropped in migration v17. See pglite-engine.ts for matching
-    // notes; multi-source sync (Step 5) will surface an explicit sourceId.
+    // was dropped in migration v17.
     const pageKind = page.page_kind || 'markdown';
+    // v0.29.1 — effective_date / effective_date_source / import_filename are
+    // additive opt-in inputs from the importer (computeEffectiveDate). When
+    // omitted, the ON CONFLICT path preserves any existing value via
+    // COALESCE(EXCLUDED.x, pages.x) so a putPage that doesn't know about
+    // these columns (auto-link, code reindex, etc.) doesn't blank them out.
+    const effectiveDate = page.effective_date ?? null;
+    const effectiveDateSource = page.effective_date_source ?? null;
+    const importFilename = page.import_filename ?? null;
     const rows = await sql`
-      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now())
+      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename)
+      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename})
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -445,8 +455,11 @@ export class PostgresEngine implements BrainEngine {
         timeline = EXCLUDED.timeline,
         frontmatter = EXCLUDED.frontmatter,
         content_hash = EXCLUDED.content_hash,
-        updated_at = now()
-      RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at
+        updated_at = now(),
+        effective_date        = COALESCE(EXCLUDED.effective_date,        pages.effective_date),
+        effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source),
+        import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename)
+      RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename
     `;
     return rowToPage(rows[0]);
   }
@@ -524,11 +537,16 @@ export class PostgresEngine implements BrainEngine {
       ? sql``
       : sql`AND p.deleted_at IS NULL`;
 
+    // v0.29: ORDER BY threading via PAGE_SORT_SQL whitelist (no SQL injection).
+    // postgres.js sql.unsafe lets us splice the literal fragment safely.
+    const sortKey = filters?.sort && PAGE_SORT_SQL[filters.sort] ? filters.sort : 'updated_desc';
+    const orderBy = sql.unsafe(PAGE_SORT_SQL[sortKey]);
+
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
       WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${deletedCondition}
-      ORDER BY p.updated_at DESC LIMIT ${limit} OFFSET ${offset}
+      ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
     `;
 
     return rows.map(rowToPage);
@@ -616,6 +634,17 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    // v0.27.0: date filtering support
+    let afterDateClause = '';
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    let beforeDateClause = '';
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -644,6 +673,8 @@ export class PostgresEngine implements BrainEngine {
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${languageClause}
           ${symbolKindClause}
+          ${afterDateClause}
+          ${beforeDateClause}
           ${hardExcludeClause}
           ${visibilityClause}
           -- v0.27.1: hide image rows from text-keyword search so OCR text
@@ -729,6 +760,17 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    // v0.27.0: date filtering support
+    let afterDateClause = '';
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    let beforeDateClause = '';
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
     params.push(limit);
     const limitParam = `$${params.length}`;
     params.push(offset);
@@ -752,6 +794,8 @@ export class PostgresEngine implements BrainEngine {
         ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
         ${languageClause}
         ${symbolKindClause}
+        ${afterDateClause}
+        ${beforeDateClause}
         ${hardExcludeClause}
         ${visibilityClause}
       ORDER BY score DESC
@@ -817,6 +861,17 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    // v0.27.0: date filtering support
+    let afterDateClause = '';
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      afterDateClause = `AND COALESCE(p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    let beforeDateClause = '';
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -849,6 +904,8 @@ export class PostgresEngine implements BrainEngine {
           ${excludeSlugsClause}
           ${languageClause}
           ${symbolKindClause}
+          ${afterDateClause}
+          ${beforeDateClause}
           ${hardExcludeClause}
           ${visibilityClause}
         ORDER BY cc.${col} <=> $1::vector
@@ -1366,6 +1423,66 @@ export class PostgresEngine implements BrainEngine {
       result.set(r.slug, Number(r.cnt));
     }
     return result;
+  }
+
+  async getPageTimestamps(slugs: string[]): Promise<Map<string, Date>> {
+    if (slugs.length === 0) return new Map();
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT slug, COALESCE(updated_at, created_at) as ts
+      FROM pages WHERE slug = ANY(${slugs}::text[])
+    `;
+    return new Map(rows.map(r => [r.slug as string, new Date(r.ts as string)]));
+  }
+
+  async getEffectiveDates(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, Date>> {
+    if (refs.length === 0) return new Map();
+    const sql = this.sql;
+    const slugs = refs.map(r => r.slug);
+    const sourceIds = refs.map(r => r.source_id);
+    // Composite-keyed: a page is unique by (source_id, slug). unnest the
+    // two arrays in lockstep so multi-source brains don't fan out across
+    // sources (codex pass-1 finding #3).
+    const rows = await sql`
+      SELECT p.slug, p.source_id, COALESCE(p.effective_date, p.updated_at, p.created_at) AS ts
+        FROM pages p
+        JOIN unnest(${slugs}::text[], ${sourceIds}::text[]) AS u(slug, source_id)
+          ON p.slug = u.slug AND p.source_id = u.source_id
+    `;
+    const out = new Map<string, Date>();
+    for (const raw of rows as unknown as Array<Record<string, unknown>>) {
+      const r = raw as { slug: string; source_id: string; ts: string | Date };
+      const key = `${r.source_id}::${r.slug}`;
+      out.set(key, r.ts instanceof Date ? r.ts : new Date(r.ts));
+    }
+    return out;
+  }
+
+  async getSalienceScores(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, number>> {
+    if (refs.length === 0) return new Map();
+    const sql = this.sql;
+    const slugs = refs.map(r => r.slug);
+    const sourceIds = refs.map(r => r.source_id);
+    // Salience = emotional_weight × 5 + ln(1 + take_count). Pure mattering
+    // signal — NO time component (per D9: salience and recency are
+    // orthogonal axes). Composite-keyed for multi-source isolation.
+    const rows = await sql`
+      SELECT p.slug, p.source_id,
+             (COALESCE(p.emotional_weight, 0) * 5
+              + ln(1 + COUNT(DISTINCT t.id))) AS score
+        FROM pages p
+        JOIN unnest(${slugs}::text[], ${sourceIds}::text[]) AS u(slug, source_id)
+          ON p.slug = u.slug AND p.source_id = u.source_id
+        LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
+       GROUP BY p.id
+    `;
+    const out = new Map<string, number>();
+    for (const raw of rows as unknown as Array<Record<string, unknown>>) {
+      const r = raw as { slug: string; source_id: string; score: number | string };
+      const key = `${r.source_id}::${r.slug}`;
+      out.set(key, Number(r.score));
+    }
+    return out;
   }
 
   async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
@@ -2429,6 +2546,269 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY ts DESC
     `;
     return rows as unknown as EvalCaptureFailure[];
+  }
+
+  // ============================================================
+  // v0.29 — Salience + Anomaly Detection
+  // ============================================================
+
+  async batchLoadEmotionalInputs(slugs?: string[]): Promise<EmotionalWeightInputRow[]> {
+    const sql = this.sql;
+    // Two CTEs avoid the N×M cartesian product (codex C4#4): a page with N tags
+    // and M takes joined directly would emit N×M rows and corrupt aggregates.
+    // Per-table aggregation keeps each table's grouping correct.
+    const rows = slugs
+      ? await sql`
+          WITH page_tags AS (
+            SELECT page_id, array_agg(DISTINCT tag) AS tags
+              FROM tags GROUP BY page_id
+          ),
+          page_takes AS (
+            SELECT page_id, json_agg(json_build_object(
+                     'holder', holder, 'weight', weight, 'kind', kind, 'active', active
+                   )) AS takes
+              FROM takes WHERE active = TRUE GROUP BY page_id
+          )
+          SELECT p.slug, p.source_id,
+                 COALESCE(pt.tags, ARRAY[]::text[]) AS tags,
+                 COALESCE(pk.takes, '[]'::json) AS takes
+            FROM pages p
+            LEFT JOIN page_tags pt  ON pt.page_id = p.id
+            LEFT JOIN page_takes pk ON pk.page_id = p.id
+           WHERE p.slug = ANY(${slugs}::text[])
+        `
+      : await sql`
+          WITH page_tags AS (
+            SELECT page_id, array_agg(DISTINCT tag) AS tags
+              FROM tags GROUP BY page_id
+          ),
+          page_takes AS (
+            SELECT page_id, json_agg(json_build_object(
+                     'holder', holder, 'weight', weight, 'kind', kind, 'active', active
+                   )) AS takes
+              FROM takes WHERE active = TRUE GROUP BY page_id
+          )
+          SELECT p.slug, p.source_id,
+                 COALESCE(pt.tags, ARRAY[]::text[]) AS tags,
+                 COALESCE(pk.takes, '[]'::json) AS takes
+            FROM pages p
+            LEFT JOIN page_tags pt  ON pt.page_id = p.id
+            LEFT JOIN page_takes pk ON pk.page_id = p.id
+        `;
+    return rows.map((r: Record<string, unknown>) => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      tags: (r.tags as string[]) ?? [],
+      takes: (r.takes as EmotionalWeightInputRow['takes']) ?? [],
+    }));
+  }
+
+  async setEmotionalWeightBatch(rows: EmotionalWeightWriteRow[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    const sql = this.sql;
+    const slugs = rows.map(r => r.slug);
+    const sourceIds = rows.map(r => r.source_id);
+    const weights = rows.map(r => r.weight);
+    // Composite-keyed UPDATE FROM unnest (codex C4#3): pages.slug is unique
+    // only within a source, so a slug-only join would fan out across sources.
+    //
+    // v0.29.1: bump salience_touched_at to NOW() ONLY when emotional_weight
+    // actually changes. The salience query window then includes the page in
+    // GREATEST(updated_at, salience_touched_at) >= boundary, so a previously
+    // calm page that just became salient surfaces in the recent salience
+    // results without a content edit. No-op writes (same weight) leave
+    // salience_touched_at alone — preserves "actual change" semantics.
+    const result = await sql`
+      UPDATE pages
+         SET emotional_weight = u.weight,
+             salience_touched_at = CASE
+               WHEN pages.emotional_weight IS DISTINCT FROM u.weight THEN now()
+               ELSE pages.salience_touched_at
+             END
+        FROM unnest(${slugs}::text[], ${sourceIds}::text[], ${weights}::real[])
+          AS u(slug, source_id, weight)
+       WHERE pages.slug = u.slug AND pages.source_id = u.source_id
+      RETURNING 1
+    `;
+    return result.length;
+  }
+
+  async getRecentSalience(opts: SalienceOpts): Promise<SalienceResult[]> {
+    const sql = this.sql;
+    const days = Math.max(0, opts.days ?? 14);
+    const limit = clampSearchLimit(opts.limit, 20, 100);
+    const slugPrefix = opts.slugPrefix;
+    // Compute the boundary in JS so the SQL is identical across engines (eng review D5).
+    const boundaryIso = new Date(Date.now() - days * 86400000).toISOString();
+    // Escape LIKE meta for the optional prefix match.
+    const prefixCondition = slugPrefix
+      ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
+      : sql``;
+    // v0.29.1: third score term via buildRecencyComponentSql. Default
+    // 'flat' = v0.29.0 behavior (1 / (1 + days_old)). 'on' opts into the
+    // per-prefix decay map (concepts/ evergreen, daily/ aggressive, etc.).
+    const recencyBias = opts.recency_bias ?? 'flat';
+    let recencySql: string;
+    if (recencyBias === 'on') {
+      const { resolveRecencyDecayMap, DEFAULT_FALLBACK } = await import('./search/recency-decay.ts');
+      recencySql = buildRecencyComponentSql({
+        slugColumn: 'p.slug',
+        dateExpr: 'COALESCE(p.effective_date, p.updated_at)',
+        decayMap: resolveRecencyDecayMap(),
+        fallback: DEFAULT_FALLBACK,
+      });
+    } else {
+      recencySql = buildRecencyComponentSql({
+        slugColumn: 'p.slug',
+        dateExpr: 'p.updated_at',
+        decayMap: {},
+        fallback: { halflifeDays: 1, coefficient: 1.0 },
+      });
+    }
+    const rows = await sql`
+      SELECT p.slug, p.source_id, p.title, p.type, p.updated_at, p.emotional_weight,
+             COUNT(DISTINCT t.id) AS take_count,
+             COALESCE(AVG(t.weight), 0) AS take_avg_weight,
+             (p.emotional_weight * 5)
+               + ln(1 + COUNT(DISTINCT t.id))
+               + ${sql.unsafe(recencySql)}
+               AS score
+        FROM pages p
+        LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
+       WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= ${boundaryIso}::timestamptz
+         ${prefixCondition}
+       GROUP BY p.id
+       ORDER BY score DESC
+       LIMIT ${limit}
+    `;
+    return rows.map((r: Record<string, unknown>) => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      title: String(r.title ?? ''),
+      type: r.type as SalienceResult['type'],
+      updated_at: r.updated_at as Date,
+      emotional_weight: Number(r.emotional_weight ?? 0),
+      take_count: Number(r.take_count ?? 0),
+      take_avg_weight: Number(r.take_avg_weight ?? 0),
+      score: Number(r.score ?? 0),
+    }));
+  }
+
+  async findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]> {
+    const sql = this.sql;
+    const sigma = opts.sigma ?? 3.0;
+    const lookbackDays = Math.max(1, opts.lookback_days ?? 30);
+    // Boundaries: today's window is [since, since+1day); baseline is [since-lookback, since).
+    const sinceIso = (opts.since ?? new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
+    const sinceDate = new Date(sinceIso + 'T00:00:00Z');
+    const sinceEnd = new Date(sinceDate.getTime() + 86400000);
+    const baselineStart = new Date(sinceDate.getTime() - lookbackDays * 86400000);
+
+    // Tag cohort baseline with day densification + zero-fill (codex C4#6).
+    const tagBaseline = await sql`
+      WITH days AS (
+        SELECT day::date FROM generate_series(
+          ${baselineStart.toISOString()}::date,
+          ${sinceDate.toISOString()}::date - 1,
+          '1 day'::interval
+        ) AS day
+      ),
+      cohort_keys AS (
+        SELECT DISTINCT t.tag FROM tags t JOIN pages p ON p.id = t.page_id
+         WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
+           AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+      ),
+      touched AS (
+        SELECT t.tag,
+               date_trunc('day', p.updated_at)::date AS day,
+               COUNT(DISTINCT p.id) AS cnt
+          FROM tags t JOIN pages p ON p.id = t.page_id
+         WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
+           AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+         GROUP BY 1, 2
+      )
+      SELECT cd.tag AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
+        FROM cohort_keys cd CROSS JOIN days d
+        LEFT JOIN touched t ON t.tag = cd.tag AND t.day = d.day
+    `;
+
+    const typeBaseline = await sql`
+      WITH days AS (
+        SELECT day::date FROM generate_series(
+          ${baselineStart.toISOString()}::date,
+          ${sinceDate.toISOString()}::date - 1,
+          '1 day'::interval
+        ) AS day
+      ),
+      cohort_keys AS (
+        SELECT DISTINCT p.type FROM pages p
+         WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
+           AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+      ),
+      touched AS (
+        SELECT p.type,
+               date_trunc('day', p.updated_at)::date AS day,
+               COUNT(DISTINCT p.id) AS cnt
+          FROM pages p
+         WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
+           AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+         GROUP BY 1, 2
+      )
+      SELECT cd.type AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
+        FROM cohort_keys cd CROSS JOIN days d
+        LEFT JOIN touched t ON t.type = cd.type AND t.day = d.day
+    `;
+
+    // Today's window — current counts + slugs per cohort.
+    const tagToday = await sql`
+      SELECT t.tag AS cohort_value,
+             COUNT(DISTINCT p.id)::int AS count,
+             array_agg(DISTINCT p.slug) AS slugs
+        FROM tags t JOIN pages p ON p.id = t.page_id
+       WHERE p.updated_at >= ${sinceIso}::timestamptz
+         AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz
+       GROUP BY 1
+    `;
+    const typeToday = await sql`
+      SELECT p.type AS cohort_value,
+             COUNT(DISTINCT p.id)::int AS count,
+             array_agg(DISTINCT p.slug) AS slugs
+        FROM pages p
+       WHERE p.updated_at >= ${sinceIso}::timestamptz
+         AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz
+       GROUP BY 1
+    `;
+
+    const baseline = [
+      ...tagBaseline.map((r: Record<string, unknown>) => ({
+        cohort_kind: 'tag' as const,
+        cohort_value: String(r.cohort_value),
+        day: String(r.day),
+        count: Number(r.count),
+      })),
+      ...typeBaseline.map((r: Record<string, unknown>) => ({
+        cohort_kind: 'type' as const,
+        cohort_value: String(r.cohort_value),
+        day: String(r.day),
+        count: Number(r.count),
+      })),
+    ];
+    const today = [
+      ...tagToday.map((r: Record<string, unknown>) => ({
+        cohort_kind: 'tag' as const,
+        cohort_value: String(r.cohort_value),
+        count: Number(r.count),
+        page_slugs: (r.slugs as string[]) ?? [],
+      })),
+      ...typeToday.map((r: Record<string, unknown>) => ({
+        cohort_kind: 'type' as const,
+        cohort_value: String(r.cohort_value),
+        count: Number(r.count),
+        page_slugs: (r.slugs as string[]) ?? [],
+      })),
+    ];
+
+    return computeAnomaliesFromBuckets(baseline, today, sigma);
   }
 }
 

@@ -24,7 +24,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -526,6 +526,15 @@ async function handleCliOnly(command: string, args: string[]) {
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
 
+  // v0.28.8: longmemeval brings its own in-memory PGLite. Bypassing
+  // connectEngine here keeps `gbrain eval longmemeval --help` and benchmark
+  // runs working on machines that have no `~/.gbrain/config.json` configured.
+  if (command === 'eval' && args[0] === 'longmemeval') {
+    const { runEvalLongMemEval } = await import('./commands/eval-longmemeval.ts');
+    await runEvalLongMemEval(args.slice(1));
+    return;
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
@@ -630,6 +639,22 @@ async function handleCliOnly(command: string, args: string[]) {
         await runOrphans(engine, args);
         break;
       }
+      // v0.29 — Salience + Anomaly Detection
+      case 'salience': {
+        const { runSalience } = await import('./commands/salience.ts');
+        await runSalience(engine, args);
+        break;
+      }
+      case 'anomalies': {
+        const { runAnomalies } = await import('./commands/anomalies.ts');
+        await runAnomalies(engine, args);
+        break;
+      }
+      case 'transcripts': {
+        const { runTranscripts } = await import('./commands/transcripts.ts');
+        await runTranscripts(engine, args);
+        break;
+      }
       case 'takes': {
         const { runTakes } = await import('./commands/takes.ts');
         await runTakes(engine, args);
@@ -673,6 +698,16 @@ async function handleCliOnly(command: string, args: string[]) {
         const { runReindexCodeCli } = await import('./commands/reindex-code.ts');
         await runReindexCodeCli(engine, args);
         break;
+      }
+      case 'reindex-frontmatter': {
+        // v0.29.1: recovery / explicit-rebuild path for pages.effective_date.
+        // Mirror of reindex-code shape. Wraps the shared library function in
+        // src/core/backfill-effective-date.ts (same code path the v0.29.1
+        // migration orchestrator uses). The orchestrator runs once on
+        // upgrade; this command is for after-the-fact frontmatter edits.
+        const { reindexFrontmatterCli } = await import('./commands/reindex-frontmatter.ts');
+        await reindexFrontmatterCli(args);
+        return; // reindexFrontmatterCli handles its own engine lifecycle
       }
       case 'code-callers': {
         // v0.20.0 Cathedral II Layer 10 (C4): "who calls <symbol>?"
@@ -887,6 +922,9 @@ TOOLS
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
   orphans [--json] [--count]         Find pages with no inbound wikilinks
+  salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
+  anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)
+  transcripts recent [--days N]      v0.29: recent raw .txt transcripts (local-only)
   dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
                                      See also: autopilot --install (continuous daemon).
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
