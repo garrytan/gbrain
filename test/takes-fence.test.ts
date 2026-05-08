@@ -236,3 +236,174 @@ describe('stripTakesFence', () => {
     expect(stripTakesFence(body)).toBe(body);
   });
 });
+
+// ============================================================
+// v0.30.0 (Slice A1): resolution columns + round-trip preservation.
+// The round-trip preservation tests are the codex-F3 regression gate.
+// Without these, every `gbrain takes update` after a resolve silently
+// deletes the resolution data on the next render.
+// ============================================================
+
+describe('v0.30.0 resolution columns', () => {
+  const RESOLVED_BODY = `# Some Page\n\n## Takes\n\n${TAKES_FENCE_BEGIN}
+| # | claim | kind | who | weight | since | source | resolved | quality | evidence | value | unit | by |
+|---|-------|------|-----|--------|-------|--------|----------|---------|----------|-------|------|----|
+| 1 | First bet | bet | garry | 0.7 | 2026-04 | OH | 2026-04-30 | correct | Series A closed | 50 | usd | garry |
+| 2 | Pending bet | bet | garry | 0.6 | 2026-04 | OH |  |  |  |  |  |  |
+${TAKES_FENCE_END}\n`;
+
+  test('parses v0.30-shape fence: resolved row has resolution fields populated', () => {
+    const { takes, warnings } = parseTakesFence(RESOLVED_BODY);
+    expect(warnings).toEqual([]);
+    expect(takes).toHaveLength(2);
+    expect(takes[0]).toMatchObject({
+      rowNum: 1,
+      resolvedAt: '2026-04-30',
+      resolvedQuality: 'correct',
+      resolvedOutcome: true,
+      resolvedEvidence: 'Series A closed',
+      resolvedValue: 50,
+      resolvedUnit: 'usd',
+      resolvedBy: 'garry',
+    });
+  });
+
+  test('parses v0.30-shape fence: unresolved row has resolution fields undefined', () => {
+    const { takes } = parseTakesFence(RESOLVED_BODY);
+    expect(takes[1].resolvedQuality).toBeUndefined();
+    expect(takes[1].resolvedOutcome).toBeUndefined();
+    expect(takes[1].resolvedAt).toBeUndefined();
+  });
+
+  test('renderer: page with no resolved rows keeps narrow 7-column shape', () => {
+    const { takes } = parseTakesFence(SAMPLE_BODY);
+    const rendered = renderTakesFence(takes);
+    expect(rendered).toContain('| # | claim | kind | who | weight | since | source |');
+    expect(rendered).not.toContain('quality');
+    expect(rendered).not.toContain('resolved');
+  });
+
+  test('renderer: any resolved row triggers wide 13-column shape', () => {
+    const { takes } = parseTakesFence(SAMPLE_BODY);
+    // Mutate one row to have resolution data.
+    takes[0] = {
+      ...takes[0],
+      resolvedAt: '2026-05-01',
+      resolvedQuality: 'correct',
+      resolvedOutcome: true,
+      resolvedEvidence: 'verified',
+    };
+    const rendered = renderTakesFence(takes);
+    expect(rendered).toContain('quality');
+    expect(rendered).toContain('evidence');
+    expect(rendered).toContain('correct');
+    expect(rendered).toContain('verified');
+  });
+
+  // ============================================================
+  // CODEX F3 REGRESSION GATE — DATA-LOSS BUG GUARD
+  // ============================================================
+  // Without these tests, `gbrain takes update --row 2` on a page where row 1
+  // is resolved would render only the 7-column shape on parse + render,
+  // silently deleting row 1's resolution cells on the next disk write.
+  // ============================================================
+  test('REGRESSION (codex F3): round-trip preserves resolution fields on a resolved row', () => {
+    const { takes } = parseTakesFence(RESOLVED_BODY);
+    const rendered = renderTakesFence(takes);
+    const { takes: roundTripped } = parseTakesFence(rendered);
+    expect(roundTripped).toHaveLength(2);
+    expect(roundTripped[0].resolvedQuality).toBe('correct');
+    expect(roundTripped[0].resolvedOutcome).toBe(true);
+    expect(roundTripped[0].resolvedAt).toBe('2026-04-30');
+    expect(roundTripped[0].resolvedEvidence).toBe('Series A closed');
+    expect(roundTripped[0].resolvedValue).toBe(50);
+    expect(roundTripped[0].resolvedUnit).toBe('usd');
+    expect(roundTripped[0].resolvedBy).toBe('garry');
+  });
+
+  test('REGRESSION (codex F3): updating an unrelated row preserves resolution on the resolved row', () => {
+    const { takes } = parseTakesFence(RESOLVED_BODY);
+    // Simulate cmdUpdate's spread pattern on row 2 (the unresolved one).
+    const updated = takes.map(t =>
+      t.rowNum === 2 ? { ...t, weight: 0.95 } : t,
+    );
+    const rendered = renderTakesFence(updated);
+    const { takes: after } = parseTakesFence(rendered);
+    // Row 1 (resolved) — resolution survives intact.
+    expect(after[0].resolvedQuality).toBe('correct');
+    expect(after[0].resolvedEvidence).toBe('Series A closed');
+    // Row 2 — weight changed, no resolution.
+    expect(after[1].weight).toBe(0.95);
+    expect(after[1].resolvedQuality).toBeUndefined();
+  });
+
+  test('REGRESSION: parsing a v0.28-shape fence (no resolution columns) round-trips byte-identical narrow shape', () => {
+    const { takes } = parseTakesFence(SAMPLE_BODY);
+    const rendered = renderTakesFence(takes);
+    expect(rendered).not.toContain('quality');
+    expect(rendered).not.toContain('| resolved |');
+    // Re-parse verifies fidelity.
+    const { takes: roundTripped } = parseTakesFence(rendered);
+    expect(roundTripped).toHaveLength(takes.length);
+    for (let i = 0; i < takes.length; i++) {
+      expect(roundTripped[i].claim).toBe(takes[i].claim);
+      expect(roundTripped[i].weight).toBe(takes[i].weight);
+      expect(roundTripped[i].active).toBe(takes[i].active);
+    }
+  });
+
+  test('partial quality renders + parses correctly (outcome left empty)', () => {
+    const { takes } = parseTakesFence(SAMPLE_BODY);
+    takes[0] = {
+      ...takes[0],
+      resolvedAt: '2026-05-01',
+      resolvedQuality: 'partial',
+      resolvedOutcome: undefined, // partial has no boolean outcome
+      resolvedEvidence: 'kind of right',
+    };
+    const rendered = renderTakesFence(takes);
+    expect(rendered).toContain('partial');
+    const { takes: roundTripped } = parseTakesFence(rendered);
+    expect(roundTripped[0].resolvedQuality).toBe('partial');
+    expect(roundTripped[0].resolvedOutcome).toBeUndefined();
+  });
+
+  test('upsertTakeRow on a page with resolved rows preserves the resolution + uses wide shape', () => {
+    const { body: nextBody, rowNum } = upsertTakeRow(RESOLVED_BODY, {
+      claim: 'Brand new bet',
+      kind: 'bet',
+      holder: 'garry',
+      weight: 0.4,
+      active: true,
+    });
+    expect(rowNum).toBe(3);
+    const { takes } = parseTakesFence(nextBody);
+    expect(takes).toHaveLength(3);
+    // Row 1's resolution survived the upsert.
+    expect(takes[0].resolvedQuality).toBe('correct');
+    expect(takes[0].resolvedEvidence).toBe('Series A closed');
+    // New row is unresolved.
+    expect(takes[2].resolvedQuality).toBeUndefined();
+    // Wide shape was emitted (resolution columns visible).
+    expect(nextBody).toContain('quality');
+  });
+
+  test('supersedeRow preserves resolution on the row being struck through', () => {
+    // Note: superseding a RESOLVED bet would normally throw at the engine
+    // layer (TAKE_RESOLVED_IMMUTABLE). The fence-layer supersedeRow doesn't
+    // enforce that — it just strikes through. The point of this test is
+    // that whatever resolution data lives on the old row survives the strike.
+    const { body: nextBody } = supersedeRow(RESOLVED_BODY, 1, {
+      claim: 'Updated bet',
+      kind: 'bet',
+      holder: 'garry',
+      weight: 0.5,
+    });
+    const { takes } = parseTakesFence(nextBody);
+    const oldRow = takes.find(t => t.rowNum === 1)!;
+    expect(oldRow.active).toBe(false);
+    // Resolution data on the old (struck) row preserved.
+    expect(oldRow.resolvedQuality).toBe('correct');
+    expect(oldRow.resolvedEvidence).toBe('Series A closed');
+  });
+});

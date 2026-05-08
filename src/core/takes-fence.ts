@@ -38,6 +38,8 @@
 
 export type TakeKind = 'fact' | 'take' | 'bet' | 'hunch';
 
+export type TakeQuality = 'correct' | 'incorrect' | 'partial';
+
 export interface ParsedTake {
   rowNum: number;
   claim: string;        // strikethrough markers stripped; inner text only
@@ -48,6 +50,20 @@ export interface ParsedTake {
   untilDate?: string;
   source?: string;
   active: boolean;      // false when claim was wrapped in ~~ ~~
+  // v0.30.0 (Slice A1) resolution fields. Optional + always undefined on
+  // unresolved rows. The renderer emits the resolved/quality/evidence/value/
+  // unit/by columns ONLY when at least one row on the page has resolvedQuality
+  // set; pages with no resolved rows keep their narrow 7-column shape.
+  // Round-trip preservation through cmdUpdate/cmdSupersede is the codex F3
+  // safety net — without it, every update after a resolve silently deletes
+  // the resolution data on the next render.
+  resolvedAt?: string;       // ISO timestamp 'YYYY-MM-DD' or full ISO
+  resolvedQuality?: TakeQuality;
+  resolvedOutcome?: boolean; // back-compat boolean; derivable from quality
+  resolvedEvidence?: string; // human note (alias for resolved_source)
+  resolvedValue?: number;
+  resolvedUnit?: string;
+  resolvedBy?: string;       // slug or 'garry'
 }
 
 export interface ParseResult {
@@ -60,6 +76,32 @@ export const TAKES_FENCE_BEGIN = '<!--- gbrain:takes:begin -->';
 export const TAKES_FENCE_END   = '<!--- gbrain:takes:end -->';
 
 const KIND_VALUES: ReadonlySet<string> = new Set(['fact', 'take', 'bet', 'hunch']);
+const QUALITY_VALUES: ReadonlySet<string> = new Set(['correct', 'incorrect', 'partial']);
+
+// v0.30.0: header tokens that mark a v0.30-shape fence. Presence of `quality`
+// (or any other resolution column) widens the parser to read 7+ extra cells
+// per row. Missing tokens → v0.28 7-column shape, parsed exactly as before.
+const RESOLUTION_HEADER_TOKENS = ['resolved', 'quality', 'evidence', 'value', 'unit', 'by'] as const;
+type ResolutionColumn = typeof RESOLUTION_HEADER_TOKENS[number];
+
+function parseQualityCell(raw: string): TakeQuality | undefined {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return undefined;
+  if (QUALITY_VALUES.has(trimmed)) return trimmed as TakeQuality;
+  return undefined;
+}
+
+function parseFloatCell(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const n = parseFloat(trimmed);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseStringCell(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 // Match a markdown table row's cell-stripped content. Allows surrounding
 // whitespace and tolerates trailing `|`.
@@ -115,6 +157,9 @@ export function parseTakesFence(body: string): ParseResult {
   const lines = inner.split('\n');
   const takes: ParsedTake[] = [];
   let sawHeader = false;
+  // Map from resolution column name → cell index in the row. Empty when the
+  // fence is a v0.28 7-column shape; populated when resolution columns appear.
+  const resolutionColIdx: Partial<Record<ResolutionColumn, number>> = {};
   const seenRowNums = new Set<number>();
 
   for (let i = 0; i < lines.length; i++) {
@@ -124,11 +169,18 @@ export function parseTakesFence(body: string): ParseResult {
     if (!cells) continue;
 
     // Header row: `| # | claim | kind | who | weight | since | source |`
+    // (v0.28 7-column shape) OR with extra `| resolved | quality | evidence
+    // | value | unit | by |` columns appended (v0.30 13-column shape).
     if (!sawHeader) {
-      // Best-effort detection: header has 'claim' and 'kind' tokens.
       const lower = cells.map(c => c.toLowerCase());
       if (lower.includes('claim') && lower.includes('kind')) {
         sawHeader = true;
+        // Detect v0.30 resolution columns. Columns are positional, but tolerate
+        // any subset (forward-compat: future schemas might add more).
+        for (const tok of RESOLUTION_HEADER_TOKENS) {
+          const idx = lower.indexOf(tok);
+          if (idx !== -1) resolutionColIdx[tok] = idx;
+        }
         continue;
       }
       // First content row before header — skip with warning.
@@ -139,7 +191,7 @@ export function parseTakesFence(body: string): ParseResult {
     // Separator row (just dashes/colons) — skip.
     if (isSeparatorRow(cells)) continue;
 
-    // Expect 7 cells: row_num, claim, kind, holder, weight, since, source.
+    // Expect 7 cells minimum: row_num, claim, kind, holder, weight, since, source.
     if (cells.length < 6) {
       warnings.push(`TAKES_TABLE_MALFORMED: only ${cells.length} cells in row "${line.trim()}"`);
       continue;
@@ -172,6 +224,26 @@ export function parseTakesFence(body: string): ParseResult {
     const { text: claimText, struck } = stripStrikethrough(claimRaw);
     const { since, until } = parseSinceCell(sinceRaw);
 
+    // v0.30 resolution columns. Only populated when the header contained the
+    // matching tokens AND the row has cells at those positions.
+    const cellAt = (col: ResolutionColumn): string | undefined => {
+      const idx = resolutionColIdx[col];
+      if (idx === undefined) return undefined;
+      return idx < cells.length ? cells[idx] : undefined;
+    };
+    const resolvedAt        = cellAt('resolved');
+    const qualityRaw        = cellAt('quality');
+    const evidenceRaw       = cellAt('evidence');
+    const valueRaw          = cellAt('value');
+    const unitRaw           = cellAt('unit');
+    const byRaw             = cellAt('by');
+    const resolvedQuality   = qualityRaw !== undefined ? parseQualityCell(qualityRaw) : undefined;
+    // Derive resolvedOutcome from quality so the parsed shape is self-consistent
+    // for callers that read either field.
+    const resolvedOutcome   = resolvedQuality === 'correct'   ? true
+                            : resolvedQuality === 'incorrect' ? false
+                            :                                    undefined;
+
     takes.push({
       rowNum,
       claim: claimText,
@@ -182,6 +254,13 @@ export function parseTakesFence(body: string): ParseResult {
       untilDate: until,
       source: sourceRaw.trim() || undefined,
       active: !struck,
+      resolvedAt:        resolvedAt        ? parseStringCell(resolvedAt)  : undefined,
+      resolvedQuality,
+      resolvedOutcome,
+      resolvedEvidence:  evidenceRaw       ? parseStringCell(evidenceRaw) : undefined,
+      resolvedValue:     valueRaw          ? parseFloatCell(valueRaw)     : undefined,
+      resolvedUnit:      unitRaw           ? parseStringCell(unitRaw)     : undefined,
+      resolvedBy:        byRaw             ? parseStringCell(byRaw)       : undefined,
     });
   }
 
@@ -196,10 +275,30 @@ export function parseTakesFence(body: string): ParseResult {
  * Render a takes array back to a fenced markdown table. Round-trip safe
  * with parseTakesFence. Output uses tight column padding (one space per
  * side) — readable but not pretty-printed.
+ *
+ * v0.30.0 (Slice A1, codex F3 fix): conditional render of resolution
+ * columns. When ANY take in the array has `resolvedQuality !== undefined`,
+ * the renderer widens the table to 13 columns (`# | claim | kind | who |
+ * weight | since | source | resolved | quality | evidence | value | unit |
+ * by |`). Pages with no resolved rows keep the narrow 7-column shape
+ * exactly as v0.28 emitted. The parser tolerates both shapes.
+ *
+ * Round-trip preservation is the safety net for the silent-data-loss bug
+ * codex caught: every CLI that re-renders a fence (cmdUpdate, cmdSupersede,
+ * cmdAdd) must read existing rows via parseTakesFence and pass them
+ * through to renderTakesFence so resolution data on resolved rows survives
+ * unrelated edits to other rows on the same page. The
+ * round-trip-preservation test in test/takes-fence.test.ts is the
+ * regression gate.
  */
 export function renderTakesFence(takes: ParsedTake[]): string {
-  const header = `| # | claim | kind | who | weight | since | source |`;
-  const separator = `|---|-------|------|-----|--------|-------|--------|`;
+  const hasAnyResolution = takes.some(t => t.resolvedQuality !== undefined);
+  const header = hasAnyResolution
+    ? `| # | claim | kind | who | weight | since | source | resolved | quality | evidence | value | unit | by |`
+    : `| # | claim | kind | who | weight | since | source |`;
+  const separator = hasAnyResolution
+    ? `|---|-------|------|-----|--------|-------|--------|----------|---------|----------|-------|------|----|`
+    : `|---|-------|------|-----|--------|-------|--------|`;
   const rows = takes.map(t => {
     const claimCell = t.active ? t.claim : `~~${t.claim}~~`;
     const sinceCell = t.untilDate ? `${t.sinceDate ?? ''} → ${t.untilDate}` : (t.sinceDate ?? '');
@@ -207,7 +306,17 @@ export function renderTakesFence(takes: ParsedTake[]): string {
     const source = t.source ?? '';
     // Escape any pipes inside cells so the table doesn't break.
     const safe = (s: string) => s.replace(/\|/g, '\\|');
-    return `| ${t.rowNum} | ${safe(claimCell)} | ${t.kind} | ${safe(t.holder)} | ${w} | ${safe(sinceCell)} | ${safe(source)} |`;
+    const baseCells = `| ${t.rowNum} | ${safe(claimCell)} | ${t.kind} | ${safe(t.holder)} | ${w} | ${safe(sinceCell)} | ${safe(source)} |`;
+    if (!hasAnyResolution) return baseCells;
+    // Resolution cells. Empty string for unresolved rows keeps the table
+    // visually clean; the parser treats empty cells as undefined fields.
+    const resolved   = t.resolvedAt       ? safe(t.resolvedAt)              : '';
+    const quality    = t.resolvedQuality  ?? '';
+    const evidence   = t.resolvedEvidence ? safe(t.resolvedEvidence)        : '';
+    const value      = t.resolvedValue !== undefined ? formatWeight(t.resolvedValue) : '';
+    const unit       = t.resolvedUnit     ? safe(t.resolvedUnit)            : '';
+    const by         = t.resolvedBy       ? safe(t.resolvedBy)              : '';
+    return `${baseCells} ${resolved} | ${quality} | ${evidence} | ${value} | ${unit} | ${by} |`;
   });
   const inner = ['', header, separator, ...rows, ''].join('\n');
   return `${TAKES_FENCE_BEGIN}${inner}${TAKES_FENCE_END}`;
