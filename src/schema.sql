@@ -120,8 +120,16 @@ CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
 -- COALESCE(effective_date, updated_at). A partial index on effective_date
 -- alone would NOT help — the planner can't use it for the negative side of
 -- the COALESCE. Expression index is what actually accelerates the filter.
-CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
-  ON pages ((COALESCE(effective_date, updated_at)));
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'pages' AND column_name = 'effective_date'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx ON pages ((COALESCE(effective_date, updated_at)))';
+  END IF;
+END $$;
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings

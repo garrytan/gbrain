@@ -92,8 +92,16 @@ CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
 -- v0.29.1: expression index for since/until date-range filters.
-CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
-  ON pages ((COALESCE(effective_date, updated_at)));
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'pages' AND column_name = 'effective_date'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx ON pages ((COALESCE(effective_date, updated_at)))';
+  END IF;
+END $$;
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings

@@ -45,10 +45,15 @@ async function phaseBBackfill(opts: OrchestratorOpts): Promise<OrchestratorPhase
   try {
     const { createEngine } = await import('../../core/engine-factory.ts');
     const { loadConfig, toEngineConfig } = await import('../../core/config.ts');
+    const { connectWithRetry } = await import('../../core/db.ts');
     const { backfillEffectiveDate } = await import('../../core/backfill-effective-date.ts');
     const cfg = loadConfig();
     if (!cfg) throw new Error('No gbrain config; run `gbrain init` first.');
-    const engine = await createEngine(toEngineConfig(cfg));
+    const engineCfg = toEngineConfig(cfg);
+    const engine = await createEngine(engineCfg);
+    await connectWithRetry(engine, engineCfg, {
+      noRetry: process.argv.includes('--no-retry-connect') || process.env.GBRAIN_NO_RETRY_CONNECT === '1',
+    });
 
     let totalExamined = 0;
     let totalUpdated = 0;
@@ -62,6 +67,8 @@ async function phaseBBackfill(opts: OrchestratorOpts): Promise<OrchestratorPhase
         }
       },
     });
+
+    await engine.disconnect();
 
     return {
       name: 'backfill_effective_date',
@@ -80,9 +87,14 @@ async function phaseCVerify(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
   try {
     const { createEngine } = await import('../../core/engine-factory.ts');
     const { loadConfig, toEngineConfig } = await import('../../core/config.ts');
+    const { connectWithRetry } = await import('../../core/db.ts');
     const cfg = loadConfig();
     if (!cfg) throw new Error('No gbrain config; run `gbrain init` first.');
-    const engine = await createEngine(toEngineConfig(cfg));
+    const engineCfg = toEngineConfig(cfg);
+    const engine = await createEngine(engineCfg);
+    await connectWithRetry(engine, engineCfg, {
+      noRetry: process.argv.includes('--no-retry-connect') || process.env.GBRAIN_NO_RETRY_CONNECT === '1',
+    });
     // Count rows where effective_date is still NULL but frontmatter HAS a
     // parseable date — those are the rows the backfill should have touched
     // but didn't. (Rows that fall through to 'fallback' have non-null
@@ -92,12 +104,14 @@ async function phaseCVerify(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
     );
     const remaining = Number(rows[0]?.count ?? 0);
     if (remaining > 0) {
+      await engine.disconnect();
       return {
         name: 'verify',
         status: 'failed',
         detail: `${remaining} pages still have NULL effective_date (backfill incomplete)`,
       };
     }
+    await engine.disconnect();
     return { name: 'verify', status: 'complete', detail: '0 pages with NULL effective_date' };
   } catch (e) {
     return { name: 'verify', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
