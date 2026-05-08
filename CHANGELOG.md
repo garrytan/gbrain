@@ -2,6 +2,110 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.29.2] - 2026-05-07
+
+**Thin-client mode: install gbrain on a laptop without a local DB and have it consume a remote brain over MCP.**
+**`gbrain init --mcp-only` + `gbrain remote ping` + `gbrain remote doctor` + run_doctor MCP op.**
+
+You can now run `gbrain init --mcp-only --issuer-url <url> --mcp-url <url>/mcp --oauth-client-id <id> --oauth-client-secret <secret>` on a machine that should NOT have its own brain. No PGLite file gets created. No Postgres connection. Three pre-flight smoke probes run before the config lands so a typo in the URL or a bad credential surfaces up front, not later. The CLI's dispatch guard refuses every DB-bound subcommand (`sync`, `embed`, `extract`, `migrate`, `apply-migrations`, `repair-jsonb`, `orphans`, `integrity`, `serve`) with a single canonical error pointing at the remote host. `gbrain doctor` runs a thin-client check set instead: OAuth discovery, token round-trip, MCP initialize.
+
+Once configured, `gbrain remote ping` triggers an autopilot cycle on the remote host and polls until terminal so you don't have to wait for the autopilot cron after writing markdown. `gbrain remote doctor` calls a new `run_doctor` MCP op (admin scope, HTTP-reachable) that returns a structured DoctorReport from the remote host's brain. Fast feedback when something's off.
+
+The new `docs/architecture/topologies.md` documents three deployment shapes (single brain, cross-machine thin client, per-worktree code engines + shared remote artifacts) so users and gstack can compose them deliberately. Topology 3 (per-worktree split-engine for Conductor users) needs zero gbrain code changes — `GBRAIN_HOME` already overrides `~/.gbrain` and `gbrain serve --http --port N` already runs on any port. The new doc spells out the alias-routing footgun (wrong alias = silent wrong-brain writes) explicitly.
+
+### What this means for you
+
+A v0.29.1 caller upgrading to v0.29.2 with no setup change gets identical local-only behavior. The thin-client surface is pure opt-in: only fires when `~/.gbrain/config.json` carries a `remote_mcp` block. Existing local-engine installs are unchanged.
+
+If you want to actually use thin-client mode:
+
+1. On the host running `gbrain serve --http`: `gbrain auth register-client <name> --grant-types client_credentials --scopes "read write admin"` (admin needed for ping + doctor).
+2. On the consuming machine: `gbrain init --mcp-only --issuer-url <issuer> --mcp-url <issuer>/mcp --oauth-client-id <id> --oauth-client-secret <secret>`.
+3. Configure your agent's MCP client to point at the host's `mcp_url` with the bearer token. Per-client snippets in `docs/mcp/`.
+4. `gbrain doctor` to verify connectivity, `gbrain remote ping` after writes, `gbrain remote doctor` for remote-side health.
+
+The full setup recipe and three topology diagrams live in `docs/architecture/topologies.md`.
+
+## To take advantage of v0.29.2
+
+`gbrain upgrade` does this automatically — no schema migration, no data backfill. The thin-client surface is opt-in via the `--mcp-only` flag.
+
+If you're setting up a new thin-client install:
+
+```bash
+# On the host
+gbrain serve --http --port 3001
+gbrain auth register-client neuromancer --grant-types client_credentials --scopes "read write admin"
+
+# On the thin client
+gbrain init --mcp-only \
+  --issuer-url https://brain-host:3001 \
+  --mcp-url https://brain-host:3001/mcp \
+  --oauth-client-id <id> --oauth-client-secret <secret>
+
+# Verify
+gbrain doctor          # thin-client check set: discovery, token, MCP smoke
+gbrain remote doctor   # ask the host to run its own doctor
+gbrain remote ping     # trigger an autopilot cycle on the host
+```
+
+If anything fails, please file an issue: https://github.com/garrytan/gbrain/issues with:
+- output of `gbrain doctor --json` from the thin client
+- a redacted copy of `~/.gbrain/config.json`
+- which step failed
+
+### Itemized changes
+
+**New CLI surfaces**:
+
+- `gbrain init --mcp-only` (`src/commands/init.ts`) — thin-client setup. Pre-flight runs OAuth discovery, `/token` round-trip, and MCP initialize against the remote before writing config. Re-run guard refuses without `--force` when `~/.gbrain/config.json` already has `remote_mcp` set, so scripted setup-loops can't silently re-create a local DB on a thin-client machine.
+- `gbrain remote ping` (`src/commands/remote.ts`) — submits an `autopilot-cycle` job on the remote via `submit_job` MCP op, polls `get_job` with backoff (1s × 30s, then 5s × 5min, then 10s), exits when terminal. Default cap 15min, override with `--timeout 5m` or `--timeout 30m`. NO `repo` arg passed — autopilot uses the host's configured brain repo, no caller-controlled paths.
+- `gbrain remote doctor` (`src/commands/remote.ts`) — calls the new `run_doctor` MCP op, renders the DoctorReport. Exit 0/1 based on status.
+
+**New config field**:
+
+- `remote_mcp: {issuer_url, mcp_url, oauth_client_id, oauth_client_secret}` on `GBrainConfig`. Two URLs because OAuth discovery + `/token` live at the issuer root while tool dispatch is at `/mcp` — they compose from a common base in practice but reverse-proxy setups need them explicit. `GBRAIN_REMOTE_CLIENT_SECRET` env var overrides the config-file value for headless agents; secrets supplied via env stay out of disk.
+- `isThinClient(config)` helper in `src/core/config.ts` — single source of truth for the "is this install a thin client?" check used by the CLI dispatch guard, doctor branch, and remote subcommands.
+
+**New CLI dispatch guard** (`src/cli.ts`):
+
+- Single top-level check refuses 9 DB-bound commands with a canonical error naming the remote `mcp_url` when `remote_mcp` is set. Runs BEFORE `connectEngine` so commands never enter the engine factory only to fail late. Doctor branches to a new `runRemoteDoctor` for thin-client installs.
+- `engine` field on `GBrainConfig` stays as today (`postgres | pglite`) — thin-client mode is a separate code path, NOT an engine kind extension.
+
+**New thin-client doctor** (`src/core/doctor-remote.ts`, ~180 LOC):
+
+- Five outbound HTTP probes scoped to "is the remote MCP we configured actually reachable?": config_integrity (URL fields well-formed), oauth_credentials (secret resolvable), oauth_discovery, oauth_token, mcp_smoke. Output shape matches the local doctor's Check surface (`schema_version: 2`) so JSON consumers can union the two without conditional logic.
+
+**New focused server-side doctor** (`src/commands/doctor.ts:doctorReportRemote`):
+
+- Used by the new `run_doctor` MCP op for `gbrain remote doctor`. Five checks: connection (engine reachable), schema_version (current vs latest), brain_score (5-component composite), sync_failures (file-plane JSONL count), queue_health (Postgres-only stalled-job sweep). Engine-agnostic — uses `engine.executeRaw` + `engine.getConfig` + `engine.getHealth`. Local doctor (`runDoctor`) is unchanged; operators on the host still get the full check set.
+- New `DoctorReport` interface + `computeDoctorReport(checks)` exported for shared status/score math.
+
+**New MCP op** (`src/core/operations.ts`):
+
+- `run_doctor` (`scope: 'admin'`, `localOnly: false`, `mutating: false`) wraps `doctorReportRemote()` and returns the structured DoctorReport. First read-only diagnostic op exposed over HTTP MCP. Doctor only — generalizing to lint/integrity/orphans is filed as follow-up pending demand.
+
+**New outbound HTTP MCP client** (`src/core/mcp-client.ts`, ~210 LOC):
+
+- Wraps the official `@modelcontextprotocol/sdk` `Client` + `StreamableHTTPClientTransport` with OAuth `client_credentials` minting, in-process token caching (Map keyed by `mcp_url`, expires_at with 30s safety margin), and refresh-on-401 retry semantics. Initial-credentials-fail surfaces immediately as `RemoteMcpError(auth)` — retry only fires when a previously-good token gets rejected mid-session. Auth-fail-after-refresh produces a structured error pointing the operator at `gbrain auth register-client`.
+- Probe helpers in `src/core/remote-mcp-probe.ts` (`discoverOAuth`, `mintClientCredentialsToken`, `smokeTestMcp`) — pure `fetch`-based, no SDK dep, used by both init's setup smoke and the thin-client doctor.
+
+**New documentation**:
+
+- `docs/architecture/topologies.md` — three topology diagrams (single brain, cross-machine thin client, split-engine per-worktree) with concrete setup recipes. Honest about Topology 3's manual-alias routing (wrong alias = silent wrong-brain writes).
+- `skills/setup/SKILL.md` — new Phase A.5 walks the user through which topology fits before running `gbrain init`. Thin-client path skips Phases B/C/C.5/H entirely.
+
+**Tests** (72 new test cases across 6 new files):
+
+- `test/init-mcp-only.test.ts` (15 cases) — happy path, env-var-supplied secret stays out of disk, all four required-flag missing-error paths, three pre-flight smoke-failure paths, network-unreachable, four re-run-guard variants.
+- `test/cli-dispatch-thin-client.test.ts` (14 cases) — 9 refused commands × canonical error, 2 safe commands still work, doctor routes to runRemoteDoctor, regression for local config.
+- `test/doctor-remote.test.ts` (12 cases) — 5 thin-client checks against in-process HTTP fixture, every probe failure mode (404/parse/auth/network/server-error), env-var override of secret.
+- `test/doctor-report-remote.test.ts` (11 cases) — 5 PGLite checks, computeDoctorReport math.
+- `test/mcp-client.test.ts` (13 cases) — token cache, force-refresh, every error reason path, unpackToolResult parse failures.
+- `test/e2e/thin-client.test.ts` (7 cases against real Postgres + `gbrain serve --http`) — full cross-machine flow: init → doctor → sync refused → remote doctor → remote ping → re-run-guard → scope-mismatch regression.
+
+All tests use async `Bun.spawn` for subprocess invocation rather than `execFileSync`, which deadlocks against in-process HTTP fixtures because the parent's event loop can't accept connections while sync-blocked.
+
 ## [0.29.1] - 2026-05-05
 
 **Recency and salience as two orthogonal options. Agent in charge.**
