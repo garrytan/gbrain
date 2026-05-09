@@ -116,7 +116,7 @@ describeE2E('serve-http default access-tier enforcement (runtime MCP access cont
     const res = await fetch(`${BASE}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=${encodeURIComponent(scope)}`,
+      body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=${encodeURIComponent(scope)}&resource=${encodeURIComponent(`${BASE}/mcp`)}`,
     });
     if (!res.ok) throw new Error(`mintToken failed: ${res.status} ${await res.text()}`);
     const data = await res.json() as { access_token: string };

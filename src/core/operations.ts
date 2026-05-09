@@ -204,6 +204,11 @@ export interface AuthInfo {
   scopes: string[];
   expiresAt?: number;
   /**
+   * RFC 8707 resource indicator bound to this access token. HTTP MCP uses this
+   * to reject a token minted for a different protected resource.
+   */
+  resource?: URL;
+  /**
    * Access tier resolved at token-verification time (v45 schema).
    * For OAuth clients this is `oauth_clients.access_tier`; for
    * legacy access_tokens this is `'Full'` (grandfathered with the

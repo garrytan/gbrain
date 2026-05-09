@@ -146,7 +146,9 @@ export async function collectRemoteDoctorReport(config: GBrainConfig): Promise<R
   });
 
   // 3. Token round-trip
-  const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, remote.oauth_client_id, clientSecret);
+  const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, remote.oauth_client_id, clientSecret, {
+    resource: remote.mcp_url,
+  });
   if (!tokenRes.ok) {
     checks.push({
       name: 'oauth_token',

@@ -84,6 +84,41 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     expect(srcCheck).toHaveLength(1);
   });
 
+  test('PostgresEngine.initSchema bootstraps v46 oauth token columns before subject_email index replay', async () => {
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_iss;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS user_tier;
+    `);
+    await engine.setConfig('version', '45');
+
+    await engine.initSchema();
+
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+
+    const colCheck = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'oauth_tokens'
+        AND column_name IN ('subject_email', 'subject_iss', 'user_tier')
+    `;
+    expect(new Set(colCheck.map((r: any) => r.column_name))).toEqual(
+      new Set(['subject_email', 'subject_iss', 'user_tier']),
+    );
+
+    const idxCheck = await conn`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = current_schema()
+        AND tablename = 'oauth_tokens'
+        AND indexname = 'idx_oauth_tokens_subject_email'
+    `;
+    expect(idxCheck).toHaveLength(1);
+  });
+
   test('PostgresEngine.initSchema is idempotent on a brain already at LATEST', async () => {
     // Fresh-LATEST brain. Calling initSchema again must not error and must
     // not regress the version.

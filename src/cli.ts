@@ -1042,6 +1042,12 @@ ADMIN
     --token-ttl N                    Access token TTL in seconds (default: 3600)
     --enable-dcr                     Enable Dynamic Client Registration
     --public-url URL                 Public issuer URL (required behind proxy/tunnel)
+    --oidc-issuer URL                Federate /authorize through an OIDC issuer
+    --oidc-client-id ID              OIDC client id for the upstream issuer
+    --oidc-client-secret SECRET      OIDC client secret for the upstream issuer
+    --audit-access-tiers             Log tier decisions without rejecting
+    --no-enforce-access-tiers        Disable tier enforcement after auditing
+    --log-full-params                Store raw MCP params instead of redacted summaries
   call <tool> '<json>'               Raw tool invocation
   version                            Version info
   --tools-json                       Tool discovery (JSON)

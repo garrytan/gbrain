@@ -95,7 +95,9 @@ async function getAccessToken(config: GBrainConfig, force = false): Promise<stri
     );
   }
 
-  const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, remote.oauth_client_id, secret);
+  const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, remote.oauth_client_id, secret, {
+    resource: remote.mcp_url,
+  });
   if (!tokenRes.ok) {
     throw new RemoteMcpError(
       tokenRes.reason === 'auth' ? 'auth' : tokenRes.reason === 'network' ? 'network' : 'discovery',

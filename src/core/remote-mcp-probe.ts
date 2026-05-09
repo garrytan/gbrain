@@ -82,7 +82,7 @@ export async function mintClientCredentialsToken(
   tokenEndpoint: string,
   clientId: string,
   clientSecret: string,
-  opts: { scope?: string; timeoutMs?: number } = {},
+  opts: { scope?: string; timeoutMs?: number; resource?: string } = {},
 ): Promise<{ ok: true; token: TokenResponse } | { ok: false; reason: 'network' | 'http' | 'auth' | 'parse' | 'config'; status?: number; message: string }> {
   if (!clientId) return { ok: false, reason: 'config', message: 'client_id is required' };
   if (!clientSecret) return { ok: false, reason: 'config', message: 'client_secret is required' };
@@ -92,6 +92,7 @@ export async function mintClientCredentialsToken(
   body.set('client_id', clientId);
   body.set('client_secret', clientSecret);
   if (opts.scope) body.set('scope', opts.scope);
+  if (opts.resource) body.set('resource', opts.resource);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10_000);
