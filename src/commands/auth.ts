@@ -418,13 +418,31 @@ async function revokeClient(clientId: string) {
 }
 
 async function registerClient(name: string, args: string[]) {
-  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--tier <Full|Work|Family|None>]'); process.exit(1); }
+  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--redirect-uri URI] [--tier <Full|Work|Family|None>]'); process.exit(1); }
   const grantsIdx = args.indexOf('--grant-types');
   const scopesIdx = args.indexOf('--scopes');
   const tierIdx = args.indexOf('--tier');
+  const redirectUris: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '--redirect-uri' && args[i] !== '--redirect-uris') continue;
+    const value = args[i + 1];
+    if (!value || value.startsWith('--')) {
+      console.error(`Error: ${args[i]} requires a value`);
+      process.exit(1);
+    }
+    redirectUris.push(...value.split(',').map(s => s.trim()).filter(Boolean));
+  }
   const grantTypes = grantsIdx >= 0 && args[grantsIdx + 1]
     ? args[grantsIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
     : ['client_credentials'];
+  if (grantTypes.length === 0) {
+    console.error('Error: at least one grant type is required');
+    process.exit(1);
+  }
+  if (grantTypes.includes('authorization_code') && redirectUris.length === 0) {
+    console.error('Error: authorization_code clients require at least one --redirect-uri');
+    process.exit(1);
+  }
   const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
   // Per-client access tier. Default Full preserves the pre-v45 grant
   // for upgrade safety; operators tighten per-client with --tier work
@@ -459,13 +477,16 @@ async function registerClient(name: string, args: string[]) {
     const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
     const provider = new GBrainOAuthProvider({ sql: sql as any });
     const { clientId, clientSecret } = await provider.registerClientManual(
-      name, grantTypes, scopes, [], accessTier,
+      name, grantTypes, scopes, redirectUris, accessTier,
     );
     console.log(`OAuth client registered: "${name}"\n`);
     console.log(`  Client ID:     ${clientId}`);
     console.log(`  Client Secret: ${clientSecret}\n`);
     console.log(`  Grant types: ${grantTypes.join(', ')}`);
     console.log(`  Scopes:      ${scopes}`);
+    if (redirectUris.length > 0) {
+      console.log(`  Redirect URIs: ${redirectUris.join(', ')}`);
+    }
     console.log(`  Access tier: ${accessTier}\n`);
     if (accessTier === 'Full') {
       console.log('NOTE: tier=Full is the default. Pass --tier Work (or Family) to restrict.');
@@ -754,6 +775,8 @@ Usage:
   gbrain auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
      --grant-types <client_credentials,authorization_code> (default: client_credentials)
      --scopes "<read write admin>"                         (default: read)
+     --redirect-uri <uri>                                  Required when grant-types includes authorization_code.
+                                                           Repeat or comma-separate for multiple redirect URIs.
      --tier <Full|Work|Family|None>                        (default: Full; runtime MCP access control)
   gbrain auth list-clients                                List OAuth clients with id, name, access_tier, scope, status
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
