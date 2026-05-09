@@ -354,6 +354,31 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     next();
   });
 
+  // ---------------------------------------------------------------------------
+  // DCR (Dynamic Client Registration) rate limiter
+  //
+  // /register is mounted by mcpAuthRouter when --enable-dcr is on.  Without a
+  // limiter, any internet client can flood it: each registration hashes a
+  // secret, INSERTs into oauth_clients, and writes to the database pool.  At
+  // Supabase transaction-pooler sizes a sustained flood exhausts the pool,
+  // causing 503s for all other requests.
+  //
+  // Placed before app.use(authRouter) so it fires regardless of SDK internals.
+  // Only meaningful when --enable-dcr is passed; no-ops otherwise (the SDK
+  // never mounts /register so traffic never reaches this middleware).
+  //
+  // Depends on Issue 1 (trust proxy) being correct: without real client IPs,
+  // all registrations share one bucket and the limiter is trivially bypassed.
+  // ---------------------------------------------------------------------------
+  const registerRateLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 10, // 10 registrations per minute per IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'too_many_requests', error_description: 'Too many client registrations from this IP. Try again later.' },
+  });
+
+  app.use('/register', registerRateLimiter);
   app.use(authRouter);
 
   // ---------------------------------------------------------------------------
