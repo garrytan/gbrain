@@ -28,7 +28,11 @@ export interface RunImportResult {
   failures: Array<{ path: string; error: string }>;
 }
 
-export async function runImport(engine: BrainEngine, args: string[], opts: { commit?: string; sourceId?: string } = {}): Promise<RunImportResult> {
+export async function runImport(
+  engine: BrainEngine,
+  args: string[],
+  opts: { commit?: string; sourceId?: string; writeSyncConfig?: boolean } = {},
+): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
@@ -37,6 +41,13 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   // source. The CLI `gbrain import` deliberately has no --source flag per
   // PR #707's design intent — only programmatic callers thread sourceId.
   const sourceId = opts.sourceId;
+  // v0.30.x follow-up to PR #707: when called from performFullSync (which
+  // owns its own source-scoped sync anchors via writeSyncAnchor), gate the
+  // legacy global config writes (sync.last_commit / sync.last_run /
+  // sync.repo_path) so a `--source X --full` run can't overwrite the
+  // global repo path with X's repo and contaminate a later bare
+  // `gbrain sync` against the default source.
+  const writeSyncConfig = opts.writeSyncConfig !== false;
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
@@ -280,17 +291,19 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
       const { recordSyncFailures } = await import('../core/sync.ts');
       recordSyncFailures(failures, gitHead);
     }
-    if (failures.length === 0) {
+    if (failures.length === 0 && writeSyncConfig) {
       await engine.setConfig('sync.last_commit', gitHead);
-    } else {
+    } else if (failures.length > 0) {
       console.error(
         `\nImport completed with ${failures.length} failure(s). ` +
         `sync.last_commit NOT advanced — re-run 'gbrain sync' to retry, or ` +
         `'gbrain sync --skip-failed' to acknowledge and move past them.`,
       );
     }
-    await engine.setConfig('sync.last_run', new Date().toISOString());
-    await engine.setConfig('sync.repo_path', dir);
+    if (writeSyncConfig) {
+      await engine.setConfig('sync.last_run', new Date().toISOString());
+      await engine.setConfig('sync.repo_path', dir);
+    }
   }
 
   return { imported, skipped, errors, chunksCreated, failures };

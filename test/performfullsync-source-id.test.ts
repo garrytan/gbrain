@@ -133,3 +133,103 @@ describe('performFullSync threads sourceId end-to-end', () => {
     expect(counts['testsrc-pfs'] ?? 0).toBe(0);
   });
 });
+
+describe('performFullSync global sync-config isolation under --source', () => {
+  // Regression for the writeSyncConfig opt: runImport writes three global
+  // (non-source-scoped) config keys — sync.last_commit / sync.last_run /
+  // sync.repo_path. Pre-fix, those wrote even when called from
+  // performFullSync with a sourceId, so a `--source X --full` run would
+  // overwrite global `sync.repo_path` with X's repo. A later bare
+  // `gbrain sync` then read X's path as the default-source repo and
+  // imported X content into source='default'. Silent contamination.
+  //
+  // Post-fix, performFullSync passes writeSyncConfig=false to runImport
+  // when sourceId is set, so the legacy global writes are gated. The
+  // source-scoped anchor (sources.X.last_commit) is owned by performFullSync
+  // itself via writeSyncAnchor.
+  let isolationEngine: PGLiteEngine;
+  let isolationRepo: string;
+
+  beforeAll(async () => {
+    isolationEngine = new PGLiteEngine();
+    await isolationEngine.connect({});
+    await isolationEngine.initSchema();
+    await runSources(isolationEngine, ['add', 'isolated-src', '--no-federated']);
+  }, 60_000);
+
+  afterAll(async () => {
+    if (isolationEngine) await isolationEngine.disconnect();
+  }, 60_000);
+
+  beforeEach(async () => {
+    await resetPgliteState(isolationEngine);
+    const sources = await isolationEngine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = 'isolated-src'`,
+    );
+    if (sources.length === 0) {
+      await runSources(isolationEngine, ['add', 'isolated-src', '--no-federated']);
+    }
+    isolationRepo = mkdtempSync(join(tmpdir(), 'gbrain-iso-'));
+    execSync('git init', { cwd: isolationRepo, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: isolationRepo, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: isolationRepo, stdio: 'pipe' });
+    mkdirSync(join(isolationRepo, 'topics'), { recursive: true });
+    writeFileSync(join(isolationRepo, 'topics/iso.md'), [
+      '---', 'type: concept', 'title: Iso Topic', '---',
+      '', 'Isolation test content.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "initial"', { cwd: isolationRepo, stdio: 'pipe' });
+  });
+
+  afterEach(() => {
+    if (isolationRepo) rmSync(isolationRepo, { recursive: true, force: true });
+  });
+
+  test('--source X --full does NOT overwrite global sync.repo_path or sync.last_commit', async () => {
+    // Pre-set the global keys to known sentinel values so we can detect
+    // whether runImport overwrote them.
+    await isolationEngine.setConfig('sync.repo_path', '/tmp/sentinel-default-repo');
+    await isolationEngine.setConfig('sync.last_commit', 'sentinel-default-commit');
+
+    const { performSync } = await import('../src/commands/sync.ts');
+    const result = await performSync(isolationEngine, {
+      repoPath: isolationRepo,
+      full: true,
+      sourceId: 'isolated-src',
+      noPull: true,
+      noEmbed: true,
+    });
+    expect(['first_sync', 'synced']).toContain(result.status);
+
+    // Pre-fix: these would now hold isolationRepo / its HEAD. Post-fix: untouched.
+    const repoPathAfter = await isolationEngine.getConfig('sync.repo_path');
+    const lastCommitAfter = await isolationEngine.getConfig('sync.last_commit');
+    expect(repoPathAfter).toBe('/tmp/sentinel-default-repo');
+    expect(lastCommitAfter).toBe('sentinel-default-commit');
+
+    // The source-scoped anchor IS expected to be written (performFullSync owns
+    // it directly via writeSyncAnchor). Verify by reading sources.isolated-src.
+    const srcRows = await isolationEngine.executeRaw<{ last_commit: string | null }>(
+      `SELECT last_commit FROM sources WHERE id = 'isolated-src'`,
+    );
+    expect(srcRows[0]?.last_commit).not.toBeNull();
+    expect(srcRows[0]?.last_commit).not.toBe('sentinel-default-commit');
+  });
+
+  test('full sync WITHOUT --source DOES update global sync.repo_path (back-compat)', async () => {
+    await isolationEngine.setConfig('sync.repo_path', '/tmp/sentinel-default-repo');
+
+    const { performSync } = await import('../src/commands/sync.ts');
+    const result = await performSync(isolationEngine, {
+      repoPath: isolationRepo,
+      full: true,
+      // no sourceId — back-compat path; runImport SHOULD write global config
+      noPull: true,
+      noEmbed: true,
+    });
+    expect(['first_sync', 'synced']).toContain(result.status);
+
+    const repoPathAfter = await isolationEngine.getConfig('sync.repo_path');
+    expect(repoPathAfter).toBe(isolationRepo);
+  });
+});
