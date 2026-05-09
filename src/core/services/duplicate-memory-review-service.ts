@@ -167,12 +167,20 @@ function scorePage(
   const titleScore = tokenOverlap(input.title ?? '', page.title);
   const tagScore = setOverlap(input.tags ?? [], tags);
   const sourceScore = setOverlap(input.source_refs ?? [], sourceRefsFromPage(page));
-  const score = roundScore((contentScore * 0.65) + (titleScore * 0.2) + (tagScore * 0.15) + (sourceScore * 0.1));
+  const sameTarget = input.target_object_id !== undefined && input.target_object_id === page.slug;
+  const score = roundScore(
+    (contentScore * 0.65)
+      + (titleScore * 0.2)
+      + (tagScore * 0.15)
+      + (sourceScore * 0.1)
+      + (sameTarget ? 0.5 : 0),
+  );
   const reasons = buildReasons([
     [contentScore >= 0.35, 'content overlap'],
     [titleScore >= 0.5, 'title overlap'],
     [tagScore > 0, 'shared tags'],
     [sourceScore > 0, 'shared source refs'],
+    [sameTarget, 'same target object'],
   ]);
 
   return {

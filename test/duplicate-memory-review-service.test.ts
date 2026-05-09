@@ -109,6 +109,32 @@ test('duplicate review reports same target update for a candidate with the same 
   expect(result.matches[0]?.reasons).toContain('same target object');
 });
 
+test('duplicate review reports same target update for a page with the target id slug', async () => {
+  const engine = await createEngine();
+  await engine.putPage('projects/acme-migration', {
+    type: 'project',
+    title: 'Acme Migration',
+    compiled_truth: 'The Acme migration page tracks staged cutover notes.',
+  });
+
+  const result = await reviewDuplicateMemory(engine, {
+    scope_id: 'workspace:default',
+    subject_kind: 'memory_candidate',
+    subject_id: 'incoming-candidate',
+    content: 'Acme migration should add the rollout owner.',
+    target_object_type: 'curated_note',
+    target_object_id: 'projects/acme-migration',
+    include_pages: true,
+    include_candidates: false,
+    limit: 5,
+  });
+
+  expect(result.decision).toBe('same_target_update');
+  expect(result.matches[0]?.kind).toBe('page');
+  expect(result.matches[0]?.id).toBe('projects/acme-migration');
+  expect(result.matches[0]?.reasons).toContain('same target object');
+});
+
 test('duplicate review pages through canonical pages independent of result limit', async () => {
   const pages = [
     ...Array.from({ length: 100 }, (_, index) => makePage(

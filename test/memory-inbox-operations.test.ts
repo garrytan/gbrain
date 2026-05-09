@@ -28,6 +28,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
     'list_memory_candidate_entries',
     'list_memory_candidate_status_events',
     'delete_memory_candidate_entry',
+    'review_duplicate_memory',
     'create_memory_candidate_entry',
     'create_memory_patch_candidate',
     'review_memory_patch_candidate',
@@ -57,6 +58,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   const list = operations.find((operation) => operation.name === 'list_memory_candidate_entries');
   const listStatusEvents = operations.find((operation) => operation.name === 'list_memory_candidate_status_events');
   const deleteCandidate = operations.find((operation) => operation.name === 'delete_memory_candidate_entry');
+  const reviewDuplicate = operations.find((operation) => operation.name === 'review_duplicate_memory');
   const rank = operations.find((operation) => operation.name === 'rank_memory_candidate_entries');
   const captureMapDerived = operations.find((operation) => operation.name === 'capture_map_derived_candidates');
   const reviewBacklog = operations.find((operation) => operation.name === 'list_memory_candidate_review_backlog');
@@ -79,6 +81,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(list?.cliHints?.name).toBe('list-memory-candidates');
   expect(listStatusEvents?.cliHints?.name).toBe('list-memory-candidate-status-events');
   expect(deleteCandidate?.cliHints?.name).toBe('delete-memory-candidate');
+  expect(reviewDuplicate?.cliHints?.name).toBe('review-duplicate-memory');
   expect(rank?.cliHints?.name).toBe('rank-memory-candidates');
   expect(captureMapDerived?.cliHints?.name).toBe('capture-map-derived-candidates');
   expect(reviewBacklog?.cliHints?.name).toBe('list-memory-candidate-review-backlog');
@@ -119,6 +122,9 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(list?.params.patch_target_id?.type).toBe('string');
   expect(listStatusEvents?.params.interaction_id?.type).toBe('string');
   expect(deleteCandidate?.params.id?.type).toBe('string');
+  expect(reviewDuplicate?.params.subject_kind?.enum).toEqual(['page', 'memory_candidate', 'proposed_memory']);
+  expect(reviewDuplicate?.params.include_pages?.type).toBe('boolean');
+  expect(reviewDuplicate?.params.include_candidates?.type).toBe('boolean');
   expect(create?.params.interaction_id?.type).toBe('string');
   expect(advance?.params.interaction_id?.type).toBe('string');
   expect(reject?.params.interaction_id?.type).toBe('string');

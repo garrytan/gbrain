@@ -13,6 +13,10 @@ import { rankMemoryCandidateEntries } from './services/memory-candidate-scoring-
 import { captureMapDerivedCandidates } from './services/map-derived-candidate-service.ts';
 import { getStructuralContextMapReport } from './services/context-map-report-service.ts';
 import { buildMemoryCandidateReviewBacklog } from './services/memory-candidate-dedup-service.ts';
+import {
+  reviewDuplicateMemory,
+  type DuplicateMemorySubjectKind,
+} from './services/duplicate-memory-review-service.ts';
 import { recordCanonicalHandoff } from './services/canonical-handoff-service.ts';
 import { assessHistoricalValidity } from './services/historical-validity-service.ts';
 import { resolveMemoryCandidateContradiction } from './services/memory-inbox-contradiction-service.ts';
@@ -50,6 +54,7 @@ const MEMORY_CANDIDATE_GENERATED_BY_VALUES = ['agent', 'map_analysis', 'dream_cy
 const MEMORY_CANDIDATE_EXTRACTION_KIND_VALUES = ['extracted', 'inferred', 'ambiguous', 'manual'] as const;
 const MEMORY_CANDIDATE_SENSITIVITY_VALUES = ['public', 'work', 'personal', 'secret', 'unknown'] as const;
 const MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES = ['curated_note', 'procedure', 'profile_memory', 'personal_episode', 'other'] as const;
+const DUPLICATE_MEMORY_SUBJECT_KIND_VALUES = ['page', 'memory_candidate', 'proposed_memory'] as const satisfies readonly DuplicateMemorySubjectKind[];
 const CANONICAL_HANDOFF_TARGET_OBJECT_TYPE_VALUES = ['curated_note', 'procedure', 'profile_memory', 'personal_episode'] as const;
 const MEMORY_CANDIDATE_CONTRADICTION_OUTCOME_VALUES = ['rejected', 'unresolved', 'superseded'] as const;
 const PAGE_TYPE_VALUES = [
@@ -186,6 +191,20 @@ function normalizeSourceRefs(
     return [];
   }
   throw invalidParams(deps, 'source_ref must be a string and source_refs must be an array of strings');
+}
+
+function normalizeOptionalStringArray(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): string[] {
+  if (value == null) {
+    return [];
+  }
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string' && entry.trim().length > 0)) {
+    throw invalidParams(deps, `${field} must be an array of non-empty strings`);
+  }
+  return value.map((entry) => entry.trim());
 }
 
 function normalizeLimit(
@@ -912,6 +931,61 @@ export function createMemoryInboxOperations(
     cliHints: { name: 'delete-memory-candidate', positional: ['id'] },
   };
 
+  const review_duplicate_memory: Operation = {
+    name: 'review_duplicate_memory',
+    description: 'Review proposed or existing memory against near matches without mutating memory.',
+    params: {
+      scope_id: { type: 'string', description: `Memory candidate scope id (default: ${deps.defaultScopeId})` },
+      subject_kind: {
+        type: 'string',
+        required: true,
+        description: 'Memory subject kind to review',
+        enum: [...DUPLICATE_MEMORY_SUBJECT_KIND_VALUES],
+      },
+      subject_id: { type: 'string', description: 'Optional existing subject id to exclude from matches' },
+      title: { type: 'string', description: 'Optional subject title for matching' },
+      content: { type: 'string', required: true, description: 'Subject content to compare against existing memory' },
+      page_type: { type: 'string', description: 'Optional page type context', enum: [...PAGE_TYPE_VALUES] },
+      tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags for match scoring' },
+      source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional provenance strings for match scoring' },
+      candidate_type: { type: 'string', description: 'Optional candidate type context', enum: [...MEMORY_CANDIDATE_TYPE_VALUES] },
+      target_object_type: {
+        type: 'string',
+        description: 'Optional target object type context',
+        enum: [...MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES],
+      },
+      target_object_id: { type: 'string', description: 'Optional target object id context' },
+      include_pages: { type: 'boolean', description: 'Whether to include canonical page matches (default true)' },
+      include_candidates: { type: 'boolean', description: 'Whether to include memory candidate matches (default true)' },
+      limit: { type: 'number', description: `Max results (default 20, cap ${MAX_MEMORY_CANDIDATE_LIMIT})` },
+      exclude_ids: { type: 'array', items: { type: 'string' }, description: 'Optional match ids to exclude' },
+    },
+    handler: async (ctx, p) => {
+      const content = normalizeOptionalNonEmptyString(deps, 'content', p.content);
+      if (!content) {
+        throw invalidParams(deps, 'content must be a non-empty string');
+      }
+      optionalEnumValue(deps, 'page_type', p.page_type, PAGE_TYPE_VALUES);
+      return reviewDuplicateMemory(ctx.engine, {
+        scope_id: normalizeOptionalNonEmptyString(deps, 'scope_id', p.scope_id) ?? deps.defaultScopeId,
+        subject_kind: requireEnumValue(deps, 'subject_kind', p.subject_kind, DUPLICATE_MEMORY_SUBJECT_KIND_VALUES),
+        subject_id: normalizeOptionalNonEmptyString(deps, 'subject_id', p.subject_id) ?? undefined,
+        title: normalizeOptionalNonEmptyString(deps, 'title', p.title) ?? undefined,
+        content,
+        tags: normalizeOptionalStringArray(deps, 'tags', p.tags),
+        source_refs: normalizeOptionalStringArray(deps, 'source_refs', p.source_refs),
+        candidate_type: optionalEnumValue(deps, 'candidate_type', p.candidate_type, MEMORY_CANDIDATE_TYPE_VALUES),
+        target_object_type: optionalEnumValue(deps, 'target_object_type', p.target_object_type, MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES),
+        target_object_id: normalizeOptionalTargetObjectId(deps, p.target_object_id) ?? undefined,
+        include_pages: p.include_pages !== false,
+        include_candidates: p.include_candidates !== false,
+        limit: normalizeLimit(deps, p.limit),
+        exclude_ids: normalizeOptionalStringArray(deps, 'exclude_ids', p.exclude_ids),
+      });
+    },
+    cliHints: { name: 'review-duplicate-memory', aliases: { n: 'limit' } },
+  };
+
   const create_memory_candidate_entry: Operation = {
     name: 'create_memory_candidate_entry',
     description: 'Create one canonical memory-inbox candidate in captured state by default.',
@@ -963,6 +1037,7 @@ export function createMemoryInboxOperations(
       reviewed_at: { type: 'string', description: 'Optional ISO timestamp for review metadata' },
       review_reason: { type: 'string', description: 'Optional review reason or audit note' },
       interaction_id: { type: 'string', description: 'Optional retrieval trace id for lifecycle event attribution' },
+      include_duplicate_review: { type: 'boolean', description: 'Include a duplicate review result with the created candidate' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -982,7 +1057,7 @@ export function createMemoryInboxOperations(
         };
       }
 
-      return createMemoryCandidateEntryWithStatusEvent(ctx.engine, {
+      const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, {
         id,
         scope_id: scopeId,
         candidate_type: requireEnumValue(deps, 'candidate_type', p.candidate_type, MEMORY_CANDIDATE_TYPE_VALUES),
@@ -1001,6 +1076,27 @@ export function createMemoryInboxOperations(
         review_reason: typeof p.review_reason === 'string' ? p.review_reason : null,
         interaction_id: interactionId,
       });
+      if (p.include_duplicate_review !== true) {
+        return created;
+      }
+      const duplicateReview = await reviewDuplicateMemory(ctx.engine, {
+        scope_id: created.scope_id,
+        subject_kind: 'memory_candidate',
+        subject_id: created.id,
+        content: created.proposed_content,
+        source_refs: created.source_refs,
+        candidate_type: created.candidate_type,
+        target_object_type: created.target_object_type ?? undefined,
+        target_object_id: created.target_object_id ?? undefined,
+        include_pages: true,
+        include_candidates: true,
+        limit: 5,
+        exclude_ids: [created.id],
+      });
+      return {
+        candidate: created,
+        duplicate_review: duplicateReview,
+      };
     },
     cliHints: { name: 'create-memory-candidate' },
   };
@@ -2313,6 +2409,7 @@ export function createMemoryInboxOperations(
     list_memory_candidate_entries,
     list_memory_candidate_status_events,
     delete_memory_candidate_entry,
+    review_duplicate_memory,
     create_memory_candidate_entry,
     create_memory_patch_candidate,
     review_memory_patch_candidate,
