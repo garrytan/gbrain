@@ -217,7 +217,7 @@ describe('gbrain extract --dir default resolution', () => {
       (process as any).exit = savedExit;
       console.error = savedConsoleError;
     }
-    expect(exitCode).toBe(1);
+    expect(exitCode as unknown).toBe(1);
     const all = errBuf.join('\n');
     expect(all).toContain('No brain directory configured');
     expect(all).toContain('--source db');
