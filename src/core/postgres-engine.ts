@@ -373,13 +373,32 @@ export class PostgresEngine implements BrainEngine {
 
   async getChunks(slug: string): Promise<Chunk[]> {
     const sql = this.sql;
+    // Explicit projection: omit the 1536-dim embedding column. rowToChunk's
+    // default (includeEmbedding=false) discards it anyway, but pulling it
+    // across the wire is the bulk of egress on hot-loop callers (embed
+    // --stale, autopilot). Callers that need the vector use
+    // getChunksWithEmbeddings() instead.
     const rows = await sql`
-      SELECT cc.* FROM content_chunks cc
+      SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+             cc.model, cc.token_count, cc.embedded_at
+      FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE p.slug = ${slug}
       ORDER BY cc.chunk_index
     `;
     return rows.map((r) => rowToChunk(r as Record<string, unknown>));
+  }
+
+  async listStalePageSlugs(): Promise<string[]> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT DISTINCT p.slug
+      FROM pages p
+      JOIN content_chunks cc ON cc.page_id = p.id
+      WHERE cc.embedding IS NULL
+      ORDER BY p.slug
+    `;
+    return rows.map((r) => (r as { slug: string }).slug);
   }
 
   async deleteChunks(slug: string): Promise<void> {

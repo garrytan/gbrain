@@ -133,6 +133,13 @@ export interface BrainEngine {
   upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
   getChunks(slug: string): Promise<Chunk[]>;
   deleteChunks(slug: string): Promise<void>;
+  /**
+   * Return page slugs that have at least one chunk with embedding IS NULL.
+   * Used by `embed --stale` to skip the all-pages scan when the brain is
+   * already fully embedded (avoids 682+ wasted getChunks round-trips per
+   * autopilot cycle).
+   */
+  listStalePageSlugs(): Promise<string[]>;
 
   // Links
   /**

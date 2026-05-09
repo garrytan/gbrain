@@ -343,14 +343,30 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async getChunks(slug: string): Promise<Chunk[]> {
+    // Explicit projection: omit embedding column. See postgres-engine.ts
+    // getChunks for rationale.
     const { rows } = await this.db.query(
-      `SELECT cc.* FROM content_chunks cc
+      `SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+              cc.model, cc.token_count, cc.embedded_at
+       FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
        WHERE p.slug = $1
        ORDER BY cc.chunk_index`,
       [slug]
     );
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r));
+  }
+
+  async listStalePageSlugs(): Promise<string[]> {
+    const { rows } = await this.db.query(
+      `SELECT DISTINCT p.slug
+       FROM pages p
+       JOIN content_chunks cc ON cc.page_id = p.id
+       WHERE cc.embedding IS NULL
+       ORDER BY p.slug`,
+      []
+    );
+    return (rows as { slug: string }[]).map(r => r.slug);
   }
 
   async deleteChunks(slug: string): Promise<void> {
