@@ -531,7 +531,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // Unified view: OAuth clients + legacy API keys
       const oauthClients = await sql`
         SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-          c.grant_types, c.scope, c.created_at, c.token_ttl,
+          c.grant_types, c.scope, c.access_tier, c.created_at, c.token_ttl,
           CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
@@ -540,7 +540,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       `;
       const legacyKeys = await sql`
         SELECT a.id, a.name, 'api_key' as auth_type,
-          '{"bearer"}' as grant_types, 'read write admin' as scope, a.created_at, null as token_ttl,
+          '{"bearer"}' as grant_types, 'read write admin' as scope, 'Full' as access_tier, a.created_at, null as token_ttl,
           CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           a.last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,

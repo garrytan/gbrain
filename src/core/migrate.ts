@@ -2168,7 +2168,9 @@ export const MIGRATIONS: Migration[] = [
       const rows = await engine.executeRaw<{ is_nullable: string; column_default: string | null }>(
         `SELECT is_nullable, column_default
          FROM information_schema.columns
-         WHERE table_name = 'oauth_clients' AND column_name = 'access_tier'`,
+         WHERE table_schema = current_schema()
+           AND table_name = 'oauth_clients'
+           AND column_name = 'access_tier'`,
       );
       if (rows.length !== 1) return false;
       if (rows[0].is_nullable !== 'NO') return false;

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 import { ALLOWED_SCOPES_LIST, type Scope } from '../lib/scope-constants';
 
+type AccessTier = 'None' | 'Family' | 'Work' | 'Full';
+
 function timeAgo(date: Date): string {
   const s = Math.floor((Date.now() - date.getTime()) / 1000);
   if (s < 60) return 'just now';
@@ -18,6 +20,7 @@ interface Agent {
   client_name?: string; // compat
   grant_types: string[];
   scope: string;
+  access_tier?: AccessTier | null;
   created_at: string;
   last_used_at: string | null;
   total_requests: number;
@@ -87,6 +90,7 @@ export function AgentsPage() {
               <tr>
                 <th>Name</th>
                 <th>Type</th>
+                <th>Tier</th>
                 <th>Scopes</th>
                 <th>Status</th>
                 <th>Requests</th>
@@ -101,6 +105,11 @@ export function AgentsPage() {
                   <td>
                     <span className={`badge ${a.auth_type === 'oauth' ? 'badge-read' : 'badge-write'}`} style={{ fontSize: 11 }}>
                       {a.auth_type === 'oauth' ? 'OAuth' : 'API Key'}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="badge badge-write" style={{ fontSize: 11 }}>
+                      {a.access_tier || 'Full'}
                     </span>
                   </td>
                   <td>
@@ -256,6 +265,7 @@ function RegisterModal({ onClose, onRegistered }: {
   const [scopes, setScopes] = useState<Record<Scope, boolean>>(() =>
     Object.fromEntries(ALLOWED_SCOPES_LIST.map(s => [s, s === 'read'])) as Record<Scope, boolean>,
   );
+  const [accessTier, setAccessTier] = useState<AccessTier>('Work');
   const [ttl, setTtl] = useState('86400'); // 24h default
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -281,7 +291,12 @@ function RegisterModal({ onClose, onRegistered }: {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), scopes: selectedScopes, tokenTtl: ttl === '0' ? 315360000 : Number(ttl) }),
+        body: JSON.stringify({
+          name: name.trim(),
+          scopes: selectedScopes,
+          accessTier,
+          tokenTtl: ttl === '0' ? 315360000 : Number(ttl),
+        }),
       });
       if (!res.ok) throw new Error('Registration failed');
       const data = await res.json();
@@ -311,6 +326,16 @@ function RegisterModal({ onClose, onRegistered }: {
               </label>
             ))}
           </div>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label>Access Tier</label>
+          <select value={accessTier} onChange={e => setAccessTier(e.target.value as AccessTier)}
+            style={{ width: '100%', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 14 }}>
+            <option value="Work">Work</option>
+            <option value="Family">Family</option>
+            <option value="None">None</option>
+            <option value="Full">Full</option>
+          </select>
         </div>
         <div style={{ marginBottom: 20 }}>
           <label>Token Lifetime</label>
@@ -547,6 +572,8 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <span>{(agent.scope || '').split(' ').filter(Boolean).map(s => (
             <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>
           ))}</span>
+          <span style={{ color: 'var(--text-secondary)' }}>Tier</span>
+          <span><span className="badge badge-write">{agent.access_tier || 'Full'}</span></span>
           <span style={{ color: 'var(--text-secondary)' }}>Registered</span>
           <span>{new Date(agent.created_at).toLocaleDateString()}</span>
           <span style={{ color: 'var(--text-secondary)' }}>Token TTL</span>
