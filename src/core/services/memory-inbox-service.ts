@@ -9,6 +9,10 @@ import type {
   MemoryCandidateStatusEventKind,
   MemoryCandidateTargetObjectType,
 } from '../types.ts';
+import {
+  reviewDuplicateMemory,
+  summarizeDuplicateReviewForPreflight,
+} from './duplicate-memory-review-service.ts';
 
 type AdvanceableMemoryCandidateStatus = 'captured' | 'candidate' | 'staged_for_review';
 type MemoryCandidateAdvanceTargetStatus = 'candidate' | 'staged_for_review';
@@ -105,6 +109,24 @@ export async function preflightPromoteMemoryCandidate(
     deferReasons.push('candidate_requires_revalidation');
   }
 
+  const duplicateReview = summarizeDuplicateReviewForPreflight(await reviewDuplicateMemory(engine, {
+    scope_id: entry.scope_id,
+    subject_kind: 'memory_candidate',
+    subject_id: entry.id,
+    content: entry.proposed_content,
+    source_refs: entry.source_refs,
+    candidate_type: entry.candidate_type,
+    target_object_type: entry.target_object_type ?? undefined,
+    target_object_id: entry.target_object_id ?? undefined,
+    include_pages: true,
+    include_candidates: true,
+    limit: 5,
+    exclude_ids: [entry.id],
+  }));
+  if (duplicateReview.decision === 'likely_duplicate') {
+    deferReasons.push('candidate_possible_duplicate');
+  }
+
   const reasons: MemoryCandidatePromotionPreflightReason[] = denyReasons.length > 0
     ? denyReasons
     : (deferReasons.length > 0 ? deferReasons : ['candidate_ready_for_promotion']);
@@ -112,14 +134,22 @@ export async function preflightPromoteMemoryCandidate(
     ? 'deny'
     : (deferReasons.length > 0 ? 'defer' : 'allow');
 
+  const reasonSummaryLine = `Reasons: ${reasons.map(formatReasonLabel).join(', ')}.`;
+  const individualReasonSummaryLines = reasons.length > 1
+    ? reasons.map((reason) => `Reasons: ${formatReasonLabel(reason)}.`)
+    : [];
+
   return {
     candidate_id: entry.id,
     decision,
     reasons,
+    duplicate_review: duplicateReview,
     summary_lines: [
       `Promotion preflight decision: ${decision}.`,
       `Candidate ${entry.id} targets ${entry.target_object_type ?? 'none'}/${entry.target_object_id ?? 'none'}.`,
-      `Reasons: ${reasons.map(formatReasonLabel).join(', ')}.`,
+      `Duplicate review decision: ${duplicateReview.decision}.`,
+      reasonSummaryLine,
+      ...individualReasonSummaryLines,
     ],
   };
 }
@@ -375,6 +405,8 @@ function formatReasonLabel(reason: MemoryCandidatePromotionPreflightReason): str
       return 'candidate sensitivity is unknown';
     case 'candidate_requires_revalidation':
       return 'candidate requires revalidation';
+    case 'candidate_possible_duplicate':
+      return 'possible duplicate';
     case 'candidate_ready_for_promotion':
       return 'candidate is ready for promotion';
   }
