@@ -240,10 +240,11 @@ export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
  */
 export function slugifySegment(segment: string): string {
   return segment
-    .normalize('NFD')                     // Decompose accented chars
-    .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
+    .normalize('NFD')                     // Decompose accented chars (Latin) and Hangul/CJK precomposed forms
+    .replace(/[\u0300-\u036f]/g, '')      // Strip Latin combining accent marks only \u2014 leaves CJK voicing/sound marks (U+3099/U+309A) intact
+    .normalize('NFC')                     // Recompose what's left (notably Hangul Jamo \u2192 syllables, CJK kana + voiced mark \u2192 \u6fc1\u97f3)
     .toLowerCase()
-    .replace(/[^a-z0-9.\s_-]/g, '')      // Keep alphanumeric, dots, spaces, underscores, hyphens
+    .replace(/[^\p{L}\p{N}\p{M}.\s_-]/gu, '')  // Keep Unicode letters/numbers/marks (incl. CJK, Hangul, Cyrillic, ...), dots, spaces, underscores, hyphens (#738)
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
