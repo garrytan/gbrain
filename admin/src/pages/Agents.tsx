@@ -265,6 +265,11 @@ function RegisterModal({ onClose, onRegistered }: {
   const [scopes, setScopes] = useState<Record<Scope, boolean>>(() =>
     Object.fromEntries(ALLOWED_SCOPES_LIST.map(s => [s, s === 'read'])) as Record<Scope, boolean>,
   );
+  const [grantTypes, setGrantTypes] = useState({
+    client_credentials: true,
+    authorization_code: false,
+  });
+  const [redirectUris, setRedirectUris] = useState('');
   const [accessTier, setAccessTier] = useState<AccessTier>('Work');
   const [ttl, setTtl] = useState('86400'); // 24h default
   const [loading, setLoading] = useState(false);
@@ -287,6 +292,18 @@ function RegisterModal({ onClose, onRegistered }: {
     try {
       // Use the CLI registration endpoint (POST to admin API)
       const selectedScopes = Object.entries(scopes).filter(([, v]) => v).map(([k]) => k).join(' ');
+      const selectedGrantTypes = Object.entries(grantTypes).filter(([, v]) => v).map(([k]) => k);
+      const parsedRedirectUris = redirectUris.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+      if (selectedGrantTypes.length === 0) {
+        setError('Grant type required');
+        setLoading(false);
+        return;
+      }
+      if (selectedGrantTypes.includes('authorization_code') && parsedRedirectUris.length === 0) {
+        setError('Redirect URI required for authorization_code');
+        setLoading(false);
+        return;
+      }
       const res = await fetch('/admin/api/register-client', {
         method: 'POST',
         credentials: 'same-origin',
@@ -294,6 +311,8 @@ function RegisterModal({ onClose, onRegistered }: {
         body: JSON.stringify({
           name: name.trim(),
           scopes: selectedScopes,
+          grantTypes: selectedGrantTypes,
+          redirectUris: parsedRedirectUris,
           accessTier,
           tokenTtl: ttl === '0' ? 315360000 : Number(ttl),
         }),
@@ -327,6 +346,39 @@ function RegisterModal({ onClose, onRegistered }: {
             ))}
           </div>
         </div>
+        <div style={{ marginBottom: 16 }}>
+          <label>Grant Types</label>
+          <div className="checkbox-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={grantTypes.client_credentials}
+                onChange={e => setGrantTypes(p => ({ ...p, client_credentials: e.target.checked }))}
+              />
+              client_credentials
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={grantTypes.authorization_code}
+                onChange={e => setGrantTypes(p => ({ ...p, authorization_code: e.target.checked }))}
+              />
+              authorization_code
+            </label>
+          </div>
+        </div>
+        {grantTypes.authorization_code && (
+          <div style={{ marginBottom: 16 }}>
+            <label>Redirect URIs</label>
+            <textarea
+              value={redirectUris}
+              onChange={e => setRedirectUris(e.target.value)}
+              placeholder="https://chat.openai.com/connector_platform_oauth_redirect"
+              rows={3}
+              style={{ width: '100%', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 14, resize: 'vertical' }}
+            />
+          </div>
+        )}
         <div style={{ marginBottom: 16 }}>
           <label>Access Tier</label>
           <select value={accessTier} onChange={e => setAccessTier(e.target.value as AccessTier)}
@@ -478,7 +530,8 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
       `3. When prompted for credentials:`,
       `   Client ID: ${cid}`,
       `   Client Secret: (the secret from agent registration)`,
-      `   Grant Type: client_credentials`,
+      `   Grant Type: authorization_code with PKCE`,
+      `   Redirect URI: https://chat.openai.com/connector_platform_oauth_redirect`,
       `   Scope: ${agent.scope || 'read write'}`,
     ].join('\n'),
 
@@ -587,7 +640,7 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           JSON is just structured metadata). ChatGPT, Claude.ai, and
           Perplexity tabs render an "OAuth client required" message on
           api_key agents — those MCP clients only speak OAuth 2.0
-          client_credentials, not raw bearer tokens.
+          authorization_code with PKCE, not raw bearer tokens.
 
           Pre-fix (Wintermute commit 16): the entire Config Export
           section was hidden for api_key agents, dropping the working
@@ -621,7 +674,7 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
                 <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
                   {clientName} requires an OAuth client
                 </div>
-                {clientName} only supports OAuth 2.0 (client_credentials). API keys use raw bearer tokens, which {clientName} does not accept. Register a separate OAuth client and use that to connect this AI.
+                {clientName} only supports OAuth 2.0. API keys use raw bearer tokens, which {clientName} does not accept. Register a separate OAuth client and use that to connect this AI.
               </div>
             );
           }
