@@ -28,6 +28,7 @@ import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
 import { ACCESS_TIER_DEFAULT, OP_TIER_DEFAULT_REQUIRED, filterResponseByTier, parseAccessTier, tierImplies, type AccessTier } from '../core/access-tier.ts';
+import { isUndefinedColumnError } from '../core/utils.ts';
 import { summarizeMcpParams } from '../mcp/dispatch.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
@@ -528,16 +529,35 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      // Unified view: OAuth clients + legacy API keys
-      const oauthClients = await sql`
-        SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-          c.grant_types, c.scope, c.access_tier, c.created_at, c.token_ttl,
-          CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
-        FROM oauth_clients c ORDER BY c.created_at DESC
-      `;
+      // Unified view: OAuth clients + legacy API keys. The access_tier
+      // read falls back to ACCESS_TIER_DEFAULT during the upgrade window
+      // when the daemon has been replaced but migrations haven't applied
+      // (mirrors the verifyAccessToken UndefinedColumn fallback in
+      // oauth-provider.ts so the admin Agents page stays reachable
+      // through the v45 transition).
+      let oauthClients;
+      try {
+        oauthClients = await sql`
+          SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
+            c.grant_types, c.scope, c.access_tier, c.created_at, c.token_ttl,
+            CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+            (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
+          FROM oauth_clients c ORDER BY c.created_at DESC
+        `;
+      } catch (e) {
+        if (!isUndefinedColumnError(e, 'access_tier')) throw e;
+        oauthClients = await sql`
+          SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
+            c.grant_types, c.scope, ${ACCESS_TIER_DEFAULT} as access_tier, c.created_at, c.token_ttl,
+            CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+            (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
+          FROM oauth_clients c ORDER BY c.created_at DESC
+        `;
+      }
       const legacyKeys = await sql`
         SELECT a.id, a.name, 'api_key' as auth_type,
           '{"bearer"}' as grant_types, 'read write admin' as scope, 'Full' as access_tier, a.created_at, null as token_ttl,
