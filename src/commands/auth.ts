@@ -126,6 +126,34 @@ async function list() {
   }
 }
 
+async function listClients() {
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    const rows = await sql`
+      SELECT client_id, client_name, access_tier, scope, grant_types, created_at, deleted_at
+      FROM oauth_clients
+      ORDER BY created_at DESC
+    `;
+    if (rows.length === 0) {
+      console.log('No OAuth clients registered. Create one: gbrain auth register-client <name>');
+      return;
+    }
+    console.log('Client ID                  Name                  Tier    Scope          Created              Status');
+    console.log('-'.repeat(110));
+    for (const r of rows) {
+      const id = (r.client_id as string).padEnd(26);
+      const name = ((r.client_name as string) || '').padEnd(20);
+      const tier = String(r.access_tier ?? 'Full').padEnd(7);
+      const scope = ((r.scope as string) || '').padEnd(13);
+      const created = new Date(r.created_at as string).toISOString().slice(0, 19);
+      const status = r.deleted_at ? 'REVOKED' : 'active';
+      console.log(`${id}  ${name}  ${tier}  ${scope}  ${created}  ${status}`);
+    }
+  } finally {
+    await sql.end();
+  }
+}
+
 async function revoke(name: string) {
   if (!name) { console.error('Usage: auth revoke <name>'); process.exit(1); }
   const sql = postgres(getDatabaseUrl(true)!);
@@ -417,6 +445,7 @@ export async function runAuth(args: string[]): Promise<void> {
       return;
     }
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
+    case 'list-clients': await listClients(); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
     case 'set-tier': await setTier(rest[0], rest[1]); return;
     case 'test': {
@@ -443,6 +472,7 @@ Usage:
      --grant-types <client_credentials,authorization_code> (default: client_credentials)
      --scopes "<read write admin>"                         (default: read)
      --tier <Full|Work|Family|None>                        (default: Full; runtime MCP access control)
+  gbrain auth list-clients                                List OAuth clients with id, name, access_tier, scope, status
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth set-tier <client_id> <Full|Work|Family|None> Update an existing client's access tier
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server

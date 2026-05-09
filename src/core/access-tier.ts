@@ -21,6 +21,11 @@
  * visibility, see `tierAllowsSlug`.
  */
 
+// OperationError is loaded lazily inside `filterResponseByTier` to avoid
+// a module-load cycle: operations.ts imports `type AccessTier` from this
+// file (type-only, erased), so a runtime back-edge from this file to
+// operations.ts is safe but only at call time.
+
 export type AccessTier = 'None' | 'Family' | 'Work' | 'Full';
 
 export const ACCESS_TIERS: ReadonlyArray<AccessTier> = Object.freeze([
@@ -126,16 +131,18 @@ export function resolveStoredAccessTier(value: unknown): AccessTier {
 
 /**
  * Slug-prefix visibility map. Each tier sees pages whose slug starts
- * with one of its declared prefixes; `'*'` means "no filter".
- * Operators override via `gbrain.yml.access` (see config.ts).
+ * with one of its declared prefixes; `'*'` means "no filter". Threaded
+ * into `filterResponseByTier` via the `prefixes` field of FilterContext;
+ * operators wire up their own map by passing it in (config plumbing is
+ * a separate concern from this primitive).
  */
 export type TierPrefixMap = Record<AccessTier, ReadonlyArray<string>>;
 
 /**
  * Defaults derived from templates/ACCESS_POLICY.md.template. Family
  * sees logistics + scheduling; Work sees brain pages (people,
- * companies, deals, projects, concepts, ideas); Full sees
- * everything. Slug prefixes match gbrain's wiki/* namespacing
+ * companies, deals, projects, tasks, calendar) per the template;
+ * Full sees everything. Slug prefixes match gbrain's wiki/* mirror
  * convention without committing to a specific operator's layout —
  * an operator with different slugs must override.
  */
@@ -146,14 +153,14 @@ export const DEFAULT_TIER_PREFIXES: TierPrefixMap = Object.freeze({
     'companies/',
     'deals/',
     'projects/',
-    'concepts/',
-    'ideas/',
+    'tasks/',
+    'calendar/',
     'wiki/people/',
     'wiki/companies/',
     'wiki/deals/',
     'wiki/projects/',
-    'wiki/concepts/',
-    'wiki/ideas/',
+    'wiki/tasks/',
+    'wiki/calendar/',
   ],
   Family: [
     'logistics/',
@@ -187,82 +194,167 @@ export function tierAllowsSlug(
 }
 
 /**
- * Apply tier-aware visibility to a tools/call response. Used by the
- * MCP dispatch layer between op.handler() and writing the response,
- * so a Work-tier caller cannot see personal pages even when the op
- * itself was permitted to run.
+ * Per-op result-shape declaration. Read ops that should be tier-filtered
+ * MUST declare their shape here; the filter switches on this map rather
+ * than guessing. Ops not in the map pass through unchanged.
  *
- * Coverage in this PR: ops that return a single page-shaped object
- * keyed by `slug` (`get_page`), or an array of slug-bearing rows
- * (`list_pages`, `search`, `query`, `get_chunks`, `find_orphans`,
- * `get_recent_salience`). Ops that return non-page shapes (graph
- * traversal, links, takes, system stats) pass through; their tier
- * gate runs at invocation time only.
+ * Adding an op is opt-in: a new tier-annotated read op without an entry
+ * here passes through unfiltered. The tier-coverage parity test asserts
+ * every tier-annotated read op either appears in this map or is gated
+ * input-side in its handler (see `get_chunks`).
  *
- * Full callers (and undefined tier — local CLI, stdio MCP) bypass
- * the filter entirely. Family/Work callers see only rows whose
- * slug starts with one of the prefixes for their tier.
- *
- * For `get_page`: when the resolved page is outside the visible
- * prefix set, return a `page_not_found` shape rather than a
- * `permission_denied` so a Work-tier caller cannot probe slug
- * existence by status code.
+ *   single-page         { ...page, slug, ...} OR
+ *                       { error: 'ambiguous_slug', candidates: string[] }
+ *   page-array          Array<{ slug, ... }>
+ *   orphans-wrapper     { orphans: Array<{ slug, ... }>,
+ *                         total_orphans, total_linkable, total_pages,
+ *                         excluded }
+ *   slug-string-array   string[] (each element is itself a slug)
  */
+type FilterShape =
+  | 'single-page'
+  | 'page-array'
+  | 'orphans-wrapper'
+  | 'slug-string-array';
+
+const OP_FILTER_SHAPE: Readonly<Record<string, FilterShape>> = Object.freeze({
+  get_page: 'single-page',
+  list_pages: 'page-array',
+  search: 'page-array',
+  query: 'page-array',
+  get_recent_salience: 'page-array',
+  find_orphans: 'orphans-wrapper',
+  resolve_slugs: 'slug-string-array',
+});
+
+export function filterShapeFor(opName: string): FilterShape | undefined {
+  return OP_FILTER_SHAPE[opName];
+}
+
 export interface FilterContext {
   tier?: AccessTier;
   prefixes?: TierPrefixMap;
 }
 
-const READ_OPS_RETURNING_PAGE_LIST: ReadonlySet<string> = new Set([
-  'list_pages',
-  'search',
-  'query',
-  'get_chunks',
-  'find_orphans',
-  'get_recent_salience',
-]);
+/**
+ * Apply tier-aware visibility to a tools/call response. Used by the
+ * MCP dispatch layer between op.handler() and writing the response,
+ * so a Work-tier caller cannot see personal pages even when the op
+ * itself was permitted to run.
+ *
+ * Coverage:
+ *   - get_page (single-page): a hidden slug throws OperationError
+ *     'page_not_found' so the wire envelope is byte-identical to a
+ *     real not-found result; ambiguous-slug branch filters its
+ *     candidates list.
+ *   - list_pages, search, query, get_recent_salience (page-array):
+ *     drop rows whose slug is outside the visible prefix set.
+ *   - find_orphans (orphans-wrapper): filter the inner orphans
+ *     array, recompute total_orphans, fold dropped rows into
+ *     `excluded`.
+ *   - resolve_slugs (slug-string-array): drop bare-string slugs
+ *     outside the visible prefix set.
+ *
+ * Ops with non-page shapes (graph traversal, links, takes, system
+ * stats) pass through; their tier gate runs at invocation time only.
+ * Some read ops with non-slug-bearing rows (`get_chunks`) are gated
+ * input-side in their handler instead — see operations.ts.
+ *
+ * Full callers (and undefined tier — local CLI, stdio MCP) bypass
+ * the filter entirely.
+ */
+// Lazy resolution of OperationError to avoid a module-load cycle through
+// operations.ts. Cached after first hit. The serve-http error envelope
+// matches `e instanceof OperationError`, so a tier-rejected single-page
+// hit produces a response byte-identical to a real engine not-found.
+let _OperationErrorCtor: (new (code: string, message: string) => Error) | undefined;
+async function loadOperationError(): Promise<new (code: string, message: string) => Error> {
+  if (_OperationErrorCtor) return _OperationErrorCtor;
+  const mod = await import('./operations.ts');
+  _OperationErrorCtor = mod.OperationError as unknown as new (code: string, message: string) => Error;
+  return _OperationErrorCtor;
+}
 
-const READ_OPS_RETURNING_SINGLE_PAGE: ReadonlySet<string> = new Set([
-  'get_page',
-]);
-
-export function filterResponseByTier(
+export async function filterResponseByTier(
   opName: string,
   result: unknown,
   ctxFilter: FilterContext,
-): unknown {
+): Promise<unknown> {
   const tier = ctxFilter.tier;
   // No tier set (local CLI, stdio MCP) or Full tier: bypass.
   if (!tier || tier === 'Full') return result;
   const prefixes = ctxFilter.prefixes ?? DEFAULT_TIER_PREFIXES;
+  const shape = OP_FILTER_SHAPE[opName];
+  if (!shape) return result;
 
-  if (READ_OPS_RETURNING_SINGLE_PAGE.has(opName)) {
-    if (result && typeof result === 'object' && !Array.isArray(result)) {
-      const slug = (result as { slug?: unknown }).slug;
-      if (typeof slug === 'string' && !tierAllowsSlug(slug, tier, prefixes)) {
-        // Mimic the engine's `page_not_found` shape so a tier-rejected
-        // page is indistinguishable from an absent page on the wire.
-        return {
-          error: 'page_not_found',
-          message: `Page not found: ${slug}`,
-        };
+  switch (shape) {
+    case 'single-page': {
+      if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+      const obj = result as Record<string, unknown>;
+      // Ambiguous-slug branch: filter the candidates list. If the
+      // post-filter set is empty, fall through to a not-found throw
+      // (so a Work-tier caller cannot probe slug existence by
+      // observing a non-empty candidates array).
+      if (obj.error === 'ambiguous_slug' && Array.isArray(obj.candidates)) {
+        const visible = (obj.candidates as unknown[]).filter(
+          (c) => typeof c === 'string' && tierAllowsSlug(c, tier, prefixes),
+        );
+        if (visible.length === 0) {
+          const OperationError = await loadOperationError();
+          throw new OperationError('page_not_found', `Page not found`);
+        }
+        return { ...obj, candidates: visible };
       }
+      const slug = obj.slug;
+      if (typeof slug === 'string' && !tierAllowsSlug(slug, tier, prefixes)) {
+        // Throw rather than return a fabricated shape; serve-http's
+        // unified error handler wraps this identically to a real
+        // not-found from the engine, so a Work-tier probe cannot
+        // distinguish hidden vs absent.
+        const OperationError = await loadOperationError();
+        throw new OperationError('page_not_found', `Page not found: ${slug}`);
+      }
+      return result;
     }
-    return result;
-  }
 
-  if (READ_OPS_RETURNING_PAGE_LIST.has(opName)) {
-    if (Array.isArray(result)) {
+    case 'page-array': {
+      if (!Array.isArray(result)) return result;
       return result.filter((row) => {
-        if (!row || typeof row !== 'object') return true;
+        if (!row || typeof row !== 'object') return false;
         const slug = (row as { slug?: unknown }).slug;
-        if (typeof slug !== 'string') return true;
+        if (typeof slug !== 'string') return false;
         return tierAllowsSlug(slug, tier, prefixes);
       });
     }
-  }
 
-  return result;
+    case 'orphans-wrapper': {
+      if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+      const wrapper = result as Record<string, unknown>;
+      const orphans = wrapper.orphans;
+      if (!Array.isArray(orphans)) return result;
+      const visible = orphans.filter((row) => {
+        if (!row || typeof row !== 'object') return false;
+        const slug = (row as { slug?: unknown }).slug;
+        if (typeof slug !== 'string') return false;
+        return tierAllowsSlug(slug, tier, prefixes);
+      });
+      const dropped = orphans.length - visible.length;
+      const excluded = typeof wrapper.excluded === 'number' ? wrapper.excluded : 0;
+      return {
+        ...wrapper,
+        orphans: visible,
+        total_orphans: visible.length,
+        excluded: excluded + dropped,
+      };
+    }
+
+    case 'slug-string-array': {
+      if (!Array.isArray(result)) return result;
+      return result.filter(
+        (s) => typeof s === 'string' && tierAllowsSlug(s, tier, prefixes),
+      );
+    }
+  }
 }
 
 export class InvalidAccessTierError extends Error {

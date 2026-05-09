@@ -174,58 +174,156 @@ describe('tierAllowsSlug — slug-prefix visibility', () => {
 });
 
 describe('filterResponseByTier — read-path response filtering', () => {
-  test('Full tier passes results through unchanged', () => {
+  test('Full tier passes results through unchanged', async () => {
     const list = [{ slug: 'people/alice' }, { slug: 'personal/diary' }];
-    expect(filterResponseByTier('list_pages', list, { tier: 'Full' })).toBe(list);
+    expect(await filterResponseByTier('list_pages', list, { tier: 'Full' })).toBe(list);
   });
-  test('undefined tier (local CLI / stdio) passes through unchanged', () => {
+  test('undefined tier (local CLI / stdio) passes through unchanged', async () => {
     const list = [{ slug: 'people/alice' }, { slug: 'personal/diary' }];
-    expect(filterResponseByTier('list_pages', list, {})).toBe(list);
+    expect(await filterResponseByTier('list_pages', list, {})).toBe(list);
   });
-  test('Work tier filters list_pages by slug prefix', () => {
+  test('Work tier filters list_pages by slug prefix', async () => {
     const list = [
       { slug: 'people/alice', title: 'Alice' },
       { slug: 'personal/diary', title: 'Diary' },
       { slug: 'companies/acme', title: 'Acme' },
     ];
-    const filtered = filterResponseByTier('list_pages', list, { tier: 'Work' });
+    const filtered = await filterResponseByTier('list_pages', list, { tier: 'Work' });
     expect(Array.isArray(filtered)).toBe(true);
     expect((filtered as Array<{ slug: string }>).map(r => r.slug)).toEqual(['people/alice', 'companies/acme']);
   });
-  test('Family tier filters list_pages to logistics only', () => {
+  test('Family tier filters list_pages to logistics only', async () => {
     const list = [
       { slug: 'people/alice' },
       { slug: 'logistics/calendar' },
       { slug: 'meetings/q1' },
     ];
-    const filtered = filterResponseByTier('list_pages', list, { tier: 'Family' });
+    const filtered = await filterResponseByTier('list_pages', list, { tier: 'Family' });
     expect((filtered as Array<{ slug: string }>).map(r => r.slug)).toEqual(['logistics/calendar', 'meetings/q1']);
   });
-  test('None tier filters everything out', () => {
+  test('None tier filters everything out', async () => {
     const list = [{ slug: 'people/alice' }, { slug: 'logistics/x' }];
-    expect(filterResponseByTier('list_pages', list, { tier: 'None' })).toEqual([]);
+    expect(await filterResponseByTier('list_pages', list, { tier: 'None' })).toEqual([]);
   });
-  test('get_page returns page_not_found shape when out of tier visibility', () => {
+  test('get_page throws OperationError(page_not_found) when out of tier visibility', async () => {
     const page = { slug: 'personal/diary', title: 'Diary', content: 'secret' };
-    const filtered = filterResponseByTier('get_page', page, { tier: 'Work' });
-    expect(filtered).toEqual({ error: 'page_not_found', message: 'Page not found: personal/diary' });
+    // Throws OperationError so the wire envelope is byte-identical to a
+    // real engine not-found and a Work-tier caller cannot probe slug
+    // existence by status code.
+    await expect(
+      filterResponseByTier('get_page', page, { tier: 'Work' }),
+    ).rejects.toMatchObject({ name: 'OperationError', code: 'page_not_found' });
   });
-  test('get_page passes visible page through unchanged', () => {
+  test('get_page passes visible page through unchanged', async () => {
     const page = { slug: 'people/alice', title: 'Alice' };
-    expect(filterResponseByTier('get_page', page, { tier: 'Work' })).toBe(page);
+    expect(await filterResponseByTier('get_page', page, { tier: 'Work' })).toBe(page);
   });
-  test('non-page-shape ops (traverse_graph etc.) pass through unchanged', () => {
+  test('get_page ambiguous_slug — candidates filtered by tier; empty after filter throws not-found', async () => {
+    // Multiple candidates with mixed visibility for Work: only the
+    // visible ones survive; if none are visible, the filter throws
+    // page_not_found rather than leaking the existence of personal slugs.
+    const ambiguousMixed = {
+      error: 'ambiguous_slug',
+      candidates: ['people/alice', 'personal/alice-diary', 'companies/acme'],
+    };
+    const filtered = await filterResponseByTier('get_page', ambiguousMixed, { tier: 'Work' });
+    expect(filtered).toEqual({
+      error: 'ambiguous_slug',
+      candidates: ['people/alice', 'companies/acme'],
+    });
+
+    const ambiguousAllPersonal = {
+      error: 'ambiguous_slug',
+      candidates: ['personal/a', 'personal/b'],
+    };
+    await expect(
+      filterResponseByTier('get_page', ambiguousAllPersonal, { tier: 'Work' }),
+    ).rejects.toMatchObject({ name: 'OperationError', code: 'page_not_found' });
+  });
+  test('find_orphans wrapper — inner orphans array filtered, totals recomputed', async () => {
+    // Real shape from src/commands/orphans.ts findOrphans():
+    // { orphans, total_orphans, total_linkable, total_pages, excluded }.
+    // A prior implementation only handled top-level arrays so the whole
+    // wrapper passed through unchanged — Work tier saw every personal/
+    // orphan slug. Regression test for that defect.
+    const wrapper = {
+      orphans: [
+        { slug: 'people/alice', title: 'Alice', domain: null },
+        { slug: 'personal/diary', title: 'Diary', domain: null },
+        { slug: 'companies/acme', title: 'Acme', domain: null },
+      ],
+      total_orphans: 3,
+      total_linkable: 5,
+      total_pages: 100,
+      excluded: 2,
+    };
+    const filtered = await filterResponseByTier('find_orphans', wrapper, { tier: 'Work' });
+    expect(filtered).toEqual({
+      orphans: [
+        { slug: 'people/alice', title: 'Alice', domain: null },
+        { slug: 'companies/acme', title: 'Acme', domain: null },
+      ],
+      total_orphans: 2,
+      total_linkable: 5,
+      total_pages: 100,
+      excluded: 3, // 2 pre-existing + 1 newly hidden
+    });
+  });
+  test('resolve_slugs string[] — bare slugs filtered by tier prefix', async () => {
+    // Real shape from src/core/operations.ts resolve_slugs handler:
+    // ctx.engine.resolveSlugs() returns Promise<string[]>. Prior filter
+    // looked for `row.slug` on object rows and silently no-op'd on bare
+    // strings, leaking slug existence to Work-tier callers via
+    // resolve_slugs("personal").
+    const slugs = ['people/alice', 'personal/diary', 'companies/acme', 'soul/identity'];
+    const filtered = await filterResponseByTier('resolve_slugs', slugs, { tier: 'Work' });
+    expect(filtered).toEqual(['people/alice', 'companies/acme']);
+  });
+  test('resolve_slugs string[] — None tier strips everything', async () => {
+    const slugs = ['people/alice', 'logistics/x'];
+    expect(await filterResponseByTier('resolve_slugs', slugs, { tier: 'None' })).toEqual([]);
+  });
+  test('search returns SearchResult[] (page-array) — Work tier strips personal hits', async () => {
+    // Real shape: hybridSearch returns SearchResult[] each with a `slug`
+    // field. Confirms the page-array branch handles search/query results.
+    const results = [
+      { slug: 'people/alice', score: 0.9, chunk_text: 'Alice...' },
+      { slug: 'personal/diary', score: 0.8, chunk_text: 'secret diary entry' },
+    ];
+    const filtered = await filterResponseByTier('search', results, { tier: 'Work' });
+    expect((filtered as Array<{ slug: string }>).map(r => r.slug)).toEqual(['people/alice']);
+  });
+  test('non-page-shape ops (traverse_graph etc.) pass through unchanged', async () => {
     const graph = { nodes: [{ slug: 'people/alice' }], edges: [] };
-    expect(filterResponseByTier('traverse_graph', graph, { tier: 'Family' })).toBe(graph);
+    expect(await filterResponseByTier('traverse_graph', graph, { tier: 'Family' })).toBe(graph);
   });
-  test('uses default prefix map when not overridden', () => {
+  test('mutating ops (put_page, sync_brain) pass through unchanged for any tier', async () => {
+    const writeResult = { status: 'ok', slug: 'personal/diary' };
+    expect(await filterResponseByTier('put_page', writeResult, { tier: 'Work' })).toBe(writeResult);
+    expect(await filterResponseByTier('sync_brain', writeResult, { tier: 'None' })).toBe(writeResult);
+  });
+  test('uses default prefix map when not overridden', async () => {
     const list = [{ slug: 'people/alice' }];
-    const filteredDefault = filterResponseByTier('list_pages', list, { tier: 'Family' });
-    const filteredCustom = filterResponseByTier('list_pages', list, {
+    const filteredDefault = await filterResponseByTier('list_pages', list, { tier: 'Family' });
+    const filteredCustom = await filterResponseByTier('list_pages', list, {
       tier: 'Family',
       prefixes: { ...DEFAULT_TIER_PREFIXES, Family: ['people/'] },
     });
     expect((filteredDefault as Array<unknown>).length).toBe(0);
     expect((filteredCustom as Array<unknown>).length).toBe(1);
+  });
+  test('page-array branch drops rows with missing or non-string slug (fail-closed)', async () => {
+    // Defense against future ops returning mixed-shape rows. A row the
+    // filter cannot inspect must be dropped, not passed through, for any
+    // non-Full tier.
+    const rows = [
+      { slug: 'people/alice' },
+      { slug: 12345 }, // non-string slug
+      null,
+      'bare-string',
+      { /* no slug */ title: 'orphan' },
+    ];
+    const filtered = await filterResponseByTier('list_pages', rows, { tier: 'Work' });
+    expect(filtered).toEqual([{ slug: 'people/alice' }]);
   });
 });

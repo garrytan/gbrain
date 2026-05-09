@@ -914,17 +914,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // discoverable in container deployments. Write a `warn` row
         // and broadcast a non-isError event with `would_reject: true`
         // so the dashboard can surface it without confusing it with
-        // a real failure. Then fall through to the handler.
-        const auditLatency = Date.now() - startTime;
+        // a real failure. latency_ms is set to NULL for the warn row
+        // because the handler has not run yet; the success row at the
+        // end of the request carries the real wall-clock latency.
         try {
           await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${auditLatency}, ${'warn'}, ${null}, ${`would_reject_tier: ${tierMsg}`})`;
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${null}, ${'warn'}, ${null}, ${`would_reject_tier: ${tierMsg}`})`;
         } catch { /* best effort */ }
         broadcastEvent({
           agent: agentName,
           operation: name,
           scopes: authInfo.scopes.join(','),
-          latency_ms: auditLatency,
           status: 'warn',
           would_reject: true,
           tier_required: requiredTier,
@@ -971,8 +971,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // Tier-aware response filtering for the read surface. Bypass
         // for Full / undefined tier; per-op slug-prefix filter for
         // Work / Family. See `filterResponseByTier` for op coverage
-        // and the page-not-found rationale.
-        const result = filterResponseByTier(name, rawResult, { tier: ctx.tier });
+        // and the page-not-found rationale. Throws OperationError on
+        // a tier-rejected single-page hit so the wire envelope matches
+        // a real engine not-found.
+        const result = await filterResponseByTier(name, rawResult, { tier: ctx.tier });
         const latency = Date.now() - startTime;
 
         try {

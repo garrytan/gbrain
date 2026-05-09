@@ -403,11 +403,18 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // tier. The FK normally guarantees the row exists; the explicit
     // INNER JOIN fail-closes if it doesn't, surfacing as 'Invalid
     // token' rather than admitting the request.
+    //
+    // c.deleted_at IS NULL gates the soft-delete window: the dashboard
+    // revoke path soft-deletes the client and purges its tokens in two
+    // non-atomic statements, so a token can race the purge. This
+    // predicate makes the JOIN itself reject any soft-deleted client's
+    // surviving token, regardless of whether the purge ever ran.
     const oauthRows = await this.sql`
       SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.access_tier
       FROM oauth_tokens t
       INNER JOIN oauth_clients c ON c.client_id = t.client_id
       WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+        AND c.deleted_at IS NULL
     `;
 
     if (oauthRows.length > 0) {
@@ -610,8 +617,13 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     if (!isAccessTier(accessTier)) {
       throw new Error(`setClientAccessTier: invalid tier "${accessTier}"`);
     }
+    // deleted_at IS NULL: refuse to mutate a tombstoned client's tier.
+    // Operators get a "no client matched" return on a soft-deleted id
+    // rather than a misleading success that has no effect.
     const rows = await this.sql`
-      UPDATE oauth_clients SET access_tier = ${accessTier} WHERE client_id = ${clientId} RETURNING client_id
+      UPDATE oauth_clients SET access_tier = ${accessTier}
+      WHERE client_id = ${clientId} AND deleted_at IS NULL
+      RETURNING client_id
     `;
     return rows.length > 0;
   }

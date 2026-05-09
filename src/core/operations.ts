@@ -1567,7 +1567,19 @@ const get_chunks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getChunks(p.slug as string);
+    const slug = p.slug as string;
+    // Input-side tier gate. Chunks rows have no slug field, so the
+    // response-side filterResponseByTier cannot distinguish a personal
+    // page's chunks from a public page's chunks. Reject up-front when
+    // the caller's tier doesn't admit the slug, mirroring the engine's
+    // not-found shape so a Work-tier caller cannot probe slug existence.
+    if (ctx.tier && ctx.tier !== 'Full') {
+      const { tierAllowsSlug } = await import('./access-tier.ts');
+      if (!tierAllowsSlug(slug, ctx.tier)) {
+        throw new OperationError('page_not_found', `Page not found: ${slug}`);
+      }
+    }
+    return ctx.engine.getChunks(slug);
   },
   scope: 'read',
   tier: 'Work',
