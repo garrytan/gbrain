@@ -17,6 +17,10 @@ export const ollama: Recipe = {
       default_dims: 768, // nomic-embed-text native dim
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
+      // Sentinel: Ollama's embed cap is model-/runtime-specific (`num_ctx`,
+      // context window, truncate=true by default), so there is no truthful
+      // static provider-wide max_batch_tokens value for this recipe.
+      max_batch_tokens: 0,
     },
   },
   setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` and `ollama serve`.',

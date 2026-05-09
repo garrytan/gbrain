@@ -105,24 +105,32 @@ export function configureGateway(config: AIGatewayConfig): void {
  */
 const _warnedRecipes = new Set<string>();
 
+function getUsableMaxBatchTokens(maxBatchTokens: number | undefined): number | undefined {
+  return typeof maxBatchTokens === 'number' && maxBatchTokens > 0 ? maxBatchTokens : undefined;
+}
+
 /**
  * Walk every registered recipe with an `embedding` touchpoint. Each one
  * missing `max_batch_tokens` gets exactly one stderr line per process for
- * its first appearance. Recipes WITH the field stay quiet. The
- * recursive-halving safety net only fires when `max_batch_tokens` is set,
- * so a recipe that forgets it has no protection if the provider has a
- * batch cap. Loud-fail over silent-skip per CLAUDE.md; a future
- * Cohere/Mistral/Jina recipe that inherits the embedding-touchpoint
- * pattern but forgets the cap re-creates the v0.27 Voyage backfill loop.
- * The warning calls that out before production traffic hits it.
+ * its first appearance. Recipes WITH the field stay quiet. A `0` value is
+ * an explicit sentinel for model-specific or proxy-defined limits where the
+ * shipped recipe cannot truthfully advertise one static cap.
+ *
+ * The recursive-halving safety net only fires after a token-limit miss, so a
+ * recipe that accidentally omits a known cap loses the proactive pre-split.
+ * Loud-fail over silent-skip per CLAUDE.md; a future Cohere/Mistral/Jina
+ * recipe that inherits the embedding-touchpoint pattern but forgets the cap
+ * re-creates the v0.27 Voyage backfill loop. The warning calls that out
+ * before production traffic hits it.
  */
 function warnRecipesMissingBatchTokens(): void {
   for (const recipe of listRecipes()) {
     const embedding = recipe.touchpoints?.embedding;
-    if (!embedding || embedding.max_batch_tokens !== undefined) continue;
+    const maxBatchTokens = embedding?.max_batch_tokens;
+    if (!embedding || getUsableMaxBatchTokens(maxBatchTokens) !== undefined || maxBatchTokens === 0) continue;
     // OpenAI is the canonical "no cap declared, fast path is intentional"
-    // recipe; suppress the warning for it. Every other recipe missing the
-    // field is suspicious.
+    // recipe; suppress the warning for it. Every other accidental omission
+    // is suspicious.
     if (recipe.id === 'openai') continue;
     if (_warnedRecipes.has(recipe.id)) continue;
     _warnedRecipes.add(recipe.id);
@@ -357,7 +365,7 @@ export async function embed(texts: string[]): Promise<Float32Array[]> {
   const expected = cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
 
   const embedding = recipe.touchpoints?.embedding;
-  const maxBatchTokens = embedding?.max_batch_tokens;
+  const maxBatchTokens = getUsableMaxBatchTokens(embedding?.max_batch_tokens);
   const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
 
   // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)

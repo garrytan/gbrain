@@ -16,6 +16,10 @@ export const google: Recipe = {
       dims_options: [768, 1536, 3072],
       cost_per_1m_tokens_usd: 0.15,
       price_last_verified: '2026-04-20',
+      // Google documents gemini-embedding-001 at 250 input texts / 20K
+      // tokens per request. Use the raw cap here; gateway.ts applies the
+      // recipe-level safety factor before pre-splitting.
+      max_batch_tokens: 20_000,
     },
     expansion: {
       models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite'],
