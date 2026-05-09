@@ -43,14 +43,16 @@ agent planning/spec files are intentionally not tracked.
 | S20 | `s20-interaction-id-nullable.test.ts` | L6 | ✅ green |
 | S21 | `s21-candidate-status-events-audit.test.ts` | L6, G1 | ✅ green |
 | S22 | `s22-agentic-canonical-retrieval.test.ts` | Task 7 | ✅ green |
+| S23 | `s23-duplicate-review-governance.test.ts` | G1, L6 | ✅ green |
 
 Legend:
 - ✅ green = passes on current code
 
 The redesign scenario suite currently has zero placeholder tests. It covers the
 original S1-S14 redesign contracts, S15-S21 loop-observability and
-interaction-identity contracts, plus S22 agentic canonical retrieval transcript
-coverage. Run this as part of final acceptance:
+interaction-identity contracts, S22 agentic canonical retrieval transcript
+coverage, plus S23 duplicate review governance coverage. Run this as part of
+final acceptance:
 
 ```sh
 if rg -n "test\\.todo|todo\\(" test/scenarios; then
