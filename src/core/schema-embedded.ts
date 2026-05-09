@@ -428,17 +428,24 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
 );
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
-  token_hash   TEXT PRIMARY KEY,
-  token_type   TEXT NOT NULL,
-  client_id    TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
-  scopes       TEXT[],
-  expires_at   BIGINT,
-  resource     TEXT,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+  token_hash    TEXT PRIMARY KEY,
+  token_type    TEXT NOT NULL,
+  client_id     TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  scopes        TEXT[],
+  expires_at    BIGINT,
+  resource      TEXT,
+  -- v46: end-user identity captured at mint time (federated /authorize flow).
+  subject_email TEXT,
+  subject_iss   TEXT,
+  user_tier     TEXT CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expiry ON oauth_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_tokens(client_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_subject_email
+  ON oauth_tokens(subject_email)
+  WHERE subject_email IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS oauth_codes (
   code_hash              TEXT PRIMARY KEY,
@@ -449,8 +456,29 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
   redirect_uri           TEXT NOT NULL,
   state                  TEXT,
   resource               TEXT,
+  -- v46: end-user identity carried from /authorize to /token.
+  subject_email          TEXT,
+  subject_iss            TEXT,
+  user_tier              TEXT CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full')),
   expires_at             BIGINT NOT NULL,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- v46: per-email access grants. The grants CLI normalizes email lowercase
+-- before INSERT; the CHECK enforces the invariant at the storage layer.
+-- revoked_at IS NOT NULL means the grant is revoked; the application
+-- treats that as tier=None at the next /token exchange.
+CREATE TABLE IF NOT EXISTS oauth_user_grants (
+  email        TEXT PRIMARY KEY,
+  access_tier  TEXT NOT NULL DEFAULT 'None'
+    CONSTRAINT oauth_user_grants_access_tier_check
+    CHECK (access_tier IN ('None', 'Family', 'Work', 'Full')),
+  granted_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  granted_by   TEXT,
+  revoked_at   TIMESTAMPTZ,
+  notes        TEXT,
+  CONSTRAINT oauth_user_grants_email_lowercase
+    CHECK (email = lower(email))
 );
 
 -- Composite indexes for admin dashboard request log queries

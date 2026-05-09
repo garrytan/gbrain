@@ -2142,6 +2142,100 @@ export const MIGRATIONS: Migration[] = [
     },
   },
   {
+    version: 46,
+    name: 'oauth_user_grants',
+    idempotent: true,
+    // End-user identity layer on top of v45's per-client access tier. v45
+    // grants a tier to an OAuth client (the agent); v46 grants a tier to a
+    // human (the email). When the /token endpoint exchanges an auth code
+    // that carried a federated identity (subject_email + subject_iss), the
+    // resulting bearer token snapshots the email's current grant tier into
+    // oauth_tokens.user_tier. Snapshot at mint time means revoking a grant
+    // affects only the next mint, not already-issued tokens. Operators
+    // revoke by setting oauth_user_grants.revoked_at; the application layer
+    // treats a non-null revoked_at as tier=None at the next exchange.
+    //
+    // Email normalization: oauth_user_grants.email is the lowercase
+    // canonical form. The CHECK (email = lower(email)) constraint is the
+    // simpler path versus a BEFORE INSERT trigger - it surfaces violations
+    // at the call site instead of silently rewriting input. The grants CLI
+    // and /token exchange both lower() before INSERT/lookup.
+    //
+    // Three-column extension to oauth_tokens AND oauth_codes uses
+    // ADD COLUMN IF NOT EXISTS so a partially-applied run on a wedged
+    // pooler is recoverable. The auth code carries subject_email +
+    // subject_iss + user_tier between /authorize and /token; /token reads
+    // those off the consumed code row and persists them onto the new
+    // oauth_tokens row.
+    //
+    // Verify hook: post-condition probe asserts oauth_user_grants table
+    // exists with the expected columns AND oauth_tokens.subject_email +
+    // oauth_codes.subject_email columns exist. current_schema() scoping
+    // matches v45 so multi-tenant deployments don't false-positive on a
+    // sibling schema's table.
+    sql: `
+      CREATE TABLE IF NOT EXISTS oauth_user_grants (
+        email        TEXT PRIMARY KEY,
+        access_tier  TEXT NOT NULL DEFAULT 'None'
+          CONSTRAINT oauth_user_grants_access_tier_check
+          CHECK (access_tier IN ('None', 'Family', 'Work', 'Full')),
+        granted_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        granted_by   TEXT,
+        revoked_at   TIMESTAMPTZ,
+        notes        TEXT,
+        CONSTRAINT oauth_user_grants_email_lowercase
+          CHECK (email = lower(email))
+      );
+
+      ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_email TEXT;
+      ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_iss   TEXT;
+      ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS user_tier     TEXT
+        CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
+
+      ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_email TEXT;
+      ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_iss   TEXT;
+      ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS user_tier     TEXT
+        CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
+
+      CREATE INDEX IF NOT EXISTS idx_oauth_tokens_subject_email
+        ON oauth_tokens(subject_email)
+        WHERE subject_email IS NOT NULL;
+    `,
+    verify: async (engine) => {
+      // 1. oauth_user_grants table + columns.
+      const grantCols = await engine.executeRaw<{ column_name: string; is_nullable: string }>(
+        `SELECT column_name, is_nullable
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'oauth_user_grants'`,
+      );
+      const grantNames = new Set(grantCols.map(r => r.column_name));
+      const wantGrant = ['email', 'access_tier', 'granted_at', 'granted_by', 'revoked_at', 'notes'];
+      for (const c of wantGrant) {
+        if (!grantNames.has(c)) return false;
+      }
+      // 2. oauth_tokens.subject_email column exists.
+      const tokRows = await engine.executeRaw<{ column_name: string }>(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'oauth_tokens'
+           AND column_name = 'subject_email'`,
+      );
+      if (tokRows.length !== 1) return false;
+      // 3. oauth_codes.subject_email column exists.
+      const codeRows = await engine.executeRaw<{ column_name: string }>(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'oauth_codes'
+           AND column_name = 'subject_email'`,
+      );
+      if (codeRows.length !== 1) return false;
+      return true;
+    },
+  },
+  {
     version: 45,
     name: 'oauth_clients_access_tier',
     idempotent: true,
