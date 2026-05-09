@@ -1208,14 +1208,29 @@ describeE2E('E2E: RLS Verification', () => {
 // ─────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: Doctor Command', () => {
+  // Scope GBRAIN_HOME to a hermetic tmpdir so `gbrain doctor` doesn't read
+  // the developer's local ~/.gbrain/migrations/completed.jsonl. Stale partial
+  // entries from in-flight workspaces (e.g. v0.31.x santiago) would make the
+  // minions_migration check fail and exit 1, masking real DB-health failures.
+  let gbrainHome: string;
+
   beforeAll(async () => {
     await setupDB();
     await importFixtures();
+    gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-e2e-'));
   });
-  afterAll(teardownDB);
+  afterAll(async () => {
+    await teardownDB();
+    if (gbrainHome) rmSync(gbrainHome, { recursive: true, force: true });
+  });
 
   const cliCwd = join(import.meta.dir, '../..');
-  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, GBRAIN_DATABASE_URL: process.env.DATABASE_URL! });
+  const cliEnv = () => ({
+    ...process.env,
+    DATABASE_URL: process.env.DATABASE_URL!,
+    GBRAIN_DATABASE_URL: process.env.DATABASE_URL!,
+    GBRAIN_HOME: gbrainHome,
+  });
 
   test('gbrain doctor exits 0 on healthy DB', () => {
     // Init first so config exists for CLI
