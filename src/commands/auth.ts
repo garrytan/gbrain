@@ -135,6 +135,13 @@ async function listClients() {
       WHERE table_schema = current_schema()
         AND table_name = 'oauth_clients'
     `;
+    if (columns.length === 0) {
+      // No `oauth_clients` table at all — pre-v0.26 schema or a brain
+      // that was never initialised. Friendly exit beats an uncaught
+      // 42P01 from the SELECT below.
+      console.log('No OAuth clients table on this brain. Run `gbrain init` (and migrations) before registering clients.');
+      return;
+    }
     const columnNames = new Set(columns.map((row: any) => String(row.column_name)));
     const hasAccessTier = columnNames.has('access_tier');
     const hasDeletedAt = columnNames.has('deleted_at');
