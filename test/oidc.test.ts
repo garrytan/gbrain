@@ -280,9 +280,12 @@ describe('OidcVerifier verifyIdToken negative cases', () => {
     const v = newVerifier();
     const token = await signToken(defaultClaims());
     const parts = token.split('.');
-    // Flip the last char of the signature segment.
+    // Flip a high-order base64url char of the signature segment. Mutating
+    // the final char is brittle because the last character can contain
+    // padding-adjacent unused bits and still decode to the same signature.
     const sig = parts[2];
-    const mutated = sig[sig.length - 1] === 'A' ? sig.slice(0, -1) + 'B' : sig.slice(0, -1) + 'A';
+    const replacement = sig[0] === 'A' ? 'B' : 'A';
+    const mutated = replacement + sig.slice(1);
     parts[2] = mutated;
     const bad = parts.join('.');
     let caught: unknown;

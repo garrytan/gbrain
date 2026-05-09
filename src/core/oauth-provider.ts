@@ -22,8 +22,13 @@ import type {
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+import {
+  InvalidGrantError,
+  InvalidScopeError as OAuthInvalidScopeError,
+  InvalidTargetError,
+} from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
-import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
+import { hasScope, assertAllowedScopes, parseScopeString } from './scope.ts';
 import { ACCESS_TIER_DEFAULT, isAccessTier, resolveStoredAccessTier, tierMin, type AccessTier } from './access-tier.ts';
 
 // ---------------------------------------------------------------------------
@@ -77,6 +82,28 @@ function validateRedirectUri(uri: string): void {
   throw new Error(
     `redirect_uri must use https:// (or http://localhost for loopback): ${uri}`,
   );
+}
+
+function canonicalResource(value: URL | string | undefined | null): string | undefined {
+  if (!value) return undefined;
+  const url = value instanceof URL ? new URL(value.href) : new URL(value);
+  url.hash = '';
+  return url.href;
+}
+
+function assertResourceBinding(stored: unknown, requested: URL | undefined, context: 'authorization_code' | 'refresh_token'): URL | undefined {
+  const storedHref = typeof stored === 'string' && stored ? canonicalResource(stored) : undefined;
+  const requestedHref = canonicalResource(requested);
+  if (storedHref && !requestedHref) {
+    throw new InvalidTargetError(`${context} resource is required`);
+  }
+  if (!storedHref && requestedHref) {
+    throw new InvalidTargetError(`${context} was not issued for a resource`);
+  }
+  if (storedHref && requestedHref && storedHref !== requestedHref) {
+    throw new InvalidTargetError(`${context} resource does not match original grant`);
+  }
+  return storedHref ? new URL(storedHref) : undefined;
 }
 
 /**
@@ -296,6 +323,18 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     return this._clientsStore;
   }
 
+  private validateAuthorizationScopes(client: OAuthClientInformationFull, requestedScopes: readonly string[] | undefined): string[] {
+    const scopes = [...(requestedScopes || [])];
+    assertAllowedScopes(scopes);
+    const allowedScopes = parseScopeString(client.scope);
+    for (const scope of scopes) {
+      if (!hasScope(allowedScopes, scope)) {
+        throw new OAuthInvalidScopeError(`Requested scope "${scope}" exceeds this client's registered scope`);
+      }
+    }
+    return scopes;
+  }
+
   // -------------------------------------------------------------------------
   // Authorization Code Flow
   // -------------------------------------------------------------------------
@@ -305,13 +344,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
+    const scopes = this.validateAuthorizationScopes(client, params.scopes);
     if (this.oidc) {
       this.prunePendingOidc();
       const state = generateToken('gbrain_oidc_');
       const nonce = generateToken('gbrain_nonce_');
       this.pendingOidc.set(state, {
         clientId: client.client_id,
-        scopes: params.scopes || [],
+        scopes,
         codeChallenge: params.codeChallenge,
         redirectUri: params.redirectUri,
         clientState: params.state,
@@ -333,7 +373,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     }
 
     const code = await this.createInternalAuthorizationCode(client.client_id, {
-      scopes: params.scopes || [],
+      scopes,
       codeChallenge: params.codeChallenge,
       redirectUri: params.redirectUri,
       state: params.state,
@@ -391,6 +431,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (!isUndefinedColumnError(e, 'subject_email')
           && !isUndefinedColumnError(e, 'subject_iss')
           && !isUndefinedColumnError(e, 'user_tier')) throw e;
+      if (params.federated) {
+        throw new Error('Database is missing v46 OIDC identity columns; run `gbrain apply-migrations --yes` before enabling OIDC federation.');
+      }
       await this.sql`
         INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
                                   code_challenge_method, redirect_uri, state, resource, expires_at)
@@ -454,7 +497,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         clientState,
         error: {
           code: 'access_denied',
-          description: e instanceof Error ? e.message : 'OIDC verification failed',
+          description: 'OIDC verification failed',
         },
       };
     }
@@ -470,7 +513,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         clientState,
         error: {
           code: 'access_denied',
-          description: `No grant for ${identity.email}`,
+          description: 'Access denied',
         },
       };
     }
@@ -481,7 +524,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         clientState,
         error: {
           code: 'access_denied',
-          description: `Grant for ${identity.email} does not allow access`,
+          description: 'Access denied',
         },
       };
     }
@@ -527,7 +570,6 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     redirectUri?: string,
     resource?: URL,
   ): Promise<OAuthTokens> {
-    void resource;
     // OAuth 2.1 / RFC 9700 §4.1.3: redirect_uri MUST be sent at /token if it
     // was sent at /authorize. gbrain's /authorize requires it (oauth_codes
     // schema is NOT NULL), so /token MUST receive it too. Earlier versions
@@ -597,10 +639,24 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const subjectEmail = (codeRow.subject_email as string | null | undefined) ?? undefined;
     const subjectIss = (codeRow.subject_iss as string | null | undefined) ?? undefined;
     const userTierRaw = (codeRow.user_tier as string | null | undefined) ?? undefined;
-    const userTier = userTierRaw && isAccessTier(userTierRaw) ? userTierRaw : undefined;
-    const storedResource = typeof codeRow.resource === 'string' && codeRow.resource
-      ? new URL(codeRow.resource)
-      : undefined;
+    let userTier = userTierRaw && isAccessTier(userTierRaw) ? userTierRaw : undefined;
+    if (subjectEmail) {
+      if (!subjectIss || !userTier) {
+        throw new InvalidGrantError('OIDC authorization code is missing federated identity fields');
+      }
+      const grants = await this.sql`
+        SELECT access_tier FROM oauth_user_grants
+        WHERE email = ${subjectEmail} AND revoked_at IS NULL
+      `;
+      if (grants.length === 0) {
+        throw new InvalidGrantError('OIDC grant is no longer active');
+      }
+      userTier = resolveStoredAccessTier(grants[0].access_tier);
+      if (userTier === 'None') {
+        throw new InvalidGrantError('OIDC grant does not allow access');
+      }
+    }
+    const storedResource = assertResourceBinding(codeRow.resource, resource, 'authorization_code');
     return this.issueTokens(client.client_id, scopes, storedResource, true, undefined, {
       subjectEmail, subjectIss, userTier,
     });
@@ -616,7 +672,6 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     scopes?: string[],
     resource?: URL,
   ): Promise<OAuthTokens> {
-    void resource;
     const tokenHash = hashToken(refreshToken);
     const now = Math.floor(Date.now() / 1000);
 
@@ -698,9 +753,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         throw new Error(`OIDC grant for ${subjectEmail} does not allow access`);
       }
     }
-    const storedResource = typeof row.resource === 'string' && row.resource
-      ? new URL(row.resource)
-      : undefined;
+    const storedResource = assertResourceBinding(row.resource, resource, 'refresh_token');
     return this.issueTokens(client.client_id, tokenScopes, storedResource, true, undefined, {
       subjectEmail, subjectIss, userTier,
     });
@@ -1045,6 +1098,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     if (!isAccessTier(accessTier)) {
       throw new Error(`registerClientManual: invalid accessTier "${accessTier}"`);
     }
+    for (const uri of redirectUris) {
+      validateRedirectUri(uri);
+    }
+    if (grantTypes.includes('authorization_code') && redirectUris.length === 0) {
+      throw new Error('authorization_code clients require at least one redirect_uri');
+    }
 
     const clientId = generateToken('gbrain_cl_');
     const clientSecret = generateToken('gbrain_cs_');
@@ -1142,6 +1201,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (!isUndefinedColumnError(e, 'subject_email')
           && !isUndefinedColumnError(e, 'subject_iss')
           && !isUndefinedColumnError(e, 'user_tier')) throw e;
+      if (federated?.subjectEmail || federated?.subjectIss || federated?.userTier) {
+        throw new Error('Database is missing v46 OIDC identity columns; run `gbrain apply-migrations --yes` before enabling OIDC federation.');
+      }
       await this.sql`
         INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
         VALUES (${accessHash}, ${'access'}, ${clientId},
@@ -1178,6 +1240,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         if (!isUndefinedColumnError(e, 'subject_email')
             && !isUndefinedColumnError(e, 'subject_iss')
             && !isUndefinedColumnError(e, 'user_tier')) throw e;
+        if (federated?.subjectEmail || federated?.subjectIss || federated?.userTier) {
+          throw new Error('Database is missing v46 OIDC identity columns; run `gbrain apply-migrations --yes` before enabling OIDC federation.');
+        }
         await this.sql`
           INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
           VALUES (${refreshHash}, ${'refresh'}, ${clientId},

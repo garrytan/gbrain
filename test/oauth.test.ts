@@ -420,6 +420,23 @@ describe('revokeToken', () => {
 // ---------------------------------------------------------------------------
 
 describe('authorization code flow', () => {
+  test('authorize rejects scopes outside registered client scope', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'authcode-scope-cap-test', ['authorization_code'], 'read',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+    const mockRes = { redirect() {} } as any;
+
+    await expect(
+      provider.authorize(client, {
+        codeChallenge: 'challenge',
+        redirectUri: 'http://localhost:3000/callback',
+        scopes: ['admin'],
+      }, mockRes),
+    ).rejects.toThrow(/exceeds this client's registered scope/);
+  });
+
   test('code issuance and exchange', async () => {
     const { clientId } = await provider.registerClientManual(
       'authcode-test', ['authorization_code'], 'read write',
@@ -543,6 +560,139 @@ describe('authorization code flow', () => {
     const failures = results.filter(r => r.status === 'rejected');
     expect(successes.length).toBe(1);
     expect(failures.length).toBe(N - 1);
+  });
+
+  test('authorization code resource is bound at token exchange', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'authcode-resource-test', ['authorization_code'], 'read',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read'],
+      resource: new URL('https://brain.example/mcp'),
+    }, mockRes);
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+
+    await expect(
+      provider.exchangeAuthorizationCode(client, code, undefined, 'http://localhost:3000/callback'),
+    ).rejects.toThrow(/resource is required/);
+
+    redirectUrl = '';
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read'],
+      resource: new URL('https://brain.example/mcp'),
+    }, mockRes);
+    const code2 = new URL(redirectUrl).searchParams.get('code')!;
+    await expect(
+      provider.exchangeAuthorizationCode(
+        client,
+        code2,
+        undefined,
+        'http://localhost:3000/callback',
+        new URL('https://other.example/mcp'),
+      ),
+    ).rejects.toThrow(/resource does not match/);
+
+    redirectUrl = '';
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read'],
+      resource: new URL('https://brain.example/mcp'),
+    }, mockRes);
+    const code3 = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = await provider.exchangeAuthorizationCode(
+      client,
+      code3,
+      undefined,
+      'http://localhost:3000/callback',
+      new URL('https://brain.example/mcp'),
+    );
+    const authInfo = await provider.verifyAccessToken(tokens.access_token);
+    expect(authInfo.resource?.href).toBe('https://brain.example/mcp');
+  });
+
+  test('OIDC grant revocation before token exchange invalidates the internal code', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'oidc-code-revoke-test', ['authorization_code'], 'read',
+      ['http://localhost:3000/callback'],
+    );
+    await sql`
+      INSERT INTO oauth_user_grants (email, access_tier)
+      VALUES (${'alice@example.com'}, ${'Work'})
+      ON CONFLICT (email) DO UPDATE SET access_tier = excluded.access_tier, revoked_at = NULL
+    `;
+    const code = generateToken('gbrain_code_');
+    await sql`
+      INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
+                                redirect_uri, subject_email, subject_iss, user_tier, expires_at)
+      VALUES (${hashToken(code)}, ${clientId}, ${'{read}'}, ${'challenge'},
+              ${'http://localhost:3000/callback'}, ${'alice@example.com'},
+              ${'https://accounts.google.com'}, ${'Work'}, ${Math.floor(Date.now() / 1000) + 60})
+    `;
+    await sql`
+      UPDATE oauth_user_grants SET revoked_at = now()
+      WHERE email = ${'alice@example.com'}
+    `;
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    await expect(
+      provider.exchangeAuthorizationCode(
+        client,
+        code,
+        undefined,
+        'http://localhost:3000/callback',
+      ),
+    ).rejects.toThrow(/grant is no longer active/);
+  });
+
+  test('federated token issuance fails closed when v46 token columns are absent', async () => {
+    const oldDb = new PGlite({ extensions: { vector, pg_trgm } });
+    await oldDb.exec(PGLITE_SCHEMA_SQL);
+    try {
+      await oldDb.exec(`
+        DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_iss;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS user_tier;
+      `);
+      const oldSql = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<Record<string, unknown>[]> => {
+        const query = strings.reduce((acc, str, i) => acc + str + (i < values.length ? `$${i + 1}` : ''), '');
+        const result = await oldDb.query(query, values as any[]);
+        return result.rows as Record<string, unknown>[];
+      };
+      const oldProvider = new GBrainOAuthProvider({ sql: oldSql });
+      const clientId = generateToken('gbrain_cl_');
+      await oldSql`
+        INSERT INTO oauth_clients (client_id, client_name, scope)
+        VALUES (${clientId}, ${'old-oidc-client'}, ${'read'})
+      `;
+
+      await expect(
+        (oldProvider as any).issueTokens(
+          clientId,
+          ['read'],
+          undefined,
+          true,
+          undefined,
+          {
+            subjectEmail: 'alice@example.com',
+            subjectIss: 'https://accounts.google.com',
+            userTier: 'Work',
+          },
+        ),
+      ).rejects.toThrow(/missing v46 OIDC identity columns/);
+    } finally {
+      await oldDb.close();
+    }
   });
 });
 
