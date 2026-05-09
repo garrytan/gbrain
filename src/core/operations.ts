@@ -319,11 +319,9 @@ export interface OperationContext {
    * (stdio MCP / local CLI, which are owner-trust paths).
    *
    * Operations enforce a minimum required tier via the
-   * `Operation.tier` field. The check is gated by
-   * `--enforce-access-tiers` on `gbrain serve` so existing
-   * deployments upgrade without breakage; when the flag is off, the
-   * dispatch layer logs the would-be decision (mcp_request_log + SSE)
-   * but does not reject.
+   * `Operation.tier` field. HTTP MCP enforcement is default-on; audit-only
+   * mode logs the would-be decision (mcp_request_log + SSE) and leaves this
+   * field undefined so handler-level filtering is passive too.
    */
   tier?: AccessTier;
   /**
@@ -1395,12 +1393,12 @@ const get_timeline: Operation = {
     const slug = p.slug as string;
     // Input-side tier gate. TimelineEntry rows have no slug field, so
     // response-side filtering cannot distinguish a personal page's
-    // timeline from a public page's. Reject up-front when the caller's
-    // tier doesn't admit the slug, mirroring the engine's not-found shape.
+    // timeline from a public page's. Hidden and absent slugs both return
+    // [] on this op, avoiding a slug-existence oracle.
     if (ctx.tier && ctx.tier !== 'Full') {
       const { tierAllowsSlug } = await import('./access-tier.ts');
       if (!tierAllowsSlug(slug, ctx.tier)) {
-        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug or use fuzzy: true');
+        return [];
       }
     }
     return ctx.engine.getTimeline(slug);
@@ -1581,13 +1579,12 @@ const get_chunks: Operation = {
     const slug = p.slug as string;
     // Input-side tier gate. Chunks rows have no slug field, so the
     // response-side filterResponseByTier cannot distinguish a personal
-    // page's chunks from a public page's chunks. Reject up-front when
-    // the caller's tier doesn't admit the slug, mirroring the engine's
-    // not-found shape so a Work-tier caller cannot probe slug existence.
+    // page's chunks from a public page's chunks. Hidden and absent slugs
+    // both return [] on this op, avoiding a slug-existence oracle.
     if (ctx.tier && ctx.tier !== 'Full') {
       const { tierAllowsSlug } = await import('./access-tier.ts');
       if (!tierAllowsSlug(slug, ctx.tier)) {
-        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug or use fuzzy: true');
+        return [];
       }
     }
     return ctx.engine.getChunks(slug);

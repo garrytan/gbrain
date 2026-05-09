@@ -27,7 +27,7 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
-import { ACCESS_TIER_DEFAULT, OP_TIER_DEFAULT_REQUIRED, filterResponseByTier, tierImplies, type AccessTier } from '../core/access-tier.ts';
+import { ACCESS_TIER_DEFAULT, OP_TIER_DEFAULT_REQUIRED, filterResponseByTier, parseAccessTier, tierImplies, type AccessTier } from '../core/access-tier.ts';
 import { summarizeMcpParams } from '../mcp/dispatch.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
@@ -164,16 +164,16 @@ interface ServeHttpOptions {
   /**
    * Runtime MCP access control. When true, MCP tools/call dispatch
    * enforces the minimum tier declared on each Operation against the
-   * caller's `oauth_clients.access_tier`. Default false: tier is
-   * still threaded into OperationContext + mcp_request_log so
-   * operators can audit what would be rejected before turning the
-   * boundary on. Flip via `gbrain serve --enforce-access-tiers`.
+   * caller's `oauth_clients.access_tier` and filters tier-visible
+   * response rows. Default true for HTTP OAuth; legacy rows resolve
+   * to Full for compatibility. Set false only for explicit audit-only
+   * rollout.
    */
   enforceAccessTiers?: boolean;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, publicUrl, logFullParams, enforceAccessTiers = false } = options;
+  const { port, tokenTtl, enableDcr, publicUrl, logFullParams, enforceAccessTiers = true } = options;
   const config = loadConfig() || { engine: 'pglite' as const };
 
   if (logFullParams) {
@@ -674,16 +674,25 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes, tokenTtl } = req.body;
+      const { name, scopes, tokenTtl, accessTier } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      let tier = ACCESS_TIER_DEFAULT;
+      if (accessTier !== undefined) {
+        try {
+          tier = parseAccessTier(String(accessTier)) ?? ACCESS_TIER_DEFAULT;
+        } catch (e) {
+          res.status(400).json({ error: e instanceof Error ? e.message : 'Invalid access tier' });
+          return;
+        }
+      }
       const result = await oauthProvider.registerClientManual(
-        name, ['client_credentials'], scopes || 'read', [],
+        name, ['client_credentials'], scopes || 'read', [], tier,
       );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
         await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
       }
-      res.json({ ...result, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
+      res.json({ ...result, accessTier: tier, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'Registration failed' });
     }
@@ -788,8 +797,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         status: 'success',
         timestamp: new Date().toISOString(),
       });
+      const visibleOps = mcpOperations.filter((op) => {
+        const requiredScope = op.scope || 'read';
+        if (!hasScope(authInfo.scopes, requiredScope)) return false;
+        if (!enforceAccessTiers) return true;
+        const callerTier: AccessTier = authInfo.tier ?? ACCESS_TIER_DEFAULT;
+        const requiredTier: AccessTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
+        return tierImplies(callerTier, requiredTier);
+      });
       return {
-        tools: mcpOperations.map(op => ({
+        tools: visibleOps.map(op => ({
           name: op.name,
           description: op.description,
           inputSchema: {
@@ -873,10 +890,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // `oauth_clients.access_tier`, threaded into AuthInfo by the
       // OAuth provider. Default ACCESS_TIER_DEFAULT preserves the
       // pre-v45 grant when the column is null (legacy rows). The
-      // op.tier check below enforces the boundary only when
-      // --enforce-access-tiers is set; otherwise we log the would-be
-      // decision (to mcp_request_log + SSE + stderr) so operators
-      // can audit before flipping the switch.
+      // op.tier check below enforces the boundary unless the operator
+      // explicitly starts audit-only mode; otherwise we log the
+      // would-be decision (to mcp_request_log + SSE + stderr) so
+      // operators can audit a rollout.
       const callerTier: AccessTier = authInfo.tier ?? ACCESS_TIER_DEFAULT;
       const requiredTier: AccessTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
       const tierAllowed = tierImplies(callerTier, requiredTier);
@@ -935,7 +952,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           tier_caller: callerTier,
           timestamp: new Date().toISOString(),
         });
-        console.error(`[serve-http] WARN: ${tierMsg} for op '${name}' (audit-only; pass --enforce-access-tiers to reject)`);
+        console.error(`[serve-http] WARN: ${tierMsg} for op '${name}' (audit-only; remove --audit-access-tiers to reject)`);
       }
 
       const ctx: OperationContext = {
@@ -955,7 +972,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // belt; this is the suspenders.
         remote: true,
         auth: authInfo,
-        tier: callerTier,
+        tier: enforceAccessTiers ? callerTier : undefined,
         senderId: authInfo.clientId,
       };
 
@@ -981,7 +998,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // an empty post-filter ambiguous-candidates throw can echo the
         // caller's input slug in the message (matching engine shape).
         const requestSlug = typeof params?.slug === 'string' ? (params.slug as string) : undefined;
-        const result = await filterResponseByTier(name, rawResult, { tier: ctx.tier, requestSlug });
+        const includeDeleted = (params?.include_deleted as boolean) === true;
+        const result = enforceAccessTiers
+          ? await filterResponseByTier(name, rawResult, { tier: ctx.tier, requestSlug, includeDeleted })
+          : rawResult;
         const latency = Date.now() - startTime;
 
         try {

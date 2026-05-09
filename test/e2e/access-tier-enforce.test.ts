@@ -1,8 +1,8 @@
 /**
- * E2E: --enforce-access-tiers gates a Work-tier OAuth client at the MCP
- * dispatch layer.
+ * E2E: default HTTP access-tier enforcement gates a Work-tier OAuth client
+ * at the MCP dispatch layer.
  *
- * Boots `gbrain serve --http --enforce-access-tiers` against real Postgres,
+ * Boots `gbrain serve --http` against real Postgres,
  * registers two OAuth clients (one Full, one Work), seeds a `personal/`
  * page and a `people/` page via the Full client, then asserts that the
  * Work client gets `page_not_found` on the personal slug and an empty
@@ -10,11 +10,11 @@
  * filters that earlier versions of access-tier.ts shipped against
  * get_chunks / find_orphans / resolve_slugs.
  *
- * Run: GBRAIN_DATABASE_URL=... bun test test/e2e/access-tier-enforce.test.ts
+ * Run: DATABASE_URL=... bun test test/e2e/access-tier-enforce.test.ts
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { hasDatabase } from './helpers.ts';
+import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -26,7 +26,7 @@ if (skip) {
 const PORT = 19132;
 const BASE = `http://localhost:${PORT}`;
 
-describeE2E('serve-http --enforce-access-tiers (runtime MCP access control)', () => {
+describeE2E('serve-http default access-tier enforcement (runtime MCP access control)', () => {
   let serverProcess: ReturnType<typeof import('child_process').spawn> | null = null;
   let fullClientId: string | undefined;
   let fullClientSecret: string | undefined;
@@ -36,6 +36,8 @@ describeE2E('serve-http --enforce-access-tiers (runtime MCP access control)', ()
   beforeAll(async () => {
     const { execSync, spawn } = await import('child_process');
     const env = { ...process.env };
+
+    await setupDB();
 
     // Full-tier admin client (default tier when --tier omitted is Full).
     const fullOut = execSync(
@@ -60,7 +62,6 @@ describeE2E('serve-http --enforce-access-tiers (runtime MCP access control)', ()
       'run', 'src/cli.ts', 'serve', '--http',
       '--port', String(PORT),
       '--public-url', `http://localhost:${PORT}`,
-      '--enforce-access-tiers',
     ], {
       cwd: process.cwd(),
       env: process.env,
@@ -108,6 +109,7 @@ describeE2E('serve-http --enforce-access-tiers (runtime MCP access control)', ()
         console.error(`[afterAll] revoke-client cleanup failed for ${id}: ${e.message}`);
       }
     }
+    await teardownDB();
   });
 
   async function mintToken(id: string, secret: string, scope: string): Promise<string> {
@@ -201,15 +203,16 @@ describeE2E('serve-http --enforce-access-tiers (runtime MCP access control)', ()
     expect(body).toEqual([]);
   });
 
-  test('Work-tier client: get_chunks on personal/ returns page_not_found', async () => {
+  test('Work-tier client: get_chunks on personal/ returns empty array', async () => {
     // Input-side gate (chunks rows have no slug, so response-side filter
-    // is structurally inert; handler rejects up-front).
+    // is structurally inert). Hidden and absent slugs both return [] to
+    // avoid an existence oracle.
     const token = await mintToken(workClientId!, workClientSecret!, 'read');
     const result = await mcpToolCall(token, 'get_chunks', { slug: 'personal/diary' });
     const inner = result?.result ?? result;
-    expect(inner?.isError).toBe(true);
+    expect(inner?.isError).toBeFalsy();
     const body = unwrapToolText(result);
-    expect(JSON.stringify(body)).toMatch(/page_not_found/);
+    expect(body).toEqual([]);
   });
 
   test('Full-tier client: get_page on personal/ returns the page (control)', async () => {

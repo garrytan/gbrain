@@ -29,13 +29,13 @@ export async function runServe(engine: BrainEngine, args: string[] = []) {
     // when set so the posture change is visible in stderr.
     const logFullParams = args.includes('--log-full-params');
 
-    // Runtime MCP access control. Default off so existing
-    // deployments upgrade without breakage; flag flips enforcement on
-    // for the per-client `oauth_clients.access_tier` check. When off,
-    // the dispatch layer still threads tier into OperationContext +
-    // mcp_request_log so operators can audit decisions before turning
-    // enforcement on.
-    const enforceAccessTiers = args.includes('--enforce-access-tiers');
+    // Runtime MCP access control. Default on: legacy clients and old
+    // rows resolve to Full, so existing grants keep working while
+    // lower-tier clients get a real boundary. Operators can use
+    // --audit-access-tiers / --no-enforce-access-tiers as an explicit
+    // dry-run escape hatch during rollout.
+    const auditAccessTiers = args.includes('--audit-access-tiers') || args.includes('--no-enforce-access-tiers');
+    const enforceAccessTiers = !auditAccessTiers || args.includes('--enforce-access-tiers');
 
     const { runServeHttp } = await import('./serve-http.ts');
     await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, enforceAccessTiers });

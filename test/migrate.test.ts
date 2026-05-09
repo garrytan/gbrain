@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
-import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers, hasPendingMigrations } from '../src/core/migrate.ts';
+import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers, hasPendingMigrations, MigrationDriftError } from '../src/core/migrate.ts';
 import type { IdleBlocker } from '../src/core/migrate.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -369,6 +369,38 @@ describe('migrate — ordering guarantee (v15 must NOT be skipped by v16)', () =
     const versions = MIGRATIONS.map(m => m.version);
     const uniq = new Set(versions);
     expect(uniq.size).toBe(versions.length);
+  });
+});
+
+describe('migrate — verify retry must pass before version bump', () => {
+  test('idempotent migration whose verify still fails after retry does not advance version', async () => {
+    const migration = {
+      version: LATEST_VERSION + 1,
+      name: 'test_verify_retry_failure',
+      sql: '',
+      idempotent: true,
+      handler: async () => {},
+      verify: async () => false,
+    };
+    const setVersions: string[] = [];
+    const engine = {
+      kind: 'pglite' as const,
+      async getConfig(_k: string) { return String(LATEST_VERSION); },
+      async setConfig(_k: string, value: string) { setVersions.push(value); },
+      async executeRaw() { return []; },
+      async transaction<T>(fn: (e: BrainEngine) => Promise<T>): Promise<T> { return fn(engine as unknown as BrainEngine); },
+      async runMigration() {},
+    } as unknown as BrainEngine;
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    MIGRATIONS.push(migration);
+    try {
+      await expect(runMigrations(engine)).rejects.toBeInstanceOf(MigrationDriftError);
+      expect(setVersions).not.toContain(String(migration.version));
+    } finally {
+      MIGRATIONS.pop();
+      warnSpy.mockRestore();
+    }
   });
 });
 

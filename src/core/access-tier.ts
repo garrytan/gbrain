@@ -245,6 +245,11 @@ export interface FilterContext {
    * still works without it.
    */
   requestSlug?: string;
+  /**
+   * Mirrors get_page's include_deleted parameter so tier-hidden pages use
+   * the same not-found hint as genuinely absent pages for the same request.
+   */
+  includeDeleted?: boolean;
 }
 
 /**
@@ -289,12 +294,13 @@ async function loadOperationError(): Promise<OperationErrorCtor> {
   return _OperationErrorCtor;
 }
 
-// Match the dominant engine `page_not_found` shape at
-// src/core/operations.ts get_page handler: same code, same message
-// template, same suggestion text. Both filter throws and the get_chunks
-// + get_timeline input-side gates use this to keep the wire envelope
-// byte-identical and defeat side-channel slug-existence probes.
-const NOT_FOUND_SUGGESTION = 'Check the slug or use fuzzy: true';
+// Match src/core/operations.ts get_page handler exactly for the same request
+// params, so a hidden page and an absent page serialize identically.
+function notFoundSuggestion(includeDeleted?: boolean): string {
+  return includeDeleted
+    ? 'Check the slug or use fuzzy: true'
+    : 'Page may be soft-deleted; pass include_deleted: true to verify';
+}
 
 export async function filterResponseByTier(
   opName: string,
@@ -330,7 +336,7 @@ export async function filterResponseByTier(
           throw new OperationError(
             'page_not_found',
             probeSlug ? `Page not found: ${probeSlug}` : `Page not found`,
-            NOT_FOUND_SUGGESTION,
+            notFoundSuggestion(ctxFilter.includeDeleted),
           );
         }
         return { ...obj, candidates: visible };
@@ -342,10 +348,11 @@ export async function filterResponseByTier(
         // not-found from the engine, so a Work-tier probe cannot
         // distinguish hidden vs absent.
         const OperationError = await loadOperationError();
+        const probeSlug = ctxFilter.requestSlug ?? slug;
         throw new OperationError(
           'page_not_found',
-          `Page not found: ${slug}`,
-          NOT_FOUND_SUGGESTION,
+          `Page not found: ${probeSlug}`,
+          notFoundSuggestion(ctxFilter.includeDeleted),
         );
       }
       return result;

@@ -177,16 +177,23 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     const secretHash = hashToken(clientSecret);
     const now = Math.floor(Date.now() / 1000);
 
-    await this.sql`
-      INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                  grant_types, scope, token_endpoint_auth_method,
-                                  client_id_issued_at)
-      VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
-              ${pgArray((client.redirect_uris || []).map(String))},
-              ${pgArray(client.grant_types || ['client_credentials'])},
-              ${client.scope || ''}, ${client.token_endpoint_auth_method || 'client_secret_post'},
-              ${now})
-    `;
+    try {
+      await this.sql`
+        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                    grant_types, scope, token_endpoint_auth_method,
+                                    client_id_issued_at, access_tier)
+        VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                ${pgArray((client.redirect_uris || []).map(String))},
+                ${pgArray(client.grant_types || ['client_credentials'])},
+                ${client.scope || ''}, ${client.token_endpoint_auth_method || 'client_secret_post'},
+                ${now}, ${'None'})
+      `;
+    } catch (e) {
+      if (isUndefinedColumnError(e, 'access_tier')) {
+        throw new Error('Database is missing oauth_clients.access_tier; run `gbrain apply-migrations --yes` before enabling dynamic client registration.');
+      }
+      throw e;
+    }
 
     return {
       ...client,
@@ -409,13 +416,60 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // non-atomic statements, so a token can race the purge. This
     // predicate makes the JOIN itself reject any soft-deleted client's
     // surviving token, regardless of whether the purge ever ran.
-    const oauthRows = await this.sql`
-      SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.access_tier
-      FROM oauth_tokens t
-      INNER JOIN oauth_clients c ON c.client_id = t.client_id
-      WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
-        AND c.deleted_at IS NULL
-    `;
+    let oauthRows;
+    try {
+      oauthRows = await this.sql`
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.access_tier
+        FROM oauth_tokens t
+        INNER JOIN oauth_clients c ON c.client_id = t.client_id
+        WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          AND c.deleted_at IS NULL
+      `;
+    } catch (e) {
+      if (isUndefinedColumnError(e, 'access_tier')) {
+        // Pre-v45 database during an upgrade window: preserve legacy OAuth
+        // behavior by treating matching clients as Full tier until migrations
+        // add the column. Keep the INNER JOIN + deleted_at gate when present.
+        try {
+          oauthRows = await this.sql`
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, ${ACCESS_TIER_DEFAULT} as access_tier
+            FROM oauth_tokens t
+            INNER JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+              AND c.deleted_at IS NULL
+          `;
+        } catch (fallbackErr) {
+          if (!isUndefinedColumnError(fallbackErr, 'deleted_at')) throw fallbackErr;
+          oauthRows = await this.sql`
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, ${ACCESS_TIER_DEFAULT} as access_tier
+            FROM oauth_tokens t
+            INNER JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          `;
+        }
+      } else if (isUndefinedColumnError(e, 'deleted_at')) {
+        // Pre-soft-delete schema: preserve legacy verification. Revocation
+        // races are fixed once migrations add deleted_at.
+        try {
+          oauthRows = await this.sql`
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.access_tier
+            FROM oauth_tokens t
+            INNER JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          `;
+        } catch (fallbackErr) {
+          if (!isUndefinedColumnError(fallbackErr, 'access_tier')) throw fallbackErr;
+          oauthRows = await this.sql`
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, ${ACCESS_TIER_DEFAULT} as access_tier
+            FROM oauth_tokens t
+            INNER JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          `;
+        }
+      } else {
+        throw e;
+      }
+    }
 
     if (oauthRows.length > 0) {
       const row = oauthRows[0];
@@ -597,12 +651,27 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const secretHash = hashToken(clientSecret);
     const now = Math.floor(Date.now() / 1000);
 
-    await this.sql`
-      INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                  grant_types, scope, client_id_issued_at, access_tier)
-      VALUES (${clientId}, ${secretHash}, ${name},
-              ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now}, ${accessTier})
-    `;
+    try {
+      await this.sql`
+        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                    grant_types, scope, client_id_issued_at, access_tier)
+        VALUES (${clientId}, ${secretHash}, ${name},
+                ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now}, ${accessTier})
+      `;
+    } catch (e) {
+      if (!isUndefinedColumnError(e, 'access_tier')) throw e;
+      if (accessTier !== ACCESS_TIER_DEFAULT) {
+        throw new Error('Database is missing oauth_clients.access_tier; run `gbrain apply-migrations --yes` before registering a restricted-tier client.');
+      }
+      // Back-compat for operators who register a legacy Full client before
+      // running v45. The column default cannot exist yet, so omit it.
+      await this.sql`
+        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                    grant_types, scope, client_id_issued_at)
+        VALUES (${clientId}, ${secretHash}, ${name},
+                ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now})
+      `;
+    }
 
     return { clientId, clientSecret };
   }
@@ -620,11 +689,19 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // deleted_at IS NULL: refuse to mutate a tombstoned client's tier.
     // Operators get a "no client matched" return on a soft-deleted id
     // rather than a misleading success that has no effect.
-    const rows = await this.sql`
-      UPDATE oauth_clients SET access_tier = ${accessTier}
-      WHERE client_id = ${clientId} AND deleted_at IS NULL
-      RETURNING client_id
-    `;
+    let rows;
+    try {
+      rows = await this.sql`
+        UPDATE oauth_clients SET access_tier = ${accessTier}
+        WHERE client_id = ${clientId} AND deleted_at IS NULL
+        RETURNING client_id
+      `;
+    } catch (e) {
+      if (isUndefinedColumnError(e, 'access_tier')) {
+        throw new Error('Database is missing oauth_clients.access_tier; run `gbrain apply-migrations --yes` before setting client tiers.');
+      }
+      throw e;
+    }
     return rows.length > 0;
   }
 

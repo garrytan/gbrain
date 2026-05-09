@@ -129,11 +129,38 @@ async function list() {
 async function listClients() {
   const sql = postgres(getDatabaseUrl(true)!);
   try {
-    const rows = await sql`
-      SELECT client_id, client_name, access_tier, scope, grant_types, created_at, deleted_at
-      FROM oauth_clients
-      ORDER BY created_at DESC
+    const columns = await sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'oauth_clients'
     `;
+    const columnNames = new Set(columns.map((row: any) => String(row.column_name)));
+    const hasAccessTier = columnNames.has('access_tier');
+    const hasDeletedAt = columnNames.has('deleted_at');
+    const rows = hasAccessTier && hasDeletedAt
+      ? await sql`
+        SELECT client_id, client_name, access_tier, scope, grant_types, created_at, deleted_at
+        FROM oauth_clients
+        ORDER BY created_at DESC
+      `
+      : hasAccessTier
+        ? await sql`
+          SELECT client_id, client_name, access_tier, scope, grant_types, created_at, ${null} as deleted_at
+          FROM oauth_clients
+          ORDER BY created_at DESC
+        `
+        : hasDeletedAt
+          ? await sql`
+            SELECT client_id, client_name, ${'Full'} as access_tier, scope, grant_types, created_at, deleted_at
+            FROM oauth_clients
+            ORDER BY created_at DESC
+          `
+          : await sql`
+            SELECT client_id, client_name, ${'Full'} as access_tier, scope, grant_types, created_at, ${null} as deleted_at
+            FROM oauth_clients
+            ORDER BY created_at DESC
+          `;
     if (rows.length === 0) {
       console.log('No OAuth clients registered. Create one: gbrain auth register-client <name>');
       return;
@@ -371,7 +398,7 @@ async function registerClient(name: string, args: string[]) {
     console.log(`  Scopes:      ${scopes}`);
     console.log(`  Access tier: ${accessTier}\n`);
     if (accessTier === 'Full') {
-      console.log('NOTE: tier=Full is the default. Pass --tier work (or family) to restrict.');
+      console.log('NOTE: tier=Full is the default. Pass --tier Work (or Family) to restrict.');
       console.log('See ACCESS_POLICY.md.\n');
     }
     console.log('Save the client secret — it will not be shown again.');

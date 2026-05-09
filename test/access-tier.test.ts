@@ -216,12 +216,12 @@ describe('filterResponseByTier — read-path response filtering', () => {
     // produces the same `hint` string on both real and tier-rejected
     // not-found responses.
     await expect(
-      filterResponseByTier('get_page', page, { tier: 'Work' }),
+      filterResponseByTier('get_page', page, { tier: 'Work', requestSlug: 'personal/diary' }),
     ).rejects.toMatchObject({
       name: 'OperationError',
       code: 'page_not_found',
       message: 'Page not found: personal/diary',
-      suggestion: 'Check the slug or use fuzzy: true',
+      suggestion: 'Page may be soft-deleted; pass include_deleted: true to verify',
     });
   });
   test('get_page passes visible page through unchanged', async () => {
@@ -255,7 +255,7 @@ describe('filterResponseByTier — read-path response filtering', () => {
       name: 'OperationError',
       code: 'page_not_found',
       message: 'Page not found: a',
-      suggestion: 'Check the slug or use fuzzy: true',
+      suggestion: 'Page may be soft-deleted; pass include_deleted: true to verify',
     });
 
     // Without requestSlug the throw still fires; message degrades
@@ -267,6 +267,32 @@ describe('filterResponseByTier — read-path response filtering', () => {
       name: 'OperationError',
       code: 'page_not_found',
       message: 'Page not found',
+    });
+  });
+  test('get_page hidden fuzzy single-candidate echoes request slug, not hidden resolved slug', async () => {
+    const page = { slug: 'personal/diary', title: 'Diary', content: 'secret' };
+    await expect(
+      filterResponseByTier('get_page', page, { tier: 'Work', requestSlug: 'diar' }),
+    ).rejects.toMatchObject({
+      name: 'OperationError',
+      code: 'page_not_found',
+      message: 'Page not found: diar',
+      suggestion: 'Page may be soft-deleted; pass include_deleted: true to verify',
+    });
+  });
+  test('get_page include_deleted hidden-page hint matches real absent-page hint', async () => {
+    const page = { slug: 'personal/diary', title: 'Diary', content: 'secret' };
+    await expect(
+      filterResponseByTier('get_page', page, {
+        tier: 'Work',
+        requestSlug: 'personal/diary',
+        includeDeleted: true,
+      }),
+    ).rejects.toMatchObject({
+      name: 'OperationError',
+      code: 'page_not_found',
+      message: 'Page not found: personal/diary',
+      suggestion: 'Check the slug or use fuzzy: true',
     });
   });
   test('find_orphans wrapper — inner orphans array filtered, totals recomputed', async () => {
@@ -436,4 +462,53 @@ describe('OP_FILTER_SHAPE parity — tier-annotated read ops are covered', () =>
       expect(covered).toBe(true);
     });
   }
+});
+
+describe('input-side gated ops — hidden and absent slugs are indistinguishable', () => {
+  test('get_chunks returns [] for hidden slug without touching engine', async () => {
+    const op = operations.find(o => o.name === 'get_chunks');
+    expect(op).toBeDefined();
+    let called = false;
+    const result = await op!.handler({
+      tier: 'Work',
+      engine: {
+        getChunks: async () => {
+          called = true;
+          return [{ id: 1, chunk_text: 'secret' }];
+        },
+      },
+    } as any, { slug: 'personal/diary' });
+    expect(result).toEqual([]);
+    expect(called).toBe(false);
+  });
+
+  test('get_timeline returns [] for hidden slug without touching engine', async () => {
+    const op = operations.find(o => o.name === 'get_timeline');
+    expect(op).toBeDefined();
+    let called = false;
+    const result = await op!.handler({
+      tier: 'Work',
+      engine: {
+        getTimeline: async () => {
+          called = true;
+          return [{ date: '2026-01-01', summary: 'secret' }];
+        },
+      },
+    } as any, { slug: 'personal/diary' });
+    expect(result).toEqual([]);
+    expect(called).toBe(false);
+  });
+
+  test('get_timeline allows visible slug through', async () => {
+    const op = operations.find(o => o.name === 'get_timeline');
+    expect(op).toBeDefined();
+    const rows = [{ date: '2026-01-01', summary: 'logistics' }];
+    const result = await op!.handler({
+      tier: 'Family',
+      engine: {
+        getTimeline: async (slug: string) => slug === 'logistics/calendar' ? rows : [],
+      },
+    } as any, { slug: 'logistics/calendar' });
+    expect(result).toBe(rows);
+  });
 });

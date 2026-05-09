@@ -2149,8 +2149,9 @@ export const MIGRATIONS: Migration[] = [
     // the column and defaults existing rows to 'Full' so legacy
     // clients keep their current invocation rights — operators
     // tighten per-client via `gbrain auth register-client --tier
-    // <Full|Work|Family|None>` or the new `set-tier` subcommand;
-    // enforcement is opt-in via `gbrain serve --enforce-access-tiers`.
+    // <Full|Work|Family|None>` or the new `set-tier` subcommand.
+    // HTTP enforcement is default-on; `--audit-access-tiers` /
+    // `--no-enforce-access-tiers` is the rollout escape hatch.
     //
     // Column type TEXT (not an enum) so future tier-model evolutions
     // don't require an ALTER TYPE migration; values are validated at
@@ -2476,8 +2477,9 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
 
     // v0.30.1 (D6): post-condition probe. If a verify hook is declared, run
     // it before bumping config.version. When verify returns false, check
-    // idempotent — if true, log + retry the same migration once; if false,
-    // throw MigrationDriftError so operator runs --skip-verify deliberately.
+    // idempotent — if true, log + retry the same migration once and verify
+    // again; if false or the retry still fails, throw MigrationDriftError so
+    // operator runs --skip-verify deliberately.
     if (m.verify) {
       const verifyOk = await m.verify(engine).catch(() => false);
       if (!verifyOk) {
@@ -2486,8 +2488,14 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
           console.warn(`  [${m.version}] ⚠️  verify failed; re-running idempotent migration once`);
           if (sql) await runMigrationSQLWithRetry(engine, m, sql);
           if (m.handler) await m.handler(engine);
-          // Best-effort: don't double-throw if second run still fails verify.
-          // Operator's next run of doctor will re-detect drift.
+          const verifyRetryOk = await m.verify(engine).catch(() => false);
+          if (!verifyRetryOk) {
+            throw new MigrationDriftError(
+              m.version,
+              m.name,
+              `Schema still does not match expected post-condition after idempotent retry. Run with --skip-verify to force.`,
+            );
+          }
         } else {
           throw new MigrationDriftError(
             m.version,

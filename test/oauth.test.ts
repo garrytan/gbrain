@@ -598,6 +598,18 @@ describe('redirect_uri validation (DCR)', () => {
     expect(result.client_id).toStartWith('gbrain_cl_');
   });
 
+  test('DCR clients default to None access tier, not schema-default Full', async () => {
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'dcr-none-tier',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read write admin',
+      token_endpoint_auth_method: 'client_secret_post',
+    });
+    const rows = await sql`SELECT access_tier FROM oauth_clients WHERE client_id = ${result.client_id}`;
+    expect(rows[0].access_tier).toBe('None');
+  });
+
   test('plaintext http:// (non-loopback) is rejected', async () => {
     await expect(
       provider.clientsStore.registerClient!({

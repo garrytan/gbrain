@@ -1203,7 +1203,7 @@ iteration's residuals.
 
 **Depends on:** v0.10.0 GStackBrain skill layer (shipped).
 
-**Status:** Landing in PR. Sender identity is now resolved per-request from `oauth_clients.access_tier`; `Operation.tier?: AccessTier` annotates each op's required tier; the read surface (`get_page`, `list_pages`, `search`, `query`, `get_chunks`, `resolve_slugs`, `get_recent_salience`, `find_orphans`) is tier-annotated and tier-filtered by slug prefix; mutating + admin ops sit at Full. `gbrain serve --enforce-access-tiers` flips the boundary on; off-mode still logs would-reject decisions to `mcp_request_log` + SSE so operators can audit before enforcing. Open follow-ups: ACCESS_POLICY.md → tier-table auto-sync, per-page frontmatter tier overrides, traverse_graph + links/backlinks endpoint filtering (left for a follow-up to keep this PR focused).
+**Status:** Landing in PR. Sender identity is now resolved per-request from `oauth_clients.access_tier`; `Operation.tier?: AccessTier` annotates each op's required tier; the read surface (`get_page`, `list_pages`, `search`, `query`, `get_chunks`, `resolve_slugs`, `get_recent_salience`, `find_orphans`) is tier-annotated and tier-filtered by slug prefix; mutating + admin ops sit at Full. HTTP MCP enforces access tiers by default; `gbrain serve --audit-access-tiers` is the explicit dry-run mode that logs would-reject decisions to `mcp_request_log` + SSE without enforcing. Open follow-ups: ACCESS_POLICY.md → tier-table auto-sync, per-page frontmatter tier overrides, traverse_graph + links/backlinks endpoint filtering (left for a follow-up to keep this PR focused).
 
 ## P1 (new from v0.25.0 — eval-capture adversarial review)
 
