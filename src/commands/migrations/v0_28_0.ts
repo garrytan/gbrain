@@ -63,11 +63,23 @@ async function phaseASchema(
     const versionStr = await engine.getConfig('version');
     const v = parseInt(versionStr || '0', 10);
     if (v < 38) {
-      return {
-        name: 'schema',
-        status: 'failed',
-        detail: `expected schema version >= 38 (takes + access_tokens.permissions); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
-      };
+      // Cold-start path: schema migrations haven't run yet (e.g. direct
+      // upgrade from v0.22 without going through `gbrain upgrade`). Apply
+      // them now rather than failing — this is exactly what --force-schema
+      // does in apply-migrations.ts and what gbrain init --migrate-only
+      // does, but inline so the user doesn't need a two-step command.
+      console.log(`  Schema version ${v} < 38; applying pending schema migrations...`);
+      await engine.initSchema();
+      // Re-read version after apply to confirm we reached v38.
+      const newVerStr = await engine.getConfig('version');
+      const newV = parseInt(newVerStr || '0', 10);
+      if (newV < 38) {
+        return {
+          name: 'schema',
+          status: 'failed',
+          detail: `schema migration applied but version is still ${newV} (expected >= 38). Check for DDL errors above.`,
+        };
+      }
     }
     // Quick post-condition: takes + synthesis_evidence tables exist
     const rows = await engine.executeRaw<{ tablename: string }>(
