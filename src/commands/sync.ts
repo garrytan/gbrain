@@ -1155,12 +1155,19 @@ async function performFullSync(
   // actually enumerates code files (closes bug 1).
   // v0.30.x: thread sourceId so performFullSync routes pages to the named
   // source (incremental path already does this).
-  // v0.31.x (ee0754c): thread exclude (--exclude CLI) + slugRoot (when
-  // --src-subpath is active, so slugs stay git-root-relative).
+  // v0.31.x (ee0754c): thread exclude (--exclude CLI) + slugRoot.
+  //
+  // slugRoot gating (b4bfb70): use git-root-relative slugs ONLY when
+  // --src-subpath was explicitly provided. Sources registered with a
+  // direct subdirectory path (e.g. wiki → ~/atlas/shared/wiki) expect
+  // slugs relative to that path, not the git root — they may carry
+  // frontmatter slug: fields matching the old path-relative convention.
+  // The --src-subpath monorepo case is the only place git-root-relative
+  // slugs are intentional.
   const _fullImportT0 = Date.now();
   console.error(`[gbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
   const scopeRel = relative(gitContextRoot, syncScopeRoot);
-  const slugRoot = scopeRel ? gitContextRoot : undefined;
+  const slugRoot = (opts.srcSubpath && scopeRel) ? gitContextRoot : undefined;
   const result = await runImport(engine, importArgs, {
     commit: headCommit,
     strategy: opts.strategy,
