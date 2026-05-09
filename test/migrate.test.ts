@@ -1325,15 +1325,19 @@ describe('migrate v46 - oauth_user_grants', () => {
     expect(v46!.idempotent).toBe(true);
   });
 
-  test('v46 verify hook checks oauth_user_grants + both subject_email columns', () => {
+  test('v46 verify hook checks grants, federated columns, and subject index', () => {
     expect(typeof v46!.verify).toBe('function');
-    // Source-shape probe: the hook must reference both child tables and the
-    // grants table so a partially-applied run on a wedged pooler is caught.
+    // Source-shape probe: the hook must reference both child tables, all
+    // federated columns, the subject index, and the grants table so a
+    // partially-applied run on a wedged pooler is caught.
     const verifySrc = v46!.verify!.toString();
     expect(verifySrc).toContain('oauth_user_grants');
     expect(verifySrc).toContain('oauth_tokens');
     expect(verifySrc).toContain('oauth_codes');
     expect(verifySrc).toContain('subject_email');
+    expect(verifySrc).toContain('subject_iss');
+    expect(verifySrc).toContain('user_tier');
+    expect(verifySrc).toContain('idx_oauth_tokens_subject_email');
     // Spec mandates current_schema() scoping like v45.
     expect(verifySrc).toContain('current_schema()');
   });

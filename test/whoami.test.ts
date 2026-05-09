@@ -72,6 +72,29 @@ describe('whoami op contract', () => {
     expect(result.client_name).toBe('gstack-test');
     expect(result.scopes).toEqual(['read', 'sources_admin']);
     expect(result.expires_at).toBe(1234567890);
+    expect(result.tier).toBeNull();
+  });
+
+  test('oauth transport returns tier and federated subject when present', async () => {
+    const auth: AuthInfo = {
+      token: 'gbrain_at_xxx',
+      clientId: 'gbrain_cl_oidc',
+      clientName: 'browser-client',
+      scopes: ['read'],
+      expiresAt: 1234567890,
+      tier: 'Family',
+      subjectEmail: 'alice@example.com',
+      subjectIss: 'https://accounts.google.com',
+    };
+    const result = (await whoami.handler(
+      ctxWith({ remote: true, auth }),
+      {},
+    )) as any;
+    expect(result.transport).toBe('oauth');
+    expect(result.client_id).toBe('gbrain_cl_oidc');
+    expect(result.tier).toBe('Family');
+    expect(result.subject_email).toBe('alice@example.com');
+    expect(result.subject_iss).toBe('https://accounts.google.com');
   });
 
   test('legacy transport (token name as clientId, no gbrain_cl_ prefix)', async () => {

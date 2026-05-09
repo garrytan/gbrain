@@ -286,6 +286,8 @@ export class PostgresEngine implements BrainEngine {
    *     (indexed by `idx_mcp_log_agent_time`) — v0.26.3
    *   - `subagent_messages.provider_id` column (indexed by
    *     `idx_subagent_messages_provider`) — v0.27
+   *   - `oauth_tokens.subject_email` + `subject_iss` + `user_tier`
+   *     columns (indexed by `idx_oauth_tokens_subject_email`) — v46
    *
    * Keep this in sync with the PGLite version; covered by
    * `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
@@ -312,6 +314,10 @@ export class PostgresEngine implements BrainEngine {
       agent_name_exists: boolean;
       subagent_messages_exists: boolean;
       subagent_provider_id_exists: boolean;
+      oauth_tokens_exists: boolean;
+      oauth_tokens_subject_email_exists: boolean;
+      oauth_tokens_subject_iss_exists: boolean;
+      oauth_tokens_user_tier_exists: boolean;
     }[]>`
       SELECT
         EXISTS (SELECT 1 FROM information_schema.tables
@@ -341,7 +347,15 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'subagent_messages') AS subagent_messages_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'subagent_messages' AND column_name = 'provider_id') AS subagent_provider_id_exists
+                WHERE table_schema = current_schema() AND table_name = 'subagent_messages' AND column_name = 'provider_id') AS subagent_provider_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'oauth_tokens') AS oauth_tokens_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_tokens' AND column_name = 'subject_email') AS oauth_tokens_subject_email_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_tokens' AND column_name = 'subject_iss') AS oauth_tokens_subject_iss_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_tokens' AND column_name = 'user_tier') AS oauth_tokens_user_tier_exists
     `;
     const probe = probeRows[0]!;
 
@@ -358,8 +372,14 @@ export class PostgresEngine implements BrainEngine {
     // v0.27 (v36): idx_subagent_messages_provider in SCHEMA_SQL needs provider_id
     // (the SECOND column in the composite index `(job_id, provider_id)`).
     const needsSubagentProviderId = probe.subagent_messages_exists && !probe.subagent_provider_id_exists;
+    const needsOauthTokensV46Bootstrap = probe.oauth_tokens_exists
+      && (!probe.oauth_tokens_subject_email_exists
+        || !probe.oauth_tokens_subject_iss_exists
+        || !probe.oauth_tokens_user_tier_exists);
 
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId) return;
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
+        && !needsPagesDeletedAt && !needsMcpLogBootstrap
+        && !needsSubagentProviderId && !needsOauthTokensV46Bootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -445,6 +465,15 @@ export class PostgresEngine implements BrainEngine {
       // is idempotent.
       await conn.unsafe(`
         ALTER TABLE subagent_messages ADD COLUMN IF NOT EXISTS provider_id TEXT;
+      `);
+    }
+
+    if (needsOauthTokensV46Bootstrap) {
+      await conn.unsafe(`
+        ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_email TEXT;
+        ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_iss TEXT;
+        ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS user_tier TEXT
+          CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
       `);
     }
   }
