@@ -1109,7 +1109,6 @@ export function createMemoryInboxOperations(
         include_pages: true,
         include_candidates: true,
         limit: 5,
-        exclude_ids: [candidateInput.id],
       });
       const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
       return {

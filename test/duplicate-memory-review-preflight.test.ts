@@ -129,6 +129,31 @@ test('promotion preflight allows same-target canonical page updates', async () =
   });
 });
 
+test('promotion preflight does not hide duplicate pages whose slug matches the candidate id', async () => {
+  await withEngine('mbrain-duplicate-preflight-id-collision-', async (engine) => {
+    await engine.putPage('incoming-id-collision', {
+      type: 'concept',
+      title: 'Incoming Id Collision',
+      compiled_truth: 'Incoming id collision review keeps staged rollback owner notes and checkpoint evidence.',
+      frontmatter: {
+        source_refs: ['User, direct message, 2026-05-09 10:00 KST'],
+      },
+    });
+    await seedCandidate(engine, 'incoming-id-collision', {
+      proposed_content: 'Incoming id collision review keeps staged rollback owner notes and checkpoint evidence.',
+      target_object_id: 'concepts/new-collision-target',
+    });
+
+    const result = await preflightPromoteMemoryCandidate(engine, {
+      id: 'incoming-id-collision',
+    });
+
+    expect(result.decision).toBe('defer');
+    expect(result.reasons).toContain('candidate_possible_duplicate');
+    expect(result.duplicate_review.top_match?.id).toBe('incoming-id-collision');
+  });
+});
+
 test('promotion service fails closed for likely duplicate candidates', async () => {
   await withEngine('mbrain-duplicate-preflight-promote-', async (engine) => {
     await engine.putPage('concepts/existing-rollout', {

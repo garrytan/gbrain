@@ -121,7 +121,6 @@ export async function preflightPromoteMemoryCandidate(
     include_pages: true,
     include_candidates: true,
     limit: 5,
-    exclude_ids: [entry.id],
   }));
   if (duplicateReview.decision === 'likely_duplicate') {
     deferReasons.push('candidate_possible_duplicate');

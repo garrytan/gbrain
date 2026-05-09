@@ -172,6 +172,70 @@ test('duplicate review reports same target update for a page with the target id 
   expect(result.matches[0]?.reasons).toContain('same target object');
 });
 
+test('duplicate review does not exclude a page whose slug matches a candidate subject id', async () => {
+  const engine = await createEngine();
+  await engine.putPage('candidate-collision', {
+    type: 'concept',
+    title: 'Candidate Collision',
+    compiled_truth: 'Collision review keeps staged rollback owner notes and checkpoint evidence.',
+  });
+
+  const result = await reviewDuplicateMemory(engine, {
+    scope_id: 'workspace:default',
+    subject_kind: 'memory_candidate',
+    subject_id: 'candidate-collision',
+    title: 'Candidate Collision',
+    content: 'Collision review keeps staged rollback owner notes and checkpoint evidence.',
+    include_pages: true,
+    include_candidates: false,
+    limit: 5,
+  });
+
+  expect(result.decision).toBe('likely_duplicate');
+  expect(result.matches[0]?.kind).toBe('page');
+  expect(result.matches[0]?.id).toBe('candidate-collision');
+});
+
+test('duplicate review prefers unresolved likely duplicates over same target updates', async () => {
+  const engine = await createEngine();
+  await engine.putPage('projects/acme-existing', {
+    type: 'project',
+    title: 'Acme Existing',
+    compiled_truth: 'Acme migration adds staged rollback owner checkpoint evidence.',
+    frontmatter: {
+      source_refs: ['User, direct message, 2026-05-09 09:00 KST'],
+    },
+  });
+  await engine.putPage('projects/acme-duplicate', {
+    type: 'project',
+    title: 'Acme Duplicate',
+    compiled_truth: 'Acme migration adds staged rollback owner checkpoint evidence.',
+    frontmatter: {
+      source_refs: ['User, direct message, 2026-05-09 09:00 KST'],
+    },
+  });
+  await engine.addTag('projects/acme-duplicate', 'migration');
+
+  const result = await reviewDuplicateMemory(engine, {
+    scope_id: 'workspace:default',
+    subject_kind: 'memory_candidate',
+    subject_id: 'incoming-candidate',
+    title: 'Acme Existing',
+    content: 'Acme migration adds staged rollback owner checkpoint evidence.',
+    tags: ['migration'],
+    source_refs: ['User, direct message, 2026-05-09 09:00 KST'],
+    target_object_type: 'curated_note',
+    target_object_id: 'projects/acme-existing',
+    include_pages: true,
+    include_candidates: false,
+    limit: 5,
+  });
+
+  expect(result.matches[0]?.id).toBe('projects/acme-existing');
+  expect(result.matches.some((match) => match.id === 'projects/acme-duplicate')).toBe(true);
+  expect(result.decision).toBe('likely_duplicate');
+});
+
 test('duplicate review pages through canonical pages independent of result limit', async () => {
   const pages = [
     ...Array.from({ length: 100 }, (_, index) => makePage(

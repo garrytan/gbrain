@@ -94,7 +94,14 @@ export async function reviewDuplicateMemory(
   input: DuplicateMemoryReviewInput,
 ): Promise<DuplicateMemoryReviewResult> {
   const limit = normalizeLimit(input.limit);
-  const excludedIds = new Set([input.subject_id, ...(input.exclude_ids ?? [])].filter(Boolean));
+  const pageExcludedIds = new Set(input.exclude_ids ?? []);
+  const candidateExcludedIds = new Set(input.exclude_ids ?? []);
+  if (input.subject_kind === 'page' && input.subject_id) {
+    pageExcludedIds.add(input.subject_id);
+  }
+  if (input.subject_kind === 'memory_candidate' && input.subject_id) {
+    candidateExcludedIds.add(input.subject_id);
+  }
   const matches: DuplicateMemoryReviewMatch[] = [];
 
   if (input.include_pages !== false) {
@@ -102,7 +109,7 @@ export async function reviewDuplicateMemory(
     while (true) {
       const pages = await engine.listPages({ limit: SCAN_BATCH_SIZE, offset });
       for (const page of pages) {
-        if (excludedIds.has(page.slug)) continue;
+        if (pageExcludedIds.has(page.slug)) continue;
         const tags = await engine.getTags(page.slug);
         const match = scorePage(input, page, tags);
         if (isMeaningfulMatch(match)) matches.push(match);
@@ -122,7 +129,7 @@ export async function reviewDuplicateMemory(
       });
 
       for (const candidate of candidates) {
-        if (excludedIds.has(candidate.id)) continue;
+        if (candidateExcludedIds.has(candidate.id)) continue;
         const match = scoreCandidate(input, candidate);
         if (isMeaningfulMatch(match)) matches.push(match);
       }
@@ -265,9 +272,12 @@ function scoreCandidate(
 }
 
 function decide(matches: DuplicateMemoryReviewMatch[]): DuplicateMemoryDecision {
+  const likelyDuplicate = matches.find((match) => !isSameTargetMatch(match) && match.score >= THRESHOLDS.likely_duplicate);
+  if (likelyDuplicate) return 'likely_duplicate';
+
   const topMatch = matches[0];
   if (!topMatch) return 'no_match';
-  if (topMatch.reasons.includes('same target object') && topMatch.score >= THRESHOLDS.same_target_update) {
+  if (isSameTargetMatch(topMatch) && topMatch.score >= THRESHOLDS.same_target_update) {
     return 'same_target_update';
   }
   if (topMatch.score >= THRESHOLDS.likely_duplicate) return 'likely_duplicate';
@@ -277,7 +287,11 @@ function decide(matches: DuplicateMemoryReviewMatch[]): DuplicateMemoryDecision 
 
 function isMeaningfulMatch(match: DuplicateMemoryReviewMatch): boolean {
   return match.score >= THRESHOLDS.possible_duplicate
-    || (match.reasons.includes('same target object') && match.score >= THRESHOLDS.same_target_update);
+    || (isSameTargetMatch(match) && match.score >= THRESHOLDS.same_target_update);
+}
+
+function isSameTargetMatch(match: DuplicateMemoryReviewMatch): boolean {
+  return match.reasons.includes('same target object');
 }
 
 function buildSummaryLines(
