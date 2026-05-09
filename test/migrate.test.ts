@@ -166,6 +166,23 @@ describe('migrate v33 — admin_dashboard_columns_v0_26_3', () => {
     expect(v33!.sql).toContain('mcp_request_log(agent_name, created_at DESC)');
   });
 
+  test('/admin/api/agents fallback avoids optional OAuth client columns on old schemas', () => {
+    const src = readFileSync(resolve('src/commands/serve-http.ts'), 'utf-8');
+    const fallbackStart = src.indexOf("!isUndefinedColumnError(e, 'access_tier')");
+    const fallbackEnd = src.indexOf('const legacyKeys = await sql`', fallbackStart);
+    expect(fallbackStart).toBeGreaterThan(0);
+    expect(fallbackEnd).toBeGreaterThan(fallbackStart);
+
+    const fallback = src.slice(fallbackStart, fallbackEnd);
+    expect(fallback).toContain("!isUndefinedColumnError(e, 'token_ttl')");
+    expect(fallback).toContain("!isUndefinedColumnError(e, 'deleted_at')");
+    expect(fallback).toContain('${null} as token_ttl');
+    expect(fallback).toContain("'active' as status");
+    expect(fallback).not.toContain('c.access_tier');
+    expect(fallback).not.toContain('c.token_ttl');
+    expect(fallback).not.toContain('c.deleted_at');
+  });
+
   test('v33 uses ADD COLUMN IF NOT EXISTS so re-runs are idempotent', () => {
     // All ALTER lines must be IF NOT EXISTS — re-running migrations on a
     // brain that already has v33 columns must be a no-op, not a duplicate

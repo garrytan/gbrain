@@ -31,6 +31,13 @@ import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall } from './dispatch.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
+import {
+  ACCESS_TIER_DEFAULT,
+  OP_TIER_DEFAULT_REQUIRED,
+  tierImplies,
+  type AccessTier,
+} from '../core/access-tier.ts';
+import { hasScope } from '../core/scope.ts';
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
 
@@ -62,6 +69,8 @@ interface AuthResult {
   ok: boolean;
   tokenId?: string;
   tokenName?: string;
+  scopes?: string[];
+  tier?: AccessTier;
   /** v0.28: per-token allow-list for takes.holder. Default ['world'] when permissions row absent. */
   takesHoldersAllowList?: string[];
 }
@@ -136,7 +145,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   const limiters = opts.limiters || buildDefaultLimiters();
   const bodyCap = envInt('GBRAIN_HTTP_MAX_BODY_BYTES', DEFAULT_BODY_CAP);
   const corsAllowlist = parseCorsAllowlist();
-  const tools = buildToolDefs(operations);
+  const mcpOperations = operations.filter((op) => !op.localOnly);
 
   function corsHeaders(origin: string | null, extra: Record<string, string> = {}): Record<string, string> {
     const headers: Record<string, string> = { ...extra };
@@ -186,6 +195,8 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         ok: true,
         tokenId: row.id,
         tokenName: row.name,
+        scopes: ['admin'],
+        tier: 'Full',
         takesHoldersAllowList: allowList,
       };
     } catch {
@@ -322,6 +333,13 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
 
       // tools/list
       if (method === 'tools/list') {
+        const tools = buildToolDefs(mcpOperations.filter((op) => {
+          const requiredScope = op.scope || 'read';
+          if (!hasScope(auth.scopes ?? [], requiredScope)) return false;
+          const callerTier = auth.tier ?? ACCESS_TIER_DEFAULT;
+          const requiredTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
+          return tierImplies(callerTier, requiredTier);
+        }));
         logRequest(auth.tokenName!, 'tools/list', 'success', Date.now() - startedMs);
         return Response.json(
           { result: { tools }, jsonrpc: '2.0', id },
@@ -337,6 +355,10 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // takes_search / query (when it returns takes) can server-side filter.
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,
+          enforceRemoteAccess: true,
+          scopes: auth.scopes ?? [],
+          tier: auth.tier ?? ACCESS_TIER_DEFAULT,
+          senderId: auth.tokenId,
           takesHoldersAllowList: auth.takesHoldersAllowList,
         });
         const status = result.isError ? 'error' : 'success';

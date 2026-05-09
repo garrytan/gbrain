@@ -308,6 +308,34 @@ describe('http-transport: tools/call dispatch', () => {
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0].text).toContain('Unknown tool');
   });
+
+  test('9c. remote tool list hides local-only operations', async () => {
+    const r = await fetch(`${srv.url}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/list'),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    const names = body.result.tools.map((t: { name: string }) => t.name);
+    expect(names).not.toContain('purge_deleted_pages');
+    expect(names).not.toContain('file_upload');
+    expect(names).not.toContain('file_url');
+  });
+
+  test('9d. remote tools/call rejects local-only operations even when hidden', async () => {
+    const r = await fetch(`${srv.url}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/call', { name: 'file_upload', arguments: { path: '/tmp/nope' } }),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.result.isError).toBe(true);
+    const text = body.result.content[0].text;
+    expect(text).toContain('operation_unavailable');
+    expect(text).toContain('local-only');
+  });
 });
 
 // --------------------------------------------------------------------------

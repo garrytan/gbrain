@@ -10,6 +10,14 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import {
+  ACCESS_TIER_DEFAULT,
+  OP_TIER_DEFAULT_REQUIRED,
+  filterResponseByTier,
+  tierImplies,
+  type AccessTier,
+} from '../core/access-tier.ts';
+import { hasScope } from '../core/scope.ts';
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -29,6 +37,18 @@ export interface DispatchOpts {
    * callers leave this unset (no filter — they own the brain).
    */
   takesHoldersAllowList?: string[];
+  /**
+   * Enforce the remote MCP operation boundary in this shared dispatcher.
+   * Stdio keeps this false because it is an owner-trust path today; HTTP
+   * transports that accept bearer-token clients set it true.
+   */
+  enforceRemoteAccess?: boolean;
+  /** Granted OAuth scopes for enforceRemoteAccess. */
+  scopes?: string[];
+  /** Granted runtime access tier for enforceRemoteAccess. */
+  tier?: AccessTier;
+  /** Stable caller id for attribution inside handlers. */
+  senderId?: string;
 }
 
 /**
@@ -163,6 +183,8 @@ export function buildOperationContext(
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    tier: opts.tier,
+    senderId: opts.senderId,
   };
 }
 
@@ -184,6 +206,53 @@ export async function dispatchToolCall(
   }
 
   const safeParams = params || {};
+  if (opts.enforceRemoteAccess && (opts.remote ?? true)) {
+    if (op.localOnly) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'operation_unavailable',
+            message: `Operation ${name} is local-only and is not available over remote MCP`,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+
+    const requiredScope = op.scope || 'read';
+    const scopes = opts.scopes ?? [];
+    if (!hasScope(scopes, requiredScope)) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'insufficient_scope',
+            message: `Operation ${name} requires '${requiredScope}' scope`,
+            your_scopes: scopes,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+
+    const callerTier = opts.tier ?? ACCESS_TIER_DEFAULT;
+    const requiredTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
+    if (!tierImplies(callerTier, requiredTier)) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'insufficient_tier',
+            message: `Operation ${name} tier='${callerTier}' does not satisfy required '${requiredTier}'`,
+            your_tier: callerTier,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+  }
+
   const validationError = validateParams(op, safeParams);
   if (validationError) {
     return {
@@ -195,7 +264,14 @@ export async function dispatchToolCall(
   const ctx = buildOperationContext(engine, safeParams, opts);
 
   try {
-    const result = await op.handler(ctx, safeParams);
+    const rawResult = await op.handler(ctx, safeParams);
+    const result = opts.enforceRemoteAccess
+      ? await filterResponseByTier(name, rawResult, {
+        tier: opts.tier,
+        requestSlug: typeof safeParams.slug === 'string' ? safeParams.slug : undefined,
+        includeDeleted: safeParams.include_deleted === true,
+      })
+      : rawResult;
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   } catch (e: unknown) {
     if (e instanceof OperationError) {

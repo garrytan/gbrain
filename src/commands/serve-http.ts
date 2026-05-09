@@ -529,12 +529,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      // Unified view: OAuth clients + legacy API keys. The access_tier
-      // read falls back to ACCESS_TIER_DEFAULT during the upgrade window
-      // when the daemon has been replaced but migrations haven't applied
-      // (mirrors the verifyAccessToken UndefinedColumn fallback in
-      // oauth-provider.ts so the admin Agents page stays reachable
-      // through the v45 transition).
+      // Unified view: OAuth clients + legacy API keys. During upgrade
+      // windows, OAuth client schemas may be missing one or more of the
+      // columns added after the original table shape. The fallback avoids
+      // all optional columns so the admin Agents page stays reachable until
+      // migrations apply.
       let oauthClients;
       try {
         oauthClients = await sql`
@@ -547,11 +546,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           FROM oauth_clients c ORDER BY c.created_at DESC
         `;
       } catch (e) {
-        if (!isUndefinedColumnError(e, 'access_tier')) throw e;
+        if (!isUndefinedColumnError(e, 'access_tier') &&
+            !isUndefinedColumnError(e, 'token_ttl') &&
+            !isUndefinedColumnError(e, 'deleted_at')) throw e;
         oauthClients = await sql`
           SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-            c.grant_types, c.scope, ${ACCESS_TIER_DEFAULT} as access_tier, c.created_at, c.token_ttl,
-            CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+            c.grant_types, c.scope, ${ACCESS_TIER_DEFAULT} as access_tier, c.created_at, ${null} as token_ttl,
+            'active' as status,
             (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
             (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
             (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
