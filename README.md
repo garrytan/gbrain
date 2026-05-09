@@ -752,10 +752,13 @@ ADMIN
   gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
                                         [--token-ttl 3600] [--enable-dcr]
                                         [--public-url URL] [--log-full-params]
+                                        [--oidc-issuer URL --oidc-client-id ID
+                                         --oidc-client-secret SECRET]
                                         [--audit-access-tiers|--no-enforce-access-tiers]
   gbrain auth create|list|revoke|test   Legacy bearer token management
   gbrain auth register-client <name>    Register an OAuth 2.1 client
         --grant-types client_credentials,authorization_code
+        --redirect-uri https://client.example/callback
         --scopes "read write admin"
         --tier <Full|Work|Family|None>
   gbrain auth revoke-client <client_id> Revoke an OAuth 2.1 client (cascade purges

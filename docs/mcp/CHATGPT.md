@@ -30,9 +30,9 @@ Register from the `/admin` dashboard:
 5. Redirect URI: ChatGPT's OAuth redirect (copy it from the ChatGPT
    connector setup screen — something like
    `https://chat.openai.com/connector_platform_oauth_redirect`).
-6. Hit **Register**. The credential-reveal modal shows the `client_id` once
-   with Copy and Download JSON buttons. There is no client secret for
-   PKCE-based public clients.
+6. Hit **Register**. The credential-reveal modal shows the `client_id` and
+   `client_secret` once with Copy and Download JSON buttons. Use the secret if
+   ChatGPT asks for confidential-client credentials during connector setup.
 
 Host-repo wrappers can register programmatically:
 
