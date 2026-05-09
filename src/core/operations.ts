@@ -210,8 +210,26 @@ export interface AuthInfo {
    * legacy admin grant). Defaults to `'Full'` when the column is
    * null on pre-v45 rows so existing deployments behave identically
    * until the operator opts into per-client tiers.
+   *
+   * v46: when the token was minted via OIDC code-grant from an
+   * end-user identity, the resolved tier is `min(client_tier,
+   * user_tier)` so the user grant can only narrow, never widen.
    */
   tier?: AccessTier;
+  /**
+   * Verified end-user email (v46). Populated when the token was
+   * minted via OIDC code-grant against `oauth_user_grants`.
+   * Undefined for client_credentials tokens where the OAuth client
+   * is the entire identity. The dispatch path uses this for
+   * audit attribution; tier resolution already folded the user-tier
+   * into AuthInfo.tier.
+   */
+  subjectEmail?: string;
+  /**
+   * The OIDC issuer that asserted `subjectEmail`. Undefined when
+   * subjectEmail is undefined.
+   */
+  subjectIss?: string;
 }
 
 export interface OperationContext {

@@ -24,7 +24,7 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/serv
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
-import { ACCESS_TIER_DEFAULT, isAccessTier, resolveStoredAccessTier, type AccessTier } from './access-tier.ts';
+import { ACCESS_TIER_DEFAULT, isAccessTier, resolveStoredAccessTier, tierMin, type AccessTier } from './access-tier.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -327,29 +327,67 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // Use `redirectUri !== undefined` rather than truthy — an attacker
     // submitting `redirect_uri=""` (empty string) at /token would otherwise
     // hit the falsy branch and bypass the binding entirely.
-    const rows = redirectUri !== undefined
-      ? await this.sql`
-          DELETE FROM oauth_codes
-          WHERE code_hash = ${codeHash}
-            AND client_id = ${client.client_id}
-            AND redirect_uri = ${redirectUri}
-            AND expires_at > ${now}
-          RETURNING client_id, scopes, resource
-        `
-      : await this.sql`
-          DELETE FROM oauth_codes
-          WHERE code_hash = ${codeHash}
-            AND client_id = ${client.client_id}
-            AND expires_at > ${now}
-          RETURNING client_id, scopes, resource
-        `;
+    // v46: also project subject_email/subject_iss/user_tier from the code
+    // row so the federated end-user identity captured at /authorize survives
+    // into the issued access_token. The columns are nullable - rows minted
+    // by non-OIDC flows leave them as null and tokens get no end-user attribution.
+    let rows;
+    try {
+      rows = redirectUri !== undefined
+        ? await this.sql`
+            DELETE FROM oauth_codes
+            WHERE code_hash = ${codeHash}
+              AND client_id = ${client.client_id}
+              AND redirect_uri = ${redirectUri}
+              AND expires_at > ${now}
+            RETURNING client_id, scopes, resource, subject_email, subject_iss, user_tier
+          `
+        : await this.sql`
+            DELETE FROM oauth_codes
+            WHERE code_hash = ${codeHash}
+              AND client_id = ${client.client_id}
+              AND expires_at > ${now}
+            RETURNING client_id, scopes, resource, subject_email, subject_iss, user_tier
+          `;
+    } catch (e) {
+      // Pre-v46 schema fallback: same DELETE without v46 columns. The
+      // resulting tokens won't carry subject_email; that's correct on a
+      // database that doesn't have the column yet.
+      if (!isUndefinedColumnError(e, 'subject_email')
+          && !isUndefinedColumnError(e, 'subject_iss')
+          && !isUndefinedColumnError(e, 'user_tier')) throw e;
+      rows = redirectUri !== undefined
+        ? await this.sql`
+            DELETE FROM oauth_codes
+            WHERE code_hash = ${codeHash}
+              AND client_id = ${client.client_id}
+              AND redirect_uri = ${redirectUri}
+              AND expires_at > ${now}
+            RETURNING client_id, scopes, resource
+          `
+        : await this.sql`
+            DELETE FROM oauth_codes
+            WHERE code_hash = ${codeHash}
+              AND client_id = ${client.client_id}
+              AND expires_at > ${now}
+            RETURNING client_id, scopes, resource
+          `;
+    }
     if (rows.length === 0) throw new Error('Authorization code not found or expired');
 
     const codeRow = rows[0];
 
-    // Issue tokens
+    // Issue tokens. v46 federated identity (if present) flows through to
+    // issueTokens so the new oauth_tokens row carries the same email + tier
+    // captured at /authorize. issueTokens handles the column-absent case.
     const scopes = (codeRow.scopes as string[]) || [];
-    return this.issueTokens(client.client_id, scopes, resource, true);
+    const subjectEmail = (codeRow.subject_email as string | null | undefined) ?? undefined;
+    const subjectIss = (codeRow.subject_iss as string | null | undefined) ?? undefined;
+    const userTierRaw = (codeRow.user_tier as string | null | undefined) ?? undefined;
+    const userTier = userTierRaw && isAccessTier(userTierRaw) ? userTierRaw : undefined;
+    return this.issueTokens(client.client_id, scopes, resource, true, undefined, {
+      subjectEmail, subjectIss, userTier,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -373,13 +411,30 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // legitimate client. With the predicate in the DELETE, wrong-client
     // attempts get zero rows back; the legitimate client retains the row
     // for one valid rotation.
-    const rows = await this.sql`
-      DELETE FROM oauth_tokens
-      WHERE token_hash = ${tokenHash}
-        AND token_type = 'refresh'
-        AND client_id = ${client.client_id}
-      RETURNING client_id, scopes, expires_at
-    `;
+    // v46: pull subject_email/subject_iss/user_tier so a refresh-rotated
+    // access token preserves the original code-grant's federated identity
+    // snapshot. Pre-v46 schema falls back to the v45 RETURNING shape.
+    let rows;
+    try {
+      rows = await this.sql`
+        DELETE FROM oauth_tokens
+        WHERE token_hash = ${tokenHash}
+          AND token_type = 'refresh'
+          AND client_id = ${client.client_id}
+        RETURNING client_id, scopes, expires_at, subject_email, subject_iss, user_tier
+      `;
+    } catch (e) {
+      if (!isUndefinedColumnError(e, 'subject_email')
+          && !isUndefinedColumnError(e, 'subject_iss')
+          && !isUndefinedColumnError(e, 'user_tier')) throw e;
+      rows = await this.sql`
+        DELETE FROM oauth_tokens
+        WHERE token_hash = ${tokenHash}
+          AND token_type = 'refresh'
+          AND client_id = ${client.client_id}
+        RETURNING client_id, scopes, expires_at
+      `;
+    }
     if (rows.length === 0) throw new Error('Refresh token not found');
 
     const row = rows[0];
@@ -407,7 +462,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       throw new Error('Requested scope exceeds refresh token grant');
     }
     const tokenScopes = scopes ?? grantedScopes;
-    return this.issueTokens(client.client_id, tokenScopes, resource, true);
+    // v46: forward the federated identity snapshot if present. issueTokens
+    // handles the pre-v46 schema case where the columns are absent.
+    const subjectEmail = (row.subject_email as string | null | undefined) ?? undefined;
+    const subjectIss = (row.subject_iss as string | null | undefined) ?? undefined;
+    const userTierRaw = (row.user_tier as string | null | undefined) ?? undefined;
+    const userTier = userTierRaw && isAccessTier(userTierRaw) ? userTierRaw : undefined;
+    return this.issueTokens(client.client_id, tokenScopes, resource, true, undefined, {
+      subjectEmail, subjectIss, userTier,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -437,15 +500,35 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // surviving token, regardless of whether the purge ever ran.
     let oauthRows;
     try {
+      // v46: also pull subject_email/subject_iss/user_tier so federated
+      // OIDC tokens carry the verified end-user identity into AuthInfo.
+      // The columns are nullable for client_credentials tokens that have
+      // no end-user behind them; verifyAccessToken treats null user_tier
+      // as "client tier wins" (no narrowing).
       oauthRows = await this.sql`
-        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.access_tier
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource,
+               t.subject_email, t.subject_iss, t.user_tier,
+               c.client_name, c.access_tier
         FROM oauth_tokens t
         INNER JOIN oauth_clients c ON c.client_id = t.client_id
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.deleted_at IS NULL
       `;
     } catch (e) {
-      if (isUndefinedColumnError(e, 'access_tier')) {
+      if (isUndefinedColumnError(e, 'subject_email') || isUndefinedColumnError(e, 'subject_iss') || isUndefinedColumnError(e, 'user_tier')) {
+        // Pre-v46 schema: no end-user identity columns. Fall back to the
+        // v45 SELECT shape (no subject fields). The next catch ladder
+        // handles pre-v45 / pre-deleted_at cases the same way as before.
+        oauthRows = await this.sql`
+          SELECT t.client_id, t.scopes, t.expires_at, t.resource,
+                 ${null} as subject_email, ${null} as subject_iss, ${null} as user_tier,
+                 c.client_name, c.access_tier
+          FROM oauth_tokens t
+          INNER JOIN oauth_clients c ON c.client_id = t.client_id
+          WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+            AND c.deleted_at IS NULL
+        `;
+      } else if (isUndefinedColumnError(e, 'access_tier')) {
         // Pre-v45 database during an upgrade window: preserve legacy OAuth
         // behavior by treating matching clients as Full tier until migrations
         // add the column. Keep the INNER JOIN + deleted_at gate when present.
@@ -499,6 +582,20 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (expiresAt === undefined || expiresAt < now) {
         throw new Error('Token expired');
       }
+      // v46 tier resolution: if the token was minted via OIDC code-grant
+      // and we captured a snapshot of the end-user's tier at exchange
+      // time, the effective tier is the more-restrictive of (client
+      // tier, user tier). user_tier is null on client_credentials
+      // tokens; in that case the client tier wins. Revoking the user
+      // grant after mint takes effect on next mint, not on already-
+      // issued tokens (snapshot semantics, intentional - matches how
+      // `set-tier` behaves on the client side).
+      const clientTier = resolveStoredAccessTier(row.access_tier);
+      const userTierRaw = row.user_tier as string | null | undefined;
+      const userTier = userTierRaw && isAccessTier(userTierRaw) ? userTierRaw : undefined;
+      const resolvedTier = userTier ? tierMin(clientTier, userTier) : clientTier;
+      const subjectEmail = (row.subject_email as string | null) ?? undefined;
+      const subjectIss = (row.subject_iss as string | null) ?? undefined;
       return {
         token,
         clientId: row.client_id as string,
@@ -506,7 +603,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         scopes: (row.scopes as string[]) || [],
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
-        tier: resolveStoredAccessTier(row.access_tier),
+        tier: resolvedTier,
+        ...(subjectEmail ? { subjectEmail } : {}),
+        ...(subjectIss ? { subjectIss } : {}),
       } as AuthInfo;
     }
 
@@ -734,6 +833,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     resource: URL | undefined,
     includeRefresh: boolean,
     ttlOverride?: number,
+    federated?: { subjectEmail?: string; subjectIss?: string; userTier?: AccessTier },
   ): Promise<OAuthTokens> {
     const accessToken = generateToken('gbrain_at_');
     const accessHash = hashToken(accessToken);
@@ -741,11 +841,31 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const effectiveTtl = ttlOverride || this.tokenTtl;
     const accessExpiry = now + effectiveTtl;
 
-    await this.sql`
-      INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
-      VALUES (${accessHash}, ${'access'}, ${clientId},
-              ${pgArray(scopes)}, ${accessExpiry}, ${resource?.toString() || null})
-    `;
+    // v46 federated identity insert. The columns are nullable; for
+    // client_credentials and other non-OIDC paths the federated arg is
+    // undefined and the projected nulls preserve pre-v46 behavior.
+    // Pre-v46 schema fallback drops the federated columns entirely.
+    const subjectEmail = federated?.subjectEmail ?? null;
+    const subjectIss = federated?.subjectIss ?? null;
+    const userTier = federated?.userTier ?? null;
+    try {
+      await this.sql`
+        INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource,
+                                  subject_email, subject_iss, user_tier)
+        VALUES (${accessHash}, ${'access'}, ${clientId},
+                ${pgArray(scopes)}, ${accessExpiry}, ${resource?.toString() || null},
+                ${subjectEmail}, ${subjectIss}, ${userTier})
+      `;
+    } catch (e) {
+      if (!isUndefinedColumnError(e, 'subject_email')
+          && !isUndefinedColumnError(e, 'subject_iss')
+          && !isUndefinedColumnError(e, 'user_tier')) throw e;
+      await this.sql`
+        INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
+        VALUES (${accessHash}, ${'access'}, ${clientId},
+                ${pgArray(scopes)}, ${accessExpiry}, ${resource?.toString() || null})
+      `;
+    }
 
     const result: OAuthTokens = {
       access_token: accessToken,
@@ -759,11 +879,29 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const refreshHash = hashToken(refreshToken);
       const refreshExpiry = now + this.refreshTtl;
 
-      await this.sql`
-        INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
-        VALUES (${refreshHash}, ${'refresh'}, ${clientId},
-                ${pgArray(scopes)}, ${refreshExpiry}, ${resource?.toString() || null})
-      `;
+      // Refresh tokens carry the same federated identity so a refresh
+      // mint produces a fresh access_token bound to the same email + iss
+      // + user_tier snapshot. Revoking the user grant takes effect on
+      // the NEXT mint after refresh; in-flight refresh-rotated tokens
+      // retain the snapshot from the original code-grant exchange.
+      try {
+        await this.sql`
+          INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource,
+                                    subject_email, subject_iss, user_tier)
+          VALUES (${refreshHash}, ${'refresh'}, ${clientId},
+                  ${pgArray(scopes)}, ${refreshExpiry}, ${resource?.toString() || null},
+                  ${subjectEmail}, ${subjectIss}, ${userTier})
+        `;
+      } catch (e) {
+        if (!isUndefinedColumnError(e, 'subject_email')
+            && !isUndefinedColumnError(e, 'subject_iss')
+            && !isUndefinedColumnError(e, 'user_tier')) throw e;
+        await this.sql`
+          INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
+          VALUES (${refreshHash}, ${'refresh'}, ${clientId},
+                  ${pgArray(scopes)}, ${refreshExpiry}, ${resource?.toString() || null})
+        `;
+      }
 
       result.refresh_token = refreshToken;
     }
