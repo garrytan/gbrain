@@ -854,11 +854,18 @@ async function performFullSync(
   // Fixes the silent-write-on-dry-run bug where performFullSync called
   // runImport unconditionally regardless of opts.dryRun.
   if (opts.dryRun) {
-    const { collectMarkdownFiles } = await import('./import.ts');
-    const allFiles = collectMarkdownFiles(repoPath);
+    // Issue #767 fix: dry-run branch also needs to honor strategy. Was
+    // hardcoded to collectMarkdownFiles which gave a misleading dry-run
+    // count for code-strategy syncs.
+    const { collectMarkdownFiles, collectFilesByStrategy } = await import('./import.ts');
+    const strategy = opts.strategy ?? 'markdown';
+    const allFiles = strategy === 'markdown'
+      ? collectMarkdownFiles(repoPath)
+      : collectFilesByStrategy(repoPath, strategy);
+    const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
     const syncableRelPaths = allFiles
       .map(abs => relative(repoPath, abs))
-      .filter(rel => isSyncable(rel));
+      .filter(rel => isSyncable(rel, syncOpts));
     console.log(
       `Full-sync dry run: ${syncableRelPaths.length} file(s) would be imported ` +
       `from ${repoPath} @ ${headCommit.slice(0, 8)}.`,
@@ -888,6 +895,12 @@ async function performFullSync(
   const { runImport } = await import('./import.ts');
   const importArgs = [repoPath];
   if (opts.noEmbed) importArgs.push('--no-embed');
+  // Issue #767 fix: thread strategy so performFullSync honors `gbrain sync
+  // --strategy code` on first sync (no anchor commit yet). Without this,
+  // runImport's collectMarkdownFiles is hardcoded markdown and silently
+  // produces 0 code pages, breaking code-def/code-refs/code-callers on
+  // freshly-registered code sources.
+  if (opts.strategy) importArgs.push('--strategy', opts.strategy);
   if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
   const result = await runImport(engine, importArgs, { commit: headCommit });
 

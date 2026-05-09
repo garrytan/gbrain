@@ -34,6 +34,17 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   const jsonOutput = args.includes('--json');
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
+  // Issue #767 fix: --strategy <markdown|code|auto> selects which file types
+  // are walked. Without this, full-sync via performFullSync silently does
+  // markdown-only even when strategy=code is requested, which means a fresh
+  // code source registers but no code pages are ever created.
+  const strategyIdx = args.indexOf('--strategy');
+  const strategyArg = strategyIdx !== -1 ? args[strategyIdx + 1] : 'markdown';
+  if (!['markdown', 'code', 'auto'].includes(strategyArg)) {
+    console.error(`Invalid --strategy ${strategyArg}; expected markdown|code|auto`);
+    process.exit(1);
+  }
+  const strategy = strategyArg as 'markdown' | 'code' | 'auto';
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
   // (--workers 0, -3, "foo") with a loud error instead of silently falling
   // through to 1. Mirrors sync.ts's flag handling.
@@ -45,20 +56,26 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   }
-  // Find dir: first non-flag arg that isn't a value for --workers
+  // Find dir: first non-flag arg that isn't a value for --workers / --strategy
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
+  if (strategyIdx !== -1) flagValues.add(strategyIdx + 1);
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json] [--strategy markdown|code|auto]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
 
-  // Collect all .md files
-  const allFiles = collectMarkdownFiles(dir);
-  console.log(`Found ${allFiles.length} markdown files`);
+  // Collect all syncable files for the requested strategy. Markdown stays on
+  // the legacy collector for behavioral parity; code/auto routes through the
+  // strategy-aware walker.
+  const allFiles = strategy === 'markdown'
+    ? collectMarkdownFiles(dir)
+    : collectFilesByStrategy(dir, strategy);
+  const fileLabel = strategy === 'markdown' ? 'markdown' : strategy === 'code' ? 'code' : 'syncable';
+  console.log(`Found ${allFiles.length} ${fileLabel} files`);
 
   // Resume from checkpoint if available
   const checkpointPath = gbrainPath('import-checkpoint.json');
@@ -339,6 +356,57 @@ export function collectMarkdownFiles(dir: string): string[] {
   }
 
   const multimodalEnabled = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+  walk(dir);
+  return files.sort();
+}
+
+/**
+ * Issue #767 fix: strategy-aware companion to collectMarkdownFiles. Walks the
+ * tree and returns absolute paths for files allowed by the given strategy
+ * (`code` or `auto`). Mirrors collectMarkdownFiles for symlink + hidden +
+ * node_modules safety, then routes the include filter through `isSyncable`
+ * so this function and the incremental `walkSyncableFiles` use the same
+ * inclusion logic.
+ */
+export function collectFilesByStrategy(dir: string, strategy: 'code' | 'auto'): string[] {
+  const { isSyncable } = require('../core/sync.ts');
+  const files: string[] = [];
+
+  function walk(d: string) {
+    let entries: string[];
+    try {
+      entries = readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.startsWith('.')) continue;
+      if (entry === 'node_modules') continue;
+
+      const full = join(d, entry);
+      let stat;
+      try {
+        stat = lstatSync(full);
+      } catch {
+        console.warn(`[gbrain import] Skipping unreadable path: ${full}`);
+        continue;
+      }
+      if (stat.isSymbolicLink()) {
+        console.warn(`[gbrain import] Skipping symlink: ${full}`);
+        continue;
+      }
+      if (stat.isDirectory()) {
+        walk(full);
+      } else if (stat.isFile()) {
+        if (stat.size > 5_000_000) continue;
+        const rel = relative(dir, full);
+        if (isSyncable(rel, { strategy })) {
+          files.push(full);
+        }
+      }
+    }
+  }
+
   walk(dir);
   return files.sort();
 }
