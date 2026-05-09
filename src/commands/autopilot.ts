@@ -427,6 +427,12 @@ async function installDaemon(engine: BrainEngine, args: string[]) {
 }
 
 function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
+  // StartInterval (run every N seconds) instead of KeepAlive (restart
+  // immediately on exit). Prior behavior was a hot loop: each cycle exited
+  // in seconds and launchd respawned instantly, producing ~4200 cycles/day
+  // and ~400-600 GB/day of egress when the brain was fully embedded.
+  // 300s = 5 min cycles = 288/day max, plenty for any reasonable ingest
+  // cadence. Tunable per-user by editing the plist directly.
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -436,7 +442,7 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
     <string>${escapeXml(wrapperPath)}</string>
   </array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <key>StartInterval</key><integer>300</integer>
   <key>StandardOutPath</key><string>${escapeXml(home)}/.gbrain/autopilot.log</string>
   <key>StandardErrorPath</key><string>${escapeXml(home)}/.gbrain/autopilot.err</string>
 </dict>
