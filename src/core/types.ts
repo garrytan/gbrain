@@ -1128,6 +1128,7 @@ export type MemoryCandidatePromotionPreflightReason =
   | 'candidate_scope_conflict'
   | 'candidate_unknown_sensitivity'
   | 'candidate_requires_revalidation'
+  | 'candidate_possible_duplicate'
   | 'candidate_ready_for_promotion';
 
 export interface MemoryCandidateEntry {
@@ -1282,10 +1283,27 @@ export interface MemoryCandidatePromotionPreflightInput {
   id: string;
 }
 
+export type MemoryCandidateDuplicateReviewDecision =
+  | 'no_match'
+  | 'possible_duplicate'
+  | 'likely_duplicate'
+  | 'same_target_update';
+
+export interface MemoryCandidateDuplicateReviewSummary {
+  decision: MemoryCandidateDuplicateReviewDecision;
+  top_match?: {
+    kind: 'page' | 'memory_candidate';
+    id: string;
+    score: number;
+    reasons: string[];
+  };
+}
+
 export interface MemoryCandidatePromotionPreflightResult {
   candidate_id: string;
   decision: MemoryCandidatePromotionPreflightDecision;
   reasons: MemoryCandidatePromotionPreflightReason[];
+  duplicate_review: MemoryCandidateDuplicateReviewSummary;
   summary_lines: string[];
 }
 

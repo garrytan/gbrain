@@ -6,6 +6,10 @@ import {
   preflightPromoteMemoryCandidate,
   recordMemoryCandidateStatusEvent,
 } from './memory-inbox-service.ts';
+import {
+  duplicateMemoryReviewFreshnessEquals,
+  getDuplicateMemoryReviewFreshness,
+} from './duplicate-memory-review-service.ts';
 
 export interface PromoteMemoryCandidateEntryInput {
   id: string;
@@ -19,6 +23,37 @@ export async function promoteMemoryCandidateEntry(
   input: PromoteMemoryCandidateEntryInput,
 ): Promise<MemoryCandidateEntry> {
   const reviewedAt = normalizeMemoryInboxReviewedAt(input.reviewed_at, new Date());
+  const currentEntry = await engine.getMemoryCandidateEntry(input.id);
+  if (!currentEntry) {
+    throw new MemoryInboxServiceError(
+      'memory_candidate_not_found',
+      `Memory candidate not found: ${input.id}`,
+    );
+  }
+  if (currentEntry.status !== 'staged_for_review') {
+    throw new MemoryInboxServiceError(
+      'invalid_status_transition',
+      `Cannot promote memory candidate from ${currentEntry.status}; only staged_for_review candidates may be promoted.`,
+    );
+  }
+
+  const freshnessBefore = await getDuplicateMemoryReviewFreshness(engine, {
+    scope_id: currentEntry.scope_id,
+  });
+  const preflight = await preflightPromoteMemoryCandidate(engine, { id: input.id });
+  if (preflight.decision !== 'allow') {
+    throw new MemoryInboxServiceError(
+      'promotion_preflight_failed',
+      `Cannot promote memory candidate ${input.id}: ${preflight.reasons.join(', ')}.`,
+    );
+  }
+  const freshnessAfter = await getDuplicateMemoryReviewFreshness(engine, {
+    scope_id: currentEntry.scope_id,
+  });
+  if (!duplicateMemoryReviewFreshnessEquals(freshnessBefore, freshnessAfter)) {
+    throw staleDuplicateReviewInputsError(input.id);
+  }
+
   return engine.transaction(async (txBase) => {
     const tx = txBase as BrainEngine;
     const entry = await tx.getMemoryCandidateEntry(input.id);
@@ -36,12 +71,11 @@ export async function promoteMemoryCandidateEntry(
       );
     }
 
-    const preflight = await preflightPromoteMemoryCandidate(tx, { id: input.id });
-    if (preflight.decision !== 'allow') {
-      throw new MemoryInboxServiceError(
-        'promotion_preflight_failed',
-        `Cannot promote memory candidate ${input.id}: ${preflight.reasons.join(', ')}.`,
-      );
+    const freshnessAtWrite = await getDuplicateMemoryReviewFreshness(tx, {
+      scope_id: entry.scope_id,
+    });
+    if (!duplicateMemoryReviewFreshnessEquals(freshnessAfter, freshnessAtWrite)) {
+      throw staleDuplicateReviewInputsError(input.id);
     }
 
     const promoted = await tx.promoteMemoryCandidateEntry(entry.id, {
@@ -63,4 +97,11 @@ export async function promoteMemoryCandidateEntry(
     });
     return promoted;
   });
+}
+
+function staleDuplicateReviewInputsError(candidateId: string): MemoryInboxServiceError {
+  return new MemoryInboxServiceError(
+    'promotion_preflight_failed',
+    `Cannot promote memory candidate ${candidateId}: duplicate review inputs changed; retry promotion.`,
+  );
 }
