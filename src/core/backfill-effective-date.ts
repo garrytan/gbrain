@@ -175,14 +175,10 @@ export async function backfillEffectiveDate(
     if (!opts.dryRun) {
       // Compute effective_date for each row, then UPDATE in a batch wrapped
       // in its own transaction (so SET LOCAL statement_timeout scopes to it).
-      // postgres.js's `transaction` would be cleaner but we're using executeRaw
-      // for engine portability; explicit BEGIN/COMMIT does the same on both.
-      if (isPostgres) {
-        await engine.executeRaw(`BEGIN`);
-        await engine.executeRaw(`SET LOCAL statement_timeout = '600s'`);
-      }
-
-      try {
+      const applyBatch = async (txEngine: BrainEngine): Promise<void> => {
+        if (isPostgres) {
+          await txEngine.executeRaw(`SET LOCAL statement_timeout = '600s'`);
+        }
         for (const r of rows) {
           const fm = parseFrontmatter(r.frontmatter);
           const filename = r.import_filename
@@ -211,13 +207,12 @@ export async function backfillEffectiveDate(
           touched++;
           if (computed.source === 'fallback') fallback++;
         }
+      };
 
-        if (isPostgres) await engine.executeRaw(`COMMIT`);
-      } catch (e) {
-        if (isPostgres) {
-          try { await engine.executeRaw(`ROLLBACK`); } catch { /* ignore */ }
-        }
-        throw e;
+      if (isPostgres) {
+        await engine.transaction(applyBatch);
+      } else {
+        await applyBatch(engine);
       }
     } else {
       // Dry run: still count what WOULD change.
