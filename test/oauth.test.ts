@@ -122,6 +122,15 @@ describe('client registration', () => {
     expect(client).toBeUndefined();
   });
 
+  test('getClient returns undefined for soft-deleted client', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'soft-deleted-client-lookup', ['client_credentials'], 'read',
+    );
+    expect(await provider.clientsStore.getClient(clientId)).toBeDefined();
+    await sql`UPDATE oauth_clients SET deleted_at = NOW() WHERE client_id = ${clientId}`;
+    expect(await provider.clientsStore.getClient(clientId)).toBeUndefined();
+  });
+
   test('duplicate client_id is rejected', async () => {
     const { clientId } = await provider.registerClientManual(
       'dup-test', ['client_credentials'], 'read',

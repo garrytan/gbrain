@@ -134,12 +134,31 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
   constructor(private sql: SqlQuery) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
-    const rows = await this.sql`
-      SELECT client_id, client_secret_hash, client_name, redirect_uris,
-             grant_types, scope, token_endpoint_auth_method,
-             client_id_issued_at, client_secret_expires_at
-      FROM oauth_clients WHERE client_id = ${clientId}
-    `;
+    // deleted_at IS NULL: a soft-deleted client must not authenticate at
+    // /token, /authorize, or /revoke. The verifyAccessToken JOIN already
+    // catches issued tokens at use time, but failing earlier here means
+    // the SDK's authenticateClient middleware rejects refresh-token
+    // rotations and authorization-code redemptions cleanly without
+    // depending on the downstream gate. Falls back to the unfiltered
+    // query on pre-v33 schemas where deleted_at hasn't been added yet
+    // (mirrors the verifyAccessToken UndefinedColumn fallback pattern).
+    let rows;
+    try {
+      rows = await this.sql`
+        SELECT client_id, client_secret_hash, client_name, redirect_uris,
+               grant_types, scope, token_endpoint_auth_method,
+               client_id_issued_at, client_secret_expires_at
+        FROM oauth_clients WHERE client_id = ${clientId} AND deleted_at IS NULL
+      `;
+    } catch (e) {
+      if (!isUndefinedColumnError(e, 'deleted_at')) throw e;
+      rows = await this.sql`
+        SELECT client_id, client_secret_hash, client_name, redirect_uris,
+               grant_types, scope, token_endpoint_auth_method,
+               client_id_issued_at, client_secret_expires_at
+        FROM oauth_clients WHERE client_id = ${clientId}
+      `;
+    }
     if (rows.length === 0) return undefined;
     const r = rows[0];
     return {

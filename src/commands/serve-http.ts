@@ -739,8 +739,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
       // Soft-delete the client
       await sql`UPDATE oauth_clients SET deleted_at = now() WHERE client_id = ${clientId} AND deleted_at IS NULL`;
-      // Revoke all active tokens for this client
+      // Revoke all active tokens AND outstanding authorization codes.
+      // Without the oauth_codes purge, an attacker who captured a code
+      // (10-min TTL) just before revocation could still redeem it at
+      // /token after revocation; verifyAccessToken's c.deleted_at gate
+      // catches the minted token at use time, but we shouldn't count
+      // on that single chokepoint when explicit cleanup is one query.
       await sql`DELETE FROM oauth_tokens WHERE client_id = ${clientId}`;
+      try {
+        await sql`DELETE FROM oauth_codes WHERE client_id = ${clientId}`;
+      } catch (codesErr) {
+        // Pre-DCR schemas may not have oauth_codes; ignore the missing
+        // table and continue. Any other error still surfaces.
+        const msg = codesErr instanceof Error ? codesErr.message : '';
+        if (!/relation "oauth_codes" does not exist/i.test(msg) && !/oauth_codes/.test(msg)) throw codesErr;
+      }
       res.json({ revoked: true });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
