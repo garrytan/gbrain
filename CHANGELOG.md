@@ -6,7 +6,7 @@ All notable changes to GBrain will be documented in this file.
 
 ### Added — Runtime MCP access control
 
-Adds sender-identity checking and tier-aware response filtering to MCP operations so ACCESS_POLICY.md is enforced at the dispatch layer, not just by the agent's prompt.
+Adds tier-aware response filtering and per-op invocation gates to the MCP dispatch path so the slug-prefix half of ACCESS_POLICY.md is enforced at the protocol layer, not just by the agent's prompt. The "sender" the dispatcher sees is the OAuth `client_id` the operator registered; verified end-user identity (Google OIDC / SD-JWT bridge for resolving "Bob signed in with Google") is a separate v0.32+ follow-up tracked in TODOS.md. ACCESS_POLICY.md's "Check sender identity in multi-user contexts" line still lives at the prompt layer until that lands.
 
 - `src/core/access-tier.ts` — `AccessTier` type (`Full | Work | Family | None`), strict-ordered `tierImplies`, `parseAccessTier` with typo-loud `InvalidAccessTierError`, `resolveStoredAccessTier` (NULL → default Full, junk → fail-closed None), `tierAllowsSlug` for slug-prefix visibility.
 - Migration v45: `ALTER TABLE oauth_clients ADD COLUMN access_tier TEXT NOT NULL DEFAULT 'Full'`. Existing clients land at Full to preserve the pre-v45 grant. Verify hook asserts the column landed NOT NULL with the right default so a wedged DDL on a managed Postgres pooler can't claim success silently.

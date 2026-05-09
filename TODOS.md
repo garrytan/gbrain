@@ -1203,7 +1203,20 @@ iteration's residuals.
 
 **Depends on:** v0.10.0 GStackBrain skill layer (shipped).
 
-**Status:** Landing in PR. Sender identity is now resolved per-request from `oauth_clients.access_tier`; `Operation.tier?: AccessTier` annotates each op's required tier; the read surface (`get_page`, `list_pages`, `search`, `query`, `get_chunks`, `resolve_slugs`, `get_recent_salience`, `find_orphans`) is tier-annotated and tier-filtered by slug prefix; mutating + admin ops sit at Full. HTTP MCP enforces access tiers by default; `gbrain serve --audit-access-tiers` is the explicit dry-run mode that logs would-reject decisions to `mcp_request_log` + SSE without enforcing. Open follow-ups: ACCESS_POLICY.md → tier-table auto-sync, per-page frontmatter tier overrides, traverse_graph + links/backlinks endpoint filtering (left for a follow-up to keep this PR focused).
+**Status:** Landing in PR. Sender identity is now resolved per-request from `oauth_clients.access_tier`; `Operation.tier?: AccessTier` annotates each op's required tier; the read surface (`get_page`, `list_pages`, `search`, `query`, `get_chunks`, `resolve_slugs`, `get_recent_salience`, `find_orphans`) is tier-annotated and tier-filtered by slug prefix; mutating + admin ops sit at Full. HTTP MCP enforces access tiers by default; `gbrain serve --audit-access-tiers` is the explicit dry-run mode that logs would-reject decisions to `mcp_request_log` + SSE without enforcing. Open follow-ups: ACCESS_POLICY.md -> tier-table auto-sync, per-page frontmatter tier overrides, traverse_graph + links/backlinks endpoint filtering (left for a follow-up to keep this PR focused).
+
+### Verified end-user identity via Google OIDC
+**What:** Federate `/authorize` to Google so the OAuth code-grant flow captures a verified end-user `email` claim. Add an operator-managed `oauth_user_grants(email, access_tier)` table; resolve the per-request tier as `min(client_tier, user_tier)`. CLI: `gbrain auth grant <email> <tier>` / `revoke-grant` / `list-grants`. Admin dashboard surface for the same. Generalises to other OIDC issuers (Apple, Microsoft, Okta) via configuration.
+
+**Why:** v0.31.x access tiers are bound to `oauth_clients.access_tier` - the operator labels a client and the label is the entire identity. `templates/ACCESS_POLICY.md.template:16` says "Check sender identity before every response in multi-user contexts," which the prompt-layer agent honours but the runtime-access PR deliberately closed at the client level. This entry tracks the user-level boundary that makes "Bob signs in with Google, gets Work tier" actually verifiable, not just labelable.
+
+**Pros:** Real end-user identity rooted in a verified OIDC claim, not in operator-issued client_id+secret pairs. Tier downgrade from Full client to Family user is enforceable. The clean AuthInfo seam already in place takes a `subject_email` extension without dispatch surgery.
+
+**Cons:** ~1000-1200 LOC: discovery-doc fetcher with JWKS cache, id_token verifier, `/authorize` rewrite + Google callback handler, `oauth_user_grants` table + migration v46, `oauth_tokens.subject_email` column, `exchangeAuthorizationCode` tier-persistence, AuthInfo extension, CLI grants surface, admin UI, e2e tests with mocked OIDC discovery. New consent-screen UX decisions. Tier-narrowing semantics (`min(client, user)` vs absolute user tier) need an explicit design call.
+
+**Context:** `/authorize` today is a rubber-stamp redirect (`oauth-provider.ts:authorize` returns the code without any consent or identity check). The MCP SDK auth router wires bare OAuth 2.1, not OIDC - no `/userinfo`, no JWKS, no id_token issuance - so gbrain would have to install its own well-known + verifier surface. The single hook point is `requireBearerAuth({ verifier })` at `serve-http.ts:800`; the AuthInfo extension is one column read in `verifyAccessToken` and one `min()` in tier resolution.
+
+**Depends on:** v0.31.x runtime-access (shipped).
 
 ## P1 (new from v0.25.0 — eval-capture adversarial review)
 
