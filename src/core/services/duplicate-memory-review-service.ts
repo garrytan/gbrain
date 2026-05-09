@@ -81,7 +81,7 @@ const THRESHOLDS: DuplicateMemoryReviewThresholds = {
   same_target_update: 0.35,
 };
 const SCAN_BATCH_SIZE = 100;
-const FRESHNESS_MARKER_LIMIT = 20;
+const FRESHNESS_BATCH_SIZE = 100;
 
 const STOP_WORDS = new Set([
   'a',
@@ -203,11 +203,11 @@ export async function getDuplicateMemoryReviewFreshness(
   engine: Pick<BrainEngine, 'listPages' | 'listMemoryCandidateEntries'>,
   input: { scope_id?: string; limit?: number; candidate_statuses?: MemoryCandidateStatus[] },
 ): Promise<DuplicateMemoryReviewFreshness> {
-  const limit = normalizeFreshnessLimit(input.limit);
+  const limit = input.limit === undefined ? undefined : normalizeFreshnessLimit(input.limit);
   const candidateStatuses: readonly MemoryCandidateStatus[] = input.candidate_statuses
     ?? DUPLICATE_MEMORY_REVIEW_CANDIDATE_STATUSES;
   const [pages, memoryCandidates] = await Promise.all([
-    engine.listPages({ limit, offset: 0 }),
+    listFreshnessPages(engine, { limit }),
     listFreshnessMemoryCandidates(engine, {
       scope_id: input.scope_id,
       limit,
@@ -216,10 +216,7 @@ export async function getDuplicateMemoryReviewFreshness(
   ]);
 
   return {
-    pages: pages.map((page) => ({
-      id: page.slug,
-      updated_at: page.updated_at.toISOString(),
-    })),
+    pages,
     memory_candidates: memoryCandidates,
   };
 }
@@ -232,34 +229,71 @@ export function duplicateMemoryReviewFreshnessEquals(
     && markerEntriesEqual(left.memory_candidates, right.memory_candidates);
 }
 
+async function listFreshnessPages(
+  engine: Pick<BrainEngine, 'listPages'>,
+  input: { limit?: number },
+): Promise<Array<{ id: string; updated_at: string }>> {
+  if (input.limit === 0) return [];
+  const batchSize = input.limit ?? FRESHNESS_BATCH_SIZE;
+  const pages: Array<{ id: string; updated_at: string }> = [];
+  let offset = 0;
+  while (true) {
+    const batch = await engine.listPages({
+      limit: batchSize,
+      offset,
+    });
+    pages.push(...batch.map((page) => ({
+      id: page.slug,
+      updated_at: page.updated_at.toISOString(),
+    })));
+    if (input.limit !== undefined || batch.length < batchSize) break;
+    offset += batchSize;
+  }
+  return sortAndLimitFreshnessMarkers(pages, input.limit);
+}
+
 async function listFreshnessMemoryCandidates(
   engine: Pick<BrainEngine, 'listMemoryCandidateEntries'>,
   input: {
     scope_id?: string;
-    limit: number;
+    limit?: number;
     candidate_statuses: readonly MemoryCandidateStatus[];
   },
 ): Promise<Array<{ id: string; updated_at: string }>> {
-  const batches = await Promise.all(input.candidate_statuses.map((status) => {
-    return engine.listMemoryCandidateEntries({
-      scope_id: input.scope_id,
-      status,
-      limit: input.limit,
-      offset: 0,
-    });
+  if (input.limit === 0) return [];
+  const batches = await Promise.all(input.candidate_statuses.map(async (status) => {
+    const batchSize = input.limit ?? FRESHNESS_BATCH_SIZE;
+    const candidates: Array<{ id: string; updated_at: string }> = [];
+    let offset = 0;
+    while (true) {
+      const batch = await engine.listMemoryCandidateEntries({
+        scope_id: input.scope_id,
+        status,
+        limit: batchSize,
+        offset,
+      });
+      candidates.push(...batch.map((candidate) => ({
+        id: candidate.id,
+        updated_at: candidate.updated_at.toISOString(),
+      })));
+      if (input.limit !== undefined || batch.length < batchSize) break;
+      offset += batchSize;
+    }
+    return candidates;
   }));
-  return batches
-    .flat()
-    .sort((left, right) => {
-      const updatedAtDelta = right.updated_at.getTime() - left.updated_at.getTime();
-      if (updatedAtDelta !== 0) return updatedAtDelta;
-      return left.id.localeCompare(right.id);
-    })
-    .slice(0, input.limit)
-    .map((candidate) => ({
-      id: candidate.id,
-      updated_at: candidate.updated_at.toISOString(),
-    }));
+  return sortAndLimitFreshnessMarkers(batches.flat(), input.limit);
+}
+
+function sortAndLimitFreshnessMarkers(
+  markers: Array<{ id: string; updated_at: string }>,
+  limit: number | undefined,
+): Array<{ id: string; updated_at: string }> {
+  const sorted = markers.sort((left, right) => {
+    const updatedAtDelta = Date.parse(right.updated_at) - Date.parse(left.updated_at);
+    if (updatedAtDelta !== 0) return updatedAtDelta;
+    return left.id.localeCompare(right.id);
+  });
+  return limit === undefined ? sorted : sorted.slice(0, limit);
 }
 
 function scorePage(
@@ -449,8 +483,7 @@ function normalizeLimit(value: number | undefined): number {
   return Math.max(0, Math.floor(value));
 }
 
-function normalizeFreshnessLimit(value: number | undefined): number {
-  if (value === undefined) return FRESHNESS_MARKER_LIMIT;
+function normalizeFreshnessLimit(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.floor(value));
 }

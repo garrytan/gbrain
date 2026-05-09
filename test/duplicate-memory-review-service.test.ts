@@ -56,7 +56,7 @@ function makeStoredCandidate(
   };
 }
 
-test('duplicate review freshness markers compare sampled pages and candidates', async () => {
+test('duplicate review freshness markers compare pages and candidates', async () => {
   const engine = await createEngine();
   await engine.putPage('concepts/sample-marker', {
     type: 'concept',
@@ -105,6 +105,24 @@ test('duplicate review freshness markers ignore terminal candidates by default',
   });
 
   expect(marker.memory_candidates.map((candidate) => candidate.id)).not.toContain('freshness-terminal-candidate');
+});
+
+test('duplicate review freshness markers cover more than the first sampled page window', async () => {
+  const engine = await createEngine();
+  for (let index = 0; index < 25; index += 1) {
+    await engine.putPage(`concepts/freshness-wide-${String(index).padStart(2, '0')}`, {
+      type: 'concept',
+      title: `Freshness Wide ${index}`,
+      compiled_truth: `Freshness marker wide coverage page ${index}.`,
+    });
+  }
+
+  const marker = await getDuplicateMemoryReviewFreshness(engine, {
+    scope_id: 'workspace:default',
+  });
+
+  expect(marker.pages).toHaveLength(25);
+  expect(marker.pages.map((page) => page.id)).toContain('concepts/freshness-wide-00');
 });
 
 test('duplicate review returns a likely duplicate for a near matching canonical page', async () => {
