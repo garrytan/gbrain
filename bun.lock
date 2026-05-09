@@ -23,6 +23,7 @@
         "express": "^5.1.0",
         "express-rate-limit": "^8.5.1",
         "gray-matter": "^4.0.3",
+        "jose": "^6.2.2",
         "marked": "^18.0.3",
         "openai": "^4.0.0",
         "pgvector": "^0.2.0",
