@@ -129,3 +129,67 @@ describe('importImageFile happy path (noEmbed)', () => {
     expect(result.error).toMatch(/Image too large/);
   });
 });
+
+describe('importImageFile source_id routing (multi-source)', () => {
+  // Regression for the image-import body wiring. Pre-fix, importImageFile
+  // accepted opts.sourceId for typecheck but never routed page/chunk/file
+  // writes to that source — they all silently landed in 'default'. Under
+  // multi-source full-sync with GBRAIN_EMBEDDING_MULTIMODAL=true, that
+  // recreated the same silent-misroute bug the text-path fix addressed.
+
+  async function pageCountBySource(engine: PGLiteEngine): Promise<Record<string, number>> {
+    const rows = await engine.executeRaw<{ source_id: string; n: number }>(
+      `SELECT source_id, COUNT(*)::int AS n FROM pages WHERE type = 'image' GROUP BY source_id`,
+    );
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.source_id] = r.n;
+    return out;
+  }
+
+  test('imports image to a named source when sourceId is passed', async () => {
+    // Pre-create the named source so the FK on pages.source_id is satisfied.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('img-src', 'Image Source') ON CONFLICT (id) DO NOTHING`,
+    );
+
+    const target = join(tmpDir, 'sourced-photo.png');
+    copyFileSync('test/fixtures/images/tiny.avif', target);
+
+    const result = await importImageFile(engine, target, 'photos/sourced-photo.png', {
+      noEmbed: true,
+      sourceId: 'img-src',
+    });
+    expect(result.status).toBe('imported');
+
+    const counts = await pageCountBySource(engine);
+    expect(counts['img-src']).toBe(1);
+    expect(counts['default'] ?? 0).toBe(0);
+
+    // File row also lands in img-src (FileSpec identity is (source_id, storage_path)).
+    const fileInSrc = await engine.getFile('img-src', 'photos/sourced-photo.png');
+    expect(fileInSrc).not.toBeNull();
+    const fileInDefault = await engine.getFile('default', 'photos/sourced-photo.png');
+    expect(fileInDefault).toBeNull();
+
+    // Page is reachable in img-src, not default.
+    const pageInSrc = await engine.getPage('photos/sourced-photo.png', { sourceId: 'img-src' });
+    expect(pageInSrc).not.toBeNull();
+    const pageInDefault = await engine.getPage('photos/sourced-photo.png', { sourceId: 'default' });
+    expect(pageInDefault).toBeNull();
+  });
+
+  test('omitting sourceId still targets default (back-compat preserved)', async () => {
+    const target = join(tmpDir, 'default-photo.png');
+    copyFileSync('test/fixtures/images/tiny.avif', target);
+
+    const result = await importImageFile(engine, target, 'photos/default-photo.png', { noEmbed: true });
+    expect(result.status).toBe('imported');
+
+    const counts = await pageCountBySource(engine);
+    expect(counts['default']).toBe(1);
+    expect(counts['img-src'] ?? 0).toBe(0);
+
+    const file = await engine.getFile('default', 'photos/default-photo.png');
+    expect(file).not.toBeNull();
+  });
+});

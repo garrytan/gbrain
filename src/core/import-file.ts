@@ -676,6 +676,14 @@ export interface ImportTransactionSpec {
   chunks?: ChunkInput[];
   /** Optional file-row insert (image ingest). Page link injected automatically. */
   file?: FileSpec;
+  /**
+   * v0.30.x follow-up to PR #707: source the entire transaction's writes to
+   * a named source. When omitted, every tx call defaults to source='default'.
+   * Mirrors importFromContent's source-aware threading; required for image
+   * imports under multi-source sync (otherwise pages, chunks, files, and
+   * sibling addLinks all silently route to default).
+   */
+  sourceId?: string;
   /** Inside-transaction hook for type-specific work (tags, links). */
   after?: (tx: BrainEngine) => Promise<void>;
 }
@@ -684,23 +692,25 @@ export async function withImportTransaction(
   engine: BrainEngine,
   spec: ImportTransactionSpec,
 ): Promise<void> {
+  const sourceOpts = spec.sourceId ? { sourceId: spec.sourceId } : undefined;
   await engine.transaction(async (tx) => {
-    if (spec.hadExisting) await tx.createVersion(spec.slug);
-    await tx.putPage(spec.slug, spec.page);
+    if (spec.hadExisting) await tx.createVersion(spec.slug, sourceOpts);
+    await tx.putPage(spec.slug, spec.page, sourceOpts);
     if (spec.file) {
       // page_id resolution after putPage so the new row's id is available.
-      const stored = await tx.getPage(spec.slug);
+      const stored = await tx.getPage(spec.slug, sourceOpts);
       await tx.upsertFile({
         ...spec.file,
+        source_id: spec.sourceId ?? spec.file.source_id,
         page_slug: spec.slug,
         page_id: stored?.id ?? null,
       });
     }
     if (spec.chunks !== undefined) {
       if (spec.chunks.length > 0) {
-        await tx.upsertChunks(spec.slug, spec.chunks);
+        await tx.upsertChunks(spec.slug, spec.chunks, sourceOpts);
       } else {
-        await tx.deleteChunks(spec.slug);
+        await tx.deleteChunks(spec.slug, sourceOpts);
       }
     }
     if (spec.after) await spec.after(tx);
@@ -887,9 +897,10 @@ export interface ImportImageOptions {
   /** Skip the embed call (for tests that want fast metadata-only inserts). */
   noEmbed?: boolean;
   /**
-   * v0.30.x follow-up to PR #707: route image-page writes to a named source.
-   * Mirrors importFromContent's threading; without this, runImport callers
-   * with sourceId would TS-error on the importImageFile branch.
+   * Route image-page, chunk, file, and sibling-link writes to a named source.
+   * Mirrors importFromContent's source-aware threading; without this, image
+   * imports invoked under multi-source full-sync would silently land all
+   * rows in source='default' even when the caller passed sourceId.
    */
   sourceId?: string;
 }
@@ -933,7 +944,8 @@ export async function importImageFile(
   const buf = readFileSync(filePath);
   const hash = createHash('sha256').update(buf).digest('hex');
 
-  const existing = await engine.getPage(imageSlug);
+  const sourceOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
+  const existing = await engine.getPage(imageSlug, sourceOpts);
   if (existing?.content_hash === hash) {
     return { slug: imageSlug, status: 'skipped', chunks: 0 };
   }
@@ -1009,6 +1021,7 @@ export async function importImageFile(
   await withImportTransaction(engine, {
     slug: imageSlug,
     hadExisting: !!existing,
+    sourceId: opts.sourceId,
     page: {
       type: 'image',
       page_kind: 'image',
@@ -1025,14 +1038,25 @@ export async function importImageFile(
       // matching candidate gets an image_of edge. Best-effort — addLink
       // throws when the target doesn't exist; we silently skip for now and
       // let `gbrain reconcile-links` pick up later additions.
+      //
+      // The sibling lookup + edge are scoped to opts.sourceId so a
+      // multi-source brain can't accidentally cross-link an image in source
+      // X to a same-named text page in source Y.
       for (const candidate of imageOfCandidates(imageSlug)) {
-        const sibling = await tx.getPage(candidate);
+        const sibling = await tx.getPage(candidate, sourceOpts);
         if (sibling) {
           try {
             await tx.addLink(
               imageSlug, candidate,
               filename,
               'image_of', 'manual', imageSlug, 'frontmatter',
+              opts.sourceId
+                ? {
+                    fromSourceId: opts.sourceId,
+                    toSourceId: opts.sourceId,
+                    originSourceId: opts.sourceId,
+                  }
+                : undefined,
             );
           } catch { /* sibling vanished mid-tx; skip */ }
           break; // one canonical link per image
