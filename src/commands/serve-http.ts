@@ -211,7 +211,32 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Express 5 app
   const app = express();
-  app.set('trust proxy', 'loopback'); // Caddy/Tailscale reverse proxy on localhost
+
+  // ---------------------------------------------------------------------------
+  // Proxy trust configuration
+  //
+  // Default: trust exactly one upstream hop (the PaaS edge proxy on Fly.io,
+  // Render, Heroku, Railway, etc.).  This makes req.ip resolve to the real
+  // client IP so downstream rate limiters (ccRateLimiter, adminAuthRateLimiter,
+  // registerRateLimiter) work per-client instead of seeing every request from
+  // the same PaaS-internal address.
+  //
+  // GBRAIN_TRUST_PROXY values:
+  //   "1" (default) — trust one upstream hop (Fly.io / standard PaaS)
+  //   "2", "3", ...  — trust N hops (multi-layer PaaS/CDN setups)
+  //   "false"        — no proxy; req.ip is the TCP peer (self-hosted, no proxy)
+  //   "true"         — trust all hops (only for fully controlled infra)
+  //   loopback-only deployments (Caddy/Tailscale on localhost) should use "false"
+  //
+  // See https://expressjs.com/en/guide/behind-proxies.html
+  // ---------------------------------------------------------------------------
+  const trustProxy = process.env.GBRAIN_TRUST_PROXY ?? '1';
+  const tpValue: boolean | number | string =
+    trustProxy === 'true' ? true
+    : trustProxy === 'false' ? false
+    : /^\d+$/.test(trustProxy) ? parseInt(trustProxy, 10)
+    : trustProxy;
+  app.set('trust proxy', tpValue);
 
   // ---------------------------------------------------------------------------
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
