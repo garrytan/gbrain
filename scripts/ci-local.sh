@@ -296,7 +296,7 @@ fi
 echo \"[runner] All 4 shards passed.\""
 fi
 
-INNER_CMD=$(cat <<'EOF'
+INNER_PROLOGUE=$(cat <<'EOF'
 set -euo pipefail
 echo "[runner] bun version: $(bun --version)"
 # oven/bun:1 omits git; many unit tests use mkdtemp + git init for fixtures.
@@ -312,10 +312,10 @@ if [ ! -d /app/node_modules ] || [ -z "$(ls -A /app/node_modules 2>/dev/null)" ]
   echo "[runner] First run (or --clean): bun install --frozen-lockfile"
   bun install --frozen-lockfile
 fi
-__RUN_PHASES__
 EOF
 )
-INNER_CMD="${INNER_CMD/__RUN_PHASES__/$RUN_PHASES_CMD}"
+INNER_CMD="${INNER_PROLOGUE}
+${RUN_PHASES_CMD}"
 
 # Conductor / git-worktree support: when `.git` is a file (not a directory),
 # it points at a host gitdir outside the bind-mount. Without remounting that
