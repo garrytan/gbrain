@@ -25,6 +25,18 @@ mock.module('../src/core/embedding.ts', () => ({
 // Import AFTER mocking.
 const { runEmbed } = await import('../src/commands/embed.ts');
 
+// Derive the slugs that have at least one stale (embedded_at: null/falsy)
+// chunk from a test's chunksBySlug map. Test fixtures inject this as the
+// listStalePageSlugs override so the embedAll early-exit path matches what
+// the test data actually contains.
+function deriveStaleSlugs(chunksBySlug: Map<string, any[]>): string[] {
+  const out: string[] = [];
+  for (const [slug, chunks] of chunksBySlug) {
+    if (chunks.some(c => !c.embedded_at)) out.push(slug);
+  }
+  return out.sort();
+}
+
 // Proxy-based mock engine that matches test/import-file.test.ts pattern.
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const calls: { method: string; args: any[] }[] = [];
@@ -115,6 +127,7 @@ describe('runEmbed --all (parallel)', () => {
     const engine = mockEngine({
       listPages: async () => pages,
       getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      listStalePageSlugs: async () => deriveStaleSlugs(chunksBySlug),
       upsertChunks: async () => {},
     });
 
@@ -150,6 +163,7 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     const engine = mockEngine({
       listPages: async () => pages,
       getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      listStalePageSlugs: async () => deriveStaleSlugs(chunksBySlug),
       upsertChunks: async (slug: string) => { upserts.push(slug); },
     });
 
@@ -189,6 +203,7 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     const engine = mockEngine({
       listPages: async () => pages,
       getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      listStalePageSlugs: async () => deriveStaleSlugs(chunksBySlug),
       upsertChunks: async () => {},
     });
 
@@ -197,9 +212,12 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     expect(totalEmbedCalls).toBe(0);
     expect(result.dryRun).toBe(true);
     expect(result.would_embed).toBe(3); // 1 from 'partial' + 2 from 'all-stale'
-    expect(result.skipped).toBe(3); // 2 from 'fresh' + 1 from 'partial'
-    expect(result.total_chunks).toBe(6);
-    expect(result.pages_processed).toBe(3);
+    // With the stale-prefilter optimization, fully-embedded pages are
+    // skipped entirely (not visited), so their chunks no longer contribute
+    // to skipped/total_chunks/pages_processed. 'fresh' is excluded.
+    expect(result.skipped).toBe(1); // 1 already-embedded chunk from 'partial'
+    expect(result.total_chunks).toBe(4); // 2 from 'partial' + 2 from 'all-stale'
+    expect(result.pages_processed).toBe(2); // 'partial' + 'all-stale'
   });
 
   test('dry-run --slugs on a single page counts stale chunks, no API calls', async () => {
@@ -240,6 +258,7 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     const engine = mockEngine({
       listPages: async () => pages,
       getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      listStalePageSlugs: async () => deriveStaleSlugs(chunksBySlug),
       upsertChunks: async () => {},
     });
 

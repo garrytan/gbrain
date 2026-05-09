@@ -44,9 +44,21 @@ export interface EmbedResult {
   skipped: number;
   /** Chunks that would be embedded if not for dryRun (0 in non-dryRun). */
   would_embed: number;
-  /** Total chunks considered across all processed pages. */
+  /**
+   * Total chunks considered across all processed pages.
+   *
+   * In `--stale` mode, fully-embedded pages are pre-filtered out and never
+   * visited, so this count reflects only chunks on pages that had at least
+   * one stale chunk — not the entire brain.
+   */
   total_chunks: number;
-  /** Number of pages processed (whether or not they had stale chunks). */
+  /**
+   * Number of pages processed.
+   *
+   * In `--stale` mode, equals the number of pages with at least one stale
+   * chunk (pre-filtered via listStalePageSlugs). In `--all` mode, equals
+   * every page in the brain.
+   */
   pages_processed: number;
   /** True if this run was a dry-run. */
   dryRun: boolean;
@@ -220,7 +232,30 @@ async function embedAll(
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
 ) {
-  const pages = await engine.listPages({ limit: 100000 });
+  // Stale-only path: ask the DB which pages actually have unembedded chunks
+  // before pulling the full page list. In steady state (brain fully
+  // embedded), this query returns 0 rows and we exit without a single
+  // getChunks round-trip — vs. the previous behavior of calling getChunks
+  // on every page just to filter to zero in memory. Cuts autopilot egress
+  // from ~100MB/cycle to ~few KB/cycle.
+  let pages: Awaited<ReturnType<BrainEngine['listPages']>>;
+  if (staleOnly) {
+    const staleSlugs = await engine.listStalePageSlugs();
+    if (staleSlugs.length === 0) {
+      onProgress?.(0, 0, 0);
+      if (dryRun) {
+        console.log(`[dry-run] Would embed 0 chunks across 0 pages`);
+      } else {
+        console.log(`Embedded 0 chunks across 0 pages`);
+      }
+      return;
+    }
+    const staleSet = new Set(staleSlugs);
+    const allPages = await engine.listPages({ limit: 100000 });
+    pages = allPages.filter(p => staleSet.has(p.slug));
+  } else {
+    pages = await engine.listPages({ limit: 100000 });
+  }
   let processed = 0;
 
   // Concurrency limit for parallel page embedding.
