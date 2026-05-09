@@ -10,9 +10,6 @@
  * batch. A killed process can re-run and pick up where it left off without
  * re-doing rows. Idempotent: even a full re-walk produces the same writes.
  *
- * Postgres only sets `SET LOCAL statement_timeout = '600s'` per batch (does
- * NOT refuse the migration on low session settings — codex pass-2 #16).
- *
  * Pure library function — same code path used by the v0_29_1 orchestrator
  * AND the `gbrain reindex-frontmatter` CLI command (added in commit 4).
  *
@@ -136,11 +133,6 @@ export async function backfillEffectiveDate(
   let fallback = 0;
   let batchNum = 0;
 
-  // Per-engine statement_timeout boost. Postgres can wedge on a slow
-  // batch otherwise; PGLite ignores SET LOCAL outside transactions but
-  // doesn't have the timeout problem in the first place (single writer).
-  const isPostgres = engine.kind === 'postgres';
-
   while (true) {
     if (opts.maxRows && examined >= opts.maxRows) break;
 
@@ -173,51 +165,39 @@ export async function backfillEffectiveDate(
     let touched = 0;
 
     if (!opts.dryRun) {
-      // Compute effective_date for each row, then UPDATE in a batch wrapped
-      // in its own transaction (so SET LOCAL statement_timeout scopes to it).
-      // postgres.js's `transaction` would be cleaner but we're using executeRaw
-      // for engine portability; explicit BEGIN/COMMIT does the same on both.
-      if (isPostgres) {
-        await engine.executeRaw(`BEGIN`);
-        await engine.executeRaw(`SET LOCAL statement_timeout = '600s'`);
-      }
+      // Compute effective_date for each row, then UPDATE independently.
+      // This backfill is idempotent and resumable via CHECKPOINT_KEY, so a
+      // batch-level transaction is unnecessary. More importantly, postgres.js
+      // rejects raw BEGIN/COMMIT on pooled connections; callers that need a
+      // transaction must use sql.begin/sql.reserved, which is not exposed by
+      // the portable BrainEngine interface used here.
+      for (const r of rows) {
+        const fm = parseFrontmatter(r.frontmatter);
+        const filename = r.import_filename
+          || (r.slug.includes('/') ? r.slug.split('/').pop()! : r.slug);
+        const computed = computeEffectiveDate({
+          slug: r.slug,
+          frontmatter: fm,
+          filename,
+          updatedAt: new Date(r.updated_at),
+          createdAt: new Date(r.created_at),
+        });
 
-      try {
-        for (const r of rows) {
-          const fm = parseFrontmatter(r.frontmatter);
-          const filename = r.import_filename
-            || (r.slug.includes('/') ? r.slug.split('/').pop()! : r.slug);
-          const computed = computeEffectiveDate({
-            slug: r.slug,
-            frontmatter: fm,
-            filename,
-            updatedAt: new Date(r.updated_at),
-            createdAt: new Date(r.created_at),
-          });
+        // No-op-on-equal: skip the UPDATE if existing matches (saves write
+        // amplification on re-runs). `force: true` bypasses.
+        const existingMs = r.effective_date ? new Date(r.effective_date).getTime() : null;
+        const computedMs = computed.date ? computed.date.getTime() : null;
+        const datesMatch = existingMs === computedMs;
+        const sourcesMatch = (r.effective_date_source ?? null) === (computed.source ?? null);
 
-          // No-op-on-equal: skip the UPDATE if existing matches (saves write
-          // amplification on re-runs). `force: true` bypasses.
-          const existingMs = r.effective_date ? new Date(r.effective_date).getTime() : null;
-          const computedMs = computed.date ? computed.date.getTime() : null;
-          const datesMatch = existingMs === computedMs;
-          const sourcesMatch = (r.effective_date_source ?? null) === (computed.source ?? null);
+        if (!opts.force && datesMatch && sourcesMatch) continue;
 
-          if (!opts.force && datesMatch && sourcesMatch) continue;
-
-          await engine.executeRaw(
-            `UPDATE pages SET effective_date = $1::timestamptz, effective_date_source = $2 WHERE id = $3`,
-            [computed.date ? computed.date.toISOString() : null, computed.source, r.id],
-          );
-          touched++;
-          if (computed.source === 'fallback') fallback++;
-        }
-
-        if (isPostgres) await engine.executeRaw(`COMMIT`);
-      } catch (e) {
-        if (isPostgres) {
-          try { await engine.executeRaw(`ROLLBACK`); } catch { /* ignore */ }
-        }
-        throw e;
+        await engine.executeRaw(
+          `UPDATE pages SET effective_date = $1::timestamptz, effective_date_source = $2 WHERE id = $3`,
+          [computed.date ? computed.date.toISOString() : null, computed.source, r.id],
+        );
+        touched++;
+        if (computed.source === 'fallback') fallback++;
       }
     } else {
       // Dry run: still count what WOULD change.
