@@ -3,6 +3,7 @@ import type {
 } from '../engine.ts';
 import type {
   MemoryCandidateTargetObjectType,
+  MemoryCandidateStatus,
   MemoryCandidateType,
   Page,
   PageType,
@@ -26,6 +27,7 @@ export interface DuplicateMemoryReviewInput {
   target_object_id?: string;
   include_pages?: boolean;
   include_candidates?: boolean;
+  candidate_statuses?: MemoryCandidateStatus[];
   exclude_ids?: string[];
   limit?: number;
 }
@@ -41,6 +43,7 @@ export interface DuplicateMemoryReviewMatch {
 export interface DuplicateMemoryReviewResult {
   decision: DuplicateMemoryDecision;
   matches: DuplicateMemoryReviewMatch[];
+  decision_match?: DuplicateMemoryReviewMatch;
   thresholds: DuplicateMemoryReviewThresholds;
   summary_lines: string[];
 }
@@ -65,6 +68,12 @@ export interface DuplicateMemoryReviewThresholds {
   likely_duplicate: number;
   same_target_update: number;
 }
+
+export const DUPLICATE_MEMORY_REVIEW_CANDIDATE_STATUSES = [
+  'captured',
+  'candidate',
+  'staged_for_review',
+] as const satisfies readonly MemoryCandidateStatus[];
 
 const THRESHOLDS: DuplicateMemoryReviewThresholds = {
   possible_duplicate: 0.45,
@@ -94,6 +103,8 @@ export async function reviewDuplicateMemory(
   input: DuplicateMemoryReviewInput,
 ): Promise<DuplicateMemoryReviewResult> {
   const limit = normalizeLimit(input.limit);
+  const candidateStatuses: readonly MemoryCandidateStatus[] = input.candidate_statuses
+    ?? DUPLICATE_MEMORY_REVIEW_CANDIDATE_STATUSES;
   const pageExcludedIds = new Set(input.exclude_ids ?? []);
   const candidateExcludedIds = new Set(input.exclude_ids ?? []);
   if (input.subject_kind === 'page' && input.subject_id) {
@@ -110,6 +121,7 @@ export async function reviewDuplicateMemory(
       const pages = await engine.listPages({ limit: SCAN_BATCH_SIZE, offset });
       for (const page of pages) {
         if (pageExcludedIds.has(page.slug)) continue;
+        if (input.page_type !== undefined && page.type !== input.page_type) continue;
         const tags = await engine.getTags(page.slug);
         const match = scorePage(input, page, tags);
         if (isMeaningfulMatch(match)) matches.push(match);
@@ -130,6 +142,7 @@ export async function reviewDuplicateMemory(
 
       for (const candidate of candidates) {
         if (candidateExcludedIds.has(candidate.id)) continue;
+        if (!candidateStatuses.includes(candidate.status)) continue;
         const match = scoreCandidate(input, candidate);
         if (isMeaningfulMatch(match)) matches.push(match);
       }
@@ -143,12 +156,14 @@ export async function reviewDuplicateMemory(
       if (right.score !== left.score) return right.score - left.score;
       return left.id.localeCompare(right.id);
     });
-  const decision = decide(allRankedMatches);
+  const decisionResult = decide(allRankedMatches);
+  const decision = decisionResult.decision;
   const returnedMatches = decision === 'no_match' ? [] : allRankedMatches.slice(0, limit);
 
   return {
     decision,
     matches: returnedMatches,
+    ...(decisionResult.decision_match ? { decision_match: decisionResult.decision_match } : {}),
     thresholds: { ...THRESHOLDS },
     summary_lines: buildSummaryLines(decision, allRankedMatches),
   };
@@ -157,7 +172,7 @@ export async function reviewDuplicateMemory(
 export function summarizeDuplicateReviewForPreflight(
   result: DuplicateMemoryReviewResult,
 ): DuplicateMemoryReviewPreflightSummary {
-  const topMatch = result.matches[0];
+  const topMatch = selectPreflightTopMatch(result);
   return {
     decision: result.decision,
     ...(topMatch
@@ -173,14 +188,31 @@ export function summarizeDuplicateReviewForPreflight(
   };
 }
 
+function selectPreflightTopMatch(
+  result: DuplicateMemoryReviewResult,
+): DuplicateMemoryReviewMatch | undefined {
+  if (result.decision !== 'likely_duplicate') {
+    return result.matches[0];
+  }
+  return result.decision_match ?? result.matches.find((match) => {
+    return !isSameTargetMatch(match) && match.score >= result.thresholds.likely_duplicate;
+  }) ?? result.matches[0];
+}
+
 export async function getDuplicateMemoryReviewFreshness(
   engine: Pick<BrainEngine, 'listPages' | 'listMemoryCandidateEntries'>,
-  input: { scope_id?: string; limit?: number },
+  input: { scope_id?: string; limit?: number; candidate_statuses?: MemoryCandidateStatus[] },
 ): Promise<DuplicateMemoryReviewFreshness> {
   const limit = normalizeFreshnessLimit(input.limit);
+  const candidateStatuses: readonly MemoryCandidateStatus[] = input.candidate_statuses
+    ?? DUPLICATE_MEMORY_REVIEW_CANDIDATE_STATUSES;
   const [pages, memoryCandidates] = await Promise.all([
     engine.listPages({ limit, offset: 0 }),
-    engine.listMemoryCandidateEntries({ scope_id: input.scope_id, limit, offset: 0 }),
+    listFreshnessMemoryCandidates(engine, {
+      scope_id: input.scope_id,
+      limit,
+      candidate_statuses: candidateStatuses,
+    }),
   ]);
 
   return {
@@ -188,10 +220,7 @@ export async function getDuplicateMemoryReviewFreshness(
       id: page.slug,
       updated_at: page.updated_at.toISOString(),
     })),
-    memory_candidates: memoryCandidates.map((candidate) => ({
-      id: candidate.id,
-      updated_at: candidate.updated_at.toISOString(),
-    })),
+    memory_candidates: memoryCandidates,
   };
 }
 
@@ -201,6 +230,36 @@ export function duplicateMemoryReviewFreshnessEquals(
 ): boolean {
   return markerEntriesEqual(left.pages, right.pages)
     && markerEntriesEqual(left.memory_candidates, right.memory_candidates);
+}
+
+async function listFreshnessMemoryCandidates(
+  engine: Pick<BrainEngine, 'listMemoryCandidateEntries'>,
+  input: {
+    scope_id?: string;
+    limit: number;
+    candidate_statuses: readonly MemoryCandidateStatus[];
+  },
+): Promise<Array<{ id: string; updated_at: string }>> {
+  const batches = await Promise.all(input.candidate_statuses.map((status) => {
+    return engine.listMemoryCandidateEntries({
+      scope_id: input.scope_id,
+      status,
+      limit: input.limit,
+      offset: 0,
+    });
+  }));
+  return batches
+    .flat()
+    .sort((left, right) => {
+      const updatedAtDelta = right.updated_at.getTime() - left.updated_at.getTime();
+      if (updatedAtDelta !== 0) return updatedAtDelta;
+      return left.id.localeCompare(right.id);
+    })
+    .slice(0, input.limit)
+    .map((candidate) => ({
+      id: candidate.id,
+      updated_at: candidate.updated_at.toISOString(),
+    }));
 }
 
 function scorePage(
@@ -271,18 +330,41 @@ function scoreCandidate(
   };
 }
 
-function decide(matches: DuplicateMemoryReviewMatch[]): DuplicateMemoryDecision {
+interface DuplicateMemoryDecisionResult {
+  decision: DuplicateMemoryDecision;
+  decision_match?: DuplicateMemoryReviewMatch;
+}
+
+function decide(matches: DuplicateMemoryReviewMatch[]): DuplicateMemoryDecisionResult {
   const likelyDuplicate = matches.find((match) => !isSameTargetMatch(match) && match.score >= THRESHOLDS.likely_duplicate);
-  if (likelyDuplicate) return 'likely_duplicate';
+  if (likelyDuplicate) {
+    return {
+      decision: 'likely_duplicate',
+      decision_match: likelyDuplicate,
+    };
+  }
 
   const topMatch = matches[0];
-  if (!topMatch) return 'no_match';
+  if (!topMatch) return { decision: 'no_match' };
   if (isSameTargetMatch(topMatch) && topMatch.score >= THRESHOLDS.same_target_update) {
-    return 'same_target_update';
+    return {
+      decision: 'same_target_update',
+      decision_match: topMatch,
+    };
   }
-  if (topMatch.score >= THRESHOLDS.likely_duplicate) return 'likely_duplicate';
-  if (topMatch.score >= THRESHOLDS.possible_duplicate) return 'possible_duplicate';
-  return 'no_match';
+  if (topMatch.score >= THRESHOLDS.likely_duplicate) {
+    return {
+      decision: 'likely_duplicate',
+      decision_match: topMatch,
+    };
+  }
+  if (topMatch.score >= THRESHOLDS.possible_duplicate) {
+    return {
+      decision: 'possible_duplicate',
+      decision_match: topMatch,
+    };
+  }
+  return { decision: 'no_match' };
 }
 
 function isMeaningfulMatch(match: DuplicateMemoryReviewMatch): boolean {

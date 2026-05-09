@@ -154,6 +154,28 @@ test('promotion preflight does not hide duplicate pages whose slug matches the c
   });
 });
 
+test('promotion preflight ignores terminal duplicate candidates', async () => {
+  await withEngine('mbrain-duplicate-preflight-terminal-candidate-', async (engine) => {
+    await seedCandidate(engine, 'terminal-duplicate-candidate');
+    await engine.updateMemoryCandidateEntryStatus('terminal-duplicate-candidate', {
+      status: 'rejected',
+      reviewed_at: new Date('2026-05-09T01:00:00.000Z'),
+      review_reason: 'Rejected duplicate no longer blocks promotion.',
+    });
+    await seedCandidate(engine, 'incoming-terminal-candidate-check', {
+      target_object_id: 'concepts/new-terminal-candidate-check',
+    });
+
+    const result = await preflightPromoteMemoryCandidate(engine, {
+      id: 'incoming-terminal-candidate-check',
+    });
+
+    expect(result.decision).toBe('allow');
+    expect(result.reasons).toEqual(['candidate_ready_for_promotion']);
+    expect(result.duplicate_review.decision).toBe('no_match');
+  });
+});
+
 test('promotion service fails closed for likely duplicate candidates', async () => {
   await withEngine('mbrain-duplicate-preflight-promote-', async (engine) => {
     await engine.putPage('concepts/existing-rollout', {

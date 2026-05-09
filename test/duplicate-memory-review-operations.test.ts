@@ -107,6 +107,30 @@ test('review_duplicate_memory accepts valid page type and rejects invalid page t
   });
 });
 
+test('review_duplicate_memory filters page matches by page type context', async () => {
+  await withSQLiteEngine(async (engine) => {
+    await engine.putPage('concepts/page-type-filter', {
+      type: 'concept',
+      title: 'Page Type Filter',
+      compiled_truth: 'Page type filter keeps duplicate review evidence bounded to the requested page type.',
+    });
+
+    const review = findOperation('review_duplicate_memory');
+    const result = await review.handler(operationContext(engine), {
+      subject_kind: 'proposed_memory',
+      title: 'Page type filter',
+      content: 'Page type filter keeps duplicate review evidence bounded to the requested page type.',
+      page_type: 'project',
+      include_pages: true,
+      include_candidates: false,
+      limit: 5,
+    }) as any;
+
+    expect(result.decision).toBe('no_match');
+    expect(result.matches).toEqual([]);
+  });
+});
+
 test('review_duplicate_memory rejects non-boolean include flags', async () => {
   await withSQLiteEngine(async (engine) => {
     const review = findOperation('review_duplicate_memory');

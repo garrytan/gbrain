@@ -91,6 +91,22 @@ test('duplicate review freshness markers compare sampled pages and candidates', 
   expect(duplicateMemoryReviewFreshnessEquals(marker, changedCandidate)).toBe(false);
 });
 
+test('duplicate review freshness markers ignore terminal candidates by default', async () => {
+  const engine = await createEngine();
+  await engine.createMemoryCandidateEntry(makeCandidate('freshness-terminal-candidate'));
+  await engine.updateMemoryCandidateEntryStatus('freshness-terminal-candidate', {
+    status: 'rejected',
+    reviewed_at: new Date('2026-05-09T01:00:00.000Z'),
+    review_reason: 'Rejected candidate is outside duplicate review inputs.',
+  });
+
+  const marker = await getDuplicateMemoryReviewFreshness(engine, {
+    scope_id: 'workspace:default',
+  });
+
+  expect(marker.memory_candidates.map((candidate) => candidate.id)).not.toContain('freshness-terminal-candidate');
+});
+
 test('duplicate review returns a likely duplicate for a near matching canonical page', async () => {
   const engine = await createEngine();
   await engine.putPage('projects/acme-migration', {
@@ -120,6 +136,29 @@ test('duplicate review returns a likely duplicate for a near matching canonical 
   expect(result.summary_lines[0]).toContain('likely_duplicate');
 });
 
+test('duplicate review filters canonical page matches by supplied page type', async () => {
+  const engine = await createEngine();
+  await engine.putPage('concepts/type-filter-target', {
+    type: 'concept',
+    title: 'Type Filter Target',
+    compiled_truth: 'Type filter target keeps staged review notes with rollback evidence.',
+  });
+
+  const result = await reviewDuplicateMemory(engine, {
+    scope_id: 'workspace:default',
+    subject_kind: 'proposed_memory',
+    title: 'Type filter target',
+    content: 'Type filter target keeps staged review notes with rollback evidence.',
+    page_type: 'project',
+    include_pages: true,
+    include_candidates: false,
+    limit: 5,
+  });
+
+  expect(result.decision).toBe('no_match');
+  expect(result.matches).toEqual([]);
+});
+
 test('duplicate review reports same target update for a candidate with the same target object', async () => {
   const engine = await createEngine();
   await engine.createMemoryCandidateEntry(makeCandidate('existing-candidate', {
@@ -144,6 +183,32 @@ test('duplicate review reports same target update for a candidate with the same 
   expect(result.matches[0]?.kind).toBe('memory_candidate');
   expect(result.matches[0]?.id).toBe('existing-candidate');
   expect(result.matches[0]?.reasons).toContain('same target object');
+});
+
+test('duplicate review ignores terminal candidate matches by default', async () => {
+  const engine = await createEngine();
+  await engine.createMemoryCandidateEntry(makeCandidate('rejected-candidate'));
+  await engine.updateMemoryCandidateEntryStatus('rejected-candidate', {
+    status: 'rejected',
+    reviewed_at: new Date('2026-05-09T01:00:00.000Z'),
+    review_reason: 'Rejected candidate should not block future review.',
+  });
+
+  const result = await reviewDuplicateMemory(engine, {
+    scope_id: 'workspace:default',
+    subject_kind: 'memory_candidate',
+    subject_id: 'incoming-candidate',
+    content: 'Acme migration plan uses staged cutover with rollback notes.',
+    candidate_type: 'note_update',
+    target_object_type: 'curated_note',
+    target_object_id: 'projects/acme-migration',
+    include_pages: false,
+    include_candidates: true,
+    limit: 5,
+  });
+
+  expect(result.decision).toBe('no_match');
+  expect(result.matches).toEqual([]);
 });
 
 test('duplicate review reports same target update for a page with the target id slug', async () => {
@@ -234,6 +299,50 @@ test('duplicate review prefers unresolved likely duplicates over same target upd
   expect(result.matches[0]?.id).toBe('projects/acme-existing');
   expect(result.matches.some((match) => match.id === 'projects/acme-duplicate')).toBe(true);
   expect(result.decision).toBe('likely_duplicate');
+
+  const summary = summarizeDuplicateReviewForPreflight(result);
+  expect(summary.top_match?.id).toBe('projects/acme-duplicate');
+});
+
+test('preflight summary keeps the blocking duplicate when it is outside returned matches', async () => {
+  const engine = await createEngine();
+  for (let index = 0; index < 6; index += 1) {
+    await engine.createMemoryCandidateEntry(makeCandidate(`same-target-${index}`, {
+      proposed_content: 'Atlas migration keeps staged rollback owner checkpoint evidence.',
+      source_refs: ['User, direct message, 2026-05-09 09:00 KST'],
+      target_object_id: 'projects/atlas-existing',
+    }));
+  }
+  await engine.putPage('projects/atlas-duplicate', {
+    type: 'project',
+    title: 'Atlas Duplicate',
+    compiled_truth: 'Atlas migration keeps staged rollback owner checkpoint evidence.',
+    frontmatter: {
+      source_refs: ['User, direct message, 2026-05-09 09:00 KST'],
+    },
+  });
+
+  const result = await reviewDuplicateMemory(engine, {
+    scope_id: 'workspace:default',
+    subject_kind: 'memory_candidate',
+    subject_id: 'incoming-candidate',
+    title: 'Atlas Existing',
+    content: 'Atlas migration keeps staged rollback owner checkpoint evidence.',
+    source_refs: ['User, direct message, 2026-05-09 09:00 KST'],
+    candidate_type: 'note_update',
+    target_object_type: 'curated_note',
+    target_object_id: 'projects/atlas-existing',
+    include_pages: true,
+    include_candidates: true,
+    limit: 5,
+  });
+
+  expect(result.decision).toBe('likely_duplicate');
+  expect(result.matches).toHaveLength(5);
+  expect(result.matches.every((match) => match.reasons.includes('same target object'))).toBe(true);
+
+  const summary = summarizeDuplicateReviewForPreflight(result);
+  expect(summary.top_match?.id).toBe('projects/atlas-duplicate');
 });
 
 test('duplicate review pages through canonical pages independent of result limit', async () => {
