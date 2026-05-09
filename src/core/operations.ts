@@ -1571,7 +1571,19 @@ const resolve_slugs: Operation = {
     partial: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.resolveSlugs(p.partial as string);
+    const candidates = await ctx.engine.resolveSlugs(p.partial as string);
+    // Defense in depth: filter at handler-level too, mirroring the get_page
+    // fuzzy fix. The slug-string-array response filter already drops hidden
+    // slugs from the wire, but doing it here keeps the timing/ordering
+    // observable to a Work caller closer to what they see for an absent
+    // slug. See CHANGELOG "Known limitations" for the residual rank-order
+    // post-filter oracle (engine-side LIMIT then post-filter; SQL push-down
+    // is tracked as a follow-up).
+    if (ctx.tier && ctx.tier !== 'Full') {
+      const { tierAllowsSlug } = await import('./access-tier.ts');
+      return candidates.filter((c) => tierAllowsSlug(c, ctx.tier!));
+    }
+    return candidates;
   },
   scope: 'read',
   tier: 'Work',

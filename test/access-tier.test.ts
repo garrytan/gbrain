@@ -499,6 +499,90 @@ describe('input-side gated ops — hidden and absent slugs are indistinguishable
     ]);
   });
 
+  test('get_page fuzzy with all-hidden candidates throws page_not_found, not ambiguous', async () => {
+    // Edge case: zero visible after tier-filter. The handler must fall through
+    // to the not-found throw instead of leaving `page` null with an ambiguous
+    // shape. Mirrors the engine's wire envelope for "no fuzzy match at all".
+    const op = operations.find(o => o.name === 'get_page');
+    const engine = {
+      async getPage() { return null; },
+      async resolveSlugs() {
+        return ['personal/diary', 'soul/identity']; // both hidden for Work
+      },
+      async getTags() { return []; },
+    };
+    await expect(
+      op!.handler(
+        { engine, tier: 'Work', remote: true, logger: console } as any,
+        { slug: 'd', fuzzy: true },
+      ),
+    ).rejects.toMatchObject({ name: 'OperationError', code: 'page_not_found' });
+  });
+
+  test('get_page fuzzy with multiple visible candidates returns ambiguous_slug filtered', async () => {
+    // 3+ visible after filter: caller still sees ambiguous_slug with the
+    // visible candidate set only. Hidden candidates are not echoed even
+    // though they would have ranked higher in the engine's similarity sort.
+    const op = operations.find(o => o.name === 'get_page');
+    const engine = {
+      async getPage() { return null; },
+      async resolveSlugs() {
+        return [
+          'personal/diary',           // hidden
+          'people/alice-diary',       // visible
+          'wiki/people/dan-diary',    // visible
+          'companies/diary-co',       // visible
+        ];
+      },
+      async getTags() { return []; },
+    };
+    const result = await op!.handler(
+      { engine, tier: 'Work', remote: true, logger: console } as any,
+      { slug: 'diary', fuzzy: true },
+    );
+    expect(result).toEqual({
+      error: 'ambiguous_slug',
+      candidates: ['people/alice-diary', 'wiki/people/dan-diary', 'companies/diary-co'],
+    });
+  });
+
+  test('resolve_slugs handler-side filter mirrors get_page fuzzy fix', async () => {
+    // Defense-in-depth: even before the response-side slug-string-array filter
+    // runs, the handler itself drops hidden candidates. Closes a small timing
+    // gap between handler return and filter pass for non-Full callers.
+    const op = operations.find(o => o.name === 'resolve_slugs');
+    const engine = {
+      async resolveSlugs() {
+        return ['personal/diary', 'people/alice', 'soul/identity'];
+      },
+    };
+    const result = await op!.handler(
+      { engine, tier: 'Work', remote: true, logger: console } as any,
+      { partial: 'di' },
+    );
+    expect(result).toEqual(['people/alice']);
+  });
+
+  test('resolve_slugs handler-side filter passes through Full tier and undefined tier', async () => {
+    const op = operations.find(o => o.name === 'resolve_slugs');
+    const engine = {
+      async resolveSlugs() {
+        return ['personal/diary', 'people/alice'];
+      },
+    };
+    const full = await op!.handler(
+      { engine, tier: 'Full', remote: true, logger: console } as any,
+      { partial: 'd' },
+    );
+    expect(full).toEqual(['personal/diary', 'people/alice']);
+
+    const undef = await op!.handler(
+      { engine, remote: false, logger: console } as any,
+      { partial: 'd' },
+    );
+    expect(undef).toEqual(['personal/diary', 'people/alice']);
+  });
+
   test('get_chunks returns [] for hidden slug without touching engine', async () => {
     const op = operations.find(o => o.name === 'get_chunks');
     expect(op).toBeDefined();
