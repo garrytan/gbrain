@@ -9,10 +9,12 @@ import {
   resolveStoredAccessTier,
   tierAllowsSlug,
   filterResponseByTier,
+  filterShapeFor,
   DEFAULT_TIER_PREFIXES,
   InvalidAccessTierError,
   type AccessTier,
 } from '../src/core/access-tier.ts';
+import { operations } from '../src/core/operations.ts';
 
 // ---------------------------------------------------------------------------
 // Runtime MCP access control: AccessTier primitive tests.
@@ -209,10 +211,18 @@ describe('filterResponseByTier — read-path response filtering', () => {
     const page = { slug: 'personal/diary', title: 'Diary', content: 'secret' };
     // Throws OperationError so the wire envelope is byte-identical to a
     // real engine not-found and a Work-tier caller cannot probe slug
-    // existence by status code.
+    // existence by status code. The `suggestion` field matches the
+    // engine's get_page handler exactly so the buildError->hint path
+    // produces the same `hint` string on both real and tier-rejected
+    // not-found responses.
     await expect(
       filterResponseByTier('get_page', page, { tier: 'Work' }),
-    ).rejects.toMatchObject({ name: 'OperationError', code: 'page_not_found' });
+    ).rejects.toMatchObject({
+      name: 'OperationError',
+      code: 'page_not_found',
+      message: 'Page not found: personal/diary',
+      suggestion: 'Check the slug or use fuzzy: true',
+    });
   });
   test('get_page passes visible page through unchanged', async () => {
     const page = { slug: 'people/alice', title: 'Alice' };
@@ -237,8 +247,27 @@ describe('filterResponseByTier — read-path response filtering', () => {
       candidates: ['personal/a', 'personal/b'],
     };
     await expect(
+      filterResponseByTier('get_page', ambiguousAllPersonal, {
+        tier: 'Work',
+        requestSlug: 'a',
+      }),
+    ).rejects.toMatchObject({
+      name: 'OperationError',
+      code: 'page_not_found',
+      message: 'Page not found: a',
+      suggestion: 'Check the slug or use fuzzy: true',
+    });
+
+    // Without requestSlug the throw still fires; message degrades
+    // gracefully to the slugless template (tested only as a defense in
+    // depth — production always threads requestSlug).
+    await expect(
       filterResponseByTier('get_page', ambiguousAllPersonal, { tier: 'Work' }),
-    ).rejects.toMatchObject({ name: 'OperationError', code: 'page_not_found' });
+    ).rejects.toMatchObject({
+      name: 'OperationError',
+      code: 'page_not_found',
+      message: 'Page not found',
+    });
   });
   test('find_orphans wrapper — inner orphans array filtered, totals recomputed', async () => {
     // Real shape from src/commands/orphans.ts findOrphans():
@@ -326,4 +355,85 @@ describe('filterResponseByTier — read-path response filtering', () => {
     const filtered = await filterResponseByTier('list_pages', rows, { tier: 'Work' });
     expect(filtered).toEqual([{ slug: 'people/alice' }]);
   });
+  test('get_health wrapper — most_connected slugs filtered for Family', async () => {
+    // BrainHealth.most_connected leaks brain topology. A Family-tier
+    // caller calling get_health should see aggregate counts but not the
+    // top-N most-linked slugs from outside the visible prefix set.
+    const health = {
+      page_count: 100,
+      chunk_count: 5000,
+      most_connected: [
+        { slug: 'people/alice', link_count: 42 },
+        { slug: 'personal/diary', link_count: 30 },
+        { slug: 'logistics/q1', link_count: 20 },
+      ],
+      embed_coverage: 0.95,
+    };
+    const filtered = await filterResponseByTier('get_health', health, { tier: 'Family' });
+    expect(filtered).toEqual({
+      page_count: 100,
+      chunk_count: 5000,
+      most_connected: [{ slug: 'logistics/q1', link_count: 20 }],
+      embed_coverage: 0.95,
+    });
+  });
+  test('get_health wrapper — Full tier passes most_connected through unchanged', async () => {
+    const health = {
+      page_count: 100,
+      most_connected: [
+        { slug: 'personal/diary', link_count: 30 },
+        { slug: 'people/alice', link_count: 42 },
+      ],
+    };
+    expect(await filterResponseByTier('get_health', health, { tier: 'Full' })).toBe(health);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage parity: every tier-annotated read op MUST be either declared in
+// OP_FILTER_SHAPE or input-gated in its handler. Without this test, a future
+// op tagged `tier: 'Work'` whose response shape the filter doesn't recognize
+// would silently leak data — exactly the regression that bounced this PR
+// the first time.
+//
+// Maintenance: when an op opts into input-side gating instead of response
+// filtering (e.g. because its row shape carries no `slug`), add it to the
+// HANDLER_GATED_OPS set below and document the rationale on the handler.
+// ---------------------------------------------------------------------------
+
+describe('OP_FILTER_SHAPE parity — tier-annotated read ops are covered', () => {
+  // Ops whose handlers reject up-front via tierAllowsSlug rather than
+  // letting the response filter do it. Each of these has a comment in
+  // operations.ts justifying the choice (typically because the response
+  // shape carries no slug field).
+  const HANDLER_GATED_OPS: ReadonlySet<string> = new Set([
+    'get_chunks',  // Chunk[] has no slug; gated input-side
+    'get_timeline', // TimelineEntry[] has no slug; gated input-side
+  ]);
+
+  // Ops that legitimately return no slug-bearing data. They satisfy the
+  // tier annotation as an invocation gate (Family caller may invoke);
+  // there's nothing to filter on the response side.
+  const NO_SLUG_DATA_OPS: ReadonlySet<string> = new Set([
+    'get_stats',  // aggregate counts only
+    'whoami',     // self-introspection (client_id, scopes, expires_at)
+  ]);
+
+  for (const op of operations) {
+    if (!op.tier || op.tier === 'Full') continue;
+    if (op.scope !== 'read' && op.scope !== 'admin') continue;
+    test(`${op.name} (tier=${op.tier}, scope=${op.scope}) is covered`, () => {
+      const shape = filterShapeFor(op.name);
+      const inMap = shape !== undefined;
+      const inputGated = HANDLER_GATED_OPS.has(op.name);
+      const noSlugData = NO_SLUG_DATA_OPS.has(op.name);
+      const covered = inMap || inputGated || noSlugData;
+      // The error message names the op so a failure points at the next
+      // step: declare its shape in OP_FILTER_SHAPE, or add an input-side
+      // gate in the handler and append the op name to HANDLER_GATED_OPS,
+      // or (if the op truly returns no slug data) add it to
+      // NO_SLUG_DATA_OPS with a one-line justification.
+      expect(covered).toBe(true);
+    });
+  }
 });

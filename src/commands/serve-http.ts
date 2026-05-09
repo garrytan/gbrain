@@ -914,17 +914,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // discoverable in container deployments. Write a `warn` row
         // and broadcast a non-isError event with `would_reject: true`
         // so the dashboard can surface it without confusing it with
-        // a real failure. latency_ms is set to NULL for the warn row
-        // because the handler has not run yet; the success row at the
-        // end of the request carries the real wall-clock latency.
+        // a real failure. latency_ms is the dispatch-side overhead
+        // (auth + scope + tier check) before the handler runs; the
+        // matching success row at end-of-request carries the full
+        // wall-clock latency. Operators reading the warn row see how
+        // much pre-handler cost the gate adds.
+        const auditLatency = Date.now() - startTime;
         try {
           await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${null}, ${'warn'}, ${null}, ${`would_reject_tier: ${tierMsg}`})`;
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${auditLatency}, ${'warn'}, ${null}, ${`would_reject_tier: ${tierMsg}`})`;
         } catch { /* best effort */ }
         broadcastEvent({
           agent: agentName,
           operation: name,
           scopes: authInfo.scopes.join(','),
+          latency_ms: auditLatency,
           status: 'warn',
           would_reject: true,
           tier_required: requiredTier,
@@ -973,8 +977,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // Work / Family. See `filterResponseByTier` for op coverage
         // and the page-not-found rationale. Throws OperationError on
         // a tier-rejected single-page hit so the wire envelope matches
-        // a real engine not-found.
-        const result = await filterResponseByTier(name, rawResult, { tier: ctx.tier });
+        // a real engine not-found. requestSlug is threaded through so
+        // an empty post-filter ambiguous-candidates throw can echo the
+        // caller's input slug in the message (matching engine shape).
+        const requestSlug = typeof params?.slug === 'string' ? (params.slug as string) : undefined;
+        const result = await filterResponseByTier(name, rawResult, { tier: ctx.tier, requestSlug });
         const latency = Date.now() - startTime;
 
         try {

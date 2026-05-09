@@ -245,6 +245,26 @@ describe('verifyAccessToken', () => {
     await expect(provider.verifyAccessToken(tokens.access_token)).rejects.toThrow('Invalid token');
   });
 
+  test('soft-deleted client invalidates its tokens (deleted_at IS NULL gate)', async () => {
+    // The dashboard revoke path soft-deletes the client (UPDATE
+    // deleted_at = NOW()) and purges its tokens in two non-atomic
+    // statements; if the second statement fails or is delayed, surviving
+    // tokens must NOT verify against a tombstoned client. Regression
+    // test for the `c.deleted_at IS NULL` predicate added to the
+    // verifyAccessToken JOIN. Independent of the hard-delete cascade
+    // path covered above.
+    const { clientId, clientSecret } = await provider.registerClientManual(
+      'soft-delete-test', ['client_credentials'], 'read',
+    );
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret, 'read');
+    // Sanity: token works while client is live.
+    const live = await provider.verifyAccessToken(tokens.access_token);
+    expect(live.clientId).toBe(clientId);
+    // Tombstone the client without purging tokens.
+    await sql`UPDATE oauth_clients SET deleted_at = NOW() WHERE client_id = ${clientId}`;
+    await expect(provider.verifyAccessToken(tokens.access_token)).rejects.toThrow('Invalid token');
+  });
+
   test('expiresAt is always a number (not string) — SDK bearerAuth compat', async () => {
     // Regression: postgres driver with prepare:false returns integers as strings.
     // MCP SDK's bearerAuth middleware checks typeof === 'number' and rejects strings.

@@ -1392,7 +1392,18 @@ const get_timeline: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getTimeline(p.slug as string);
+    const slug = p.slug as string;
+    // Input-side tier gate. TimelineEntry rows have no slug field, so
+    // response-side filtering cannot distinguish a personal page's
+    // timeline from a public page's. Reject up-front when the caller's
+    // tier doesn't admit the slug, mirroring the engine's not-found shape.
+    if (ctx.tier && ctx.tier !== 'Full') {
+      const { tierAllowsSlug } = await import('./access-tier.ts');
+      if (!tierAllowsSlug(slug, ctx.tier)) {
+        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug or use fuzzy: true');
+      }
+    }
+    return ctx.engine.getTimeline(slug);
   },
   scope: 'read',
   tier: 'Family',
@@ -1576,7 +1587,7 @@ const get_chunks: Operation = {
     if (ctx.tier && ctx.tier !== 'Full') {
       const { tierAllowsSlug } = await import('./access-tier.ts');
       if (!tierAllowsSlug(slug, ctx.tier)) {
-        throw new OperationError('page_not_found', `Page not found: ${slug}`);
+        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug or use fuzzy: true');
       }
     }
     return ctx.engine.getChunks(slug);

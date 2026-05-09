@@ -210,12 +210,14 @@ export function tierAllowsSlug(
  *                         total_orphans, total_linkable, total_pages,
  *                         excluded }
  *   slug-string-array   string[] (each element is itself a slug)
+ *   health-wrapper      { ..., most_connected: Array<{ slug, ... }> }
  */
 type FilterShape =
   | 'single-page'
   | 'page-array'
   | 'orphans-wrapper'
-  | 'slug-string-array';
+  | 'slug-string-array'
+  | 'health-wrapper';
 
 const OP_FILTER_SHAPE: Readonly<Record<string, FilterShape>> = Object.freeze({
   get_page: 'single-page',
@@ -225,6 +227,7 @@ const OP_FILTER_SHAPE: Readonly<Record<string, FilterShape>> = Object.freeze({
   get_recent_salience: 'page-array',
   find_orphans: 'orphans-wrapper',
   resolve_slugs: 'slug-string-array',
+  get_health: 'health-wrapper',
 });
 
 export function filterShapeFor(opName: string): FilterShape | undefined {
@@ -234,6 +237,14 @@ export function filterShapeFor(opName: string): FilterShape | undefined {
 export interface FilterContext {
   tier?: AccessTier;
   prefixes?: TierPrefixMap;
+  /**
+   * The slug the caller passed in `params.slug`, if any. Used to compose
+   * a not-found message that mirrors the engine's shape when the
+   * filter has to throw on the ambiguous-slug branch (where the result
+   * itself doesn't carry a single resolved slug). Optional; the throw
+   * still works without it.
+   */
+  requestSlug?: string;
 }
 
 /**
@@ -266,14 +277,24 @@ export interface FilterContext {
 // Lazy resolution of OperationError to avoid a module-load cycle through
 // operations.ts. Cached after first hit. The serve-http error envelope
 // matches `e instanceof OperationError`, so a tier-rejected single-page
-// hit produces a response byte-identical to a real engine not-found.
-let _OperationErrorCtor: (new (code: string, message: string) => Error) | undefined;
-async function loadOperationError(): Promise<new (code: string, message: string) => Error> {
+// hit produces a response byte-identical to a real engine not-found —
+// including the `suggestion` field that becomes `hint` in the wire envelope
+// (so a Work-tier probe cannot tell hidden vs absent by inspecting `hint`).
+type OperationErrorCtor = new (code: string, message: string, suggestion?: string, docs?: string) => Error;
+let _OperationErrorCtor: OperationErrorCtor | undefined;
+async function loadOperationError(): Promise<OperationErrorCtor> {
   if (_OperationErrorCtor) return _OperationErrorCtor;
   const mod = await import('./operations.ts');
-  _OperationErrorCtor = mod.OperationError as unknown as new (code: string, message: string) => Error;
+  _OperationErrorCtor = mod.OperationError as unknown as OperationErrorCtor;
   return _OperationErrorCtor;
 }
+
+// Match the dominant engine `page_not_found` shape at
+// src/core/operations.ts get_page handler: same code, same message
+// template, same suggestion text. Both filter throws and the get_chunks
+// + get_timeline input-side gates use this to keep the wire envelope
+// byte-identical and defeat side-channel slug-existence probes.
+const NOT_FOUND_SUGGESTION = 'Check the slug or use fuzzy: true';
 
 export async function filterResponseByTier(
   opName: string,
@@ -300,8 +321,17 @@ export async function filterResponseByTier(
           (c) => typeof c === 'string' && tierAllowsSlug(c, tier, prefixes),
         );
         if (visible.length === 0) {
+          // Echo the caller's request slug into the message when we have
+          // it, so the wire envelope matches the engine's
+          // `Page not found: <slug>` template. Without it, a probe can
+          // distinguish "hidden by tier" from "actually missing".
+          const probeSlug = ctxFilter.requestSlug;
           const OperationError = await loadOperationError();
-          throw new OperationError('page_not_found', `Page not found`);
+          throw new OperationError(
+            'page_not_found',
+            probeSlug ? `Page not found: ${probeSlug}` : `Page not found`,
+            NOT_FOUND_SUGGESTION,
+          );
         }
         return { ...obj, candidates: visible };
       }
@@ -312,7 +342,11 @@ export async function filterResponseByTier(
         // not-found from the engine, so a Work-tier probe cannot
         // distinguish hidden vs absent.
         const OperationError = await loadOperationError();
-        throw new OperationError('page_not_found', `Page not found: ${slug}`);
+        throw new OperationError(
+          'page_not_found',
+          `Page not found: ${slug}`,
+          NOT_FOUND_SUGGESTION,
+        );
       }
       return result;
     }
@@ -353,6 +387,24 @@ export async function filterResponseByTier(
       return result.filter(
         (s) => typeof s === 'string' && tierAllowsSlug(s, tier, prefixes),
       );
+    }
+
+    case 'health-wrapper': {
+      // BrainHealth carries a `most_connected: Array<{slug, link_count}>`
+      // that leaks brain topology. Strip rows whose slug is outside the
+      // caller's visible prefix set; leave aggregate counts alone (those
+      // are the legitimate Family signal that "the brain is up").
+      if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+      const wrapper = result as Record<string, unknown>;
+      const mostConnected = wrapper.most_connected;
+      if (!Array.isArray(mostConnected)) return result;
+      const visible = mostConnected.filter((row) => {
+        if (!row || typeof row !== 'object') return false;
+        const slug = (row as { slug?: unknown }).slug;
+        if (typeof slug !== 'string') return false;
+        return tierAllowsSlug(slug, tier, prefixes);
+      });
+      return { ...wrapper, most_connected: visible };
     }
   }
 }
