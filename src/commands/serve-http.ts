@@ -27,6 +27,7 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
+import { ACCESS_TIER_DEFAULT, OP_TIER_DEFAULT_REQUIRED, filterResponseByTier, tierImplies, type AccessTier } from '../core/access-tier.ts';
 import { summarizeMcpParams } from '../mcp/dispatch.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
@@ -160,10 +161,19 @@ interface ServeHttpOptions {
    * at startup so the privacy posture change is visible.
    */
   logFullParams?: boolean;
+  /**
+   * Runtime MCP access control. When true, MCP tools/call dispatch
+   * enforces the minimum tier declared on each Operation against the
+   * caller's `oauth_clients.access_tier`. Default false: tier is
+   * still threaded into OperationContext + mcp_request_log so
+   * operators can audit what would be rejected before turning the
+   * boundary on. Flip via `gbrain serve --enforce-access-tiers`.
+   */
+  enforceAccessTiers?: boolean;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  const { port, tokenTtl, enableDcr, publicUrl, logFullParams, enforceAccessTiers = false } = options;
   const config = loadConfig() || { engine: 'pglite' as const };
 
   if (logFullParams) {
@@ -859,6 +869,71 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         };
       }
 
+      // Runtime MCP access control. Source of truth:
+      // `oauth_clients.access_tier`, threaded into AuthInfo by the
+      // OAuth provider. Default ACCESS_TIER_DEFAULT preserves the
+      // pre-v45 grant when the column is null (legacy rows). The
+      // op.tier check below enforces the boundary only when
+      // --enforce-access-tiers is set; otherwise we log the would-be
+      // decision (to mcp_request_log + SSE + stderr) so operators
+      // can audit before flipping the switch.
+      const callerTier: AccessTier = authInfo.tier ?? ACCESS_TIER_DEFAULT;
+      const requiredTier: AccessTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
+      const tierAllowed = tierImplies(callerTier, requiredTier);
+      if (!tierAllowed) {
+        const tierMsg = `tier='${callerTier}' does not satisfy required '${requiredTier}'`;
+        if (enforceAccessTiers) {
+          const latency = Date.now() - startTime;
+          try {
+            await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                      VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${null}, ${`insufficient_tier: ${tierMsg}`})`;
+          } catch { /* best effort */ }
+          broadcastEvent({
+            agent: agentName,
+            operation: name,
+            scopes: authInfo.scopes.join(','),
+            latency_ms: latency,
+            status: 'error',
+            error: { code: 'insufficient_tier', message: tierMsg },
+            timestamp: new Date().toISOString(),
+          });
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                error: 'insufficient_tier',
+                message: `Operation ${name} ${tierMsg}`,
+                your_tier: callerTier,
+              }),
+            }],
+            isError: true,
+          };
+        }
+        // Audit-only mode. Operators flipping enforcement need a SQL
+        // surface to query and a live SSE feed; stderr alone is not
+        // discoverable in container deployments. Write a `warn` row
+        // and broadcast a non-isError event with `would_reject: true`
+        // so the dashboard can surface it without confusing it with
+        // a real failure. Then fall through to the handler.
+        const auditLatency = Date.now() - startTime;
+        try {
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${auditLatency}, ${'warn'}, ${null}, ${`would_reject_tier: ${tierMsg}`})`;
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: name,
+          scopes: authInfo.scopes.join(','),
+          latency_ms: auditLatency,
+          status: 'warn',
+          would_reject: true,
+          tier_required: requiredTier,
+          tier_caller: callerTier,
+          timestamp: new Date().toISOString(),
+        });
+        console.error(`[serve-http] WARN: ${tierMsg} for op '${name}' (audit-only; pass --enforce-access-tiers to reject)`);
+      }
+
       const ctx: OperationContext = {
         engine,
         config,
@@ -876,6 +951,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // belt; this is the suspenders.
         remote: true,
         auth: authInfo,
+        tier: callerTier,
+        senderId: authInfo.clientId,
       };
 
       // F8: redact request payload by default (declared keys only via the
@@ -890,7 +967,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
 
       try {
-        const result = await op.handler(ctx, (params || {}) as Record<string, unknown>);
+        const rawResult = await op.handler(ctx, (params || {}) as Record<string, unknown>);
+        // Tier-aware response filtering for the read surface. Bypass
+        // for Full / undefined tier; per-op slug-prefix filter for
+        // Work / Family. See `filterResponseByTier` for op coverage
+        // and the page-not-found rationale.
+        const result = filterResponseByTier(name, rawResult, { tier: ctx.tier });
         const latency = Date.now() - startTime;
 
         try {

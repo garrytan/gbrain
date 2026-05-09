@@ -24,6 +24,7 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/serv
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
+import { ACCESS_TIER_DEFAULT, isAccessTier, resolveStoredAccessTier, type AccessTier } from './access-tier.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -105,6 +106,7 @@ export function coerceTimestamp(value: unknown): number | undefined {
   }
   return n;
 }
+
 
 interface GBrainOAuthProviderOptions {
   sql: SqlQuery;
@@ -391,13 +393,20 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const now = Math.floor(Date.now() / 1000);
 
     // Try OAuth tokens first. JOIN oauth_clients in the same query so
-    // verifyAccessToken returns client_name in AuthInfo — eliminates the
-    // separate per-request lookup at serve-http.ts that was the N+1 hot
-    // path (see PR #586 review D14=B).
+    // verifyAccessToken returns client_name + access_tier in AuthInfo —
+    // eliminates the separate per-request lookup at serve-http.ts
+    // that was the N+1 hot path (see PR #586 review D14=B).
+    //
+    // The INNER JOIN is load-bearing for the access_tier read: an
+    // oauth_tokens row without a matching oauth_clients row (orphan
+    // from a partial cascade) MUST NOT be silently treated as Full
+    // tier. The FK normally guarantees the row exists; the explicit
+    // INNER JOIN fail-closes if it doesn't, surfacing as 'Invalid
+    // token' rather than admitting the request.
     const oauthRows = await this.sql`
-      SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
+      SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.access_tier
       FROM oauth_tokens t
-      LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+      INNER JOIN oauth_clients c ON c.client_id = t.client_id
       WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
     `;
 
@@ -417,6 +426,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         scopes: (row.scopes as string[]) || [],
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
+        tier: resolveStoredAccessTier(row.access_tier),
       } as AuthInfo;
     }
 
@@ -440,6 +450,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         clientName: name,
         scopes: ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
+        // Legacy tokens grandfathered with Full tier (matches the
+        // pre-v45 "all admin" grant). Operators that want tier
+        // enforcement should rotate to OAuth clients via
+        // `gbrain auth register-client --tier <tier>`.
+        tier: 'Full' as AccessTier,
       } as AuthInfo;
     }
 
@@ -558,12 +573,17 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     grantTypes: string[],
     scopes: string,
     redirectUris: string[] = [],
+    accessTier: AccessTier = ACCESS_TIER_DEFAULT,
   ): Promise<{ clientId: string; clientSecret: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
     // Pre-allowlist clients keep working (allowlist is registration-time;
     // existing rows aren't re-validated).
     assertAllowedScopes(parseScopeString(scopes));
+
+    if (!isAccessTier(accessTier)) {
+      throw new Error(`registerClientManual: invalid accessTier "${accessTier}"`);
+    }
 
     const clientId = generateToken('gbrain_cl_');
     const clientSecret = generateToken('gbrain_cs_');
@@ -572,12 +592,28 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     await this.sql`
       INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                  grant_types, scope, client_id_issued_at)
+                                  grant_types, scope, client_id_issued_at, access_tier)
       VALUES (${clientId}, ${secretHash}, ${name},
-              ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now})
+              ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now}, ${accessTier})
     `;
 
     return { clientId, clientSecret };
+  }
+
+  /**
+   * Update an existing OAuth client's access_tier. Used by
+   * `gbrain auth set-tier <client_id> <tier>`. Returns true when the
+   * row was updated, false when no client matched the supplied id.
+   * Throws on an invalid tier so a typo at the CLI fails loudly.
+   */
+  async setClientAccessTier(clientId: string, accessTier: AccessTier): Promise<boolean> {
+    if (!isAccessTier(accessTier)) {
+      throw new Error(`setClientAccessTier: invalid tier "${accessTier}"`);
+    }
+    const rows = await this.sql`
+      UPDATE oauth_clients SET access_tier = ${accessTier} WHERE client_id = ${clientId} RETURNING client_id
+    `;
+    return rows.length > 0;
   }
 
   // -------------------------------------------------------------------------

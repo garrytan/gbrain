@@ -293,28 +293,96 @@ async function revokeClient(clientId: string) {
 }
 
 async function registerClient(name: string, args: string[]) {
-  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S]'); process.exit(1); }
+  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--tier <Full|Work|Family|None>]'); process.exit(1); }
   const grantsIdx = args.indexOf('--grant-types');
   const scopesIdx = args.indexOf('--scopes');
+  const tierIdx = args.indexOf('--tier');
   const grantTypes = grantsIdx >= 0 && args[grantsIdx + 1]
     ? args[grantsIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
     : ['client_credentials'];
   const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
+  // Per-client access tier. Default Full preserves the pre-v45 grant
+  // for upgrade safety; operators tighten per-client with --tier work
+  // (or --tier family) when registering an agent that should not see
+  // owner-only content. ACCESS_POLICY.md is the human-readable map of
+  // which tier each agent should land in.
+  const { parseAccessTier, ACCESS_TIER_DEFAULT } = await import('../core/access-tier.ts');
+  let accessTier: import('../core/access-tier.ts').AccessTier;
+  if (tierIdx >= 0) {
+    const tierVal = args[tierIdx + 1];
+    if (tierVal === undefined || tierVal.startsWith('--')) {
+      console.error('Error: --tier requires a value (Full|Work|Family|None)');
+      process.exit(1);
+    }
+    try {
+      const parsed = parseAccessTier(tierVal);
+      if (!parsed) {
+        console.error('Error: --tier value is empty');
+        process.exit(1);
+      }
+      accessTier = parsed;
+    } catch (e: any) {
+      console.error('Error:', e.message);
+      process.exit(1);
+    }
+  } else {
+    accessTier = ACCESS_TIER_DEFAULT;
+  }
 
   const sql = postgres(getDatabaseUrl(true)!);
   try {
     const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
     const provider = new GBrainOAuthProvider({ sql: sql as any });
     const { clientId, clientSecret } = await provider.registerClientManual(
-      name, grantTypes, scopes, [],
+      name, grantTypes, scopes, [], accessTier,
     );
     console.log(`OAuth client registered: "${name}"\n`);
     console.log(`  Client ID:     ${clientId}`);
     console.log(`  Client Secret: ${clientSecret}\n`);
     console.log(`  Grant types: ${grantTypes.join(', ')}`);
-    console.log(`  Scopes:      ${scopes}\n`);
+    console.log(`  Scopes:      ${scopes}`);
+    console.log(`  Access tier: ${accessTier}\n`);
+    if (accessTier === 'Full') {
+      console.log('NOTE: tier=Full is the default. Pass --tier work (or family) to restrict.');
+      console.log('See ACCESS_POLICY.md.\n');
+    }
     console.log('Save the client secret — it will not be shown again.');
     console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  } finally {
+    await sql.end();
+  }
+}
+
+async function setTier(clientId: string, tierArg: string) {
+  if (!clientId || !tierArg) {
+    console.error('Usage: auth set-tier <client_id> <Full|Work|Family|None>');
+    process.exit(1);
+  }
+  const { parseAccessTier } = await import('../core/access-tier.ts');
+  let tier: import('../core/access-tier.ts').AccessTier;
+  try {
+    const parsed = parseAccessTier(tierArg);
+    if (!parsed) throw new Error(`tier value "${tierArg}" is empty or unrecognised`);
+    tier = parsed;
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
+
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
+    const provider = new GBrainOAuthProvider({ sql: sql as any });
+    const ok = await provider.setClientAccessTier(clientId, tier);
+    if (!ok) {
+      console.error(`No OAuth client found with id "${clientId}".`);
+      process.exit(1);
+    }
+    console.log(`Updated access_tier for ${clientId} -> ${tier}.`);
+    console.log('New requests pick up the new tier immediately; in-flight dispatch finishes under the tier it started with.');
   } catch (e: any) {
     console.error('Error:', e.message);
     process.exit(1);
@@ -350,6 +418,7 @@ export async function runAuth(args: string[]): Promise<void> {
     }
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
+    case 'set-tier': await setTier(rest[0], rest[1]); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');
       const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
@@ -373,7 +442,9 @@ Usage:
   gbrain auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
      --grant-types <client_credentials,authorization_code> (default: client_credentials)
      --scopes "<read write admin>"                         (default: read)
+     --tier <Full|Work|Family|None>                        (default: Full; runtime MCP access control)
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  gbrain auth set-tier <client_id> <Full|Work|Family|None> Update an existing client's access tier
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);
   }

@@ -2,6 +2,23 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Added — Runtime MCP access control
+
+Adds sender-identity checking and tier-aware response filtering to MCP operations so ACCESS_POLICY.md is enforced at the dispatch layer, not just by the agent's prompt.
+
+- `src/core/access-tier.ts` — `AccessTier` type (`Full | Work | Family | None`), strict-ordered `tierImplies`, `parseAccessTier` with typo-loud `InvalidAccessTierError`, `resolveStoredAccessTier` (NULL → default Full, junk → fail-closed None), `tierAllowsSlug` for slug-prefix visibility.
+- Migration v45: `ALTER TABLE oauth_clients ADD COLUMN access_tier TEXT NOT NULL DEFAULT 'Full'`. Existing clients land at Full to preserve the pre-v45 grant. Verify hook asserts the column landed NOT NULL with the right default so a wedged DDL on a managed Postgres pooler can't claim success silently.
+- `OperationContext.tier` + `OperationContext.senderId` threaded through the HTTP MCP dispatch path. `AuthInfo.tier` resolved from `oauth_clients.access_tier` at verify time (single JOIN, no N+1).
+- `Operation.tier?: AccessTier` declarative requirement next to `Operation.scope`. Default `Full` (most restrictive) so a new op without an annotation fails closed for non-Full callers until reviewed.
+- Per-op tier annotations on the read surface: `get_page`, `list_pages`, `search`, `query`, `get_chunks`, `resolve_slugs`, `get_recent_salience`, `find_orphans` lowered to `Work`; `get_timeline`, `get_stats`, `get_health`, `whoami` lowered to `Family`. All mutating + admin ops stay at `Full`.
+- Tier-aware response filtering for read paths: `get_page` 404s when the slug is outside the caller's visible prefixes; `list_pages`, `search`, `query`, `get_chunks`, `get_recent_salience`, `find_orphans` post-filter result rows by slug prefix. Defaults derived from `templates/ACCESS_POLICY.md.template` (Work sees `people/`, `companies/`, `deals/`, `projects/`, `concepts/`, `ideas/` and the `wiki/*` mirrors; Family sees `logistics/`, `meetings/`, `calendar/`, `scheduling/`). Operators override via `gbrain.yml` `access` block.
+- `gbrain serve --enforce-access-tiers`: when set, the MCP handler returns `insufficient_tier` for callers whose tier does not satisfy `op.tier`. Default off — when off, the handler logs the would-be decision to `mcp_request_log` (status `warn`), broadcasts an SSE event with `would_reject: true`, and proceeds, so operators can query/dashboard audit-only signal before flipping enforcement on.
+- `gbrain auth register-client --tier <Full|Work|Family|None>` (default Full); `gbrain auth set-tier <client_id> <tier>` to retag existing clients. INNER JOIN on `verifyAccessToken` so an orphan token (cascade race) cannot fall open to Full.
+- Legacy `access_tokens` grandfathered to Full to preserve the pre-v45 admin grant. Operators that want tier filtering should rotate to OAuth clients.
+- Tests: `test/access-tier.test.ts` (primitive, ~30 cases including prototype-pollution regression), `test/access-tier-filter.test.ts` (slug-prefix visibility), `test/access-tier-dispatch.test.ts` (audit vs enforce mode).
+
 ## [0.30.1] - 2026-05-08
 
 **Operational hardening: gbrain upgrade just works on Supabase. DDL stops timing out on the pooler. Migrations stop wedging. HNSW rebuilds stop nuking your search. Backfills stop being bespoke scripts.**

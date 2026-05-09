@@ -2142,6 +2142,41 @@ export const MIGRATIONS: Migration[] = [
     },
   },
   {
+    version: 45,
+    name: 'oauth_clients_access_tier',
+    idempotent: true,
+    // Per-client access tier for runtime MCP access control. Adds
+    // the column and defaults existing rows to 'Full' so legacy
+    // clients keep their current invocation rights — operators
+    // tighten per-client via `gbrain auth register-client --tier
+    // <Full|Work|Family|None>` or the new `set-tier` subcommand;
+    // enforcement is opt-in via `gbrain serve --enforce-access-tiers`.
+    //
+    // Column type TEXT (not an enum) so future tier-model evolutions
+    // don't require an ALTER TYPE migration; values are validated at
+    // the application layer via src/core/access-tier.ts.
+    //
+    // Verify hook: post-condition probe asserts the column exists +
+    // is NOT NULL, since a wedged DDL on Supabase pooler can leave
+    // a partially-applied state where the migration claims success
+    // but the column is absent or nullable.
+    sql: `
+      ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS access_tier TEXT NOT NULL DEFAULT 'Full';
+    `,
+    verify: async (engine) => {
+      const rows = await engine.executeRaw<{ is_nullable: string; column_default: string | null }>(
+        `SELECT is_nullable, column_default
+         FROM information_schema.columns
+         WHERE table_name = 'oauth_clients' AND column_name = 'access_tier'`,
+      );
+      if (rows.length !== 1) return false;
+      if (rows[0].is_nullable !== 'NO') return false;
+      // column_default may carry a typecast suffix ("'Full'::text"). Match flexibly.
+      const def = rows[0].column_default ?? '';
+      return def.includes("'Full'");
+    },
+  },
+  {
     version: 44,
     name: 'pages_emotional_weight_recomputed_at',
     idempotent: true,

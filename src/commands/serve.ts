@@ -29,8 +29,16 @@ export async function runServe(engine: BrainEngine, args: string[] = []) {
     // when set so the posture change is visible in stderr.
     const logFullParams = args.includes('--log-full-params');
 
+    // Runtime MCP access control. Default off so existing
+    // deployments upgrade without breakage; flag flips enforcement on
+    // for the per-client `oauth_clients.access_tier` check. When off,
+    // the dispatch layer still threads tier into OperationContext +
+    // mcp_request_log so operators can audit decisions before turning
+    // enforcement on.
+    const enforceAccessTiers = args.includes('--enforce-access-tiers');
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, enforceAccessTiers });
   } else {
     console.error('Starting GBrain MCP server (stdio)...');
     await startMcpServer(engine);

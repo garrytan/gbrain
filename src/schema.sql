@@ -418,6 +418,8 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   client_secret_expires_at BIGINT,
   token_ttl               INTEGER,
   deleted_at              TIMESTAMPTZ,
+  -- v45: runtime MCP access control. See src/core/access-tier.ts.
+  access_tier             TEXT NOT NULL DEFAULT 'Full',
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
