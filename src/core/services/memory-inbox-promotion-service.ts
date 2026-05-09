@@ -19,6 +19,14 @@ export async function promoteMemoryCandidateEntry(
   input: PromoteMemoryCandidateEntryInput,
 ): Promise<MemoryCandidateEntry> {
   const reviewedAt = normalizeMemoryInboxReviewedAt(input.reviewed_at, new Date());
+  const preflight = await preflightPromoteMemoryCandidate(engine, { id: input.id });
+  if (preflight.decision !== 'allow') {
+    throw new MemoryInboxServiceError(
+      'promotion_preflight_failed',
+      `Cannot promote memory candidate ${input.id}: ${preflight.reasons.join(', ')}.`,
+    );
+  }
+
   return engine.transaction(async (txBase) => {
     const tx = txBase as BrainEngine;
     const entry = await tx.getMemoryCandidateEntry(input.id);
@@ -33,14 +41,6 @@ export async function promoteMemoryCandidateEntry(
       throw new MemoryInboxServiceError(
         'invalid_status_transition',
         `Cannot promote memory candidate from ${entry.status}; only staged_for_review candidates may be promoted.`,
-      );
-    }
-
-    const preflight = await preflightPromoteMemoryCandidate(tx, { id: input.id });
-    if (preflight.decision !== 'allow') {
-      throw new MemoryInboxServiceError(
-        'promotion_preflight_failed',
-        `Cannot promote memory candidate ${input.id}: ${preflight.reasons.join(', ')}.`,
       );
     }
 

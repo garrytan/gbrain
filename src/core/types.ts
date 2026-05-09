@@ -1303,7 +1303,7 @@ export interface MemoryCandidatePromotionPreflightResult {
   candidate_id: string;
   decision: MemoryCandidatePromotionPreflightDecision;
   reasons: MemoryCandidatePromotionPreflightReason[];
-  duplicate_review?: MemoryCandidateDuplicateReviewSummary;
+  duplicate_review: MemoryCandidateDuplicateReviewSummary;
   summary_lines: string[];
 }
 

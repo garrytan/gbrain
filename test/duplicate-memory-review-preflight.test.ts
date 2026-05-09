@@ -73,10 +73,35 @@ test('promotion preflight defers likely duplicate against a different canonical 
 
     expect(result.decision).toBe('defer');
     expect(result.reasons).toContain('candidate_possible_duplicate');
-    expect(result.duplicate_review?.decision).toBe('likely_duplicate');
-    expect(result.duplicate_review?.top_match?.kind).toBe('page');
-    expect(result.duplicate_review?.top_match?.id).toBe('concepts/existing-rollout');
+    expect(result.duplicate_review.decision).toBe('likely_duplicate');
+    expect(result.duplicate_review.top_match?.kind).toBe('page');
+    expect(result.duplicate_review.top_match?.id).toBe('concepts/existing-rollout');
     expect(result.summary_lines).toContain('Duplicate review decision: likely_duplicate.');
+  });
+});
+
+test('promotion preflight deny reasons win over likely duplicate deferral', async () => {
+  await withEngine('mbrain-duplicate-preflight-deny-wins-', async (engine) => {
+    await engine.putPage('concepts/existing-rollout', {
+      type: 'concept',
+      title: 'Existing Rollout',
+      compiled_truth: 'Existing rollout atlas keeps staged verification notes with rollback owner evidence.',
+      frontmatter: {
+        source_refs: ['User, direct message, 2026-05-09 10:00 KST'],
+      },
+    });
+    await seedCandidate(engine, 'incoming-deny-duplicate', {
+      sensitivity: 'personal',
+    });
+
+    const result = await preflightPromoteMemoryCandidate(engine, {
+      id: 'incoming-deny-duplicate',
+    });
+
+    expect(result.decision).toBe('deny');
+    expect(result.reasons).toContain('candidate_scope_conflict');
+    expect(result.reasons).not.toContain('candidate_possible_duplicate');
+    expect(result.duplicate_review.decision).toBe('likely_duplicate');
   });
 });
 
@@ -98,9 +123,9 @@ test('promotion preflight allows same-target canonical page updates', async () =
 
     expect(result.decision).toBe('allow');
     expect(result.reasons).toEqual(['candidate_ready_for_promotion']);
-    expect(result.duplicate_review?.decision).toBe('same_target_update');
-    expect(result.duplicate_review?.top_match?.kind).toBe('page');
-    expect(result.duplicate_review?.top_match?.id).toBe('concepts/incoming-review');
+    expect(result.duplicate_review.decision).toBe('same_target_update');
+    expect(result.duplicate_review.top_match?.kind).toBe('page');
+    expect(result.duplicate_review.top_match?.id).toBe('concepts/incoming-review');
   });
 });
 
@@ -142,8 +167,8 @@ test('promotion preflight allow path includes no-match duplicate review', async 
 
     expect(result.decision).toBe('allow');
     expect(result.reasons).toEqual(['candidate_ready_for_promotion']);
-    expect(result.duplicate_review?.decision).toBe('no_match');
-    expect(result.duplicate_review?.top_match).toBeUndefined();
+    expect(result.duplicate_review.decision).toBe('no_match');
+    expect(result.duplicate_review.top_match).toBeUndefined();
     expect(result.summary_lines).toContain('Duplicate review decision: no_match.');
   });
 });
