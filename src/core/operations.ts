@@ -315,8 +315,9 @@ export interface OperationContext {
   /**
    * Runtime MCP access control: the verified tier the caller is
    * operating at. Populated by the dispatch layer from the OAuth
-   * client row's `access_tier` column (HTTP MCP) or left undefined
-   * (stdio MCP / local CLI, which are owner-trust paths).
+   * client row's `access_tier` column (HTTP MCP) or from the fixed
+   * stdio posture (`Work`). Left undefined only for trusted local
+   * CLI/owner paths and audit-only mode.
    *
    * Operations enforce a minimum required tier via the
    * `Operation.tier` field. HTTP MCP enforcement is default-on; audit-only
@@ -329,8 +330,8 @@ export interface OperationContext {
    * from `oauth_clients.client_id` at OAuth verify time; surfaced here
    * so per-op enforcement and audit hooks can attribute decisions
    * without reading authInfo directly. Undefined for legacy access
-   * tokens, local CLI callers, and stdio MCP. Threaded into ctx.tier
-   * by the same dispatch path.
+   * tokens, local CLI callers, and stdio callers that have no stable
+   * OAuth client id. Threaded alongside ctx.tier by the same dispatch path.
    */
   senderId?: string;
 }
@@ -1571,19 +1572,7 @@ const resolve_slugs: Operation = {
     partial: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    const candidates = await ctx.engine.resolveSlugs(p.partial as string);
-    // Defense in depth: filter at handler-level too, mirroring the get_page
-    // fuzzy fix. The slug-string-array response filter already drops hidden
-    // slugs from the wire, but doing it here keeps the timing/ordering
-    // observable to a Work caller closer to what they see for an absent
-    // slug. See CHANGELOG "Known limitations" for the residual rank-order
-    // post-filter oracle (engine-side LIMIT then post-filter; SQL push-down
-    // is tracked as a follow-up).
-    if (ctx.tier && ctx.tier !== 'Full') {
-      const { tierAllowsSlug } = await import('./access-tier.ts');
-      return candidates.filter((c) => tierAllowsSlug(c, ctx.tier!));
-    }
-    return candidates;
+    return ctx.engine.resolveSlugs(p.partial as string);
   },
   scope: 'read',
   tier: 'Work',

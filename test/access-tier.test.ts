@@ -15,6 +15,7 @@ import {
   type AccessTier,
 } from '../src/core/access-tier.ts';
 import { operations } from '../src/core/operations.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 
 // ---------------------------------------------------------------------------
 // Runtime MCP access control: AccessTier primitive tests.
@@ -121,9 +122,9 @@ describe('resolveStoredAccessTier — fail-closed read-side coercion', () => {
     expect(resolveStoredAccessTier(null)).toBe('Full');
     expect(resolveStoredAccessTier(undefined)).toBe('Full');
   });
-  test('empty string preserves pre-v45 grant (Full)', () => {
-    expect(resolveStoredAccessTier('')).toBe('Full');
-    expect(resolveStoredAccessTier('   ')).toBe('Full');
+  test('empty string falls CLOSED to None (corrupt-DB defense)', () => {
+    expect(resolveStoredAccessTier('')).toBe('None');
+    expect(resolveStoredAccessTier('   ')).toBe('None');
   });
   test('valid tier passes through', () => {
     for (const t of ACCESS_TIERS) {
@@ -546,41 +547,35 @@ describe('input-side gated ops — hidden and absent slugs are indistinguishable
     });
   });
 
-  test('resolve_slugs handler-side filter mirrors get_page fuzzy fix', async () => {
-    // Defense-in-depth: even before the response-side slug-string-array filter
-    // runs, the handler itself drops hidden candidates. Closes a small timing
-    // gap between handler return and filter pass for non-Full callers.
-    const op = operations.find(o => o.name === 'resolve_slugs');
+  test('resolve_slugs remote dispatch strips hidden slugs at response boundary', async () => {
     const engine = {
       async resolveSlugs() {
         return ['personal/diary', 'people/alice', 'soul/identity'];
       },
     };
-    const result = await op!.handler(
-      { engine, tier: 'Work', remote: true, logger: console } as any,
+    const toolResult = await dispatchToolCall(
+      engine as any,
+      'resolve_slugs',
       { partial: 'di' },
+      { remote: true, enforceRemoteAccess: true, scopes: ['read'], tier: 'Work' },
     );
+    const result = JSON.parse(toolResult.content[0].text);
     expect(result).toEqual(['people/alice']);
   });
 
-  test('resolve_slugs handler-side filter passes through Full tier and undefined tier', async () => {
-    const op = operations.find(o => o.name === 'resolve_slugs');
+  test('resolve_slugs Full-tier remote dispatch preserves all candidates', async () => {
     const engine = {
       async resolveSlugs() {
         return ['personal/diary', 'people/alice'];
       },
     };
-    const full = await op!.handler(
-      { engine, tier: 'Full', remote: true, logger: console } as any,
+    const toolResult = await dispatchToolCall(
+      engine as any,
+      'resolve_slugs',
       { partial: 'd' },
+      { remote: true, enforceRemoteAccess: true, scopes: ['read'], tier: 'Full' },
     );
-    expect(full).toEqual(['personal/diary', 'people/alice']);
-
-    const undef = await op!.handler(
-      { engine, remote: false, logger: console } as any,
-      { partial: 'd' },
-    );
-    expect(undef).toEqual(['personal/diary', 'people/alice']);
+    expect(JSON.parse(toolResult.content[0].text)).toEqual(['personal/diary', 'people/alice']);
   });
 
   test('get_chunks returns [] for hidden slug without touching engine', async () => {

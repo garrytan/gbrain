@@ -44,18 +44,18 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     expect(missing).toEqual([]);
   });
 
-  test('contains the reviewed remote-safe read set + put_page + v0.29 salience pair', () => {
-    // v0.29 added get_recent_salience + find_anomalies (read-only).
-    // get_recent_transcripts is deliberately excluded — subagent calls always
-    // have ctx.remote=true, and the v0.29 trust gate rejects remote callers.
-    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(11);
+  test('contains the reviewed Work-tier read set + put_page', () => {
+    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(7);
     expect(BRAIN_TOOL_ALLOWLIST.has('query')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('search')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_page')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('list_pages')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('put_page')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_salience')).toBe(true);
-    expect(BRAIN_TOOL_ALLOWLIST.has('find_anomalies')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('get_backlinks')).toBe(false);
+    expect(BRAIN_TOOL_ALLOWLIST.has('traverse_graph')).toBe(false);
+    expect(BRAIN_TOOL_ALLOWLIST.has('get_ingest_log')).toBe(false);
+    expect(BRAIN_TOOL_ALLOWLIST.has('find_anomalies')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('file_list')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('file_url')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_transcripts')).toBe(false);
@@ -121,6 +121,30 @@ describe('buildBrainTools', () => {
     const slug = ((getPage!.input_schema as any).properties as any).slug;
     expect(slug).toBeDefined();
     expect(slug.pattern).toBeUndefined();
+  });
+
+  test('execute() on read tools applies the Work-tier response filter', async () => {
+    await engine.putPage('personal/diary', {
+      type: 'note',
+      title: 'Diary',
+      compiled_truth: 'private',
+      frontmatter: {},
+    });
+    await engine.putPage('people/alice-example', {
+      type: 'person',
+      title: 'Alice Example',
+      compiled_truth: 'visible',
+      frontmatter: {},
+    });
+
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const listPages = tools.find(t => t.name === 'brain_list_pages');
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    const res = await listPages!.execute({ limit: 20 }, ctx) as Array<{ slug: string }>;
+    const slugs = res.map(r => r.slug);
+
+    expect(slugs).toContain('people/alice-example');
+    expect(slugs).not.toContain('personal/diary');
   });
 
   test('execute() on put_page with valid namespace slug succeeds', async () => {

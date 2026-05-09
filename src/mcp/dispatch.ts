@@ -39,8 +39,9 @@ export interface DispatchOpts {
   takesHoldersAllowList?: string[];
   /**
    * Enforce the remote MCP operation boundary in this shared dispatcher.
-   * Stdio keeps this false because it is an owner-trust path today; HTTP
-   * transports that accept bearer-token clients set it true.
+   * HTTP transports that accept bearer-token clients set this true with the
+   * token's scopes/tier. Stdio also sets this true with its fixed Work/read
+   * posture. Trusted local CLI/owner paths leave it false.
    */
   enforceRemoteAccess?: boolean;
   /** Granted OAuth scopes for enforceRemoteAccess. */

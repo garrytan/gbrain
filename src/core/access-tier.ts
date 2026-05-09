@@ -125,16 +125,16 @@ export function resolveStoredAccessTier(value: unknown): AccessTier {
   if (value === null || value === undefined) return ACCESS_TIER_DEFAULT;
   if (typeof value !== 'string') return 'None';
   const trimmed = value.trim();
-  if (trimmed === '') return ACCESS_TIER_DEFAULT;
+  if (trimmed === '') return 'None';
   return isAccessTier(trimmed) ? (trimmed as AccessTier) : 'None';
 }
 
 /**
  * Slug-prefix visibility map. Each tier sees pages whose slug starts
  * with one of its declared prefixes; `'*'` means "no filter". Threaded
- * into `filterResponseByTier` via the `prefixes` field of FilterContext;
- * operators wire up their own map by passing it in (config plumbing is
- * a separate concern from this primitive).
+ * into `filterResponseByTier` via the `prefixes` field of FilterContext.
+ * Current transports use DEFAULT_TIER_PREFIXES; config plumbing for custom
+ * operator maps is a separate follow-up.
  */
 export type TierPrefixMap = Record<AccessTier, ReadonlyArray<string>>;
 
@@ -212,7 +212,8 @@ export function tierAllowsSlug(
  *   page-array          Array<{ slug, ... }>
  *   orphans-wrapper     { orphans: Array<{ slug, ... }>,
  *                         total_orphans, total_linkable, total_pages,
- *                         excluded }
+ *                         excluded } where non-Full tiers receive counts
+ *                         scoped to returned visible rows only.
  *   slug-string-array   string[] (each element is itself a slug)
  *   health-wrapper      { ..., most_connected: Array<{ slug, ... }> }
  */
@@ -269,9 +270,10 @@ export interface FilterContext {
  *     candidates list.
  *   - list_pages, search, query, get_recent_salience (page-array):
  *     drop rows whose slug is outside the visible prefix set.
- *   - find_orphans (orphans-wrapper): filter the inner orphans
- *     array, recompute total_orphans, fold dropped rows into
- *     `excluded`.
+ *   - find_orphans (orphans-wrapper): filter the inner orphans array
+ *     and rewrite aggregate counts to describe only returned visible
+ *     rows. Hidden rows are not folded into `excluded`; that would leak
+ *     hidden-brain size.
  *   - resolve_slugs (slug-string-array): drop bare-string slugs
  *     outside the visible prefix set.
  *
@@ -280,8 +282,8 @@ export interface FilterContext {
  * Some read ops with non-slug-bearing rows (`get_chunks`) are gated
  * input-side in their handler instead — see operations.ts.
  *
- * Full callers (and undefined tier — local CLI, stdio MCP) bypass
- * the filter entirely.
+ * Full callers and undefined-tier owner paths bypass the filter entirely.
+ * Enforced remote dispatch substitutes `None` when a tier was not threaded.
  */
 // Lazy resolution of OperationError to avoid a module-load cycle through
 // operations.ts. Cached after first hit. The serve-http error envelope
@@ -312,7 +314,7 @@ export async function filterResponseByTier(
   ctxFilter: FilterContext,
 ): Promise<unknown> {
   const tier = ctxFilter.tier;
-  // No tier set (local CLI, stdio MCP) or Full tier: bypass.
+  // No tier set (trusted local/owner path or audit-only) or Full tier: bypass.
   if (!tier || tier === 'Full') return result;
   const prefixes = ctxFilter.prefixes ?? DEFAULT_TIER_PREFIXES;
   const shape = OP_FILTER_SHAPE[opName];

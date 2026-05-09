@@ -11,12 +11,9 @@
  *    of this; if the filter ever drops the flag, the in-handler check is
  *    the last line. We assert both halves of the contract.
  *
- * 2. `buildBrainTools` (subagent registry) surfaces salience + anomalies
- *    as `brain_get_recent_salience` / `brain_find_anomalies` and EXCLUDES
- *    `brain_get_recent_transcripts`. The exclusion is intentional —
- *    subagent calls always run with `ctx.remote === true`, and the v0.29
- *    trust gate would always reject. Listing it would be a footgun
- *    (subagent calls op, gets permission_denied, looks like a bug).
+ * 2. `buildBrainTools` (subagent registry) surfaces filtered salience as
+ *    `brain_get_recent_salience` and excludes anomaly/transcript tools until
+ *    they have a safe subagent boundary.
  *
  * Both filters are pure-function checks; no DB / engine / network needed.
  */
@@ -82,10 +79,10 @@ describe('v0.29 — buildBrainTools subagent surfacing', () => {
     expect(names).toContain('brain_get_recent_salience');
   });
 
-  test('subagent registry includes brain_find_anomalies', () => {
+  test('subagent registry excludes brain_find_anomalies until it has a tier-safe result shape', () => {
     const tools = buildBrainTools({ subagentId: 1, engine: fakeEngine, config });
     const names = tools.map(t => t.name);
-    expect(names).toContain('brain_find_anomalies');
+    expect(names).not.toContain('brain_find_anomalies');
   });
 
   test('subagent registry EXCLUDES brain_get_recent_transcripts (codex C3 footgun gate)', () => {
@@ -99,13 +96,10 @@ describe('v0.29 — buildBrainTools subagent surfacing', () => {
     expect(names).not.toContain('brain_get_recent_transcripts');
   });
 
-  test('the v0.29 ops carry their description verbatim into the registry', () => {
+  test('the v0.29 salience op carries its description verbatim into the registry', () => {
     const tools = buildBrainTools({ subagentId: 1, engine: fakeEngine, config });
     const sal = tools.find(t => t.name === 'brain_get_recent_salience');
-    const ano = tools.find(t => t.name === 'brain_find_anomalies');
     const opSal = operations.find(o => o.name === 'get_recent_salience');
-    const opAno = operations.find(o => o.name === 'find_anomalies');
     expect(sal!.description).toBe(opSal!.description);
-    expect(ano!.description).toBe(opAno!.description);
   });
 });
