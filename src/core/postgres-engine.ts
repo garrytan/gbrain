@@ -2268,17 +2268,16 @@ export class PostgresEngine implements BrainEngine {
     const orphanPages = Number(h.orphan_pages);
     const deadLinks = Number(h.dead_links);
     const linkCount = Number(h.link_count);
-    const pagesWithTimeline = Number(h.pages_with_timeline);
+    const timelineCoverage = Number(h.timeline_coverage);
 
     // brain_score: 0-100 weighted average
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverageWhole = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
     const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Per-component points. Sum equals brainScore by construction.
     const embedCoverageScore = pageCount === 0 ? 0 : Math.round(embedCoverage * 35);
     const linkDensityScore = pageCount === 0 ? 0 : Math.round(linkDensity * 25);
-    const timelineCoverageScore = pageCount === 0 ? 0 : Math.round(timelineCoverageWhole * 15);
+    const timelineCoverageScore = pageCount === 0 ? 0 : Math.round(timelineCoverage * 15);
     const noOrphansScore = pageCount === 0 ? 0 : Math.round(noOrphans * 15);
     const noDeadLinksScore = pageCount === 0 ? 0 : Math.round(noDeadLinks * 10);
     const brainScore = embedCoverageScore + linkDensityScore + timelineCoverageScore + noOrphansScore + noDeadLinksScore;
@@ -2292,7 +2291,7 @@ export class PostgresEngine implements BrainEngine {
       brain_score: brainScore,
       dead_links: deadLinks,
       link_coverage: Number(h.link_coverage),
-      timeline_coverage: Number(h.timeline_coverage),
+      timeline_coverage: timelineCoverage,
       most_connected: (connected as unknown as { slug: string; link_count: number }[]).map(c => ({
         slug: c.slug,
         link_count: Number(c.link_count),
