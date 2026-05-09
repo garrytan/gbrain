@@ -236,7 +236,13 @@ export async function dispatchToolCall(
       };
     }
 
-    const callerTier = opts.tier ?? ACCESS_TIER_DEFAULT;
+    // Fail-closed default when the caller opted into enforceRemoteAccess
+    // but forgot to thread tier. The pre-fix default of ACCESS_TIER_DEFAULT
+    // ('Full') would silently grant the most permissive grant, defeating
+    // the boundary the caller asked us to enforce. Resolve to 'None' so an
+    // accidentally-untyped caller sees all-rejection rather than all-access
+    // — the operator's logs surface the misconfiguration loudly.
+    const callerTier = opts.tier ?? 'None';
     const requiredTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
     if (!tierImplies(callerTier, requiredTier)) {
       return {
@@ -267,7 +273,11 @@ export async function dispatchToolCall(
     const rawResult = await op.handler(ctx, safeParams);
     const result = opts.enforceRemoteAccess
       ? await filterResponseByTier(name, rawResult, {
-        tier: opts.tier,
+        // Mirror the fail-closed default used by the gate above so the
+        // filter doesn't bypass on tier=undefined (filterResponseByTier
+        // treats undefined as "owner-trust path" and returns the result
+        // unfiltered — wrong here when the caller asked us to enforce).
+        tier: opts.tier ?? 'None',
         requestSlug: typeof safeParams.slug === 'string' ? safeParams.slug : undefined,
         includeDeleted: safeParams.include_deleted === true,
       })
