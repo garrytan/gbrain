@@ -216,6 +216,52 @@ paths outside cwd are rejected. Page slugs and filenames are allowlist-validated
 CLI callers (`gbrain file upload ...`) keep unrestricted filesystem access since
 the user owns the machine.
 
+## Supabase Deployment Caveat
+
+If your brain is backed by Supabase and you are deploying `gbrain serve --http`
+to an external host (Fly.io, Render, Railway, your own VPS, etc.), you must
+set two environment variables:
+
+```bash
+GBRAIN_DISABLE_DIRECT_POOL=1
+GBRAIN_POOL_SIZE=1
+```
+
+**Why this is needed:**
+
+GBrain's dual-pool routing tries to open a second direct connection to the
+Postgres host (port 5432) alongside the standard pooler connection.  On
+Supabase that direct host is only reachable from inside Supabase's VPC — it
+is not accessible from external deployments.  Without `GBRAIN_DISABLE_DIRECT_POOL=1`
+the startup sequence attempts an IPv6 connection to the direct host, times out
+(or receives a connection-refused), and either crashes or falls back to a
+degraded state.
+
+**Connection string:**
+
+Use the **Transaction Pooler** URL (port **6543**, not 5432):
+
+```
+postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/<db>
+```
+
+The Session Pooler (port 5432 on the pooler host) also works but has higher
+per-connection overhead.  The **direct** connection string (`db.<project-ref>.supabase.co:5432`)
+will not work from outside the Supabase VPC and should not be used for
+externally-deployed servers.
+
+**Minimal Fly.io `fly.toml` env block example:**
+
+```toml
+[env]
+  GBRAIN_DISABLE_DIRECT_POOL = "1"
+  GBRAIN_POOL_SIZE = "1"
+  GBRAIN_TRUST_PROXY = "1"
+```
+
+Set `DATABASE_URL` as a secret (`fly secrets set DATABASE_URL=...`) — never
+in `fly.toml`.
+
 ## Deployment Options
 
 See [ALTERNATIVES.md](ALTERNATIVES.md) for a comparison of ngrok, Tailscale
