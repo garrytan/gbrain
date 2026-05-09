@@ -7,6 +7,15 @@ import { importFile, importImageFile, isImageFilePath } from '../core/import-fil
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { isSyncable } from '../core/sync.ts';
+
+// Issue #767 fix: shared constant for the import-time per-file size cap.
+// The legacy collectMarkdownFiles walker did not enforce this (it was a
+// post-hoc check inside importFile). collectFilesByStrategy enforces it
+// up front to avoid loading multi-megabyte source files into memory only
+// to bounce them at import time. Stays in sync with MAX_FILE_SIZE in
+// src/core/import-file.ts.
+const MAX_IMPORT_FILE_SIZE = 5_000_000;
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -38,8 +47,24 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   // are walked. Without this, full-sync via performFullSync silently does
   // markdown-only even when strategy=code is requested, which means a fresh
   // code source registers but no code pages are ever created.
-  const strategyIdx = args.indexOf('--strategy');
-  const strategyArg = strategyIdx !== -1 ? args[strategyIdx + 1] : 'markdown';
+  //
+  // Accept both space-separated (`--strategy code`) and equals-separated
+  // (`--strategy=code`) forms — anything less and a user typing the equals
+  // form silently falls through to markdown, exactly the silent-drop the
+  // patch is meant to fix.
+  let strategyRaw: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--strategy') {
+      strategyRaw = args[i + 1];
+      break;
+    }
+    if (a && a.startsWith('--strategy=')) {
+      strategyRaw = a.slice('--strategy='.length);
+      break;
+    }
+  }
+  const strategyArg = strategyRaw ?? 'markdown';
   if (!['markdown', 'code', 'auto'].includes(strategyArg)) {
     console.error(`Invalid --strategy ${strategyArg}; expected markdown|code|auto`);
     process.exit(1);
@@ -56,10 +81,14 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   }
-  // Find dir: first non-flag arg that isn't a value for --workers / --strategy
+  // Find dir: first non-flag arg that isn't a value for --workers / --strategy.
+  // Equals-separated flags (`--strategy=code`) are themselves `--`-prefixed so
+  // they're filtered automatically; only space-separated values need the index
+  // skip-set.
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
-  if (strategyIdx !== -1) flagValues.add(strategyIdx + 1);
+  const spaceStrategyIdx = args.indexOf('--strategy');
+  if (spaceStrategyIdx !== -1) flagValues.add(spaceStrategyIdx + 1);
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
@@ -68,12 +97,29 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
 
-  // Collect all syncable files for the requested strategy. Markdown stays on
-  // the legacy collector for behavioral parity; code/auto routes through the
-  // strategy-aware walker.
-  const allFiles = strategy === 'markdown'
-    ? collectMarkdownFiles(dir)
-    : collectFilesByStrategy(dir, strategy);
+  // Collect all syncable files for the requested strategy.
+  //   - markdown: legacy collectMarkdownFiles (preserves backward compat for
+  //     callers that just want every .md/.mdx + multimodal images, including
+  //     brain-convention files like README.md / index.md / ops/** that
+  //     isSyncable would strip).
+  //   - code: collectFilesByStrategy with the code allowlist (.ts, .py, .java,
+  //     .c, etc. — see CODE_EXTENSIONS in src/core/sync.ts).
+  //   - auto: union of markdown + code so callers get strict superset
+  //     coverage. Without the union, brain-convention files (README.md, etc.)
+  //     would silently disappear when migrating from `markdown` to `auto`,
+  //     which is the same class of silent-drop bug this patch is fixing.
+  let allFiles: string[];
+  if (strategy === 'markdown') {
+    allFiles = collectMarkdownFiles(dir);
+  } else if (strategy === 'code') {
+    allFiles = collectFilesByStrategy(dir, 'code');
+  } else {
+    const md = collectMarkdownFiles(dir);
+    const code = collectFilesByStrategy(dir, 'code');
+    // Dedup: collectMarkdownFiles already excludes code files, but be
+    // defensive in case future filter changes blur the boundary.
+    allFiles = Array.from(new Set([...md, ...code])).sort();
+  }
   const fileLabel = strategy === 'markdown' ? 'markdown' : strategy === 'code' ? 'code' : 'syncable';
   console.log(`Found ${allFiles.length} ${fileLabel} files`);
 
@@ -367,9 +413,15 @@ export function collectMarkdownFiles(dir: string): string[] {
  * node_modules safety, then routes the include filter through `isSyncable`
  * so this function and the incremental `walkSyncableFiles` use the same
  * inclusion logic.
+ *
+ * Note: callers asking for the user-facing `auto` strategy in `runImport`
+ * use a UNION of `collectMarkdownFiles(dir)` + `collectFilesByStrategy(dir,
+ * 'code')`. This function on its own with `strategy='auto'` returns
+ * isSyncable's auto set, which is *not* a strict superset of
+ * collectMarkdownFiles (it strips brain-convention files like README.md,
+ * index.md, ops/**). Callers who want the union should compose the two.
  */
 export function collectFilesByStrategy(dir: string, strategy: 'code' | 'auto'): string[] {
-  const { isSyncable } = require('../core/sync.ts');
   const files: string[] = [];
 
   function walk(d: string) {
@@ -398,7 +450,7 @@ export function collectFilesByStrategy(dir: string, strategy: 'code' | 'auto'): 
       if (stat.isDirectory()) {
         walk(full);
       } else if (stat.isFile()) {
-        if (stat.size > 5_000_000) continue;
+        if (stat.size > MAX_IMPORT_FILE_SIZE) continue;
         const rel = relative(dir, full);
         if (isSyncable(rel, { strategy })) {
           files.push(full);

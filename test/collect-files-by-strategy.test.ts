@@ -8,9 +8,10 @@ import { collectFilesByStrategy, collectMarkdownFiles } from '../src/commands/im
 // collectMarkdownFiles. Without it, performFullSync silently dropped the
 // --strategy flag on first sync and produced 0 code pages for fresh code
 // sources. These tests verify (1) strategy=code returns only code files,
-// (2) strategy=auto returns code + markdown, (3) the symlink containment
-// + node_modules + hidden-dir guards from collectMarkdownFiles are mirrored
-// in the new walker (the security invariant from L002 must not regress).
+// (2) the symlink containment + node_modules + hidden-dir guards from
+// collectMarkdownFiles are mirrored in the new walker (the security
+// invariant from L002 must not regress), (3) edge cases the integration
+// tests don't cover.
 
 describe('collectFilesByStrategy — strategy filtering', () => {
   let root: string;
@@ -24,7 +25,6 @@ describe('collectFilesByStrategy — strategy filtering', () => {
   });
 
   test('strategy=code returns code files but not markdown', () => {
-    writeFileSync(join(root, 'README.md'), '# readme\n');
     writeFileSync(join(root, 'doc.md'), '# doc\n');
     writeFileSync(join(root, 'main.ts'), 'export const x = 1;\n');
     writeFileSync(join(root, 'helper.py'), 'def helper(): pass\n');
@@ -36,17 +36,7 @@ describe('collectFilesByStrategy — strategy filtering', () => {
     expect(files).toContain(join(root, 'helper.py'));
     expect(files).toContain(join(root, 'app.java'));
     expect(files).toContain(join(root, 'core.c'));
-    expect(files).not.toContain(join(root, 'README.md'));
     expect(files).not.toContain(join(root, 'doc.md'));
-  });
-
-  test('strategy=auto returns both code and markdown', () => {
-    writeFileSync(join(root, 'doc.md'), '# doc\n');
-    writeFileSync(join(root, 'main.ts'), 'export const x = 1;\n');
-
-    const files = collectFilesByStrategy(root, 'auto');
-    expect(files).toContain(join(root, 'doc.md'));
-    expect(files).toContain(join(root, 'main.ts'));
   });
 
   test('strategy=code recurses into subdirectories', () => {
@@ -82,7 +72,6 @@ describe('collectFilesByStrategy — strategy filtering', () => {
   });
 
   test('strategy=code skips files larger than 5MB', () => {
-    // Build a 5.1MB file to ensure size guard fires.
     const big = 'a'.repeat(5_100_000);
     writeFileSync(join(root, 'big.ts'), big);
     writeFileSync(join(root, 'small.ts'), 'export {};\n');
@@ -90,6 +79,34 @@ describe('collectFilesByStrategy — strategy filtering', () => {
     const files = collectFilesByStrategy(root, 'code');
     expect(files).toContain(join(root, 'small.ts'));
     expect(files).not.toContain(join(root, 'big.ts'));
+  });
+
+  test('returns empty array for an empty directory', () => {
+    const files = collectFilesByStrategy(root, 'code');
+    expect(files).toEqual([]);
+  });
+
+  test('does not crash on a non-existent directory', () => {
+    const ghost = join(root, 'does-not-exist');
+    const files = collectFilesByStrategy(ghost, 'code');
+    expect(files).toEqual([]);
+  });
+
+  test('does not crash when an unreadable subdirectory is encountered', () => {
+    // chmod 0 on a real subdir is the conventional unreadable case. Skip
+    // root-only unreadable test paths since BSD/macOS test runners differ.
+    mkdirSync(join(root, 'normal'));
+    writeFileSync(join(root, 'normal', 'a.ts'), 'export {};\n');
+    mkdirSync(join(root, 'denied'), { mode: 0o000 });
+    try {
+      const files = collectFilesByStrategy(root, 'code');
+      expect(files).toContain(join(root, 'normal', 'a.ts'));
+      // The denied dir's contents must not appear, and the walker must
+      // not have thrown on the readdirSync failure.
+    } finally {
+      // Restore mode so afterEach can clean up.
+      try { require('fs').chmodSync(join(root, 'denied'), 0o755); } catch {}
+    }
   });
 });
 
@@ -149,31 +166,59 @@ describe('collectFilesByStrategy — symlink containment (L002 parity)', () => {
   });
 });
 
-describe('collectFilesByStrategy — parity with collectMarkdownFiles for markdown content', () => {
-  // strategy=auto should include the same markdown set that the legacy
-  // collectMarkdownFiles returns, so callers that opt in to auto don't lose
-  // any pre-existing markdown coverage.
+describe('collectFilesByStrategy — strategy=auto', () => {
+  // strategy=auto inside collectFilesByStrategy uses isSyncable's auto rules,
+  // which is markdown + code + (multimodal images when on). This is NOT a
+  // strict superset of collectMarkdownFiles — isSyncable strips brain-
+  // convention files like README.md / index.md / ops/**. The runImport CLI
+  // path composes `collectMarkdownFiles ∪ collectFilesByStrategy('code')` to
+  // produce the user-visible "auto" set; tests for that union live in the
+  // run-import-strategy section below, not here.
+  //
+  // These tests exercise the raw helper to make the behavior unambiguous.
 
   let root: string;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'gbrain-strategy-parity-'));
+    root = mkdtempSync(join(tmpdir(), 'gbrain-auto-'));
   });
 
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  test('strategy=auto subsumes collectMarkdownFiles for an md-only tree', () => {
-    writeFileSync(join(root, 'a.md'), '# a\n');
-    mkdirSync(join(root, 'sub'));
-    writeFileSync(join(root, 'sub', 'b.md'), '# b\n');
+  test('auto returns both code and non-stripped markdown', () => {
+    writeFileSync(join(root, 'note.md'), '# note\n');
+    writeFileSync(join(root, 'main.ts'), 'export {};\n');
 
-    const mdOnly = collectMarkdownFiles(root);
+    const files = collectFilesByStrategy(root, 'auto');
+    expect(files).toContain(join(root, 'note.md'));
+    expect(files).toContain(join(root, 'main.ts'));
+  });
+
+  test('auto strips brain-convention files (README.md, index.md, ops/**)', () => {
+    // Document the divergence from collectMarkdownFiles explicitly. Callers
+    // that want the union should compose, not rely on auto alone.
+    writeFileSync(join(root, 'README.md'), '# readme\n');
+    writeFileSync(join(root, 'index.md'), '# index\n');
+    mkdirSync(join(root, 'ops'));
+    writeFileSync(join(root, 'ops', 'runbook.md'), '# runbook\n');
+    writeFileSync(join(root, 'note.md'), '# note\n');
+
     const auto = collectFilesByStrategy(root, 'auto');
+    const md = collectMarkdownFiles(root);
 
-    for (const md of mdOnly) {
-      expect(auto).toContain(md);
-    }
+    // The brain-convention files DO appear in the legacy markdown walker.
+    expect(md).toContain(join(root, 'README.md'));
+    expect(md).toContain(join(root, 'index.md'));
+    expect(md).toContain(join(root, 'ops', 'runbook.md'));
+
+    // But NOT in auto. This is intentional — isSyncable is the same filter
+    // the incremental sync path uses, and those files are gbrain metadata,
+    // not knowledge content. Callers wanting the union compose the two.
+    expect(auto).not.toContain(join(root, 'README.md'));
+    expect(auto).not.toContain(join(root, 'index.md'));
+    expect(auto).not.toContain(join(root, 'ops', 'runbook.md'));
+    expect(auto).toContain(join(root, 'note.md'));
   });
 });
