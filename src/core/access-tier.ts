@@ -93,6 +93,20 @@ export function tierImplies(granted: AccessTier, required: AccessTier): boolean 
 }
 
 /**
+ * Return the more-restrictive of two tiers (the lower rank).
+ *
+ * Used by v46 OIDC end-user identity: when a token is minted for a
+ * client at tier X but the verified user has a grant at tier Y,
+ * the effective tier is `tierMin(X, Y)` so the user grant can only
+ * narrow access, never widen it. Fail-closed if either input is not
+ * a recognised tier (returns 'None').
+ */
+export function tierMin(a: AccessTier, b: AccessTier): AccessTier {
+  if (!isAccessTier(a) || !isAccessTier(b)) return 'None';
+  return RANK[a] <= RANK[b] ? a : b;
+}
+
+/**
  * Parse a tier string from CLI / config / DB. Returns undefined for
  * empty/null inputs (caller decides on a default); throws on a
  * non-empty string that is not a recognised tier so a typo at
