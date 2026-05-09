@@ -730,7 +730,7 @@ test('memory inbox promotion service rejects non-staged or non-promotable candid
       id: 'candidate-20',
       review_reason: 'Should not promote before staged review.',
     })).rejects.toMatchObject({
-      code: 'promotion_preflight_failed',
+      code: 'invalid_status_transition',
     });
 
     await expect(promoteMemoryCandidateEntry(engine, {

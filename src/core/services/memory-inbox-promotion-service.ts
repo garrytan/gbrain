@@ -19,6 +19,20 @@ export async function promoteMemoryCandidateEntry(
   input: PromoteMemoryCandidateEntryInput,
 ): Promise<MemoryCandidateEntry> {
   const reviewedAt = normalizeMemoryInboxReviewedAt(input.reviewed_at, new Date());
+  const currentEntry = await engine.getMemoryCandidateEntry(input.id);
+  if (!currentEntry) {
+    throw new MemoryInboxServiceError(
+      'memory_candidate_not_found',
+      `Memory candidate not found: ${input.id}`,
+    );
+  }
+  if (currentEntry.status !== 'staged_for_review') {
+    throw new MemoryInboxServiceError(
+      'invalid_status_transition',
+      `Cannot promote memory candidate from ${currentEntry.status}; only staged_for_review candidates may be promoted.`,
+    );
+  }
+
   const preflight = await preflightPromoteMemoryCandidate(engine, { id: input.id });
   if (preflight.decision !== 'allow') {
     throw new MemoryInboxServiceError(
