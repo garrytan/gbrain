@@ -769,9 +769,11 @@ ADMIN
                                         $GBRAIN_HOME/clones/<id>/ and re-cloned on sync if
                                         it goes missing. Also exposed via MCP for remote
                                         agent setup (whoami + sources_{add,list,remove,status}).
-  gbrain dream [--dry-run] [--phase N]  8-phase maintenance cycle (lint→backlinks→sync→synthesize
-                                        →extract→patterns→embed→orphans). v0.23 added synthesize +
-                                        patterns: transcripts → reflections + cross-session themes.
+  gbrain dream [--dry-run] [--phase N]  9-phase maintenance cycle (lint→backlinks→sync→synthesize
+                                        →extract→patterns→recompute_emotional_weight→embed→orphans).
+                                        v0.23 added synthesize + patterns. v0.29 added emotional-weight
+                                        recompute. v0.30.2: synthesize now chunks fat transcripts
+                                        (config: dream.synthesize.max_prompt_tokens, max_chunks_per_transcript).
   gbrain dream --input <file>           Ad-hoc transcript synthesis (implies --phase synthesize)
   gbrain dream --date YYYY-MM-DD        Synthesize a single day; --from/--to for backfill ranges
   gbrain check-backlinks check|fix      Back-link enforcement
