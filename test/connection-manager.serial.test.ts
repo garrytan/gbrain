@@ -44,6 +44,18 @@ describe('deriveDirectUrl', () => {
     expect(direct).toContain(':secret@'); // creds preserved
   });
 
+  test('strips .<project-ref> suffix from username when going pooler→direct', () => {
+    // Supabase direct connections require bare `postgres`; the `postgres.<ref>`
+    // form is pooler-only (Supavisor uses the suffix for tenant routing).
+    // Without the strip, direct auth fails with "password authentication
+    // failed for user postgres.<ref>" even with the correct password.
+    const direct = deriveDirectUrl(
+      'postgresql://postgres.abcxyz:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres'
+    );
+    expect(direct).toContain('postgres:secret@'); // bare username
+    expect(direct).not.toContain('postgres.abcxyz:secret@'); // no pooler suffix
+  });
+
   test('falls back to port-only swap when project-ref unparseable', () => {
     const direct = deriveDirectUrl(
       'postgresql://customuser:secret@some.pooler.supabase.com:6543/db'
@@ -51,6 +63,7 @@ describe('deriveDirectUrl', () => {
     expect(direct).toBeTruthy();
     expect(direct).toContain(':5432');
     expect(direct).toContain('some.pooler.supabase.com'); // host preserved
+    expect(direct).toContain('customuser:secret@'); // non-pooler username preserved
   });
 
   test('returns null for non-pooler URL', () => {
