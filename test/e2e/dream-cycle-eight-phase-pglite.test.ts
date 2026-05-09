@@ -80,11 +80,12 @@ async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
   }
 }
 
-describe('E2E v0.31 10-phase cycle', () => {
-  test('ALL_PHASES is the 10-phase order in the documented sequence', () => {
+describe('E2E v0.31 11-phase cycle', () => {
+  test('ALL_PHASES is the 11-phase order in the documented sequence', () => {
     // v0.23: original 8 phases (lint→orphans).
     // v0.26.5: added 'purge' (hard-delete soft-deleted pages + sources past 72h TTL).
-    // v0.31: added 'consolidate' between patterns and embed (facts→takes promotion).
+    // v0.29: added 'recompute_emotional_weight' after patterns.
+    // v0.31: added 'consolidate' between recompute_emotional_weight and embed (facts→takes promotion).
     expect(ALL_PHASES).toEqual([
       'lint',
       'backlinks',
@@ -92,6 +93,7 @@ describe('E2E v0.31 10-phase cycle', () => {
       'synthesize',
       'extract',
       'patterns',
+      'recompute_emotional_weight',
       'consolidate',
       'embed',
       'orphans',
@@ -116,6 +118,7 @@ describe('E2E v0.31 10-phase cycle', () => {
           'synthesize',
           'extract',
           'patterns',
+          'recompute_emotional_weight',
           'consolidate',
           'embed',
           'orphans',

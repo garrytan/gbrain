@@ -97,10 +97,11 @@ describeE2E('E2E: runCycle against real Postgres', () => {
     });
 
     expect(report.schema_version).toBe('1');
-    // Cycle ran all 10 phases (or skipped the ones that don't support dry-run).
+    // Cycle ran all 11 phases (or skipped the ones that don't support dry-run).
     // v0.26.5 added the `purge` phase (after `orphans`).
-    // v0.31 added the `consolidate` phase (between `patterns` and `embed`).
-    expect(report.phases.length).toBe(10);
+    // v0.29   added the `recompute_emotional_weight` phase (after `patterns`).
+    // v0.31   added the `consolidate` phase (between `recompute_emotional_weight` and `embed`).
+    expect(report.phases.length).toBe(11);
 
     // Nothing got written.
     const afterPages = await conn.unsafe(`SELECT count(*)::int AS n FROM pages`);
