@@ -16,6 +16,7 @@
  */
 import postgres from 'postgres';
 import { createHash, randomBytes } from 'crypto';
+import { execSync } from 'child_process';
 
 function getDatabaseUrl(requireDb: boolean): string | undefined {
   const url = process.env.DATABASE_URL || process.env.GBRAIN_DATABASE_URL;
@@ -24,6 +25,68 @@ function getDatabaseUrl(requireDb: boolean): string | undefined {
     process.exit(1);
   }
   return url;
+}
+
+/**
+ * Tagged-template SQL surface shared by postgres-js and the PGLite test wrapper
+ * in test/auth-grants.test.ts. Mirrors `SqlQuery` from src/core/oauth-provider.ts.
+ * Kept local to auth.ts to avoid widening the import surface of that module.
+ */
+type SqlClient = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
+
+/**
+ * Open a postgres-js connection or return the injected sql client used by
+ * tests. The injection seam keeps the new grant/revoke/list functions
+ * testable against PGLite without spawning a subprocess; production callers
+ * (the runAuth dispatcher and the direct-script entry point) pass nothing
+ * and get the postgres-js connection plus its end() lifecycle.
+ */
+function openSql(injected?: SqlClient): { sql: SqlClient; end: () => Promise<void> } {
+  if (injected) return { sql: injected, end: async () => {} };
+  const conn = postgres(getDatabaseUrl(true)!);
+  return { sql: conn as unknown as SqlClient, end: async () => { await conn.end(); } };
+}
+
+/**
+ * Email validator per spec section 7. Pragmatic, not RFC 5321:
+ *   - exactly one '@'
+ *   - the part after '@' contains at least one '.'
+ *   - total length <= 254
+ *   - both local and domain parts non-empty after split
+ *
+ * We are gating CLI input for an operator-managed grants table, not running
+ * an SMTP front door. A typo will fail loudly at the next OIDC sign-in
+ * regardless; this check is just to reject obvious garbage.
+ */
+function validateEmail(email: string): string | null {
+  if (typeof email !== 'string') return 'email must be a string';
+  if (email.length === 0) return 'email is empty';
+  if (email.length > 254) return 'email exceeds 254 characters';
+  const parts = email.split('@');
+  if (parts.length !== 2) return 'email must contain exactly one "@"';
+  const [local, domain] = parts;
+  if (!local) return 'email local part is empty';
+  if (!domain) return 'email domain part is empty';
+  if (!domain.includes('.')) return 'email domain must contain a "."';
+  return null;
+}
+
+/**
+ * Best-effort author attribution for the grants audit column. Reads
+ * `git config user.email` from the cwd; falls back to the literal 'cli'
+ * when git is missing, when the repo has no user.email, or when the
+ * exec throws for any reason. Truncated to 254 chars so a misconfigured
+ * git identity cannot blow past the column's email-shape budget.
+ */
+function detectGrantedBy(): string {
+  try {
+    const out = execSync('git config user.email', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+    if (out && out.length <= 254) return out;
+  } catch {
+    // git missing or no user.email configured - fall through.
+  }
+  return 'cli';
 }
 
 function hashToken(token: string): string {
@@ -453,6 +516,189 @@ async function setTier(clientId: string, tierArg: string) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// v0.32 OIDC end-user identity: oauth_user_grants surface.
+//
+// The OIDC code path resolves a per-request tier as `min(client_tier,
+// user_tier)` where user_tier comes from the row in oauth_user_grants
+// keyed by the verified id_token email claim. These three functions are
+// the operator-side admin surface for that table; the OIDC verifier and
+// the runtime tier-resolution code live in src/core/oidc.ts and
+// src/core/oauth-provider.ts (separate agents).
+// ---------------------------------------------------------------------------
+
+/**
+ * Insert or update a row in oauth_user_grants. Idempotent: re-granting
+ * an existing email overwrites the tier and clears `revoked_at`, which
+ * un-revokes a previously revoked grant in a single statement. The
+ * `granted_by` column is populated from `git config user.email` when
+ * available; falls back to the literal 'cli' so the audit row is
+ * always non-NULL.
+ *
+ * Exported for direct testing from test/auth-grants.test.ts; the
+ * runAuth dispatcher calls it with no `sqlOverride` and gets the
+ * postgres-js connection.
+ */
+export async function grantUser(
+  email: string,
+  tierArg: string,
+  sqlOverride?: SqlClient,
+): Promise<void> {
+  if (!email || !tierArg) {
+    console.error('Usage: auth grant <email> <Full|Work|Family|None>');
+    process.exit(1);
+  }
+
+  // Normalize first so the validator and the persisted row see the same shape.
+  const normalized = email.trim().toLowerCase();
+  const emailError = validateEmail(normalized);
+  if (emailError) {
+    console.error(`Error: invalid email: ${emailError}`);
+    process.exit(1);
+  }
+
+  const { parseAccessTier } = await import('../core/access-tier.ts');
+  let tier: import('../core/access-tier.ts').AccessTier;
+  try {
+    const parsed = parseAccessTier(tierArg);
+    if (!parsed) {
+      console.error('Error: tier value is empty');
+      process.exit(1);
+    }
+    tier = parsed;
+  } catch (e: any) {
+    // parseAccessTier throws InvalidAccessTierError for typos; surface
+    // the message verbatim so the operator sees the allowed set.
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
+
+  const grantedBy = detectGrantedBy();
+  const { sql, end } = openSql(sqlOverride);
+  try {
+    // ON CONFLICT (email) -> overwrite tier, clear revoked_at, refresh
+    // granted_at and granted_by. The clear-on-conflict is the un-revoke
+    // path; without it a re-grant after revoke-grant would silently
+    // remain revoked.
+    await sql`
+      INSERT INTO oauth_user_grants (email, access_tier, granted_at, granted_by, revoked_at)
+      VALUES (${normalized}, ${tier}, now(), ${grantedBy}, NULL)
+      ON CONFLICT (email) DO UPDATE
+        SET access_tier = EXCLUDED.access_tier,
+            granted_at  = EXCLUDED.granted_at,
+            granted_by  = EXCLUDED.granted_by,
+            revoked_at  = NULL
+    `;
+    console.log(`Granted ${tier} to ${normalized}`);
+    console.log('Takes effect on next OIDC sign-in. The OAuth /authorize flow');
+    console.log('looks this up after id_token verification and resolves the');
+    console.log('per-request tier as min(client_tier, user_tier).');
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  } finally {
+    await end();
+  }
+}
+
+/**
+ * Soft-delete a grant by setting `revoked_at = now()`. Mirrors the
+ * `oauth_clients.deleted_at` pattern: the row stays in place so audit
+ * still resolves email -> tier history; the OIDC tier resolver gates on
+ * `revoked_at IS NULL`. Re-granting via `auth grant` clears the
+ * revoked_at field (see grantUser).
+ *
+ * The output explicitly notes that already-issued access_tokens with
+ * subject_email retain their tier until expiry - operators reaching for
+ * revoke-grant during an incident should also revoke the relevant
+ * tokens via `auth revoke-client` or by sweeping oauth_tokens directly.
+ */
+export async function revokeUserGrant(
+  email: string,
+  sqlOverride?: SqlClient,
+): Promise<void> {
+  if (!email) {
+    console.error('Usage: auth revoke-grant <email>');
+    process.exit(1);
+  }
+  const normalized = email.trim().toLowerCase();
+  // No re-validation here: a malformed email simply won't match any row,
+  // which falls through to the "no active grant" branch below. Keeps
+  // revoke-grant useful as a cleanup tool for legacy rows that pre-date
+  // the validator.
+
+  const { sql, end } = openSql(sqlOverride);
+  try {
+    const rows = await sql`
+      UPDATE oauth_user_grants
+        SET revoked_at = now()
+        WHERE email = ${normalized} AND revoked_at IS NULL
+      RETURNING email
+    `;
+    if (rows.length === 0) {
+      console.error(`No active grant for ${normalized}`);
+      process.exit(1);
+    }
+    console.log(`Revoked grant for ${normalized}`);
+    console.log(`Revocation takes effect on next OIDC sign-in. Existing access_tokens with subject_email=${normalized} retain their tier until expiry.`);
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  } finally {
+    await end();
+  }
+}
+
+/**
+ * List rows in oauth_user_grants. Schema-aware: a brain that has not yet
+ * run the v46 migration prints a friendly hint and exits 0 (the table
+ * absence is a config state, not an error). Output columns mirror
+ * list-clients: ASCII separator, fixed-width columns, REVOKED/active
+ * status derived from `revoked_at`. Sort by granted_at DESC so the most
+ * recent grants are at the top.
+ */
+export async function listUserGrants(sqlOverride?: SqlClient): Promise<void> {
+  const { sql, end } = openSql(sqlOverride);
+  try {
+    const columns = await sql`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'oauth_user_grants'
+    `;
+    if (columns.length === 0) {
+      // Mirrors listClients: a missing table is a "needs migrate" state,
+      // not a hard error. Operators running list-grants on a pre-v46
+      // brain shouldn't get a 42P01 trace.
+      console.log('No grants table on this brain. Run `gbrain apply-migrations` first.');
+      return;
+    }
+    const rows = await sql`
+      SELECT email, access_tier, granted_at, granted_by, revoked_at
+      FROM oauth_user_grants
+      ORDER BY granted_at DESC
+    `;
+    if (rows.length === 0) {
+      console.log('No user grants. Create one: gbrain auth grant <email> <Full|Work|Family|None>');
+      return;
+    }
+    console.log('Email                                   Tier    Granted At           Granted By                Status');
+    console.log('-'.repeat(110));
+    for (const r of rows) {
+      const email = (String(r.email ?? '')).padEnd(38);
+      const tier = String(r.access_tier ?? '').padEnd(7);
+      const granted = r.granted_at
+        ? new Date(r.granted_at as string).toISOString().slice(0, 19)
+        : 'unknown'.padEnd(19);
+      const grantedBy = String(r.granted_by ?? '').padEnd(24);
+      const status = r.revoked_at ? 'REVOKED' : 'active';
+      console.log(`${email}  ${tier}  ${granted}  ${grantedBy}  ${status}`);
+    }
+  } finally {
+    await end();
+  }
+}
+
 /**
  * Entry point for the `gbrain auth` CLI subcommand. Also reused by the
  * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
@@ -482,6 +728,9 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'list-clients': await listClients(); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
     case 'set-tier': await setTier(rest[0], rest[1]); return;
+    case 'grant': await grantUser(rest[0] || '', rest[1] || ''); return;
+    case 'revoke-grant': await revokeUserGrant(rest[0] || ''); return;
+    case 'list-grants': await listUserGrants(); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');
       const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
@@ -509,6 +758,14 @@ Usage:
   gbrain auth list-clients                                List OAuth clients with id, name, access_tier, scope, status
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth set-tier <client_id> <Full|Work|Family|None> Update an existing client's access tier
+  gbrain auth grant <email> <Full|Work|Family|None>       v0.32: insert/update an end-user OIDC grant.
+                                                          Re-granting an existing email overwrites the
+                                                          tier and clears revoked_at.
+  gbrain auth revoke-grant <email>                        v0.32: soft-revoke an OIDC end-user grant.
+                                                          Existing access_tokens keep their tier until
+                                                          expiry; revocation gates the next sign-in.
+  gbrain auth list-grants                                 v0.32: list OIDC end-user grants with email,
+                                                          tier, granted_at, granted_by, status.
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);
   }

@@ -86,6 +86,11 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // by default, which is why this fix wave's Step 3 replaces this with a
   // SQL parser that extracts every column referenced by any DDL.
   { kind: 'column', table: 'subagent_messages', column: 'provider_id' },
+  // v46 — forward-referenced by `CREATE INDEX idx_oauth_tokens_subject_email
+  // ON oauth_tokens(subject_email) WHERE subject_email IS NOT NULL`.
+  { kind: 'column', table: 'oauth_tokens', column: 'subject_email' },
+  { kind: 'column', table: 'oauth_tokens', column: 'subject_iss' },
+  { kind: 'column', table: 'oauth_tokens', column: 'user_tier' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -139,6 +144,11 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
 
       DROP INDEX IF EXISTS idx_subagent_messages_provider;
       ALTER TABLE subagent_messages DROP COLUMN IF EXISTS provider_id;
+
+      DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_iss;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS user_tier;
     `);
 
     // Run bootstrap in isolation (NOT initSchema). This is what we're testing.
@@ -198,6 +208,11 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       DROP INDEX IF EXISTS idx_chunks_embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS modality;
+
+      DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_iss;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS user_tier;
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.

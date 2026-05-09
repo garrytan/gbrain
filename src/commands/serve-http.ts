@@ -171,10 +171,23 @@ interface ServeHttpOptions {
    * rollout.
    */
   enforceAccessTiers?: boolean;
+  /**
+   * v46 OIDC end-user identity federation. When all three are set, the
+   * /authorize endpoint redirects to the OIDC issuer instead of returning
+   * the gbrain code immediately, and /oauth/oidc/callback completes the
+   * dance against `oauth_user_grants`. When unset, gbrain runs the legacy
+   * client_credentials path (the operator labels clients; no end-user
+   * verification). Operators flip on with --oidc-issuer + --oidc-client-id
+   * + --oidc-client-secret.
+   */
+  oidcIssuer?: string;
+  oidcClientId?: string;
+  oidcClientSecret?: string;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, publicUrl, logFullParams, enforceAccessTiers = true } = options;
+  const { port, tokenTtl, enableDcr, publicUrl, logFullParams, enforceAccessTiers = true,
+          oidcIssuer, oidcClientId, oidcClientSecret } = options;
   const config = loadConfig() || { engine: 'pglite' as const };
 
   if (logFullParams) {
@@ -186,6 +199,30 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Get raw SQL connection for OAuth provider
   const sql = db.getConnection() as SqlQuery;
 
+  // v46 OIDC federation: build the verifier once if the operator passed
+  // --oidc-issuer + --oidc-client-id + --oidc-client-secret. The provider
+  // takes the verifier in its constructor; the callback route below
+  // delegates to provider.completeOidcCallback. publicUrl is required
+  // because OIDC issuers redirect to a fixed URL (the redirect_uri sent
+  // at /authorize must match the one sent at /token).
+  let oidcConfig: { verifier: import('../core/oidc.ts').OidcVerifier; clientId: string; publicUrl: string } | undefined;
+  const oidcAnySet = Boolean(oidcIssuer || oidcClientId || oidcClientSecret);
+  if (oidcAnySet && !(oidcIssuer && oidcClientId && oidcClientSecret)) {
+    throw new Error('--oidc-issuer, --oidc-client-id, and --oidc-client-secret must be set together');
+  }
+  if (oidcIssuer && oidcClientId && oidcClientSecret) {
+    if (!publicUrl) {
+      console.error('[serve-http] WARNING: --oidc-issuer is set but --public-url is missing. The OIDC redirect_uri will use http://localhost:<port>/oauth/oidc/callback which most issuers reject. Set --public-url to a stable URL the issuer accepts.');
+    }
+    const { OidcVerifier } = await import('../core/oidc.ts');
+    oidcConfig = {
+      verifier: new OidcVerifier({ issuerUrl: oidcIssuer, clientId: oidcClientId, clientSecret: oidcClientSecret }),
+      clientId: oidcClientId,
+      publicUrl: publicUrl || `http://localhost:${port}`,
+    };
+    console.error(`[serve-http] OIDC federation enabled: issuer=${oidcIssuer}, callback=${oidcConfig.publicUrl}/oauth/oidc/callback`);
+  }
+
   // Initialize OAuth provider. F12 cleanup: DCR-disable now flips a
   // constructor option instead of monkey-patching `_clientsStore` after
   // construction. Same outcome (no /register endpoint when --enable-dcr
@@ -194,6 +231,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     sql,
     tokenTtl,
     dcrDisabled: !enableDcr,
+    oidc: oidcConfig,
   });
 
   // Sweep expired tokens on startup (non-blocking)
@@ -321,6 +359,40 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // SDK's mcpAuthRouter reads provider.clientsStore once and only wires up
   // /register when the store exposes registerClient — so passing dcrDisabled
   // to the constructor is sufficient. No monkey-patching here.
+
+  // v46 OIDC callback. Registered BEFORE mcpAuthRouter so the SDK's catch-all
+  // doesn't intercept /oauth/oidc/callback. Only mounted when OIDC config is
+  // present; the path 404s naturally on non-OIDC deployments.
+  if (oidcConfig) {
+    app.get('/oauth/oidc/callback', async (req: Request, res: Response) => {
+      const code = typeof req.query.code === 'string' ? req.query.code : undefined;
+      const state = typeof req.query.state === 'string' ? req.query.state : undefined;
+      const idpError = typeof req.query.error === 'string' ? req.query.error : undefined;
+
+      // The IdP-error case (user denied consent, etc.) and the success case
+      // share the same shape on the wire: we look up the gbrain code via
+      // state, fetch the original redirect_uri, then redirect back with
+      // either error= or code=. completeOidcCallback handles both branches.
+      if (!state || (!code && !idpError)) {
+        res.status(400).send('Missing code or state');
+        return;
+      }
+      try {
+        const result = await oauthProvider.completeOidcCallback(code ?? '', state, idpError);
+        const finalRedirect = new URL(result.redirectUri);
+        if (result.error) {
+          finalRedirect.searchParams.set('error', result.error.code);
+          finalRedirect.searchParams.set('error_description', result.error.description);
+        } else if (result.gbrainCode) {
+          finalRedirect.searchParams.set('code', result.gbrainCode);
+        }
+        if (result.clientState) finalRedirect.searchParams.set('state', result.clientState);
+        res.redirect(finalRedirect.toString());
+      } catch (e) {
+        res.status(400).send('OIDC callback failed: ' + (e instanceof Error ? e.message : 'unknown'));
+      }
+    });
+  }
 
   const authRouter = mcpAuthRouter(authRouterOptions);
 

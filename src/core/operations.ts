@@ -210,8 +210,26 @@ export interface AuthInfo {
    * legacy admin grant). Defaults to `'Full'` when the column is
    * null on pre-v45 rows so existing deployments behave identically
    * until the operator opts into per-client tiers.
+   *
+   * v46: when the token was minted via OIDC code-grant from an
+   * end-user identity, the resolved tier is `min(client_tier,
+   * user_tier)` so the user grant can only narrow, never widen.
    */
   tier?: AccessTier;
+  /**
+   * Verified end-user email (v46). Populated when the token was
+   * minted via OIDC code-grant against `oauth_user_grants`.
+   * Undefined for client_credentials tokens where the OAuth client
+   * is the entire identity. The dispatch path uses this for
+   * audit attribution; tier resolution already folded the user-tier
+   * into AuthInfo.tier.
+   */
+  subjectEmail?: string;
+  /**
+   * The OIDC issuer that asserted `subjectEmail`. Undefined when
+   * subjectEmail is undefined.
+   */
+  subjectIss?: string;
 }
 
 export interface OperationContext {
@@ -2108,7 +2126,7 @@ const whoami: Operation = {
   name: 'whoami',
   description:
     'Introspect the calling identity. Returns one of three transport shapes: ' +
-    '{transport: "oauth", client_id, client_name, scopes, expires_at}, ' +
+    '{transport: "oauth", client_id, client_name, scopes, expires_at, tier, subject_email?}, ' +
     '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
     '{transport: "local", scopes: []}. Throws unknown_transport when the ' +
     'context is ambiguous (remote=true without auth) — fail-closed posture ' +
@@ -2143,6 +2161,9 @@ const whoami: Operation = {
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
         scopes: ctx.auth.scopes,
         expires_at: ctx.auth.expiresAt ?? null,
+        tier: ctx.auth.tier ?? null,
+        ...(ctx.auth.subjectEmail ? { subject_email: ctx.auth.subjectEmail } : {}),
+        ...(ctx.auth.subjectIss ? { subject_iss: ctx.auth.subjectIss } : {}),
       };
     }
     return {
