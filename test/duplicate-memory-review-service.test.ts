@@ -4,7 +4,8 @@ import {
   reviewDuplicateMemory,
   summarizeDuplicateReviewForPreflight,
 } from '../src/core/services/duplicate-memory-review-service.ts';
-import type { MemoryCandidateEntry } from '../src/core/types.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import type { MemoryCandidateEntry, Page } from '../src/core/types.ts';
 
 async function createEngine(): Promise<SQLiteEngine> {
   const engine = new SQLiteEngine();
@@ -90,8 +91,85 @@ test('duplicate review reports same target update for a candidate with the same 
   });
 
   expect(result.decision).toBe('same_target_update');
+  expect(result.matches[0]?.kind).toBe('memory_candidate');
   expect(result.matches[0]?.id).toBe('existing-candidate');
   expect(result.matches[0]?.reasons).toContain('same target object');
+});
+
+test('duplicate review pages through canonical pages independent of result limit', async () => {
+  const pages = [
+    ...Array.from({ length: 100 }, (_, index) => makePage(
+      `concepts/unrelated-${index}`,
+      `Unrelated ${index}`,
+      `Coffee note ${index} covers brew temperature.`,
+    )),
+    makePage('projects/acme-migration', 'Acme Migration', 'Acme migration plan uses staged cutover with rollback notes.'),
+  ];
+  const pageCalls: Array<{ limit?: number; offset?: number }> = [];
+  const engine = {
+    listPages: async (filters?: { limit?: number; offset?: number }) => {
+      pageCalls.push({ limit: filters?.limit, offset: filters?.offset });
+      return pages.slice(filters?.offset ?? 0, (filters?.offset ?? 0) + (filters?.limit ?? 100));
+    },
+    getTags: async (slug: string) => slug === 'projects/acme-migration' ? ['migration', 'acme'] : [],
+    listMemoryCandidateEntries: async () => [],
+  } satisfies Pick<BrainEngine, 'listPages' | 'getTags' | 'listMemoryCandidateEntries'>;
+
+  const result = await reviewDuplicateMemory(engine, {
+    subject_kind: 'proposed_memory',
+    title: 'Acme migration plan',
+    content: 'Acme migration plan uses staged cutover with rollback notes.',
+    tags: ['migration', 'acme'],
+    include_pages: true,
+    include_candidates: false,
+    limit: 1,
+  });
+
+  expect(result.decision).toBe('likely_duplicate');
+  expect(result.matches).toHaveLength(1);
+  expect(result.matches[0]?.id).toBe('projects/acme-migration');
+  expect(pageCalls.map((call) => call.offset)).toEqual([0, 100]);
+});
+
+test('duplicate review pages through memory candidates independent of result limit', async () => {
+  const candidates = [
+    ...Array.from({ length: 100 }, (_, index) => makeCandidate(`unrelated-candidate-${index}`, {
+      proposed_content: `Coffee note ${index} covers brew temperature.`,
+      target_object_id: `concepts/coffee-${index}`,
+    })),
+    makeCandidate('matching-candidate', {
+      proposed_content: 'Acme migration has a staged cutover and rollback owner.',
+      target_object_id: 'projects/acme-migration',
+    }),
+  ];
+  const candidateCalls: Array<{ limit?: number; offset?: number }> = [];
+  const engine = {
+    listPages: async () => [],
+    getTags: async () => [],
+    listMemoryCandidateEntries: async (filters?: { limit?: number; offset?: number }) => {
+      candidateCalls.push({ limit: filters?.limit, offset: filters?.offset });
+      return candidates.slice(filters?.offset ?? 0, (filters?.offset ?? 0) + (filters?.limit ?? 100));
+    },
+  } satisfies Pick<BrainEngine, 'listPages' | 'getTags' | 'listMemoryCandidateEntries'>;
+
+  const result = await reviewDuplicateMemory(engine, {
+    scope_id: 'workspace:default',
+    subject_kind: 'memory_candidate',
+    subject_id: 'incoming-candidate',
+    content: 'Acme migration should update the staged cutover notes.',
+    candidate_type: 'note_update',
+    target_object_type: 'curated_note',
+    target_object_id: 'projects/acme-migration',
+    include_pages: false,
+    include_candidates: true,
+    limit: 1,
+  });
+
+  expect(result.decision).toBe('same_target_update');
+  expect(result.matches).toHaveLength(1);
+  expect(result.matches[0]?.kind).toBe('memory_candidate');
+  expect(result.matches[0]?.id).toBe('matching-candidate');
+  expect(candidateCalls.map((call) => call.offset)).toEqual([0, 100]);
 });
 
 test('duplicate review excludes the subject candidate id', async () => {
@@ -181,3 +259,17 @@ test('preflight summary keeps only compact duplicate fields', async () => {
     },
   });
 });
+
+function makePage(slug: string, title: string, compiledTruth: string): Page {
+  return {
+    id: 0,
+    slug,
+    type: 'project',
+    title,
+    compiled_truth: compiledTruth,
+    timeline: '',
+    frontmatter: {},
+    created_at: new Date('2026-05-09T00:00:00.000Z'),
+    updated_at: new Date('2026-05-09T00:00:00.000Z'),
+  };
+}

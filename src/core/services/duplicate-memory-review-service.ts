@@ -7,8 +7,8 @@ import type {
   Page,
 } from '../types.ts';
 
-export type DuplicateMemorySubjectKind = 'proposed_memory' | 'memory_candidate';
-export type DuplicateMemoryMatchKind = 'page' | 'candidate';
+export type DuplicateMemorySubjectKind = 'page' | 'memory_candidate' | 'proposed_memory';
+export type DuplicateMemoryMatchKind = 'page' | 'memory_candidate';
 export type DuplicateMemoryDecision = 'no_match' | 'possible_duplicate' | 'likely_duplicate' | 'same_target_update';
 
 export interface DuplicateMemoryReviewInput {
@@ -64,6 +64,7 @@ const THRESHOLDS: DuplicateMemoryReviewThresholds = {
   likely_duplicate: 0.72,
   same_target_update: 0.35,
 };
+const SCAN_BATCH_SIZE = 100;
 
 const STOP_WORDS = new Set([
   'a',
@@ -89,26 +90,36 @@ export async function reviewDuplicateMemory(
   const matches: DuplicateMemoryReviewMatch[] = [];
 
   if (input.include_pages !== false) {
-    const pages = await engine.listPages({ limit, offset: 0 });
-    for (const page of pages) {
-      if (excludedIds.has(page.slug)) continue;
-      const tags = await engine.getTags(page.slug);
-      const match = scorePage(input, page, tags);
-      if (isMeaningfulMatch(match)) matches.push(match);
+    let offset = 0;
+    while (true) {
+      const pages = await engine.listPages({ limit: SCAN_BATCH_SIZE, offset });
+      for (const page of pages) {
+        if (excludedIds.has(page.slug)) continue;
+        const tags = await engine.getTags(page.slug);
+        const match = scorePage(input, page, tags);
+        if (isMeaningfulMatch(match)) matches.push(match);
+      }
+      if (pages.length < SCAN_BATCH_SIZE) break;
+      offset += SCAN_BATCH_SIZE;
     }
   }
 
   if (input.include_candidates !== false) {
-    const candidates = await engine.listMemoryCandidateEntries({
-      scope_id: input.scope_id,
-      limit,
-      offset: 0,
-    });
+    let offset = 0;
+    while (true) {
+      const candidates = await engine.listMemoryCandidateEntries({
+        scope_id: input.scope_id,
+        limit: SCAN_BATCH_SIZE,
+        offset,
+      });
 
-    for (const candidate of candidates) {
-      if (excludedIds.has(candidate.id)) continue;
-      const match = scoreCandidate(input, candidate);
-      if (isMeaningfulMatch(match)) matches.push(match);
+      for (const candidate of candidates) {
+        if (excludedIds.has(candidate.id)) continue;
+        const match = scoreCandidate(input, candidate);
+        if (isMeaningfulMatch(match)) matches.push(match);
+      }
+      if (candidates.length < SCAN_BATCH_SIZE) break;
+      offset += SCAN_BATCH_SIZE;
     }
   }
 
@@ -200,7 +211,7 @@ function scoreCandidate(
   ]);
 
   return {
-    kind: 'candidate',
+    kind: 'memory_candidate',
     id: candidate.id,
     score,
     reasons,
