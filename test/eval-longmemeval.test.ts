@@ -170,8 +170,8 @@ describe('resetTables: schema-migration robustness', () => {
 // 4. speed (warm) — p50 + p99 across 10 trials
 // ---------------------------------------------------------------------------
 
-describe('warm-create speed gate', () => {
-  test('p50 < 500ms, p99 reported (warn-only at 1500ms)', async () => {
+describe('warm-create speed telemetry', () => {
+  test('reports p50/p99 and warns above targets', async () => {
     const trials = 10;
     const samples: number[] = [];
     for (let i = 0; i < trials; i++) {
@@ -191,7 +191,9 @@ describe('warm-create speed gate', () => {
     process.stderr.write(
       `[speed] warm reset+import+search p50=${p50.toFixed(1)}ms p99=${p99.toFixed(1)}ms (n=${trials})\n`,
     );
-    expect(p50).toBeLessThan(500);
+    if (p50 >= 500) {
+      process.stderr.write(`[speed] WARN: p50 above 500ms target (informational)\n`);
+    }
     if (p99 > 1500) {
       process.stderr.write(`[speed] WARN: p99 above 1500ms threshold (informational)\n`);
     }

@@ -106,9 +106,9 @@ describe('dispatchToolCall — enforceRemoteAccess fail-closed defaults', () => 
   });
 
   test('without enforceRemoteAccess, missing tier preserves owner-trust bypass', async () => {
-    // Stdio MCP and CLI rely on this: no enforceRemoteAccess -> dispatcher
-    // doesn't gate on tier/scope/localOnly. The handler runs (and throws
-    // here only because the stub engine has no methods).
+    // Trusted local/owner paths rely on this: no enforceRemoteAccess ->
+    // dispatcher doesn't gate on tier/scope/localOnly. The handler runs
+    // (and throws here only because the stub engine has no methods).
     const result = await dispatchToolCall(stubEngine, 'run_doctor', {}, {
       remote: false,
       // enforceRemoteAccess omitted -> false

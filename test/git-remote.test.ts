@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   GIT_SSRF_FLAGS,
+  GIT_NO_RECURSE_SUBMODULES_FLAG,
   parseRemoteUrl,
   RemoteUrlError,
   cloneRepo,
@@ -29,17 +30,29 @@ function writeFakeGit(): void {
   writeFileSync(FAKE_GIT_MODE, 'ok');
   // Per-invocation argv goes into argv.log (one JSON array per line).
   writeFileSync(FAKE_GIT_LOG, '');
-  const script = `#!/usr/bin/env bash
-# Fake git for git-remote.test.ts
-{ printf '['; for arg in "$@"; do printf '%s,' "$(printf '%s' "$arg" | jq -Rs .)"; done; printf 'null]\\n'; } >> "${FAKE_GIT_LOG}"
-mode=$(cat "${FAKE_GIT_MODE}" 2>/dev/null || echo ok)
-case "$mode" in
-  fail) exit 1 ;;
-  url-drift) echo "https://github.com/different/url" ;;
-  url-match) echo "https://github.com/expected/url" ;;
-  *) ;;
-esac
-exit 0
+  const script = `#!/usr/bin/env bun
+// Fake git for git-remote.test.ts
+import { appendFileSync, readFileSync } from "node:fs";
+
+const logPath = ${JSON.stringify(FAKE_GIT_LOG)};
+const modePath = ${JSON.stringify(FAKE_GIT_MODE)};
+appendFileSync(logPath, JSON.stringify(process.argv.slice(2)) + "\\n");
+
+let mode = "ok";
+try {
+  mode = readFileSync(modePath, "utf8").trim() || "ok";
+} catch {}
+
+switch (mode) {
+  case "fail":
+    process.exit(1);
+  case "url-drift":
+    console.log("https://github.com/different/url");
+    break;
+  case "url-match":
+    console.log("https://github.com/expected/url");
+    break;
+}
 `;
   const path = join(FAKE_GIT_DIR, 'git');
   writeFileSync(path, script);
@@ -81,12 +94,11 @@ const fakePath = (): string => `${FAKE_GIT_DIR}:${process.env.PATH ?? ''}`;
 // ---------------------------------------------------------------------------
 
 describe('GIT_SSRF_FLAGS', () => {
-  test('exact shape — codex SSRF lockdown', () => {
+  test('exact global config shape — codex SSRF lockdown', () => {
     expect([...GIT_SSRF_FLAGS]).toEqual([
       '-c', 'http.followRedirects=false',
       '-c', 'protocol.file.allow=never',
       '-c', 'protocol.ext.allow=never',
-      '--no-recurse-submodules',
     ]);
   });
 });
@@ -229,9 +241,10 @@ describe('cloneRepo', () => {
     const calls = readArgvLog();
     expect(calls.length).toBe(1);
     const argv = calls[0];
-    // Pin the SSRF flags before the 'clone' verb (codex Q2 invariant).
+    // Pin the SSRF config flags before the 'clone' verb (codex Q2 invariant).
     expect(argv.slice(0, GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('clone');
+    expect(argv[GIT_SSRF_FLAGS.length]).toBe('clone');
+    expect(argv).toContain(GIT_NO_RECURSE_SUBMODULES_FLAG);
     expect(argv).toContain('--depth=1');
     expect(argv).toContain('https://example.com/repo');
     expect(argv[argv.length - 1]).toBe(dest);
@@ -307,8 +320,9 @@ describe('pullRepo', () => {
     expect(argv[0]).toBe('-C');
     expect(argv[1]).toBe(repo);
     expect(argv.slice(2, 2 + GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('pull');
+    expect(argv[2 + GIT_SSRF_FLAGS.length]).toBe('pull');
     expect(argv).toContain('--ff-only');
+    expect(argv).toContain(GIT_NO_RECURSE_SUBMODULES_FLAG);
     rmSync(repo, { recursive: true, force: true });
   });
 

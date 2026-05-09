@@ -394,7 +394,15 @@ const get_page: Operation = {
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
-      const candidates = await ctx.engine.resolveSlugs(slug);
+      let candidates = await ctx.engine.resolveSlugs(slug);
+      // Resolve ambiguity after applying the caller's tier visibility. If we
+      // decide "ambiguous" on the whole-brain candidate set first, a Work-tier
+      // caller with exactly one visible match can infer that hidden pages also
+      // matched the probe.
+      if (ctx.tier && ctx.tier !== 'Full') {
+        const { tierAllowsSlug } = await import('./access-tier.ts');
+        candidates = candidates.filter(candidate => tierAllowsSlug(candidate, ctx.tier!));
+      }
       if (candidates.length === 1) {
         page = await ctx.engine.getPage(candidates[0], { includeDeleted });
         resolved_slug = candidates[0];

@@ -180,7 +180,7 @@ describe('filterResponseByTier — read-path response filtering', () => {
     const list = [{ slug: 'people/alice' }, { slug: 'personal/diary' }];
     expect(await filterResponseByTier('list_pages', list, { tier: 'Full' })).toBe(list);
   });
-  test('undefined tier (local CLI / stdio) passes through unchanged', async () => {
+  test('undefined tier (trusted local/owner path) passes through unchanged', async () => {
     const list = [{ slug: 'people/alice' }, { slug: 'personal/diary' }];
     expect(await filterResponseByTier('list_pages', list, {})).toBe(list);
   });
@@ -319,9 +319,11 @@ describe('filterResponseByTier — read-path response filtering', () => {
         { slug: 'companies/acme', title: 'Acme', domain: null },
       ],
       total_orphans: 2,
-      total_linkable: 5,
-      total_pages: 100,
-      excluded: 3, // 2 pre-existing + 1 newly hidden
+      // Aggregate counts are restricted to returned visible rows for
+      // non-Full tiers; whole-brain totals leak hidden brain size.
+      total_linkable: 2,
+      total_pages: 2,
+      excluded: 0,
     });
   });
   test('resolve_slugs string[] — bare slugs filtered by tier prefix', async () => {
@@ -465,6 +467,38 @@ describe('OP_FILTER_SHAPE parity — tier-annotated read ops are covered', () =>
 });
 
 describe('input-side gated ops — hidden and absent slugs are indistinguishable', () => {
+  test('get_page fuzzy resolves after tier filtering so hidden matches do not create ambiguity', async () => {
+    const op = operations.find(o => o.name === 'get_page');
+    expect(op).toBeDefined();
+    const calls: string[] = [];
+    const visible = { slug: 'people/alice', title: 'Alice' };
+    const engine = {
+      async getPage(slug: string) {
+        calls.push(`getPage:${slug}`);
+        return slug === 'people/alice' ? visible : null;
+      },
+      async resolveSlugs(slug: string) {
+        calls.push(`resolveSlugs:${slug}`);
+        return ['people/alice', 'personal/alice-diary'];
+      },
+      async getTags(slug: string) {
+        calls.push(`getTags:${slug}`);
+        return [];
+      },
+    };
+    const result = await op!.handler(
+      { engine, tier: 'Work', remote: true, logger: console } as any,
+      { slug: 'ali', fuzzy: true },
+    );
+    expect(result).toEqual({ ...visible, tags: [], resolved_slug: 'people/alice' });
+    expect(calls).toEqual([
+      'getPage:ali',
+      'resolveSlugs:ali',
+      'getPage:people/alice',
+      'getTags:people/alice',
+    ]);
+  });
+
   test('get_chunks returns [] for hidden slug without touching engine', async () => {
     const op = operations.find(o => o.name === 'get_chunks');
     expect(op).toBeDefined();

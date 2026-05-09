@@ -383,13 +383,16 @@ export async function filterResponseByTier(
         if (typeof slug !== 'string') return false;
         return tierAllowsSlug(slug, tier, prefixes);
       });
-      const dropped = orphans.length - visible.length;
-      const excluded = typeof wrapper.excluded === 'number' ? wrapper.excluded : 0;
       return {
         ...wrapper,
         orphans: visible,
         total_orphans: visible.length,
-        excluded: excluded + dropped,
+        // Whole-brain aggregate counts are themselves an oracle for hidden
+        // brain size. For filtered tiers, counts must describe only the
+        // returned visible rows; do not fold hidden rows into `excluded`.
+        total_linkable: visible.length,
+        total_pages: visible.length,
+        excluded: 0,
       };
     }
 

@@ -6,6 +6,12 @@ import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
+import { OP_TIER_DEFAULT_REQUIRED, tierImplies } from '../core/access-tier.ts';
+import type { AccessTier } from '../core/access-tier.ts';
+import { hasScope } from '../core/scope.ts';
+
+const STDIO_SCOPES = ['read'];
+const STDIO_TIER: AccessTier = 'Work';
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -17,8 +23,14 @@ export async function startMcpServer(engine: BrainEngine) {
   // the subagent tool registry (v0.15+) can call the same mapper against a
   // filtered OPERATIONS subset instead of duplicating this shape.
   const mcpOperations = operations.filter(op => !op.localOnly);
+  const stdioOperations = mcpOperations.filter((op) => {
+    const requiredScope = op.scope || 'read';
+    if (!hasScope(STDIO_SCOPES, requiredScope)) return false;
+    const requiredTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
+    return tierImplies(STDIO_TIER, requiredTier);
+  });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolDefs(mcpOperations),
+    tools: buildToolDefs(stdioOperations),
   }));
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
@@ -28,13 +40,15 @@ export async function startMcpServer(engine: BrainEngine) {
   // shape and cast through `any` (the SDK accepts it via the ServerResult union).
   server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
     const { name, arguments: params } = request.params;
-    // v0.28: stdio MCP has no per-token auth (local pipe). Default the
-    // takes-holder allow-list to ['world'] so agent-facing callers don't
-    // see private hunches via takes_list / takes_search / query. Operators
-    // who want stdio to see everything should call ops directly via
-    // `gbrain call <op>` (sets remote=false in src/cli.ts).
+    // v0.28: stdio MCP has no per-token auth (local pipe), so expose the same
+    // untrusted Work/read surface to every stdio client and enforce response
+    // tier filters. Operators who want owner-trust should call ops directly
+    // via `gbrain call <op>` (sets remote=false in src/cli.ts).
     return dispatchToolCall(engine, name, params, {
       remote: true,
+      enforceRemoteAccess: true,
+      scopes: STDIO_SCOPES,
+      tier: STDIO_TIER,
       takesHoldersAllowList: ['world'],
     });
   });
