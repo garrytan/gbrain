@@ -30,12 +30,12 @@ async function withSQLiteEngine<T>(fn: (engine: SQLiteEngine) => Promise<T>): Pr
   }
 }
 
-function operationContext(engine: SQLiteEngine) {
+function operationContext(engine: SQLiteEngine, dryRun = false) {
   return {
     engine,
     config: {} as any,
     logger: console,
-    dryRun: false,
+    dryRun,
   };
 }
 
@@ -107,6 +107,24 @@ test('review_duplicate_memory accepts valid page type and rejects invalid page t
   });
 });
 
+test('review_duplicate_memory rejects non-boolean include flags', async () => {
+  await withSQLiteEngine(async (engine) => {
+    const review = findOperation('review_duplicate_memory');
+
+    await expect(review.handler(operationContext(engine), {
+      subject_kind: 'proposed_memory',
+      content: 'Include pages must be boolean when present.',
+      include_pages: 'false',
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+
+    await expect(review.handler(operationContext(engine), {
+      subject_kind: 'proposed_memory',
+      content: 'Include candidates must be boolean when present.',
+      include_candidates: 1,
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+  });
+});
+
 test('review_duplicate_memory rejects invalid subject kind and blank content', async () => {
   await withSQLiteEngine(async (engine) => {
     const review = findOperation('review_duplicate_memory');
@@ -120,6 +138,65 @@ test('review_duplicate_memory rejects invalid subject kind and blank content', a
       subject_kind: 'proposed_memory',
       content: '   ',
     })).rejects.toMatchObject({ code: 'invalid_params' });
+  });
+});
+
+test('create_memory_candidate_entry rejects non-boolean include_duplicate_review', async () => {
+  await withSQLiteEngine(async (engine) => {
+    const create = findOperation('create_memory_candidate_entry');
+
+    await expect(create.handler(operationContext(engine), {
+      id: 'candidate-invalid-include-review',
+      scope_id: 'workspace:default',
+      candidate_type: 'fact',
+      proposed_content: 'Include duplicate review must be boolean when present.',
+      source_refs: ['User, direct message, 2026-05-09 09:10 KST'],
+      include_duplicate_review: 'true',
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+  });
+});
+
+test('create_memory_candidate_entry dry-run ignores duplicate review output', async () => {
+  await withSQLiteEngine(async (engine) => {
+    const create = findOperation('create_memory_candidate_entry');
+    const result = await create.handler(operationContext(engine, true), {
+      id: 'candidate-dry-run-review',
+      scope_id: 'workspace:default',
+      candidate_type: 'fact',
+      proposed_content: 'Dry-run output shape stays unchanged.',
+      source_refs: ['User, direct message, 2026-05-09 09:15 KST'],
+      include_duplicate_review: true,
+    }) as any;
+
+    expect(result).toEqual({
+      dry_run: true,
+      action: 'create_memory_candidate_entry',
+      id: 'candidate-dry-run-review',
+      scope_id: 'workspace:default',
+      candidate_type: 'fact',
+      status: 'captured',
+    });
+    expect(result.duplicate_review).toBeUndefined();
+  });
+});
+
+test('create_memory_candidate_entry duplicate review failure does not leave a candidate behind', async () => {
+  await withSQLiteEngine(async (engine) => {
+    const create = findOperation('create_memory_candidate_entry');
+    (engine as any).listPages = async () => {
+      throw new Error('duplicate review failed');
+    };
+
+    await expect(create.handler(operationContext(engine), {
+      id: 'candidate-review-failure',
+      scope_id: 'workspace:default',
+      candidate_type: 'fact',
+      proposed_content: 'Candidate should not be stored when duplicate review fails.',
+      source_refs: ['User, direct message, 2026-05-09 09:20 KST'],
+      include_duplicate_review: true,
+    })).rejects.toThrow('duplicate review failed');
+
+    expect(await engine.getMemoryCandidateEntry('candidate-review-failure')).toBeNull();
   });
 });
 

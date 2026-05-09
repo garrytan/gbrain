@@ -207,6 +207,20 @@ function normalizeOptionalStringArray(
   return value.map((entry) => entry.trim());
 }
 
+function normalizeOptionalBoolean(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): boolean | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  if (typeof value !== 'boolean') {
+    throw invalidParams(deps, `${field} must be a boolean`);
+  }
+  return value;
+}
+
 function normalizeLimit(
   deps: { OperationError: OperationErrorCtor },
   value: unknown,
@@ -966,6 +980,8 @@ export function createMemoryInboxOperations(
         throw invalidParams(deps, 'content must be a non-empty string');
       }
       const pageType = optionalEnumValue(deps, 'page_type', p.page_type, PAGE_TYPE_VALUES);
+      const includePages = normalizeOptionalBoolean(deps, 'include_pages', p.include_pages);
+      const includeCandidates = normalizeOptionalBoolean(deps, 'include_candidates', p.include_candidates);
       return reviewDuplicateMemory(ctx.engine, {
         scope_id: normalizeOptionalNonEmptyString(deps, 'scope_id', p.scope_id) ?? deps.defaultScopeId,
         subject_kind: requireEnumValue(deps, 'subject_kind', p.subject_kind, DUPLICATE_MEMORY_SUBJECT_KIND_VALUES),
@@ -978,8 +994,8 @@ export function createMemoryInboxOperations(
         candidate_type: optionalEnumValue(deps, 'candidate_type', p.candidate_type, MEMORY_CANDIDATE_TYPE_VALUES),
         target_object_type: optionalEnumValue(deps, 'target_object_type', p.target_object_type, MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES),
         target_object_id: normalizeOptionalTargetObjectId(deps, p.target_object_id) ?? undefined,
-        include_pages: p.include_pages !== false,
-        include_candidates: p.include_candidates !== false,
+        include_pages: includePages ?? true,
+        include_candidates: includeCandidates ?? true,
         limit: normalizeLimit(deps, p.limit),
         exclude_ids: normalizeOptionalStringArray(deps, 'exclude_ids', p.exclude_ids),
       });
@@ -1047,6 +1063,7 @@ export function createMemoryInboxOperations(
       const scopeId = String(p.scope_id ?? deps.defaultScopeId);
       const status = optionalEnumValue(deps, 'status', p.status, MEMORY_CANDIDATE_EARLY_STATUS_VALUES) ?? 'captured';
       const interactionId = normalizeOptionalNonEmptyString(deps, 'interaction_id', p.interaction_id);
+      const includeDuplicateReview = normalizeOptionalBoolean(deps, 'include_duplicate_review', p.include_duplicate_review) ?? false;
       if (ctx.dryRun) {
         return {
           dry_run: true,
@@ -1058,7 +1075,7 @@ export function createMemoryInboxOperations(
         };
       }
 
-      const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, {
+      const candidateInput = {
         id,
         scope_id: scopeId,
         candidate_type: requireEnumValue(deps, 'candidate_type', p.candidate_type, MEMORY_CANDIDATE_TYPE_VALUES),
@@ -1076,24 +1093,25 @@ export function createMemoryInboxOperations(
         reviewed_at: normalizeOptionalIsoTimestamp(deps, 'reviewed_at', p.reviewed_at) ?? null,
         review_reason: typeof p.review_reason === 'string' ? p.review_reason : null,
         interaction_id: interactionId,
-      });
-      if (p.include_duplicate_review !== true) {
-        return created;
+      };
+      if (!includeDuplicateReview) {
+        return createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
       }
       const duplicateReview = await reviewDuplicateMemory(ctx.engine, {
-        scope_id: created.scope_id,
+        scope_id: candidateInput.scope_id,
         subject_kind: 'memory_candidate',
-        subject_id: created.id,
-        content: created.proposed_content,
-        source_refs: created.source_refs,
-        candidate_type: created.candidate_type,
-        target_object_type: created.target_object_type ?? undefined,
-        target_object_id: created.target_object_id ?? undefined,
+        subject_id: candidateInput.id,
+        content: candidateInput.proposed_content,
+        source_refs: candidateInput.source_refs,
+        candidate_type: candidateInput.candidate_type,
+        target_object_type: candidateInput.target_object_type ?? undefined,
+        target_object_id: candidateInput.target_object_id ?? undefined,
         include_pages: true,
         include_candidates: true,
         limit: 5,
-        exclude_ids: [created.id],
+        exclude_ids: [candidateInput.id],
       });
+      const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
       return {
         candidate: created,
         duplicate_review: duplicateReview,
