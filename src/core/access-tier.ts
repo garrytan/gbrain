@@ -200,8 +200,12 @@ export function tierAllowsSlug(
  *
  * Adding an op is opt-in: a new tier-annotated read op without an entry
  * here passes through unfiltered. The tier-coverage parity test asserts
- * every tier-annotated read op either appears in this map or is gated
- * input-side in its handler (see `get_chunks`).
+ * every tier-annotated read op either:
+ *   - appears in this map (response-side filter), OR
+ *   - is gated input-side in its handler (see `get_chunks`, `get_timeline`
+ *     in operations.ts; tracked via HANDLER_GATED_OPS in the parity test), OR
+ *   - returns no slug-bearing data (see NO_SLUG_DATA_OPS for `get_stats`,
+ *     `whoami` — aggregate counts and self-introspection only).
  *
  *   single-page         { ...page, slug, ...} OR
  *                       { error: 'ambiguous_slug', candidates: string[] }
