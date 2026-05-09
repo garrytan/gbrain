@@ -33,6 +33,7 @@ const CLI_ONLY_SELF_HELP = new Set([
   'embed', 'config',
   'skillpack', 'skillpack-check',
   'integrations', 'friction',
+  'frontmatter', 'check-resolvable',
 ]);
 
 async function main() {
