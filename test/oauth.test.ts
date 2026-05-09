@@ -289,6 +289,84 @@ describe('verifyAccessToken', () => {
     expect(authInfo.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
   });
 
+  const oldSchemaFallbackCases = [
+    {
+      name: 'missing only v46 token columns',
+      dropSql: `
+        DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_iss;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS user_tier;
+      `,
+    },
+    {
+      name: 'missing v46 token columns plus oauth_clients.access_tier',
+      dropSql: `
+        DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_iss;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS user_tier;
+        ALTER TABLE oauth_clients DROP COLUMN IF EXISTS access_tier;
+      `,
+    },
+    {
+      name: 'missing v46 token columns plus oauth_clients.deleted_at',
+      dropSql: `
+        DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_iss;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS user_tier;
+        ALTER TABLE oauth_clients DROP COLUMN IF EXISTS deleted_at;
+      `,
+    },
+    {
+      name: 'missing v46 token columns plus access_tier and deleted_at',
+      dropSql: `
+        DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_iss;
+        ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS user_tier;
+        ALTER TABLE oauth_clients DROP COLUMN IF EXISTS access_tier;
+        ALTER TABLE oauth_clients DROP COLUMN IF EXISTS deleted_at;
+      `,
+    },
+  ];
+
+  for (const fixture of oldSchemaFallbackCases) {
+    test(`old schema fallback verifies OAuth tokens when ${fixture.name}`, async () => {
+      const oldDb = new PGlite({ extensions: { vector, pg_trgm } });
+      await oldDb.exec(PGLITE_SCHEMA_SQL);
+      try {
+        await oldDb.exec(fixture.dropSql);
+        const oldSql = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<Record<string, unknown>[]> => {
+          const query = strings.reduce((acc, str, i) => acc + str + (i < values.length ? `$${i + 1}` : ''), '');
+          const result = await oldDb.query(query, values as any[]);
+          return result.rows as Record<string, unknown>[];
+        };
+        const oldProvider = new GBrainOAuthProvider({ sql: oldSql });
+        const token = generateToken('gbrain_at_');
+        const clientId = generateToken('gbrain_cl_');
+        await oldSql`
+          INSERT INTO oauth_clients (client_id, client_name, scope)
+          VALUES (${clientId}, ${fixture.name}, ${'read'})
+        `;
+        await oldSql`
+          INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
+          VALUES (${hashToken(token)}, ${'access'}, ${clientId}, ${'{read}'}, ${Math.floor(Date.now() / 1000) + 60})
+        `;
+
+        const authInfo = await oldProvider.verifyAccessToken(token) as any;
+        expect(authInfo.clientId).toBe(clientId);
+        expect(authInfo.scopes).toEqual(['read']);
+        expect(authInfo.tier).toBe('Full');
+        expect(authInfo.subjectEmail).toBeUndefined();
+        expect(authInfo.subjectIss).toBeUndefined();
+      } finally {
+        await oldDb.close();
+      }
+    });
+  }
+
   test('legacy access_tokens fallback works', async () => {
     // Insert a legacy bearer token
     const legacyToken = generateToken('gbrain_');
