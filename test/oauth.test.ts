@@ -370,7 +370,12 @@ describe('authorization code flow', () => {
     const code = url.searchParams.get('code')!;
 
     // Exchange code for tokens
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
     expect(tokens.access_token).toStartWith('gbrain_at_');
     expect(tokens.refresh_token).toBeDefined(); // Auth code flow includes refresh
   });
@@ -394,10 +399,17 @@ describe('authorization code flow', () => {
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     // First exchange works
-    await provider.exchangeAuthorizationCode(client, code);
+    await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
 
     // Second exchange fails (code consumed)
-    await expect(provider.exchangeAuthorizationCode(client, code)).rejects.toThrow();
+    await expect(
+      provider.exchangeAuthorizationCode(client, code, undefined, 'http://localhost:3000/callback'),
+    ).rejects.toThrow();
   });
 
   test('expired code is rejected', async () => {
@@ -414,7 +426,9 @@ describe('authorization code flow', () => {
     `;
 
     const client = (await provider.clientsStore.getClient(firstClient.client_id as string))!;
-    await expect(provider.exchangeAuthorizationCode(client, expiredCode)).rejects.toThrow();
+    await expect(
+      provider.exchangeAuthorizationCode(client, expiredCode, undefined, 'http://localhost/cb'),
+    ).rejects.toThrow();
   });
 
   // CSO finding #2 regression. The pre-fix SELECT-then-DELETE pattern let two
@@ -440,7 +454,12 @@ describe('authorization code flow', () => {
 
     const N = 10;
     const results = await Promise.allSettled(
-      Array.from({ length: N }, () => provider.exchangeAuthorizationCode(client, code)),
+      Array.from({ length: N }, () => provider.exchangeAuthorizationCode(
+        client,
+        code,
+        undefined,
+        'http://localhost:3000/callback',
+      )),
     );
     const successes = results.filter(r => r.status === 'fulfilled');
     const failures = results.filter(r => r.status === 'rejected');
@@ -471,7 +490,12 @@ describe('refresh token', () => {
     }, mockRes);
 
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
 
     // Refresh
     const newTokens = await provider.exchangeRefreshToken(client, tokens.refresh_token!, ['read']);
@@ -501,7 +525,12 @@ describe('refresh token', () => {
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
 
     const N = 10;
     const results = await Promise.allSettled(
@@ -700,12 +729,19 @@ describe('F1/F4 cross-client isolation', () => {
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     // Attacker holding the same code MUST be rejected.
-    await expect(provider.exchangeAuthorizationCode(attacker, code)).rejects.toThrow();
+    await expect(
+      provider.exchangeAuthorizationCode(attacker, code, undefined, 'http://localhost:3000/callback'),
+    ).rejects.toThrow();
 
     // The atomic predicate's payoff: the legitimate owner can STILL redeem
     // the code afterward. Without it, the attacker would have burned the
     // row in the DELETE and the owner's redemption would 404.
-    const tokens = await provider.exchangeAuthorizationCode(owner, code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      owner,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
     expect(tokens.access_token).toStartWith('gbrain_at_');
   });
 
@@ -777,7 +813,12 @@ describe('F2/F3 refresh hardening', () => {
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(owner, code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      owner,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
 
     // Attacker rejected.
     await expect(provider.exchangeRefreshToken(attacker, tokens.refresh_token!)).rejects.toThrow();
@@ -810,7 +851,12 @@ describe('F2/F3 refresh hardening', () => {
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
 
     // Attempt to escalate to write — must reject.
     await expect(
@@ -837,7 +883,12 @@ describe('F2/F3 refresh hardening', () => {
       scopes: ['admin'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
 
     // Refresh requesting only sources_admin — admin implies it, so this
     // must succeed and the new token must carry only the requested subset.
@@ -875,7 +926,12 @@ describe('F2/F3 refresh hardening', () => {
       scopes: ['admin'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
 
     const rotated = await provider.exchangeRefreshToken(
       client, tokens.refresh_token!, ['users_admin'],
@@ -899,7 +955,12 @@ describe('F2/F3 refresh hardening', () => {
       scopes: ['write'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(
+      client,
+      code,
+      undefined,
+      'http://localhost:3000/callback',
+    );
 
     await expect(
       provider.exchangeRefreshToken(client, tokens.refresh_token!, ['sources_admin']),
@@ -1078,11 +1139,10 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     ).rejects.toThrow();
   });
 
-  test('omitted redirect_uri (back-compat) still succeeds', async () => {
-    // Existing callers that don't pass redirectUri keep working — the
-    // predicate only fires when redirectUri is provided. This protects
-    // against breaking SDK consumers that haven't adopted the parameter
-    // yet, while still hardening the path for those that have.
+  test('omitted redirect_uri is rejected', async () => {
+    // RFC 6749 §4.1.3 requires redirect_uri at token exchange when it
+    // was present at authorization time. The SDK should always pass it
+    // through; silently accepting omission reopens a code-rebinding class.
     const { clientId } = await provider.registerClientManual(
       'redir-omitted-test', ['authorization_code'], 'read',
       ['http://localhost:3000/callback'],
@@ -1098,8 +1158,9 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
-    expect(tokens.access_token).toStartWith('gbrain_at_');
+    await expect(
+      provider.exchangeAuthorizationCode(client, code),
+    ).rejects.toThrow(/redirect_uri is required/);
   });
 });
 

@@ -2214,24 +2214,39 @@ export const MIGRATIONS: Migration[] = [
       for (const c of wantGrant) {
         if (!grantNames.has(c)) return false;
       }
-      // 2. oauth_tokens.subject_email column exists.
+      // 2. oauth_tokens federated columns exist.
       const tokRows = await engine.executeRaw<{ column_name: string }>(
         `SELECT column_name
          FROM information_schema.columns
          WHERE table_schema = current_schema()
            AND table_name = 'oauth_tokens'
-           AND column_name = 'subject_email'`,
+           AND column_name IN ('subject_email', 'subject_iss', 'user_tier')`,
       );
-      if (tokRows.length !== 1) return false;
-      // 3. oauth_codes.subject_email column exists.
+      const tokNames = new Set(tokRows.map(r => r.column_name));
+      for (const c of ['subject_email', 'subject_iss', 'user_tier']) {
+        if (!tokNames.has(c)) return false;
+      }
+      // 3. oauth_codes federated columns exist.
       const codeRows = await engine.executeRaw<{ column_name: string }>(
         `SELECT column_name
          FROM information_schema.columns
          WHERE table_schema = current_schema()
            AND table_name = 'oauth_codes'
-           AND column_name = 'subject_email'`,
+           AND column_name IN ('subject_email', 'subject_iss', 'user_tier')`,
       );
-      if (codeRows.length !== 1) return false;
+      const codeNames = new Set(codeRows.map(r => r.column_name));
+      for (const c of ['subject_email', 'subject_iss', 'user_tier']) {
+        if (!codeNames.has(c)) return false;
+      }
+      // 4. oauth_tokens subject_email index exists.
+      const indexRows = await engine.executeRaw<{ indexname: string }>(
+        `SELECT indexname
+         FROM pg_indexes
+         WHERE schemaname = current_schema()
+           AND tablename = 'oauth_tokens'
+           AND indexname = 'idx_oauth_tokens_subject_email'`,
+      );
+      if (indexRows.length !== 1) return false;
       return true;
     },
   },

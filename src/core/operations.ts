@@ -2126,7 +2126,7 @@ const whoami: Operation = {
   name: 'whoami',
   description:
     'Introspect the calling identity. Returns one of three transport shapes: ' +
-    '{transport: "oauth", client_id, client_name, scopes, expires_at}, ' +
+    '{transport: "oauth", client_id, client_name, scopes, expires_at, tier, subject_email?}, ' +
     '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
     '{transport: "local", scopes: []}. Throws unknown_transport when the ' +
     'context is ambiguous (remote=true without auth) — fail-closed posture ' +
@@ -2161,6 +2161,9 @@ const whoami: Operation = {
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
         scopes: ctx.auth.scopes,
         expires_at: ctx.auth.expiresAt ?? null,
+        tier: ctx.auth.tier ?? null,
+        ...(ctx.auth.subjectEmail ? { subject_email: ctx.auth.subjectEmail } : {}),
+        ...(ctx.auth.subjectIss ? { subject_iss: ctx.auth.subjectIss } : {}),
       };
     }
     return {

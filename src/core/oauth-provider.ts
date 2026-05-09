@@ -124,6 +124,33 @@ interface GBrainOAuthProviderOptions {
    * before mcpAuthRouter ran).
    */
   dcrDisabled?: boolean;
+  /**
+   * v46 OIDC end-user identity federation. When set, the /authorize endpoint
+   * redirects to the OIDC issuer instead of returning the gbrain code
+   * immediately. The /oauth/oidc/callback handler in serve-http.ts completes
+   * the dance: exchanges the IdP code for an id_token, verifies the token,
+   * looks the email up in oauth_user_grants, captures the user_tier into the
+   * gbrain code row, then redirects to the original client redirect_uri.
+   */
+  oidc?: {
+    /** OIDC verifier instance from src/core/oidc.ts */
+    verifier: import('./oidc.ts').OidcVerifier;
+    /** OIDC client_id registered with the issuer (Google, Apple, etc.) */
+    clientId: string;
+    /** Public URL of this gbrain server (e.g. https://brain.example.com) */
+    publicUrl: string;
+  };
+}
+
+interface PendingOidcAuthorization {
+  clientId: string;
+  scopes: string[];
+  codeChallenge: string;
+  redirectUri: string;
+  clientState?: string;
+  resource?: string;
+  nonce: string;
+  expiresAt: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +260,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   private readonly dcrDisabled: boolean;
   private tokenTtl: number;
   private refreshTtl: number;
+  /** v46 OIDC config; when undefined, /authorize uses the legacy rubber-stamp flow. */
+  private oidc?: NonNullable<GBrainOAuthProviderOptions['oidc']>;
+  private readonly pendingOidc = new Map<string, PendingOidcAuthorization>();
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
@@ -240,6 +270,16 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
+    this.oidc = options.oidc;
+  }
+
+  /** True when v46 OIDC federation is wired. serve-http.ts uses this to gate the /oauth/oidc/callback route. */
+  get oidcEnabled(): boolean { return this.oidc !== undefined; }
+
+  /** Public OIDC config for serve-http.ts callback handler. Throws if not configured. */
+  getOidcConfig(): NonNullable<GBrainOAuthProviderOptions['oidc']> {
+    if (!this.oidc) throw new Error('OIDC not configured');
+    return this.oidc;
   }
 
   get clientsStore(): OAuthRegisteredClientsStore {
@@ -265,25 +305,201 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    const code = generateToken('gbrain_code_');
-    const codeHash = hashToken(code);
-    const expiresAt = Math.floor(Date.now() / 1000) + 600; // 10 minute TTL
+    if (this.oidc) {
+      this.prunePendingOidc();
+      const state = generateToken('gbrain_oidc_');
+      const nonce = generateToken('gbrain_nonce_');
+      this.pendingOidc.set(state, {
+        clientId: client.client_id,
+        scopes: params.scopes || [],
+        codeChallenge: params.codeChallenge,
+        redirectUri: params.redirectUri,
+        clientState: params.state,
+        resource: params.resource?.toString(),
+        nonce,
+        expiresAt: Math.floor(Date.now() / 1000) + 600,
+      });
 
-    await this.sql`
-      INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
-                                code_challenge_method, redirect_uri, state, resource, expires_at)
-      VALUES (${codeHash}, ${client.client_id},
-              ${pgArray(params.scopes || [])},
-              ${params.codeChallenge}, ${'S256'},
-              ${params.redirectUri}, ${params.state || null},
-              ${params.resource?.toString() || null}, ${expiresAt})
-    `;
+      const discovery = await this.oidc.verifier.getDiscovery();
+      const oidcRedirect = new URL(discovery.authorization_endpoint);
+      oidcRedirect.searchParams.set('client_id', this.oidc.clientId);
+      oidcRedirect.searchParams.set('redirect_uri', this.oidcCallbackUrl());
+      oidcRedirect.searchParams.set('response_type', 'code');
+      oidcRedirect.searchParams.set('scope', 'openid email');
+      oidcRedirect.searchParams.set('state', state);
+      oidcRedirect.searchParams.set('nonce', nonce);
+      res.redirect(oidcRedirect.toString());
+      return;
+    }
 
-    // Redirect back with the code
+    const code = await this.createInternalAuthorizationCode(client.client_id, {
+      scopes: params.scopes || [],
+      codeChallenge: params.codeChallenge,
+      redirectUri: params.redirectUri,
+      state: params.state,
+      resource: params.resource,
+    });
     const redirectUrl = new URL(params.redirectUri);
     redirectUrl.searchParams.set('code', code);
     if (params.state) redirectUrl.searchParams.set('state', params.state);
     res.redirect(redirectUrl.toString());
+  }
+
+  private oidcCallbackUrl(): string {
+    const oidc = this.getOidcConfig();
+    return `${oidc.publicUrl.replace(/\/+$/, '')}/oauth/oidc/callback`;
+  }
+
+  private prunePendingOidc(now = Math.floor(Date.now() / 1000)): void {
+    for (const [state, pending] of this.pendingOidc) {
+      if (pending.expiresAt <= now) this.pendingOidc.delete(state);
+    }
+  }
+
+  private async createInternalAuthorizationCode(
+    clientId: string,
+    params: {
+      scopes: string[];
+      codeChallenge: string;
+      redirectUri: string;
+      state?: string;
+      resource?: URL | string;
+      federated?: { subjectEmail: string; subjectIss: string; userTier: AccessTier };
+    },
+  ): Promise<string> {
+    const code = generateToken('gbrain_code_');
+    const codeHash = hashToken(code);
+    const expiresAt = Math.floor(Date.now() / 1000) + 600;
+    const resource = params.resource instanceof URL ? params.resource.toString() : params.resource;
+
+    try {
+      await this.sql`
+        INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
+                                  code_challenge_method, redirect_uri, state, resource,
+                                  subject_email, subject_iss, user_tier, expires_at)
+        VALUES (${codeHash}, ${clientId},
+                ${pgArray(params.scopes || [])},
+                ${params.codeChallenge}, ${'S256'},
+                ${params.redirectUri}, ${params.state || null},
+                ${resource || null},
+                ${params.federated?.subjectEmail ?? null},
+                ${params.federated?.subjectIss ?? null},
+                ${params.federated?.userTier ?? null},
+                ${expiresAt})
+      `;
+    } catch (e) {
+      if (!isUndefinedColumnError(e, 'subject_email')
+          && !isUndefinedColumnError(e, 'subject_iss')
+          && !isUndefinedColumnError(e, 'user_tier')) throw e;
+      await this.sql`
+        INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
+                                  code_challenge_method, redirect_uri, state, resource, expires_at)
+        VALUES (${codeHash}, ${clientId},
+                ${pgArray(params.scopes || [])},
+                ${params.codeChallenge}, ${'S256'},
+                ${params.redirectUri}, ${params.state || null},
+                ${resource || null}, ${expiresAt})
+      `;
+    }
+
+    return code;
+  }
+
+  /**
+   * Complete the OIDC code-grant on behalf of /oauth/oidc/callback in
+   * serve-http.ts. Given the IdP code + the state we issued at /authorize,
+   * exchanges the IdP code, verifies the id_token, looks up the email in
+   * oauth_user_grants, and (if granted) updates the gbrain oauth_codes row
+   * with subject_email/subject_iss/user_tier so the subsequent /token
+   * exchange mints a tier-narrowed access_token. Returns the original
+   * redirect_uri + (gbrain code OR error) so the caller can issue the
+   * final user-agent redirect.
+   */
+  async completeOidcCallback(
+    idpCode: string,
+    state: string,
+    idpError?: string,
+  ): Promise<{ redirectUri: string; clientState: string; gbrainCode?: string; error?: { code: string; description: string } }> {
+    if (!this.oidc) throw new Error('OIDC not configured');
+
+    this.prunePendingOidc();
+    const pending = this.pendingOidc.get(state);
+    if (!pending) throw new Error('OIDC state not found or expired');
+    this.pendingOidc.delete(state);
+    const redirectUri = pending.redirectUri;
+    const clientState = pending.clientState ?? '';
+
+    // IdP error short-circuit. The user denied consent at Google's prompt
+    // (or the issuer rejected the auth request). Bubble the error back to
+    // the original client redirect_uri so it can show a meaningful message
+    // rather than swallow the failure server-side.
+    if (idpError) {
+      return {
+        redirectUri,
+        clientState,
+        error: { code: idpError, description: 'OIDC issuer reported an error' },
+      };
+    }
+
+    let identity;
+    try {
+      const tokens = await this.oidc.verifier.exchangeCodeForTokens(
+        idpCode,
+        this.oidcCallbackUrl(),
+      );
+      identity = await this.oidc.verifier.verifyIdToken(tokens.id_token, { nonce: pending.nonce });
+    } catch (e) {
+      return {
+        redirectUri,
+        clientState,
+        error: {
+          code: 'access_denied',
+          description: e instanceof Error ? e.message : 'OIDC verification failed',
+        },
+      };
+    }
+
+    // Email -> tier lookup. Only active grants (revoked_at IS NULL).
+    const grantRows = await this.sql`
+      SELECT access_tier FROM oauth_user_grants
+      WHERE email = ${identity.email} AND revoked_at IS NULL
+    `;
+    if (grantRows.length === 0) {
+      return {
+        redirectUri,
+        clientState,
+        error: {
+          code: 'access_denied',
+          description: `No grant for ${identity.email}`,
+        },
+      };
+    }
+    const userTier = resolveStoredAccessTier(grantRows[0].access_tier);
+    if (userTier === 'None') {
+      return {
+        redirectUri,
+        clientState,
+        error: {
+          code: 'access_denied',
+          description: `Grant for ${identity.email} does not allow access`,
+        },
+      };
+    }
+
+    const gbrainCode = await this.createInternalAuthorizationCode(pending.clientId, {
+      scopes: pending.scopes,
+      codeChallenge: pending.codeChallenge,
+      redirectUri: pending.redirectUri,
+      state: pending.clientState,
+      resource: pending.resource,
+      federated: {
+        subjectEmail: identity.email,
+        subjectIss: identity.issuer,
+        userTier,
+      },
+    });
+
+    return { redirectUri, clientState, gbrainCode };
   }
 
   async challengeForAuthorizationCode(
@@ -311,6 +527,16 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     redirectUri?: string,
     resource?: URL,
   ): Promise<OAuthTokens> {
+    void resource;
+    // OAuth 2.1 / RFC 9700 §4.1.3: redirect_uri MUST be sent at /token if it
+    // was sent at /authorize. gbrain's /authorize requires it (oauth_codes
+    // schema is NOT NULL), so /token MUST receive it too. Earlier versions
+    // had a back-compat branch that omitted the binding when redirect_uri
+    // was absent at /token; that defeated the F7c redirect_uri binding for
+    // any client willing to skip the parameter. Reject up-front.
+    if (redirectUri === undefined) {
+      throw new Error('redirect_uri is required for authorization_code exchange');
+    }
     const codeHash = hashToken(authorizationCode);
     const now = Math.floor(Date.now() / 1000);
 
@@ -331,24 +557,19 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // row so the federated end-user identity captured at /authorize survives
     // into the issued access_token. The columns are nullable - rows minted
     // by non-OIDC flows leave them as null and tokens get no end-user attribution.
+    // F7c: bind redirect_uri into the DELETE atomically. The single-branch
+    // form is now safe because the rejection above ensures redirect_uri is
+    // always defined here.
     let rows;
     try {
-      rows = redirectUri !== undefined
-        ? await this.sql`
-            DELETE FROM oauth_codes
-            WHERE code_hash = ${codeHash}
-              AND client_id = ${client.client_id}
-              AND redirect_uri = ${redirectUri}
-              AND expires_at > ${now}
-            RETURNING client_id, scopes, resource, subject_email, subject_iss, user_tier
-          `
-        : await this.sql`
-            DELETE FROM oauth_codes
-            WHERE code_hash = ${codeHash}
-              AND client_id = ${client.client_id}
-              AND expires_at > ${now}
-            RETURNING client_id, scopes, resource, subject_email, subject_iss, user_tier
-          `;
+      rows = await this.sql`
+        DELETE FROM oauth_codes
+        WHERE code_hash = ${codeHash}
+          AND client_id = ${client.client_id}
+          AND redirect_uri = ${redirectUri}
+          AND expires_at > ${now}
+        RETURNING client_id, scopes, resource, subject_email, subject_iss, user_tier
+      `;
     } catch (e) {
       // Pre-v46 schema fallback: same DELETE without v46 columns. The
       // resulting tokens won't carry subject_email; that's correct on a
@@ -356,22 +577,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (!isUndefinedColumnError(e, 'subject_email')
           && !isUndefinedColumnError(e, 'subject_iss')
           && !isUndefinedColumnError(e, 'user_tier')) throw e;
-      rows = redirectUri !== undefined
-        ? await this.sql`
-            DELETE FROM oauth_codes
-            WHERE code_hash = ${codeHash}
-              AND client_id = ${client.client_id}
-              AND redirect_uri = ${redirectUri}
-              AND expires_at > ${now}
-            RETURNING client_id, scopes, resource
-          `
-        : await this.sql`
-            DELETE FROM oauth_codes
-            WHERE code_hash = ${codeHash}
-              AND client_id = ${client.client_id}
-              AND expires_at > ${now}
-            RETURNING client_id, scopes, resource
-          `;
+      rows = await this.sql`
+        DELETE FROM oauth_codes
+        WHERE code_hash = ${codeHash}
+          AND client_id = ${client.client_id}
+          AND redirect_uri = ${redirectUri}
+          AND expires_at > ${now}
+        RETURNING client_id, scopes, resource
+      `;
     }
     if (rows.length === 0) throw new Error('Authorization code not found or expired');
 
@@ -385,7 +598,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const subjectIss = (codeRow.subject_iss as string | null | undefined) ?? undefined;
     const userTierRaw = (codeRow.user_tier as string | null | undefined) ?? undefined;
     const userTier = userTierRaw && isAccessTier(userTierRaw) ? userTierRaw : undefined;
-    return this.issueTokens(client.client_id, scopes, resource, true, undefined, {
+    const storedResource = typeof codeRow.resource === 'string' && codeRow.resource
+      ? new URL(codeRow.resource)
+      : undefined;
+    return this.issueTokens(client.client_id, scopes, storedResource, true, undefined, {
       subjectEmail, subjectIss, userTier,
     });
   }
@@ -400,6 +616,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     scopes?: string[],
     resource?: URL,
   ): Promise<OAuthTokens> {
+    void resource;
     const tokenHash = hashToken(refreshToken);
     const now = Math.floor(Date.now() / 1000);
 
@@ -421,7 +638,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         WHERE token_hash = ${tokenHash}
           AND token_type = 'refresh'
           AND client_id = ${client.client_id}
-        RETURNING client_id, scopes, expires_at, subject_email, subject_iss, user_tier
+        RETURNING client_id, scopes, expires_at, resource, subject_email, subject_iss, user_tier
       `;
     } catch (e) {
       if (!isUndefinedColumnError(e, 'subject_email')
@@ -432,7 +649,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         WHERE token_hash = ${tokenHash}
           AND token_type = 'refresh'
           AND client_id = ${client.client_id}
-        RETURNING client_id, scopes, expires_at
+        RETURNING client_id, scopes, expires_at, resource
       `;
     }
     if (rows.length === 0) throw new Error('Refresh token not found');
@@ -467,8 +684,24 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const subjectEmail = (row.subject_email as string | null | undefined) ?? undefined;
     const subjectIss = (row.subject_iss as string | null | undefined) ?? undefined;
     const userTierRaw = (row.user_tier as string | null | undefined) ?? undefined;
-    const userTier = userTierRaw && isAccessTier(userTierRaw) ? userTierRaw : undefined;
-    return this.issueTokens(client.client_id, tokenScopes, resource, true, undefined, {
+    let userTier = userTierRaw && isAccessTier(userTierRaw) ? userTierRaw : undefined;
+    if (subjectEmail) {
+      const grants = await this.sql`
+        SELECT access_tier FROM oauth_user_grants
+        WHERE email = ${subjectEmail} AND revoked_at IS NULL
+      `;
+      if (grants.length === 0) {
+        throw new Error(`OIDC grant for ${subjectEmail} is no longer active`);
+      }
+      userTier = resolveStoredAccessTier(grants[0].access_tier);
+      if (userTier === 'None') {
+        throw new Error(`OIDC grant for ${subjectEmail} does not allow access`);
+      }
+    }
+    const storedResource = typeof row.resource === 'string' && row.resource
+      ? new URL(row.resource)
+      : undefined;
+    return this.issueTokens(client.client_id, tokenScopes, storedResource, true, undefined, {
       subjectEmail, subjectIss, userTier,
     });
   }
@@ -519,15 +752,64 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // Pre-v46 schema: no end-user identity columns. Fall back to the
         // v45 SELECT shape (no subject fields). The next catch ladder
         // handles pre-v45 / pre-deleted_at cases the same way as before.
-        oauthRows = await this.sql`
-          SELECT t.client_id, t.scopes, t.expires_at, t.resource,
-                 ${null} as subject_email, ${null} as subject_iss, ${null} as user_tier,
-                 c.client_name, c.access_tier
-          FROM oauth_tokens t
-          INNER JOIN oauth_clients c ON c.client_id = t.client_id
-          WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
-            AND c.deleted_at IS NULL
-        `;
+        try {
+          oauthRows = await this.sql`
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource,
+                   ${null} as subject_email, ${null} as subject_iss, ${null} as user_tier,
+                   c.client_name, c.access_tier
+            FROM oauth_tokens t
+            INNER JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+              AND c.deleted_at IS NULL
+          `;
+        } catch (fallbackErr) {
+          if (isUndefinedColumnError(fallbackErr, 'access_tier')) {
+            try {
+              oauthRows = await this.sql`
+                SELECT t.client_id, t.scopes, t.expires_at, t.resource,
+                       ${null} as subject_email, ${null} as subject_iss, ${null} as user_tier,
+                       c.client_name, ${ACCESS_TIER_DEFAULT} as access_tier
+                FROM oauth_tokens t
+                INNER JOIN oauth_clients c ON c.client_id = t.client_id
+                WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+                  AND c.deleted_at IS NULL
+              `;
+            } catch (fallbackErr2) {
+              if (!isUndefinedColumnError(fallbackErr2, 'deleted_at')) throw fallbackErr2;
+              oauthRows = await this.sql`
+                SELECT t.client_id, t.scopes, t.expires_at, t.resource,
+                       ${null} as subject_email, ${null} as subject_iss, ${null} as user_tier,
+                       c.client_name, ${ACCESS_TIER_DEFAULT} as access_tier
+                FROM oauth_tokens t
+                INNER JOIN oauth_clients c ON c.client_id = t.client_id
+                WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+              `;
+            }
+          } else if (isUndefinedColumnError(fallbackErr, 'deleted_at')) {
+            try {
+              oauthRows = await this.sql`
+                SELECT t.client_id, t.scopes, t.expires_at, t.resource,
+                       ${null} as subject_email, ${null} as subject_iss, ${null} as user_tier,
+                       c.client_name, c.access_tier
+                FROM oauth_tokens t
+                INNER JOIN oauth_clients c ON c.client_id = t.client_id
+                WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+              `;
+            } catch (fallbackErr2) {
+              if (!isUndefinedColumnError(fallbackErr2, 'access_tier')) throw fallbackErr2;
+              oauthRows = await this.sql`
+                SELECT t.client_id, t.scopes, t.expires_at, t.resource,
+                       ${null} as subject_email, ${null} as subject_iss, ${null} as user_tier,
+                       c.client_name, ${ACCESS_TIER_DEFAULT} as access_tier
+                FROM oauth_tokens t
+                INNER JOIN oauth_clients c ON c.client_id = t.client_id
+                WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+              `;
+            }
+          } else {
+            throw fallbackErr;
+          }
+        }
       } else if (isUndefinedColumnError(e, 'access_tier')) {
         // Pre-v45 database during an upgrade window: preserve legacy OAuth
         // behavior by treating matching clients as Full tier until migrations
