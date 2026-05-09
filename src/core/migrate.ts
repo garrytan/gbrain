@@ -520,6 +520,25 @@ export const MIGRATIONS: Migration[] = [
             NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
           CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
 
+          -- 1a'. Defensive FK repair. ALTER TABLE ADD COLUMN IF NOT EXISTS is a
+          --      no-op when the column already exists, so the inline FK never
+          --      re-adds. Some test paths (notably postgres-bootstrap.test.ts)
+          --      drop the sources table CASCADE which removes
+          --      files_source_id_fkey while leaving files.source_id intact.
+          --      Without this block the FK would never come back on upgrade,
+          --      and CASCADE-on-source-delete silently stops working.
+          DO $$ BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conname = 'files_source_id_fkey'
+                AND conrelid = 'files'::regclass
+            ) THEN
+              ALTER TABLE files
+                ADD CONSTRAINT files_source_id_fkey
+                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE;
+            END IF;
+          END $$;
+
           -- 1b. page_id (nullable; pre-v0.17 files pointed at page_slug
           --     which was ON DELETE SET NULL, so we keep the same nullable
           --     semantic — orphaned files are legal).

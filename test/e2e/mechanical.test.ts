@@ -1215,7 +1215,18 @@ describeE2E('E2E: Doctor Command', () => {
   afterAll(teardownDB);
 
   const cliCwd = join(import.meta.dir, '../..');
-  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, GBRAIN_DATABASE_URL: process.env.DATABASE_URL! });
+  // Isolate GBRAIN_HOME to a per-test tempdir so the developer's
+  // ~/.gbrain/migrations/completed.jsonl ledger doesn't leak in. Without
+  // this, doctor reads Garry's machine state — partial v0.21/v0.22.4/v0.28.0
+  // migration entries from prior dev work — and surfaces them as the
+  // 'minions_migration' [FAIL] check, exiting with code 1.
+  const isolatedHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-test-'));
+  const cliEnv = () => ({
+    ...process.env,
+    DATABASE_URL: process.env.DATABASE_URL!,
+    GBRAIN_DATABASE_URL: process.env.DATABASE_URL!,
+    GBRAIN_HOME: isolatedHome,
+  });
 
   test('gbrain doctor exits 0 on healthy DB', () => {
     // Init first so config exists for CLI
@@ -1229,6 +1240,12 @@ describeE2E('E2E: Doctor Command', () => {
       env: cliEnv(),
       timeout: 15_000,
     });
+    if (result.exitCode !== 0) {
+      const stdout = new TextDecoder().decode(result.stdout);
+      const stderr = new TextDecoder().decode(result.stderr);
+      console.error('doctor stdout:', stdout.slice(-2000));
+      console.error('doctor stderr:', stderr.slice(-1000));
+    }
     expect(result.exitCode).toBe(0);
   }, 60_000);
 

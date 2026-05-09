@@ -891,6 +891,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           takesHoldersAllowList: tokenAllowList,
           sourceId: tokenSourceId,
           metaHook: getBrainHotMemoryMeta,
+          // v0.31 follow-up fix: thread auth so the whoami op (and any
+          // future scope-aware handlers) can introspect the caller. The
+          // original D12/eE1 refactor moved dispatch into dispatchToolCall
+          // but forgot to pass authInfo; whoami fell through to the
+          // unknown_transport throw because ctx.auth was undefined.
+          auth: authInfo,
           logger: {
             info: (msg: string) => console.error(`[INFO] ${msg}`),
             warn: (msg: string) => console.error(`[WARN] ${msg}`),

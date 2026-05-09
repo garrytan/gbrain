@@ -8,7 +8,7 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
-import type { Operation, OperationContext } from '../core/operations.ts';
+import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 
 export interface ToolResult {
@@ -61,6 +61,15 @@ export interface DispatchOpts {
     name: string,
     ctx: OperationContext,
   ) => Promise<Record<string, unknown> | undefined>;
+  /**
+   * OAuth auth info threaded through from the HTTP MCP transport. Set so
+   * the whoami op (and any future scope-aware op handlers) can introspect
+   * the calling identity. Without this, every whoami call from HTTP
+   * transports throws unknown_transport — the v0.31 D12 / eE1 refactor
+   * silently dropped this field when the inlined OperationContext literal
+   * was replaced by dispatchToolCall.
+   */
+  auth?: AuthInfo;
 }
 
 /**
@@ -196,6 +205,7 @@ export function buildOperationContext(
     remote: opts.remote ?? true,
     takesHoldersAllowList: opts.takesHoldersAllowList,
     sourceId: opts.sourceId,
+    auth: opts.auth,
   };
 }
 
@@ -213,7 +223,15 @@ export async function dispatchToolCall(
 ): Promise<ToolResult> {
   const op = operations.find(o => o.name === name);
   if (!op) {
-    return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
+    // Always return JSON-shaped error content. v0.31 e2e tests
+    // (sources-remote-mcp.test.ts) parse content via JSON.parse so a
+    // plain `Error: ...` string here breaks the contract on every
+    // unknown-op path and the resulting test failure looked like a
+    // transport bug.
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_tool', message: `Unknown tool: ${name}` }, null, 2) }],
+      isError: true,
+    };
   }
 
   const safeParams = params || {};
@@ -248,7 +266,14 @@ export async function dispatchToolCall(
     if (e instanceof OperationError) {
       return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };
     }
+    // Non-OperationError (uncaught throws) — wrap in the same shape so
+    // every error response is JSON-parseable. The pre-v0.31 path emitted
+    // plain `Error: ${msg}` strings here, which broke any caller that
+    // tried JSON.parse(content).
     const msg = e instanceof Error ? e.message : String(e);
-    return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ error: 'internal_error', message: msg }, null, 2) }],
+      isError: true,
+    };
   }
 }
