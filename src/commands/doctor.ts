@@ -1306,6 +1306,21 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       `;
       const rssKillCount = rssKillRows[0]?.cnt ?? 0;
 
+      // Subcheck 4 (v0.30.2): prompt_too_long terminal failures on subagent
+      // jobs in the last 24h. The dream/synthesize phase classifies Anthropic
+      // 400 "prompt is too long" responses as UnrecoverableError so they
+      // dead-letter on first attempt instead of clogging the queue with
+      // max_stalled retries. Surface count + fix hint when present.
+      const promptTooLongRows: Array<{ cnt: number }> = await sql`
+        SELECT count(*)::int AS cnt
+          FROM minion_jobs
+         WHERE name = 'subagent'
+           AND status = 'dead'
+           AND finished_at > now() - interval '24 hours'
+           AND error_text LIKE 'prompt_too_long:%'
+      `;
+      const promptTooLongCount = promptTooLongRows[0]?.cnt ?? 0;
+
       const problems: string[] = [];
       if (stalledRows.length > 0) {
         const sample = stalledRows
@@ -1331,6 +1346,15 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
           `v0.22.14 changed the bare-worker --max-rss default from 0 (off) to 2048 MB. ` +
           `Fix: raise the limit (e.g. \`gbrain jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
           `See skills/migrations/v0.22.14.md.`
+        );
+      }
+      if (promptTooLongCount > 0) {
+        problems.push(
+          `${promptTooLongCount} subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
+          `Dream/synthesize transcripts exceeded the model's input context. ` +
+          `Fix: \`gbrain dream --phase synthesize --dry-run --json\` to identify fat transcripts; ` +
+          `set \`dream.synthesize.max_prompt_tokens\` to bound the per-chunk budget, or use a ` +
+          `larger-context model (Opus 4.7 = 1M tokens vs Sonnet 4.6 = 200K).`
         );
       }
 

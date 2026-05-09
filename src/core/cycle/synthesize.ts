@@ -42,6 +42,173 @@ import type { Page, PageType } from '../types.ts';
 // Used for the orchestrator-written summary index slug.
 const SUMMARY_SLUG_RE = /^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)*$/;
 
+// ── Model context budget (D1, D5, D7, D9) ─────────────────────────────
+
+/**
+ * Anthropic model id → input context window (tokens).
+ * Unknown id (non-Anthropic alias, custom string) → safe 200K-token fallback
+ * via `computeChunkCharBudget`. Codex finding #4: `resolveModel()` does not
+ * canonicalize to Anthropic-only; this map keys on the exact strings the
+ * resolver returns for known Anthropic aliases.
+ */
+const MODEL_CONTEXT_TOKENS: Record<string, number> = {
+  'claude-opus-4-7': 1_000_000,
+  'claude-opus-4-6': 1_000_000,
+  'claude-sonnet-4-6': 200_000,
+  'claude-sonnet-4-5': 200_000,
+  'claude-haiku-4-5-20251001': 200_000,
+};
+
+/** Token-to-char ratio. 3.5 matches PR #748; conservative for English text. */
+const CHARS_PER_TOKEN = 3.5;
+/** Reserve 10% of context window for system prompt + tool defs + output. */
+const HEADROOM_RATIO = 0.9;
+/** Floor on user-overridable max_prompt_tokens (matches PR #748 minimum). */
+const MIN_PROMPT_TOKENS = 100_000;
+/** Default chunk-count cap; operator-configurable via dream.synthesize.max_chunks_per_transcript. */
+const DEFAULT_MAX_CHUNKS = 24;
+/** Conservative default budget when model is unknown (200K × HEADROOM_RATIO). */
+const UNKNOWN_MODEL_BUDGET_TOKENS = 180_000;
+
+/**
+ * Compute per-chunk character budget for the resolved model + config override.
+ *
+ * Resolution:
+ *   - configMaxPromptTokens (already floored at MIN_PROMPT_TOKENS) wins when set.
+ *   - Else the model's MODEL_CONTEXT_TOKENS entry × HEADROOM_RATIO.
+ *   - Else (non-Anthropic alias / custom id) UNKNOWN_MODEL_BUDGET_TOKENS, with
+ *     a once-per-process stderr warning.
+ *
+ * D7 scope: this bounds the INITIAL prompt size only. Tool-loop turn-N
+ * accumulation is out of scope for v0.30.2 (terminal-error classification
+ * catches turn-N blowups; per-turn budget guard is a v0.31+ follow-up).
+ */
+function computeChunkCharBudget(
+  model: string,
+  configMaxPromptTokens: number | null,
+): number {
+  if (configMaxPromptTokens !== null) {
+    return Math.floor(configMaxPromptTokens * CHARS_PER_TOKEN);
+  }
+  const ctx = MODEL_CONTEXT_TOKENS[model];
+  if (ctx === undefined) {
+    warnUnknownModelOnce(model);
+    return Math.floor(UNKNOWN_MODEL_BUDGET_TOKENS * CHARS_PER_TOKEN);
+  }
+  return Math.floor(ctx * HEADROOM_RATIO * CHARS_PER_TOKEN);
+}
+
+const _unknownModelWarned = new Set<string>();
+function warnUnknownModelOnce(model: string): void {
+  if (_unknownModelWarned.has(model)) return;
+  _unknownModelWarned.add(model);
+  process.stderr.write(
+    `[dream] model "${model}" is not in MODEL_CONTEXT_TOKENS; ` +
+    `using ${UNKNOWN_MODEL_BUDGET_TOKENS}-token fallback budget. ` +
+    `Set dream.synthesize.max_prompt_tokens to override.\n`,
+  );
+}
+
+// ── Hash-deterministic transcript chunker (D9) ────────────────────────
+
+/**
+ * Split content into chunks at most maxChars long, picking boundaries via a
+ * 3-tier ladder lifted from PR #748:
+ *   1. `## Topic:` separators (matches the daily-aggregated transcript shape)
+ *   2. `---` markdown HR markers
+ *   3. nearest `\n` newline
+ *
+ * D9 stable chunk identity: the back-half-of-budget search window is seeded
+ * with a deterministic offset derived from contentHash so the same
+ * (content, contentHash, maxChars) triple always produces identical chunks.
+ * Closes the partial-progress ambiguity: chunk 2 of a transcript that
+ * previously failed terminally produces byte-identical content on retry,
+ * so the per-chunk idempotency key is durable across runs.
+ *
+ * The hash-derived offset jitters the search start within
+ * [0.5×budget, 0.6×budget] so the back-half rule still holds.
+ *
+ * If no boundary fits, hard-split at maxChars (also deterministic in the
+ * inputs).
+ *
+ * Pure function. Tested by `test/cycle/synthesize-chunker.test.ts`.
+ */
+export function splitTranscriptByBudget(
+  content: string,
+  contentHash: string,
+  maxChars: number,
+): string[] {
+  if (maxChars <= 0) {
+    throw new Error(`splitTranscriptByBudget: maxChars must be > 0, got ${maxChars}`);
+  }
+  if (content.length <= maxChars) return [content];
+
+  const hashInt = parseHashOffset(contentHash);
+  // Jitter window is the next 10% of budget after the 50% midpoint.
+  const jitterRange = Math.max(1, Math.floor(maxChars * 0.1));
+  const searchStart = Math.floor(maxChars * 0.5) + (hashInt % jitterRange);
+
+  const out: string[] = [];
+  let remaining = content;
+  while (remaining.length > maxChars) {
+    const split = findBoundary(remaining, maxChars, searchStart);
+    out.push(remaining.slice(0, split));
+    remaining = remaining.slice(split);
+  }
+  if (remaining.length > 0) out.push(remaining);
+  return out;
+}
+
+function parseHashOffset(contentHash: string): number {
+  // First 8 hex chars = 32 bits; plenty of entropy for the offset jitter.
+  const hex = contentHash.slice(0, 8);
+  const n = parseInt(hex, 16);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function findBoundary(text: string, maxChars: number, searchStart: number): number {
+  const window = text.slice(searchStart, maxChars);
+  // Tier 1: "\n## Topic:" — last occurrence inside the search window.
+  const topicIdx = window.lastIndexOf('\n## Topic:');
+  if (topicIdx >= 0) return searchStart + topicIdx;
+  // Tier 2: "\n---\n" markdown HR.
+  const hrIdx = window.lastIndexOf('\n---\n');
+  if (hrIdx >= 0) return searchStart + hrIdx;
+  // Tier 3: any newline.
+  const nlIdx = window.lastIndexOf('\n');
+  if (nlIdx >= 0) return searchStart + nlIdx;
+  // No boundary fits; hard-split at maxChars (deterministic).
+  return maxChars;
+}
+
+/**
+ * D6: orchestrator-side deterministic slug rewrite. Zero Sonnet trust.
+ *
+ * Expected shape from `buildSynthesisPrompt` for a chunked child is already
+ * `<base>-<hash6>-c<idx>`, but if Sonnet drops the chunk suffix this rewrite
+ * enforces uniqueness post-hoc. Same hash AND same chunk idx → idempotent.
+ *
+ * Pure function. Cases:
+ *   - already correctly suffixed (`...-<hash6>-c<idx>`) → return unchanged.
+ *   - bare hash suffix (`...-<hash6>`) → append `-c<idx>`.
+ *   - some other shape → pass through (orchestrator can't safely guess
+ *     where to inject the chunk index; e2e test pins this).
+ */
+export function rewriteChunkedSlug(slug: string, hash6: string, idx: number): string {
+  if (!slug) return slug;
+  const expected = `${hash6}-c${idx}`;
+  // Already correctly chunk-suffixed.
+  if (slug === expected) return slug;
+  if (slug.endsWith(`-${expected}`) || slug.endsWith(`/${expected}`)) return slug;
+  // Bare hash6 at end of last path segment: rewrite.
+  // Match either at start-of-slug, after a "/" path separator, or after a "-".
+  const re = new RegExp(`(^|[/-])${hash6}$`);
+  if (re.test(slug)) return `${slug}-c${idx}`;
+  // Unknown shape — pass through; collision risk is now bounded by Sonnet's
+  // per-chunk-prompt guidance and the existing slug-prefix allow-list.
+  return slug;
+}
+
 // ── Public entry ──────────────────────────────────────────────────────
 
 export interface SynthesizePhaseOpts {
@@ -166,7 +333,8 @@ export async function runPhaseSynthesize(
       });
     }
 
-    // Fan-out: submit one subagent per worth-processing transcript.
+    // Fan-out: submit one subagent per worth-processing transcript (or one
+    // per chunk for transcripts that exceed the model's per-prompt budget).
     const allowedSlugPrefixes = await loadAllowedSlugPrefixes();
     if (allowedSlugPrefixes.length === 0) {
       return failed(makeError('InternalError', 'NO_ALLOWLIST',
@@ -175,26 +343,82 @@ export async function runPhaseSynthesize(
 
     const queue = new MinionQueue(engine);
     const childIds: number[] = [];
+    /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
+    const chunkInfo = new Map<number, { idx: number; hash6: string }>();
+    /** Skip reasons for the cycle report (D5 cap hits, D8 legacy-key skips). */
+    const skipReports: Array<{ filePath: string; reason: string }> = [];
+
+    const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
+
     for (const t of worthProcessing) {
-      const childData: SubagentHandlerData = {
-        prompt: buildSynthesisPrompt(t),
-        model: config.model,
-        max_turns: 30,
-        allowed_slug_prefixes: allowedSlugPrefixes,
-      };
-      const submitOpts: Partial<MinionJobInput> = {
-        max_stalled: 3,
-        on_child_fail: 'continue',
-        idempotency_key: `dream:synth:${t.filePath}:${t.contentHash.slice(0, 16)}`,
-        timeout_ms: 30 * 60 * 1000, // 30 min per transcript
-      };
-      const child = await queue.add(
-        'subagent',
-        childData as unknown as Record<string, unknown>,
-        submitOpts,
-        { allowProtectedSubmit: true },
-      );
-      childIds.push(child.id);
+      const hash16 = t.contentHash.slice(0, 16);
+      const hash6 = t.contentHash.slice(0, 6);
+
+      // D8: single→multi-chunk migration safety. If a completed legacy
+      // single-chunk job exists for this content_hash, treat as already-
+      // synthesized and skip. Prevents duplicate writes when a transcript
+      // that was previously single-chunk now multi-chunks (because budget
+      // shrank or model changed).
+      if (await hasLegacySingleChunkCompletion(engine, t.filePath, hash16)) {
+        skipReports.push({
+          filePath: t.filePath,
+          reason: 'already_synthesized_legacy_single_chunk',
+        });
+        continue;
+      }
+
+      const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
+
+      // D5 cap hit: log + skip; do NOT write to dream_verdicts. Closes the
+      // poison-pill class — next cycle re-attempts under whatever budget
+      // is then current.
+      if (chunks.length > config.maxChunksPerTranscript) {
+        process.stderr.write(
+          `[dream] transcript ${t.basename} produced ${chunks.length} chunks at ` +
+          `${maxCharsPerChunk}-char budget (cap=${config.maxChunksPerTranscript}); skipping. ` +
+          `Increase dream.synthesize.max_chunks_per_transcript or use a larger-context model.\n`,
+        );
+        skipReports.push({
+          filePath: t.filePath,
+          reason: `oversize_after_split: ${chunks.length}/${config.maxChunksPerTranscript}`,
+        });
+        continue;
+      }
+
+      const isChunked = chunks.length > 1;
+      for (let i = 0; i < chunks.length; i++) {
+        const childData: SubagentHandlerData = {
+          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length),
+          model: config.model,
+          max_turns: 30,
+          allowed_slug_prefixes: allowedSlugPrefixes,
+        };
+        // Idempotency key parity:
+        //   - single-chunk → legacy `dream:synth:<filePath>:<hash16>` (byte-
+        //     equivalent across versions; preserves dedup for unchanged
+        //     transcripts on upgrade).
+        //   - multi-chunk → `<legacy>:c<i>of<n>` per chunk; durable across
+        //     runs because D9 splitTranscriptByBudget is hash-deterministic.
+        const idempotency_key = isChunked
+          ? `dream:synth:${t.filePath}:${hash16}:c${i}of${chunks.length}`
+          : `dream:synth:${t.filePath}:${hash16}`;
+        const submitOpts: Partial<MinionJobInput> = {
+          max_stalled: 3,
+          on_child_fail: 'continue',
+          idempotency_key,
+          timeout_ms: 30 * 60 * 1000, // 30 min per chunk
+        };
+        const child = await queue.add(
+          'subagent',
+          childData as unknown as Record<string, unknown>,
+          submitOpts,
+          { allowProtectedSubmit: true },
+        );
+        childIds.push(child.id);
+        if (isChunked) {
+          chunkInfo.set(child.id, { idx: i, hash6 });
+        }
+      }
     }
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
@@ -222,7 +446,10 @@ export async function runPhaseSynthesize(
 
     // Collect slugs from put_page tool executions across the children
     // (codex finding #2: deterministic provenance, NOT pages.updated_at).
-    const writtenSlugs = await collectChildPutPageSlugs(engine, childIds);
+    // D6 orchestrator slug rewrite: chunkInfo drives post-hoc rewrite of
+    // bare-hash slugs to `<hash6>-c<idx>` so chunked siblings can't collide
+    // even if Sonnet drops the chunk suffix.
+    const writtenSlugs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
 
     // Dual-write: reverse-render each DB row → markdown file.
     const reverseWriteCount = await reverseWriteSlugs(engine, opts.brainDir, writtenSlugs);
@@ -239,9 +466,10 @@ export async function runPhaseSynthesize(
     await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
 
     const ms = Date.now() - start;
-    return ok(`${worthProcessing.length} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s`, {
+    const submittedTranscripts = worthProcessing.length - skipReports.length;
+    return ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s`, {
       transcripts_discovered: transcripts.length,
-      transcripts_processed: worthProcessing.length,
+      transcripts_processed: submittedTranscripts,
       pages_written: writtenSlugs.length,
       // v0.29: emit the slug list so the recompute_emotional_weight phase can
       // union with sync's pagesAffected and recompute weights for every page
@@ -249,6 +477,12 @@ export async function runPhaseSynthesize(
       written_slugs: writtenSlugs,
       reverse_write_count: reverseWriteCount,
       child_outcomes: childOutcomes,
+      // Children submitted (one per chunk for chunked transcripts; one per
+      // transcript for single-chunk). Differs from transcripts_processed
+      // when chunking is in play.
+      children_submitted: childIds.length,
+      // D5 cap hits + D8 legacy-key skips. Empty when nothing skipped.
+      skips: skipReports,
       summary_slug: summarySlug,
       verdicts,
     });
@@ -269,6 +503,20 @@ interface SynthConfig {
   model: string;
   verdictModel: string;
   cooldownHours: number;
+  /**
+   * D1: Override the per-chunk token budget (model_context × HEADROOM_RATIO
+   * by default). Floor MIN_PROMPT_TOKENS, no upper cap (model context wins).
+   * Surface name follows PR #748: `dream.synthesize.max_prompt_tokens`.
+   * `null` means use the model-context lookup.
+   */
+  maxPromptTokens: number | null;
+  /**
+   * D5/D10: Cap on chunks produced from a single transcript. On cap hit, the
+   * transcript is logged + skipped (NOT cached in dream_verdicts — closes the
+   * cache-poisoning class). Operator override:
+   * `dream.synthesize.max_chunks_per_transcript`.
+   */
+  maxChunksPerTranscript: number;
 }
 
 async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -290,6 +538,8 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     fallback: 'haiku',
   });
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');
+  const maxPromptTokensStr = await engine.getConfig('dream.synthesize.max_prompt_tokens');
+  const maxChunksStr = await engine.getConfig('dream.synthesize.max_chunks_per_transcript');
 
   let excludePatterns: string[] = ['medical', 'therapy'];
   if (excludeStr) {
@@ -297,6 +547,23 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
       const parsed = JSON.parse(excludeStr);
       if (Array.isArray(parsed)) excludePatterns = parsed.filter(p => typeof p === 'string');
     } catch { /* keep default */ }
+  }
+
+  // D1: max_prompt_tokens floored at MIN_PROMPT_TOKENS; null → use model lookup.
+  let maxPromptTokens: number | null = null;
+  if (maxPromptTokensStr) {
+    const parsed = parseInt(maxPromptTokensStr, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      maxPromptTokens = Math.max(MIN_PROMPT_TOKENS, parsed);
+    }
+  }
+  // D10: max_chunks default 24, floor 1.
+  let maxChunksPerTranscript = DEFAULT_MAX_CHUNKS;
+  if (maxChunksStr) {
+    const parsed = parseInt(maxChunksStr, 10);
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      maxChunksPerTranscript = parsed;
+    }
   }
 
   return {
@@ -308,6 +575,8 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     model,
     verdictModel,
     cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 12) : 12,
+    maxPromptTokens,
+    maxChunksPerTranscript,
   };
 }
 
@@ -422,16 +691,38 @@ Two reasons max, one phrase each.`;
 
 // ── Subagent prompt ──────────────────────────────────────────────────
 
-function buildSynthesisPrompt(t: DiscoveredTranscript): string {
+/**
+ * Build the prompt for one subagent. When `chunkTotal > 1`, the slug seed
+ * gains a `-c<idx>` suffix and the prompt names which chunk this is.
+ *
+ * D6 enforcement is orchestrator-side (rewriteChunkedSlug runs at slug-
+ * collection time). Sonnet still gets the chunked seed via the prompt's
+ * `USE THIS in slugs` rule for the happy path.
+ */
+function buildSynthesisPrompt(
+  t: DiscoveredTranscript,
+  chunkText: string,
+  chunkIdx: number,
+  chunkTotal: number,
+): string {
   const dateHint = t.inferredDate ?? today();
-  const hashSuffix = t.contentHash.slice(0, 6);
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
+  const isChunked = chunkTotal > 1;
+  const hashSuffix = isChunked
+    ? `${t.contentHash.slice(0, 6)}-c${chunkIdx}`
+    : t.contentHash.slice(0, 6);
+  const chunkBanner = isChunked
+    ? `\n- This is CHUNK ${chunkIdx + 1} of ${chunkTotal} from the same transcript. Different chunks process different sections; do not assume continuity with other chunks.`
+    : '';
+  const transcriptHeader = isChunked
+    ? `${t.filePath} (chunk ${chunkIdx + 1}/${chunkTotal})`
+    : t.filePath;
   return `You are synthesizing a conversation transcript into the user's personal knowledge brain.
 
 CONTEXT
 - Today's date: ${dateHint}
 - Transcript hash suffix (USE THIS in slugs): ${hashSuffix}
-- Source file basename: ${baseSlugSegment}
+- Source file basename: ${baseSlugSegment}${chunkBanner}
 
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Do not paraphrase memorable phrasings.
@@ -450,9 +741,9 @@ C. People mentions: search first; if a page exists, do not put_page over it (the
 
 D. If nothing in this transcript meets the bar (significance filter already passed but the content is still routine), return without writing anything.
 
-TRANSCRIPT (${t.filePath})
+TRANSCRIPT (${transcriptHeader})
 ---
-${t.content}
+${chunkText}
 ---
 
 When done, briefly list the slugs you wrote in your final message so the orchestrator can audit.`;
@@ -466,24 +757,71 @@ function sanitizeForSlug(s: string): string {
     .slice(0, 60);
 }
 
-// ── Slug collection from child put_page calls (codex #2) ────────────
+// ── Slug collection from child put_page calls (codex #2 + D6) ────────
 
+/**
+ * D6 (orchestrator-side deterministic slug rewrite, zero Sonnet trust):
+ * two-stage path — raw fetch (no DISTINCT, preserves duplicate evidence) →
+ * in-memory chunk-suffix rewrite via `rewriteChunkedSlug` for chunked
+ * children → return distinct rewritten set.
+ *
+ * Closes Codex finding #2 ("collision detection via SELECT DISTINCT was
+ * fake"): we no longer need detection because the rewrite enforces
+ * uniqueness at slug-write time.
+ *
+ * `chunkInfo` maps child job_id → { chunk_index, hash6 }. Single-chunk
+ * children are absent from the map and pass through unchanged.
+ */
 async function collectChildPutPageSlugs(
   engine: BrainEngine,
   childIds: number[],
+  chunkInfo: Map<number, { idx: number; hash6: string }>,
 ): Promise<string[]> {
   if (childIds.length === 0) return [];
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT DISTINCT input->>'slug' AS slug
+  // Raw fetch — NO SELECT DISTINCT. Preserves per-child slug duplicates so
+  // the orchestrator sees what each child wrote.
+  const rows = await engine.executeRaw<{ job_id: number; slug: string }>(
+    `SELECT job_id, input->>'slug' AS slug
        FROM subagent_tool_executions
       WHERE job_id = ANY($1::int[])
         AND tool_name = 'brain_put_page'
         AND status = 'complete'
-        AND input ? 'slug'
-      ORDER BY 1`,
+        AND input ? 'slug'`,
     [childIds],
   );
-  return rows.map(r => r.slug).filter((s): s is string => typeof s === 'string' && s.length > 0);
+  const rewritten = new Set<string>();
+  for (const r of rows) {
+    if (typeof r.slug !== 'string' || r.slug.length === 0) continue;
+    const ci = chunkInfo.get(r.job_id);
+    rewritten.add(ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug);
+  }
+  return Array.from(rewritten).sort();
+}
+
+/**
+ * D8: query for any `completed` legacy single-chunk job at the canonical
+ * idempotency key shape `dream:synth:<filePath>:<hash16>`. Used at fan-out
+ * time to detect transcripts that were synthesized under the pre-chunking
+ * code path; those should NOT be re-submitted under chunked keys.
+ *
+ * Reuses the existing `minion_jobs.idempotency_key` index — no schema
+ * additions. One indexed lookup per worth-processing transcript.
+ */
+async function hasLegacySingleChunkCompletion(
+  engine: BrainEngine,
+  filePath: string,
+  hash16: string,
+): Promise<boolean> {
+  const legacyKey = `dream:synth:${filePath}:${hash16}`;
+  const rows = await engine.executeRaw<{ status: string }>(
+    `SELECT status
+       FROM minion_jobs
+      WHERE idempotency_key = $1
+        AND status = 'completed'
+      LIMIT 1`,
+    [legacyKey],
+  );
+  return rows.length > 0;
 }
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────
