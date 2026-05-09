@@ -199,13 +199,45 @@ describe('OidcVerifier verifyIdToken happy path', () => {
     expect(id.expiresAt).toBeGreaterThan(id.issuedAt);
   });
 
-  test('accepts aud as an array containing clientId', async () => {
+  test('accepts matching nonce when caller supplies one', async () => {
+    const v = newVerifier();
+    const token = await signToken(defaultClaims({ nonce: 'nonce-123' }));
+    const id = await v.verifyIdToken(token, { nonce: 'nonce-123' });
+    expect(id.subject).toBe('sub-12345');
+  });
+
+  test('accepts aud as an array containing clientId (with azp set per OIDC spec)', async () => {
+    // OIDC Core 1.0 §3.1.3.7: when aud has more than one value, the azp
+    // claim MUST be present and MUST equal the clientId. The verifier
+    // enforces this; tests must set azp accordingly.
+    const v = newVerifier();
+    const token = await signToken(
+      defaultClaims({ aud: ['other', CLIENT_ID, 'another'], azp: CLIENT_ID }),
+    );
+    const id = await v.verifyIdToken(token);
+    expect(id.audience).toBe(CLIENT_ID);
+  });
+
+  test('rejects aud as multi-element array without azp', async () => {
     const v = newVerifier();
     const token = await signToken(
       defaultClaims({ aud: ['other', CLIENT_ID, 'another'] }),
     );
-    const id = await v.verifyIdToken(token);
-    expect(id.audience).toBe(CLIENT_ID);
+    let caught: unknown;
+    try { await v.verifyIdToken(token); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(OidcError);
+    expect((caught as OidcError).code).toBe('audience_mismatch');
+  });
+
+  test('rejects aud as multi-element array with wrong azp', async () => {
+    const v = newVerifier();
+    const token = await signToken(
+      defaultClaims({ aud: ['other', CLIENT_ID, 'another'], azp: 'wrong-client' }),
+    );
+    let caught: unknown;
+    try { await v.verifyIdToken(token); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(OidcError);
+    expect((caught as OidcError).code).toBe('audience_mismatch');
   });
 });
 
@@ -411,6 +443,34 @@ describe('OidcVerifier verifyIdToken negative cases', () => {
       caught = e;
     }
     expect((caught as OidcError).code).toBe('no_email');
+  });
+
+  test('malformed: sub claim is missing', async () => {
+    const v = newVerifier();
+    const claims = defaultClaims();
+    delete claims.sub;
+    const token = await signToken(claims);
+    let caught: unknown;
+    try {
+      await v.verifyIdToken(token);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(OidcError);
+    expect((caught as OidcError).code).toBe('malformed');
+  });
+
+  test('malformed: nonce does not match', async () => {
+    const v = newVerifier();
+    const token = await signToken(defaultClaims({ nonce: 'issuer-nonce' }));
+    let caught: unknown;
+    try {
+      await v.verifyIdToken(token, { nonce: 'expected-nonce' });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(OidcError);
+    expect((caught as OidcError).code).toBe('malformed');
   });
 });
 

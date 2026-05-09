@@ -69,6 +69,11 @@ export interface TokenExchangeResult {
   access_token: string;
 }
 
+export interface VerifyIdTokenOptions {
+  /** Expected nonce originally sent on the OIDC authorization request. */
+  nonce?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -201,6 +206,13 @@ export class OidcVerifier {
       jwks_uri: doc.jwks_uri,
       issuer: doc.issuer,
     };
+    if (validated.issuer !== this.config.issuerUrl) {
+      if (this.discoveryCache) return this.discoveryCache.doc;
+      throw new OidcError(
+        'issuer_mismatch',
+        `discovery issuer '${validated.issuer}' does not match configured issuer '${this.config.issuerUrl}'`,
+      );
+    }
 
     this.discoveryCache = { doc: validated, fetchedAt: now };
     return validated;
@@ -270,7 +282,7 @@ export class OidcVerifier {
    * Order of checks (fail-closed) is documented in the module spec; do
    * not reorder without updating the consuming call sites' expectations.
    */
-  async verifyIdToken(idToken: string): Promise<VerifiedIdentity> {
+  async verifyIdToken(idToken: string, options: VerifyIdTokenOptions = {}): Promise<VerifiedIdentity> {
     if (typeof idToken !== 'string' || idToken.length === 0) {
       throw new OidcError('malformed', 'id_token must be a non-empty string');
     }
@@ -395,6 +407,14 @@ export class OidcVerifier {
         `id_token aud '${audValue}' does not match clientId '${this.config.clientId}'`,
       );
     }
+    if (Array.isArray(aud) && aud.length > 1) {
+      if (payload.azp !== this.config.clientId) {
+        throw new OidcError(
+          'audience_mismatch',
+          `id_token azp '${String(payload.azp)}' does not match clientId '${this.config.clientId}'`,
+        );
+      }
+    }
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     if (typeof payload.exp !== 'number' || payload.exp <= nowSeconds) {
@@ -407,6 +427,12 @@ export class OidcVerifier {
       throw new OidcError(
         'expired',
         `id_token iat ${payload.iat} is too far in the future (now ${nowSeconds})`,
+      );
+    }
+    if (options.nonce !== undefined && payload.nonce !== options.nonce) {
+      throw new OidcError(
+        'malformed',
+        `id_token nonce did not match the authorization request`,
       );
     }
 
@@ -423,11 +449,14 @@ export class OidcVerifier {
     if (email.length === 0) {
       throw new OidcError('no_email', 'id_token has no email claim');
     }
+    if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
+      throw new OidcError('malformed', 'id_token has no subject claim');
+    }
 
     return {
       email,
       emailVerified: true,
-      subject: typeof payload.sub === 'string' ? payload.sub : '',
+      subject: payload.sub,
       issuer: payload.iss,
       audience: this.config.clientId,
       issuedAt: payload.iat,
