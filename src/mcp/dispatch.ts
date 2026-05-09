@@ -14,6 +14,17 @@ import { loadConfig } from '../core/config.ts';
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
   isError?: boolean;
+  /**
+   * v0.31 (eD3): MCP spec-blessed metadata slot for server-supplied data.
+   * The dispatcher injects `_meta.brain_hot_memory` here when an op succeeds
+   * and the configured `metaHook` returns a payload.
+   *
+   * Existing clients ignore unknown `_meta` fields; capable clients (Claude
+   * Code, Claude Desktop) read it. NOT a wrapper around the result body —
+   * `content` stays the same shape it always had. Best-effort: any error in
+   * the meta hook is absorbed and the tool call still succeeds.
+   */
+  _meta?: Record<string, unknown>;
 }
 
 export interface DispatchOpts {
@@ -29,6 +40,27 @@ export interface DispatchOpts {
    * callers leave this unset (no filter — they own the brain).
    */
   takesHoldersAllowList?: string[];
+  /**
+   * v0.31 (eD4): tenancy axis for facts hot memory ops (extract_facts,
+   * recall, forget_fact). When set, the OperationContext receives a
+   * matching `sourceId`. CLI dispatch resolves this from --source flag /
+   * GBRAIN_SOURCE / .gbrain-source / 'default'; HTTP MCP transport
+   * resolves it from the per-token allow-list (eE3).
+   */
+  sourceId?: string;
+  /**
+   * v0.31 (eD3): hook called by the dispatcher AFTER op.handler succeeds
+   * to compute `_meta.brain_hot_memory` for the response. Wrapped in its
+   * own try/catch (eE4) so a DB blip in the helper degrades to no _meta
+   * rather than flipping the whole tool call to error.
+   *
+   * Returning undefined means "no _meta to inject"; the dispatcher
+   * preserves the existing response shape.
+   */
+  metaHook?: (
+    name: string,
+    ctx: OperationContext,
+  ) => Promise<Record<string, unknown> | undefined>;
 }
 
 /**
@@ -163,6 +195,7 @@ export function buildOperationContext(
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    sourceId: opts.sourceId,
   };
 }
 
@@ -196,7 +229,21 @@ export async function dispatchToolCall(
 
   try {
     const result = await op.handler(ctx, safeParams);
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
+    // The hook is wrapped in its own try/catch — any DB blip / cache miss /
+    // helper crash degrades to no `_meta` rather than flipping the whole
+    // tool call to error.
+    if (opts.metaHook) {
+      try {
+        const meta = await opts.metaHook(name, ctx);
+        if (meta && Object.keys(meta).length > 0) out._meta = meta;
+      } catch (metaErr) {
+        const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
+        ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);
+      }
+    }
+    return out;
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };
