@@ -242,13 +242,13 @@ export async function runPhaseSynthesize(
     const config = await loadSynthConfig(engine);
 
     // Allow ad-hoc --input to run even when config is disabled.
-    if (!opts.inputFile && !config.enabled) {
-      return skipped('not_configured',
-        'dream.synthesize.enabled is false (set dream.synthesize.session_corpus_dir to enable)');
-    }
     if (!opts.inputFile && !config.corpusDir) {
       return skipped('not_configured',
         'dream.synthesize.session_corpus_dir is unset');
+    }
+    if (!opts.inputFile && !config.enabled) {
+      return skipped('not_configured',
+        'dream.synthesize.enabled is explicitly false');
     }
 
     // Cooldown check (skipped for explicit --input / --date / --from / --to runs).
@@ -520,8 +520,10 @@ interface SynthConfig {
 }
 
 async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
-  const enabled = (await engine.getConfig('dream.synthesize.enabled')) === 'true';
+  const enabledRaw = await engine.getConfig('dream.synthesize.enabled');
   const corpusDir = await engine.getConfig('dream.synthesize.session_corpus_dir');
+  // Default: enabled when corpus dir is configured, unless explicitly disabled.
+  const enabled = enabledRaw === 'false' ? false : (enabledRaw === 'true' || !!corpusDir);
   const meetingTranscriptsDir = await engine.getConfig('dream.synthesize.meeting_transcripts_dir');
   const minCharsStr = await engine.getConfig('dream.synthesize.min_chars');
   const excludeStr = await engine.getConfig('dream.synthesize.exclude_patterns');
