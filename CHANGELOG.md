@@ -4,6 +4,12 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-05-09
+
+### Changed
+
+- **Version metadata now reports `0.10.3`.** `VERSION`, `package.json`, `skills/manifest.json`, and `openclaw.plugin.json` are aligned so CLI, skills, and plugin metadata describe the same release.
+
 ## [0.10.2] - 2026-04-27
 
 ### Added
