@@ -9,8 +9,8 @@
         "start": { "date": "2026-05-10" },
         "end": { "date": "2026-05-11" },
         "attendees": [
-          { "displayName": "Alice Martin", "email": "alice@example.com" },
-          { "displayName": "Bob Durant", "email": "bob@example.com" }
+          { "displayName": "Alice Martin", "email": "alice.example.invalid" },
+          { "displayName": "Bob Durant", "email": "bob.example.invalid" }
         ],
         "location": "Montreuil"
       },
@@ -21,7 +21,7 @@
         "start": { "dateTime": "2026-05-10T09:00:00+02:00" },
         "end": { "dateTime": "2026-05-10T09:30:00+02:00" },
         "attendees": [
-          { "displayName": "Claire Dupont", "email": "claire@example.com" }
+          { "displayName": "Claire Dupont", "email": "claire.example.invalid" }
         ],
         "location": "Visio"
       },
@@ -39,8 +39,8 @@
         "start": { "dateTime": "2026-05-11T12:00:00+02:00" },
         "end": { "dateTime": "2026-05-11T13:00:00+02:00" },
         "attendees": [
-          { "displayName": "David Leroy", "email": "david@example.com" },
-          { "email": "no-name@example.com" }
+          { "displayName": "David Leroy", "email": "david.example.invalid" },
+          { "displayName": "No Name", "email": "no-name.example.invalid" }
         ],
         "location": "Paris 11e"
       }

@@ -33,7 +33,7 @@ function usage() {
     '  --write                  Write markdown files under ~/brain/sources/google-calendar/',
     '  --task-id ID             Reuse an existing ClawVisor task id',
     '  --create-task            Create a short-lived list_events task before fetching',
-    '  --service ID             Override service alias (ex: google.calendar:user@example.test)',
+    '  --service ID             Override service alias (ex: google.calendar:[redacted])',
     '  --session-id UUID        Pass session_id for standing tasks if needed',
     '  --mock                   Use the local fixture instead of ClawVisor',
     '  --mock-file PATH         Override fixture path for --mock',

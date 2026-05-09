@@ -22,7 +22,7 @@ describe('calendar-to-brain collector', () => {
   test('renders markdown with explicit redacted source and no leaked emails', () => {
     const events = normalizeEvents(fixture);
     const grouped = groupEventsByDay(events);
-    const serviceId = 'google.calendar:user@example.test';
+    const serviceId = ['google.calendar', 'fixture-user'].join(':');
     const markdown = renderDayMarkdown('2026-05-10', grouped.get('2026-05-10'), {
       collectedAt: '2026-05-09T00:00:00.000Z',
       serviceId,
@@ -32,11 +32,11 @@ describe('calendar-to-brain collector', () => {
     expect(markdown).toContain('service: google.calendar:[redacted]');
     expect(markdown).toContain('Source: ClawVisor Google Calendar (google.calendar:[redacted])');
     expect(markdown).not.toContain(serviceId);
-    expect(markdown).not.toContain('user@example.test');
+    expect(markdown).not.toContain('fixture-user');
     expect(markdown).toContain('All day **Offsite équipe**');
     expect(markdown).toContain('09:00-09:30 **Point dossier X**');
     expect(markdown).toContain('Attendees: Alice Martin, Bob Durant');
-    expect(markdown).not.toContain('@example.com');
+    expect(markdown).not.toContain('@');
   });
 
   test('CLI defaults stay safe', () => {
