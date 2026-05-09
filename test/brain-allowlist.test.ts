@@ -44,11 +44,11 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     expect(missing).toEqual([]);
   });
 
-  test('contains the v0.15 read-only 10 + put_page + v0.29 salience pair', () => {
+  test('contains the reviewed remote-safe read set + put_page + v0.29 salience pair', () => {
     // v0.29 added get_recent_salience + find_anomalies (read-only).
     // get_recent_transcripts is deliberately excluded — subagent calls always
     // have ctx.remote=true, and the v0.29 trust gate rejects remote callers.
-    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(13);
+    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(11);
     expect(BRAIN_TOOL_ALLOWLIST.has('query')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('search')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_page')).toBe(true);
@@ -56,10 +56,17 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     expect(BRAIN_TOOL_ALLOWLIST.has('put_page')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_salience')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('find_anomalies')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('file_list')).toBe(false);
+    expect(BRAIN_TOOL_ALLOWLIST.has('file_url')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_transcripts')).toBe(false);
   });
 
-  test('does NOT contain destructive ops', () => {
+  test('does NOT contain local-only or destructive ops', () => {
+    const localOnlyNames = new Set(
+      operations.filter(op => op.localOnly).map(op => op.name),
+    );
+    const localOnlyAllowed = [...BRAIN_TOOL_ALLOWLIST].filter(n => localOnlyNames.has(n));
+    expect(localOnlyAllowed).toEqual([]);
     expect(BRAIN_TOOL_ALLOWLIST.has('file_upload')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('delete_page')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('delete_file')).toBe(false);

@@ -34,8 +34,8 @@ import type { ToolCtx, ToolDef } from '../types.ts';
  * Knowledge Runtime).
  *
  * Read-only (all safe):
- *   query, search, get_page, list_pages, file_list, file_url,
- *   get_backlinks, traverse_graph, resolve_slugs, get_ingest_log
+ *   query, search, get_page, list_pages, get_backlinks, traverse_graph,
+ *   resolve_slugs, get_ingest_log
  *
  * Conditional write:
  *   put_page (namespace-enforced by the tool schema + server-side check)
@@ -49,8 +49,6 @@ export const BRAIN_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'search',
   'get_page',
   'list_pages',
-  'file_list',
-  'file_url',
   'get_backlinks',
   'traverse_graph',
   'resolve_slugs',
@@ -206,7 +204,7 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
 export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
   const filter = opts.allowedNames ?? BRAIN_TOOL_ALLOWLIST;
   const picked: Operation[] = operations.filter(
-    op => BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
+    op => !op.localOnly && BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
   );
 
   return picked.map<ToolDef>(op => {

@@ -82,6 +82,17 @@ describe('dispatchToolCall — enforceRemoteAccess fail-closed defaults', () => 
     expect(result.content[0].text).toContain('local-only');
   });
 
+  test('remote dispatch rejects localOnly ops even without enforceRemoteAccess', async () => {
+    // Stdio MCP has no OAuth tier/scope context, but remote=true must still
+    // honor localOnly metadata for host-local surfaces.
+    const result = await dispatchToolCall(stubEngine, 'file_url', { storage_path: 'x' }, {
+      remote: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('operation_unavailable');
+    expect(result.content[0].text).toContain('local-only');
+  });
+
   test('enforceRemoteAccess rejects insufficient scope', async () => {
     // put_page needs 'write' scope. Caller has only 'read'.
     const result = await dispatchToolCall(stubEngine, 'put_page', { slug: 'x', content: 'y' }, {

@@ -16,8 +16,9 @@ export async function startMcpServer(engine: BrainEngine) {
   // Generate tool definitions from operations. Extracted to buildToolDefs so
   // the subagent tool registry (v0.15+) can call the same mapper against a
   // filtered OPERATIONS subset instead of duplicating this shape.
+  const mcpOperations = operations.filter(op => !op.localOnly);
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolDefs(operations),
+    tools: buildToolDefs(mcpOperations),
   }));
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).

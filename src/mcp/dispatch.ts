@@ -206,20 +206,20 @@ export async function dispatchToolCall(
   }
 
   const safeParams = params || {};
-  if (opts.enforceRemoteAccess && (opts.remote ?? true)) {
-    if (op.localOnly) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            error: 'operation_unavailable',
-            message: `Operation ${name} is local-only and is not available over remote MCP`,
-          }, null, 2),
-        }],
-        isError: true,
-      };
-    }
+  if ((opts.remote ?? true) && op.localOnly) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'operation_unavailable',
+          message: `Operation ${name} is local-only and is not available over remote MCP`,
+        }, null, 2),
+      }],
+      isError: true,
+    };
+  }
 
+  if (opts.enforceRemoteAccess && (opts.remote ?? true)) {
     const requiredScope = op.scope || 'read';
     const scopes = opts.scopes ?? [];
     if (!hasScope(scopes, requiredScope)) {
