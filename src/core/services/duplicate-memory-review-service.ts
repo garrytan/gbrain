@@ -53,7 +53,7 @@ export interface DuplicateMemoryReviewPreflightSummary {
   };
 }
 
-interface DuplicateMemoryReviewThresholds {
+export interface DuplicateMemoryReviewThresholds {
   possible_duplicate: number;
   likely_duplicate: number;
   same_target_update: number;
@@ -85,7 +85,7 @@ export async function reviewDuplicateMemory(
   engine: Pick<BrainEngine, 'listPages' | 'getTags' | 'listMemoryCandidateEntries'>,
   input: DuplicateMemoryReviewInput,
 ): Promise<DuplicateMemoryReviewResult> {
-  const limit = input.limit ?? 5;
+  const limit = normalizeLimit(input.limit);
   const excludedIds = new Set([input.subject_id, ...(input.exclude_ids ?? [])].filter(Boolean));
   const matches: DuplicateMemoryReviewMatch[] = [];
 
@@ -123,19 +123,19 @@ export async function reviewDuplicateMemory(
     }
   }
 
-  const rankedMatches = matches
+  const allRankedMatches = matches
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
       return left.id.localeCompare(right.id);
-    })
-    .slice(0, limit);
-  const decision = decide(rankedMatches);
+    });
+  const decision = decide(allRankedMatches);
+  const returnedMatches = decision === 'no_match' ? [] : allRankedMatches.slice(0, limit);
 
   return {
     decision,
-    matches: decision === 'no_match' ? [] : rankedMatches,
-    thresholds: THRESHOLDS,
-    summary_lines: buildSummaryLines(decision, rankedMatches),
+    matches: returnedMatches,
+    thresholds: { ...THRESHOLDS },
+    summary_lines: buildSummaryLines(decision, allRankedMatches),
   };
 }
 
@@ -299,4 +299,10 @@ function buildReasons(entries: Array<[boolean, string]>): string[] {
 
 function roundScore(value: number): number {
   return Number(Math.min(1, value).toFixed(6));
+}
+
+function normalizeLimit(value: number | undefined): number {
+  if (value === undefined) return 5;
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
 }

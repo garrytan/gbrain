@@ -5,7 +5,7 @@ import {
   summarizeDuplicateReviewForPreflight,
 } from '../src/core/services/duplicate-memory-review-service.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import type { MemoryCandidateEntry, Page } from '../src/core/types.ts';
+import type { MemoryCandidateEntry, MemoryCandidateEntryInput, Page } from '../src/core/types.ts';
 
 async function createEngine(): Promise<SQLiteEngine> {
   const engine = new SQLiteEngine();
@@ -16,8 +16,8 @@ async function createEngine(): Promise<SQLiteEngine> {
 
 function makeCandidate(
   id: string,
-  overrides: Partial<MemoryCandidateEntry> = {},
-): MemoryCandidateEntry {
+  overrides: Partial<MemoryCandidateEntryInput> = {},
+): MemoryCandidateEntryInput {
   return {
     id,
     scope_id: 'workspace:default',
@@ -35,9 +35,22 @@ function makeCandidate(
     target_object_id: 'projects/acme-migration',
     reviewed_at: null,
     review_reason: null,
+    ...overrides,
+  };
+}
+
+function makeStoredCandidate(
+  id: string,
+  overrides: Partial<MemoryCandidateEntryInput> = {},
+): MemoryCandidateEntry {
+  return {
+    ...makeCandidate(id, overrides),
+    target_object_type: overrides.target_object_type ?? 'curated_note',
+    target_object_id: overrides.target_object_id ?? 'projects/acme-migration',
+    reviewed_at: overrides.reviewed_at instanceof Date ? overrides.reviewed_at : null,
+    review_reason: overrides.review_reason ?? null,
     created_at: new Date('2026-05-09T00:00:00.000Z'),
     updated_at: new Date('2026-05-09T00:00:00.000Z'),
-    ...overrides,
   };
 }
 
@@ -133,11 +146,11 @@ test('duplicate review pages through canonical pages independent of result limit
 
 test('duplicate review pages through memory candidates independent of result limit', async () => {
   const candidates = [
-    ...Array.from({ length: 100 }, (_, index) => makeCandidate(`unrelated-candidate-${index}`, {
+    ...Array.from({ length: 100 }, (_, index) => makeStoredCandidate(`unrelated-candidate-${index}`, {
       proposed_content: `Coffee note ${index} covers brew temperature.`,
       target_object_id: `concepts/coffee-${index}`,
     })),
-    makeCandidate('matching-candidate', {
+    makeStoredCandidate('matching-candidate', {
       proposed_content: 'Acme migration has a staged cutover and rollback owner.',
       target_object_id: 'projects/acme-migration',
     }),
@@ -170,6 +183,58 @@ test('duplicate review pages through memory candidates independent of result lim
   expect(result.matches[0]?.kind).toBe('memory_candidate');
   expect(result.matches[0]?.id).toBe('matching-candidate');
   expect(candidateCalls.map((call) => call.offset)).toEqual([0, 100]);
+});
+
+test('duplicate review limit zero returns no matches but keeps detected decision', async () => {
+  const engine = await createEngine();
+  await engine.putPage('projects/acme-migration', {
+    type: 'project',
+    title: 'Acme Migration',
+    compiled_truth: 'The Acme migration plan uses staged cutover with rollback notes and operator checkpoints.',
+  });
+  await engine.addTag('projects/acme-migration', 'migration');
+  await engine.addTag('projects/acme-migration', 'acme');
+
+  const result = await reviewDuplicateMemory(engine, {
+    subject_kind: 'proposed_memory',
+    title: 'Acme migration plan',
+    content: 'Acme migration plan uses staged cutover with rollback notes.',
+    tags: ['migration', 'acme'],
+    include_pages: true,
+    include_candidates: false,
+    limit: 0,
+  });
+
+  expect(result.decision).toBe('likely_duplicate');
+  expect(result.matches).toEqual([]);
+});
+
+test('duplicate review returns fresh thresholds for each result', async () => {
+  const engine = await createEngine();
+  await engine.putPage('projects/acme-migration', {
+    type: 'project',
+    title: 'Acme Migration',
+    compiled_truth: 'The Acme migration plan uses staged cutover with rollback notes and operator checkpoints.',
+  });
+
+  const first = await reviewDuplicateMemory(engine, {
+    subject_kind: 'proposed_memory',
+    title: 'Acme migration plan',
+    content: 'Acme migration plan uses staged cutover with rollback notes.',
+    include_pages: true,
+    include_candidates: false,
+  });
+  first.thresholds.likely_duplicate = 99;
+
+  const second = await reviewDuplicateMemory(engine, {
+    subject_kind: 'proposed_memory',
+    title: 'Acme migration plan',
+    content: 'Acme migration plan uses staged cutover with rollback notes.',
+    include_pages: true,
+    include_candidates: false,
+  });
+
+  expect(second.thresholds.likely_duplicate).toBe(0.72);
 });
 
 test('duplicate review excludes the subject candidate id', async () => {
