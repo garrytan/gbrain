@@ -5,6 +5,7 @@ import type {
   MemoryCandidateTargetObjectType,
   MemoryCandidateType,
   Page,
+  PageType,
 } from '../types.ts';
 
 export type DuplicateMemorySubjectKind = 'page' | 'memory_candidate' | 'proposed_memory';
@@ -17,6 +18,7 @@ export interface DuplicateMemoryReviewInput {
   subject_id?: string;
   title?: string;
   content: string;
+  page_type?: PageType;
   tags?: string[];
   source_refs?: string[];
   candidate_type?: MemoryCandidateType;

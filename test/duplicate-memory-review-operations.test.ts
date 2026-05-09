@@ -6,6 +6,7 @@ import { createMemoryInboxOperations } from '../src/core/operations-memory-inbox
 import { OperationError, operations } from '../src/core/operations.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { Operation } from '../src/core/operations.ts';
+import type { DuplicateMemoryReviewInput } from '../src/core/services/duplicate-memory-review-service.ts';
 
 function findOperation(name: string, source: Operation[] = operations): Operation {
   const operation = source.find((entry) => entry.name === name);
@@ -37,6 +38,12 @@ function operationContext(engine: SQLiteEngine) {
     dryRun: false,
   };
 }
+
+const serviceInputWithPageType: DuplicateMemoryReviewInput = {
+  subject_kind: 'proposed_memory',
+  content: 'Typed service input accepts page type context.',
+  page_type: 'project',
+};
 
 test('review_duplicate_memory is registered with CLI hints', () => {
   const built = createMemoryInboxOperations({
@@ -74,6 +81,29 @@ test('review_duplicate_memory returns a likely duplicate page match', async () =
     expect(result.decision).toBe('likely_duplicate');
     expect(result.matches[0]?.kind).toBe('page');
     expect(result.matches[0]?.id).toBe('projects/duplicate-review-target');
+  });
+});
+
+test('review_duplicate_memory accepts valid page type and rejects invalid page type', async () => {
+  expect(serviceInputWithPageType.page_type).toBe('project');
+
+  await withSQLiteEngine(async (engine) => {
+    const review = findOperation('review_duplicate_memory');
+
+    const result = await review.handler(operationContext(engine), {
+      subject_kind: 'proposed_memory',
+      content: 'Valid page type context should be accepted.',
+      page_type: 'project',
+      include_pages: false,
+      include_candidates: false,
+    }) as any;
+    expect(result.decision).toBe('no_match');
+
+    await expect(review.handler(operationContext(engine), {
+      subject_kind: 'proposed_memory',
+      content: 'Invalid page type context should be rejected.',
+      page_type: 'invalid-page-type',
+    })).rejects.toMatchObject({ code: 'invalid_params' });
   });
 });
 

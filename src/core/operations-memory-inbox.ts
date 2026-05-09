@@ -965,13 +965,14 @@ export function createMemoryInboxOperations(
       if (!content) {
         throw invalidParams(deps, 'content must be a non-empty string');
       }
-      optionalEnumValue(deps, 'page_type', p.page_type, PAGE_TYPE_VALUES);
+      const pageType = optionalEnumValue(deps, 'page_type', p.page_type, PAGE_TYPE_VALUES);
       return reviewDuplicateMemory(ctx.engine, {
         scope_id: normalizeOptionalNonEmptyString(deps, 'scope_id', p.scope_id) ?? deps.defaultScopeId,
         subject_kind: requireEnumValue(deps, 'subject_kind', p.subject_kind, DUPLICATE_MEMORY_SUBJECT_KIND_VALUES),
         subject_id: normalizeOptionalNonEmptyString(deps, 'subject_id', p.subject_id) ?? undefined,
         title: normalizeOptionalNonEmptyString(deps, 'title', p.title) ?? undefined,
         content,
+        page_type: pageType,
         tags: normalizeOptionalStringArray(deps, 'tags', p.tags),
         source_refs: normalizeOptionalStringArray(deps, 'source_refs', p.source_refs),
         candidate_type: optionalEnumValue(deps, 'candidate_type', p.candidate_type, MEMORY_CANDIDATE_TYPE_VALUES),
