@@ -30,10 +30,13 @@ export interface GBrainConfig {
   database_url?: string;
   database_path?: string;
   openai_api_key?: string;
+  openai_base_url?: string;
+  /** AI gateway embedding model. Accepts provider-prefixed ids (preferred), plus legacy bare model names bridged in cli.ts. */
+  embedding_model?: string;
+  /** Embedding vector dimensions. May arrive from env as a string before normalization. */
+  embedding_dimensions?: number | string;
   anthropic_api_key?: string;
   /** AI gateway config (v0.14+). Default: "openai:text-embedding-3-large" / 1536 / "anthropic:claude-haiku-4-5-20251001". */
-  embedding_model?: string;
-  embedding_dimensions?: number;
   expansion_model?: string;
   /**
    * Default chat model for `gateway.chat()` callers (v0.27+).
@@ -143,9 +146,20 @@ export function loadConfig(): GBrainConfig | null {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
-    ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
-    ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
-    ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
+    ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY }
+      : process.env.HUNYUAN_API_KEY ? { openai_api_key: process.env.HUNYUAN_API_KEY }
+      : {}),
+    ...(process.env.OPENAI_BASE_URL ? { openai_base_url: process.env.OPENAI_BASE_URL }
+      : process.env.HUNYUAN_BASE_URL ? { openai_base_url: process.env.HUNYUAN_BASE_URL }
+      : {}),
+    ...(process.env.OPENAI_EMBEDDING_MODEL ? { embedding_model: process.env.OPENAI_EMBEDDING_MODEL }
+      : process.env.HUNYUAN_EMBEDDING_MODEL ? { embedding_model: process.env.HUNYUAN_EMBEDDING_MODEL }
+      : process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL }
+      : {}),
+    ...(process.env.OPENAI_EMBEDDING_DIMENSIONS ? { embedding_dimensions: process.env.OPENAI_EMBEDDING_DIMENSIONS }
+      : process.env.HUNYUAN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: process.env.HUNYUAN_EMBEDDING_DIMENSIONS }
+      : process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) }
+      : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
     ...(process.env.GBRAIN_CHAT_MODEL ? { chat_model: process.env.GBRAIN_CHAT_MODEL } : {}),
     ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN

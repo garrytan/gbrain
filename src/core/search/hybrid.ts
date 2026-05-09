@@ -13,6 +13,7 @@ import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed } from '../embedding.ts';
+import { loadConfig } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { autoDetectDetail, classifyQuery } from './query-intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
@@ -30,6 +31,15 @@ const COMPILED_TRUTH_BOOST = 2.0;
  */
 const BACKLINK_BOOST_COEF = 0.05;
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
+
+function hasEmbeddingConfig(): boolean {
+  const config = loadConfig();
+  return Boolean(
+    process.env.OPENAI_API_KEY
+    || process.env.HUNYUAN_API_KEY
+    || config?.openai_api_key,
+  );
+}
 
 /**
  * Apply backlink boost to a result list in place. Mutates each result's score
@@ -257,6 +267,7 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
+
   // v0.29.1: resolve salience/recency from caller (back-compat aliases for
   // PR #618's `recencyBoost` numeric scale) or fall back to the heuristic.
   // The wrapper fires from ALL THREE return paths (codex pass-1 #2 + pass-2 #4).
@@ -278,6 +289,8 @@ export async function hybridSearch(
   // Skip vector search entirely if the gateway has no embedding provider configured (Codex C3).
   const { isAvailable } = await import('../ai/gateway.ts');
   if (!isAvailable('embedding')) {
+    // Apply backlink boost in keyword-only path too. One getBacklinkCounts query
+    // per search request; not N+1.
     if (keywordResults.length > 0) {
       await runPostFusionStages(engine, keywordResults, postFusionOpts);
       keywordResults.sort((a, b) => b.score - a.score);

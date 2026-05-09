@@ -113,6 +113,23 @@ export function computeSnapshotSchemaHash(
   return hash.digest('hex');
 }
 
+const CJK_RE = /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/;
+
+function hasCJK(text: string): boolean {
+  return CJK_RE.test(text);
+}
+
+function extractSearchTokens(query: string): string[] {
+  const tokens = (query.toLowerCase().match(/[a-z0-9]+|[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]+/g) || [])
+    .map(t => t.trim())
+    .filter(Boolean);
+  return Array.from(new Set(tokens));
+}
+
+function normalizeSearchText(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, '');
+}
+
 export class PGLiteEngine implements BrainEngine {
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
@@ -644,6 +661,80 @@ export class PGLiteEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
+    // CJK path: uses fuzzy LIKE matching (not FTS) for Chinese/Japanese/Korean queries
+    if (hasCJK(query)) {
+      const tokens = extractSearchTokens(query);
+      const normalizedQuery = normalizeSearchText(query);
+      const tokenPatterns = tokens.map(t => `%${t}%`);
+      const tokenClauses = tokens.length > 0
+        ? tokens.map((_, i) => `lower(coalesce(p.title, '') || ' ' || coalesce(p.slug, '') || ' ' || coalesce(cc.chunk_text, '') || ' ' || coalesce(p.compiled_truth, '') || ' ' || coalesce(p.timeline, '')) LIKE $${i + 2}`).join(' OR ')
+        : 'false';
+      const params: unknown[] = [normalizedQuery, ...tokenPatterns, Math.max(limit * 10, 100), 0];
+      const { rows } = await this.db.query(
+        `SELECT
+          p.slug, p.id as page_id, p.title, p.type, p.source_id,
+          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+          CASE WHEN p.updated_at < (
+            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+          ) THEN true ELSE false END AS stale,
+          lower(coalesce(p.title, '')) AS title_text,
+          lower(coalesce(p.slug, '')) AS slug_text,
+          lower(coalesce(cc.chunk_text, '')) AS chunk_text_lc,
+          lower(coalesce(p.compiled_truth, '')) AS compiled_truth_lc,
+          lower(coalesce(p.timeline, '')) AS timeline_lc,
+          lower(regexp_replace(coalesce(p.title, '') || ' ' || coalesce(p.slug, '') || ' ' || coalesce(cc.chunk_text, '') || ' ' || coalesce(p.compiled_truth, '') || ' ' || coalesce(p.timeline, ''), '\\s+', '', 'g')) AS normalized_text
+        FROM pages p
+        JOIN content_chunks cc ON cc.page_id = p.id
+        WHERE (
+          lower(regexp_replace(coalesce(p.title, '') || ' ' || coalesce(p.slug, '') || ' ' || coalesce(cc.chunk_text, '') || ' ' || coalesce(p.compiled_truth, '') || ' ' || coalesce(p.timeline, ''), '\\s+', '', 'g')) LIKE '%' || $1 || '%'
+          OR ${tokenClauses}
+        ) ${detailFilter}
+        LIMIT $${tokens.length + 2}
+        OFFSET $${tokens.length + 3}`,
+        params
+      );
+
+      const scored = (rows as Record<string, unknown>[]).map((row) => {
+        const title = String(row.title_text || '');
+        const slug = String(row.slug_text || '');
+        const chunk = String(row.chunk_text_lc || '');
+        const compiled = String(row.compiled_truth_lc || '');
+        const timeline = String(row.timeline_lc || '');
+        const normalized = String(row.normalized_text || '');
+        const allText = `${title} ${slug} ${chunk} ${compiled} ${timeline}`;
+        const matchedAllTokens = tokens.length === 0 || tokens.every(t => allText.includes(t));
+        let score = 0;
+        if (normalizedQuery && normalized.includes(normalizedQuery)) score += 12;
+        for (const token of tokens) {
+          if (title.includes(token)) score += 4;
+          if (slug.includes(token)) score += 3;
+          if (chunk.includes(token)) score += 3;
+          if (compiled.includes(token)) score += 2;
+          if (timeline.includes(token)) score += 1;
+        }
+        return {
+          slug: String(row.slug),
+          page_id: Number(row.page_id),
+          title: String(row.title),
+          type: row.type as PageType,
+          chunk_text: String(row.chunk_text),
+          chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
+          chunk_id: Number(row.chunk_id),
+          chunk_index: Number(row.chunk_index),
+          score,
+          stale: Boolean(row.stale),
+          source_id: typeof row.source_id === 'string' ? row.source_id : undefined,
+          _matchedAllTokens: matchedAllTokens,
+        };
+      }).filter((row) => row.score > 0 && row._matchedAllTokens)
+        .sort((a, b) => b.score - a.score)
+        .slice(offset, offset + limit)
+        .map(({ _matchedAllTokens, ...row }) => row as SearchResult);
+
+      return scored;
+    }
+
+    // English/non-CJK path: FTS-based keyword search with source-aware ranking
     // Fetch 3x to give dedup headroom, then page-dedup + re-limit.
     const innerLimit = Math.min(limit * 3, MAX_SEARCH_LIMIT * 3);
 
