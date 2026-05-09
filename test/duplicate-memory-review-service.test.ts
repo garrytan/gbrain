@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import {
-  duplicateMemoryReviewFreshnessMarkersEqual,
-  getDuplicateMemoryReviewFreshnessMarker,
+  duplicateMemoryReviewFreshnessEquals,
+  getDuplicateMemoryReviewFreshness,
   reviewDuplicateMemory,
   summarizeDuplicateReviewForPreflight,
 } from '../src/core/services/duplicate-memory-review-service.ts';
@@ -65,7 +65,7 @@ test('duplicate review freshness markers compare sampled pages and candidates', 
   });
   await engine.createMemoryCandidateEntry(makeCandidate('sample-marker-candidate'));
 
-  const marker = await getDuplicateMemoryReviewFreshnessMarker(engine, {
+  const marker = await getDuplicateMemoryReviewFreshness(engine, {
     scope_id: 'workspace:default',
   });
   const equivalent = {
@@ -86,9 +86,9 @@ test('duplicate review freshness markers compare sampled pages and candidates', 
     ],
   };
 
-  expect(duplicateMemoryReviewFreshnessMarkersEqual(marker, equivalent)).toBe(true);
-  expect(duplicateMemoryReviewFreshnessMarkersEqual(marker, changedPage)).toBe(false);
-  expect(duplicateMemoryReviewFreshnessMarkersEqual(marker, changedCandidate)).toBe(false);
+  expect(duplicateMemoryReviewFreshnessEquals(marker, equivalent)).toBe(true);
+  expect(duplicateMemoryReviewFreshnessEquals(marker, changedPage)).toBe(false);
+  expect(duplicateMemoryReviewFreshnessEquals(marker, changedCandidate)).toBe(false);
 });
 
 test('duplicate review returns a likely duplicate for a near matching canonical page', async () => {

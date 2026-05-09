@@ -55,7 +55,7 @@ export interface DuplicateMemoryReviewPreflightSummary {
   };
 }
 
-export interface DuplicateMemoryReviewFreshnessMarker {
+export interface DuplicateMemoryReviewFreshness {
   pages: Array<{ id: string; updated_at: string }>;
   memory_candidates: Array<{ id: string; updated_at: string }>;
 }
@@ -166,10 +166,10 @@ export function summarizeDuplicateReviewForPreflight(
   };
 }
 
-export async function getDuplicateMemoryReviewFreshnessMarker(
+export async function getDuplicateMemoryReviewFreshness(
   engine: Pick<BrainEngine, 'listPages' | 'listMemoryCandidateEntries'>,
   input: { scope_id?: string; limit?: number },
-): Promise<DuplicateMemoryReviewFreshnessMarker> {
+): Promise<DuplicateMemoryReviewFreshness> {
   const limit = normalizeFreshnessLimit(input.limit);
   const [pages, memoryCandidates] = await Promise.all([
     engine.listPages({ limit, offset: 0 }),
@@ -188,9 +188,9 @@ export async function getDuplicateMemoryReviewFreshnessMarker(
   };
 }
 
-export function duplicateMemoryReviewFreshnessMarkersEqual(
-  left: DuplicateMemoryReviewFreshnessMarker,
-  right: DuplicateMemoryReviewFreshnessMarker,
+export function duplicateMemoryReviewFreshnessEquals(
+  left: DuplicateMemoryReviewFreshness,
+  right: DuplicateMemoryReviewFreshness,
 ): boolean {
   return markerEntriesEqual(left.pages, right.pages)
     && markerEntriesEqual(left.memory_candidates, right.memory_candidates);

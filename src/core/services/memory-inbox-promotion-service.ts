@@ -7,8 +7,8 @@ import {
   recordMemoryCandidateStatusEvent,
 } from './memory-inbox-service.ts';
 import {
-  duplicateMemoryReviewFreshnessMarkersEqual,
-  getDuplicateMemoryReviewFreshnessMarker,
+  duplicateMemoryReviewFreshnessEquals,
+  getDuplicateMemoryReviewFreshness,
 } from './duplicate-memory-review-service.ts';
 
 export interface PromoteMemoryCandidateEntryInput {
@@ -37,7 +37,7 @@ export async function promoteMemoryCandidateEntry(
     );
   }
 
-  const freshnessBefore = await getDuplicateMemoryReviewFreshnessMarker(engine, {
+  const freshnessBefore = await getDuplicateMemoryReviewFreshness(engine, {
     scope_id: currentEntry.scope_id,
   });
   const preflight = await preflightPromoteMemoryCandidate(engine, { id: input.id });
@@ -47,10 +47,10 @@ export async function promoteMemoryCandidateEntry(
       `Cannot promote memory candidate ${input.id}: ${preflight.reasons.join(', ')}.`,
     );
   }
-  const freshnessAfter = await getDuplicateMemoryReviewFreshnessMarker(engine, {
+  const freshnessAfter = await getDuplicateMemoryReviewFreshness(engine, {
     scope_id: currentEntry.scope_id,
   });
-  if (!duplicateMemoryReviewFreshnessMarkersEqual(freshnessBefore, freshnessAfter)) {
+  if (!duplicateMemoryReviewFreshnessEquals(freshnessBefore, freshnessAfter)) {
     throw staleDuplicateReviewInputsError(input.id);
   }
 
@@ -71,10 +71,10 @@ export async function promoteMemoryCandidateEntry(
       );
     }
 
-    const freshnessAtWrite = await getDuplicateMemoryReviewFreshnessMarker(tx, {
+    const freshnessAtWrite = await getDuplicateMemoryReviewFreshness(tx, {
       scope_id: entry.scope_id,
     });
-    if (!duplicateMemoryReviewFreshnessMarkersEqual(freshnessAfter, freshnessAtWrite)) {
+    if (!duplicateMemoryReviewFreshnessEquals(freshnessAfter, freshnessAtWrite)) {
       throw staleDuplicateReviewInputsError(input.id);
     }
 
