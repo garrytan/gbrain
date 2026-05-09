@@ -6,6 +6,10 @@ import {
   preflightPromoteMemoryCandidate,
   recordMemoryCandidateStatusEvent,
 } from './memory-inbox-service.ts';
+import {
+  duplicateMemoryReviewFreshnessMarkersEqual,
+  getDuplicateMemoryReviewFreshnessMarker,
+} from './duplicate-memory-review-service.ts';
 
 export interface PromoteMemoryCandidateEntryInput {
   id: string;
@@ -33,12 +37,21 @@ export async function promoteMemoryCandidateEntry(
     );
   }
 
+  const freshnessBefore = await getDuplicateMemoryReviewFreshnessMarker(engine, {
+    scope_id: currentEntry.scope_id,
+  });
   const preflight = await preflightPromoteMemoryCandidate(engine, { id: input.id });
   if (preflight.decision !== 'allow') {
     throw new MemoryInboxServiceError(
       'promotion_preflight_failed',
       `Cannot promote memory candidate ${input.id}: ${preflight.reasons.join(', ')}.`,
     );
+  }
+  const freshnessAfter = await getDuplicateMemoryReviewFreshnessMarker(engine, {
+    scope_id: currentEntry.scope_id,
+  });
+  if (!duplicateMemoryReviewFreshnessMarkersEqual(freshnessBefore, freshnessAfter)) {
+    throw staleDuplicateReviewInputsError(input.id);
   }
 
   return engine.transaction(async (txBase) => {
@@ -56,6 +69,13 @@ export async function promoteMemoryCandidateEntry(
         'invalid_status_transition',
         `Cannot promote memory candidate from ${entry.status}; only staged_for_review candidates may be promoted.`,
       );
+    }
+
+    const freshnessAtWrite = await getDuplicateMemoryReviewFreshnessMarker(tx, {
+      scope_id: entry.scope_id,
+    });
+    if (!duplicateMemoryReviewFreshnessMarkersEqual(freshnessAfter, freshnessAtWrite)) {
+      throw staleDuplicateReviewInputsError(input.id);
     }
 
     const promoted = await tx.promoteMemoryCandidateEntry(entry.id, {
@@ -77,4 +97,11 @@ export async function promoteMemoryCandidateEntry(
     });
     return promoted;
   });
+}
+
+function staleDuplicateReviewInputsError(candidateId: string): MemoryInboxServiceError {
+  return new MemoryInboxServiceError(
+    'promotion_preflight_failed',
+    `Cannot promote memory candidate ${candidateId}: duplicate review inputs changed; retry promotion.`,
+  );
 }

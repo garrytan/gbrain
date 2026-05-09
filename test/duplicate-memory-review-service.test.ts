@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import {
+  duplicateMemoryReviewFreshnessMarkersEqual,
+  getDuplicateMemoryReviewFreshnessMarker,
   reviewDuplicateMemory,
   summarizeDuplicateReviewForPreflight,
 } from '../src/core/services/duplicate-memory-review-service.ts';
@@ -53,6 +55,41 @@ function makeStoredCandidate(
     updated_at: new Date('2026-05-09T00:00:00.000Z'),
   };
 }
+
+test('duplicate review freshness markers compare sampled pages and candidates', async () => {
+  const engine = await createEngine();
+  await engine.putPage('concepts/sample-marker', {
+    type: 'concept',
+    title: 'Sample Marker',
+    compiled_truth: 'Freshness marker sample page.',
+  });
+  await engine.createMemoryCandidateEntry(makeCandidate('sample-marker-candidate'));
+
+  const marker = await getDuplicateMemoryReviewFreshnessMarker(engine, {
+    scope_id: 'workspace:default',
+  });
+  const equivalent = {
+    pages: marker.pages.map((page) => ({ ...page })),
+    memory_candidates: marker.memory_candidates.map((candidate) => ({ ...candidate })),
+  };
+  const changedPage = {
+    ...equivalent,
+    pages: equivalent.pages.map((page) => page.id === 'concepts/sample-marker'
+      ? { ...page, updated_at: '2026-05-09T00:00:00.000Z' }
+      : page),
+  };
+  const changedCandidate = {
+    ...equivalent,
+    memory_candidates: [
+      ...equivalent.memory_candidates,
+      { id: 'new-candidate', updated_at: '2026-05-09T00:00:00.000Z' },
+    ],
+  };
+
+  expect(duplicateMemoryReviewFreshnessMarkersEqual(marker, equivalent)).toBe(true);
+  expect(duplicateMemoryReviewFreshnessMarkersEqual(marker, changedPage)).toBe(false);
+  expect(duplicateMemoryReviewFreshnessMarkersEqual(marker, changedCandidate)).toBe(false);
+});
 
 test('duplicate review returns a likely duplicate for a near matching canonical page', async () => {
   const engine = await createEngine();

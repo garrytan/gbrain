@@ -153,6 +153,41 @@ test('promotion service fails closed for likely duplicate candidates', async () 
   });
 });
 
+test('promotion service fails closed when duplicate review inputs change during preflight', async () => {
+  await withEngine('mbrain-duplicate-preflight-stale-', async (engine) => {
+    await seedCandidate(engine, 'incoming-stale-preflight', {
+      proposed_content: 'Routing checks preserve stable review context.',
+      source_refs: ['User, direct message, 2026-05-09 12:00 KST'],
+      target_object_id: 'concepts/stale-preflight',
+    });
+
+    const originalListPages = engine.listPages.bind(engine);
+    const originalPutPage = engine.putPage.bind(engine);
+    let listPagesCalls = 0;
+    engine.listPages = async (filters) => {
+      listPagesCalls += 1;
+      if (listPagesCalls === 2) {
+        await originalPutPage('concepts/unrelated-change', {
+          type: 'concept',
+          title: 'Unrelated Change',
+          compiled_truth: 'An unrelated page changed during duplicate review.',
+        });
+      }
+      return originalListPages(filters);
+    };
+
+    await expect(promoteMemoryCandidateEntry(engine, {
+      id: 'incoming-stale-preflight',
+      review_reason: 'Attempt promotion with stale duplicate review inputs.',
+    })).rejects.toMatchObject({
+      code: 'promotion_preflight_failed',
+    });
+
+    const stored = await engine.getMemoryCandidateEntry('incoming-stale-preflight');
+    expect(stored?.status).toBe('staged_for_review');
+  });
+});
+
 test('promotion preflight allow path includes no-match duplicate review', async () => {
   await withEngine('mbrain-duplicate-preflight-no-match-', async (engine) => {
     await seedCandidate(engine, 'incoming-no-match', {

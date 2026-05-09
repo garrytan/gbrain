@@ -55,6 +55,11 @@ export interface DuplicateMemoryReviewPreflightSummary {
   };
 }
 
+export interface DuplicateMemoryReviewFreshnessMarker {
+  pages: Array<{ id: string; updated_at: string }>;
+  memory_candidates: Array<{ id: string; updated_at: string }>;
+}
+
 export interface DuplicateMemoryReviewThresholds {
   possible_duplicate: number;
   likely_duplicate: number;
@@ -67,6 +72,7 @@ const THRESHOLDS: DuplicateMemoryReviewThresholds = {
   same_target_update: 0.35,
 };
 const SCAN_BATCH_SIZE = 100;
+const FRESHNESS_MARKER_LIMIT = 20;
 
 const STOP_WORDS = new Set([
   'a',
@@ -158,6 +164,36 @@ export function summarizeDuplicateReviewForPreflight(
         }
       : {}),
   };
+}
+
+export async function getDuplicateMemoryReviewFreshnessMarker(
+  engine: Pick<BrainEngine, 'listPages' | 'listMemoryCandidateEntries'>,
+  input: { scope_id?: string; limit?: number },
+): Promise<DuplicateMemoryReviewFreshnessMarker> {
+  const limit = normalizeFreshnessLimit(input.limit);
+  const [pages, memoryCandidates] = await Promise.all([
+    engine.listPages({ limit, offset: 0 }),
+    engine.listMemoryCandidateEntries({ scope_id: input.scope_id, limit, offset: 0 }),
+  ]);
+
+  return {
+    pages: pages.map((page) => ({
+      id: page.slug,
+      updated_at: page.updated_at.toISOString(),
+    })),
+    memory_candidates: memoryCandidates.map((candidate) => ({
+      id: candidate.id,
+      updated_at: candidate.updated_at.toISOString(),
+    })),
+  };
+}
+
+export function duplicateMemoryReviewFreshnessMarkersEqual(
+  left: DuplicateMemoryReviewFreshnessMarker,
+  right: DuplicateMemoryReviewFreshnessMarker,
+): boolean {
+  return markerEntriesEqual(left.pages, right.pages)
+    && markerEntriesEqual(left.memory_candidates, right.memory_candidates);
 }
 
 function scorePage(
@@ -315,4 +351,23 @@ function normalizeLimit(value: number | undefined): number {
   if (value === undefined) return 5;
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.floor(value));
+}
+
+function normalizeFreshnessLimit(value: number | undefined): number {
+  if (value === undefined) return FRESHNESS_MARKER_LIMIT;
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
+function markerEntriesEqual(
+  left: Array<{ id: string; updated_at: string }>,
+  right: Array<{ id: string; updated_at: string }>,
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((entry, index) => {
+    const other = right[index];
+    return other !== undefined
+      && entry.id === other.id
+      && entry.updated_at === other.updated_at;
+  });
 }
