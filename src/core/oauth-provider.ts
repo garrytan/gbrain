@@ -27,6 +27,7 @@ import {
   InvalidScopeError as OAuthInvalidScopeError,
   InvalidTargetError,
 } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { checkResourceAllowed } from '@modelcontextprotocol/sdk/shared/auth-utils.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { hasScope, assertAllowedScopes, parseScopeString } from './scope.ts';
 import { ACCESS_TIER_DEFAULT, isAccessTier, resolveStoredAccessTier, tierMin, type AccessTier } from './access-tier.ts';
@@ -106,6 +107,20 @@ function assertResourceBinding(stored: unknown, requested: URL | undefined, cont
   return storedHref ? new URL(storedHref) : undefined;
 }
 
+function validateGrantTypes(grantTypes: readonly string[] | undefined, context: string): string[] {
+  const allowedGrantTypes = new Set(['client_credentials', 'authorization_code']);
+  const grants = (grantTypes || ['client_credentials']).map(String).map(s => s.trim()).filter(Boolean);
+  if (grants.length === 0) {
+    throw new Error(`${context}: at least one grant type is required`);
+  }
+  for (const grantType of grants) {
+    if (!allowedGrantTypes.has(grantType)) {
+      throw new Error(`${context}: unsupported grant type "${grantType}"`);
+    }
+  }
+  return grants;
+}
+
 /**
  * Coerce an OAuth timestamp column (Unix epoch seconds, BIGINT) into a JS
  * number, or undefined for SQL NULL.
@@ -137,6 +152,8 @@ export function coerceTimestamp(value: unknown): number | undefined {
 
 interface GBrainOAuthProviderOptions {
   sql: SqlQuery;
+  /** MCP resource URL this provider may issue tokens for. */
+  resourceServerUrl?: URL;
   /** Default token TTL in seconds (default: 3600 = 1 hour) */
   tokenTtl?: number;
   /** Default refresh token TTL in seconds (default: 30 days) */
@@ -231,6 +248,11 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
   async registerClient(
     client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>,
   ): Promise<OAuthClientInformationFull> {
+    const grantTypes = validateGrantTypes(client.grant_types, 'registerClient');
+    if (grantTypes.includes('authorization_code') && (!client.redirect_uris || client.redirect_uris.length === 0)) {
+      throw new Error('authorization_code clients require at least one redirect_uri');
+    }
+
     // Enforce HTTPS for all redirect_uris on the DCR path (RFC 6749 §3.1.2.1).
     // Without this, an attacker could register a non-loopback http:// URI and
     // exfiltrate auth codes over plaintext. CLI registrations bypass this gate
@@ -257,7 +279,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                                     client_id_issued_at, access_tier)
         VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                 ${pgArray((client.redirect_uris || []).map(String))},
-                ${pgArray(client.grant_types || ['client_credentials'])},
+                ${pgArray(grantTypes)},
                 ${client.scope || ''}, ${client.token_endpoint_auth_method || 'client_secret_post'},
                 ${now}, ${'None'})
       `;
@@ -270,6 +292,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
 
     return {
       ...client,
+      grant_types: grantTypes,
       client_id: clientId,
       client_secret: clientSecret,
       client_id_issued_at: now,
@@ -287,6 +310,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   private readonly dcrDisabled: boolean;
   private tokenTtl: number;
   private refreshTtl: number;
+  private resourceServerUrl?: URL;
   /** v46 OIDC config; when undefined, /authorize uses the legacy rubber-stamp flow. */
   private oidc?: NonNullable<GBrainOAuthProviderOptions['oidc']>;
   private readonly pendingOidc = new Map<string, PendingOidcAuthorization>();
@@ -298,6 +322,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
     this.oidc = options.oidc;
+    this.resourceServerUrl = options.resourceServerUrl;
   }
 
   /** True when v46 OIDC federation is wired. serve-http.ts uses this to gate the /oauth/oidc/callback route. */
@@ -335,6 +360,36 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     return scopes;
   }
 
+  private assertClientGrantType(client: OAuthClientInformationFull, grantType: 'client_credentials' | 'authorization_code'): void {
+    const grants = (client.grant_types as string[]) || [];
+    if (!grants.includes(grantType)) {
+      throw new InvalidGrantError(`${grantType} grant not authorized for this client`);
+    }
+  }
+
+  private assertResourceAllowed(resource: URL | undefined, context: string): URL | undefined {
+    if (!this.resourceServerUrl) return resource;
+    if (!resource) {
+      throw new InvalidTargetError(`${context} resource is required`);
+    }
+    if (!checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })) {
+      throw new InvalidTargetError(`${context} resource is not served by this MCP server`);
+    }
+    return resource;
+  }
+
+  async authenticateClientSecret(
+    clientId: string,
+    clientSecret: string,
+    grantType: 'client_credentials' | 'authorization_code',
+  ): Promise<OAuthClientInformationFull> {
+    const client = await this._clientsStore.getClient(clientId);
+    if (!client) throw new Error('Client not found');
+    this.assertClientGrantType(client, grantType);
+    if (client.client_secret !== hashToken(clientSecret)) throw new Error('Invalid client secret');
+    return client;
+  }
+
   // -------------------------------------------------------------------------
   // Authorization Code Flow
   // -------------------------------------------------------------------------
@@ -344,6 +399,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
+    this.assertClientGrantType(client, 'authorization_code');
+    if (params.resource) {
+      this.assertResourceAllowed(params.resource, 'authorization_code');
+    }
     const scopes = this.validateAuthorizationScopes(client, params.scopes);
     if (this.oidc) {
       this.prunePendingOidc();
@@ -570,6 +629,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     redirectUri?: string,
     resource?: URL,
   ): Promise<OAuthTokens> {
+    this.assertClientGrantType(client, 'authorization_code');
     // OAuth 2.1 / RFC 9700 §4.1.3: redirect_uri MUST be sent at /token if it
     // was sent at /authorize. gbrain's /authorize requires it (oauth_codes
     // schema is NOT NULL), so /token MUST receive it too. Earlier versions
@@ -656,7 +716,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         throw new InvalidGrantError('OIDC grant does not allow access');
       }
     }
-    const storedResource = assertResourceBinding(codeRow.resource, resource, 'authorization_code');
+    const storedResource = this.assertResourceAllowed(
+      assertResourceBinding(codeRow.resource, resource, 'authorization_code'),
+      'authorization_code',
+    );
     return this.issueTokens(client.client_id, scopes, storedResource, true, undefined, {
       subjectEmail, subjectIss, userTier,
     });
@@ -753,7 +816,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         throw new Error(`OIDC grant for ${subjectEmail} does not allow access`);
       }
     }
-    const storedResource = assertResourceBinding(row.resource, resource, 'refresh_token');
+    const storedResource = this.assertResourceAllowed(
+      assertResourceBinding(row.resource, resource, 'refresh_token'),
+      'refresh_token',
+    );
     return this.issueTokens(client.client_id, tokenScopes, storedResource, true, undefined, {
       subjectEmail, subjectIss, userTier,
     });
@@ -1005,9 +1071,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     clientId: string,
     clientSecret: string,
     requestedScope?: string,
+    resource?: URL,
   ): Promise<OAuthTokens> {
-    const client = await this._clientsStore.getClient(clientId);
-    if (!client) throw new Error('Client not found');
+    const client = await this.authenticateClientSecret(clientId, clientSecret, 'client_credentials');
 
     // Check if client has been revoked (soft-deleted). The deleted_at column
     // is recent — pre-migration brains don't have it, so the probe must
@@ -1024,15 +1090,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (!isUndefinedColumnError(e, 'deleted_at')) throw e;
     }
 
-    // Check grant type first (before verifying secret)
-    const grants = (client.grant_types as string[]) || [];
-    if (!grants.includes('client_credentials')) {
-      throw new Error('Client credentials grant not authorized for this client');
-    }
-
-    // Verify secret
-    const secretHash = hashToken(clientSecret);
-    if (client.client_secret !== secretHash) throw new Error('Invalid client secret');
+    resource = this.assertResourceAllowed(resource, 'client_credentials');
 
     // Determine scopes. v0.28 swaps exact-string-match for hasScope so a
     // client whose grant is `admin` can mint tokens that include implied
@@ -1056,7 +1114,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     }
 
     // Client credentials: access token only, NO refresh token (RFC 6749 4.4.3)
-    return this.issueTokens(clientId, grantedScopes, undefined, false, clientTtl);
+    return this.issueTokens(clientId, grantedScopes, resource, false, clientTtl);
   }
 
   // -------------------------------------------------------------------------
@@ -1098,6 +1156,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     if (!isAccessTier(accessTier)) {
       throw new Error(`registerClientManual: invalid accessTier "${accessTier}"`);
     }
+    grantTypes = validateGrantTypes(grantTypes, 'registerClientManual');
     for (const uri of redirectUris) {
       validateRedirectUri(uri);
     }

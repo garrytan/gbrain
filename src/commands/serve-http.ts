@@ -224,12 +224,24 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     console.error(`[serve-http] OIDC federation enabled: issuer=${oidcIssuer}, callback=${oidcConfig.publicUrl}/oauth/oidc/callback`);
   }
 
+  // The issuer URL goes into discovery metadata + token iss claims. It MUST
+  // match the URL clients actually hit, or strict OAuth clients reject tokens
+  // (RFC 8414 §3.3). Honor --public-url for production deployments behind
+  // reverse proxies / tunnels; default to localhost for dev.
+  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
+  const resourceServerUrl = resourceUrlFromServerUrl(new URL('/mcp', issuerUrl));
+  const resourceMetadataUrl = new URL(
+    `/.well-known/oauth-protected-resource${resourceServerUrl.pathname === '/' ? '' : resourceServerUrl.pathname}`,
+    issuerUrl,
+  ).href;
+
   // Initialize OAuth provider. F12 cleanup: DCR-disable now flips a
   // constructor option instead of monkey-patching `_clientsStore` after
   // construction. Same outcome (no /register endpoint when --enable-dcr
   // is not passed); cleaner shape for tests and future maintainers.
   const oauthProvider = new GBrainOAuthProvider({
     sql,
+    resourceServerUrl,
     tokenTtl,
     dcrDisabled: !enableDcr,
     oidc: oidcConfig,
@@ -302,35 +314,108 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     message: 'Too many magic-link attempts. Wait a minute before trying again.',
   });
 
+  function tokenParam(body: Record<string, unknown>, key: string): string | undefined {
+    const value = body[key];
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+  }
+
+  function parseTokenResource(body: Record<string, unknown>, res: Response): URL | undefined {
+    const raw = tokenParam(body, 'resource');
+    if (!raw) {
+      res.status(400).json({ error: 'invalid_target', error_description: 'resource is required' });
+      return undefined;
+    }
+    let requestedResource: URL;
+    try {
+      requestedResource = new URL(raw);
+    } catch {
+      res.status(400).json({ error: 'invalid_target', error_description: 'resource must be an absolute URL' });
+      return undefined;
+    }
+    if (!checkResourceAllowed({ requestedResource, configuredResource: resourceServerUrl })) {
+      res.status(400).json({ error: 'invalid_target', error_description: 'resource is not served by this MCP server' });
+      return undefined;
+    }
+    return requestedResource;
+  }
+
+  function pkceS256(verifier: string): string {
+    return createHash('sha256')
+      .update(verifier)
+      .digest('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+  }
+
+  function tokenError(res: Response, e: unknown): void {
+    const msg = e instanceof Error ? e.message : 'Unknown error';
+    const isTarget = /resource|target/i.test(msg);
+    res.status(400).json({
+      error: isTarget ? 'invalid_target' : 'invalid_grant',
+      error_description: msg,
+    });
+  }
+
   app.post('/token', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
-    if (req.body?.grant_type !== 'client_credentials') {
-      return next(); // Fall through to SDK's token handler
+    const grantType = tokenParam(req.body || {}, 'grant_type');
+    if (!grantType || !['client_credentials', 'authorization_code', 'refresh_token'].includes(grantType)) {
+      return next();
     }
 
     try {
-      const { client_id, client_secret, scope } = req.body;
+      const client_id = tokenParam(req.body, 'client_id');
+      const client_secret = tokenParam(req.body, 'client_secret');
+      const scope = tokenParam(req.body, 'scope');
       if (!client_id || !client_secret) {
         res.status(400).json({ error: 'invalid_request', error_description: 'client_id and client_secret required' });
         return;
       }
 
-      const tokens = await oauthProvider.exchangeClientCredentials(client_id, client_secret, scope);
+      const requestedResource = parseTokenResource(req.body, res);
+      if (!requestedResource) return;
+
+      if (grantType === 'client_credentials') {
+        const tokens = await oauthProvider.exchangeClientCredentials(client_id, client_secret, scope, requestedResource);
+        res.json(tokens);
+        return;
+      }
+
+      const client = await oauthProvider.authenticateClientSecret(client_id, client_secret, 'authorization_code');
+      if (grantType === 'authorization_code') {
+        const code = tokenParam(req.body, 'code');
+        const redirectUri = tokenParam(req.body, 'redirect_uri');
+        const codeVerifier = tokenParam(req.body, 'code_verifier');
+        if (!code || !redirectUri || !codeVerifier) {
+          res.status(400).json({ error: 'invalid_request', error_description: 'code, redirect_uri, and code_verifier required' });
+          return;
+        }
+        const challenge = await oauthProvider.challengeForAuthorizationCode(client, code);
+        if (challenge !== pkceS256(codeVerifier)) {
+          res.status(400).json({ error: 'invalid_grant', error_description: 'Invalid code verifier' });
+          return;
+        }
+        const tokens = await oauthProvider.exchangeAuthorizationCode(client, code, codeVerifier, redirectUri, requestedResource);
+        res.json(tokens);
+        return;
+      }
+
+      const refreshToken = tokenParam(req.body, 'refresh_token');
+      if (!refreshToken) {
+        res.status(400).json({ error: 'invalid_request', error_description: 'refresh_token required' });
+        return;
+      }
+      const scopes = scope ? scope.split(/\s+/).filter(Boolean) : undefined;
+      const tokens = await oauthProvider.exchangeRefreshToken(client, refreshToken, scopes, requestedResource);
       res.json(tokens);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      res.status(400).json({ error: 'invalid_grant', error_description: msg });
+      tokenError(res, e);
     }
   });
 
   // ---------------------------------------------------------------------------
   // MCP SDK Auth Router (OAuth endpoints)
   // ---------------------------------------------------------------------------
-  // The issuer URL goes into discovery metadata + token iss claims. It MUST
-  // match the URL clients actually hit, or strict OAuth clients reject tokens
-  // (RFC 8414 §3.3). Honor --public-url for production deployments behind
-  // reverse proxies / tunnels; default to localhost for dev.
-  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
-
   // F9: cookie `secure` flag honors both the request's TLS state (req.secure
   // is set when express trust-proxy lands an X-Forwarded-Proto: https) AND
   // the operator's declared issuer protocol (so a Cloudflare-tunnel deploy
@@ -344,12 +429,6 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     maxAge,
     path: '/admin',
   });
-
-  const resourceServerUrl = resourceUrlFromServerUrl(new URL('/mcp', issuerUrl));
-  const resourceMetadataUrl = new URL(
-    `/.well-known/oauth-protected-resource${resourceServerUrl.pathname === '/' ? '' : resourceServerUrl.pathname}`,
-    issuerUrl,
-  ).href;
 
   const authRouterOptions: any = {
     provider: oauthProvider,
@@ -782,6 +861,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         : typeof grantTypes === 'string' && grantTypes.trim()
           ? grantTypes.split(',').map(s => s.trim()).filter(Boolean)
           : ['client_credentials'];
+      if (requestedGrantTypes.length === 0) {
+        res.status(400).json({ error: 'At least one grant type is required' });
+        return;
+      }
       const requestedRedirectUris = Array.isArray(redirectUris)
         ? redirectUris.map(String).map(s => s.trim()).filter(Boolean)
         : typeof redirectUris === 'string' && redirectUris.trim()
@@ -809,7 +892,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }
       res.json({ ...result, accessTier: tier, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
     } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Registration failed' });
+      const msg = e instanceof Error ? e.message : 'Registration failed';
+      const badRequest = /unsupported grant type|grant type is required|redirect_uri|redirectUris|invalid access tier|invalid scope/i.test(msg);
+      res.status(badRequest ? 400 : 500).json({ error: msg });
     }
   });
 
@@ -894,7 +979,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.post('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
-    if (authInfo.resource && !checkResourceAllowed({
+    if (!authInfo.resource) {
+      res.status(401).json({
+        error: 'invalid_token',
+        error_description: 'Token is not bound to this MCP resource',
+      });
+      return;
+    }
+    if (!checkResourceAllowed({
       requestedResource: authInfo.resource,
       configuredResource: resourceServerUrl,
     })) {

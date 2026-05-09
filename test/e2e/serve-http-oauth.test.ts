@@ -13,6 +13,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { createHash } from 'crypto';
 import { hasDatabase } from './helpers.ts';
 
 const skip = !hasDatabase();
@@ -29,6 +30,8 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   let serverProcess: ReturnType<typeof import('child_process').spawn> | null = null;
   let clientId: string | undefined;
   let clientSecret: string | undefined;
+  let authCodeClientId: string | undefined;
+  let authCodeClientSecret: string | undefined;
   // DCR-registered clients accumulate here so afterAll can revoke them too
   // (one per test that posts to /register).
   const dcrClientIds: string[] = [];
@@ -62,6 +65,16 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     clientId = idMatch[1];
     clientSecret = secretMatch[1];
 
+    const authCodeOutput = execSync(
+      `bun run src/cli.ts auth register-client e2e-oauth-code-test --grant-types authorization_code --redirect-uri ${BASE}/callback --scopes "read write"`,
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
+    );
+    const authCodeIdMatch = authCodeOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
+    const authCodeSecretMatch = authCodeOutput.match(/Client Secret:\s+(gbrain_cs_\S+)/);
+    if (!authCodeIdMatch || !authCodeSecretMatch) throw new Error('Failed to register auth-code test client:\n' + authCodeOutput);
+    authCodeClientId = authCodeIdMatch[1];
+    authCodeClientSecret = authCodeSecretMatch[1];
+
     // Start the HTTP server. v0.26.2 adds --enable-dcr so the /register
     // endpoint is reachable for the DCR response-shape test.
     serverProcess = spawn('bun', [
@@ -77,7 +90,10 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
     // Collect stderr for debugging failures
     let stderr = '';
-    serverProcess.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    serverProcess.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString();
+      (serverProcess as any)._stderrBuffer = stderr;
+    });
 
     // Wait for server to be ready (up to 15s)
     let ready = false;
@@ -104,7 +120,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     // error that follows it. Same shape applies to DCR-registered clients
     // tracked in dcrClientIds.
     const { execSync } = await import('child_process');
-    const toRevoke = [...(clientId ? [clientId] : []), ...dcrClientIds];
+    const toRevoke = [...(clientId ? [clientId] : []), ...(authCodeClientId ? [authCodeClientId] : []), ...dcrClientIds];
     for (const id of toRevoke) {
       try {
         execSync(`bun run src/cli.ts auth revoke-client "${id}"`,
@@ -117,14 +133,30 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   });
 
   // Helper: mint a token with given scopes
-  async function mintToken(scope = 'read write'): Promise<{ access_token: string; expires_in: number; scope: string }> {
+  async function mintToken(scope = 'read write', resource = `${BASE}/mcp`): Promise<{ access_token: string; expires_in: number; scope: string }> {
+    const body = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: clientId!,
+      client_secret: clientSecret!,
+      scope,
+    });
+    body.set('resource', resource);
     const res = await fetch(`${BASE}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${clientSecret}&scope=${encodeURIComponent(scope)}`,
+      body,
     });
     expect(res.ok).toBe(true);
     return res.json() as any;
+  }
+
+  function pkceS256(verifier: string): string {
+    return createHash('sha256')
+      .update(verifier)
+      .digest('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
   }
 
   // Helper: call MCP JSON-RPC with a bearer token
@@ -138,6 +170,17 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) }),
     });
+  }
+
+  function bootstrapTokenFromStderr(): string {
+    const stderrBuf = String((serverProcess as any)?._stderrBuffer || '');
+    const afterLabel = stderrBuf.split('Admin Token (paste into /admin login):')[1] || '';
+    const chunks = afterLabel.match(/[a-f0-9]{10,}/g) || [];
+    const token = chunks.join('').slice(0, 64);
+    if (!/^[a-f0-9]{64}$/.test(token)) {
+      throw new Error('could not extract bootstrap admin token from server stderr');
+    }
+    return token;
   }
 
   // =========================================================================
@@ -162,6 +205,104 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(body).toContain('tools');
     expect(body).toContain('search'); // search tool should be in the list
     expect(body).toContain('query');  // query tool too
+  }, 15_000);
+
+  test('client_credentials resource is bound to this MCP server', async () => {
+    const good = await mintToken('read', `${BASE}/mcp`);
+    const goodRes = await mcpCall(good.access_token, 'tools/list');
+    expect(goodRes.status).not.toBe(401);
+
+    const badBody = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: clientId!,
+      client_secret: clientSecret!,
+      scope: 'read',
+      resource: 'https://other.example/mcp',
+    });
+    const bad = await fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: badBody,
+    });
+    expect(bad.status).toBe(400);
+    const data = await bad.json() as any;
+    expect(data.error).toBe('invalid_target');
+  }, 15_000);
+
+  test('client_credentials without resource is rejected', async () => {
+    const body = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: clientId!,
+      client_secret: clientSecret!,
+      scope: 'read',
+    });
+    const res = await fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json() as any;
+    expect(data.error).toBe('invalid_target');
+  }, 15_000);
+
+  test('authorization_code token exchange and refresh validate hashed secret and resource', async () => {
+    const redirectUri = `${BASE}/callback`;
+    const verifier = 'e2e-code-verifier-abcdefghijklmnopqrstuvwxyz0123456789';
+    const authorizeUrl = new URL(`${BASE}/authorize`);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('client_id', authCodeClientId!);
+    authorizeUrl.searchParams.set('redirect_uri', redirectUri);
+    authorizeUrl.searchParams.set('scope', 'read');
+    authorizeUrl.searchParams.set('code_challenge', pkceS256(verifier));
+    authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+    authorizeUrl.searchParams.set('resource', `${BASE}/mcp`);
+
+    const authorizeRes = await fetch(authorizeUrl, { redirect: 'manual' });
+    expect(authorizeRes.status).toBeGreaterThanOrEqual(300);
+    expect(authorizeRes.status).toBeLessThan(400);
+    const location = authorizeRes.headers.get('location');
+    expect(location).toBeTruthy();
+    const code = new URL(location!).searchParams.get('code');
+    expect(code).toBeTruthy();
+
+    const tokenBody = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: authCodeClientId!,
+      client_secret: authCodeClientSecret!,
+      code: code!,
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+      resource: `${BASE}/mcp`,
+    });
+    const tokenRes = await fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: tokenBody,
+    });
+    expect(tokenRes.ok).toBe(true);
+    const tokenData = await tokenRes.json() as any;
+    expect(tokenData.access_token).toMatch(/^gbrain_at_/);
+    expect(tokenData.refresh_token).toMatch(/^gbrain_rt_/);
+
+    const mcpRes = await mcpCall(tokenData.access_token, 'tools/list');
+    expect(mcpRes.status).not.toBe(401);
+
+    const refreshBody = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: authCodeClientId!,
+      client_secret: authCodeClientSecret!,
+      refresh_token: tokenData.refresh_token,
+      resource: `${BASE}/mcp`,
+    });
+    const refreshRes = await fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: refreshBody,
+    });
+    expect(refreshRes.ok).toBe(true);
+    const refreshData = await refreshRes.json() as any;
+    expect(refreshData.access_token).toMatch(/^gbrain_at_/);
   }, 15_000);
 
   test('minted token works for tools/call — search executes', async () => {
@@ -328,15 +469,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
   test('v0.28.10: /admin/api/full-stats with valid admin cookie returns getStats() body', async () => {
     // Same magic-link cookie dance the existing single-use test uses.
-    // Skip gracefully if the bootstrap token isn't extractable — the 401
-    // case above pins the auth gate; this test pins the happy path.
-    const stderrBuf = (serverProcess as any)?._stderrBuffer || '';
-    const tokenMatch = String(stderrBuf).match(/Admin Token[\s\S]*?([a-f0-9]{32,64})/);
-    if (!tokenMatch) {
-      console.warn('[e2e] skipped /admin/api/full-stats happy path: could not extract bootstrap token');
-      return;
-    }
-    const bootstrapToken = tokenMatch[1];
+    const bootstrapToken = bootstrapTokenFromStderr();
 
     const issueRes = await fetch(`${BASE}/admin/api/issue-magic-link`, {
       method: 'POST',
@@ -387,7 +520,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const res = await fetch(`${BASE}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=client_credentials&client_id=${clientId}&client_secret=gbrain_cs_wrong_secret&scope=read`,
+      body: `grant_type=client_credentials&client_id=${clientId}&client_secret=gbrain_cs_wrong_secret&scope=read&resource=${encodeURIComponent(`${BASE}/mcp`)}`,
     });
     expect(res.ok).toBe(false);
     const data = await res.json() as any;
@@ -467,7 +600,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const tokenRes = await fetch(`${BASE}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read`,
+      body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read&resource=${encodeURIComponent(`${BASE}/mcp`)}`,
     });
     expect(tokenRes.ok).toBe(true);
     const { access_token } = await tokenRes.json() as any;
@@ -533,7 +666,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       const tokenRes = await fetch(`${BASE}/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=client_credentials&client_id=${clientId!}&client_secret=${clientSecret!}&scope=read`,
+        body: `grant_type=client_credentials&client_id=${clientId!}&client_secret=${clientSecret!}&scope=read&resource=${encodeURIComponent(`${BASE}/mcp`)}`,
       });
       expect(tokenRes.ok).toBe(true);
       const { access_token } = await tokenRes.json() as any;
@@ -658,7 +791,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       const tokenRes = await fetch(`${BASE}/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read`,
+        body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read&resource=${encodeURIComponent(`${BASE}/mcp`)}`,
       });
       expect(tokenRes.ok).toBe(true);
       const body = await tokenRes.json() as any;
@@ -669,7 +802,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       const tokenRes2 = await fetch(`${BASE}/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read`,
+        body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read&resource=${encodeURIComponent(`${BASE}/mcp`)}`,
       });
       expect(tokenRes2.ok).toBe(true);
       const body2 = await tokenRes2.json() as any;
@@ -680,7 +813,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       const tokenRes3 = await fetch(`${BASE}/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read`,
+        body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=read&resource=${encodeURIComponent(`${BASE}/mcp`)}`,
       });
       expect(tokenRes3.ok).toBe(true);
       const body3 = await tokenRes3.json() as any;
@@ -719,20 +852,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     // in the test fixture. The portable approach: extract from the server
     // process's stderr.
 
-    // Pull the bootstrap token from server stderr by re-reading the
-    // spawn handle. The spawn already started so stderr has flushed.
-    // Skip if we can't extract — the test is best-effort coverage of the
-    // single-use semantic; the styled-401 test above covers the negative path.
-    const stderrBuf = (serverProcess as any)?._stderrBuffer || '';
-    const tokenMatch = String(stderrBuf).match(/Admin Token[\s\S]*?([a-f0-9]{32,64})/);
-    if (!tokenMatch) {
-      // No way to get the bootstrap token in this test fixture — skip gracefully.
-      // The unit-level coverage for nonce single-use is in oauth.test.ts and
-      // the styled-401 test above pins the consumed-nonce path.
-      console.warn('[e2e] skipped magic-link single-use: could not extract bootstrap token');
-      return;
-    }
-    const bootstrapToken = tokenMatch[1];
+    const bootstrapToken = bootstrapTokenFromStderr();
 
     // Mint a one-time nonce.
     const issueRes = await fetch(`${BASE}/admin/api/issue-magic-link`, {
@@ -774,7 +894,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       const tokenRes = await fetch(`${BASE}/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=client_credentials&client_id=${clientId!}&client_secret=${clientSecret!}&scope=read`,
+        body: `grant_type=client_credentials&client_id=${clientId!}&client_secret=${clientSecret!}&scope=read&resource=${encodeURIComponent(`${BASE}/mcp`)}`,
       });
       const { access_token } = await tokenRes.json() as any;
       await mcpCall(access_token, 'tools/list');

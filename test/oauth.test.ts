@@ -180,6 +180,7 @@ describe('client credentials', () => {
   test('client without CC grant is rejected', async () => {
     const { clientId: noCC } = await provider.registerClientManual(
       'no-cc-agent', ['authorization_code'], 'read',
+      ['http://localhost:3000/callback'],
     );
     await expect(
       provider.exchangeClientCredentials(noCC, 'any-secret', 'read'),
@@ -420,6 +421,29 @@ describe('revokeToken', () => {
 // ---------------------------------------------------------------------------
 
 describe('authorization code flow', () => {
+  test('registerClientManual requires redirect URIs for authorization_code clients', async () => {
+    await expect(
+      provider.registerClientManual('authcode-no-redirect', ['authorization_code'], 'read'),
+    ).rejects.toThrow(/redirect_uri/);
+  });
+
+  test('authorize rejects clients without authorization_code grant', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'authcode-grant-type-test', ['client_credentials'], 'read',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+    const mockRes = { redirect() {} } as any;
+
+    await expect(
+      provider.authorize(client, {
+        codeChallenge: 'challenge',
+        redirectUri: 'http://localhost:3000/callback',
+        scopes: ['read'],
+      }, mockRes),
+    ).rejects.toThrow(/authorization_code grant not authorized/);
+  });
+
   test('authorize rejects scopes outside registered client scope', async () => {
     const { clientId } = await provider.registerClientManual(
       'authcode-scope-cap-test', ['authorization_code'], 'read',
@@ -689,6 +713,44 @@ describe('authorization code flow', () => {
             userTier: 'Work',
           },
         ),
+      ).rejects.toThrow(/missing v46 OIDC identity columns/);
+    } finally {
+      await oldDb.close();
+    }
+  });
+
+  test('federated authorization code issuance fails closed when v46 code columns are absent', async () => {
+    const oldDb = new PGlite({ extensions: { vector, pg_trgm } });
+    await oldDb.exec(PGLITE_SCHEMA_SQL);
+    try {
+      await oldDb.exec(`
+        ALTER TABLE oauth_codes DROP COLUMN IF EXISTS subject_email;
+        ALTER TABLE oauth_codes DROP COLUMN IF EXISTS subject_iss;
+        ALTER TABLE oauth_codes DROP COLUMN IF EXISTS user_tier;
+      `);
+      const oldSql = async (strings: TemplateStringsArray, ...values: unknown[]): Promise<Record<string, unknown>[]> => {
+        const query = strings.reduce((acc, str, i) => acc + str + (i < values.length ? `$${i + 1}` : ''), '');
+        const result = await oldDb.query(query, values as any[]);
+        return result.rows as Record<string, unknown>[];
+      };
+      const oldProvider = new GBrainOAuthProvider({ sql: oldSql });
+      const clientId = generateToken('gbrain_cl_');
+      await oldSql`
+        INSERT INTO oauth_clients (client_id, client_name, scope, redirect_uris, grant_types)
+        VALUES (${clientId}, ${'old-oidc-client'}, ${'read'}, ${'{http://localhost:3000/callback}'}, ${'{authorization_code}'})
+      `;
+
+      await expect(
+        (oldProvider as any).createInternalAuthorizationCode(clientId, {
+          scopes: ['read'],
+          codeChallenge: 'challenge',
+          redirectUri: 'http://localhost:3000/callback',
+          federated: {
+            subjectEmail: 'alice@example.com',
+            subjectIss: 'https://accounts.google.com',
+            userTier: 'Work',
+          },
+        }),
       ).rejects.toThrow(/missing v46 OIDC identity columns/);
     } finally {
       await oldDb.close();
