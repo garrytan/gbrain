@@ -35,16 +35,16 @@ const vec = (...vals: number[]): Float32Array => {
 describe('insertFact + listFactsByEntity', () => {
   test('inserts a fact and reads it back', async () => {
     const r = await engine.insertFact(
-      { fact: 'sam works at Anthropic', kind: 'fact', entity_slug: 'people/sam', source: 'test' },
+      { fact: 'alice example fact', kind: 'fact', entity_slug: 'people/alice-example', source: 'test' },
       { source_id: 'default' },
     );
     expect(r.id).toBeGreaterThan(0);
     expect(r.status).toBe('inserted');
-    const rows = await engine.listFactsByEntity('default', 'people/sam');
+    const rows = await engine.listFactsByEntity('default', 'people/alice-example');
     expect(rows.length).toBeGreaterThanOrEqual(1);
     const ours = rows.find(x => x.id === r.id);
     expect(ours).toBeDefined();
-    expect(ours!.fact).toBe('sam works at Anthropic');
+    expect(ours!.fact).toBe('alice example fact');
     expect(ours!.kind).toBe('fact');
     expect(ours!.visibility).toBe('private');
     expect(ours!.confidence).toBe(1.0);
@@ -52,10 +52,10 @@ describe('insertFact + listFactsByEntity', () => {
 
   test('respects kind CHECK', async () => {
     const r = await engine.insertFact(
-      { fact: 'durable', kind: 'preference', entity_slug: 'sam', source: 'test' },
+      { fact: 'durable', kind: 'preference', entity_slug: 'alice-test', source: 'test' },
       { source_id: 'default' },
     );
-    const rows = await engine.listFactsByEntity('default', 'sam');
+    const rows = await engine.listFactsByEntity('default', 'alice-test');
     const ours = rows.find(x => x.id === r.id);
     expect(ours?.kind).toBe('preference');
   });
@@ -127,15 +127,15 @@ describe('listFactsSince + listFactsBySession', () => {
 describe('findCandidateDuplicates', () => {
   test('entity-prefiltered: rows from other entities never returned', async () => {
     await engine.insertFact(
-      { fact: 'sam fact', kind: 'fact', entity_slug: 'cand-sam', source: 'test' },
+      { fact: 'alice fact', kind: 'fact', entity_slug: 'cand-alice', source: 'test' },
       { source_id: 'default' },
     );
     await engine.insertFact(
       { fact: 'tim fact', kind: 'fact', entity_slug: 'cand-tim', source: 'test' },
       { source_id: 'default' },
     );
-    const candidates = await engine.findCandidateDuplicates('default', 'cand-sam', 'sam fact');
-    expect(candidates.every(c => c.entity_slug === 'cand-sam')).toBe(true);
+    const candidates = await engine.findCandidateDuplicates('default', 'cand-alice', 'alice fact');
+    expect(candidates.every(c => c.entity_slug === 'cand-alice')).toBe(true);
     expect(candidates.find(c => c.entity_slug === 'cand-tim')).toBeUndefined();
   });
 

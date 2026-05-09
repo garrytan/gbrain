@@ -86,7 +86,7 @@ async function tryFuzzyMatch(
   const lc = raw.toLowerCase();
   const fragment = slugify(raw);
   // Prefer titles (display names) over slug fragments since user input
-  // tends to be display-name-shaped ("Sam Altman" vs "sam-altman"). Cap at
+  // tends to be display-name-shaped ("Alice Example" vs "alice-example"). Cap at
   // 3 candidates; pick the first deterministic one.
   try {
     const rows = await engine.executeRaw<{ slug: string; title: string; score: number }>(

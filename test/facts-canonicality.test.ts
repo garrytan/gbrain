@@ -17,7 +17,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await engine.executeRaw(`INSERT INTO pages (slug, type, title) VALUES ('people/sam-altman', 'person', 'Sam Altman') ON CONFLICT DO NOTHING`);
+  await engine.executeRaw(`INSERT INTO pages (slug, type, title) VALUES ('people/alice-example', 'person', 'Alice Example') ON CONFLICT DO NOTHING`);
   await engine.executeRaw(`INSERT INTO pages (slug, type, title) VALUES ('companies/anthropic', 'company', 'Anthropic') ON CONFLICT DO NOTHING`);
 });
 
@@ -27,7 +27,7 @@ afterAll(async () => {
 
 describe('slugify', () => {
   test('lowercase + hyphenate', () => {
-    expect(slugify('Sam Altman')).toBe('sam-altman');
+    expect(slugify('Alice Example')).toBe('alice-example');
   });
   test('collapses repeated separators', () => {
     expect(slugify('Y    Combinator')).toBe('y-combinator');
@@ -49,8 +49,8 @@ describe('slugify', () => {
 
 describe('resolveEntitySlug', () => {
   test('exact slug match returns the slug', async () => {
-    const result = await resolveEntitySlug(engine, 'default', 'people/sam-altman');
-    expect(result).toBe('people/sam-altman');
+    const result = await resolveEntitySlug(engine, 'default', 'people/alice-example');
+    expect(result).toBe('people/alice-example');
   });
 
   test('non-matching but slug-shaped → falls through to slugify', async () => {

@@ -1,5 +1,5 @@
 /**
- * v0.31 Phase 6 — Garry's Separation Test (PRIMARY ship gate, PGLite).
+ * v0.31 Phase 6 — Cross-session recall test (PRIMARY ship gate, PGLite).
  *
  * Insert a fact via session A; recall it from session B; the brain
  * remembers across sessions. PGLite in-memory; no DATABASE_URL.
@@ -22,40 +22,40 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
-describe("Garry's Separation Test (PGLite)", () => {
+describe("Cross-session recall test (PGLite)", () => {
   test('fact inserted in session A is visible from session B (cross-session, same source)', async () => {
-    // 7 AM: in topic-2659, Garry says "I'm flying to Tokyo Tuesday".
+    // Earlier session: a user mentions a scheduled event.
     await engine.insertFact(
       {
-        fact: "flying to Tokyo Tuesday",
+        fact: 'sample event Tuesday',
         kind: 'event',
         entity_slug: 'travel',
         source: 'mcp:extract_facts',
-        source_session: 'topic-2659',
+        source_session: 'session-A',
         visibility: 'world',
       },
       { source_id: 'default' },
     );
 
-    // 2 PM: in topic-1941, Garry asks "what's on my schedule?".
-    // Recall by entity (cross-session retrieval — session is data, not key).
+    // Later session: the same user asks about their schedule. Recall by
+    // entity (cross-session retrieval — session is data, not key).
     const byEntity = await engine.listFactsByEntity('default', 'travel');
     expect(byEntity.length).toBe(1);
-    expect(byEntity[0].fact).toBe('flying to Tokyo Tuesday');
-    expect(byEntity[0].source_session).toBe('topic-2659');
+    expect(byEntity[0].fact).toBe('sample event Tuesday');
+    expect(byEntity[0].source_session).toBe('session-A');
 
     // Recall by recency (--since "8 hours ago").
     const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
     const bySince = await engine.listFactsSince('default', eightHoursAgo);
-    expect(bySince.find(f => f.fact === 'flying to Tokyo Tuesday')).toBeDefined();
+    expect(bySince.find(f => f.fact === 'sample event Tuesday')).toBeDefined();
 
     // Recall by the OLD session id (admin reviewing a session).
-    const sessionA = await engine.listFactsBySession('default', 'topic-2659');
+    const sessionA = await engine.listFactsBySession('default', 'session-A');
     expect(sessionA.length).toBe(1);
 
     // Recall by the NEW session id returns nothing — session is data, not
     // a partition. Cross-session continuity comes from entity / since.
-    const sessionB = await engine.listFactsBySession('default', 'topic-1941');
+    const sessionB = await engine.listFactsBySession('default', 'session-B');
     expect(sessionB.length).toBe(0);
   });
 

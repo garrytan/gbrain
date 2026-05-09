@@ -22,21 +22,21 @@ d('facts cross-source isolation (Postgres)', () => {
   test('listFactsByEntity scopes by source_id', async () => {
     const engine = getEngine();
     await engine.insertFact(
-      { fact: 'alpha sam', kind: 'fact', entity_slug: 'people/sam', source: 'test' },
+      { fact: 'alpha alice', kind: 'fact', entity_slug: 'people/alice-example', source: 'test' },
       { source_id: 'alpha' },
     );
     await engine.insertFact(
-      { fact: 'beta sam', kind: 'fact', entity_slug: 'people/sam', source: 'test' },
+      { fact: 'beta alice', kind: 'fact', entity_slug: 'people/alice-example', source: 'test' },
       { source_id: 'beta' },
     );
 
-    const a = await engine.listFactsByEntity('alpha', 'people/sam');
-    const b = await engine.listFactsByEntity('beta', 'people/sam');
+    const a = await engine.listFactsByEntity('alpha', 'people/alice-example');
+    const b = await engine.listFactsByEntity('beta', 'people/alice-example');
 
     expect(a.every(r => r.source_id === 'alpha')).toBe(true);
     expect(b.every(r => r.source_id === 'beta')).toBe(true);
-    expect(a.find(r => r.fact === 'beta sam')).toBeUndefined();
-    expect(b.find(r => r.fact === 'alpha sam')).toBeUndefined();
+    expect(a.find(r => r.fact === 'beta alice')).toBeUndefined();
+    expect(b.find(r => r.fact === 'alpha alice')).toBeUndefined();
   });
 
   test('CASCADE on sources delete drops the source\'s facts', async () => {

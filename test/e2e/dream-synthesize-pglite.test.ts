@@ -73,7 +73,7 @@ describe('E2E synthesize — disabled / not_configured', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 
   test('not_configured when enabled=true but session_corpus_dir is empty', async () => {
     const rig = await setupRig();
@@ -88,7 +88,7 @@ describe('E2E synthesize — disabled / not_configured', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 });
 
 describe('E2E synthesize — empty corpus', () => {
@@ -107,7 +107,7 @@ describe('E2E synthesize — empty corpus', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 });
 
 describe('E2E synthesize — no API key skip path', () => {
@@ -136,7 +136,7 @@ describe('E2E synthesize — no API key skip path', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 });
 
 describe('E2E synthesize — dry-run skips Sonnet (Codex finding #8)', () => {
@@ -162,7 +162,7 @@ describe('E2E synthesize — dry-run skips Sonnet (Codex finding #8)', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 });
 
 describe('E2E synthesize — cooldown', () => {
@@ -182,7 +182,7 @@ describe('E2E synthesize — cooldown', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 
   test('explicit --input bypasses cooldown', async () => {
     // Two engine setups + a synth run; default 5s is tight under full-suite pressure.

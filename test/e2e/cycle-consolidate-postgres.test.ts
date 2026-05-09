@@ -32,17 +32,17 @@ d('cycle consolidate phase (Postgres)', () => {
     const engine = getEngine();
     // Seed a page so consolidate has somewhere to put the take.
     await engine.executeRaw(
-      `INSERT INTO pages (slug, type, title) VALUES ('people/post-cons-sam', 'person', 'Sam')`,
+      `INSERT INTO pages (slug, type, title) VALUES ('people/post-cons-alice', 'person', 'Alice')`,
     );
     const pageRows = await engine.executeRaw<{ id: number }>(
-      `SELECT id FROM pages WHERE slug = 'people/post-cons-sam'`,
+      `SELECT id FROM pages WHERE slug = 'people/post-cons-alice'`,
     );
     const pageId = pageRows[0].id;
 
     for (let i = 0; i < 4; i++) {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, confidence, valid_from, embedding, embedded_at)
-         VALUES ('default', 'people/post-cons-sam', $1, 'fact', 'test', 0.9, $2::timestamptz, $3::vector, $2::timestamptz)`,
+         VALUES ('default', 'people/post-cons-alice', $1, 'fact', 'test', 0.9, $2::timestamptz, $3::vector, $2::timestamptz)`,
         [`postgres consolidate fact ${i}`, oldDate(), unitVec()],
       );
     }
@@ -66,7 +66,7 @@ d('cycle consolidate phase (Postgres)', () => {
       id: number; consolidated_at: Date | null; consolidated_into: number | null;
     }>(
       `SELECT id, consolidated_at, consolidated_into FROM facts
-       WHERE entity_slug = 'people/post-cons-sam' ORDER BY id`,
+       WHERE entity_slug = 'people/post-cons-alice' ORDER BY id`,
     );
     expect(facts.length).toBe(4);
     for (const f of facts) {

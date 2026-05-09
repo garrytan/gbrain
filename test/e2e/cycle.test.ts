@@ -61,7 +61,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
   beforeAll(async () => {
     await setupDB();
     repo = makeGitRepo();
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await teardownDB();

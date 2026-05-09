@@ -90,7 +90,7 @@ const EXTRACTOR_SYSTEM = [
   '- "fact": objective claim that doesn\'t fit the above.',
   '- Skip greetings, operational chatter, and questions ("how does X work?" is not a fact).',
   '- One fact per atomic claim. Cap at 10 facts per turn.',
-  '- entity = a canonical slug (e.g. "people/sam-altman", "anthropic", "travel") when known,',
+  '- entity = a canonical slug (e.g. "people/alice-example", "companies/acme", "travel") when known,',
   '  else a display name the caller can canonicalize, else null when no entity is implied.',
   '- confidence: 1.0 for "I am" / direct first-person assertions; lower for inferred or hedged claims.',
 ].join('\n');

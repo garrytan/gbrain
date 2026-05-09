@@ -2,7 +2,7 @@
  * v0.31 Phase 6 — per-source ACL coverage.
  *
  * Pins: every facts read filters WHERE source_id = $X. Two sources can
- * share the same entity_slug ("people/sam") and the recall surfaces
+ * share the same entity_slug ("people/alice-example") and the recall surfaces
  * never bleed across.
  */
 
@@ -27,19 +27,19 @@ afterAll(async () => {
 describe('cross-source isolation', () => {
   test('listFactsByEntity returns only the requested source', async () => {
     await engine.insertFact(
-      { fact: 'alpha sam fact', kind: 'fact', entity_slug: 'people/sam', source: 'test' },
+      { fact: 'alpha alice fact', kind: 'fact', entity_slug: 'people/alice-example', source: 'test' },
       { source_id: 'alpha' },
     );
     await engine.insertFact(
-      { fact: 'beta sam fact', kind: 'fact', entity_slug: 'people/sam', source: 'test' },
+      { fact: 'beta alice fact', kind: 'fact', entity_slug: 'people/alice-example', source: 'test' },
       { source_id: 'beta' },
     );
-    const alpha = await engine.listFactsByEntity('alpha', 'people/sam');
-    const beta = await engine.listFactsByEntity('beta', 'people/sam');
+    const alpha = await engine.listFactsByEntity('alpha', 'people/alice-example');
+    const beta = await engine.listFactsByEntity('beta', 'people/alice-example');
     expect(alpha.every(r => r.source_id === 'alpha')).toBe(true);
     expect(beta.every(r => r.source_id === 'beta')).toBe(true);
-    expect(alpha.find(r => r.fact === 'beta sam fact')).toBeUndefined();
-    expect(beta.find(r => r.fact === 'alpha sam fact')).toBeUndefined();
+    expect(alpha.find(r => r.fact === 'beta alice fact')).toBeUndefined();
+    expect(beta.find(r => r.fact === 'alpha alice fact')).toBeUndefined();
   });
 
   test('listFactsSince scopes by source_id', async () => {
@@ -68,7 +68,7 @@ describe('cross-source isolation', () => {
   });
 
   test('findCandidateDuplicates scopes by source_id', async () => {
-    const candidates = await engine.findCandidateDuplicates('alpha', 'people/sam', 'x');
+    const candidates = await engine.findCandidateDuplicates('alpha', 'people/alice-example', 'x');
     expect(candidates.every(c => c.source_id === 'alpha')).toBe(true);
   });
 

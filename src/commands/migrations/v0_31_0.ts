@@ -121,8 +121,8 @@ export const v0_31_0: Migration = {
       "The dream cycle's new 10th phase `consolidate` clusters related facts and promotes " +
       "them into durable `takes(kind='fact')` overnight; facts stay as the audit trail. " +
       'Per-source isolation, per-token visibility filtering (private/world), pgvector ' +
-      'HALFVEC where supported. Garry’s Separation Test: insert a fact in topic-A at ' +
-      '7 AM, recall it from topic-B at 2 PM — the brain remembers.',
+      'HALFVEC where supported. Cross-session ship gate: insert a fact in one chat ' +
+      'session, recall it from another session hours later — the brain remembers.',
   },
   orchestrator,
 };

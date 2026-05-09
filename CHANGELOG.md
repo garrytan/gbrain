@@ -17,12 +17,12 @@ without having to ask. The dream cycle's new 10th phase `consolidate`
 clusters related facts and promotes them into durable `takes(kind='fact')`
 overnight. Facts stay as the audit trail.
 
-### Garry's Separation Test
+### The cross-session test
 
-The ship gate is concrete: at 7 AM in topic-2659, you say "flying to
-Tokyo Tuesday." At 2 PM in topic-1941, the agent recalls it instantly.
-Mechanized as a primary PGLite test (CI default) and a Postgres parity
-test (`test/e2e/facts-separation-postgres.test.ts`).
+Concrete ship gate: insert a fact in one chat session, recall it from
+another session hours later, brain remembers. Mechanized as a primary
+PGLite test (CI default) and a Postgres parity test
+(`test/e2e/facts-separation-postgres.test.ts`).
 
 | Capability | Before | After v0.31 |
 |---|---|---|

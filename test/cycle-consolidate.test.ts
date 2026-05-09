@@ -80,13 +80,13 @@ describe('runPhaseConsolidate', () => {
   });
 
   test('happy path: 4 same-vector facts on a page → 1 take, all consolidated', async () => {
-    const pageId = await seedPage('people/sam');
+    const pageId = await seedPage('people/alice-example');
     expect(pageId).toBeGreaterThan(0);
     for (let i = 0; i < 4; i++) {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at)
-         VALUES ('default', 'people/sam', $1, 'fact', 'test', $2::timestamptz, 0.9, $3::vector, $2::timestamptz)`,
-        [`sam fact ${i}`, oldDate(), unitVec()],
+         VALUES ('default', 'people/alice-example', $1, 'fact', 'test', $2::timestamptz, 0.9, $3::vector, $2::timestamptz)`,
+        [`alice fact ${i}`, oldDate(), unitVec()],
       );
     }
     const r = await runPhaseConsolidate(engine, {});

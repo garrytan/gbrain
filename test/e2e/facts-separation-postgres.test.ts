@@ -1,5 +1,5 @@
 /**
- * v0.31 E2E — Garry's Separation Test against real Postgres (parity gate).
+ * v0.31 E2E — Cross-session recall test against real Postgres (parity gate).
  *
  * Mirrors test/facts-separation-pglite.test.ts. Skips gracefully when
  * DATABASE_URL is unset.
@@ -14,16 +14,16 @@ const d = RUN ? describe : describe.skip;
 beforeAll(async () => { if (RUN) await setupDB(); });
 afterAll(async () => { if (RUN) await teardownDB(); });
 
-d("Garry's Separation Test (Postgres)", () => {
-  test('cross-session recall: insert in topic-A, recall via entity from topic-B', async () => {
+d("Cross-session recall test (Postgres)", () => {
+  test('cross-session recall: insert in session-A, recall via entity from session-B', async () => {
     const engine = getEngine();
     await engine.insertFact(
       {
-        fact: 'flying to Tokyo Tuesday',
+        fact: 'sample event Tuesday',
         kind: 'event',
         entity_slug: 'travel',
         source: 'mcp:extract_facts',
-        source_session: 'topic-2659',
+        source_session: 'session-A',
         visibility: 'world',
       },
       { source_id: 'default' },
@@ -31,17 +31,17 @@ d("Garry's Separation Test (Postgres)", () => {
 
     const byEntity = await engine.listFactsByEntity('default', 'travel');
     expect(byEntity.length).toBe(1);
-    expect(byEntity[0].fact).toBe('flying to Tokyo Tuesday');
-    expect(byEntity[0].source_session).toBe('topic-2659');
+    expect(byEntity[0].fact).toBe('sample event Tuesday');
+    expect(byEntity[0].source_session).toBe('session-A');
 
     const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
     const bySince = await engine.listFactsSince('default', eightHoursAgo);
-    expect(bySince.find(f => f.fact === 'flying to Tokyo Tuesday')).toBeDefined();
+    expect(bySince.find(f => f.fact === 'sample event Tuesday')).toBeDefined();
 
-    const sessionA = await engine.listFactsBySession('default', 'topic-2659');
+    const sessionA = await engine.listFactsBySession('default', 'session-A');
     expect(sessionA.length).toBe(1);
 
-    const sessionB = await engine.listFactsBySession('default', 'topic-1941');
+    const sessionB = await engine.listFactsBySession('default', 'session-B');
     expect(sessionB.length).toBe(0);
   });
 

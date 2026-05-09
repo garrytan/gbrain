@@ -55,7 +55,7 @@ describeE2E('E2E: Minions shell handler', () => {
     process.env.GBRAIN_ALLOW_SHELL_JOBS = '1';
     await setupDB();
     await runMigrations(getEngine());
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await teardownDB();
