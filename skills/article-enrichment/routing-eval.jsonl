@@ -1,7 +1,9 @@
 // Routing eval fixtures for skills/article-enrichment. Each intent
 // includes at least one trigger string as substring.
-{"intent":"This article page is a wall of raw text — please enrich this article with quotes and insights","expected_skill":"article-enrichment"}
-{"intent":"Run a batch enrich pass on the unstructured articles in my brain","expected_skill":"article-enrichment"}
-{"intent":"Make brain pages useful by enriching the article dumps","expected_skill":"article-enrichment"}
-{"intent":"Please enrich brain pages that have raw content but no executive summary","expected_skill":"article-enrichment"}
-{"intent":"Enrich this article so it has verbatim quotes, key insights, and a why-it-matters section","expected_skill":"article-enrichment"}
+// `enrich` parent skill naturally co-fires (skills chain by design,
+// per RESOLVER.md preamble); ambiguous_with acknowledges that.
+{"intent":"This article page is a wall of raw text — please enrich this article with quotes and insights","expected_skill":"article-enrichment","ambiguous_with":["enrich"]}
+{"intent":"Run a batch enrich pass on the unstructured articles in my brain","expected_skill":"article-enrichment","ambiguous_with":["enrich"]}
+{"intent":"Make brain pages useful by enriching the article dumps","expected_skill":"article-enrichment","ambiguous_with":["enrich"]}
+{"intent":"Please enrich brain pages that have raw content but no executive summary","expected_skill":"article-enrichment","ambiguous_with":["enrich"]}
+{"intent":"Enrich this article so it has verbatim quotes, key insights, and a why-it-matters section","expected_skill":"article-enrichment","ambiguous_with":["enrich"]}
