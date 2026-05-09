@@ -21,6 +21,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { checkResourceAllowed, resourceUrlFromServerUrl } from '@modelcontextprotocol/sdk/shared/auth-utils.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
@@ -344,6 +345,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     path: '/admin',
   });
 
+  const resourceServerUrl = resourceUrlFromServerUrl(new URL('/mcp', issuerUrl));
+  const resourceMetadataUrl = new URL(
+    `/.well-known/oauth-protected-resource${resourceServerUrl.pathname === '/' ? '' : resourceServerUrl.pathname}`,
+    issuerUrl,
+  ).href;
+
   const authRouterOptions: any = {
     provider: oauthProvider,
     issuerUrl,
@@ -353,6 +360,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // ['read','write','admin'] list left those new scopes invisible.
     scopesSupported: [...ALLOWED_SCOPES_LIST],
     resourceName: 'GBrain MCP Server',
+    resourceServerUrl,
   };
 
   // F12: DCR disable lives on the provider's constructor option above. The
@@ -767,8 +775,22 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes, tokenTtl, accessTier } = req.body;
+      const { name, scopes, tokenTtl, accessTier, grantTypes, redirectUris } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      const requestedGrantTypes = Array.isArray(grantTypes)
+        ? grantTypes.map(String).map(s => s.trim()).filter(Boolean)
+        : typeof grantTypes === 'string' && grantTypes.trim()
+          ? grantTypes.split(',').map(s => s.trim()).filter(Boolean)
+          : ['client_credentials'];
+      const requestedRedirectUris = Array.isArray(redirectUris)
+        ? redirectUris.map(String).map(s => s.trim()).filter(Boolean)
+        : typeof redirectUris === 'string' && redirectUris.trim()
+          ? redirectUris.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
+          : [];
+      if (requestedGrantTypes.includes('authorization_code') && requestedRedirectUris.length === 0) {
+        res.status(400).json({ error: 'authorization_code clients require redirectUris' });
+        return;
+      }
       let tier = ACCESS_TIER_DEFAULT;
       if (accessTier !== undefined) {
         try {
@@ -779,7 +801,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         }
       }
       const result = await oauthProvider.registerClientManual(
-        name, ['client_credentials'], scopes || 'read', [], tier,
+        name, requestedGrantTypes, scopes || 'read', requestedRedirectUris, tier,
       );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
@@ -869,9 +891,19 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const mcpOperations = operations.filter(op => !op.localOnly);
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
+  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
+    if (authInfo.resource && !checkResourceAllowed({
+      requestedResource: authInfo.resource,
+      configuredResource: resourceServerUrl,
+    })) {
+      res.status(401).json({
+        error: 'invalid_token',
+        error_description: 'Token resource does not match this MCP server',
+      });
+      return;
+    }
 
     // Human-readable agent name is now threaded through AuthInfo by
     // verifyAccessToken (which JOINs oauth_clients in its existing token
