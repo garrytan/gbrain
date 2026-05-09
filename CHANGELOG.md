@@ -2,6 +2,52 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.31.2] - 2026-05-08
+
+**`gbrain sync --strategy code` no longer hangs on big repos. Code-strategy first-sync actually indexes code files. Walker hardened. Tree-sitter is now bounded.**
+
+A 1500-file gstack repo could pin `gbrain sync --strategy code` at 99% CPU on a single thread for hours, with zero disk writes and zero TCP, and a `page_count` that stayed at 0. Three real defects, fixed together: tree-sitter's WASM loop had no wall-clock cap, so a single pathological file could wedge the whole sync indefinitely. Code-strategy first-sync silently fed only `.md` files into the import pipeline, so even when sync didn't hang, no code page was produced. The walker that powered sync's cost preview was weaker than the import walker for no good reason. v0.31.2 closes all three.
+
+### What you can now do
+
+**Run `gbrain sync --strategy code` on big symlink-rich repos without wedging.** Per-file tree-sitter parsing is bounded by a 30-second wall-clock cap via `parser.setTimeoutMicros`. When a file's parse exceeds the cap, the chunker logs `[gbrain chunker] timeout parsing <path> after 30000ms; falling back to recursive chunks` to stderr and falls back to the recursive text chunker. Search quality on that one file degrades; the sync keeps going. Override the default with `GBRAIN_CHUNKER_TIMEOUT_MS=60000`.
+
+**Code-strategy first-sync now imports code files.** Previously `performFullSync` called `runImport(repoPath)` with no strategy, which silently fell through to a markdown-only walker. Now strategy threads end-to-end (`performSync → performFullSync → runImport`), through the full-sync write path AND the dry-run preview. `gbrain sync --strategy code --dry-run` finally reports the right number.
+
+**Walker survives self-referencing symlinks.** The new `collectSyncableFiles` is the single source of truth across import, full-sync dry-run, and cost preview. Three layered defenses: `lstatSync` rejects every symlink before recursion; an inode-cycle Map keyed on `${st_dev}:${st_ino}` catches non-symlink loops (bind mounts, ZFS snapshots); `MAX_WALK_DEPTH=32` is the structural backstop. Output is sorted so `runImport`'s checkpoint resume stays deterministic across runs. Override the depth cap with `GBRAIN_MAX_WALK_DEPTH=64`.
+
+**Phase logs surface where time goes.** Strategic stderr lines (`[gbrain phase] sync.git_pull start`, `sync.fullsync.import done 12345ms imported=602 skipped=3 errors=0`, `import.collect_files done 187ms files=1503`, `import.process_file slow 7234ms src/big.ts`) tell you which phase a stuck sync is in. The next hang reproduction will name the phase, not produce zero data.
+
+### Important note for upgraders
+
+After `gbrain upgrade`, the first sync against any source registered with `--strategy code` will now actually import code files that previously got skipped. On a 1500-file repo this means a one-time embed-cost spike proportional to your code-file count (rough order: ~1500 code files × ~1500 tokens average = 2.25M tokens × $0.13/1M = $0.30 with `text-embedding-3-large`). Run with `--dry-run` first to preview the file count. The CHANGELOG-and-actually-correct behavior is now aligned.
+
+### How it works under the hood
+
+`parser.setTimeoutMicros(timeoutMs * 1000)` is the canonical web-tree-sitter API for wall-clock parser caps; `parser.parse()` returns null when exceeded. `parseWithTimeout` (the new pure-function seam in `src/core/chunkers/code.ts`) wraps the call, throws `ChunkerTimeoutError` on null, and the caller's `try/finally` reaps the parser+tree WASM allocation. The pre-fix `chunkCodeTextFull` did manual `delete()` on success and on null, but the catch block returned without cleanup — codex caught the leak before it shipped.
+
+`isCollectibleForWalker(path, strategy, multimodal)` surfaces the markdown+multimodal carve-out at one site instead of leaking it across two filters. `isSyncable` (incremental diff path) admits images only on `auto`; the walker historically admitted them on markdown too when `GBRAIN_EMBEDDING_MULTIMODAL=true`. Same behavior, one source of truth.
+
+### Tests
+
+- `test/sync-walker-symlink.test.ts` (7 cases) — self-referencing symlink, symlink chain through real dirs, max-depth bailout, strategy filter, dot-dir + node_modules skip, multimodal preservation under markdown strategy, deterministic ordering.
+- `test/chunker-timeout.test.ts` (7 cases) — parser-stub timeout seam, ChunkerTimeoutError shape, env wiring under `GBRAIN_CHUNKER_TIMEOUT_MS=1`, fallback-to-recursive behavior, fail-loud regression for missing `setTimeoutMicros`, repeated-timeout cleanup smoke test.
+
+### To take advantage of v0.31.2
+
+`gbrain upgrade` then re-run any previously-stuck `gbrain sync --strategy code`. Should complete in ~25-35 minutes on a 1500-file repo. If it doesn't, the `[gbrain phase] *` log lines will name the phase that wedged — file an issue with the relevant log section.
+
+```bash
+gbrain upgrade
+cd <your-source-repo>
+gbrain sync --strategy code --dry-run --source <id>   # preview the file count
+gbrain sync --strategy code --source <id>             # the real run
+```
+
+### For contributors
+
+Codex's adversarial review caught five bug-grade findings in the original plan that hadn't survived eng review: parser cleanup leak under thrown timeout, an internal contradiction between `isSyncable` and the multimodal walker behavior, a missed dry-run plumbing site, deterministic-order requirement for checkpoint resume, and machine-speed-dependent timeout tests. All five folded into the shipped fix without re-litigating the bundle decision. Cross-model review on every nontrivial plan change continues to pay.
+
 ## [0.30.2] - 2026-05-08
 
 **Dream synthesize stops dropping fat transcripts. Subagents that overflow Anthropic's context die once, not three times. The queue stops clogging.**
