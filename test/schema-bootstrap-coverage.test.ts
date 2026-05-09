@@ -224,6 +224,41 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
   }
 }, 30000);
 
+test('PGLITE_SCHEMA_SQL directly replays v46 oauth token columns before subject_email index', async () => {
+  // CI caught the Postgres sibling of this: an existing DB with oauth_tokens
+  // but no v46 federated columns crashed when latest schema replay reached
+  // idx_oauth_tokens_subject_email before migrations could run. The schema
+  // blob now carries additive ALTERs before that index, independent of the
+  // engine bootstrap layer.
+  const engine = new PGLiteEngine();
+  await engine.connect({});
+  try {
+    await engine.initSchema();
+    const db = (engine as any).db;
+    await db.exec(`
+      DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_iss;
+      ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS user_tier;
+    `);
+
+    const { PGLITE_SCHEMA_SQL } = await import('../src/core/pglite-schema.ts');
+    await db.exec(PGLITE_SCHEMA_SQL);
+
+    const { rows } = await db.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'oauth_tokens'
+         AND column_name IN ('subject_email', 'subject_iss', 'user_tier')`,
+    );
+    expect(new Set(rows.map((r: any) => r.column_name))).toEqual(
+      new Set(['subject_email', 'subject_iss', 'user_tier']),
+    );
+  } finally {
+    await engine.disconnect();
+  }
+}, 30000);
+
 // ─────────────────────────────────────────────────────────────────
 // v0.28.5 — A2 structural prevention: auto-derive coverage from SQL.
 // ─────────────────────────────────────────────────────────────────

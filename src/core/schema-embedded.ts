@@ -441,6 +441,13 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- v46 replay safety: on existing brains CREATE TABLE IF NOT EXISTS is a no-op,
+-- so add the indexed federated columns before replaying their indexes.
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_email TEXT;
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_iss   TEXT;
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS user_tier     TEXT
+  CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
+
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expiry ON oauth_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_tokens(client_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_subject_email
@@ -463,6 +470,11 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
   expires_at             BIGINT NOT NULL,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_email TEXT;
+ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_iss   TEXT;
+ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS user_tier     TEXT
+  CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
 
 -- v46: per-email access grants. The grants CLI normalizes email lowercase
 -- before INSERT; the CHECK enforces the invariant at the storage layer.
