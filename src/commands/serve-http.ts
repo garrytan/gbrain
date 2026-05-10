@@ -12,7 +12,6 @@
 
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
-import { appendFileSync } from 'fs';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -276,16 +275,6 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // form), so naive `issuer + "/register"` concat gives `//register` -> 404.
   app.use((req, _res, next) => {
     if (req.url.startsWith('//')) req.url = req.url.replace(/^\/+/, '/');
-    next();
-  });
-
-  // Sync edge log. Bun stdout is block-buffered under launchd StandardOutPath;
-  // appendFileSync flushes per request so live debug isn't blind.
-  app.use((req, _res, next) => {
-    try {
-      const line = `${new Date().toISOString()} ${req.method} ${req.url} ua=${(req.headers['user-agent'] || '').slice(0, 60)} cfray=${req.headers['cf-ray'] || ''}\n`;
-      appendFileSync('/Users/panda/.gbrain/logs/edge-trace.log', line);
-    } catch { /* never block on logging */ }
     next();
   });
 
