@@ -7,6 +7,12 @@ import { importFile, importImageFile, isImageFilePath } from '../core/import-fil
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import {
+  isCodeFilePath,
+  isMarkdownFilePath,
+  isImageFilePath as isImageFilePathFromSync,
+  type SyncStrategy,
+} from '../core/sync.ts';
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -28,7 +34,11 @@ export interface RunImportResult {
   failures: Array<{ path: string; error: string }>;
 }
 
-export async function runImport(engine: BrainEngine, args: string[], opts: { commit?: string; sourceId?: string } = {}): Promise<RunImportResult> {
+export async function runImport(
+  engine: BrainEngine,
+  args: string[],
+  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string } = {},
+): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
@@ -61,9 +71,20 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
 
-  // Collect all .md files
-  const allFiles = collectMarkdownFiles(dir);
-  console.log(`Found ${allFiles.length} markdown files`);
+  // v0.31.2: collect under the right strategy. Pre-fix this called
+  // collectMarkdownFiles unconditionally — code-strategy first sync
+  // silently no-op'd because no code file ever made it through walker
+  // enumeration (codex C11 confirms dispatch was correct; bug was here).
+  const strategy: SyncStrategy = opts.strategy ?? 'markdown';
+  const _walkT0 = Date.now();
+  console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
+  const allFiles = collectSyncableFiles(dir, { strategy });
+  console.error(
+    `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
+  );
+  const fileTypeLabel = strategy === 'code' ? 'code'
+    : strategy === 'auto' ? 'syncable' : 'markdown';
+  console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
 
   // Resume from checkpoint if available
   const checkpointPath = gbrainPath('import-checkpoint.json');
@@ -109,6 +130,10 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
 
   async function processFile(eng: BrainEngine, filePath: string) {
     const relativePath = relative(dir, filePath);
+    // v0.31.2 (D5): per-file slow-path log. Fires only when a single
+    // file takes >5s. The user's hang surfaces as one file taking
+    // forever — without this, the agent can't see which file.
+    const _fileT0 = Date.now();
     try {
       // v0.27.1 (F2): dispatch image extensions to importImageFile when
       // multimodal is enabled. The walker (collectMarkdownFiles) only picks
@@ -117,6 +142,10 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, relativePath, { noEmbed, sourceId })
         : await importFile(eng, filePath, relativePath, { noEmbed, sourceId });
+      const _fileMs = Date.now() - _fileT0;
+      if (_fileMs > 5000) {
+        console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
+      }
       if (result.status === 'imported') {
         imported++;
         chunksCreated += result.chunks;
@@ -296,54 +325,131 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
   return { imported, skipped, errors, chunksCreated, failures };
 }
 
-export function collectMarkdownFiles(dir: string): string[] {
+/**
+ * v0.31.2: max walker depth before bailing out. 32 levels is more than
+ * any real source tree on disk; reaching it is a structural cycle the
+ * lstat+inode-set defenses missed (e.g., a Linux bind-mount or btrfs
+ * subvolume that returns a fresh inode for the same content). Override
+ * via `GBRAIN_MAX_WALK_DEPTH`.
+ */
+function resolveMaxWalkDepth(): number {
+  const raw = process.env.GBRAIN_MAX_WALK_DEPTH;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 32;
+}
+
+interface CollectOpts {
+  strategy?: SyncStrategy;
+}
+
+/**
+ * v0.27.1 + v0.31.2: walker-context image admission. `isSyncable` (the
+ * incremental-diff filter at sync.ts:213) admits images only on `auto`.
+ * The first-sync walker historically admitted them on markdown too when
+ * `GBRAIN_EMBEDDING_MULTIMODAL=true`. Codex (C5) flagged the contradiction
+ * — preserve the walker semantic explicitly.
+ */
+function isCollectibleForWalker(
+  path: string,
+  strategy: SyncStrategy,
+  multimodalOn: boolean,
+): boolean {
+  switch (strategy) {
+    case 'code':
+      return isCodeFilePath(path);
+    case 'markdown':
+      return isMarkdownFilePath(path) || (multimodalOn && isImageFilePathFromSync(path));
+    case 'auto':
+      return (
+        isMarkdownFilePath(path) ||
+        isCodeFilePath(path) ||
+        (multimodalOn && isImageFilePathFromSync(path))
+      );
+  }
+}
+
+/**
+ * v0.31.2 (codex C4 + C5 + C8): unified walker with five hardenings:
+ *
+ * 1. `lstatSync` + explicit `isSymbolicLink()` skip — never follow symlinks.
+ *    Replaces the old `collectMarkdownFiles` lstat path AND the old
+ *    `walkSyncableFiles` `statSync` path (the latter was the cost-preview
+ *    walker, weaker than the import walker for no good reason).
+ * 2. Inode-set cycle detection keyed on `${st_dev}:${st_ino}` — defense in
+ *    depth for non-symlink cycles (bind mounts, ZFS snapshots).
+ * 3. `MAX_WALK_DEPTH` bailout — last-line backstop if both layers above miss.
+ * 4. Strategy-aware filter via `isCollectibleForWalker` — single helper that
+ *    surfaces the markdown+multimodal carve-out at one site instead of
+ *    leaking it across two filter paths.
+ * 5. `.sort()` output — `runImport`'s checkpoint-resume at line 68–74 is
+ *    index-based against a sorted list. Unstable order skips the wrong
+ *    files on resume.
+ */
+export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): string[] {
+  const strategy: SyncStrategy = opts.strategy ?? 'markdown';
+  const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+  const maxDepth = resolveMaxWalkDepth();
+  const visitedInodes = new Map<string, true>();
   const files: string[] = [];
 
-  function walk(d: string) {
-    for (const entry of readdirSync(d)) {
-      // Skip hidden dirs and .raw dirs
+  function walk(d: string, depth: number): void {
+    if (depth >= maxDepth) {
+      console.warn(`[gbrain] walker depth limit reached at ${d}; skipping`);
+      return;
+    }
+    let entries: string[];
+    try {
+      entries = readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      // Skip hidden dirs (.git, .claude, .raw, etc.) and `node_modules`/`ops`.
+      // Same set the legacy walkers honored, surfaced once at the top of
+      // every iteration.
       if (entry.startsWith('.')) continue;
-      // Skip node_modules
-      if (entry === 'node_modules') continue;
+      if (entry === 'node_modules' || entry === 'ops') continue;
 
       const full = join(d, entry);
       let stat;
       try {
-        // lstatSync, not statSync: we must NOT follow symlinks. A symlink
-        // inside the brain directory can point to any file the importing
-        // user can read, so a contributor to a shared brain could plant
-        // notes/innocent.md as a symlink to ~/.gbrain/config.json, /etc/passwd,
-        // or another sensitive file outside the brain root — and on the
-        // next `gbrain import` it would be read, chunked, embedded, and
-        // indexed, at which point a bearer-token holder could exfiltrate
-        // it via search/get_page. See L002 in report/findings.md.
         stat = lstatSync(full);
       } catch {
-        // Broken symlink or permission error — skip
         console.warn(`[gbrain import] Skipping unreadable path: ${full}`);
         continue;
       }
 
-      // Skip symlinks (both file and directory targets). This also blocks
-      // circular symlink DoS since we refuse to descend into linked dirs.
       if (stat.isSymbolicLink()) {
         console.warn(`[gbrain import] Skipping symlink: ${full}`);
         continue;
       }
 
       if (stat.isDirectory()) {
-        walk(full);
-      } else if (entry.endsWith('.md') || entry.endsWith('.mdx')) {
-        files.push(full);
-      } else if (multimodalEnabled && isImageFilePath(entry)) {
-        // v0.27.1 (F2): images join the walker only when multimodal is on.
-        // Pre-v0.27.1 brains keep their existing markdown-only walk.
+        const inodeKey = `${stat.dev}:${stat.ino}`;
+        if (visitedInodes.has(inodeKey)) {
+          console.warn(`[gbrain] walker cycle detected at ${full}; skipping`);
+          continue;
+        }
+        visitedInodes.set(inodeKey, true);
+        walk(full, depth + 1);
+      } else if (stat.isFile()) {
+        if (!isCollectibleForWalker(entry, strategy, multimodalOn)) continue;
         files.push(full);
       }
     }
   }
 
-  const multimodalEnabled = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
-  walk(dir);
+  walk(dir, 0);
   return files.sort();
+}
+
+/**
+ * @deprecated v0.31.2: kept as a thin wrapper so legacy callers keep
+ * compiling. Prefer `collectSyncableFiles(dir, { strategy: 'markdown' })`.
+ */
+export function collectMarkdownFiles(dir: string): string[] {
+  return collectSyncableFiles(dir, { strategy: 'markdown' });
 }
