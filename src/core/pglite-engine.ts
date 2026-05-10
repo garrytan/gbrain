@@ -11,6 +11,8 @@ import type {
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
+  FactRow, FactKind, FactVisibility, FactInsertStatus,
+  NewFact, FactListOpts, FactsHealth,
 } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
@@ -240,7 +242,7 @@ export class PGLiteEngine implements BrainEngine {
    *   - `subagent_messages.provider_id` column (indexed by
    *     `idx_subagent_messages_provider`) — v0.27
    *   - `oauth_tokens.subject_email` + `subject_iss` + `user_tier`
-   *     columns (indexed by `idx_oauth_tokens_subject_email`) — v46
+   *     columns (indexed by `idx_oauth_tokens_subject_email`) — v47
    *
    * **Maintenance contract:** when a future migration adds a column-with-index
    * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
@@ -436,9 +438,9 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     if (needsOauthTokensV46Bootstrap) {
-      // v46 adds federated end-user columns plus an index on subject_email.
+      // v47 adds federated end-user columns plus an index on subject_email.
       // PGLITE_SCHEMA_SQL replays the index before migrations run, so old
-      // brains need the indexed column to exist first. Add all three v46
+      // brains need the indexed column to exist first. Add all three v47
       // token columns here so the later idempotent migration is a no-op.
       await this.db.exec(`
         ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_email TEXT;
@@ -1690,6 +1692,262 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // ============================================================
+  // v0.31: Hot memory — facts table operations
+  // ============================================================
+
+  async insertFact(
+    input: NewFact,
+    ctx: { source_id: string; supersedeId?: number },
+  ): Promise<{ id: number; status: FactInsertStatus }> {
+    const validFrom = input.valid_from ?? new Date();
+    const validUntil = input.valid_until ?? null;
+    const kind = input.kind ?? 'fact';
+    const visibility = input.visibility ?? 'private';
+    const confidence = input.confidence ?? 1.0;
+    const entitySlug = input.entity_slug ?? null;
+    const context = input.context ?? null;
+    const sourceSession = input.source_session ?? null;
+    const embedding = input.embedding ?? null;
+    const embeddedAt = embedding ? new Date() : null;
+    const embedStr = embedding ? toPgVectorLiteral(embedding) : null;
+
+    if (ctx.supersedeId !== undefined) {
+      // Supersede flow: insert new + expire old in one txn so observers never
+      // see both rows active simultaneously.
+      const result = await this.db.transaction(async (tx) => {
+        const ins = await tx.query<{ id: number }>(
+          `INSERT INTO facts (
+             source_id, entity_slug, fact, kind, visibility, context,
+             valid_from, valid_until, source, source_session, confidence,
+             embedding, embedded_at
+           ) VALUES (
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, ${embedStr === null ? 'NULL' : `$12::vector`}, ${embedStr === null ? 'NULL' : '$13'}
+           ) RETURNING id`,
+          embedStr === null
+            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, context, validFrom, validUntil, input.source, sourceSession, confidence]
+            : [ctx.source_id, entitySlug, input.fact, kind, visibility, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt],
+        );
+        const newId = ins.rows[0].id;
+        await tx.query(
+          `UPDATE facts SET expired_at = now(), superseded_by = $1
+           WHERE id = $2 AND expired_at IS NULL`,
+          [newId, ctx.supersedeId],
+        );
+        return newId;
+      });
+      return { id: result, status: 'superseded' };
+    }
+
+    const ins = await this.db.query<{ id: number }>(
+      `INSERT INTO facts (
+         source_id, entity_slug, fact, kind, visibility, context,
+         valid_from, valid_until, source, source_session, confidence,
+         embedding, embedded_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, ${embedStr === null ? 'NULL' : `$12::vector`}, ${embedStr === null ? 'NULL' : '$13'}
+       ) RETURNING id`,
+      embedStr === null
+        ? [ctx.source_id, entitySlug, input.fact, kind, visibility, context, validFrom, validUntil, input.source, sourceSession, confidence]
+        : [ctx.source_id, entitySlug, input.fact, kind, visibility, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt],
+    );
+    return { id: ins.rows[0].id, status: 'inserted' };
+  }
+
+  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
+    const at = opts?.at ?? new Date();
+    const result = await this.db.query(
+      `UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by)
+       WHERE id = $3 AND expired_at IS NULL`,
+      [at, opts?.supersededBy ?? null, id],
+    );
+    return (result.affectedRows ?? 0) > 0;
+  }
+
+  async listFactsByEntity(
+    source_id: string,
+    entitySlug: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]> {
+    return this._listFacts(source_id, {
+      ...opts,
+      whereClauses: [`entity_slug = $entitySlug`],
+      whereParams: { entitySlug },
+      order: 'valid_from DESC, id DESC',
+    });
+  }
+
+  async listFactsSince(
+    source_id: string,
+    since: Date,
+    opts?: FactListOpts & { entitySlug?: string },
+  ): Promise<FactRow[]> {
+    const where: string[] = [`created_at >= $since`];
+    const params: Record<string, unknown> = { since };
+    if (opts?.entitySlug) {
+      where.push(`entity_slug = $entitySlug`);
+      params.entitySlug = opts.entitySlug;
+    }
+    return this._listFacts(source_id, {
+      ...opts,
+      whereClauses: where,
+      whereParams: params,
+      order: 'created_at DESC, id DESC',
+    });
+  }
+
+  async listFactsBySession(
+    source_id: string,
+    sessionId: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]> {
+    return this._listFacts(source_id, {
+      ...opts,
+      whereClauses: [`source_session = $sessionId`],
+      whereParams: { sessionId },
+      order: 'created_at DESC, id DESC',
+    });
+  }
+
+  async listSupersessions(
+    source_id: string,
+    opts?: { since?: Date; limit?: number },
+  ): Promise<FactRow[]> {
+    const where: string[] = [`expired_at IS NOT NULL`, `superseded_by IS NOT NULL`];
+    const params: Record<string, unknown> = {};
+    if (opts?.since) {
+      where.push(`expired_at >= $since`);
+      params.since = opts.since;
+    }
+    return this._listFacts(source_id, {
+      activeOnly: false,
+      limit: opts?.limit,
+      whereClauses: where,
+      whereParams: params,
+      order: 'expired_at DESC, id DESC',
+    });
+  }
+
+  async findCandidateDuplicates(
+    source_id: string,
+    entitySlug: string,
+    factText: string,
+    opts?: { k?: number; embedding?: Float32Array },
+  ): Promise<FactRow[]> {
+    const k = Math.min(Math.max(opts?.k ?? 5, 1), 20);
+    if (opts?.embedding) {
+      // Embedding-cosine ordered candidates within the entity bucket.
+      const vec = toPgVectorLiteral(opts.embedding);
+      const result = await this.db.query<FactRowSqlShape>(
+        `SELECT * FROM facts
+         WHERE source_id = $1
+           AND entity_slug = $2
+           AND expired_at IS NULL
+           AND embedding IS NOT NULL
+         ORDER BY embedding <=> $3::vector
+         LIMIT $4`,
+        [source_id, entitySlug, vec, k],
+      );
+      return result.rows.map(rowToFact);
+    }
+    // Recency fallback when no embedding.
+    const result = await this.db.query<FactRowSqlShape>(
+      `SELECT * FROM facts
+       WHERE source_id = $1
+         AND entity_slug = $2
+         AND expired_at IS NULL
+       ORDER BY created_at DESC, id DESC
+       LIMIT $3`,
+      [source_id, entitySlug, k],
+    );
+    return result.rows.map(rowToFact);
+  }
+
+  async consolidateFact(id: number, takeId: number): Promise<void> {
+    await this.db.query(
+      `UPDATE facts SET consolidated_at = now(), consolidated_into = $1 WHERE id = $2`,
+      [takeId, id],
+    );
+  }
+
+  async getFactsHealth(source_id: string): Promise<FactsHealth> {
+    const total = await this.db.query<{
+      total_active: number; total_today: number; total_week: number;
+      total_expired: number; total_consolidated: number;
+    }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE expired_at IS NULL)                                    AS total_active,
+         COUNT(*) FILTER (WHERE expired_at IS NULL AND created_at > now() - interval '24 hours') AS total_today,
+         COUNT(*) FILTER (WHERE expired_at IS NULL AND created_at > now() - interval '7 days')   AS total_week,
+         COUNT(*) FILTER (WHERE expired_at IS NOT NULL)                                AS total_expired,
+         COUNT(*) FILTER (WHERE consolidated_at IS NOT NULL)                           AS total_consolidated
+       FROM facts WHERE source_id = $1`,
+      [source_id],
+    );
+    const top = await this.db.query<{ entity_slug: string; count: number }>(
+      `SELECT entity_slug, COUNT(*)::int AS count
+       FROM facts
+       WHERE source_id = $1 AND expired_at IS NULL AND entity_slug IS NOT NULL
+       GROUP BY entity_slug
+       ORDER BY count DESC, entity_slug ASC
+       LIMIT 5`,
+      [source_id],
+    );
+    const r = total.rows[0] ?? {
+      total_active: 0, total_today: 0, total_week: 0, total_expired: 0, total_consolidated: 0,
+    };
+    return {
+      source_id,
+      total_active: Number(r.total_active),
+      total_today: Number(r.total_today),
+      total_week: Number(r.total_week),
+      total_expired: Number(r.total_expired),
+      total_consolidated: Number(r.total_consolidated),
+      top_entities: top.rows.map(t => ({ entity_slug: t.entity_slug, count: Number(t.count) })),
+    };
+  }
+
+  /**
+   * Internal helper: shared list-facts query builder.
+   * Supports source_id always, plus arbitrary additional WHERE clauses.
+   */
+  private async _listFacts(
+    source_id: string,
+    opts: FactListOpts & {
+      whereClauses?: string[];
+      whereParams?: Record<string, unknown>;
+      order: string;
+    },
+  ): Promise<FactRow[]> {
+    const limit = clampSearchLimit(opts.limit, 50, MAX_SEARCH_LIMIT);
+    const offset = Math.max(0, opts.offset ?? 0);
+    const whereParts: string[] = [`source_id = $source_id`];
+    const params: Record<string, unknown> = { source_id };
+    if (opts.activeOnly !== false) {
+      whereParts.push(`expired_at IS NULL`);
+    }
+    if (opts.kinds && opts.kinds.length > 0) {
+      whereParts.push(`kind = ANY($kinds)`);
+      params.kinds = opts.kinds;
+    }
+    if (opts.visibility && opts.visibility.length > 0) {
+      whereParts.push(`visibility = ANY($visibility)`);
+      params.visibility = opts.visibility;
+    }
+    for (const c of opts.whereClauses ?? []) whereParts.push(c);
+    Object.assign(params, opts.whereParams ?? {});
+
+    // Convert $name placeholders to numbered $1, $2, ... for PGLite.
+    const orderedKeys = Object.keys(params);
+    const indexFor = (name: string): number => orderedKeys.indexOf(name) + 1;
+    const sql = `SELECT * FROM facts
+       WHERE ${whereParts.join(' AND ').replace(/\$(\w+)/g, (_m, k) => `$${indexFor(k)}`)}
+       ORDER BY ${opts.order}
+       LIMIT ${limit} OFFSET ${offset}`;
+    const result = await this.db.query<FactRowSqlShape>(sql, orderedKeys.map(k => params[k]));
+    return result.rows.map(rowToFact);
+  }
+
+  // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis_evidence
   // ============================================================
 
@@ -2767,6 +3025,84 @@ export class PGLiteEngine implements BrainEngine {
 
     return computeAnomaliesFromBuckets(baseline, today, sigma);
   }
+}
+
+/**
+ * Raw row shape returned from `SELECT * FROM facts`. The `embedding`
+ * column comes back as a string (`[0.1,0.2,...]`) on PGLite when
+ * postgres-style types aren't auto-decoded; we parse on the way out.
+ */
+interface FactRowSqlShape {
+  id: number;
+  source_id: string;
+  entity_slug: string | null;
+  fact: string;
+  kind: FactKind;
+  visibility: FactVisibility;
+  context: string | null;
+  valid_from: Date | string;
+  valid_until: Date | string | null;
+  expired_at: Date | string | null;
+  superseded_by: number | null;
+  consolidated_at: Date | string | null;
+  consolidated_into: number | null;
+  source: string;
+  source_session: string | null;
+  confidence: number;
+  embedding: string | number[] | Float32Array | null;
+  embedded_at: Date | string | null;
+  created_at: Date | string;
+}
+
+function toDate(v: Date | string | null): Date | null {
+  if (v == null) return null;
+  if (v instanceof Date) return v;
+  return new Date(v);
+}
+
+function rowToFact(row: FactRowSqlShape): FactRow {
+  let embedding: Float32Array | null = null;
+  if (row.embedding != null) {
+    if (row.embedding instanceof Float32Array) embedding = row.embedding;
+    else if (Array.isArray(row.embedding)) embedding = new Float32Array(row.embedding);
+    else if (typeof row.embedding === 'string') {
+      // pgvector text format: "[0.1,0.2,...]"
+      const trimmed = row.embedding.trim();
+      const inner = trimmed.startsWith('[') ? trimmed.slice(1, -1) : trimmed;
+      const parts = inner.split(',').map(p => parseFloat(p.trim())).filter(Number.isFinite);
+      embedding = parts.length > 0 ? new Float32Array(parts) : null;
+    }
+  }
+  return {
+    id: Number(row.id),
+    source_id: row.source_id,
+    entity_slug: row.entity_slug,
+    fact: row.fact,
+    kind: row.kind,
+    visibility: row.visibility,
+    context: row.context,
+    valid_from: toDate(row.valid_from)!,
+    valid_until: toDate(row.valid_until),
+    expired_at: toDate(row.expired_at),
+    superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
+    consolidated_at: toDate(row.consolidated_at),
+    consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
+    source: row.source,
+    source_session: row.source_session,
+    confidence: Number(row.confidence),
+    embedding,
+    embedded_at: toDate(row.embedded_at),
+    created_at: toDate(row.created_at)!,
+  };
+}
+
+/**
+ * Encode a Float32Array as the pgvector text-form literal `[0.1,0.2,...]`.
+ * Both PGLite and Postgres accept this when the parameter is cast to ::vector.
+ */
+function toPgVectorLiteral(v: Float32Array | number[]): string {
+  if (v instanceof Float32Array) return '[' + Array.from(v).join(',') + ']';
+  return '[' + v.join(',') + ']';
 }
 
 function rowToCodeEdge(row: Record<string, unknown>): import('./types.ts').CodeEdgeResult {

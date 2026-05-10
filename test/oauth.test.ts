@@ -292,7 +292,7 @@ describe('verifyAccessToken', () => {
 
   const oldSchemaFallbackCases = [
     {
-      name: 'missing only v46 token columns',
+      name: 'missing only v47 token columns',
       dropSql: `
         DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
         ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
@@ -301,7 +301,7 @@ describe('verifyAccessToken', () => {
       `,
     },
     {
-      name: 'missing v46 token columns plus oauth_clients.access_tier',
+      name: 'missing v47 token columns plus oauth_clients.access_tier',
       dropSql: `
         DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
         ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
@@ -311,7 +311,7 @@ describe('verifyAccessToken', () => {
       `,
     },
     {
-      name: 'missing v46 token columns plus oauth_clients.deleted_at',
+      name: 'missing v47 token columns plus oauth_clients.deleted_at',
       dropSql: `
         DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
         ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
@@ -321,7 +321,7 @@ describe('verifyAccessToken', () => {
       `,
     },
     {
-      name: 'missing v46 token columns plus access_tier and deleted_at',
+      name: 'missing v47 token columns plus access_tier and deleted_at',
       dropSql: `
         DROP INDEX IF EXISTS idx_oauth_tokens_subject_email;
         ALTER TABLE oauth_tokens DROP COLUMN IF EXISTS subject_email;
@@ -678,7 +678,7 @@ describe('authorization code flow', () => {
     ).rejects.toThrow(/grant is no longer active/);
   });
 
-  test('federated token issuance fails closed when v46 token columns are absent', async () => {
+  test('federated token issuance fails closed when v47 token columns are absent', async () => {
     const oldDb = new PGlite({ extensions: { vector, pg_trgm } });
     await oldDb.exec(PGLITE_SCHEMA_SQL);
     try {
@@ -713,13 +713,13 @@ describe('authorization code flow', () => {
             userTier: 'Work',
           },
         ),
-      ).rejects.toThrow(/missing v46 OIDC identity columns/);
+      ).rejects.toThrow(/missing v47 OIDC identity columns/);
     } finally {
       await oldDb.close();
     }
   });
 
-  test('federated authorization code issuance fails closed when v46 code columns are absent', async () => {
+  test('federated authorization code issuance fails closed when v47 code columns are absent', async () => {
     const oldDb = new PGlite({ extensions: { vector, pg_trgm } });
     await oldDb.exec(PGLITE_SCHEMA_SQL);
     try {
@@ -751,7 +751,7 @@ describe('authorization code flow', () => {
             userTier: 'Work',
           },
         }),
-      ).rejects.toThrow(/missing v46 OIDC identity columns/);
+      ).rejects.toThrow(/missing v47 OIDC identity columns/);
     } finally {
       await oldDb.close();
     }

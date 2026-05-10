@@ -1382,6 +1382,47 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
+  // 11.5 facts_health (v0.31 hot memory). Surfaces per-source counters so
+  // operators can see the extraction pipeline's pulse without raw SQL.
+  // Lightweight: one COUNT-with-filters query + a top-5 aggregate. Only
+  // runs when the facts table exists (post-v40 brains); pre-v40 the
+  // probe is a no-op.
+  progress.heartbeat('facts_health');
+  try {
+    const factsExists = await engine.executeRaw<{ exists: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'facts') AS exists`,
+    );
+    if (factsExists[0]?.exists) {
+      const health = await engine.getFactsHealth('default');
+      const status: 'ok' | 'warn' = health.total_active >= 0 ? 'ok' : 'warn';
+      const top = health.top_entities
+        .slice(0, 3)
+        .map(t => `${t.entity_slug}:${t.count}`)
+        .join(', ') || '—';
+      checks.push({
+        name: 'facts_health',
+        status,
+        message:
+          `facts_health(default): ${health.total_active} active, ` +
+          `${health.total_today} today, ${health.total_week} this week, ` +
+          `${health.total_consolidated} consolidated, ` +
+          `top entities ${top}`,
+      });
+    } else {
+      checks.push({
+        name: 'facts_health',
+        status: 'ok',
+        message: 'facts table not present (pre-v0.31 brain or migration pending)',
+      });
+    }
+  } catch (e) {
+    checks.push({
+      name: 'facts_health',
+      status: 'warn',
+      message: `facts_health probe failed: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
   // 12. Index audit (opt-in via --index-audit). v0.13.1 follow-up to #170.
   // Reports indexes with zero recorded scans on Postgres. Informational only;
   // we DO NOT auto-drop. On #170's brain, idx_pages_frontmatter and

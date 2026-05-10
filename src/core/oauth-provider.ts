@@ -169,7 +169,7 @@ interface GBrainOAuthProviderOptions {
    */
   dcrDisabled?: boolean;
   /**
-   * v46 OIDC end-user identity federation. When set, the /authorize endpoint
+   * v47 OIDC end-user identity federation. When set, the /authorize endpoint
    * redirects to the OIDC issuer instead of returning the gbrain code
    * immediately. The /oauth/oidc/callback handler in serve-http.ts completes
    * the dance: exchanges the IdP code for an id_token, verifies the token,
@@ -311,7 +311,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   private tokenTtl: number;
   private refreshTtl: number;
   private resourceServerUrl?: URL;
-  /** v46 OIDC config; when undefined, /authorize uses the legacy rubber-stamp flow. */
+  /** v47 OIDC config; when undefined, /authorize uses the legacy rubber-stamp flow. */
   private oidc?: NonNullable<GBrainOAuthProviderOptions['oidc']>;
   private readonly pendingOidc = new Map<string, PendingOidcAuthorization>();
 
@@ -325,7 +325,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     this.resourceServerUrl = options.resourceServerUrl;
   }
 
-  /** True when v46 OIDC federation is wired. serve-http.ts uses this to gate the /oauth/oidc/callback route. */
+  /** True when v47 OIDC federation is wired. serve-http.ts uses this to gate the /oauth/oidc/callback route. */
   get oidcEnabled(): boolean { return this.oidc !== undefined; }
 
   /** Public OIDC config for serve-http.ts callback handler. Throws if not configured. */
@@ -491,7 +491,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
           && !isUndefinedColumnError(e, 'subject_iss')
           && !isUndefinedColumnError(e, 'user_tier')) throw e;
       if (params.federated) {
-        throw new Error('Database is missing v46 OIDC identity columns; run `gbrain apply-migrations --yes` before enabling OIDC federation.');
+        throw new Error('Database is missing v47 OIDC identity columns; run `gbrain apply-migrations --yes` before enabling OIDC federation.');
       }
       await this.sql`
         INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
@@ -673,7 +673,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         RETURNING client_id, scopes, resource, subject_email, subject_iss, user_tier
       `;
     } catch (e) {
-      // Pre-v46 schema fallback: same DELETE without v46 columns. The
+      // Pre-v47 schema fallback: same DELETE without v47 columns. The
       // resulting tokens won't carry subject_email; that's correct on a
       // database that doesn't have the column yet.
       if (!isUndefinedColumnError(e, 'subject_email')
@@ -692,7 +692,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     const codeRow = rows[0];
 
-    // Issue tokens. v46 federated identity (if present) flows through to
+    // Issue tokens. v47 federated identity (if present) flows through to
     // issueTokens so the new oauth_tokens row carries the same email + tier
     // captured at /authorize. issueTokens handles the column-absent case.
     const scopes = (codeRow.scopes as string[]) || [];
@@ -746,9 +746,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // legitimate client. With the predicate in the DELETE, wrong-client
     // attempts get zero rows back; the legitimate client retains the row
     // for one valid rotation.
-    // v46: pull subject_email/subject_iss/user_tier so a refresh-rotated
+    // v47: pull subject_email/subject_iss/user_tier so a refresh-rotated
     // access token preserves the original code-grant's federated identity
-    // snapshot. Pre-v46 schema falls back to the v45 RETURNING shape.
+    // snapshot. Pre-v47 schema falls back to the pre-OIDC RETURNING shape.
     let rows;
     try {
       rows = await this.sql`
@@ -797,8 +797,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       throw new Error('Requested scope exceeds refresh token grant');
     }
     const tokenScopes = scopes ?? grantedScopes;
-    // v46: forward the federated identity snapshot if present. issueTokens
-    // handles the pre-v46 schema case where the columns are absent.
+    // v47: forward the federated identity snapshot if present. issueTokens
+    // handles the pre-v47 schema case where the columns are absent.
     const subjectEmail = (row.subject_email as string | null | undefined) ?? undefined;
     const subjectIss = (row.subject_iss as string | null | undefined) ?? undefined;
     const userTierRaw = (row.user_tier as string | null | undefined) ?? undefined;
@@ -852,7 +852,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // surviving token, regardless of whether the purge ever ran.
     let oauthRows;
     try {
-      // v46: also pull subject_email/subject_iss/user_tier so federated
+      // v47: also pull subject_email/subject_iss/user_tier so federated
       // OIDC tokens carry the verified end-user identity into AuthInfo.
       // The columns are nullable for client_credentials tokens that have
       // no end-user behind them; verifyAccessToken treats null user_tier
@@ -868,9 +868,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       `;
     } catch (e) {
       if (isUndefinedColumnError(e, 'subject_email') || isUndefinedColumnError(e, 'subject_iss') || isUndefinedColumnError(e, 'user_tier')) {
-        // Pre-v46 schema: no end-user identity columns. Fall back to the
-        // v45 SELECT shape (no subject fields). The next catch ladder
-        // handles pre-v45 / pre-deleted_at cases the same way as before.
+        // Pre-v47 schema: no end-user identity columns. Fall back to the
+        // pre-OIDC SELECT shape (no subject fields). The next catch ladder
+        // handles pre-v46 / pre-deleted_at cases the same way as before.
         try {
           oauthRows = await this.sql`
             SELECT t.client_id, t.scopes, t.expires_at, t.resource,
@@ -930,7 +930,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
           }
         }
       } else if (isUndefinedColumnError(e, 'access_tier')) {
-        // Pre-v45 database during an upgrade window: preserve legacy OAuth
+        // Pre-v46 database during an upgrade window: preserve legacy OAuth
         // behavior by treating matching clients as Full tier until migrations
         // add the column. Keep the INNER JOIN + deleted_at gate when present.
         try {
@@ -983,7 +983,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (expiresAt === undefined || expiresAt < now) {
         throw new Error('Token expired');
       }
-      // v46 tier resolution: if the token was minted via OIDC code-grant
+      // v47 tier resolution: if the token was minted via OIDC code-grant
       // and we captured a snapshot of the end-user's tier at exchange
       // time, the effective tier is the more-restrictive of (client
       // tier, user tier). user_tier is null on client_credentials
@@ -1031,7 +1031,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         scopes: ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
         // Legacy tokens grandfathered with Full tier (matches the
-        // pre-v45 "all admin" grant). Operators that want tier
+        // pre-v46 "all admin" grant). Operators that want tier
         // enforcement should rotate to OAuth clients via
         // `gbrain auth register-client --tier <tier>`.
         tier: 'Full' as AccessTier,
@@ -1182,7 +1182,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         throw new Error('Database is missing oauth_clients.access_tier; run `gbrain apply-migrations --yes` before registering a restricted-tier client.');
       }
       // Back-compat for operators who register a legacy Full client before
-      // running v45. The column default cannot exist yet, so omit it.
+      // running v46. The column default cannot exist yet, so omit it.
       await this.sql`
         INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
                                     grant_types, scope, client_id_issued_at)
@@ -1241,10 +1241,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const effectiveTtl = ttlOverride || this.tokenTtl;
     const accessExpiry = now + effectiveTtl;
 
-    // v46 federated identity insert. The columns are nullable; for
+    // v47 federated identity insert. The columns are nullable; for
     // client_credentials and other non-OIDC paths the federated arg is
-    // undefined and the projected nulls preserve pre-v46 behavior.
-    // Pre-v46 schema fallback drops the federated columns entirely.
+    // undefined and the projected nulls preserve pre-v47 behavior.
+    // Pre-v47 schema fallback drops the federated columns entirely.
     const subjectEmail = federated?.subjectEmail ?? null;
     const subjectIss = federated?.subjectIss ?? null;
     const userTier = federated?.userTier ?? null;
@@ -1261,7 +1261,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
           && !isUndefinedColumnError(e, 'subject_iss')
           && !isUndefinedColumnError(e, 'user_tier')) throw e;
       if (federated?.subjectEmail || federated?.subjectIss || federated?.userTier) {
-        throw new Error('Database is missing v46 OIDC identity columns; run `gbrain apply-migrations --yes` before enabling OIDC federation.');
+        throw new Error('Database is missing v47 OIDC identity columns; run `gbrain apply-migrations --yes` before enabling OIDC federation.');
       }
       await this.sql`
         INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
@@ -1300,7 +1300,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
             && !isUndefinedColumnError(e, 'subject_iss')
             && !isUndefinedColumnError(e, 'user_tier')) throw e;
         if (federated?.subjectEmail || federated?.subjectIss || federated?.userTier) {
-          throw new Error('Database is missing v46 OIDC identity columns; run `gbrain apply-migrations --yes` before enabling OIDC federation.');
+          throw new Error('Database is missing v47 OIDC identity columns; run `gbrain apply-migrations --yes` before enabling OIDC federation.');
         }
         await this.sql`
           INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)

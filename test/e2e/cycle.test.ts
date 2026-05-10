@@ -61,7 +61,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
   beforeAll(async () => {
     await setupDB();
     repo = makeGitRepo();
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await teardownDB();
@@ -97,9 +97,11 @@ describeE2E('E2E: runCycle against real Postgres', () => {
     });
 
     expect(report.schema_version).toBe('1');
-    // Cycle ran all phases (or skipped the ones that don't support dry-run).
-    // v0.29 added `recompute_emotional_weight`; v0.26.5 added `purge`.
-    expect(report.phases.length).toBe(10);
+    // Cycle ran all 11 phases (or skipped the ones that don't support dry-run).
+    // v0.26.5 added the `purge` phase (after `orphans`).
+    // v0.29   added the `recompute_emotional_weight` phase (after `patterns`).
+    // v0.31   added the `consolidate` phase (between `recompute_emotional_weight` and `embed`).
+    expect(report.phases.length).toBe(11);
 
     // Nothing got written.
     const afterPages = await conn.unsafe(`SELECT count(*)::int AS n FROM pages`);

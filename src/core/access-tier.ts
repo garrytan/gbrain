@@ -38,7 +38,7 @@ export const ACCESS_TIERS: ReadonlyArray<AccessTier> = Object.freeze([
 /**
  * Default tier GRANTED to a caller when no explicit value is on the
  * record. Set to Full so legacy `oauth_clients` rows that pre-date
- * v45 keep their existing behavior; operators tighten per-client via
+ * v46 keep their existing behavior; operators tighten per-client via
  * `gbrain auth set-tier`. Distinct from OP_TIER_DEFAULT_REQUIRED
  * (which is also Full but means "most restrictive op gate"), so the
  * two purposes can diverge if the policy ever needs to.
@@ -95,7 +95,7 @@ export function tierImplies(granted: AccessTier, required: AccessTier): boolean 
 /**
  * Return the more-restrictive of two tiers (the lower rank).
  *
- * Used by v46 OIDC end-user identity: when a token is minted for a
+ * Used by v47 OIDC end-user identity: when a token is minted for a
  * client at tier X but the verified user has a grant at tier Y,
  * the effective tier is `tierMin(X, Y)` so the user grant can only
  * narrow access, never widen it. Fail-closed if either input is not
@@ -126,7 +126,7 @@ export function parseAccessTier(value: string | null | undefined): AccessTier | 
  * Coerce an `oauth_clients.access_tier` row value into an AccessTier.
  *
  * Two paths:
- *   - NULL (pre-v45 row that pre-dated the column) -> ACCESS_TIER_DEFAULT.
+ *   - NULL (pre-v46 row that pre-dated the column) -> ACCESS_TIER_DEFAULT.
  *     Preserves backward compatibility for rows the migration default
  *     could not reach.
  *   - Any present-but-unrecognised string -> 'None' (fail-closed).

@@ -23,14 +23,15 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { checkResourceAllowed, resourceUrlFromServerUrl } from '@modelcontextprotocol/sdk/shared/auth-utils.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError } from '../core/operations.ts';
-import type { OperationContext, AuthInfo } from '../core/operations.ts';
+import { operations } from '../core/operations.ts';
+import type { AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
-import { ACCESS_TIER_DEFAULT, OP_TIER_DEFAULT_REQUIRED, filterResponseByTier, parseAccessTier, tierImplies, type AccessTier } from '../core/access-tier.ts';
+import { ACCESS_TIER_DEFAULT, OP_TIER_DEFAULT_REQUIRED, parseAccessTier, tierImplies, type AccessTier } from '../core/access-tier.ts';
 import { isUndefinedColumnError } from '../core/utils.ts';
-import { summarizeMcpParams } from '../mcp/dispatch.ts';
+import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
+import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
@@ -173,7 +174,7 @@ interface ServeHttpOptions {
    */
   enforceAccessTiers?: boolean;
   /**
-   * v46 OIDC end-user identity federation. When all three are set, the
+   * v47 OIDC end-user identity federation. When all three are set, the
    * /authorize endpoint redirects to the OIDC issuer instead of returning
    * the gbrain code immediately, and /oauth/oidc/callback completes the
    * dance against `oauth_user_grants`. When unset, gbrain runs the legacy
@@ -200,7 +201,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Get raw SQL connection for OAuth provider
   const sql = db.getConnection() as SqlQuery;
 
-  // v46 OIDC federation: build the verifier once if the operator passed
+  // v47 OIDC federation: build the verifier once if the operator passed
   // --oidc-issuer + --oidc-client-id + --oidc-client-secret. The provider
   // takes the verifier in its constructor; the callback route below
   // delegates to provider.completeOidcCallback. publicUrl is required
@@ -447,7 +448,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // /register when the store exposes registerClient — so passing dcrDisabled
   // to the constructor is sufficient. No monkey-patching here.
 
-  // v46 OIDC callback. Registered BEFORE mcpAuthRouter so the SDK's catch-all
+  // v47 OIDC callback. Registered BEFORE mcpAuthRouter so the SDK's catch-all
   // doesn't intercept /oauth/oidc/callback. Only mounted when OIDC config is
   // present; the path 404s naturally on non-OIDC deployments.
   if (oidcConfig) {
@@ -1119,7 +1120,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // Runtime MCP access control. Source of truth:
       // `oauth_clients.access_tier`, threaded into AuthInfo by the
       // OAuth provider. Default ACCESS_TIER_DEFAULT preserves the
-      // pre-v45 grant when the column is null (legacy rows). The
+      // pre-v46 grant when the column is null (legacy rows). The
       // op.tier check below enforces the boundary unless the operator
       // explicitly starts audit-only mode; otherwise we log the
       // would-be decision (to mcp_request_log + SSE + stderr) so
@@ -1127,35 +1128,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const callerTier: AccessTier = authInfo.tier ?? ACCESS_TIER_DEFAULT;
       const requiredTier: AccessTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
       const tierAllowed = tierImplies(callerTier, requiredTier);
-      if (!tierAllowed) {
+      if (!tierAllowed && !enforceAccessTiers) {
         const tierMsg = `tier='${callerTier}' does not satisfy required '${requiredTier}'`;
-        if (enforceAccessTiers) {
-          const latency = Date.now() - startTime;
-          try {
-            await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
-                      VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${null}, ${`insufficient_tier: ${tierMsg}`})`;
-          } catch { /* best effort */ }
-          broadcastEvent({
-            agent: agentName,
-            operation: name,
-            scopes: authInfo.scopes.join(','),
-            latency_ms: latency,
-            status: 'error',
-            error: { code: 'insufficient_tier', message: tierMsg },
-            timestamp: new Date().toISOString(),
-          });
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                error: 'insufficient_tier',
-                message: `Operation ${name} ${tierMsg}`,
-                your_tier: callerTier,
-              }),
-            }],
-            isError: true,
-          };
-        }
         // Audit-only mode. Operators flipping enforcement need a SQL
         // surface to query and a live SSE feed; stderr alone is not
         // discoverable in container deployments. Write a `warn` row
@@ -1185,27 +1159,6 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         console.error(`[serve-http] WARN: ${tierMsg} for op '${name}' (audit-only; remove --audit-access-tiers to reject)`);
       }
 
-      const ctx: OperationContext = {
-        engine,
-        config,
-        logger: {
-          info: (msg: string) => console.error(`[INFO] ${msg}`),
-          warn: (msg: string) => console.error(`[WARN] ${msg}`),
-          error: (msg: string) => console.error(`[ERROR] ${msg}`),
-        },
-        dryRun: !!(params?.dry_run),
-        // F7: HTTP MCP is the untrusted/agent-facing transport. Stdio MCP at
-        // src/mcp/dispatch.ts:61 sets this; the inlined HTTP context-builder
-        // forgot it for several releases, which let HTTP MCP callers with a
-        // read+write token submit `shell` jobs and execute arbitrary commands
-        // on the host (RCE). The fail-closed contract in operations.ts is the
-        // belt; this is the suspenders.
-        remote: true,
-        auth: authInfo,
-        tier: enforceAccessTiers ? callerTier : undefined,
-        senderId: authInfo.clientId,
-      };
-
       // F8: redact request payload by default (declared keys only via the
       // op's `params` allow-list; values + attacker-controlled key names
       // never written to mcp_request_log or the SSE feed). --log-full-params
@@ -1217,62 +1170,52 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         : (safeParamsSummary ? JSON.stringify(safeParamsSummary) : null);
       const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
 
+      // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
+      // src/mcp/dispatch.ts so HTTP MCP shares the same dispatch path as
+      // stdio MCP. The dispatcher does param validation, OperationContext
+      // build, error envelope unification, and (new) `_meta.brain_hot_memory`
+      // injection via the metaHook. HTTP-specific concerns (mcp_request_log
+      // persistence + SSE broadcast) stay here; the dispatcher returns the
+      // ToolResult and we read isError + _meta to pick the right branch.
+      const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
+        ?? ['world'];
+      const tokenSourceId = (authInfo as AuthInfo & { sourceId?: string }).sourceId
+        ?? process.env.GBRAIN_SOURCE
+        ?? 'default';
+
+      let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {
-        const rawResult = await op.handler(ctx, (params || {}) as Record<string, unknown>);
-        // Tier-aware response filtering for the read surface. Bypass
-        // for Full / undefined tier; per-op slug-prefix filter for
-        // Work / Family. See `filterResponseByTier` for op coverage
-        // and the page-not-found rationale. Throws OperationError on
-        // a tier-rejected single-page hit so the wire envelope matches
-        // a real engine not-found. requestSlug is threaded through so
-        // an empty post-filter ambiguous-candidates throw can echo the
-        // caller's input slug in the message (matching engine shape).
-        const requestSlug = typeof params?.slug === 'string' ? (params.slug as string) : undefined;
-        const includeDeleted = (params?.include_deleted as boolean) === true;
-        const result = enforceAccessTiers
-          ? await filterResponseByTier(name, rawResult, { tier: ctx.tier, requestSlug, includeDeleted })
-          : rawResult;
-        const latency = Date.now() - startTime;
-
-        try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'success'}, ${logParams})`;
-        } catch { /* best effort */ }
-
-        broadcastEvent({
-          agent: agentName,
-          operation: name,
-          params: broadcastParams,
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: 'success',
-          timestamp: new Date().toISOString(),
+        toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
+          remote: true,
+          enforceRemoteAccess: enforceAccessTiers,
+          scopes: authInfo.scopes,
+          tier: enforceAccessTiers ? callerTier : undefined,
+          senderId: authInfo.clientId,
+          takesHoldersAllowList: tokenAllowList,
+          sourceId: tokenSourceId,
+          metaHook: getBrainHotMemoryMeta,
+          // v0.31 follow-up fix: thread auth so the whoami op (and any
+          // future scope-aware handlers) can introspect the caller. The
+          // original D12/eE1 refactor moved dispatch into dispatchToolCall
+          // but forgot to pass authInfo; whoami fell through to the
+          // unknown_transport throw because ctx.auth was undefined.
+          auth: authInfo,
+          logger: {
+            info: (msg: string) => console.error(`[INFO] ${msg}`),
+            warn: (msg: string) => console.error(`[WARN] ${msg}`),
+            error: (msg: string) => console.error(`[ERROR] ${msg}`),
+          },
         });
-
-        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (e) {
+        // dispatchToolCall absorbs OperationError + Error and returns
+        // isError:true; only an unexpected throw lands here. Treat as the
+        // F15 unified envelope.
         const latency = Date.now() - startTime;
-        // F15: unify error envelope. Both OperationError and unexpected
-        // exceptions go through src/core/errors.ts so clients see a single
-        // shape ({class, code, message, hint}). Pre-fix, OperationError
-        // serialized via e.toJSON() and other exceptions used a hand-rolled
-        // {error, message} envelope — a client couldn't pattern-match
-        // reliably across the two.
-        const errorPayload = e instanceof OperationError
-          ? buildError({
-              class: 'OperationError',
-              code: e.code,
-              message: e.message,
-              hint: e.suggestion,
-              docs_url: e.docs,
-            })
-          : serializeError(e);
-        const errMsg = errorPayload.message;
+        const errorPayload = serializeError(e);
         try {
           await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errorPayload.message})`;
         } catch { /* best effort */ }
-
         broadcastEvent({
           agent: agentName,
           operation: name,
@@ -1283,9 +1226,50 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           error: errorPayload,
           timestamp: new Date().toISOString(),
         });
-
         return { content: [{ type: 'text', text: JSON.stringify({ error: errorPayload }) }], isError: true };
       }
+
+      const latency = Date.now() - startTime;
+      if (toolResult.isError) {
+        // dispatchToolCall serializes the error into the content text;
+        // for the audit log we re-extract a message string for the
+        // mcp_request_log error_message column. Best-effort parse.
+        let errMsg = 'unknown_error';
+        try {
+          const parsed = JSON.parse(toolResult.content[0]?.text ?? '{}');
+          errMsg = parsed.error?.message ?? parsed.message ?? errMsg;
+        } catch { /* ignore */ }
+        try {
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: name,
+          params: broadcastParams,
+          scopes: authInfo.scopes.join(','),
+          latency_ms: latency,
+          status: 'error',
+          error: { code: 'op_error', message: errMsg },
+          timestamp: new Date().toISOString(),
+        });
+        return toolResult;
+      }
+
+      try {
+        await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+                  VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'success'}, ${logParams})`;
+      } catch { /* best effort */ }
+      broadcastEvent({
+        agent: agentName,
+        operation: name,
+        params: broadcastParams,
+        scopes: authInfo.scopes.join(','),
+        latency_ms: latency,
+        status: 'success',
+        timestamp: new Date().toISOString(),
+      });
+      return toolResult;
     });
 
     // F14: wrap transport setup + handleRequest in try/catch. Without this,

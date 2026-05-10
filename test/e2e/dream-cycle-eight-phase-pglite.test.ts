@@ -78,8 +78,12 @@ async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
   }
 }
 
-describe('E2E cycle phase order', () => {
-  test('ALL_PHASES is the documented sequence', () => {
+describe('E2E v0.31 11-phase cycle', () => {
+  test('ALL_PHASES is the 11-phase order in the documented sequence', () => {
+    // v0.23: original 8 phases (lint→orphans).
+    // v0.26.5: added 'purge' (hard-delete soft-deleted pages + sources past 72h TTL).
+    // v0.29: added 'recompute_emotional_weight' after patterns.
+    // v0.31: added 'consolidate' between recompute_emotional_weight and embed (facts→takes promotion).
     expect(ALL_PHASES).toEqual([
       'lint',
       'backlinks',
@@ -88,13 +92,14 @@ describe('E2E cycle phase order', () => {
       'extract',
       'patterns',
       'recompute_emotional_weight',
+      'consolidate',
       'embed',
       'orphans',
       'purge',
     ]);
   });
 
-  test('full cycle on dry-run returns CycleReport.phases in v0.23 order with new totals fields', async () => {
+  test('full cycle on dry-run returns CycleReport.phases in v0.31 order with new totals fields', async () => {
     const rig = await setupRig();
     try {
       await withoutAnthropicKey(async () => {
@@ -112,15 +117,20 @@ describe('E2E cycle phase order', () => {
           'extract',
           'patterns',
           'recompute_emotional_weight',
+          'consolidate',
           'embed',
           'orphans',
           'purge',
         ]);
-        // New totals fields exist (v0.23 additive growth)
+        // New totals fields exist (additive growth across v0.23, v0.26.5, v0.31)
         expect(report.totals).toMatchObject({
           transcripts_processed: 0,
           synth_pages_written: 0,
           patterns_written: 0,
+          purged_sources_count: 0,
+          purged_pages_count: 0,
+          facts_consolidated: 0,
+          consolidate_takes_written: 0,
         });
         // Synthesize and patterns are skipped (not_configured / insufficient_evidence)
         const synth = report.phases.find(p => p.phase === 'synthesize');

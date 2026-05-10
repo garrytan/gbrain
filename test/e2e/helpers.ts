@@ -35,6 +35,9 @@ const FIXTURES_DIR = resolve(import.meta.dir, 'fixtures');
 let engine: PostgresEngine | null = null;
 
 const ALL_TABLES = [
+  // v0.31: facts must come BEFORE pages too (FK to sources, but tests
+  // seed via direct SQL so the row stays referenced until truncated).
+  'facts',
   // v0.28: takes + synthesis_evidence MUST come BEFORE pages because they FK pages.id
   'synthesis_evidence',
   'takes',
@@ -94,6 +97,20 @@ export async function setupDB(): Promise<PostgresEngine> {
     INSERT INTO config (key, value) VALUES ('schema_version', '1')
     ON CONFLICT (key) DO NOTHING
   `);
+  await conn.unsafe(`
+    INSERT INTO sources (id, name, config)
+    VALUES ('default', 'default', '{"federated": true}'::jsonb)
+    ON CONFLICT (id) DO UPDATE
+      SET name = 'default',
+          local_path = NULL,
+          last_commit = NULL,
+          last_sync_at = NULL,
+          config = '{"federated": true}'::jsonb,
+          archived = false,
+          archived_at = NULL,
+          archive_expires_at = NULL
+  `);
+  await conn.unsafe(`DELETE FROM sources WHERE id != 'default'`);
 
   engine = new PostgresEngine();
   await engine.connect({ database_url: DATABASE_URL });

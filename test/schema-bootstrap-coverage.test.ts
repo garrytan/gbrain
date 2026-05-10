@@ -224,9 +224,9 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
   }
 }, 30000);
 
-test('PGLITE_SCHEMA_SQL directly replays v46 oauth token columns before subject_email index', async () => {
+test('PGLITE_SCHEMA_SQL directly replays v47 oauth token columns before subject_email index', async () => {
   // CI caught the Postgres sibling of this: an existing DB with oauth_tokens
-  // but no v46 federated columns crashed when latest schema replay reached
+  // but no v47 federated columns crashed when latest schema replay reached
   // idx_oauth_tokens_subject_email before migrations could run. The schema
   // blob now carries additive ALTERs before that index, independent of the
   // engine bootstrap layer.

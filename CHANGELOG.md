@@ -9,20 +9,179 @@ All notable changes to GBrain will be documented in this file.
 Adds tier-aware response filtering and per-op invocation gates to the MCP dispatch path so the slug-prefix half of ACCESS_POLICY.md is enforced at the protocol layer, not just by the agent's prompt. The "sender" the dispatcher sees is the OAuth `client_id` the operator registered; when OIDC federation is enabled, verified end-user identity narrows that client tier through `oauth_user_grants`.
 
 - `src/core/access-tier.ts` — `AccessTier` type (`Full | Work | Family | None`), strict-ordered `tierImplies`, `parseAccessTier` with typo-loud `InvalidAccessTierError`, `resolveStoredAccessTier` (NULL → default Full, junk → fail-closed None), `tierAllowsSlug` for slug-prefix visibility.
-- Migration v45: `ALTER TABLE oauth_clients ADD COLUMN access_tier TEXT NOT NULL DEFAULT 'Full'`. Existing clients land at Full to preserve the pre-v45 grant. Verify hook asserts the column landed NOT NULL with the right default so a wedged DDL on a managed Postgres pooler can't claim success silently.
+- Migration v46: `ALTER TABLE oauth_clients ADD COLUMN access_tier TEXT NOT NULL DEFAULT 'Full'`. Existing clients land at Full to preserve the pre-v46 grant. Verify hook asserts the column landed NOT NULL with the right default so a wedged DDL on a managed Postgres pooler can't claim success silently.
 - `OperationContext.tier` + `OperationContext.senderId` threaded through the HTTP MCP dispatch path. `AuthInfo.tier` resolved from `oauth_clients.access_tier` at verify time (single JOIN, no N+1).
 - `Operation.tier?: AccessTier` declarative requirement next to `Operation.scope`. Default `Full` (most restrictive) so a new op without an annotation fails closed for non-Full callers until reviewed.
 - Per-op tier annotations on the read surface: `get_page`, `list_pages`, `search`, `query`, `get_chunks`, `resolve_slugs`, `get_recent_salience`, `find_orphans` lowered to `Work`; `get_timeline`, `get_stats`, `get_health`, `whoami` lowered to `Family`. All mutating + admin ops stay at `Full`.
 - Tier-aware response filtering for read paths via a per-op shape map (`OP_FILTER_SHAPE`) so the filter switches on declared shape rather than guessing: `get_page` (single-page) throws `page_not_found` for hidden slugs (with the engine's exact `suggestion` text so the wire envelope is byte-identical) and filters the ambiguous-slug `candidates` list; `list_pages`, `search`, `query`, `get_recent_salience` (page-array) drop rows outside the visible prefix set; `find_orphans` (orphans-wrapper) filters the inner `orphans` array and rewrites `total_orphans`, `total_linkable`, `total_pages`, and `excluded` to describe only returned visible rows (hidden rows are not counted as excluded, because that leaks hidden-brain size); `resolve_slugs` (slug-string-array) filters bare-string slugs; `get_health` (health-wrapper) strips slug rows from `most_connected` while preserving aggregate counts. `get_chunks` and `get_timeline` are gated input-side in their handlers (rows carry no slug field, so a response-side filter is structurally inert; both return `[]` for hidden slugs so hidden and absent are indistinguishable on the wire). Defaults derived from `templates/ACCESS_POLICY.md.template` (Work: `people/`, `companies/`, `deals/`, `projects/`, `tasks/`, `calendar/` and the `wiki/*` mirrors; Family: `logistics/`, `meetings/`, `calendar/`, `scheduling/`). Custom operator prefix maps are not plumbed into transports yet; `FilterContext.prefixes` is the primitive for that follow-up.
-- HTTP MCP tier enforcement defaults on; legacy clients and pre-v45 rows resolve to `Full` for compatibility. `gbrain serve --audit-access-tiers` / `--no-enforce-access-tiers` is the explicit dry-run escape hatch: it logs the would-be decision to `mcp_request_log` (status `warn`, `latency_ms` records dispatch-side overhead before the handler runs), broadcasts an SSE event with `would_reject: true`, and proceeds unfiltered.
+- HTTP MCP tier enforcement defaults on; legacy clients and pre-v46 rows resolve to `Full` for compatibility. `gbrain serve --audit-access-tiers` / `--no-enforce-access-tiers` is the explicit dry-run escape hatch: it logs the would-be decision to `mcp_request_log` (status `warn`, `latency_ms` records dispatch-side overhead before the handler runs), broadcasts an SSE event with `would_reject: true`, and proceeds unfiltered.
 - Stdio MCP enforces a fixed Work-tier read-only surface (`scopes: ['read']`, `tier: 'Work'`). The local pipe has no per-token auth, so the conservative posture is to treat every stdio caller as untrusted and apply the same dispatch + response filtering used for HTTP MCP. **Backward-incompatible for operators who relied on stdio for write/admin ops via Claude Desktop / Codex CLI / Cursor**: `put_page`, `add_link`, `delete_page`, `submit_job`, file ops, and any unannotated (default-Full) read op no longer appear in `tools/list` over stdio. Operators who want owner-trust over stdio should call ops through `gbrain call <op>` (CLI path; sets `remote: false` and bypasses the gate) or move to `gbrain serve --http` with a Full-tier OAuth client.
 - Subagent brain tools now apply the same Work-tier read boundary before returning data. The allowlist is reduced to tier-filtered reads (`query`, `search`, `get_page`, `list_pages`, `resolve_slugs`, `get_recent_salience`) plus namespace-confined `put_page`. `get_backlinks`, `traverse_graph`, `get_ingest_log`, and `find_anomalies` are not exposed to subagents until they have tier-safe result contracts; `find_anomalies` in particular carries `page_slugs` and whole-brain aggregate stats.
 
 **Known limitations (v0.31.x follow-up):** `search`, `query`, `list_pages`, `resolve_slugs`, and `get_page` fuzzy resolution use engine-side ranking/`LIMIT N` followed by post-filtering, so a non-Full caller's result-count and rank-order can encode hidden-page distribution within the top-N. The response filter strips hidden slugs and the `get_page` handler now decides ambiguity after filtering visible candidates, but whole-brain ranking still happens first. Closing this fully requires SQL push-down of the tier prefix list into the engine's search/list/resolve queries; tracked for the next access-tier wave.
-- `gbrain auth register-client --tier <Full|Work|Family|None>` (default Full); `gbrain auth set-tier <client_id> <tier>` to retag existing clients (refuses soft-deleted clients). `gbrain auth list-clients` shows OAuth clients with their `access_tier` and grant times. INNER JOIN on `verifyAccessToken` with `c.deleted_at IS NULL` so an orphan or soft-deleted client's surviving token cannot fall open to Full. NULL pre-v45 rows retain the compatibility Full default; present-but-invalid stored values, including empty/whitespace strings, fail closed to `None`.
-- Legacy `access_tokens` grandfathered to Full to preserve the pre-v45 admin grant. Operators that want tier filtering should rotate to OAuth clients.
+- `gbrain auth register-client --tier <Full|Work|Family|None>` (default Full); `gbrain auth set-tier <client_id> <tier>` to retag existing clients (refuses soft-deleted clients). `gbrain auth list-clients` shows OAuth clients with their `access_tier` and grant times. INNER JOIN on `verifyAccessToken` with `c.deleted_at IS NULL` so an orphan or soft-deleted client's surviving token cannot fall open to Full. NULL pre-v46 rows retain the compatibility Full default; present-but-invalid stored values, including empty/whitespace strings, fail closed to `None`.
+- Legacy `access_tokens` grandfathered to Full to preserve the pre-v46 admin grant. Operators that want tier filtering should rotate to OAuth clients.
 - Tests: `test/access-tier.test.ts` covers the primitive (parse/coerce/imply, prototype-pollution regression, all five filter shapes against real return types from `get_chunks`/`find_orphans`/`resolve_slugs`/`get_health`/`get_page` ambiguous + visible single-page, plus negative coverage that mutating ops pass through). An `OP_FILTER_SHAPE` parity test walks every tier-annotated read op and asserts each is in the shape map, the `HANDLER_GATED_OPS` allowlist, or the `NO_SLUG_DATA_OPS` allowlist — a future op tagged `tier: 'Work'` without coverage fails the test. Soft-delete regression in `test/oauth.test.ts` asserts a tombstoned client's surviving token fails `verifyAccessToken` (covers the `c.deleted_at IS NULL` JOIN predicate). `test/e2e/access-tier-enforce.test.ts` boots `serve --http` end-to-end and asserts a Work-tier OAuth client receives `page_not_found` on a `personal/` slug, an empty `resolve_slugs("personal")`, an empty `get_chunks` array on a hidden slug, and a personal-stripped `list_pages`. Migration verify-retry test in `test/migrate.test.ts` asserts an idempotent migration whose verify still fails after retry throws `MigrationDriftError` rather than silently advancing the version.
+## [0.31.0] - 2026-05-08
 
+**Hot memory ships. Your brain remembers what you said today, across sessions.**
+**The agent reaches for it automatically. No overnight wait.**
+
+Up to v0.30, gbrain only learned overnight. Conversations from this morning
+were invisible until the dream cycle ran. v0.31 closes the gap. Every
+substantive turn extracts facts via a cheap Haiku pass into a per-source
+`facts` table, exposed through `gbrain recall`. The MCP `_meta.brain_hot_memory`
+channel auto-injects relevant facts on every tool-call response so Claude
+Code, Claude Desktop, and any OAuth HTTP client see the brain's hot memory
+without having to ask. The dream cycle's new `consolidate` phase clusters
+related facts and promotes them into durable `takes(kind='fact')` overnight,
+landing as the 11th phase between `recompute_emotional_weight` (v0.29) and
+`embed`. Facts stay as the audit trail.
+
+### The cross-session test
+
+Concrete ship gate: insert a fact in one chat session, recall it from
+another session hours later, brain remembers. Mechanized as a primary
+PGLite test (CI default) and a Postgres parity test
+(`test/e2e/facts-separation-postgres.test.ts`).
+
+| Capability | Before | After v0.31 |
+|---|---|---|
+| Cross-session recall freshness | overnight (12-24h) | <1s (per-turn) |
+| User-visible memory surface | none | `gbrain recall --today` markdown |
+| Agent context injection | manual tool call | automatic via MCP `_meta` |
+| Per-source isolation | n/a | every read filtered by `source_id` |
+| Privacy parity with takes | n/a | `visibility` column (private/world); remote-default world-only |
+| Audit trail when facts get superseded | n/a | `gbrain recall --supersessions` |
+
+### What it ships
+
+- **5 fact kinds.** `event` / `preference` / `commitment` / `belief` / `fact`
+  with per-kind decay halflives (event 7d / commitment 90d / preference 90d
+  / belief 365d / fact 365d) so a Tuesday lunch event ages out faster than
+  a durable preference.
+- **MCP `_meta.brain_hot_memory` injection.** Capable clients see the
+  brain's relevant hot memory automatically. Cache key is
+  `(source_id, session_id, hash(takesHoldersAllowList))` so visibility
+  tiers don't bleed and per-token allow-lists stay isolated.
+- **Cross-source isolation.** Same entity_slug in two sources never bleeds.
+  Every recall query starts `WHERE source_id = $X` so the trust boundary is
+  part of the index path.
+- **Cosine fast-path.** New facts within 0.95 cosine of an existing fact
+  skip the LLM classifier entirely. Classifier-failure fallback at 0.92.
+- **Bounded queue.** Cap 100, drop-oldest, per-session in-flight=1, abort
+  signal threading from server SIGTERM with 5s grace. Burst chat doesn't
+  fan out 50 parallel Haiku calls.
+- **Anti-loop.** Pages with `dream_generated: true` frontmatter never
+  trigger extraction (reuses v0.23.2 marker).
+- **`gbrain recall` CLI.** `<entity>` / `--since DUR` / `--session ID` /
+  `--today` (markdown with kind icons 📅🎯🤝💭📌) / `--grep TEXT` /
+  `--supersessions` (audit log) / `--include-expired` / `--as-context`
+  (prompt-injection-ready for headless agents) / `--json`.
+- **`gbrain forget <fact-id>`.** Shorthand for the soft-delete path. Never
+  DELETE — the row stays, `expired_at` gets set.
+- **`facts.extraction_enabled` config kill switch.** `gbrain config set
+  facts.extraction_enabled false` disables extraction across the brain
+  without a binary downgrade.
+- **`gbrain doctor` `facts_health` check.** Per-source counters: total
+  active / today / week / consolidated, top entities by fact count.
+- **HTTP MCP transport refactor.** `serve-http.ts` now goes through
+  `dispatchToolCall` so OAuth HTTP clients inherit `_meta` injection,
+  `source_id` resolution, and the unified error envelope from the same
+  code path stdio uses (closes the v0.22.7 anti-drift contract for HTTP).
+- **`ErrorCode` opens.** TS forward-compat via `(string & {})` so
+  downstream consumers (gbrain-evals etc) don't break on every new code.
+- **Dream-cycle 11th phase `consolidate`.** Between `recompute_emotional_weight` and `embed`.
+  Clusters facts ≥3-strong + ≥24h-old per (source, entity), greedy cosine
+  threshold 0.85, picks highest-confidence claim as the take, INSERTs
+  into `takes(kind='fact')`, marks contributing facts `consolidated_at` +
+  `consolidated_into`. Never DELETE.
+
+### Itemized changes
+
+- Schema migration v45 in `src/core/migrate.ts` (renumbered from v40 during the
+  merge with master, which added v40-v44 in v0.29/v0.30). New `facts` table with
+  `source_id` (TEXT FK to sources, per-source isolation, NOT brain_id),
+  `kind` CHECK constraint, `visibility` CHECK (private/world for
+  takes-style ACL parity), temporal columns
+  (`valid_from`/`valid_until`/`expired_at`/`superseded_by`), supersession
+  + consolidation chains, embedding column with engine-resolved dim
+  (HALFVEC where pgvector ≥0.7, VECTOR fallback below). 5 partial indexes
+  leading on source_id. RLS DO-block matches takes pattern.
+- `BrainEngine` extended with 8 facts methods: `insertFact`, `expireFact`,
+  `listFactsByEntity` / `Since` / `BySession`, `listSupersessions`,
+  `findCandidateDuplicates`, `consolidateFact`, `getFactsHealth`.
+  Per-entity `pg_advisory_xact_lock` on Postgres for the dedup window.
+  PGLite no-op (single process).
+- New modules: `src/core/facts/{extract, classify, queue, decay, meta-hook}.ts`
+  + `src/core/entities/resolve.ts` (slug canonicalization shared with
+  signal-detector).
+- 3 new MCP ops: `extract_facts` (write scope), `recall` (read scope),
+  `forget_fact` (write scope). `OperationContext.sourceId?: string`
+  (TEXT, per the schema). `ToolResult._meta?: Record<string, unknown>`
+  extension. Best-effort `metaHook` in dispatch.ts wrapped in its own
+  try/catch (any DB blip degrades to no-`_meta`, doesn't fail the tool
+  call).
+- `put_page` compliance backstop on conversation-shape pages (note,
+  meeting, slack, email, calendar-event, source, writing) with body
+  ≥80 chars. Skipped reasons (`subagent_namespace` / `dream_generated` /
+  `kind:*` / `too_short` / `extraction_disabled` / `queue_shutdown` /
+  `backstop_error`) are stable strings consumed by tests.
+- 110 unit + 6 e2e test files. PGLite primary ship gate
+  (`test/facts-separation-pglite.test.ts`) + Postgres parity gate
+  (`test/e2e/facts-separation-postgres.test.ts`).
+- `gbrain doctor` adds `facts_health` check. JSON output shape pinned by
+  `test/facts-doctor-shape.test.ts`.
+
+## To take advantage of v0.31.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if
+`gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the migration applied:**
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.name == "facts_health")'
+   ```
+3. **Try recall and forget:**
+   ```bash
+   gbrain recall --today          # today's facts as markdown
+   gbrain recall --since "1h ago" --json
+   gbrain recall --supersessions  # audit log
+   gbrain forget <fact-id>        # expire a fact (soft delete)
+   ```
+4. **Optional: kill switch.** If extraction misbehaves on your brain,
+   disable globally without rolling back the binary:
+   ```bash
+   gbrain config set facts.extraction_enabled false
+   ```
+5. **If any step fails or the numbers look wrong**, file an issue at
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output
+   + which step broke. The auto-recovery loop depends on this signal.
+
+### Out of v0.31 scope (deferred to v0.32+)
+
+- Hybrid/semantic search in `recall` (`--semantic` flag)
+- Auto-parsing `valid_until` from natural language ("until Tuesday")
+- Migration of pre-existing `takes(kind='fact')` rows into facts (durable
+  cold memory; left intact)
+- Cross-brain federation for facts (agent-side, post-v0.32)
+- Interactive supersession confirmation UX (audit log only in v0.31)
+- Extraction on sync / ingest / webhook paths (v0.31 covers conversation
+  paths only via signal-detector + put_page backstop)
+
+### For contributors
+
+- Codex outside-voice review caught 8 implementation gaps the eng review
+  missed (HTTP transport bypass, source_id-as-INTEGER vs TEXT,
+  hardcoded VECTOR(1536), `_meta`-as-response-wrapper API break, more);
+  all addressed inline. Plan + every decision tracked at
+  `~/.claude/plans/system-instruction-you-are-working-typed-piglet.md`.
+- All 110 facts unit tests run hermetic on PGLite. E2E suite skips
+  cleanly without `DATABASE_URL` per existing test policy.
 ## [0.30.2] - 2026-05-08
 
 **Dream synthesize stops dropping fat transcripts. Subagents that overflow Anthropic's context die once, not three times. The queue stops clogging.**
@@ -813,6 +972,9 @@ gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s.json \
 
 If anything looks off, file at https://github.com/garrytan/gbrain/issues
 with `gbrain doctor` output.
+
+
+
 
 ## [0.28.11] - 2026-05-07
 

@@ -9,6 +9,7 @@ import { dispatchToolCall, validateParams, buildOperationContext } from './dispa
 import { OP_TIER_DEFAULT_REQUIRED, tierImplies } from '../core/access-tier.ts';
 import type { AccessTier } from '../core/access-tier.ts';
 import { hasScope } from '../core/scope.ts';
+import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 
 const STDIO_SCOPES = ['read'];
 const STDIO_TIER: AccessTier = 'Work';
@@ -50,6 +51,14 @@ export async function startMcpServer(engine: BrainEngine) {
       scopes: STDIO_SCOPES,
       tier: STDIO_TIER,
       takesHoldersAllowList: ['world'],
+      // v0.31: source defaults to 'default' for stdio (no per-token scope).
+      // Operators who want a different source on stdio MCP should set
+      // GBRAIN_SOURCE in the env or use --source via `gbrain call`.
+      sourceId: process.env.GBRAIN_SOURCE || 'default',
+      // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
+      // Code see the brain's relevant hot memory automatically alongside
+      // every tool-call response. Best-effort; absorbs errors.
+      metaHook: getBrainHotMemoryMeta,
     });
   });
 

@@ -76,7 +76,7 @@ describeE2E('E2E: Git-to-DB Sync Pipeline', () => {
   beforeAll(async () => {
     await setupDB();
     repoPath = createTestRepo();
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await teardownDB();
@@ -437,7 +437,7 @@ describeE2E('E2E: sync --skip-failed structured summary loop (v0.22.12, issue #5
       '---', 'type: person', 'title: Alice', '---', '', 'Body.',
     ].join('\n'));
     execSync('git add -A && git commit -m "initial"', { cwd: repoPath, stdio: 'pipe' });
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await teardownDB();

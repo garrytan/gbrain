@@ -969,6 +969,11 @@ describe('PR #356 — LATEST_VERSION is max(versions), not array[-1]', () => {
     expect(LATEST_VERSION).toBe(expectedMax);
   });
 
+  test('migration versions are unique', () => {
+    const versions = MIGRATIONS.map(m => m.version);
+    expect(new Set(versions).size).toBe(versions.length);
+  });
+
   test('Math.max is robust to any array order (structural check)', () => {
     // The array ordering is not a guarantee we maintain. v0.18.0's v21/v22/v23
     // sat out-of-order in the middle of the array (release-order reasons);
@@ -1259,23 +1264,46 @@ describe('migration v40 — pages_emotional_weight (v0.29)', () => {
 });
 
 // ============================================================
-// v0.30.2 - v46 oauth_user_grants (end-user identity layer)
+// v0.31.1 - v46/v47 access-tier + oauth_user_grants
 // ============================================================
-// v45 shipped per-client access tier. v46 layers per-email grants on top:
+// v45 is upstream v0.31 hot memory. v46 ships per-client access tier.
+// v47 layers per-email grants on top:
 // when /token exchanges an auth code carrying a federated identity, the
 // minted bearer token snapshots the email's grant tier into
 // oauth_tokens.user_tier. Snapshot semantics mean revoking a grant takes
 // effect on the next mint, not on already-issued tokens.
-describe('migrate v46 - oauth_user_grants', () => {
+describe('migrate v46 - oauth_clients_access_tier', () => {
   const v46 = MIGRATIONS.find(m => m.version === 46);
 
   test('v46 is registered with the expected name', () => {
     expect(v46).toBeDefined();
-    expect(v46!.name).toContain('oauth_user_grants');
+    expect(v46!.name).toContain('oauth_clients_access_tier');
   });
 
-  test('v46 creates oauth_user_grants table with the spec columns', () => {
-    const sql = v46!.sql;
+  test('v46 adds access_tier with the compatibility Full default', () => {
+    expect(v46!.sql).toContain("ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS access_tier TEXT NOT NULL DEFAULT 'Full'");
+    expect(v46!.idempotent).toBe(true);
+  });
+
+  test('v46 verify hook checks access_tier in current_schema()', () => {
+    expect(typeof v46!.verify).toBe('function');
+    const verifySrc = v46!.verify!.toString();
+    expect(verifySrc).toContain('oauth_clients');
+    expect(verifySrc).toContain('access_tier');
+    expect(verifySrc).toContain('current_schema()');
+  });
+});
+
+describe('migrate v47 - oauth_user_grants', () => {
+  const v47 = MIGRATIONS.find(m => m.version === 47);
+
+  test('v47 is registered with the expected name', () => {
+    expect(v47).toBeDefined();
+    expect(v47!.name).toContain('oauth_user_grants');
+  });
+
+  test('v47 creates oauth_user_grants table with the spec columns', () => {
+    const sql = v47!.sql;
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS oauth_user_grants');
     expect(sql).toContain('email        TEXT PRIMARY KEY');
     // Spec requires a NAMED CHECK so it is referenceable for diagnostics.
@@ -1290,8 +1318,8 @@ describe('migrate v46 - oauth_user_grants', () => {
     expect(sql).toContain('CHECK (email = lower(email))');
   });
 
-  test('v46 extends oauth_tokens with subject_email/subject_iss/user_tier (idempotent)', () => {
-    const sql = v46!.sql;
+  test('v47 extends oauth_tokens with subject_email/subject_iss/user_tier (idempotent)', () => {
+    const sql = v47!.sql;
     expect(sql).toContain('ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_email TEXT');
     expect(sql).toContain('ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_iss');
     expect(sql).toContain('ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS user_tier');
@@ -1299,15 +1327,15 @@ describe('migrate v46 - oauth_user_grants', () => {
     expect(sql).toContain("user_tier IS NULL OR user_tier IN ('None','Family','Work','Full')");
   });
 
-  test('v46 extends oauth_codes with the same three columns (idempotent)', () => {
-    const sql = v46!.sql;
+  test('v47 extends oauth_codes with the same three columns (idempotent)', () => {
+    const sql = v47!.sql;
     expect(sql).toContain('ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_email TEXT');
     expect(sql).toContain('ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_iss');
     expect(sql).toContain('ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS user_tier');
   });
 
-  test('v46 ALTER TABLE statements all use ADD COLUMN IF NOT EXISTS (re-run safe)', () => {
-    const sql = v46!.sql;
+  test('v47 ALTER TABLE statements all use ADD COLUMN IF NOT EXISTS (re-run safe)', () => {
+    const sql = v47!.sql;
     const addColumnLines = sql.match(/ADD COLUMN[^,;]+/gi) || [];
     // 3 cols on oauth_tokens + 3 on oauth_codes = 6.
     expect(addColumnLines.length).toBeGreaterThanOrEqual(6);
@@ -1316,21 +1344,21 @@ describe('migrate v46 - oauth_user_grants', () => {
     }
   });
 
-  test('v46 creates idx_oauth_tokens_subject_email gated on IF NOT EXISTS', () => {
-    expect(v46!.sql).toContain('CREATE INDEX IF NOT EXISTS idx_oauth_tokens_subject_email');
-    expect(v46!.sql).toContain('ON oauth_tokens(subject_email)');
+  test('v47 creates idx_oauth_tokens_subject_email gated on IF NOT EXISTS', () => {
+    expect(v47!.sql).toContain('CREATE INDEX IF NOT EXISTS idx_oauth_tokens_subject_email');
+    expect(v47!.sql).toContain('ON oauth_tokens(subject_email)');
   });
 
-  test('v46 declares idempotent: true', () => {
-    expect(v46!.idempotent).toBe(true);
+  test('v47 declares idempotent: true', () => {
+    expect(v47!.idempotent).toBe(true);
   });
 
-  test('v46 verify hook checks grants, federated columns, and subject index', () => {
-    expect(typeof v46!.verify).toBe('function');
+  test('v47 verify hook checks grants, federated columns, and subject index', () => {
+    expect(typeof v47!.verify).toBe('function');
     // Source-shape probe: the hook must reference both child tables, all
     // federated columns, the subject index, and the grants table so a
     // partially-applied run on a wedged pooler is caught.
-    const verifySrc = v46!.verify!.toString();
+    const verifySrc = v47!.verify!.toString();
     expect(verifySrc).toContain('oauth_user_grants');
     expect(verifySrc).toContain('oauth_tokens');
     expect(verifySrc).toContain('oauth_codes');
@@ -1338,24 +1366,24 @@ describe('migrate v46 - oauth_user_grants', () => {
     expect(verifySrc).toContain('subject_iss');
     expect(verifySrc).toContain('user_tier');
     expect(verifySrc).toContain('idx_oauth_tokens_subject_email');
-    // Spec mandates current_schema() scoping like v45.
+    // Spec mandates current_schema() scoping like v46.
     expect(verifySrc).toContain('current_schema()');
   });
 
-  test('v46 verify returns true on a freshly-migrated PGLite engine', async () => {
+  test('v47 verify returns true on a freshly-migrated PGLite engine', async () => {
     const engine = new PGLiteEngine();
     await engine.connect({});
     try {
       await engine.initSchema();
-      const ok = await v46!.verify!(engine);
+      const ok = await v47!.verify!(engine);
       expect(ok).toBe(true);
     } finally {
       await engine.disconnect();
     }
   }, 30000);
 
-  test('LATEST_VERSION caught up to 46', () => {
-    expect(LATEST_VERSION).toBeGreaterThanOrEqual(46);
+  test('LATEST_VERSION caught up to 47', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(47);
   });
 });
 

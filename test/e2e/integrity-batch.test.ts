@@ -28,7 +28,7 @@ if (skip) {
 describeE2E('scanIntegrity batch parity (E2E, Postgres-only)', () => {
   beforeAll(async () => {
     await setupDB();
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await teardownDB();

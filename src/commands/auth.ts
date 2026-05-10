@@ -444,7 +444,7 @@ async function registerClient(name: string, args: string[]) {
     process.exit(1);
   }
   const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
-  // Per-client access tier. Default Full preserves the pre-v45 grant
+  // Per-client access tier. Default Full preserves the pre-v46 grant
   // for upgrade safety; operators tighten per-client with --tier work
   // (or --tier family) when registering an agent that should not see
   // owner-only content. ACCESS_POLICY.md is the human-readable map of

@@ -37,7 +37,7 @@ export async function runServe(engine: BrainEngine, args: string[] = []) {
     const auditAccessTiers = args.includes('--audit-access-tiers') || args.includes('--no-enforce-access-tiers');
     const enforceAccessTiers = !auditAccessTiers || args.includes('--enforce-access-tiers');
 
-    // v46 OIDC end-user identity. All three flags must be set together to
+    // v47 OIDC end-user identity. All three flags must be set together to
     // enable the federation path; missing flags leave gbrain on the legacy
     // operator-trusted client_credentials posture. The OIDC client secret
     // can also be sourced from GBRAIN_OIDC_CLIENT_SECRET so operators do

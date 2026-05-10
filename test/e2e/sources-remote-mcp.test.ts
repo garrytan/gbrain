@@ -228,7 +228,7 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
     }
     rmSync(FIXTURE_DIR, { recursive: true, force: true });
     await teardownDB();
-  });
+  }, 30_000);
 
   // -------------------------------------------------------------------------
   // Headline flow: gstack /setup-gbrain Path 4 unblock

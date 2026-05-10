@@ -594,6 +594,25 @@ export const MIGRATIONS: Migration[] = [
             NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
           CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
 
+          -- 1a'. Defensive FK repair. ALTER TABLE ADD COLUMN IF NOT EXISTS is a
+          --      no-op when the column already exists, so the inline FK never
+          --      re-adds. Some test paths (notably postgres-bootstrap.test.ts)
+          --      drop the sources table CASCADE which removes
+          --      files_source_id_fkey while leaving files.source_id intact.
+          --      Without this block the FK would never come back on upgrade,
+          --      and CASCADE-on-source-delete silently stops working.
+          DO $$ BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conname = 'files_source_id_fkey'
+                AND conrelid = 'files'::regclass
+            ) THEN
+              ALTER TABLE files
+                ADD CONSTRAINT files_source_id_fkey
+                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE;
+            END IF;
+          END $$;
+
           -- 1b. page_id (nullable; pre-v0.17 files pointed at page_slug
           --     which was ON DELETE SET NULL, so we keep the same nullable
           --     semantic — orphaned files are legal).
@@ -2142,11 +2161,11 @@ export const MIGRATIONS: Migration[] = [
     },
   },
   {
-    version: 46,
+    version: 47,
     name: 'oauth_user_grants',
     idempotent: true,
-    // End-user identity layer on top of v45's per-client access tier. v45
-    // grants a tier to an OAuth client (the agent); v46 grants a tier to a
+    // End-user identity layer on top of v46's per-client access tier. v46
+    // grants a tier to an OAuth client (the agent); v47 grants a tier to a
     // human (the email). When the /token endpoint exchanges an auth code
     // that carried a federated identity (subject_email + subject_iss), the
     // resulting bearer token snapshots the email's current grant tier into
@@ -2171,7 +2190,7 @@ export const MIGRATIONS: Migration[] = [
     // Verify hook: post-condition probe asserts oauth_user_grants table
     // exists with the expected columns AND oauth_tokens.subject_email +
     // oauth_codes.subject_email columns exist. current_schema() scoping
-    // matches v45 so multi-tenant deployments don't false-positive on a
+    // matches v46 so multi-tenant deployments don't false-positive on a
     // sibling schema's table.
     sql: `
       CREATE TABLE IF NOT EXISTS oauth_user_grants (
@@ -2251,7 +2270,7 @@ export const MIGRATIONS: Migration[] = [
     },
   },
   {
-    version: 45,
+    version: 46,
     name: 'oauth_clients_access_tier',
     idempotent: true,
     // Per-client access tier for runtime MCP access control. Adds
@@ -2313,6 +2332,182 @@ export const MIGRATIONS: Migration[] = [
     sql: `
       ALTER TABLE pages ADD COLUMN IF NOT EXISTS emotional_weight_recomputed_at TIMESTAMPTZ;
     `,
+  },
+  {
+    version: 45,
+    name: 'facts_hot_memory_v0_31',
+    // v0.31: hot memory layer — real-time working memory queryable across
+    // sessions. Sits alongside `takes` (cold, markdown-mirrored) as the
+    // ephemeral DB-only counterpart. Dream cycle's new `consolidate` phase
+    // promotes facts → takes(kind='fact') overnight; the consolidated_into
+    // pointer keeps facts as the audit trail.
+    //
+    // Schema decisions (from /plan-eng-review):
+    //   - source_id TEXT (sources.id is TEXT — eE2). Per-source isolation;
+    //     cross-brain federation stays agent-side.
+    //   - kind CHECK constraint with 5 values; different decay halflives.
+    //   - visibility column mirrors takes' world-default ACL contract (D21).
+    //   - embedding column dim resolved at migration time from the
+    //     `config.embedding_dimensions` row (matches content_chunks dim) so
+    //     non-OpenAI brains (Voyage, etc.) work — codex F6 fix.
+    //   - HALFVEC preferred (pgvector >= 0.7 needed); falls back to VECTOR
+    //     with stderr warn on older pgvector — codex eE6 fix.
+    //   - 5 partial indexes leading on source_id so every read uses the
+    //     trust boundary as part of the index, not a callback.
+    //   - consolidated_into BIGINT — takes.id is BIGSERIAL.
+    sql: '',
+    handler: async (engine: BrainEngine) => {
+      // Step 1: resolve embedding dim from config table (already populated
+      // by the schema-init __EMBEDDING_DIMS__ replacement on PGLite, or by
+      // the seed config on Postgres). Default to 1536 (OpenAI text-embed-3-large).
+      let embeddingDim = 1536;
+      try {
+        const dimRows = await engine.executeRaw<{ value: string }>(
+          `SELECT value FROM config WHERE key = 'embedding_dimensions'`,
+        );
+        if (dimRows.length > 0) {
+          const parsed = parseInt(dimRows[0].value, 10);
+          if (Number.isFinite(parsed) && parsed > 0 && parsed <= 4096) {
+            embeddingDim = parsed;
+          }
+        }
+      } catch {
+        // No config row yet — fall back to default. Fresh installs hit this
+        // path on first initSchema; that's fine since the schema seeds
+        // the row before subsequent migrations run.
+      }
+
+      // Step 2: pgvector version preflight for HALFVEC support (>=0.7).
+      // PGLite ships a recent pgvector inside its WASM bundle; we still
+      // probe to be honest about the column type.
+      let useHalfvec = false;
+      if (engine.kind === 'postgres') {
+        try {
+          const vrows = await engine.executeRaw<{ extversion: string }>(
+            `SELECT extversion FROM pg_extension WHERE extname = 'vector'`,
+          );
+          if (vrows.length === 0) {
+            throw new Error(
+              `Migration v40 (facts hot memory) requires the pgvector extension. ` +
+              `Install it via\n  CREATE EXTENSION vector;\n` +
+              `then re-run \`gbrain apply-migrations --yes\`.`,
+            );
+          }
+          const v = vrows[0].extversion;
+          const parts = v.split('.');
+          const major = parseInt(parts[0] ?? '0', 10);
+          const minor = parseInt(parts[1] ?? '0', 10);
+          // HALFVEC introduced in pgvector 0.7.0
+          if (major > 0 || (major === 0 && minor >= 7)) {
+            useHalfvec = true;
+          } else {
+            // Fall back to full-precision vector with stderr warning.
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[v40 facts] pgvector ${v} < 0.7 — falling back to VECTOR(${embeddingDim}). ` +
+              `HALFVEC space savings unavailable; functionality otherwise identical. ` +
+              `Upgrade pgvector to 0.7+ to enable HALFVEC.`,
+            );
+          }
+        } catch (err) {
+          // Re-throw the missing-extension error; tolerate other probe failures.
+          if (err instanceof Error && err.message.includes('requires the pgvector')) throw err;
+          // Probe failed for other reason — assume older pgvector and fall back.
+        }
+      } else {
+        // PGLite: bundled pgvector is recent enough for HALFVEC. Use it.
+        useHalfvec = true;
+      }
+
+      const vecType = useHalfvec ? 'HALFVEC' : 'VECTOR';
+      // HNSW operator class must match the column type:
+      //   VECTOR(n)  → vector_cosine_ops
+      //   HALFVEC(n) → halfvec_cosine_ops
+      const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+      // FK to sources is added in a separate ALTER TABLE rather than inline
+      // on the column. Inline `REFERENCES` worked on PGLite but silently
+      // got dropped by postgres.js's `unsafe()` multi-statement path on
+      // Postgres in the v0.31 e2e run (table created without FK; CASCADE
+      // delete didn't fire). Splitting the FK declaration out makes the
+      // intent explicit and idempotent: the named constraint either
+      // exists or doesn't, and the ALTER is a no-op on re-runs.
+      const factsDDL = `
+        CREATE TABLE IF NOT EXISTS facts (
+          id                BIGSERIAL PRIMARY KEY,
+          source_id         TEXT        NOT NULL DEFAULT 'default',
+          entity_slug       TEXT,
+          fact              TEXT        NOT NULL,
+          kind              TEXT        NOT NULL DEFAULT 'fact'
+                            CHECK (kind IN ('event','preference','commitment','belief','fact')),
+          visibility        TEXT        NOT NULL DEFAULT 'private'
+                            CHECK (visibility IN ('private','world')),
+          context           TEXT,
+          valid_from        TIMESTAMPTZ NOT NULL DEFAULT now(),
+          valid_until       TIMESTAMPTZ,
+          expired_at        TIMESTAMPTZ,
+          superseded_by     BIGINT      REFERENCES facts(id),
+          consolidated_at   TIMESTAMPTZ,
+          consolidated_into BIGINT,
+          source            TEXT        NOT NULL,
+          source_session    TEXT,
+          confidence        REAL        NOT NULL DEFAULT 1.0
+                            CHECK (confidence BETWEEN 0 AND 1),
+          embedding         ${vecType}(${embeddingDim}),
+          embedded_at       TIMESTAMPTZ,
+          created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        DO $$ BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'facts_source_id_fkey'
+              AND conrelid = 'facts'::regclass
+          ) THEN
+            ALTER TABLE facts
+              ADD CONSTRAINT facts_source_id_fkey
+              FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE;
+          END IF;
+        END $$;
+
+        CREATE INDEX IF NOT EXISTS idx_facts_entity_active
+          ON facts(source_id, entity_slug, valid_from DESC)
+          WHERE expired_at IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_facts_session
+          ON facts(source_id, source_session, created_at DESC)
+          WHERE expired_at IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_facts_since
+          ON facts(source_id, created_at DESC)
+          WHERE expired_at IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_facts_unconsolidated
+          ON facts(source_id, entity_slug)
+          WHERE consolidated_at IS NULL AND expired_at IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw
+          ON facts USING hnsw (embedding ${opclass})
+          WHERE embedding IS NOT NULL AND expired_at IS NULL;
+      `;
+
+      await engine.runMigration(40, factsDDL);
+
+      // Step 3: enable RLS on Postgres when role has BYPASSRLS (v24/v29 pattern).
+      // PGLite has no RLS engine.
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(40, `
+          DO $$
+          DECLARE
+            has_bypass BOOLEAN;
+          BEGIN
+            SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+            IF has_bypass THEN
+              ALTER TABLE facts ENABLE ROW LEVEL SECURITY;
+            END IF;
+          END $$;
+        `);
+      }
+    },
   },
 ];
 

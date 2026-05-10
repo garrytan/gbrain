@@ -8,6 +8,8 @@ import type {
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
+  FactRow, FactKind, FactVisibility, FactInsertStatus,
+  NewFact, FactListOpts, FactsHealth,
 } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
@@ -287,7 +289,7 @@ export class PostgresEngine implements BrainEngine {
    *   - `subagent_messages.provider_id` column (indexed by
    *     `idx_subagent_messages_provider`) — v0.27
    *   - `oauth_tokens.subject_email` + `subject_iss` + `user_tier`
-   *     columns (indexed by `idx_oauth_tokens_subject_email`) — v46
+   *     columns (indexed by `idx_oauth_tokens_subject_email`) — v47
    *
    * Keep this in sync with the PGLite version; covered by
    * `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
@@ -1823,6 +1825,251 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // ============================================================
+  // v0.31: Hot memory — facts table operations
+  // ============================================================
+
+  async insertFact(
+    input: NewFact,
+    ctx: { source_id: string; supersedeId?: number },
+  ): Promise<{ id: number; status: FactInsertStatus }> {
+    const sql = this.sql;
+    const validFrom = input.valid_from ?? new Date();
+    const validUntil = input.valid_until ?? null;
+    const kind = input.kind ?? 'fact';
+    const visibility = input.visibility ?? 'private';
+    const confidence = input.confidence ?? 1.0;
+    const entitySlug = input.entity_slug ?? null;
+    const context = input.context ?? null;
+    const sourceSession = input.source_session ?? null;
+    const embedding = input.embedding ?? null;
+    const embeddedAt = embedding ? new Date() : null;
+    const embedLit = embedding ? toPgVectorLiteral(embedding) : null;
+
+    if (ctx.supersedeId !== undefined) {
+      // Per-entity advisory lock + atomic insert + supersede in one txn.
+      const supersedeId = ctx.supersedeId;
+      const newId = await sql.begin(async (tx) => {
+        if (entitySlug) {
+          await tx`SELECT pg_advisory_xact_lock(hashtextextended(${ctx.source_id} || ':' || ${entitySlug}, 0))`;
+        }
+        const ins = await tx<Array<{ id: number }>>`
+          INSERT INTO facts (
+            source_id, entity_slug, fact, kind, visibility, context,
+            valid_from, valid_until, source, source_session, confidence,
+            embedding, embedded_at
+          ) VALUES (
+            ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${context},
+            ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
+            ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt}
+          ) RETURNING id
+        `;
+        const id = Number(ins[0].id);
+        await tx`UPDATE facts SET expired_at = now(), superseded_by = ${id}
+                 WHERE id = ${supersedeId} AND expired_at IS NULL`;
+        return id;
+      });
+      return { id: newId, status: 'superseded' };
+    }
+
+    // Plain insert path with optional advisory lock for the dedup window.
+    const id = await sql.begin(async (tx) => {
+      if (entitySlug) {
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended(${ctx.source_id} || ':' || ${entitySlug}, 0))`;
+      }
+      const ins = await tx<Array<{ id: number }>>`
+        INSERT INTO facts (
+          source_id, entity_slug, fact, kind, visibility, context,
+          valid_from, valid_until, source, source_session, confidence,
+          embedding, embedded_at
+        ) VALUES (
+          ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${context},
+          ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
+          ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt}
+        ) RETURNING id
+      `;
+      return Number(ins[0].id);
+    });
+    return { id, status: 'inserted' };
+  }
+
+  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
+    const sql = this.sql;
+    const at = opts?.at ?? new Date();
+    const supersededBy = opts?.supersededBy ?? null;
+    const result = await sql`
+      UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by)
+      WHERE id = ${id} AND expired_at IS NULL
+    `;
+    return (result.count ?? 0) > 0;
+  }
+
+  async listFactsByEntity(
+    source_id: string,
+    entitySlug: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
+    const offset = Math.max(0, opts?.offset ?? 0);
+    const activeOnly = opts?.activeOnly !== false;
+    const kinds = (opts?.kinds && opts.kinds.length > 0) ? opts.kinds : null;
+    const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND entity_slug = ${entitySlug}
+        ${activeOnly ? sql`AND expired_at IS NULL` : sql``}
+        ${kinds ? sql`AND kind = ANY(${kinds}::text[])` : sql``}
+        ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
+      ORDER BY valid_from DESC, id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async listFactsSince(
+    source_id: string,
+    since: Date,
+    opts?: FactListOpts & { entitySlug?: string },
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
+    const offset = Math.max(0, opts?.offset ?? 0);
+    const activeOnly = opts?.activeOnly !== false;
+    const kinds = (opts?.kinds && opts.kinds.length > 0) ? opts.kinds : null;
+    const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
+    const entitySlug = opts?.entitySlug ?? null;
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND created_at >= ${since}
+        ${entitySlug ? sql`AND entity_slug = ${entitySlug}` : sql``}
+        ${activeOnly ? sql`AND expired_at IS NULL` : sql``}
+        ${kinds ? sql`AND kind = ANY(${kinds}::text[])` : sql``}
+        ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async listFactsBySession(
+    source_id: string,
+    sessionId: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
+    const offset = Math.max(0, opts?.offset ?? 0);
+    const activeOnly = opts?.activeOnly !== false;
+    const kinds = (opts?.kinds && opts.kinds.length > 0) ? opts.kinds : null;
+    const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND source_session = ${sessionId}
+        ${activeOnly ? sql`AND expired_at IS NULL` : sql``}
+        ${kinds ? sql`AND kind = ANY(${kinds}::text[])` : sql``}
+        ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async listSupersessions(
+    source_id: string,
+    opts?: { since?: Date; limit?: number },
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
+    const since = opts?.since ?? null;
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND expired_at IS NOT NULL
+        AND superseded_by IS NOT NULL
+        ${since ? sql`AND expired_at >= ${since}` : sql``}
+      ORDER BY expired_at DESC, id DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async findCandidateDuplicates(
+    source_id: string,
+    entitySlug: string,
+    factText: string,
+    opts?: { k?: number; embedding?: Float32Array },
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const k = Math.min(Math.max(opts?.k ?? 5, 1), 20);
+    if (opts?.embedding) {
+      const lit = toPgVectorLiteral(opts.embedding);
+      const rows = await sql<FactRowSqlShape[]>`
+        SELECT * FROM facts
+        WHERE source_id = ${source_id}
+          AND entity_slug = ${entitySlug}
+          AND expired_at IS NULL
+          AND embedding IS NOT NULL
+        ORDER BY embedding <=> ${sql.unsafe(`'${lit}'::vector`)}
+        LIMIT ${k}
+      `;
+      return rows.map(rowToFactPg);
+    }
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND entity_slug = ${entitySlug}
+        AND expired_at IS NULL
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${k}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async consolidateFact(id: number, takeId: number): Promise<void> {
+    const sql = this.sql;
+    await sql`UPDATE facts SET consolidated_at = now(), consolidated_into = ${takeId} WHERE id = ${id}`;
+  }
+
+  async getFactsHealth(source_id: string): Promise<FactsHealth> {
+    const sql = this.sql;
+    const totals = await sql<Array<{
+      total_active: bigint; total_today: bigint; total_week: bigint;
+      total_expired: bigint; total_consolidated: bigint;
+    }>>`
+      SELECT
+        COUNT(*) FILTER (WHERE expired_at IS NULL)                                     AS total_active,
+        COUNT(*) FILTER (WHERE expired_at IS NULL AND created_at > now() - interval '24 hours') AS total_today,
+        COUNT(*) FILTER (WHERE expired_at IS NULL AND created_at > now() - interval '7 days')   AS total_week,
+        COUNT(*) FILTER (WHERE expired_at IS NOT NULL)                                 AS total_expired,
+        COUNT(*) FILTER (WHERE consolidated_at IS NOT NULL)                            AS total_consolidated
+      FROM facts WHERE source_id = ${source_id}
+    `;
+    const top = await sql<Array<{ entity_slug: string; count: bigint }>>`
+      SELECT entity_slug, COUNT(*) AS count
+      FROM facts
+      WHERE source_id = ${source_id} AND expired_at IS NULL AND entity_slug IS NOT NULL
+      GROUP BY entity_slug
+      ORDER BY count DESC, entity_slug ASC
+      LIMIT 5
+    `;
+    const r = totals[0] ?? {
+      total_active: 0n, total_today: 0n, total_week: 0n, total_expired: 0n, total_consolidated: 0n,
+    };
+    return {
+      source_id,
+      total_active: Number(r.total_active),
+      total_today: Number(r.total_today),
+      total_week: Number(r.total_week),
+      total_expired: Number(r.total_expired),
+      total_consolidated: Number(r.total_consolidated),
+      top_entities: top.map(t => ({ entity_slug: t.entity_slug, count: Number(t.count) })),
+    };
+  }
+
+  // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis_evidence
   // ============================================================
 
@@ -2908,6 +3155,74 @@ export class PostgresEngine implements BrainEngine {
 
     return computeAnomaliesFromBuckets(baseline, today, sigma);
   }
+}
+
+/**
+ * Raw row shape returned from `SELECT * FROM facts` on Postgres.
+ * postgres.js auto-decodes timestamps and numbers; embedding lands as
+ * either a string ("[0.1,...]") or already-parsed array depending on type
+ * codec — we handle both.
+ */
+interface FactRowSqlShape {
+  id: number | bigint;
+  source_id: string;
+  entity_slug: string | null;
+  fact: string;
+  kind: FactKind;
+  visibility: FactVisibility;
+  context: string | null;
+  valid_from: Date;
+  valid_until: Date | null;
+  expired_at: Date | null;
+  superseded_by: number | bigint | null;
+  consolidated_at: Date | null;
+  consolidated_into: number | bigint | null;
+  source: string;
+  source_session: string | null;
+  confidence: number | string;
+  embedding: string | number[] | Float32Array | null;
+  embedded_at: Date | null;
+  created_at: Date;
+}
+
+function rowToFactPg(row: FactRowSqlShape): FactRow {
+  let embedding: Float32Array | null = null;
+  if (row.embedding != null) {
+    if (row.embedding instanceof Float32Array) embedding = row.embedding;
+    else if (Array.isArray(row.embedding)) embedding = new Float32Array(row.embedding);
+    else if (typeof row.embedding === 'string') {
+      const trimmed = row.embedding.trim();
+      const inner = trimmed.startsWith('[') ? trimmed.slice(1, -1) : trimmed;
+      const parts = inner.split(',').map(p => parseFloat(p.trim())).filter(Number.isFinite);
+      embedding = parts.length > 0 ? new Float32Array(parts) : null;
+    }
+  }
+  return {
+    id: Number(row.id),
+    source_id: row.source_id,
+    entity_slug: row.entity_slug,
+    fact: row.fact,
+    kind: row.kind,
+    visibility: row.visibility,
+    context: row.context,
+    valid_from: row.valid_from,
+    valid_until: row.valid_until,
+    expired_at: row.expired_at,
+    superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
+    consolidated_at: row.consolidated_at,
+    consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
+    source: row.source,
+    source_session: row.source_session,
+    confidence: typeof row.confidence === 'string' ? parseFloat(row.confidence) : row.confidence,
+    embedding,
+    embedded_at: row.embedded_at,
+    created_at: row.created_at,
+  };
+}
+
+function toPgVectorLiteral(v: Float32Array | number[]): string {
+  if (v instanceof Float32Array) return '[' + Array.from(v).join(',') + ']';
+  return '[' + v.join(',') + ']';
 }
 
 function pgRowToCodeEdge(row: Record<string, unknown>): import('./types.ts').CodeEdgeResult {

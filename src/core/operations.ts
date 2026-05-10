@@ -29,6 +29,15 @@ import {
 
 // --- Types ---
 
+/**
+ * v0.31 (eD6 / eE7): ErrorCode is now an OPEN union via the
+ * `(string & {})` autocomplete-friendly hack. Downstream consumers (e.g.
+ * gbrain-evals) get autocomplete on the named codes AND remain TS-forward-
+ * compatible when gbrain adds new codes in future releases. This shape is
+ * the standard Anthropic-API/OpenAI-API pattern.
+ *
+ * v0.31 added: 'rate_limited', 'extraction_failed', 'fact_not_found'.
+ */
 export type ErrorCode =
   | 'page_not_found'
   | 'invalid_params'
@@ -37,7 +46,12 @@ export type ErrorCode =
   | 'bucket_not_found'
   | 'database_error'
   | 'permission_denied'
-  | 'unknown_transport'; // v0.28.1: whoami fail-closed for ambiguous transport
+  | 'unknown_transport' // v0.28.1: whoami fail-closed for ambiguous transport
+  | 'rate_limited'      // v0.31: gateway rate-limit upstream
+  | 'extraction_failed' // v0.31: facts extractor failed (refusal, parse, abort)
+  | 'fact_not_found'    // v0.31: forget_fact / recall on unknown id
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  | (string & {});      // OPEN union for forward-compat (eE7 / D13)
 
 export class OperationError extends Error {
   constructor(
@@ -209,20 +223,20 @@ export interface AuthInfo {
    */
   resource?: URL;
   /**
-   * Access tier resolved at token-verification time (v45 schema).
+   * Access tier resolved at token-verification time (v46 schema).
    * For OAuth clients this is `oauth_clients.access_tier`; for
    * legacy access_tokens this is `'Full'` (grandfathered with the
    * legacy admin grant). Defaults to `'Full'` when the column is
-   * null on pre-v45 rows so existing deployments behave identically
+   * null on pre-v46 rows so existing deployments behave identically
    * until the operator opts into per-client tiers.
    *
-   * v46: when the token was minted via OIDC code-grant from an
+   * v47: when the token was minted via OIDC code-grant from an
    * end-user identity, the resolved tier is `min(client_tier,
    * user_tier)` so the user grant can only narrow, never widen.
    */
   tier?: AccessTier;
   /**
-   * Verified end-user email (v46). Populated when the token was
+   * Verified end-user email (v47). Populated when the token was
    * minted via OIDC code-grant against `oauth_user_grants`.
    * Undefined for client_credentials tokens where the OAuth client
    * is the entire identity. The dispatch path uses this for
@@ -357,6 +371,21 @@ export interface OperationContext {
    * OAuth client id. Threaded alongside ctx.tier by the same dispatch path.
    */
   senderId?: string;
+  /**
+   * v0.31 (eD4 / eE2): the in-DB tenancy axis for facts hot memory.
+   * `sources.id` is TEXT (not INTEGER) — keep this as a string.
+   *
+   * Resolved once in the dispatcher from CLI flag (--source) / env
+   * (GBRAIN_SOURCE) / `.gbrain-source` dotfile / per-token sources scope
+   * (HTTP). Defaults to 'default' when nothing else applies.
+   *
+   * Every facts read/write filter starts with `WHERE source_id = $X`
+   * so the trust boundary is part of the index path, not a callback.
+   *
+   * Pre-v0.31 callers (pages/links/etc.) keep working without change —
+   * sourceId here is purely additive context for the new ops.
+   */
+  sourceId?: string;
 }
 
 export interface Operation {
@@ -565,6 +594,56 @@ const put_page: Operation = {
       }
     }
 
+    // v0.31 (D23): facts compliance backstop. When an agent writes a page
+    // on a conversation-shape slug AND the body has substantive prose, fire
+    // a fact-extraction job into the bounded queue. Skipped on dry-run,
+    // dream-generated content (anti-loop), and non-eligible kinds (sync,
+    // ingest, file uploads, code pages). Never blocks the put_page response.
+    let factsQueued: { queued: boolean } | { skipped: string } | undefined;
+    try {
+      const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
+      const enabled = await isFactsExtractionEnabled(ctx.engine);
+      const eligible = enabled
+        ? isFactsBackstopEligible(slug, result.parsedPage)
+        : { ok: false as const, reason: 'extraction_disabled' };
+      if (!eligible.ok) {
+        factsQueued = { skipped: eligible.reason };
+      } else {
+        const { getFactsQueue } = await import('./facts/queue.ts');
+        const { extractFactsFromTurn } = await import('./facts/extract.ts');
+        const { resolveEntitySlug } = await import('./entities/resolve.ts');
+        const sourceId = ctx.sourceId ?? 'default';
+        const sessionId = (ctx as { source_session?: string }).source_session ?? null;
+        // result.parsedPage non-null is a precondition of backstop eligibility,
+        // verified above; the type narrows for the inner closure.
+        const body = result.parsedPage?.compiled_truth ?? '';
+        const enqueued = getFactsQueue().enqueue(async (signal) => {
+          if (signal.aborted) return;
+          const facts = await extractFactsFromTurn({
+            turnText: body,
+            sessionId,
+            source: 'mcp:put_page',
+            isDreamGenerated: false,
+            abortSignal: signal,
+          });
+          for (const f of facts) {
+            if (signal.aborted) return;
+            const resolvedSlug = f.entity_slug
+              ? await resolveEntitySlug(ctx.engine, sourceId, f.entity_slug)
+              : null;
+            await ctx.engine.insertFact({
+              ...f,
+              entity_slug: resolvedSlug,
+              visibility: 'private',
+            }, { source_id: sourceId });
+          }
+        }, sessionId ?? slug);
+        factsQueued = enqueued > -1 ? { queued: true } : { skipped: 'queue_shutdown' };
+      }
+    } catch {
+      factsQueued = { skipped: 'backstop_error' };
+    }
+
     // Post-write validator lint (PR 2.5): feature-flag-gated, non-blocking.
     // When `writer.lint_on_put_page` is enabled, runs the BrainWriter's
     // validators on the freshly-written page and logs findings to
@@ -593,10 +672,44 @@ const put_page: Operation = {
       ...(autoLinks ? { auto_links: autoLinks } : {}),
       ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
       ...(writerLint ? { writer_lint: writerLint } : {}),
+      ...(factsQueued ? { facts_backstop: factsQueued } : {}),
     };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
+
+/**
+ * v0.31: backstop eligibility. The put_page facts hook fires only on
+ * conversation-shape pages, where extraction is most useful. Pages from
+ * sync / ingest / file upload / code-import paths have their own surfaces
+ * (extract takes / search) and shouldn't pump the hot memory layer.
+ *
+ * Eligible:
+ *   - kind/type in: note, meeting, slack, email, calendar-event, source, writing
+ *   - body length >= 80 chars (skip TODO-style snippets)
+ *   - slug NOT under wiki/agents/ (subagent scratch is its own world)
+ *   - dream_generated:true frontmatter is anti-loop reject
+ *
+ * Reasons returned for the skipped envelope are stable strings consumed
+ * by tests and observability.
+ */
+function isFactsBackstopEligible(
+  slug: string,
+  parsed: { type: PageType; compiled_truth: string; frontmatter: Record<string, unknown> } | null | undefined,
+): { ok: true } | { ok: false; reason: string } {
+  if (!parsed) return { ok: false, reason: 'no_parsed_page' };
+  if (slug.startsWith('wiki/agents/')) return { ok: false, reason: 'subagent_namespace' };
+  if (parsed.frontmatter && parsed.frontmatter.dream_generated === true) {
+    return { ok: false, reason: 'dream_generated' };
+  }
+  const eligibleTypes: PageType[] = [
+    'note', 'meeting', 'slack', 'email', 'calendar-event', 'source', 'writing',
+  ];
+  if (!eligibleTypes.includes(parsed.type)) return { ok: false, reason: `kind:${parsed.type}` };
+  const body = (parsed.compiled_truth ?? '').trim();
+  if (body.length < 80) return { ok: false, reason: 'too_short' };
+  return { ok: true };
+}
 
 /**
  * Extract entity refs from a freshly-written page, sync the links table to match.
@@ -2332,6 +2445,249 @@ const sources_status: Operation = {
   cliHints: { name: 'sources_status', hidden: true },
 };
 
+// ============================================================
+// v0.31 — Hot memory ops: extract_facts / recall / forget_fact
+// ============================================================
+
+const extract_facts: Operation = {
+  name: 'extract_facts',
+  description:
+    'v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls Haiku to extract structured claims, runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. Skips extraction when the turn is dream-generated content (anti-loop).',
+  params: {
+    turn_text: { type: 'string', required: true, description: 'The user message or page body to extract facts from. Sanitized via INJECTION_PATTERNS before the LLM call.' },
+    session_id: { type: 'string', description: 'Opaque session id (e.g. topic-id from MCP _meta.session_id, or CLI --session). Stored on each fact for the recall --session filter. Not an auth surface.' },
+    entity_hints: { type: 'array', description: 'Existing canonical entity slugs the agent has already resolved. Helps the extractor pick the right slug.' },
+    is_dream_generated: { type: 'boolean', description: 'When true, extraction is skipped (anti-loop). Caller flips this on for pages with dream_generated:true frontmatter.' },
+    visibility: { type: 'string', description: 'Default visibility for extracted facts. private (default) | world.' },
+  },
+  mutating: true,
+  scope: 'write',
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'extract_facts' };
+    const { extractFactsFromTurn, isFactsExtractionEnabled } = await import('./facts/extract.ts');
+    const { resolveEntitySlug } = await import('./entities/resolve.ts');
+
+    // D15: kill switch. Operator can disable facts extraction across the
+    // brain without binary downgrade by setting `facts.extraction_enabled`
+    // to false. Returns zero-counts envelope so callers see a clean
+    // success rather than a 'permission_denied' false alarm.
+    if (!(await isFactsExtractionEnabled(ctx.engine))) {
+      return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'extraction_disabled' };
+    }
+
+    const sourceId = ctx.sourceId ?? 'default';
+    const visibility = p.visibility === 'world' ? 'world' : 'private';
+
+    const facts = await extractFactsFromTurn({
+      turnText: p.turn_text as string,
+      sessionId: typeof p.session_id === 'string' ? p.session_id : null,
+      entityHints: Array.isArray(p.entity_hints) ? (p.entity_hints as string[]) : undefined,
+      source: 'mcp:extract_facts',
+      isDreamGenerated: p.is_dream_generated === true,
+    });
+
+    let inserted = 0;
+    let duplicate = 0;
+    let superseded = 0;
+    const fact_ids: number[] = [];
+
+    for (const f of facts) {
+      const slug = f.entity_slug
+        ? await resolveEntitySlug(ctx.engine, sourceId, f.entity_slug)
+        : null;
+
+      const candidates = slug
+        ? await ctx.engine.findCandidateDuplicates(sourceId, slug, f.fact, {
+            embedding: f.embedding ?? undefined,
+            k: 5,
+          })
+        : [];
+
+      // Cosine fast-path inline for engine consistency. The classifier path
+      // is exercised by the offline `classifyAgainstCandidates` helper which
+      // ops can call when they want richer dedup; for the MCP op we ship
+      // with the cheap path + recency-only fallback to keep per-turn latency
+      // bounded. Tests pin the cheap-path threshold.
+      let matchedExisting: number | null = null;
+      if (f.embedding && candidates.length > 0) {
+        const { cosineSimilarity } = await import('./facts/classify.ts');
+        let topId: number | null = null;
+        let topScore = -1;
+        for (const c of candidates) {
+          if (!c.embedding) continue;
+          const s = cosineSimilarity(f.embedding, c.embedding);
+          if (s > topScore) { topScore = s; topId = c.id; }
+        }
+        if (topId !== null && topScore >= 0.95) matchedExisting = topId;
+      }
+
+      if (matchedExisting !== null) {
+        duplicate += 1;
+        fact_ids.push(matchedExisting);
+        continue;
+      }
+
+      const result = await ctx.engine.insertFact(
+        {
+          fact: f.fact,
+          kind: f.kind,
+          entity_slug: slug,
+          visibility,
+          source: f.source,
+          source_session: f.source_session ?? null,
+          confidence: f.confidence,
+          embedding: f.embedding ?? null,
+        },
+        { source_id: sourceId },
+      );
+      fact_ids.push(result.id);
+      if (result.status === 'inserted') inserted += 1;
+      else if (result.status === 'duplicate') duplicate += 1;
+      else superseded += 1;
+    }
+
+    return { inserted, duplicate, superseded, fact_ids };
+  },
+};
+
+const recall: Operation = {
+  name: 'recall',
+  description:
+    'v0.31: query per-source hot memory (facts table). Filters by entity / since / session. Remote callers see only visibility=world facts. Returns most-recent first. Use --semantic in v0.32+ for embedding search; v0.31 is plain SELECT + filters.',
+  params: {
+    entity: { type: 'string', description: 'Entity slug (canonical). Returns facts about this entity newest first.' },
+    since: { type: 'string', description: 'ISO datetime or duration shorthand (e.g. "8 hours ago"). Returns facts created since.' },
+    session_id: { type: 'string', description: 'Source session id (e.g. topic-A). Returns facts captured in that session.' },
+    include_expired: { type: 'boolean', description: 'When true, include expired_at IS NOT NULL rows. Default false.' },
+    supersessions: { type: 'boolean', description: 'When true, return only the supersession audit log (expired_at + superseded_by both set).' },
+    limit: { type: 'number', description: 'Max rows to return. Default 50, cap 100.' },
+    grep: { type: 'string', description: 'Substring filter on fact text (case-insensitive). Applied client-side after recall.' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const sourceId = ctx.sourceId ?? 'default';
+    const limit = typeof p.limit === 'number' ? p.limit : 50;
+    const includeExpired = p.include_expired === true;
+    const grep = typeof p.grep === 'string' ? p.grep.toLowerCase() : null;
+
+    // Visibility filter: remote callers see world-only unless their token
+    // grants elevated visibility (future-proofing; v0.31 ships world-only
+    // for remote, all for local CLI).
+    const visibility =
+      ctx.remote === false
+        ? undefined
+        : ['world'] as ('private' | 'world')[];
+
+    let rows: Awaited<ReturnType<typeof ctx.engine.listFactsByEntity>> = [];
+
+    if (p.supersessions === true) {
+      const since = parseSinceParam(p.since);
+      rows = await ctx.engine.listSupersessions(sourceId, { since: since ?? undefined, limit });
+    } else if (typeof p.entity === 'string' && p.entity.length > 0) {
+      const { resolveEntitySlug } = await import('./entities/resolve.ts');
+      const slug = (await resolveEntitySlug(ctx.engine, sourceId, p.entity)) ?? p.entity;
+      rows = await ctx.engine.listFactsByEntity(sourceId, slug, {
+        activeOnly: !includeExpired,
+        limit,
+        visibility,
+      });
+    } else if (typeof p.session_id === 'string' && p.session_id.length > 0) {
+      rows = await ctx.engine.listFactsBySession(sourceId, p.session_id, {
+        activeOnly: !includeExpired,
+        limit,
+        visibility,
+      });
+    } else if (p.since !== undefined) {
+      const since = parseSinceParam(p.since);
+      if (since) {
+        rows = await ctx.engine.listFactsSince(sourceId, since, {
+          activeOnly: !includeExpired,
+          limit,
+          visibility,
+        });
+      }
+    } else {
+      // No filter: return recent across the source.
+      rows = await ctx.engine.listFactsSince(sourceId, new Date(0), {
+        activeOnly: !includeExpired,
+        limit,
+        visibility,
+      });
+    }
+
+    if (grep) rows = rows.filter(r => r.fact.toLowerCase().includes(grep));
+
+    return {
+      facts: rows.map(r => ({
+        id: r.id,
+        fact: r.fact,
+        kind: r.kind,
+        entity_slug: r.entity_slug,
+        visibility: r.visibility,
+        valid_from: r.valid_from.toISOString(),
+        valid_until: r.valid_until?.toISOString() ?? null,
+        expired_at: r.expired_at?.toISOString() ?? null,
+        superseded_by: r.superseded_by,
+        consolidated_at: r.consolidated_at?.toISOString() ?? null,
+        consolidated_into: r.consolidated_into,
+        source: r.source,
+        source_session: r.source_session,
+        confidence: r.confidence,
+        created_at: r.created_at.toISOString(),
+      })),
+      total: rows.length,
+    };
+  },
+};
+
+const forget_fact: Operation = {
+  name: 'forget_fact',
+  description: 'v0.31: mark a fact as expired (sets expired_at; never DELETE). Idempotent-as-false on already-expired or unknown ids.',
+  params: {
+    id: { type: 'number', required: true, description: 'Fact id to expire.' },
+  },
+  mutating: true,
+  scope: 'write',
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'forget_fact', id: p.id };
+    const id = p.id as number;
+    const ok = await ctx.engine.expireFact(id);
+    if (!ok) throw new OperationError('fact_not_found', `Fact id ${id} not found or already expired.`);
+    return { id, expired: true };
+  },
+};
+
+/**
+ * Parse a `since` parameter into a Date. Accepts ISO 8601, plain duration
+ * shorthand ("8 hours ago", "3 days ago", "30m", "1h", "2d", "7d"), or
+ * Unix epoch millis. Returns null on unparseable input.
+ */
+function parseSinceParam(raw: unknown): Date | null {
+  if (raw == null) return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return new Date(raw);
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s) return null;
+
+  // Try ISO first.
+  const iso = Date.parse(s);
+  if (Number.isFinite(iso)) return new Date(iso);
+
+  // "N (minutes|hours|days) ago" or compact forms.
+  const ago = s.match(/^(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)(?:\s+ago)?$/i);
+  if (ago) {
+    const n = parseInt(ago[1], 10);
+    const unit = ago[2].toLowerCase();
+    const ms =
+      unit.startsWith('s') ? n * 1000 :
+      unit.startsWith('m') ? n * 60 * 1000 :
+      unit.startsWith('h') ? n * 60 * 60 * 1000 :
+      n * 24 * 60 * 60 * 1000;
+    return new Date(Date.now() - ms);
+  }
+  return null;
+}
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -2372,6 +2728,8 @@ export const operations: Operation[] = [
   whoami, sources_add, sources_list, sources_remove, sources_status,
   // v0.29: Salience + anomalies + recent transcripts
   get_recent_salience, find_anomalies, get_recent_transcripts,
+  // v0.31: hot memory (facts table)
+  extract_facts, recall, forget_fact,
 ];
 
 export const operationsByName = Object.fromEntries(

@@ -35,7 +35,7 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
   beforeAll(async () => {
     engine = new PostgresEngine();
     await engine.connect({ database_url: DATABASE_URL! });
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();
@@ -84,7 +84,7 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     expect(srcCheck).toHaveLength(1);
   });
 
-  test('PostgresEngine.initSchema bootstraps v46 oauth token columns before subject_email index replay', async () => {
+  test('PostgresEngine.initSchema bootstraps v47 oauth token columns before subject_email index replay', async () => {
     await engine.initSchema();
     const conn = (engine as any).sql;
 

@@ -109,7 +109,7 @@ describe('parseAccessTier — typo-loud at the registration boundary', () => {
 });
 
 describe('ACCESS_TIER_DEFAULT', () => {
-  test('is Full to preserve the pre-v45 grant for legacy oauth_clients rows', () => {
+  test('is Full to preserve the pre-v46 grant for legacy oauth_clients rows', () => {
     expect(ACCESS_TIER_DEFAULT).toBe('Full');
   });
   test('OP_TIER_DEFAULT_REQUIRED is Full so unannotated ops fail closed for non-Full callers', () => {
@@ -118,7 +118,7 @@ describe('ACCESS_TIER_DEFAULT', () => {
 });
 
 describe('resolveStoredAccessTier — fail-closed read-side coercion', () => {
-  test('NULL preserves pre-v45 grant (Full)', () => {
+  test('NULL preserves pre-v46 grant (Full)', () => {
     expect(resolveStoredAccessTier(null)).toBe('Full');
     expect(resolveStoredAccessTier(undefined)).toBe('Full');
   });
