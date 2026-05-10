@@ -17,14 +17,14 @@ export const anthropic: Recipe = {
   touchpoints: {
     // No embedding model available.
     expansion: {
-      models: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6-20250929'],
+      models: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6'],
       cost_per_1m_tokens_usd: 0.25,
       price_last_verified: '2026-04-20',
     },
     chat: {
       models: [
         'claude-opus-4-7',
-        'claude-sonnet-4-6-20250929',
+        'claude-sonnet-4-6',
         'claude-haiku-4-5-20251001',
       ],
       supports_tools: true,
@@ -38,7 +38,6 @@ export const anthropic: Recipe = {
   },
   // Friendly undated aliases (Codex F-OV-5).
   aliases: {
-    'claude-sonnet-4-6': 'claude-sonnet-4-6-20250929',
     'claude-haiku-4-5': 'claude-haiku-4-5-20251001',
   },
   setup_hint: 'Get an API key at https://console.anthropic.com/settings/keys, then `export ANTHROPIC_API_KEY=...`',
