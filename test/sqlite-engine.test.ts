@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { buildPageChunks, importFromContent } from '../src/core/import-file.ts';
@@ -10,6 +10,15 @@ import type { ChunkInput, PageInput } from '../src/core/types.ts';
 import { importContentHash } from '../src/core/utils.ts';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitForFile(path: string, timeoutMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return true;
+    await delay(20);
+  }
+  return false;
+}
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -128,6 +137,85 @@ describe('SQLiteEngine', () => {
     await expect(second).resolves.toBe('committed');
     expect(await engine.getPage('people/rolled-back.md')).toBeNull();
     expect((await engine.getPage('people/committed-peer.md'))?.title).toBe('Committed Peer');
+  });
+
+  test('waits for a cross-process SQLite writer instead of failing schema initialization with SQLITE_BUSY', async () => {
+    const firstReadyPath = join(tempDir, 'first-ready');
+    const releasePath = join(tempDir, 'release-first');
+    const workerCode = `
+      import { existsSync, writeFileSync } from 'fs';
+      import { SQLiteEngine } from './src/core/sqlite-engine.ts';
+
+      const dbPath = process.env.MBRAIN_TEST_DB_PATH;
+      const firstReadyPath = process.env.MBRAIN_TEST_FIRST_READY_PATH;
+      const releasePath = process.env.MBRAIN_TEST_RELEASE_PATH;
+      if (!dbPath || !firstReadyPath || !releasePath) {
+        throw new Error('missing worker environment');
+      }
+
+      const engine = new SQLiteEngine();
+      await engine.connect({ engine: 'sqlite', database_path: dbPath });
+      await engine.initSchema();
+      await engine.transaction(async (tx) => {
+        await tx.putPage('people/cross-process-lock-holder.md', {
+          type: 'person',
+          title: 'Cross Process Lock Holder',
+          compiled_truth: 'This process holds a SQLite write lock.',
+          timeline: '',
+          frontmatter: {},
+        });
+        writeFileSync(firstReadyPath, 'ready');
+        while (!existsSync(releasePath)) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      });
+      await engine.disconnect();
+    `;
+    const lockHolder = Bun.spawn({
+      cmd: [process.execPath, '--eval', workerCode],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        MBRAIN_TEST_DB_PATH: dbPath,
+        MBRAIN_TEST_FIRST_READY_PATH: firstReadyPath,
+        MBRAIN_TEST_RELEASE_PATH: releasePath,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    expect(await waitForFile(firstReadyPath)).toBe(true);
+
+    const contenderCode = `
+      import { SQLiteEngine } from './src/core/sqlite-engine.ts';
+
+      const dbPath = process.env.MBRAIN_TEST_DB_PATH;
+      if (!dbPath) throw new Error('missing contender environment');
+
+      const engine = new SQLiteEngine();
+      await engine.connect({ engine: 'sqlite', database_path: dbPath });
+      await engine.initSchema();
+      await engine.disconnect();
+    `;
+    const contender = Bun.spawn({
+      cmd: [process.execPath, '--eval', contenderCode],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        MBRAIN_TEST_DB_PATH: dbPath,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    await delay(100);
+    writeFileSync(releasePath, 'release');
+    const contenderExitCode = await contender.exited;
+    const contenderStderr = await new Response(contender.stderr).text();
+    expect({ exitCode: contenderExitCode, stderr: contenderStderr.trim() }).toEqual({ exitCode: 0, stderr: '' });
+
+    const exitCode = await lockHolder.exited;
+    const stderr = await new Response(lockHolder.stderr).text();
+    expect({ exitCode, stderr: stderr.trim() }).toEqual({ exitCode: 0, stderr: '' });
   });
 
   test('supports page CRUD, chunks, config, slug resolution, and slug updates', async () => {

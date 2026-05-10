@@ -88,6 +88,19 @@ function optionalString(
   return value;
 }
 
+function optionalTargetSnapshotHash(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string' || !/^[a-fA-F0-9]{64}$/.test(value)) {
+    throw invalidParams(deps, `${field} must be null or a SHA-256 hex content hash`);
+  }
+  return value.toLowerCase();
+}
+
 function optionalStringArray(
   deps: { OperationError: OperationErrorCtor },
   field: string,
@@ -188,6 +201,7 @@ function parseRouteMemoryWritebackInput(
       MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES,
     ),
     target_object_id: optionalString(deps, 'target_object_id', params.target_object_id),
+    target_snapshot_hash: optionalTargetSnapshotHash(deps, 'target_snapshot_hash', params.target_snapshot_hash),
     scope_id: optionalString(deps, 'scope_id', params.scope_id),
     sensitivity: optionalEnumValue(deps, 'sensitivity', params.sensitivity, MEMORY_CANDIDATE_SENSITIVITY_VALUES),
     confidence_score: optionalNumber(deps, 'confidence_score', params.confidence_score),
@@ -222,6 +236,7 @@ export function createMemoryWritebackRouterOperations(
         enum: [...MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES],
       },
       target_object_id: { type: 'string', description: 'Optional canonical target object id' },
+      target_snapshot_hash: { type: 'string', nullable: true, description: 'Canonical target content_hash observed before routing; null asserts that the target is absent' },
       scope_id: { type: 'string', description: `Memory candidate scope id (default: ${deps.defaultScopeId})` },
       sensitivity: { type: 'string', description: 'Optional sensitivity classification', enum: [...MEMORY_CANDIDATE_SENSITIVITY_VALUES] },
       confidence_score: { type: 'number', description: 'Optional confidence score from 0 to 1' },

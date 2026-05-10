@@ -66,7 +66,12 @@ export const REQUIRED_AGENT_TOOLS = [
 
 const RULES_START = '<!-- MBRAIN:RULES:START -->';
 const RULES_END = '<!-- MBRAIN:RULES:END -->';
-const ROUTER_TERMS = ['route_memory_writeback', 'canonical_write_allowed'] as const;
+const ROUTER_TERMS = [
+  'route_memory_writeback',
+  'canonical_write_allowed',
+  'target_snapshot_hash',
+  'expected_content_hash',
+] as const;
 
 export function parseAgentRulesVersion(content: string): string | null {
   return content.match(/<!--\s*mbrain-agent-rules-version:\s*([\d.]+)\s*-->/)?.[1] ?? null;

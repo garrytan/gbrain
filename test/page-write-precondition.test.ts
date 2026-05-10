@@ -214,6 +214,71 @@ describe('put_page content hash preconditions and mutation ledger', () => {
     });
   });
 
+  test('null expected_content_hash creates only when the page is absent', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const slug = 'concepts/precondition-create-only';
+
+      await put.handler(ctx, {
+        slug,
+        content: pageContent(
+          'Precondition Create Only',
+          'This page should be created only when absent.',
+          '- 2026-04-25 | Missing target creation.',
+        ),
+        expected_content_hash: null,
+        session_id: 'put-page-create-only-session',
+        source_refs: ['Source: create-only precondition test'],
+      });
+
+      const created = await ctx.engine.getPage(slug);
+      expect(created?.compiled_truth).toBe('This page should be created only when absent.');
+      expect(created?.content_hash).toBeTruthy();
+    });
+  });
+
+  test('null expected_content_hash rejects existing pages without overwriting them', async () => {
+    await withSqliteEngine(async (ctx) => {
+      const put = getOperation('put_page');
+      const slug = 'concepts/precondition-create-only-conflict';
+
+      await put.handler(ctx, {
+        slug,
+        content: pageContent(
+          'Precondition Create Only Conflict',
+          'Original compiled truth.',
+          '- 2026-04-25 | Initial evidence.',
+        ),
+      });
+      const before = await ctx.engine.getPage(slug);
+
+      await expect(put.handler(ctx, {
+        slug,
+        content: pageContent(
+          'Precondition Create Only Conflict',
+          'This content should not overwrite an existing page.',
+          '- 2026-04-25 | Conflicting create-only write.',
+        ),
+        expected_content_hash: null,
+        session_id: 'put-page-create-only-conflict-session',
+        source_refs: ['Source: create-only conflict test'],
+      })).rejects.toMatchObject({ code: 'write_conflict' });
+
+      const after = await ctx.engine.getPage(slug);
+      expect(after?.content_hash).toBe(before?.content_hash);
+      expect(after?.compiled_truth).toBe('Original compiled truth.');
+      const events = await ctx.engine.listMemoryMutationEvents({
+        session_id: 'put-page-create-only-conflict-session',
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.conflict_info).toEqual({
+        reason: 'page_exists',
+        expected_content_hash: null,
+        current_content_hash: before?.content_hash,
+      });
+    });
+  });
+
   test('conflict ledger failure preserves write_conflict and does not mutate the page', async () => {
     await withSqliteEngine(async (ctx) => {
       const put = getOperation('put_page');

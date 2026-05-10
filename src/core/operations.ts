@@ -1744,11 +1744,12 @@ function putPageContent(value: unknown): string {
   return value;
 }
 
-function putPageExpectedContentHash(value: unknown): string | undefined {
+function putPageExpectedContentHash(value: unknown): string | null | undefined {
+  if (value === null) return null;
   const expected = optionalPutPageString('expected_content_hash', value);
   if (expected === undefined) return undefined;
   if (!/^[a-fA-F0-9]{64}$/.test(expected)) {
-    throw new OperationError('invalid_params', 'expected_content_hash must be a SHA-256 hex content hash');
+    throw new OperationError('invalid_params', 'expected_content_hash must be null or a SHA-256 hex content hash');
   }
   return expected.toLowerCase();
 }
@@ -1999,7 +2000,7 @@ function putPageMarkdownPreflightError(content: string): string | null {
 function putPageMarkdownConflict(input: {
   slug: string;
   existingPageHash: string | null;
-  expectedContentHash?: string;
+  expectedContentHash?: string | null;
   markdownContentHash: string | null;
 }): {
   expectedContentHash: string | null;
@@ -2229,7 +2230,7 @@ const put_page: Operation = {
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
-    expected_content_hash: { type: 'string', description: 'Optional optimistic write precondition. Existing page content_hash must match before writing.' },
+    expected_content_hash: { type: 'string', nullable: true, description: 'Optional optimistic write precondition. Existing page content_hash must match before writing; null requires that the page is absent.' },
     repo: { type: 'string', description: 'Optional markdown repo root for markdown-first local/offline writes. Defaults to configured markdown.repo_path or sync.repo_path.' },
     memory_session_id: { type: 'string', description: 'Optional memory session id used for write authorization. Requires realm_id.' },
     session_id: { type: 'string', description: 'Optional audit session id. Defaults to put_page:direct.' },
@@ -2289,7 +2290,25 @@ const put_page: Operation = {
           ? hashMarkdownTargetSnapshot(markdownTarget, markdownSnapshot)
           : null;
 
-        if (expectedContentHash !== undefined && !existing) {
+        if (expectedContentHash === null && existing) {
+          return {
+            kind: 'conflict' as const,
+            audit,
+            conflict: {
+              slug,
+              expectedContentHash,
+              currentContentHash: previousHash,
+              conflictInfo: {
+                reason: 'page_exists',
+                expected_content_hash: null,
+                current_content_hash: previousHash,
+              },
+            },
+            error: new OperationError('write_conflict', `Page already exists for null expected content hash: ${slug}`),
+          };
+        }
+
+        if (expectedContentHash !== undefined && expectedContentHash !== null && !existing) {
           return {
             kind: 'conflict' as const,
             audit,
@@ -2306,7 +2325,7 @@ const put_page: Operation = {
           };
         }
 
-        if (expectedContentHash !== undefined && previousHash !== expectedContentHash) {
+        if (expectedContentHash !== undefined && expectedContentHash !== null && previousHash !== expectedContentHash) {
           return {
             kind: 'conflict' as const,
             audit,

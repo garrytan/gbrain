@@ -300,11 +300,13 @@ function canonicalWriteRequirementsFor(
   if (!isPageBackedCanonicalTargetType(targetObjectType)) return null;
   if (!targetObjectId) return null;
   if (sensitivity === 'unknown') return null;
+  if (!hasTargetSnapshotHash(input)) return null;
 
   return {
     source_refs: sourceRefs,
     target_object_type: targetObjectType,
     target_object_id: targetObjectId,
+    expected_content_hash: input.target_snapshot_hash ?? null,
     sensitivity,
   };
 }
@@ -324,6 +326,7 @@ function canonicalMissingRequirements(
     missing.push('canonical_page_target');
   }
   if (!targetObjectId) missing.push('target_object_id');
+  if (!hasTargetSnapshotHash(input)) missing.push('target_snapshot_hash');
   if (sensitivity === 'unknown') missing.push('sensitivity');
   if (input.evidence_kind !== 'direct_user_statement' && input.evidence_kind !== 'source_extracted') {
     missing.push('canonical_evidence_kind');
@@ -338,9 +341,15 @@ function canonicalMissingReasons(missing: string[]): string[] {
     reasons.add('canonical_target_required');
   }
   if (missing.includes('canonical_page_target')) reasons.add('canonical_target_not_page_backed');
+  if (missing.includes('target_snapshot_hash')) reasons.add('canonical_missing_target_snapshot_hash');
   if (missing.includes('sensitivity')) reasons.add('canonical_sensitivity_required');
   if (missing.includes('canonical_evidence_kind')) reasons.add('canonical_evidence_kind_not_allowed');
   return [...reasons];
+}
+
+function hasTargetSnapshotHash(input: RouteMemoryWritebackInput): boolean {
+  return Object.prototype.hasOwnProperty.call(input, 'target_snapshot_hash')
+    && input.target_snapshot_hash !== undefined;
 }
 
 function personalTargetMissingRequirements(

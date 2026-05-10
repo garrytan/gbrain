@@ -489,7 +489,7 @@ Then start a new session in your AI client and verify:
 
 ## 11. Using Codex and Claude Code simultaneously
 
-Both clients can connect to the same local brain at the same time. Each spawns its own `mbrain serve` process, and both read from the same SQLite database at `~/.mbrain/brain.db`. SQLite WAL mode makes concurrent reads safe.
+Both clients can connect to the same local brain at the same time. Each spawns its own `mbrain serve` process, and both read from the same SQLite database at `~/.mbrain/brain.db`. SQLite WAL mode makes concurrent reads safe, and local SQLite connections wait briefly for another writer instead of immediately surfacing `SQLITE_BUSY`.
 
 The quickest way to set up both:
 
@@ -511,7 +511,10 @@ After this:
 - Codex sessions have full access to your local brain
 - Claude Code sessions have full access to your local brain
 - reads are safe to share concurrently
-- writes from one session are visible to the other immediately
+- committed writes from one session are visible to the other immediately
+- canonical `put_page` writes should carry `expected_content_hash` from
+  `route_memory_writeback`; a stale hash fails with `write_conflict` instead of
+  overwriting another session's update
 
 Both clients auto-spawn the server when they need it.
 

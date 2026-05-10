@@ -6,6 +6,7 @@ import { operationsByName, parseOpArgs, type OperationContext } from '../src/cor
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 const sourceRefs = ['Source: User, direct message, 2026-05-10 12:00 KST'];
+const currentHash = 'd'.repeat(64);
 
 async function withEngine<T>(run: (engine: SQLiteEngine) => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-writeback-router-op-'));
@@ -40,6 +41,7 @@ describe('memory writeback router operation', () => {
     expect(op.params.evidence_kind.enum).toContain('agent_inferred');
     expect(op.params.apply.type).toBe('boolean');
     expect(op.params.dry_run.type).toBe('boolean');
+    expect(op.params.target_snapshot_hash.nullable).toBe(true);
   });
 
   test('CLI parser accepts dry-run for the router operation', () => {
@@ -95,6 +97,65 @@ describe('memory writeback router operation', () => {
 
     expect(result.decision).toBe('create_candidate');
     expect(result.candidate_input.source_refs).toEqual(sourceRefs);
+  });
+
+  test('canonical write routing carries target_snapshot_hash as put_page expected_content_hash', async () => {
+    const engine = new Proxy({}, {
+      get() {
+        throw new Error('route_memory_writeback planning must not read the engine');
+      },
+    }) as unknown as OperationContext['engine'];
+
+    const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+      content: 'The user stated that canonical direct writes need optimistic concurrency.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      allow_canonical_write: true,
+      target_object_type: 'curated_note',
+      target_object_id: 'systems/mbrain',
+      target_snapshot_hash: currentHash,
+      sensitivity: 'work',
+    }) as any;
+
+    expect(result.decision).toBe('canonical_write_allowed');
+    expect(result.canonical_write_requirements.expected_content_hash).toBe(currentHash);
+  });
+
+  test('canonical write routing accepts null target_snapshot_hash for create-only writes', async () => {
+    const engine = new Proxy({}, {
+      get() {
+        throw new Error('route_memory_writeback planning must not read the engine');
+      },
+    }) as unknown as OperationContext['engine'];
+
+    const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+      content: 'The user stated that absent targets can be created with a null precondition.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      allow_canonical_write: true,
+      target_object_type: 'curated_note',
+      target_object_id: 'systems/new-mbrain-page',
+      target_snapshot_hash: null,
+      sensitivity: 'work',
+    }) as any;
+
+    expect(result.decision).toBe('canonical_write_allowed');
+    expect(result.canonical_write_requirements.expected_content_hash).toBeNull();
+  });
+
+  test('rejects invalid target_snapshot_hash values', async () => {
+    const engine = {} as unknown as OperationContext['engine'];
+
+    await expect(operationsByName.route_memory_writeback.handler(ctx(engine), {
+      content: 'This target snapshot hash is invalid.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      allow_canonical_write: true,
+      target_object_type: 'curated_note',
+      target_object_id: 'systems/mbrain',
+      target_snapshot_hash: 'not-a-hash',
+      sensitivity: 'work',
+    })).rejects.toThrow(/target_snapshot_hash/);
   });
 
   test('rejects invalid source_refs JSON array strings', async () => {
