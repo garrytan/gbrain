@@ -16,6 +16,7 @@ import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
@@ -615,38 +616,9 @@ const put_page: Operation = {
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
 
-/**
- * v0.31: backstop eligibility. The put_page facts hook fires only on
- * conversation-shape pages, where extraction is most useful. Pages from
- * sync / ingest / file upload / code-import paths have their own surfaces
- * (extract takes / search) and shouldn't pump the hot memory layer.
- *
- * Eligible:
- *   - kind/type in: note, meeting, slack, email, calendar-event, source, writing
- *   - body length >= 80 chars (skip TODO-style snippets)
- *   - slug NOT under wiki/agents/ (subagent scratch is its own world)
- *   - dream_generated:true frontmatter is anti-loop reject
- *
- * Reasons returned for the skipped envelope are stable strings consumed
- * by tests and observability.
- */
-function isFactsBackstopEligible(
-  slug: string,
-  parsed: { type: PageType; compiled_truth: string; frontmatter: Record<string, unknown> } | null | undefined,
-): { ok: true } | { ok: false; reason: string } {
-  if (!parsed) return { ok: false, reason: 'no_parsed_page' };
-  if (slug.startsWith('wiki/agents/')) return { ok: false, reason: 'subagent_namespace' };
-  if (parsed.frontmatter && parsed.frontmatter.dream_generated === true) {
-    return { ok: false, reason: 'dream_generated' };
-  }
-  const eligibleTypes: PageType[] = [
-    'note', 'meeting', 'slack', 'email', 'calendar-event', 'source', 'writing',
-  ];
-  if (!eligibleTypes.includes(parsed.type)) return { ok: false, reason: `kind:${parsed.type}` };
-  const body = (parsed.compiled_truth ?? '').trim();
-  if (body.length < 80) return { ok: false, reason: 'too_short' };
-  return { ok: true };
-}
+// v0.31.2: isFactsBackstopEligible moved to src/core/facts/eligibility.ts
+// so sync.ts, file_upload, code_import, and runFactsBackstop all share one
+// predicate. Imported above.
 
 /**
  * Extract entity refs from a freshly-written page, sync the links table to match.
