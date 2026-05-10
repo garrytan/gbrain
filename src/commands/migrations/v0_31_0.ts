@@ -40,11 +40,11 @@ async function phaseASchema(
   try {
     const versionStr = await engine.getConfig('version');
     const v = parseInt(versionStr || '0', 10);
-    if (v < 45) {
+    if (v < 40) {
       return {
         name: 'schema',
         status: 'failed',
-        detail: `expected schema version >= 45 (facts hot memory); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
+        detail: `expected schema version >= 40 (facts hot memory + notability); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
       };
     }
     // Post-condition: facts table exists.

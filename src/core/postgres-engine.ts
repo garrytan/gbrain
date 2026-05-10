@@ -1810,6 +1810,7 @@ export class PostgresEngine implements BrainEngine {
     const validUntil = input.valid_until ?? null;
     const kind = input.kind ?? 'fact';
     const visibility = input.visibility ?? 'private';
+    const notability = input.notability ?? 'medium';
     const confidence = input.confidence ?? 1.0;
     const entitySlug = input.entity_slug ?? null;
     const context = input.context ?? null;
@@ -1827,11 +1828,11 @@ export class PostgresEngine implements BrainEngine {
         }
         const ins = await tx<Array<{ id: number }>>`
           INSERT INTO facts (
-            source_id, entity_slug, fact, kind, visibility, context,
+            source_id, entity_slug, fact, kind, visibility, notability, context,
             valid_from, valid_until, source, source_session, confidence,
             embedding, embedded_at
           ) VALUES (
-            ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${context},
+            ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${notability}, ${context},
             ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
             ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt}
           ) RETURNING id
@@ -1851,11 +1852,11 @@ export class PostgresEngine implements BrainEngine {
       }
       const ins = await tx<Array<{ id: number }>>`
         INSERT INTO facts (
-          source_id, entity_slug, fact, kind, visibility, context,
+          source_id, entity_slug, fact, kind, visibility, notability, context,
           valid_from, valid_until, source, source_session, confidence,
           embedding, embedded_at
         ) VALUES (
-          ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${context},
+          ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${notability}, ${context},
           ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
           ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt}
         ) RETURNING id

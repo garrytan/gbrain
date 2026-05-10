@@ -360,6 +360,7 @@ export interface NewFact {
   source: string;                       // 'mcp:put_page' | 'mcp:extract_facts' | 'cli:think' | etc
   source_session?: string | null;
   confidence?: number;                  // [0,1], default 1.0
+  notability?: 'high' | 'medium' | 'low'; // salience filter for extraction gate
   embedding?: Float32Array | null;     // pre-computed; if null, insertFact computes via gateway
 }
 

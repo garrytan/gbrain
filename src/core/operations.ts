@@ -547,6 +547,7 @@ const put_page: Operation = {
             sessionId,
             source: 'mcp:put_page',
             isDreamGenerated: false,
+            engine: ctx.engine,
             abortSignal: signal,
           });
           for (const f of facts) {
@@ -2402,6 +2403,7 @@ const extract_facts: Operation = {
       entityHints: Array.isArray(p.entity_hints) ? (p.entity_hints as string[]) : undefined,
       source: 'mcp:extract_facts',
       isDreamGenerated: p.is_dream_generated === true,
+      engine: ctx.engine,
     });
 
     let inserted = 0;

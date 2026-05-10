@@ -2294,6 +2294,8 @@ export const MIGRATIONS: Migration[] = [
                             CHECK (kind IN ('event','preference','commitment','belief','fact')),
           visibility        TEXT        NOT NULL DEFAULT 'private'
                             CHECK (visibility IN ('private','world')),
+          notability        TEXT        NOT NULL DEFAULT 'medium'
+                            CHECK (notability IN ('high','medium','low')),
           context           TEXT,
           valid_from        TIMESTAMPTZ NOT NULL DEFAULT now(),
           valid_until       TIMESTAMPTZ,

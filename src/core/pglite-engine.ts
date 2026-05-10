@@ -1671,6 +1671,7 @@ export class PGLiteEngine implements BrainEngine {
     const validUntil = input.valid_until ?? null;
     const kind = input.kind ?? 'fact';
     const visibility = input.visibility ?? 'private';
+    const notability = input.notability ?? 'medium';
     const confidence = input.confidence ?? 1.0;
     const entitySlug = input.entity_slug ?? null;
     const context = input.context ?? null;
@@ -1685,15 +1686,15 @@ export class PGLiteEngine implements BrainEngine {
       const result = await this.db.transaction(async (tx) => {
         const ins = await tx.query<{ id: number }>(
           `INSERT INTO facts (
-             source_id, entity_slug, fact, kind, visibility, context,
+             source_id, entity_slug, fact, kind, visibility, notability, context,
              valid_from, valid_until, source, source_session, confidence,
              embedding, embedded_at
            ) VALUES (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, ${embedStr === null ? 'NULL' : `$12::vector`}, ${embedStr === null ? 'NULL' : '$13'}
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, ${embedStr === null ? 'NULL' : `$13::vector`}, ${embedStr === null ? 'NULL' : '$14'}
            ) RETURNING id`,
           embedStr === null
-            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, context, validFrom, validUntil, input.source, sourceSession, confidence]
-            : [ctx.source_id, entitySlug, input.fact, kind, visibility, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt],
+            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence]
+            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt],
         );
         const newId = ins.rows[0].id;
         await tx.query(
@@ -1708,15 +1709,15 @@ export class PGLiteEngine implements BrainEngine {
 
     const ins = await this.db.query<{ id: number }>(
       `INSERT INTO facts (
-         source_id, entity_slug, fact, kind, visibility, context,
+         source_id, entity_slug, fact, kind, visibility, notability, context,
          valid_from, valid_until, source, source_session, confidence,
          embedding, embedded_at
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, ${embedStr === null ? 'NULL' : `$12::vector`}, ${embedStr === null ? 'NULL' : '$13'}
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, ${embedStr === null ? 'NULL' : `$13::vector`}, ${embedStr === null ? 'NULL' : '$14'}
        ) RETURNING id`,
       embedStr === null
-        ? [ctx.source_id, entitySlug, input.fact, kind, visibility, context, validFrom, validUntil, input.source, sourceSession, confidence]
-        : [ctx.source_id, entitySlug, input.fact, kind, visibility, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt],
+        ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence]
+        : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt],
     );
     return { id: ins.rows[0].id, status: 'inserted' };
   }

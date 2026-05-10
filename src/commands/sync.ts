@@ -815,6 +815,70 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     } catch { /* extraction is best-effort */ }
   }
 
+  // Auto-extract facts from eligible pages (real-time hot memory).
+  // Only HIGH notability facts are inserted during sync; MEDIUM waits
+  // for the dream cycle; LOW is dropped entirely.
+  if (!opts.noExtract && pagesAffected.length > 0 && pagesAffected.length <= 50) {
+    try {
+      const { extractFactsFromTurn, isFactsExtractionEnabled, getFactsExtractionModel } = await import('../core/facts/extract.ts');
+      const enabled = await isFactsExtractionEnabled(engine);
+      if (enabled) {
+        const model = await getFactsExtractionModel(engine);
+        let factsInserted = 0;
+        for (const slug of pagesAffected) {
+          try {
+            // Read the page content
+            const page = await engine.getPage(slug);
+            if (!page?.body) continue;
+            // Skip non-eligible types: only meetings, conversations, personal pages
+            const pageType = page.frontmatter?.type as string | undefined;
+            const eligibleTypes = ['meeting', 'conversation', 'transcript', 'personal', 'therapy', 'call'];
+            const isEligible = pageType && eligibleTypes.includes(pageType);
+            // Also check path-based eligibility for meetings/ and personal/
+            const pathEligible = slug.startsWith('meetings/') || slug.startsWith('personal/');
+            if (!isEligible && !pathEligible) continue;
+            // Skip dream-generated pages
+            if (page.frontmatter?.dream_generated) continue;
+            const facts = await extractFactsFromTurn({
+              turnText: page.body,
+              sessionId: `sync:${slug}`,
+              source: 'sync:import',
+              isDreamGenerated: false,
+              model,
+              engine,
+            });
+            for (const f of facts) {
+              // Notability gate: only HIGH during sync
+              if (f.notability !== 'high') continue;
+              const resolvedSlug = f.entity_slug
+                ? await (async () => {
+                    try {
+                      const { resolveEntitySlug } = await import('../core/operations.ts');
+                      return await resolveEntitySlug(engine, slug, f.entity_slug!);
+                    } catch { return f.entity_slug; }
+                  })()
+                : null;
+              await engine.insertFact({
+                source_id: slug,
+                entity_slug: resolvedSlug ?? undefined,
+                fact: f.fact,
+                kind: f.kind,
+                confidence: f.confidence,
+                notability: f.notability,
+                source: 'sync:import',
+                source_session: `sync:${slug}`,
+              });
+              factsInserted++;
+            }
+          } catch { /* per-page facts extraction is best-effort */ }
+        }
+        if (factsInserted > 0) {
+          console.log(`  Extracted: ${factsInserted} high-notability facts`);
+        }
+      }
+    } catch { /* facts extraction is best-effort */ }
+  }
+
   // Auto-embed (skip for large syncs — embedding calls OpenAI)
   let embedded = 0;
   if (!noEmbed && pagesAffected.length > 0 && pagesAffected.length <= 100) {
