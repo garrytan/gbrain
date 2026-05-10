@@ -4,7 +4,7 @@ import { installSigchldHandler } from './core/zombie-reap.ts';
 installSigchldHandler();
 
 import { readFileSync } from 'fs';
-import { loadConfig, loadConfigWithEngine, toEngineConfig, isThinClient } from './core/config.ts';
+import { loadConfig, loadConfigWithEngine, toEngineConfig, isThinClient, loadSharedProviderEnvFiles } from './core/config.ts';
 import type { GBrainConfig } from './core/config.ts';
 import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
@@ -27,6 +27,11 @@ for (const op of operations) {
 const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'remote']);
 
 async function main() {
+  // Load provider credentials before command dispatch so gbrain works when it is
+  // launched by Hermes/cron/non-login shells. loadConfig() itself remains
+  // pure/read-only; this is the CLI bootstrap boundary.
+  loadSharedProviderEnvFiles();
+
   // Parse global flags (--quiet / --progress-json / --progress-interval)
   // BEFORE command dispatch, so `gbrain --progress-json doctor` works.
   // The stripped argv is what the command sees.
@@ -805,6 +810,11 @@ async function handleCliOnly(command: string, args: string[]) {
 // but not the other previously required remembering to mirror the change;
 // the helper makes that structural.
 function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
+  const env = { ...process.env };
+  // Env vars remain highest precedence; config-file credentials are the
+  // durable fallback for non-login shells and cron-launched gbrain runs.
+  if (!env.OPENAI_API_KEY && c.openai_api_key) env.OPENAI_API_KEY = c.openai_api_key;
+  if (!env.ANTHROPIC_API_KEY && c.anthropic_api_key) env.ANTHROPIC_API_KEY = c.anthropic_api_key;
   return {
     embedding_model: c.embedding_model,
     embedding_dimensions: c.embedding_dimensions,
@@ -813,7 +823,7 @@ function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     chat_model: c.chat_model,
     chat_fallback_chain: c.chat_fallback_chain,
     base_urls: c.provider_base_urls,
-    env: { ...process.env },
+    env,
   };
 }
 
