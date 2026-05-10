@@ -49,6 +49,25 @@ describe('memory writeback router service', () => {
     });
   });
 
+  test('normalizes source refs by trimming and filtering empty entries', () => {
+    const result = routeMemoryWriteback({
+      content: 'The user prefers sourced router candidate capture.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: [
+        '  Source: User, direct message, 2026-05-10 12:00 KST  ',
+        '',
+        '   ',
+        'Source: User, follow-up, 2026-05-10 12:05 KST',
+      ],
+    });
+
+    expect(result.decision).toBe('create_candidate');
+    expect(result.candidate_input?.source_refs).toEqual([
+      'Source: User, direct message, 2026-05-10 12:00 KST',
+      'Source: User, follow-up, 2026-05-10 12:05 KST',
+    ]);
+  });
+
   test('routes ambiguous signals to open_question candidates', () => {
     const result = routeMemoryWriteback({
       content: 'It is unclear whether this should update canonical MBrain docs.',
@@ -118,6 +137,28 @@ describe('memory writeback router service', () => {
     const result = routeMemoryWriteback({
       content: 'The user stated that docs/superpowers must stay local-only.',
       evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      allow_canonical_write: true,
+      target_object_type: 'curated_note',
+      target_object_id: 'systems/mbrain',
+      sensitivity: 'work',
+    });
+
+    expect(result.decision).toBe('canonical_write_allowed');
+    expect(result.intended_operation).toBe('put_page');
+    expect(result.canonical_write_requirements).toEqual({
+      source_refs: sourceRefs,
+      target_object_type: 'curated_note',
+      target_object_id: 'systems/mbrain',
+      sensitivity: 'work',
+    });
+    expect(result.candidate_input).toBeUndefined();
+  });
+
+  test('allows source-extracted canonical write with explicit allow flag and target binding', () => {
+    const result = routeMemoryWriteback({
+      content: 'The imported source states that router writeback should prefer candidates.',
+      evidence_kind: 'source_extracted',
       source_refs: sourceRefs,
       allow_canonical_write: true,
       target_object_type: 'curated_note',
