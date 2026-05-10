@@ -726,6 +726,6 @@ export function reportModStatus(): void {
     console.log('  cd ~/.claude/skills/gstack && ./setup');
   }
   console.log('Resolver: skills/RESOLVER.md');
-  console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
+  console.log('Soul audit: run the skill `/soul-audit` to customize agent identity');
   console.log('');
 }
