@@ -86,8 +86,12 @@ export class RemoteMcpError extends Error {
  * v0.31.1: convert any thrown value into a RemoteMcpError. Used by the
  * outermost catch in `callRemoteTool` so the dispatcher's exhaustive switch
  * is sound — no plain `Error` (undici, AbortError, JSON parse) escapes.
+ *
+ * @internal Exported for test access (test/mcp-client-hardening.test.ts).
+ * Not part of the public API — production code should consume this only via
+ * the callRemoteTool funnel.
  */
-function toRemoteMcpError(e: unknown, mcpUrl: string): RemoteMcpError {
+export function toRemoteMcpError(e: unknown, mcpUrl: string): RemoteMcpError {
   if (e instanceof RemoteMcpError) return e;
   if (e instanceof Error) {
     // AbortError fires for both --timeout and SIGINT; the caller distinguishes
@@ -119,8 +123,10 @@ function toRemoteMcpError(e: unknown, mcpUrl: string): RemoteMcpError {
  * v0.31.1: parse a tool_error content envelope and extract a structured
  * `code` (e.g. 'missing_scope') if the server provided one. Tries JSON-parsed
  * payload first, then falls back to substring detection on the message.
+ *
+ * @internal Exported for test access (test/mcp-client-hardening.test.ts).
  */
-function extractToolErrorCode(message: string): string | undefined {
+export function extractToolErrorCode(message: string): string | undefined {
   // Try to parse a JSON payload first — gbrain server-side tool errors
   // sometimes come through as `{"error":{"code":"...","message":"..."}}`.
   try {
@@ -238,7 +244,8 @@ export interface CallRemoteToolOptions {
  * Returns the controller (so callers can pass `controller.signal` to
  * downstream fetch) plus a `cleanup` to stop the timer + drop listeners.
  */
-function buildAbortController(opts: CallRemoteToolOptions): { signal: AbortSignal; cleanup: () => void } {
+/** @internal Exported for test access (test/mcp-client-hardening.test.ts). */
+export function buildAbortController(opts: CallRemoteToolOptions): { signal: AbortSignal; cleanup: () => void } {
   const controller = new AbortController();
   const cleanups: Array<() => void> = [];
 
