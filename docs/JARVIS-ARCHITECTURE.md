@@ -1918,10 +1918,10 @@ PII scrubber runs at write time; queries over 50KB rejected.
 Upstream's new `scripts/check-privacy.sh` (CLAUDE.md:550 enforcement)
 fired on two fork files:
 
-- `skills/kos-jarvis/TODO.md:35` — example slug layout `wintermute/chat/`
+- `skills/kos-jarvis/TODO.md:35` — example slug layout (banned-word form)
   rewritten to `your-openclaw/chat/`.
 - `skills/kos-jarvis/pending-enrich/SKILL.md:38` — example JSON line
-  rewritten from `Sarah Guo` / `Wintermute seed` to
+  rewritten from a real-person + real-fund pairing to
   `alice-example` / `widget-co seed`.
 
 Both are documentation examples, not real data; the scrub is a

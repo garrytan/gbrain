@@ -100,6 +100,65 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md
 
 # CLAUDE.md
 
+## Jarvis KOS v2 fork — read first (Lucien's context)
+
+This repo is a **fork of `garrytan/gbrain`**, not a vanilla install. When
+working on this codebase, before touching anything else:
+
+1. Read [`skills/kos-jarvis/README.md`](skills/kos-jarvis/README.md) — the
+   fork-local extension pack boundary. **All Jarvis-specific logic lives
+   under `skills/kos-jarvis/`**. Never modify `src/*`, `skills/RESOLVER.md`
+   outside the `## KOS-Jarvis extensions` append-only section, or other
+   upstream `skills/*`. If you think you need to change upstream, file an
+   issue on the fork instead so we can evaluate whether it's worth the
+   merge-conflict tax.
+2. Read [`docs/JARVIS-ARCHITECTURE.md`](docs/JARVIS-ARCHITECTURE.md) — the
+   full migration story (v1 Python/shell → v2 GBrain TS + Gemini shim),
+   current deployment (launchd / kos.chenge.ink / Notion Knowledge Agent
+   / OpenClaw feishu), and the Jarvis triangle (KOS compiles ↔ Notion
+   operates ↔ OpenClaw executes).
+3. Read [`skills/kos-jarvis/TODO.md`](skills/kos-jarvis/TODO.md) — current
+   outstanding work (P0/P1/P2). Check here before suggesting "what should
+   we do next?"
+
+### Fork-specific rules (override upstream behavior)
+
+- **Embeddings route through Gemini**, not OpenAI. GBrain's
+  `src/core/embedding.ts` hardcodes `new OpenAI()`; we bridge it with
+  `skills/kos-jarvis/gemini-embed-shim/server.ts` on port 7222 and point
+  `OPENAI_BASE_URL` there. If you touch the embedding path, the shim
+  must keep returning base64-encoded 1536-dim vectors (SDK default).
+- **Chinese-first knowledge base.** Pure tsvector keyword search has no
+  CJK tokenizer. Always ensure vector search is live (shim reachable,
+  `OPENAI_API_KEY` env set to stub) before declaring queries broken.
+- **9 KOS page kinds coexist with GBrain's 20-dir MECE.** KOS `kind`
+  frontmatter (source/entity/concept/project/decision/synthesis/comparison/
+  protocol/timeline) is preserved on every page; it drives kos-jarvis
+  quality gates (evidence threshold per kind) while GBrain's directory
+  placement follows upstream RESOLVER.md. Mapping lives in
+  `skills/kos-jarvis/type-mapping.md`.
+- **`kos.chenge.ink` is the stable external boundary.** External systems
+  (Notion Knowledge Agent, OpenClaw feishu cron) never talk to gbrain
+  directly — they hit the compat-api. If you change request/response
+  shape, notify Lucien. The historical command-mapping doc at
+  `skills/kos-jarvis/_archived/feishu-bridge/SKILL.md` (archived
+  2026-05-05) records the v1→v2 cutover layout for reference.
+- **Secrets stay out of git.** `scripts/launchd/*.plist` is gitignored;
+  only `*.plist.template` is tracked. `.env.local` (contains
+  `NANO_BANANA_API_KEY`) is also gitignored.
+
+### Upstream sync policy
+
+- Cherry-pick `garrytan/gbrain:master` monthly.
+- Prefer minimal conflict: if upstream touches `skills/RESOLVER.md`, resolve
+  by keeping our `## KOS-Jarvis extensions` section at the end.
+- If upstream fundamentally changes `src/core/embedding.ts` (e.g. switches
+  away from OpenAI SDK), our shim strategy may need re-evaluation.
+
+---
+
+## Upstream GBrain context (below, unchanged)
+
 GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable
 engines: PGLite (embedded Postgres via WASM, zero-config default) or Postgres + pgvector
 + hybrid search in a managed Supabase instance. `gbrain init` defaults to PGLite;
@@ -1701,13 +1760,74 @@ These apply to ALL brain-writing skills:
 
 | "voice note", "voice memo", "audio message", "audio note", "transcribe and file" | `skills/voice-note-ingest/SKILL.md` |
 
+## KOS-Jarvis extensions (fork-only, append-only)
+
+Lucien's KOS-flavored quality pack. See `skills/kos-jarvis/README.md`
+for boundary and upgrade policy. Triggers must not collide with
+upstream sections above; KOS extensions are append-only by policy.
+
+| Trigger | Skill |
+|---------|-------|
+| Post-ingest strong-link compilation, A/B/C/F grading | `skills/kos-jarvis/dikw-compile/SKILL.md` |
+| Evidence-level gate (E0-E4) for decision/protocol pages | `skills/kos-jarvis/evidence-gate/SKILL.md` |
+| Auto-score high/medium/low confidence + compile grade | `skills/kos-jarvis/confidence-score/SKILL.md` |
+| Six-check lint (frontmatter/dupes/dead-links/orphans/weak-links/evidence) | `skills/kos-jarvis/kos-lint/SKILL.md` |
+| Daily patrol + staleness + gap detection + MEMORY digest | `skills/kos-jarvis/kos-patrol/SKILL.md` |
+| Weekly push KOS digest → OpenClaw MEMORY.md 近期层 | `skills/kos-jarvis/digest-to-memory/SKILL.md` |
+| Notion → gbrain 5-min incremental sync | `skills/kos-jarvis/notion-ingest-delta/SKILL.md` |
+| Batch scan brain, extract entities, create people/company stubs (G1 payoff) | `skills/kos-jarvis/enrich-sweep/SKILL.md` |
+
+These chain into upstream skills: dikw-compile runs after idea-ingest;
+kos-lint extends maintain; digest-to-memory reads patrol output;
+enrich-sweep wraps upstream `skills/enrich/` in bulk mode.
+
+> **Archived (2026-05-05)**: `feishu-bridge` + `pending-enrich` skills
+> moved to `skills/kos-jarvis/_archived/`. Phase 2 Feishu signal-fork
+> design was superseded by retiring the OpenClaw extension; brain-side
+> contract docs survive at `_archived/` for historical reference.
+
 ---
 
 ## README.md
 
 Source: https://raw.githubusercontent.com/garrytan/gbrain/master/README.md
 
-# GBrain
+# Jarvis Knowledge OS v2 (GBrain fork)
+
+> **Fork of [`garrytan/gbrain`](https://github.com/garrytan/gbrain)** maintained by
+> Lucien Chen. Adds a KOS-flavored quality layer (DIKW compilation, evidence
+> levels E0-E4, confidence scoring, lint/patrol) on top of upstream GBrain, plus
+> a translation shim so Gemini embeddings drop in where OpenAI is hardcoded.
+> Powers Lucien's personal Jarvis across Notion, OpenClaw, and Feishu via a
+> stable `kos.chenge.ink` HTTP boundary.
+>
+> **What's different from upstream:**
+> - `skills/kos-jarvis/` — fork-local extension pack (10 skills + templates);
+>   upstream `skills/*` is untouched and `src/*` carries 2 narrow PGLite
+>   patches recorded in `docs/UPSTREAM-PATCHES/` so we can `git merge
+>   upstream/master` with minimal conflict surface. Last sync: v0.20.4
+>   (2026-04-25). See [`skills/kos-jarvis/README.md`](skills/kos-jarvis/README.md).
+> - `server/kos-compat-api.ts` — drop-in replacement for the KOS v1 `kos-api.py`
+>   HTTP contract (`/query /ingest /digest /status /health`); lets the existing
+>   Notion Knowledge Agent keep working after the cutover without redeploy.
+> - `scripts/launchd/` — templates for the two macOS services
+>   (`com.jarvis.gemini-embed-shim` on 7222, `com.jarvis.kos-compat-api` on 7225).
+> - Full migration history, architecture, and operational runbook live in
+>   [`docs/JARVIS-ARCHITECTURE.md`](docs/JARVIS-ARCHITECTURE.md).
+>
+> **When to read what:**
+> - Starting here? → this file for upstream GBrain basics, then
+>   `docs/JARVIS-ARCHITECTURE.md` for the Jarvis-specific overlay
+> - Working on the fork? → `CLAUDE.md` (Jarvis-specific agent directives are
+>   prepended to the upstream contract)
+> - Outstanding work? → [`skills/kos-jarvis/TODO.md`](skills/kos-jarvis/TODO.md)
+> - Post-migration roadmap (5 phases including Phase 3 enrich-sweep that
+>   delivers the primary "auto-extract people/company graph" goal) →
+>   [`docs/JARVIS-NEXT-STEPS.md`](docs/JARVIS-NEXT-STEPS.md)
+
+---
+
+## Upstream GBrain (below)
 
 Your AI agent is smart but forgetful. GBrain gives it a brain.
 
