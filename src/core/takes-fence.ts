@@ -44,7 +44,24 @@ export interface ParsedTake {
   rowNum: number;
   claim: string;        // strikethrough markers stripped; inner text only
   kind: TakeKind;
-  holder: string;       // 'world' | 'garry' | 'brain' | <slug>
+  /**
+   * Who HOLDS this belief — the person asserting/endorsing it.
+   * NOT the person the belief is ABOUT (that's the subject, implicit in the claim).
+   *
+   * Common confusion (flagged by cross-modal eval 2026-05-10):
+   *   WRONG: holder=people/garry-tan claim="Garry has a hero/rescuer pattern"
+   *          (brain's analysis OF Garry, not Garry's own belief)
+   *   RIGHT: holder=brain claim="Garry has a hero/rescuer pattern"
+   *
+   *   WRONG: holder=people/diana-hu claim="Diana's repeated 2.5-3.0 scores imply cautious reads"
+   *          (brain's inference from Diana's behavior, not Diana's stated belief)
+   *   RIGHT: holder=brain claim="Diana's repeated 2.5-3.0 scores imply cautious reads"
+   *
+   * Values: 'world' (consensus fact) | 'people/<slug>' (individual's stated belief) |
+   *         'companies/<slug>' (institutional fact, no individual claimant) |
+   *         'brain' (AI-inferred when holder is genuinely ambiguous)
+   */
+  holder: string;
   weight: number;       // 0..1 (raw — may be out of range; engine clamps)
   sinceDate?: string;   // ISO 'YYYY-MM-DD' or 'YYYY-MM' (caller's choice)
   untilDate?: string;
