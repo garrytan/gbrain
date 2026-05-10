@@ -26,6 +26,10 @@ export const litellmProxy: Recipe = {
       default_dims: 0, // user must declare --embedding-dimensions explicitly
       cost_per_1m_tokens_usd: undefined,
       price_last_verified: '2026-04-20',
+      // Sentinel: LiteLLM proxies arbitrary upstream embedding models, so the
+      // real batch cap lives in the proxy/model config (`max_input_tokens`),
+      // not in a single truthful static recipe constant.
+      max_batch_tokens: 0,
     },
   },
   setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
