@@ -92,7 +92,17 @@ try {
 
   const tools = await client.listTools();
   const toolNames = new Set(tools.tools.map(tool => tool.name));
-  for (const name of ['get_health', 'put_page', 'get_page', 'search', 'delete_page']) {
+  for (const name of [
+    'get_health',
+    'put_page',
+    'get_page',
+    'search',
+    'delete_page',
+    'retrieve_context',
+    'read_context',
+    'record_retrieval_trace',
+    'route_memory_writeback',
+  ]) {
     if (!toolNames.has(name)) {
       throw new Error(`tools/list did not include ${name}`);
     }
@@ -104,6 +114,20 @@ try {
     throw new Error('get_health did not return an object');
   }
   console.log('get_health: ok');
+
+  const writeback = parseMcpText<any>(await client.callTool({
+    name: 'route_memory_writeback',
+    arguments: {
+      content: 'Installed MCP smoke confirms route_memory_writeback availability.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: ['Source: installed MCP smoke test, direct tool call, 2026-05-10 00:00 KST'],
+      dry_run: true,
+    },
+  }));
+  if (writeback?.dry_run !== true) {
+    throw new Error(`route_memory_writeback did not return dry_run true: ${JSON.stringify(writeback)}`);
+  }
+  console.log('route_memory_writeback: dry-run ok');
 
   const slug = 'smoke/install-check';
   const content = [
