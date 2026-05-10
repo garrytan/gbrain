@@ -174,4 +174,144 @@ describe('doctor command', () => {
     // Recovery command names the migration version explicitly.
     expect(block).toContain('--force-retry 35');
   });
+
+  // v0.32 — takes_weight_grid pure-helper export.
+  // Codex review #7 demanded the check be extracted as a pure function so
+  // tests target it directly with stubbed engines instead of running the
+  // full runDoctor pipeline. This block validates the export shape and the
+  // 4 branches (no-takes / fail / warn / ok) behaviorally against PGLite.
+  test('takesWeightGridCheck is exported as a pure function', async () => {
+    const mod = await import('../src/commands/doctor.ts');
+    expect(typeof mod.takesWeightGridCheck).toBe('function');
+  });
+
+  test('takes_weight_grid: 0 takes → ok with "No takes yet"', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      const result = await takesWeightGridCheck(engine);
+      expect(result.name).toBe('takes_weight_grid');
+      expect(result.status).toBe('ok');
+      expect(result.message).toContain('No takes yet');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('takes_weight_grid: 100% on-grid → ok', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      // Seed a few on-grid takes via the engine's normalized path.
+      await engine.putPage('test/doc-on-grid', {
+        type: 'note', title: 't', compiled_truth: 'b', frontmatter: {},
+      });
+      const pageRows = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = 'test/doc-on-grid' LIMIT 1`,
+      );
+      await engine.addTakesBatch([
+        { page_id: pageRows[0].id, row_num: 1, claim: 'a', kind: 'take', holder: 'world', weight: 0.75 },
+        { page_id: pageRows[0].id, row_num: 2, claim: 'b', kind: 'take', holder: 'world', weight: 0.5 },
+        { page_id: pageRows[0].id, row_num: 3, claim: 'c', kind: 'take', holder: 'world', weight: 1.0 },
+      ]);
+      const result = await takesWeightGridCheck(engine);
+      expect(result.status).toBe('ok');
+      expect(result.message).toContain('on grid');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('takes_weight_grid: >10% off-grid → fail with fix hint', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      await engine.putPage('test/doc-fail', {
+        type: 'note', title: 't', compiled_truth: 'b', frontmatter: {},
+      });
+      const pageRows = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = 'test/doc-fail' LIMIT 1`,
+      );
+      // Bypass engine normalization: write off-grid weights directly.
+      // 8 of 10 off-grid → 80%, well past the 10% fail threshold.
+      for (let i = 1; i <= 8; i++) {
+        await engine.executeRaw(
+          `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+           VALUES ($1, $2, 'c', 'take', 'world', $3::real, true)`,
+          [pageRows[0].id, i, 0.74],
+        );
+      }
+      for (let i = 9; i <= 10; i++) {
+        await engine.executeRaw(
+          `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+           VALUES ($1, $2, 'c', 'take', 'world', 0.5::real, true)`,
+          [pageRows[0].id, i],
+        );
+      }
+      const result = await takesWeightGridCheck(engine);
+      expect(result.status).toBe('fail');
+      expect(result.message).toMatch(/8\/10/);
+      expect(result.message).toContain('apply-migrations');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('takes_weight_grid: 1-10% off-grid → warn', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      await engine.putPage('test/doc-warn', {
+        type: 'note', title: 't', compiled_truth: 'b', frontmatter: {},
+      });
+      const pageRows = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = 'test/doc-warn' LIMIT 1`,
+      );
+      // 5 off-grid out of 100 = 5% → warn band.
+      for (let i = 1; i <= 5; i++) {
+        await engine.executeRaw(
+          `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+           VALUES ($1, $2, 'c', 'take', 'world', 0.74::real, true)`,
+          [pageRows[0].id, i],
+        );
+      }
+      for (let i = 6; i <= 100; i++) {
+        await engine.executeRaw(
+          `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+           VALUES ($1, $2, 'c', 'take', 'world', 0.5::real, true)`,
+          [pageRows[0].id, i],
+        );
+      }
+      const result = await takesWeightGridCheck(engine);
+      expect(result.status).toBe('warn');
+      expect(result.message).toMatch(/5\/100/);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('takes_weight_grid: takes table missing → warn (graceful)', async () => {
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    // Stub engine: executeRaw throws like a "relation does not exist" error.
+    const stubEngine = {
+      executeRaw: async () => {
+        throw new Error('relation "takes" does not exist');
+      },
+    } as any;
+    const result = await takesWeightGridCheck(stubEngine);
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('Could not check takes weight grid');
+  });
 });
