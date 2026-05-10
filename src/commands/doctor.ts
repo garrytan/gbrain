@@ -862,6 +862,39 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     });
   }
 
+  // 8c. Alternative provider advisory (v0.32 D11=C / Codex finding #2 wire-through).
+  // Walks listRecipes() and surfaces any recipe whose required env vars are ALL
+  // set in the process env but is not the currently configured provider. Helps
+  // users discover that, e.g., OPENAI_API_KEY=x DASHSCOPE_API_KEY=y means they
+  // have a Chinese-region alternative ready to go without setup.
+  progress.heartbeat('alternative_providers');
+  try {
+    const { listRecipes } = await import('../core/ai/recipes/index.ts');
+    const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+    const configuredId = (getEmbeddingModel() || '').split(':')[0];
+    const alternatives: string[] = [];
+    for (const r of listRecipes()) {
+      if (r.id === configuredId) continue;
+      const required = r.auth_env?.required ?? [];
+      // Skip recipes with no required env (they're "always available" — not a
+      // useful signal) and recipes that require env we don't have.
+      if (required.length === 0) continue;
+      const allPresent = required.every(k => !!process.env[k]);
+      if (!allPresent) continue;
+      // Skip recipes without an embedding touchpoint (chat-only — not an
+      // embedding alternative).
+      if (!r.touchpoints.embedding) continue;
+      alternatives.push(r.id);
+    }
+    if (alternatives.length > 0) {
+      checks.push({
+        name: 'alternative_providers',
+        status: 'ok',
+        message: `Detected ${alternatives.length} alternative embedding provider${alternatives.length > 1 ? 's' : ''} ready to use: ${alternatives.join(', ')}. Run \`gbrain providers list\` to switch.`,
+      });
+    }
+  } catch { /* listRecipes / gateway not available — silent */ }
+
   // 9. Graph health (link + timeline coverage on entity pages).
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
   progress.heartbeat('graph_coverage');

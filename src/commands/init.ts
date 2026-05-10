@@ -134,6 +134,18 @@ async function resolveAIOptions(
       console.error(`Unknown provider: ${shorthand}. Run \`gbrain providers list\` to see known providers.`);
       process.exit(1);
     }
+    // v0.32 D8=A: recipes flagged user_provided_models (litellm, llama-server)
+    // refuse implicit "first model" pick with a setup hint pointing the user
+    // at the explicit form. The shorthand --model is meaningless for these
+    // recipes because there's no canonical first model.
+    if (recipe.touchpoints.embedding?.user_provided_models === true) {
+      console.error(
+        `Provider ${shorthand} requires you to specify the model + dimensions explicitly:\n` +
+        `  gbrain init --embedding-model ${shorthand}:<your-model-id> --embedding-dimensions <N>\n` +
+        (recipe.setup_hint ? `\nSetup: ${recipe.setup_hint}` : '')
+      );
+      process.exit(1);
+    }
     const firstModel = recipe.touchpoints.embedding?.models[0];
     if (!firstModel) {
       console.error(`Provider ${shorthand} has no embedding models listed. Use --embedding-model provider:model.`);
