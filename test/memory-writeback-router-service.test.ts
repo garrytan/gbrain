@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { routeMemoryWriteback } from '../src/core/services/memory-writeback-router-service.ts';
 
 const sourceRefs = ['Source: User, direct message, 2026-05-10 12:00 KST'];
+const currentHash = 'c'.repeat(64);
 
 describe('memory writeback router service', () => {
   test('routes task mechanics to no_write without a candidate input', () => {
@@ -141,6 +142,7 @@ describe('memory writeback router service', () => {
       allow_canonical_write: true,
       target_object_type: 'curated_note',
       target_object_id: 'systems/mbrain',
+      target_snapshot_hash: currentHash,
       sensitivity: 'work',
     });
 
@@ -150,6 +152,7 @@ describe('memory writeback router service', () => {
       source_refs: sourceRefs,
       target_object_type: 'curated_note',
       target_object_id: 'systems/mbrain',
+      expected_content_hash: currentHash,
       sensitivity: 'work',
     });
     expect(result.candidate_input).toBeUndefined();
@@ -163,6 +166,7 @@ describe('memory writeback router service', () => {
       allow_canonical_write: true,
       target_object_type: 'curated_note',
       target_object_id: 'systems/mbrain',
+      target_snapshot_hash: null,
       sensitivity: 'work',
     });
 
@@ -172,9 +176,28 @@ describe('memory writeback router service', () => {
       source_refs: sourceRefs,
       target_object_type: 'curated_note',
       target_object_id: 'systems/mbrain',
+      expected_content_hash: null,
       sensitivity: 'work',
     });
     expect(result.candidate_input).toBeUndefined();
+  });
+
+  test('defers canonical writes until the caller supplies a target snapshot hash', () => {
+    const result = routeMemoryWriteback({
+      content: 'The user stated that canonical writes should use optimistic concurrency.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      allow_canonical_write: true,
+      target_object_type: 'curated_note',
+      target_object_id: 'systems/mbrain',
+      sensitivity: 'work',
+    });
+
+    expect(result.decision).toBe('defer');
+    expect(result.intended_operation).toBe('none');
+    expect(result.reasons).toContain('canonical_missing_target_snapshot_hash');
+    expect(result.missing_requirements).toContain('target_snapshot_hash');
+    expect(result.canonical_write_requirements).toBeUndefined();
   });
 
   test('defers personal canonical targets instead of routing them to put_page', () => {

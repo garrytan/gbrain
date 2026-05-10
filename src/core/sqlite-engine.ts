@@ -126,6 +126,7 @@ import {
 const DEFAULT_EMBEDDING_MODEL = 'nomic-embed-text';
 const BASELINE_VERSION = 1;
 const INTERACTION_ID_LOOKUP_BATCH_SIZE = 500;
+const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 
 interface SQLiteTransactionContext {
   depth: number;
@@ -534,6 +535,7 @@ export class SQLiteEngine implements BrainEngine {
     }
 
     const db = new Database(resolvedPath, { create: true });
+    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`);
     db.exec('PRAGMA journal_mode = WAL;');
     db.exec('PRAGMA foreign_keys = ON;');
     this.db = db;

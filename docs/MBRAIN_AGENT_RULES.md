@@ -1,4 +1,4 @@
-<!-- mbrain-agent-rules-version: 0.5.6 -->
+<!-- mbrain-agent-rules-version: 0.5.7 -->
 <!-- source: https://raw.githubusercontent.com/meghendra6/mbrain/master/docs/MBRAIN_AGENT_RULES.md -->
 # MBrain Agent Rules
 
@@ -59,11 +59,15 @@ memory. Use `apply: true` when source refs are available and the signal is
 inferred, ambiguous, contradictory, code-sensitive, session-end, trace-review,
 meeting/import-derived, or not ready for compiled truth.
 
-Call `put_page` only after the router returns `canonical_write_allowed`, then
-write source-attributed compiled truth plus timeline evidence. If the router
+Call `put_page` only after the router returns `canonical_write_allowed`. Canonical
+write routing requires `target_snapshot_hash`: pass the current page
+`content_hash`, or pass `null` only after confirming the target page is absent.
+When calling `put_page`, pass the router's
+`canonical_write_requirements.expected_content_hash` as `expected_content_hash`,
+then write source-attributed compiled truth plus timeline evidence. If the router
 returns `create_candidate`, do not also call `put_page` for the same signal. If
-it returns `defer`, ask for or record the missing provenance, scope, or target.
-If it returns `no_write`, skip the write.
+it returns `defer`, ask for or record the missing provenance, scope, target, or
+target snapshot. If it returns `no_write`, skip the write.
 
 Never write transient task mechanics, private chain-of-thought, or generic facts
 that do not belong in the user's knowledge graph.

@@ -111,6 +111,8 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('Route Durable Writeback');
     expect(result.stdout).toContain('route_memory_writeback');
     expect(result.stdout).toContain('canonical_write_allowed');
+    expect(result.stdout).toContain('target_snapshot_hash');
+    expect(result.stdout).toContain('expected_content_hash');
     expect(result.stdout).toContain('Backlinks And Sync');
     expect(result.stdout).toContain('sync_brain');
     expect(result.stdout).toContain('no_pull: true');
@@ -187,9 +189,10 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('Rules: updated');
 
     const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
-    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.6');
+    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.7');
     expect(agentsMd).toContain('Route Durable Writeback');
     expect(agentsMd).toContain('route_memory_writeback');
+    expect(agentsMd).toContain('expected_content_hash');
     expect(agentsMd).not.toContain('Call put_page directly for durable facts.');
     expect(agentsMd).toContain('Keep this local footer.');
   });

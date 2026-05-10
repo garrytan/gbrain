@@ -544,7 +544,8 @@ the operating loop:
 - read compiled truth first, then inspect timeline evidence when needed
 - route durable writeback through `route_memory_writeback`
 - put uncertain claims into the Memory Inbox
-- call `put_page` only after canonical write is allowed
+- call `put_page` only after canonical write is allowed, passing the router's
+  `expected_content_hash` precondition
 - promote only claims with provenance
 - sync after writes and backfill embeddings when needed
 - audit the loop periodically

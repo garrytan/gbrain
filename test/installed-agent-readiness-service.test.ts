@@ -13,20 +13,24 @@ import {
 
 const rulesBlock = [
   '<!-- MBRAIN:RULES:START -->',
-  '<!-- mbrain-agent-rules-version: 0.5.6 -->',
+  '<!-- mbrain-agent-rules-version: 0.5.7 -->',
   'Use route_memory_writeback before durable memory writes.',
   'canonical_write_allowed',
+  'target_snapshot_hash',
+  'expected_content_hash',
   '<!-- MBRAIN:RULES:END -->',
 ].join('\n');
 const rulesContent = [
-  '<!-- mbrain-agent-rules-version: 0.5.6 -->',
+  '<!-- mbrain-agent-rules-version: 0.5.7 -->',
   'Use route_memory_writeback before durable memory writes.',
   'canonical_write_allowed',
+  'target_snapshot_hash',
+  'expected_content_hash',
 ].join('\n');
 
 describe('installed-agent readiness service', () => {
   test('parses agent rules version from prompt content', () => {
-    expect(parseAgentRulesVersion(rulesBlock)).toBe('0.5.6');
+    expect(parseAgentRulesVersion(rulesBlock)).toBe('0.5.7');
     expect(parseAgentRulesVersion('no marker')).toBeNull();
   });
 
@@ -60,7 +64,7 @@ describe('installed-agent readiness service', () => {
         command: 'mbrain serve',
         source: 'claude mcp get mbrain',
       },
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('ok');
@@ -85,7 +89,7 @@ describe('installed-agent readiness service', () => {
         command: null,
         source: 'codex mcp list',
       },
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('fail');
@@ -110,7 +114,7 @@ describe('installed-agent readiness service', () => {
         command: 'node other-server.js',
         source: 'codex mcp list',
       },
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('fail');
@@ -135,7 +139,7 @@ describe('installed-agent readiness service', () => {
         command: 'mbrain serve',
         source: 'codex mcp list',
       },
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('warn');
@@ -160,7 +164,7 @@ describe('installed-agent readiness service', () => {
         command: '/opt/homebrew/bin/mbrain serve',
         source: 'codex mcp list',
       },
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('ok');
@@ -186,7 +190,7 @@ describe('installed-agent readiness service', () => {
         status: 'disabled',
         source: 'codex mcp list',
       },
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('fail');
@@ -212,7 +216,7 @@ describe('installed-agent readiness service', () => {
         status: 'Failed',
         source: 'claude mcp get mbrain',
       },
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('fail');
@@ -238,7 +242,7 @@ describe('installed-agent readiness service', () => {
         status: '\u2713 Connected',
         source: 'claude mcp get mbrain',
       },
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('ok');
@@ -282,7 +286,7 @@ describe('installed-agent readiness service', () => {
     try {
       const report = await collectInstalledAgentReadiness({
         command: 'mbrain',
-        expectedRulesVersion: '0.5.6',
+        expectedRulesVersion: '0.5.7',
         home,
         resolveCommandPath: () => '/opt/homebrew/bin/mbrain',
         runCommand: (command, args) => {
@@ -346,7 +350,7 @@ describe('installed-agent readiness service', () => {
       codexPrompt: rulesBlock,
       claudePrompt: rulesBlock,
       claudeStopHook: 'route_memory_writeback with sources',
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('fail');
@@ -363,7 +367,7 @@ describe('installed-agent readiness service', () => {
       codexPrompt: null,
       claudePrompt: rulesBlock,
       claudeStopHook: 'route_memory_writeback with sources',
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('warn');
@@ -380,7 +384,7 @@ describe('installed-agent readiness service', () => {
       codexPrompt: null,
       claudePrompt: null,
       claudeStopHook: null,
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('fail');
@@ -392,10 +396,10 @@ describe('installed-agent readiness service', () => {
   test('fails when router terms are absent from the managed prompt block', () => {
     const staleRulesBlock = [
       '<!-- MBRAIN:RULES:START -->',
-      '<!-- mbrain-agent-rules-version: 0.5.6 -->',
+      '<!-- mbrain-agent-rules-version: 0.5.7 -->',
       'This managed block is missing required router terms.',
       '<!-- MBRAIN:RULES:END -->',
-      'Outside the block: route_memory_writeback canonical_write_allowed',
+      'Outside the block: route_memory_writeback canonical_write_allowed target_snapshot_hash expected_content_hash',
     ].join('\n');
 
     const report = buildInstalledAgentReadinessReport({
@@ -405,7 +409,7 @@ describe('installed-agent readiness service', () => {
       codexPrompt: staleRulesBlock,
       claudePrompt: rulesBlock,
       claudeStopHook: 'route_memory_writeback with sources',
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
     });
 
     expect(report.status).toBe('fail');
@@ -417,8 +421,8 @@ describe('installed-agent readiness service', () => {
   test('fails when the managed prompt block has the right version and tokens but not the packaged rules', () => {
     const tokenOnlyRulesBlock = [
       '<!-- MBRAIN:RULES:START -->',
-      '<!-- mbrain-agent-rules-version: 0.5.6 -->',
-      'route_memory_writeback canonical_write_allowed',
+      '<!-- mbrain-agent-rules-version: 0.5.7 -->',
+      'route_memory_writeback canonical_write_allowed target_snapshot_hash expected_content_hash',
       '<!-- MBRAIN:RULES:END -->',
     ].join('\n');
 
@@ -429,7 +433,7 @@ describe('installed-agent readiness service', () => {
       codexPrompt: tokenOnlyRulesBlock,
       claudePrompt: rulesBlock,
       claudeStopHook: 'route_memory_writeback with sources',
-      expectedRulesVersion: '0.5.6',
+      expectedRulesVersion: '0.5.7',
       expectedRulesContent: rulesContent,
     });
 

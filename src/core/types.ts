@@ -1652,6 +1652,7 @@ export interface RouteMemoryWritebackInput {
   candidate_type?: MemoryCandidateType;
   target_object_type?: MemoryCandidateTargetObjectType;
   target_object_id?: string;
+  target_snapshot_hash?: string | null;
   scope_id?: string;
   sensitivity?: MemoryCandidateSensitivity;
   confidence_score?: number;
@@ -1691,6 +1692,7 @@ export interface RouteMemoryWritebackResult {
     source_refs: string[];
     target_object_type: MemoryCandidateTargetObjectType;
     target_object_id: string;
+    expected_content_hash: string | null;
     sensitivity: MemoryCandidateSensitivity;
   };
 }
