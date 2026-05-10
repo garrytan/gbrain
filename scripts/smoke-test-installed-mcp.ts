@@ -11,12 +11,9 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { splitAgentCommand } from '../src/core/services/installed-agent-readiness-service.ts';
 
 const decoder = new TextDecoder();
-
-function splitCommand(command: string): string[] {
-  return command.trim().split(/\s+/).filter(Boolean);
-}
 
 function runCli(parts: string[], args: string[], env: Record<string, string>): void {
   const result = Bun.spawnSync({
@@ -50,7 +47,7 @@ function parseMcpText<T = any>(result: any): T {
 }
 
 const commandText = process.env.MBRAIN_SMOKE_COMMAND || 'mbrain';
-const commandParts = splitCommand(commandText);
+const commandParts = splitAgentCommand(commandText);
 if (commandParts.length === 0) {
   console.error('MBRAIN_SMOKE_COMMAND cannot be empty.');
   process.exit(1);
@@ -122,6 +119,7 @@ try {
       evidence_kind: 'direct_user_statement',
       source_refs: ['Source: installed MCP smoke test, direct tool call, 2026-05-10 00:00 KST'],
       dry_run: true,
+      apply: true,
     },
   }));
   if (writeback?.dry_run !== true) {
