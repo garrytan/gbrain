@@ -42,6 +42,176 @@ Cold-start originated as PR #802. The branch shipped three commits including one
 
 The version slot is deliberate. v0.31.4 through v0.31.9 are reserved for in-flight work; v0.31.10 was chosen so this user-facing skillpack expansion lands clearly above the patch-train.
 
+## [0.31.7] - 2026-05-09
+
+**`gbrain doctor` stops crying wolf, period — and finds itself on every deployment shape. Five community PRs land one cohesive narrative: every false-positive class on disk today, plus the install-path footgun that bit every hosted-CLI user who ever ran `gbrain doctor` from `~`.**
+
+When the doctor cries wolf, agents and humans learn to ignore it, which then masks the real problems. The previous wave (v0.31.1.1-fixwave) sharpened real signal with `sync_failures` code classification. This wave fixes the inverse: every false-positive class on disk today gets honest. Five PRs, four contributors, one theme.
+
+### The numbers that matter
+
+Verified against a live OpenClaw deployment with 224 skills, `skills/RESOLVER.md` (41 entries from skillpack), and `../AGENTS.md` (206 entries); plus a markdown-only journal brain (2533 pages, 0 entity pages); plus the v0.25.1 wave skills' routing-eval suite; plus a hosted-CLI install:
+
+| | Before | After |
+|---|---|---|
+| OpenClaw reachable skills | 37/224 | **200/224** |
+| v0.25.1 skill routing accuracy | 36 ambiguous matches | **0** |
+| Markdown-only brain `graph_coverage` | warn forever | **OK** |
+| Stale `gbrain link-extract` hint (since v0.16) | suggested in WARN | **`gbrain extract all`** |
+| Hosted-CLI doctor from `~` | "Could not find skills directory" | **finds bundled `skills/`** |
+| Health score on healthy OpenClaw + journal brains | 40/100 | **100/100** |
+
+The remaining unreachable skills, low-coverage warnings, and any future doctor warns are real gaps: new skills without trigger rows, brains with actual coverage shortfalls, fixes you actually want to see.
+
+### What you can now do
+
+**`gbrain doctor` is honest about resolver health on OpenClaw deployments.** OpenClaw workspaces typically have a thin `skills/RESOLVER.md` (~40 entries from the skillpack) and a fat `AGENTS.md` at the workspace root (200+ entries, the real dispatcher). The previous first-match-wins policy only saw `RESOLVER.md`, so the doctor reported 187 skills as "unreachable" when they were fully routed in `AGENTS.md`. Now `check-resolvable` collects entries from every resolver file across both the skills directory and its parent, deduped by `skillPath`. New helper `findAllResolverFiles()` returns every match instead of the first. ([#798](https://github.com/garrytan/gbrain/pull/798))
+
+**Routing accuracy on the v0.25.1 wave skills lifts from "36 ambiguous warnings" to zero.** Each skill's `triggers:` frontmatter declares 4-5 entries, but only the first ever made it into the matching RESOLVER.md row, so the structural matcher couldn't find a specific phrase for realistic user intents. RESOLVER.md is now synced with the full frontmatter triggers across book-mirror, article-enrichment, strategic-reading, concept-synthesis, perplexity-research, archive-crawler, academic-verify, brain-pdf, voice-note-ingest, and media-ingest. Plus targeted `ambiguous_with` fixture annotations where chains like `enrich → article-enrichment` are designed to co-fire. Contributed by [@psperera](https://github.com/psperera). ([#788](https://github.com/garrytan/gbrain/pull/788))
+
+**Markdown-only brains pass `graph_coverage` instead of warning at 0% forever.** The check measures `link_coverage` and `timeline_coverage` over entity pages. For wikis, journals, and notes brains (Karpathy's original LLM Wiki use case), entity count is 0, so coverage is structurally undefined. The doctor now detects this and reports `ok: no entity pages — graph_coverage not applicable`. Verified on a 2533-page production wiki with 6086 wikilinks, 1964 timeline entries, zero entity pages. Contributed by [@mayazbay](https://github.com/mayazbay). ([#536](https://github.com/garrytan/gbrain/pull/536), closes #530)
+
+**The `graph_coverage` hint stops suggesting commands that haven't existed since v0.16.** The hint pointed at `gbrain link-extract && gbrain timeline-extract` (consolidated into `gbrain extract <links|timeline|all>` 30 releases ago). Now says `gbrain extract all`. Header comment in `src/core/link-extraction.ts` updated to match. Pinned by an IRON-RULE regression test that bans the stale verb names from the source string. Originally raised by [@FUSED-ID](https://github.com/FUSED-ID). ([#376](https://github.com/garrytan/gbrain/pull/376), folded into the wave's clean shape)
+
+**`gbrain doctor` works from anywhere.** On `bun install -g github:garrytan/gbrain && cd ~ && gbrain doctor`, the doctor used to warn "Could not find skills directory" and dock the health score forever — every hosted-CLI user took a permanent `-5`. The bundled `skills/` lives under `node_modules/gbrain/`; the cwd-only walk never looked there. Now there's a tier-0 `$GBRAIN_SKILLS_DIR` operator override (Docker mounts, CI, monorepo subdirs) plus a read-only install-path fallback that walks up from the gbrain module's own location. Doctor / check-resolvable / routing-eval get the install-path fallback; write-path callers (skillpack install, skillify scaffold) deliberately do NOT — the architectural split prevents `gbrain skillpack install` from `~` silently retargeting the bundled gbrain repo's skills/ instead of the user's actual workspace. Originally raised by [@TheAndersMadsen](https://github.com/TheAndersMadsen) ([#128](https://github.com/garrytan/gbrain/pull/128)); adapted into the existing 5-tier resolver after eng + outside-voice review.
+
+### To take advantage of v0.31.7
+
+```bash
+gbrain upgrade
+gbrain doctor
+```
+
+After upgrade, anything that was `[WARN] graph_coverage` or `[WARN] resolver_health` on a healthy brain should now be `[OK]`. Real warnings remain real. The `[WARN]` lines you see are the ones worth acting on — file an issue at https://github.com/garrytan/gbrain/issues with `gbrain doctor --json` output if anything looks off.
+
+### Itemized changes
+
+#### Resolver merge across multiple files
+- `src/core/resolver-filenames.ts`: add `findAllResolverFiles(dir)` returning every recognized resolver file in `dir`. `findResolverFile()` unchanged (backward-compatible).
+- `src/core/check-resolvable.ts`: replace single-file lookup with multi-file merge across skills dir + parent. Entries deduped by `skillPath`. Combined `resolverContent` passed to routing-eval. Error message switches from hardcoded "RESOLVER.md" to `RESOLVER_FILENAMES_LABEL`.
+- `test/resolver-merge.test.ts`: 8 new cases covering `findAllResolverFiles` behavior and the merge path in `checkResolvable`.
+
+#### RESOLVER.md trigger sync (v0.25.1 wave)
+- `skills/RESOLVER.md`: 9 hand-curated rows expanded to include the full frontmatter triggers per skill. media-ingest's prose row converted to quoted triggers so the matcher actually sees them; `"PDF book"` and `"ingest it into my brain"` carried over from HEAD's richer frontmatter.
+- `skills/article-enrichment/routing-eval.jsonl`: `ambiguous_with: ["enrich"]` added to all 5 fixtures (acknowledges the resolver doc's framing that skills chain).
+
+#### graph_coverage zero-entity short-circuit + verb fix
+- `src/commands/doctor.ts`: detect entity-page count via SQL; mark check `ok` when 0 entity pages. Hint updated to `gbrain extract all`.
+- `src/core/link-extraction.ts`: header comment updated to reference the consolidated `extract.ts`.
+- `test/doctor.test.ts`: IRON-RULE regression assertion bans `gbrain link-extract` / `gbrain timeline-extract` from the source string.
+
+#### Install-path resolver (read-path-only)
+- `src/core/repo-root.ts`: tier-0 `$GBRAIN_SKILLS_DIR` explicit override on shared `autoDetectSkillsDir`. New exported `autoDetectSkillsDirReadOnly` wraps it with install-path fallback gated by `isGbrainRepoRoot`. Two new `SkillsDirSource` variants: `'env_explicit'`, `'install_path'`. New `AUTO_DETECT_HINT_READ_ONLY` constant.
+- Read-path callers switched to `autoDetectSkillsDirReadOnly`: `src/commands/doctor.ts`, `src/commands/check-resolvable.ts`, `src/commands/routing-eval.ts`.
+- Write-path callers stay on `autoDetectSkillsDir`: `src/commands/skillpack.ts`, `src/commands/skillify.ts`, `src/core/skillpack/post-install-advisory.ts`. The split prevents silent workspace retargeting on `gbrain skillpack install` from `~`.
+- `test/repo-root.test.ts`: 8 new cases covering tier-0 valid/invalid/precedence, install-path walk, no-drift on primary success, AUTO_DETECT_HINT updates, and the D5 regression guard that pins the read-path/write-path split (asserts the shared resolver MUST NEVER return `'install_path'` source).
+
+### For contributors
+
+- New `SkillsDirSource` variants `'env_explicit'` and `'install_path'` — downstream consumers using the type union should add cases (TypeScript exhaustiveness will flag missing handlers).
+- The architectural split between `autoDetectSkillsDir` (read+write-safe) and `autoDetectSkillsDirReadOnly` (read-only with install-path fallback) is the canonical pattern for any future "fall back further when nothing else worked" addition. New consumers default to the safer (write-safe) variant; opt into the read-only variant with intent.
+- `gbrain doctor --fix` and `gbrain check-resolvable --fix` refuse to write when the skills dir resolved via the install-path fallback (caught by codex during the ship review — without this gate, running `--fix` from a cwd with no skills dir would have silently rewritten the bundled install tree). Set `$GBRAIN_SKILLS_DIR`, `$OPENCLAW_WORKSPACE`, or pass `--skills-dir <path>` to enable `--fix`.
+- `gbrain routing-eval` now uses the same multi-file resolver merge as `check-resolvable`, so on OpenClaw layouts (`skills/RESOLVER.md` + `../AGENTS.md`) all three commands see the same trigger index. Previously `routing-eval` read only the first resolver file it found.
+- Contributors: [@mayazbay](https://github.com/mayazbay), [@psperera](https://github.com/psperera), [@FUSED-ID](https://github.com/FUSED-ID), [@TheAndersMadsen](https://github.com/TheAndersMadsen). Outside-voice plan review (codex) caught the read-path/write-path split risk on the original plan; a second codex pass during /ship caught the `--fix` write-path leak before merge.
+
+[#798](https://github.com/garrytan/gbrain/pull/798) [#788](https://github.com/garrytan/gbrain/pull/788) [#536](https://github.com/garrytan/gbrain/pull/536) [#376](https://github.com/garrytan/gbrain/pull/376) [#128](https://github.com/garrytan/gbrain/pull/128)
+## [0.31.4.1] - 2026-05-10
+
+**Takes v2: lessons from a 100K-take production extraction folded back into the runtime, and `gbrain auth` works on Postgres again.**
+
+The first full production takes extraction (28,256 pages, 100,720 takes, $361 on Azure GPT-5.5) plus a cross-modal eval (GPT-5.5 + Opus 4.6 against a 5-dim rubric, 6.8/10 overall) surfaced five concrete things to fix in the runtime. Holder grammar is now enforced at parse time. Weights round to a 0.05 grid on insert at all four write sites, and migration v46 backfills pre-v0.32 rows to the same grid. Synthesize auto-enables when a corpus dir is configured, so the silent footgun ("I set the dir, why is nothing happening?") is gone. `recall` and `forget` actually route now (v0.31 added them to `handleCliOnly()` but forgot the `CLI_ONLY` gate set). And the `gbrain auth` regression that crashed every OAuth subcommand on Postgres with a misleading `connect() has not been called` error is fixed.
+
+This release is also the v0.31.4.1 dot-suffix slot we needed because the previous merge subject claimed `v0.31.4` without bumping VERSION or `package.json`. Going forward, gbrain versions adopt `MAJOR.MINOR.PATCH.MICRO` so dot-suffix follow-ups land cleanly without churning the patch number.
+
+### What you can now do
+
+**`gbrain eval takes-quality`** ships as a real CLI surface. `run` scores a sample with three frontier models against the 5-dim rubric. `replay` re-verifies a receipt without the brain (CI-friendly, no `DATABASE_URL` needed). `trend` shows quality over time segregated by `rubric_version`. `regress --against <receipt> --threshold T` exits 1 when any dim drops past the threshold, so you can gate a PR on "is the new prompt actually better, or am I overfitting to one example?". Receipts persist DB-authoritative in `eval_takes_quality_runs` (migration v47); the disk artifact is best-effort. The 4-sha receipt name (corpus + prompt + models + rubric) means a rubric tweak segregates trend rows instead of silently corrupting the graph.
+
+**`gbrain doctor` warns when takes weights drift off the 0.05 grid.** Post-migration drift detector. More than 10% off-grid fails with an `apply-migrations` fix hint, 1-10% warns, less than 1% is ok. Tolerance comparison (abs > 1e-3) avoids float32 representation noise so a healthy brain doesn't look broken.
+
+**Bad takes holders surface as sync failures instead of silent quality drag.** Strings like `Garry`, `people/Garry-Tan`, `world/garry-tan`, whitespace-only, embedded slashes all bucket into the new `TAKES_HOLDER_INVALID` code in `~/.gbrain/sync-failures.jsonl` and show up in `gbrain doctor`. Legacy bare-slug holders (`garry`, `alice`) are preserved as v0.32 transition compat. Dotted and underscore slugs (`companies/acme.io`, `people/foo_bar`) stay valid because `SLUG_SEGMENT_PATTERN` is now a single source of truth shared with sync.
+
+**`gbrain auth register-client` works on Postgres.** Pre-fix every OAuth subcommand crashed with `Error: No database connection: connect() has not been called.` because `withConfiguredSql` created a `PostgresEngine` but never called `engine.connect()`. The error pointed users at `gbrain init` and made the regression invisible. The fix unblocks three previously-failing E2E suites (`serve-http-oauth.test.ts` 0/28 → 28/28, `sources-remote-mcp.test.ts` 0/14 → 14/14, `thin-client.test.ts` 0/7 → 6/7 + 1 documented skip).
+
+### Numbers that matter
+
+Cross-modal eval over the first full production extraction, 100,720 takes scored on a 5-dim rubric with GPT-5.5 and Opus 4.6 as judges. The "fix shipped" column is what v0.31.4.1 does about each dimension:
+
+| Dimension | GPT-5.5 | Opus 4.6 | Avg | Fix shipped |
+|---|---|---|---|---|
+| Accuracy | 7 | 8 | 7.5 | `docs/takes-vs-facts.md` architectural split |
+| Attribution | 6 | 7 | 6.5 | Holder grammar enforced at parser |
+| Weight calibration | 7 | 7 | 7.0 | 0.05 grid on insert + v46 backfill |
+| Kind classification | 6 | 7 | 6.5 | Filing-rules anchor + JSDoc examples |
+| Signal density | 7 | 6 | 6.5 | Synthesize auto-enables on corpus dir |
+
+Attribution at 6.5/10 was the dominant failure mode, and the eval flagged holder/subject confusion specifically (the model writing a fact as `holder=people/Founder-Name` when the right answer is "this person holds this belief"). v0.31.4.1 makes that a sync-failure record an operator can see instead of a silent calibration drag.
+
+### What this means for you
+
+If you run takes extraction in production, upgrade. The runtime fixes (weight rounding, holder validation, synthesize auto-enable) close real footgun classes, and v46 + v47 bring existing data and schema to the same bar without manual work. Run `gbrain upgrade && gbrain doctor` and watch the new `takes_weight_grid` slice confirm the backfill landed. Then capture a baseline with `gbrain eval takes-quality run` so the next prompt change has something to regress against.
+
+## To take advantage of v0.31.4.1
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor                                              # takes_weight_grid + sync_failures slices
+   gbrain eval takes-quality run --limit 20 --cycles 1        # capture a baseline receipt
+   ```
+3. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+#### Takes v2 runtime
+- Holder grammar enforced at parse time. `parseTakesFence()` emits `TAKES_HOLDER_INVALID` warnings on non-matching holders; the row is preserved (markdown source-of-truth contract). `HOLDER_REGEX` wraps the shared `SLUG_SEGMENT_PATTERN` exported from `src/core/sync.ts` so it accepts every legitimate slug `slugifySegment()` produces.
+- Producer seam: `extractTakesFromDb` and `extractTakesFromFs` populate `ExtractTakesResult.failedFiles[]` from the parser warnings. Migration v0.28.0's `phaseBBackfill` calls `recordSyncFailures(result.failedFiles, 'migration:v0.28.0-backfill')` so doctor's `sync_failures` slice surfaces post-upgrade drift.
+- `classifyErrorCode` extends with `TAKES_HOLDER_INVALID`, `TAKES_TABLE_MALFORMED`, `TAKES_ROW_NUM_COLLISION`, `TAKES_FENCE_UNBALANCED`. Previously these warnings bucketed to `UNKNOWN`.
+- `normalizeWeightForStorage()` extracted to `src/core/takes-fence.ts` as the single source of truth for all four takes write sites: `addTakesBatch` + `updateTake` on PGLite + Postgres. Guards `!Number.isFinite()` BEFORE the [0,1] clamp so NaN no longer survives to the DB. Also rounds to 0.05 grid; preserves 0.0 and 1.0 exactly.
+- Migration v46 (`takes_weight_round_to_grid`) backfills pre-v0.32 rows to the 0.05 grid. Tolerance comparison (`abs > 1e-3`) avoids the float32 representation-noise re-touch loop. Runs with `transaction: false` so the migration runner doesn't hold a long-lived transaction blocking other gbrain processes.
+
+#### Takes v2 documentation
+- `docs/takes-vs-facts.md` documents the two epistemological layers, why they must never be conflated, how the dream cycle bridges them, and the production extraction data (model selection, eval dimensions, key learnings for extraction prompts).
+- `skills/_brain-filing-rules.md` gains a "Takes attribution" section distilling the 6 rules into a terse contract for downstream agents.
+- `src/core/takes-fence.ts` JSDoc expanded with concrete right/wrong holder examples from the cross-modal eval (amplification ≠ endorsement, self-reported ≠ verified, founder describing company → `people/founder` not `companies/slug`).
+
+#### Takes v2 fixes
+- `recall` and `forget` added to the `CLI_ONLY` gate set. v0.31 added them to `handleCliOnly()` but the gate set was missed, so both fell through to `cliOps.get()` → `'Unknown command'`.
+- `synthesize` auto-enables when `session_corpus_dir` is configured. Explicit `enabled=false` still wins.
+
+#### Takes-quality eval CLI
+- `gbrain eval takes-quality {run,replay,trend,regress}` (`src/commands/eval-takes-quality.ts` + `src/core/takes-quality-eval/`).
+- Migration v47 creates `eval_takes_quality_runs`. DB-authoritative receipt persistence (full receipt JSON in a JSONB column) with a 4-sha UNIQUE constraint that supports `ON CONFLICT DO NOTHING` idempotency and rubric-version segregation.
+- `replay` is the only sub-subcommand that doesn't need a brain. Routes through `cli.ts`'s no-DB bypass directly to `runReplayNoBrain`, exits 0/1/2 cleanly without ever touching the engine.
+- Pricing fail-closed: any model not in `pricing.ts` produces a `PricingNotFoundError` BEFORE any HTTP call fires (only when `--budget-usd` is set; null budget skips the gate).
+- Aggregate requires all 5 declared rubric dimensions per model. Missing-dim drops the contribution, treated identically to a parse failure. Empty-scores PASS regression guard preserved.
+- `parseModelJSON` + `ParsedScore` + `ParsedModelResult` types hoisted from `cross-modal-eval/json-repair.ts` to `eval-shared/json-repair.ts`. The original module re-exports both function and types for compatibility.
+
+#### Doctor
+- New `takes_weight_grid` slice. Pure exported `takesWeightGridCheck(engine: BrainEngine)` so tests can target the helper directly with stubbed engines and against real PGLite for the four ratio bands. Branches: 0 takes → ok, >10% off-grid → fail with `apply-migrations` fix hint, 1-10% → warn, ≤1% → ok, missing table (pre-v37) → graceful skip.
+
+#### Auth (Postgres regression fix)
+- `withConfiguredSql` in `src/commands/auth.ts` now calls `engine.connect()` before invoking the SQL adapter. Pre-fix every `gbrain auth` subcommand on Postgres crashed because `PostgresEngine.sql` fell back to the module-level singleton (`db.getConnection()`) when its instance `_sql` was unset, and `db.connect()` wasn't called either. Anyone with a Postgres-backed brain hit this. Verified with `gbrain auth register-client` round-trip: before, `Error: No database connection`; after, credentials printed.
+
+#### Tests
+- 200+ new cases. Highlights: takes-quality boundaries / runner / receipt-write, takes-holder-validation (26 cases including codex-review-#3 dotted-slug positives and HOLDER_REGEX anchoring guard), engine-weight-rounding integration (15 cases mirroring the real-Postgres E2E), v46 + v47 structural assertions, real-Postgres E2E for `eval_takes_quality_runs` (8 cases including the postgres.js JSONB encoding round-trip), real-Postgres takes-weight-rounding write-path (6 cases covering the `unnest()` bind shape PGLite doesn't exercise), extract-takes producer seam (7 cases).
+- `withEnv()` adoption: `test/eval-takes-quality-receipt-write.test.ts` refactored from direct `process.env.GBRAIN_HOME = ...` mutation to the helper, complying with the v0.32.0 test-isolation lint contract (`scripts/check-test-isolation.sh` R1).
+- `test/eval-takes-quality-runner.serial.test.ts` quarantined as `*.serial.test.ts` because `mock.module(...)` leaks across files in the same shard process (R2 in the lint contract).
+
+#### Versioning convention
+- gbrain versions move to `MAJOR.MINOR.PATCH.MICRO`. The `.MICRO` slot lets dot-suffix follow-ups land without churning the patch number when a release like #795 ships its commit subject ahead of its VERSION bump. Existing 3-level versions remain valid in history.
+
 ## [0.31.3] - 2026-05-09
 
 **`gbrain serve` stops leaking the PGLite write lock when the parent disconnects, and `gbrain auth` + `gbrain serve --http` work against PGLite brains.**

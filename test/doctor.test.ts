@@ -101,6 +101,34 @@ describe('doctor command', () => {
     expect(source).toMatch(/table:\s*'files'.*col:\s*'metadata'/);
   });
 
+  // v0.31.2 — facts_extraction_health check added in PR1 commit 12.
+  // Reads ingest_log rows with source_type='facts:absorb' (written by
+  // writeFactsAbsorbLog from src/core/facts/absorb-log.ts), groups by
+  // (source_id, reason) over the last 24h, warns when any (source, reason)
+  // pair exceeds the configurable threshold (facts.absorb_warn_threshold,
+  // default 10).
+  test('doctor source contains facts_extraction_health check that iterates sources', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain('facts_extraction_health');
+    // The check must group by source_id, not hardcode 'default'.
+    const block = source.slice(
+      source.indexOf('// 11a-bis-2. facts_extraction_health'),
+      source.indexOf('// 11a-2. effective_date_health'),
+    );
+    expect(block.length).toBeGreaterThan(0);
+    expect(block).toContain('GROUP BY source_id');
+    expect(block).toContain("source_type = 'facts:absorb'");
+    expect(block).toContain('facts.absorb_warn_threshold');
+    // 24h window
+    expect(block).toMatch(/INTERVAL\s+'24\s*hours?'/i);
+    // Pre-v47 fallback (column missing) reports skipped not warn
+    expect(block).toContain("Skipped (ingest_log.source_id unavailable");
+    // RLS deny gives a useful message
+    expect(block).toContain('RLS denies SELECT on ingest_log');
+    // Negative: must NOT hardcode 'default' as the only source
+    expect(block).not.toMatch(/source_id\s*=\s*'default'/);
+  });
+
   // v0.18 RLS hardening — regression guards for PR #336 + schema backfill.
   // These are structural assertions on the source string so a silent revert
   // of the severity or the IN-filter removal fails loudly without a live DB.
@@ -173,6 +201,23 @@ describe('doctor command', () => {
     expect(block).toMatch(/engine\.kind\s*===\s*'pglite'/);
     // Recovery command names the migration version explicitly.
     expect(block).toContain('--force-retry 35');
+  });
+
+  // v0.31.7 IRON-RULE regression test for #376 + #536.
+  // The graph_coverage WARN message used to suggest stale verbs (`gbrain
+  // link-extract` / `gbrain timeline-extract`) that were removed in v0.16
+  // when extraction was consolidated into `gbrain extract <links|timeline|all>`.
+  // PR #376 (FUSED-ID) flagged the stale hint; PR #536 (mayazbay) replaced it
+  // with the canonical `gbrain extract all`. Pin the user-facing copy so a
+  // future edit can't silently re-regress to a stale verb.
+  test('graph_coverage hint uses canonical `gbrain extract all`, not removed verbs', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync('src/commands/doctor.ts', 'utf8');
+    // Canonical form (post-v0.16 single-verb consolidation).
+    expect(src).toContain('Run: gbrain extract all');
+    // Stale verb names removed in v0.16 must not return.
+    expect(src).not.toContain('gbrain link-extract');
+    expect(src).not.toContain('gbrain timeline-extract');
   });
 
   // v0.32 — takes_weight_grid pure-helper export.

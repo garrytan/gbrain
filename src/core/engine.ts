@@ -333,6 +333,13 @@ export interface FactRow {
   fact: string;
   kind: FactKind;
   visibility: FactVisibility;
+  /**
+   * v0.31.2: salience tier the LLM assigned at extraction time. Surfaces
+   * to consumers (recall response, daily-page writer, admin dashboard,
+   * agents reading via MCP `_meta.brain_hot_memory`). Pre-v45 brains had
+   * no notability column; migration v46 backfills with default 'medium'.
+   */
+  notability: 'high' | 'medium' | 'low';
   context: string | null;
   valid_from: Date;
   valid_until: Date | null;
@@ -360,6 +367,7 @@ export interface NewFact {
   source: string;                       // 'mcp:put_page' | 'mcp:extract_facts' | 'cli:think' | etc
   source_session?: string | null;
   confidence?: number;                  // [0,1], default 1.0
+  notability?: 'high' | 'medium' | 'low'; // salience filter for extraction gate
   embedding?: Float32Array | null;     // pre-computed; if null, insertFact computes via gateway
 }
 

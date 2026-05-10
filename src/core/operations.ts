@@ -16,6 +16,7 @@ import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
@@ -535,46 +536,41 @@ const put_page: Operation = {
     // a fact-extraction job into the bounded queue. Skipped on dry-run,
     // dream-generated content (anti-loop), and non-eligible kinds (sync,
     // ingest, file uploads, code pages). Never blocks the put_page response.
+    // v0.31.2: routed through runFactsBackstop (PR1 commit 6) so put_page
+    // and sync share the same eligibility/extract/dedup/insert pipeline.
+    // Queue mode preserves the prior fire-and-forget shape (caller's
+    // put_page response stays fast). Default 'all' notability filter
+    // (MEDIUM facts wait for the dream cycle but DO land via put_page,
+    // matching the pre-fix behavior on this surface).
     let factsQueued: { queued: boolean } | { skipped: string } | undefined;
     try {
-      const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
-      const enabled = await isFactsExtractionEnabled(ctx.engine);
-      const eligible = enabled
-        ? isFactsBackstopEligible(slug, result.parsedPage)
-        : { ok: false as const, reason: 'extraction_disabled' };
-      if (!eligible.ok) {
-        factsQueued = { skipped: eligible.reason };
-      } else {
-        const { getFactsQueue } = await import('./facts/queue.ts');
-        const { extractFactsFromTurn } = await import('./facts/extract.ts');
-        const { resolveEntitySlug } = await import('./entities/resolve.ts');
-        const sourceId = ctx.sourceId ?? 'default';
-        const sessionId = (ctx as { source_session?: string }).source_session ?? null;
-        // result.parsedPage non-null is a precondition of backstop eligibility,
-        // verified above; the type narrows for the inner closure.
-        const body = result.parsedPage?.compiled_truth ?? '';
-        const enqueued = getFactsQueue().enqueue(async (signal) => {
-          if (signal.aborted) return;
-          const facts = await extractFactsFromTurn({
-            turnText: body,
-            sessionId,
-            source: 'mcp:put_page',
-            isDreamGenerated: false,
-            abortSignal: signal,
-          });
-          for (const f of facts) {
-            if (signal.aborted) return;
-            const resolvedSlug = f.entity_slug
-              ? await resolveEntitySlug(ctx.engine, sourceId, f.entity_slug)
-              : null;
-            await ctx.engine.insertFact({
-              ...f,
-              entity_slug: resolvedSlug,
-              visibility: 'private',
-            }, { source_id: sourceId });
-          }
-        }, sessionId ?? slug);
-        factsQueued = enqueued > -1 ? { queued: true } : { skipped: 'queue_shutdown' };
+      const { runFactsBackstop } = await import('./facts/backstop.ts');
+      const r = await runFactsBackstop(
+        {
+          slug,
+          type: result.parsedPage!.type,
+          compiled_truth: result.parsedPage!.compiled_truth,
+          frontmatter: result.parsedPage!.frontmatter,
+        },
+        {
+          engine: ctx.engine,
+          sourceId: ctx.sourceId ?? 'default',
+          sessionId: (ctx as { source_session?: string }).source_session ?? null,
+          source: 'mcp:put_page',
+          mode: 'queue',
+        },
+      );
+      if (r.mode === 'queue' && r.enqueued) {
+        factsQueued = { queued: true };
+      } else if (r.mode === 'queue' && r.skipped) {
+        // Preserve the pre-v0.31.2 response shape for MCP clients:
+        // 'kind:guide' / 'too_short' / 'subagent_namespace' / 'dream_generated'
+        // (bare reasons), not the helper's namespaced 'eligibility_failed:...'
+        // discriminator. Map back here.
+        const bare = r.skipped.startsWith('eligibility_failed:')
+          ? r.skipped.slice('eligibility_failed:'.length)
+          : r.skipped;
+        factsQueued = { skipped: bare };
       }
     } catch {
       factsQueued = { skipped: 'backstop_error' };
@@ -614,38 +610,9 @@ const put_page: Operation = {
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
 
-/**
- * v0.31: backstop eligibility. The put_page facts hook fires only on
- * conversation-shape pages, where extraction is most useful. Pages from
- * sync / ingest / file upload / code-import paths have their own surfaces
- * (extract takes / search) and shouldn't pump the hot memory layer.
- *
- * Eligible:
- *   - kind/type in: note, meeting, slack, email, calendar-event, source, writing
- *   - body length >= 80 chars (skip TODO-style snippets)
- *   - slug NOT under wiki/agents/ (subagent scratch is its own world)
- *   - dream_generated:true frontmatter is anti-loop reject
- *
- * Reasons returned for the skipped envelope are stable strings consumed
- * by tests and observability.
- */
-function isFactsBackstopEligible(
-  slug: string,
-  parsed: { type: PageType; compiled_truth: string; frontmatter: Record<string, unknown> } | null | undefined,
-): { ok: true } | { ok: false; reason: string } {
-  if (!parsed) return { ok: false, reason: 'no_parsed_page' };
-  if (slug.startsWith('wiki/agents/')) return { ok: false, reason: 'subagent_namespace' };
-  if (parsed.frontmatter && parsed.frontmatter.dream_generated === true) {
-    return { ok: false, reason: 'dream_generated' };
-  }
-  const eligibleTypes: PageType[] = [
-    'note', 'meeting', 'slack', 'email', 'calendar-event', 'source', 'writing',
-  ];
-  if (!eligibleTypes.includes(parsed.type)) return { ok: false, reason: `kind:${parsed.type}` };
-  const body = (parsed.compiled_truth ?? '').trim();
-  if (body.length < 80) return { ok: false, reason: 'too_short' };
-  return { ok: true };
-}
+// v0.31.2: isFactsBackstopEligible moved to src/core/facts/eligibility.ts
+// so sync.ts, file_upload, code_import, and runFactsBackstop all share one
+// predicate. Imported above.
 
 /**
  * Extract entity refs from a freshly-written page, sync the links table to match.
@@ -2401,8 +2368,8 @@ const extract_facts: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'extract_facts' };
-    const { extractFactsFromTurn, isFactsExtractionEnabled } = await import('./facts/extract.ts');
-    const { resolveEntitySlug } = await import('./entities/resolve.ts');
+    const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
+    const { runFactsPipeline } = await import('./facts/backstop.ts');
 
     // D15: kill switch. Operator can disable facts extraction across the
     // brain without binary downgrade by setting `facts.extraction_enabled`
@@ -2412,78 +2379,33 @@ const extract_facts: Operation = {
       return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'extraction_disabled' };
     }
 
-    const sourceId = ctx.sourceId ?? 'default';
-    const visibility = p.visibility === 'world' ? 'world' : 'private';
+    // v0.31.2: routed through the shared pipeline (PR1 commit 9). Anti-loop
+    // dream-generated check stays at the op layer because extract_facts is
+    // an explicit user op without a parsedPage — the eligibility predicate
+    // doesn't apply, but the dream-generated guard still does.
+    if (p.is_dream_generated === true) {
+      return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'dream_generated' };
+    }
 
-    const facts = await extractFactsFromTurn({
-      turnText: p.turn_text as string,
+    const sourceId = ctx.sourceId ?? 'default';
+    const visibility: 'private' | 'world' = p.visibility === 'world' ? 'world' : 'private';
+
+    const r = await runFactsPipeline(p.turn_text as string, {
+      engine: ctx.engine,
+      sourceId,
       sessionId: typeof p.session_id === 'string' ? p.session_id : null,
       entityHints: Array.isArray(p.entity_hints) ? (p.entity_hints as string[]) : undefined,
       source: 'mcp:extract_facts',
-      isDreamGenerated: p.is_dream_generated === true,
+      visibility,
+      mode: 'inline',  // declarative; runFactsPipeline always inline
     });
 
-    let inserted = 0;
-    let duplicate = 0;
-    let superseded = 0;
-    const fact_ids: number[] = [];
-
-    for (const f of facts) {
-      const slug = f.entity_slug
-        ? await resolveEntitySlug(ctx.engine, sourceId, f.entity_slug)
-        : null;
-
-      const candidates = slug
-        ? await ctx.engine.findCandidateDuplicates(sourceId, slug, f.fact, {
-            embedding: f.embedding ?? undefined,
-            k: 5,
-          })
-        : [];
-
-      // Cosine fast-path inline for engine consistency. The classifier path
-      // is exercised by the offline `classifyAgainstCandidates` helper which
-      // ops can call when they want richer dedup; for the MCP op we ship
-      // with the cheap path + recency-only fallback to keep per-turn latency
-      // bounded. Tests pin the cheap-path threshold.
-      let matchedExisting: number | null = null;
-      if (f.embedding && candidates.length > 0) {
-        const { cosineSimilarity } = await import('./facts/classify.ts');
-        let topId: number | null = null;
-        let topScore = -1;
-        for (const c of candidates) {
-          if (!c.embedding) continue;
-          const s = cosineSimilarity(f.embedding, c.embedding);
-          if (s > topScore) { topScore = s; topId = c.id; }
-        }
-        if (topId !== null && topScore >= 0.95) matchedExisting = topId;
-      }
-
-      if (matchedExisting !== null) {
-        duplicate += 1;
-        fact_ids.push(matchedExisting);
-        continue;
-      }
-
-      const result = await ctx.engine.insertFact(
-        {
-          fact: f.fact,
-          kind: f.kind,
-          entity_slug: slug,
-          visibility,
-          source: f.source,
-          source_session: f.source_session ?? null,
-          confidence: f.confidence,
-          embedding: f.embedding ?? null,
-        },
-        { source_id: sourceId },
-      );
-      fact_ids.push(result.id);
-      if (result.status === 'inserted') inserted += 1;
-      else if (result.status === 'duplicate') duplicate += 1;
-      else superseded += 1;
-    }
-
-    return { inserted, duplicate, superseded, fact_ids };
+    return {
+      inserted: r.inserted,
+      duplicate: r.duplicate,
+      superseded: r.superseded,
+      fact_ids: r.fact_ids,
+    };
   },
 };
 
@@ -2561,6 +2483,10 @@ const recall: Operation = {
         kind: r.kind,
         entity_slug: r.entity_slug,
         visibility: r.visibility,
+        // v0.31.2: notability surfaced to recall consumers (CLI, MCP, admin).
+        // Pre-v46 brains return 'medium' via the row mapper's fallback so the
+        // contract stays total.
+        notability: r.notability,
         valid_from: r.valid_from.toISOString(),
         valid_until: r.valid_until?.toISOString() ?? null,
         expired_at: r.expired_at?.toISOString() ?? null,

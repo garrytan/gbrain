@@ -12,7 +12,7 @@ import type { FactRow, FactKind } from '../src/core/engine.ts';
 function makeFact(overrides: Partial<FactRow> = {}): FactRow {
   return {
     id: 1, source_id: 'default', entity_slug: null, fact: 'x', kind: 'fact',
-    visibility: 'private', context: null,
+    visibility: 'private', notability: 'medium', context: null,
     valid_from: new Date(), valid_until: null, expired_at: null,
     superseded_by: null, consolidated_at: null, consolidated_into: null,
     source: 'test', source_session: null, confidence: 1.0,
