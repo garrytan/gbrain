@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import {
   buildDoctorReport,
@@ -7,17 +9,17 @@ import {
 } from '../core/services/doctor-service.ts';
 import { collectInstalledAgentReadiness } from '../core/services/installed-agent-readiness-service.ts';
 
-const EXPECTED_AGENT_RULES_VERSION = '0.5.6';
+const MARKER_VERSION_RE = /<!-- mbrain-agent-rules-version: ([\d.]+) -->/;
 
 export async function runDoctor(engine: BrainEngine, args: string[]) {
   const jsonOutput = args.includes('--json');
-  const agentArgs = parseAgentArgs(args);
+  const agentArgs = parseDoctorAgentArgs(args);
   const inputs = await collectDoctorInputs(engine);
 
   if (agentArgs.agent) {
     inputs.installedAgent = await collectInstalledAgentReadiness({
       command: agentArgs.agentCommand,
-      expectedRulesVersion: EXPECTED_AGENT_RULES_VERSION,
+      expectedRulesVersion: getExpectedAgentRulesVersion(),
     });
   }
 
@@ -32,7 +34,7 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
   process.exit(doctorExitCode(report));
 }
 
-function parseAgentArgs(args: string[]): { agent: boolean; agentCommand: string } {
+export function parseDoctorAgentArgs(args: string[]): { agent: boolean; agentCommand: string } {
   let agent = false;
   let agentCommand = 'mbrain';
 
@@ -41,12 +43,38 @@ function parseAgentArgs(args: string[]): { agent: boolean; agentCommand: string 
     if (arg === '--agent') {
       agent = true;
     } else if (arg === '--agent-command') {
-      agentCommand = args[i + 1] || agentCommand;
+      const value = args[i + 1];
+      if (value && !value.startsWith('--')) {
+        agentCommand = value;
+      }
       i += 1;
     } else if (arg.startsWith('--agent-command=')) {
-      agentCommand = arg.slice('--agent-command='.length);
+      const value = arg.slice('--agent-command='.length);
+      if (value && !value.startsWith('--')) {
+        agentCommand = value;
+      }
     }
   }
 
   return { agent, agentCommand };
+}
+
+export function getExpectedAgentRulesVersion(): string {
+  return loadAgentRules()?.match(MARKER_VERSION_RE)?.[1] ?? 'unknown';
+}
+
+function loadAgentRules(): string | null {
+  const candidates = [
+    join(process.cwd(), 'docs', 'MBRAIN_AGENT_RULES.md'),
+    join(__dirname, '..', '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
+    join(__dirname, '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return readFileSync(candidate, 'utf-8');
+    }
+  }
+
+  return null;
 }

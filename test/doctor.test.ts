@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, test, expect, mock } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildDoctorReport } from '../src/core/services/doctor-service.ts';
 import { resolveOfflineProfile } from '../src/core/offline-profile.ts';
+import { getExpectedAgentRulesVersion, parseDoctorAgentArgs } from '../src/commands/doctor.ts';
 
 
 const originalEnv = { ...process.env };
@@ -329,6 +330,23 @@ describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
     expect(typeof runDoctor).toBe('function');
+  });
+
+  test('doctor expected agent rules version matches docs marker', async () => {
+    const rulesContent = readFileSync(join(import.meta.dir, '..', 'docs', 'MBRAIN_AGENT_RULES.md'), 'utf-8');
+    const docsVersion = rulesContent.match(/<!-- mbrain-agent-rules-version: ([\d.]+) -->/)?.[1];
+
+    if (!docsVersion) throw new Error('docs/MBRAIN_AGENT_RULES.md is missing the rules version marker');
+    expect(getExpectedAgentRulesVersion()).toBe(docsVersion);
+  });
+
+  test('doctor agent args keep default command when agent command value is missing', async () => {
+    expect(parseDoctorAgentArgs(['--agent']).agentCommand).toBe('mbrain');
+    expect(parseDoctorAgentArgs(['--agent', '--agent-command', 'bun run src/cli.ts']).agentCommand)
+      .toBe('bun run src/cli.ts');
+    expect(parseDoctorAgentArgs(['--agent', '--agent-command', '--json']).agentCommand).toBe('mbrain');
+    expect(parseDoctorAgentArgs(['--agent', '--agent-command=bun run src/cli.ts']).agentCommand)
+      .toBe('bun run src/cli.ts');
   });
 
   test('LATEST_VERSION is importable from migrate', async () => {
