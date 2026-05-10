@@ -5,8 +5,17 @@
 #   shard-index: 1-based (1..N)
 #   total-shards: positive integer
 #
-# E2E tests under test/e2e/ are excluded — they need DATABASE_URL and run via
-# bun run test:e2e separately.
+# Excluded from sharding (mirror of scripts/run-unit-shard.sh's local fast loop):
+#   - test/e2e/*           — need DATABASE_URL; run via bun run test:e2e
+#   - *.slow.test.ts       — intentional cold-path correctness checks
+#                            (bun run test:slow)
+#   - *.serial.test.ts     — concurrency-unsafe (file-wide mock.module / env
+#                            leaks); run via scripts/run-serial-tests.sh.
+#                            Including these here lets their mock.module()
+#                            calls leak into the rest of the shard's bun
+#                            process and silently break unrelated tests.
+#                            See test/eval-takes-quality-runner.serial.test.ts
+#                            mocking gateway.ts → voyage-multimodal failures.
 #
 # Stable partitioning: a file's shard is `(hash(path) % N) + 1`. Same file
 # lands in the same shard on every run, regardless of how many other files
@@ -32,12 +41,13 @@ fi
 
 cd "$(dirname "$0")/.."
 
-# Find all unit test files, deterministic order. Excludes test/e2e/.
+# Find all unit test files, deterministic order. Excludes test/e2e/,
+# *.slow.test.ts, *.serial.test.ts (see header comment for rationale).
 # Portable: avoid `mapfile` (bash 4+) so this runs on macOS bash 3.2 too.
 FILES=()
 while IFS= read -r line; do
   FILES+=("$line")
-done < <(find test -name '*.test.ts' -not -path 'test/e2e/*' | sort)
+done < <(find test -name '*.test.ts' -not -path 'test/e2e/*' -not -name '*.slow.test.ts' -not -name '*.serial.test.ts' | sort)
 
 if [ "${#FILES[@]}" -eq 0 ]; then
   echo "no test files found under test/" >&2
