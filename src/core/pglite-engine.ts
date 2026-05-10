@@ -3101,6 +3101,7 @@ interface FactRowSqlShape {
   fact: string;
   kind: FactKind;
   visibility: FactVisibility;
+  notability: 'high' | 'medium' | 'low';
   context: string | null;
   valid_from: Date | string;
   valid_until: Date | string | null;
@@ -3142,6 +3143,9 @@ function rowToFact(row: FactRowSqlShape): FactRow {
     fact: row.fact,
     kind: row.kind,
     visibility: row.visibility,
+    // v0.31.2: notability column added by migration v46. Same fallback
+    // as Postgres (belt-and-suspenders with the NOT NULL DEFAULT).
+    notability: row.notability ?? 'medium',
     context: row.context,
     valid_from: toDate(row.valid_from)!,
     valid_until: toDate(row.valid_until),

@@ -333,6 +333,13 @@ export interface FactRow {
   fact: string;
   kind: FactKind;
   visibility: FactVisibility;
+  /**
+   * v0.31.2: salience tier the LLM assigned at extraction time. Surfaces
+   * to consumers (recall response, daily-page writer, admin dashboard,
+   * agents reading via MCP `_meta.brain_hot_memory`). Pre-v45 brains had
+   * no notability column; migration v46 backfills with default 'medium'.
+   */
+  notability: 'high' | 'medium' | 'low';
   context: string | null;
   valid_from: Date;
   valid_until: Date | null;

@@ -3235,6 +3235,7 @@ interface FactRowSqlShape {
   fact: string;
   kind: FactKind;
   visibility: FactVisibility;
+  notability: 'high' | 'medium' | 'low';
   context: string | null;
   valid_from: Date;
   valid_until: Date | null;
@@ -3269,6 +3270,11 @@ function rowToFactPg(row: FactRowSqlShape): FactRow {
     fact: row.fact,
     kind: row.kind,
     visibility: row.visibility,
+    // v0.31.2: notability column added by migration v46. Pre-v46 rows that
+    // somehow survive a SELECT (shouldn't on a fully-migrated brain) fall
+    // back to 'medium' to keep the contract total. Belt-and-suspenders with
+    // the migration's NOT NULL DEFAULT.
+    notability: row.notability ?? 'medium',
     context: row.context,
     valid_from: row.valid_from,
     valid_until: row.valid_until,

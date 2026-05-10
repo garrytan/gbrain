@@ -148,6 +148,9 @@ export async function runRecall(engine: BrainEngine, args: string[]): Promise<vo
         kind: r.kind,
         entity_slug: r.entity_slug,
         visibility: r.visibility,
+        // v0.31.2: notability surfaced in JSON output. CLI/PR2 will gain
+        // a --notability filter on top of the same data.
+        notability: r.notability,
         valid_from: r.valid_from.toISOString(),
         valid_until: r.valid_until?.toISOString() ?? null,
         expired_at: r.expired_at?.toISOString() ?? null,
