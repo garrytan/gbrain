@@ -13,7 +13,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { rrfFusion } from '../src/core/search/hybrid.ts';
 import { dedupResults } from '../src/core/search/dedup.ts';
 import { precisionAtK, recallAtK, mrr, ndcgAtK } from '../src/core/search/eval.ts';
-import { autoDetectDetail } from '../src/core/search/intent.ts';
+import { autoDetectDetail } from '../src/core/search/query-intent.ts';
 import type { SearchResult, ChunkInput } from '../src/core/types.ts';
 
 const RRF_K = 60;

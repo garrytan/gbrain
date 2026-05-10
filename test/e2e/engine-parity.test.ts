@@ -122,7 +122,7 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
   afterAll(async () => {
     await pgliteEngine.disconnect();
     await teardownDB();
-  });
+  }, 30_000);
 
   for (const q of QUERIES) {
     test(`searchKeyword: top-5 slugs match for "${q}"`, async () => {

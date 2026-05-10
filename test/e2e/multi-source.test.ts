@@ -43,7 +43,7 @@ describeE2E('v0.18.0 multi-source — Postgres schema shape (fresh install)', ()
     const conn = getConn();
     await conn.unsafe(`DELETE FROM sources WHERE id != 'default'`);
     await conn.unsafe(`DELETE FROM file_migration_ledger`);
-  });
+  }, 30_000);
   afterAll(async () => {
     await teardownDB();
   });
@@ -137,7 +137,7 @@ describeE2E('v0.18.0 multi-source — composite UNIQUE semantics on real Postgre
     const conn = getConn();
     await conn.unsafe(`DELETE FROM sources WHERE id != 'default'`);
     await conn.unsafe(`DELETE FROM file_migration_ledger`);
-  });
+  }, 30_000);
   afterAll(async () => {
     await teardownDB();
   });
@@ -205,7 +205,7 @@ describeE2E('v0.18.0 multi-source — cascade delete covers every dependent row'
     const conn = getConn();
     await conn.unsafe(`DELETE FROM sources WHERE id != 'default'`);
     await conn.unsafe(`DELETE FROM file_migration_ledger`);
-  });
+  }, 30_000);
   afterAll(async () => {
     await teardownDB();
   });
@@ -299,7 +299,7 @@ describeE2E('v0.18.0 multi-source — sync --source routes through sources table
     const conn = getConn();
     await conn.unsafe(`DELETE FROM sources WHERE id != 'default'`);
     await conn.unsafe(`DELETE FROM file_migration_ledger`);
-  });
+  }, 30_000);
   afterAll(async () => {
     await teardownDB();
   });
@@ -363,7 +363,7 @@ describeE2E('v0.18.0 multi-source — sources table surface', () => {
     const conn = getConn();
     await conn.unsafe(`DELETE FROM sources WHERE id != 'default'`);
     await conn.unsafe(`DELETE FROM file_migration_ledger`);
-  });
+  }, 30_000);
   afterAll(async () => {
     await teardownDB();
   });
@@ -426,7 +426,7 @@ describeE2E('v0.18.0 multi-source — storage backfill against file_migration_le
     const conn = getConn();
     await conn.unsafe(`DELETE FROM sources WHERE id != 'default'`);
     await conn.unsafe(`DELETE FROM file_migration_ledger`);
-  });
+  }, 30_000);
   afterAll(async () => {
     await teardownDB();
   });
@@ -509,7 +509,7 @@ describeE2E('v0.18.0 multi-source — addLinksBatch / addTimelineEntriesBatch so
     const conn = getConn();
     await conn.unsafe(`DELETE FROM sources WHERE id != 'default'`);
     await conn.unsafe(`DELETE FROM file_migration_ledger`);
-  });
+  }, 30_000);
   afterAll(async () => { await teardownDB(); });
 
   async function seedSameSlugTwoSources() {

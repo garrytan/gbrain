@@ -26,6 +26,14 @@ mutating: false
 > **Convention:** see [conventions/cross-modal.yaml](../conventions/cross-modal.yaml)
 > for the review pairs and refusal routing chain.
 
+> **Relationship to `gbrain eval cross-modal`:** This skill is the manual
+> mid-flow gate (one model reviews work product before commit, with refusal
+> routing). The `gbrain eval cross-modal` command (v0.27.x) is a sibling
+> surface: 3 different-provider frontier models score-and-iterate on a
+> documented dimension list *before* tests cement behavior. Use this skill
+> for ad-hoc second opinions; use `gbrain eval cross-modal` for the
+> skillify Phase 3 quality gate. The two are complementary, not redundant.
+
 ## Contract
 
 This skill guarantees:

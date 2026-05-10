@@ -61,8 +61,8 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(timeoutMatches.length).toBeGreaterThanOrEqual(2); // bun + clawhub detection at minimum
   });
 
-  test('return type is bun | binary | clawhub | unknown', () => {
-    expect(source).toContain("'bun' | 'binary' | 'clawhub' | 'unknown'");
+  test('return type includes bun-link variant (v0.28.5 cluster D)', () => {
+    expect(source).toContain("'bun' | 'bun-link' | 'binary' | 'clawhub' | 'unknown'");
   });
 
   test('does not reference npm in case labels or messages', () => {
@@ -70,6 +70,54 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(source).not.toContain("case 'npm'");
     expect(source).not.toContain('via npm');
     expect(source).not.toContain('npm upgrade');
+  });
+
+  // v0.28.5 cluster D: 3-signal layered detection.
+  test('bun-link signal walks .git/config for garrytan/gbrain match', () => {
+    expect(source).toContain('function detectBunLink');
+    expect(source).toContain('GBRAIN_GITHUB_REPO');
+    expect(source).toContain('toLowerCase()');
+  });
+
+  test('detectBunLink does not gate on isSymbolicLink (bun resolves argv[1])', () => {
+    // v0.28.5 gated on lstatSync(argv1).isSymbolicLink() which always
+    // returned false because bun resolves symlinks before setting argv[1].
+    // The function body between "function detectBunLink" and the next
+    // top-level function must not contain isSymbolicLink.
+    const fnStart = source.indexOf('function detectBunLink');
+    const fnEnd = source.indexOf('\nfunction ', fnStart + 1);
+    const fnBody = source.slice(fnStart, fnEnd > -1 ? fnEnd : undefined);
+    expect(fnBody).not.toContain('isSymbolicLink');
+    expect(fnBody).not.toContain('lstatSync');
+  });
+
+  test('detectBunLink returns repoRoot, not a string literal', () => {
+    expect(source).toContain("{ repoRoot: string } | null");
+    expect(source).toContain('repoRoot: dir');
+  });
+
+  test('bun-link upgrade uses execFileSync for shell-injection safety', () => {
+    // execFileSync with array args bypasses the shell (same pattern as
+    // dry-fix.ts:172). execSync with template strings is vulnerable to
+    // paths containing shell metacharacters.
+    expect(source).toContain("execFileSync('git', ['-C', linkInfo.repoRoot, 'pull', '--ff-only']");
+    expect(source).toContain("execFileSync('bun', ['install']");
+  });
+
+  test('classifyBunInstall checks repository.url AND src/cli.ts marker', () => {
+    // Codex feedback: repository.url alone is spoofable by future squatter
+    // updates; the source-marker fallback (src/cli.ts presence) is
+    // belt-and-suspenders.
+    expect(source).toContain('function classifyBunInstall');
+    expect(source).toContain('pkg.repository');
+    expect(source).toContain("'src', 'cli.ts'");
+  });
+
+  test('squatter recovery message names both source-clone AND release-binary paths', () => {
+    expect(source).toContain('printSquatterRecovery');
+    expect(source).toContain('git clone');
+    expect(source).toContain('releases');
+    expect(source).toContain('#658');
   });
 });
 

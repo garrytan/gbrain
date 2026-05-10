@@ -97,6 +97,14 @@ not a baseline comparison. For metric-against-truth eval, use
 replay tool answers a different question: "did my code change move
 retrieval, and which queries did it move most?"
 
+For a third evaluation axis — public benchmark, ground-truth labels, full
+question-answer pipeline (not just retrieval) — `gbrain eval longmemeval
+<dataset.jsonl>` (v0.28.8) runs the LongMemEval benchmark against gbrain's
+hybrid retrieval. Each question gets a clean in-memory PGLite, its haystack
+imported, the question asked, the hypothesis emitted as JSONL — exactly the
+shape LongMemEval's `evaluate_qa.py` consumes. Your `~/.gbrain` brain is
+never opened. See `## Public benchmarks: LongMemEval` below.
+
 ## Best-effort by design
 
 Replay is not pure. Three things can drift between capture and replay:
@@ -222,3 +230,64 @@ Existing `eval_candidates` rows stay until you `gbrain eval prune
 | `Mean latency Δ: +500ms`, jaccard high | Vector path got slower; check embedding API or HNSW probes |
 | `rows_errored > 0` | One or more queries threw. Inspect first 3 in human output, or `--json` to see all `error_message` fields |
 | Many `skipped: empty query` | Capture ran on rows where someone passed empty `query` — check why those were captured |
+
+## Public benchmarks: LongMemEval (v0.28.8)
+
+`gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval)
+benchmark directly against gbrain's hybrid retrieval. Different evaluation
+axis from `eval replay`: public dataset with ground-truth labels, end-to-end
+question-answer pipeline, hermetic per-question brains.
+
+```bash
+# Download the dataset (visit the HF page in a browser; gated/manual download).
+# Place longmemeval_oracle.json (or _s.json) somewhere local.
+
+# Retrieval-only (no LLM answer-gen, fastest path, no Anthropic key needed):
+gbrain eval longmemeval ./longmemeval_oracle.json --limit 50 --retrieval-only \
+  > /tmp/hypothesis.jsonl
+
+# Full pipeline (Anthropic key required for answer-gen):
+gbrain eval longmemeval ./longmemeval_oracle.json --limit 50 \
+  > /tmp/hypothesis.jsonl
+
+# Score with LongMemEval's published evaluate_qa.py (not bundled — needs
+# OpenAI gpt-4o per their spec):
+python evaluate_qa.py /tmp/hypothesis.jsonl
+```
+
+### Architecture (read this if you're touching the harness)
+
+- One in-memory PGLite per benchmark run via `createBenchmarkBrain` +
+  `withBenchmarkBrain`. Your `~/.gbrain` is never opened.
+- Between questions: `TRUNCATE` over runtime-enumerated `pg_tables`, NOT a
+  hardcoded list — schema migrations don't silently leak data across
+  questions. Infrastructure tables (`sources`, `config`,
+  `gbrain_cycle_locks`, `subagent_rate_leases`) are preserved across resets.
+- Sanitization parity: re-uses `INJECTION_PATTERNS` from
+  `src/core/think/sanitize.ts` so adding a new injection pattern
+  automatically covers takes AND benchmarks. One source of truth.
+- Retrieved chat content is wrapped in `<chat_session id="..." date="...">`
+  framing; the answer-gen system prompt declares the content UNTRUSTED.
+  Same posture as `<take>` framing.
+- LLM injection seam: `runEvalLongMemEval(args, {client?: ThinkLLMClient})`.
+  Tests stub the client so the full pipeline runs hermetically without any
+  API key.
+
+### Flags
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--limit N` | run all | Cap question count (iterate fast) |
+| `--retrieval-only` | off | Emit retrieved chunks; no LLM answer-gen |
+| `--keyword-only` | off | Disable vector path (debug retrieval issues) |
+| `--expansion` | **off** | Multi-query expansion. Off by default for determinism (no per-query Haiku call). Pass to opt in. |
+| `--top-k K` | 10 | Retrieval depth |
+| `--model M` | resolved | Default resolves through `resolveModel()` 6-tier chain (`models.eval.longmemeval` config key) |
+| `--output FILE` | stdout | Write hypothesis JSONL to file instead of stdout |
+
+### Numbers
+
+p50 25.9ms / p99 30.3ms warm reset+import+search on Apple Silicon (per the
+`test/eval-longmemeval.test.ts` perf gate). Per-question cost well under the
+500ms speed gate. 500 questions = ~13s of overhead plus your retrieval and
+LLM latency.

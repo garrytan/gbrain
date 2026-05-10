@@ -159,3 +159,90 @@ title: Alice
     expect(elapsedMs).toBeLessThan(2000);
   });
 });
+
+describe('gbrain extract --dir default resolution', () => {
+  // Pin the cwd-footgun fix: when --dir is not passed, extract resolves the
+  // brain dir from the sources(local_path) row before falling back. The bare
+  // `.` default would let a user running from a directory with a node_modules/
+  // tree walk tens of thousands of unrelated .md files and report
+  // "created 0 links from 28K pages" — looks like a no-op, was actually a
+  // wasteful junk walk that wrote nothing because synthetic from_slugs don't
+  // match the pages table.
+  test('uses configured sources(local_path) when --dir is not passed', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('people/bob', personPage('Bob'));
+    writeFile('people/alice.md', '---\ntitle: Alice\n---\n\n[Bob](../people/bob.md) is a friend.\n');
+    writeFile('people/bob.md', '---\ntitle: Bob\n---\n');
+
+    // Register brainDir as the default source's local_path.
+    await (engine as any).db.exec(
+      `UPDATE sources SET local_path = '${brainDir.replace(/'/g, "''")}' WHERE id = 'default'`,
+    );
+
+    // Save + clobber cwd to a sibling tmpdir so the test fails loudly if the
+    // resolver still walks `.` instead of the configured path.
+    const otherDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-other-'));
+    const savedCwd = process.cwd();
+    try {
+      process.chdir(otherDir);
+      await runExtract(engine, ['links']); // no --dir
+    } finally {
+      process.chdir(savedCwd);
+      try { rmSync(otherDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+
+    const links = await engine.getLinks('people/alice');
+    expect(links.length).toBe(1);
+    expect(links[0]).toMatchObject({ to_slug: 'people/bob' });
+  });
+
+  test('errors with actionable message when no --dir and no source configured', async () => {
+    // Clear the default source's local_path so getDefaultSourcePath returns null.
+    await (engine as any).db.exec(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await (engine as any).db.exec(`DELETE FROM config WHERE key = 'sync.repo_path'`);
+
+    let exitCode: number | null = null;
+    const errBuf: string[] = [];
+    const savedExit = process.exit;
+    const savedConsoleError = console.error;
+    try {
+      (process as any).exit = (code: number) => { exitCode = code; throw new Error('__test_exit__'); };
+      console.error = (...parts: unknown[]) => { errBuf.push(parts.join(' ')); };
+      try {
+        await runExtract(engine, ['links']);
+      } catch (e) {
+        if (!(e instanceof Error && e.message === '__test_exit__')) throw e;
+      }
+    } finally {
+      (process as any).exit = savedExit;
+      console.error = savedConsoleError;
+    }
+    expect(exitCode as unknown).toBe(1);
+    const all = errBuf.join('\n');
+    expect(all).toContain('No brain directory configured');
+    expect(all).toContain('--source db');
+    expect(all).toContain('--dir');
+  });
+
+  test('explicit --dir always wins over configured source', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('people/bob', personPage('Bob'));
+    writeFile('people/alice.md', '---\ntitle: Alice\n---\n\n[Bob](../people/bob.md) is a friend.\n');
+    writeFile('people/bob.md', '---\ntitle: Bob\n---\n');
+
+    // Configured path points elsewhere; explicit --dir must override.
+    const decoyDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-decoy-'));
+    await (engine as any).db.exec(
+      `UPDATE sources SET local_path = '${decoyDir.replace(/'/g, "''")}' WHERE id = 'default'`,
+    );
+
+    try {
+      await runExtract(engine, ['links', '--dir', brainDir]);
+      const links = await engine.getLinks('people/alice');
+      expect(links.length).toBe(1);
+      expect(links[0]).toMatchObject({ to_slug: 'people/bob' });
+    } finally {
+      try { rmSync(decoyDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+});

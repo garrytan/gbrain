@@ -63,7 +63,7 @@ describeE2E('E2E sync-parallel: T2 happy path + leak probe', () => {
 
   beforeAll(async () => {
     await setupDB();
-  });
+  }, 30_000);
 
   afterAll(async () => {
     if (repoPath) rmSync(repoPath, { recursive: true, force: true });
@@ -112,7 +112,7 @@ describeE2E('E2E sync-parallel: P4 benchmark serial vs concurrency=4', () => {
 
   beforeAll(async () => {
     await setupDB();
-  });
+  }, 30_000);
 
   afterAll(async () => {
     if (repoSerial) rmSync(repoSerial, { recursive: true, force: true });

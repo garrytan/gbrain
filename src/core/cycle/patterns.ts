@@ -140,7 +140,13 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
   const enabled = enabledStr === null ? true : enabledStr === 'true';
   const lookbackStr = await engine.getConfig('dream.patterns.lookback_days');
   const minEvidenceStr = await engine.getConfig('dream.patterns.min_evidence');
-  const model = (await engine.getConfig('dream.patterns.model')) || 'claude-sonnet-4-6';
+  // v0.28: unified model resolution
+  const { resolveModel } = await import('../model-config.ts');
+  const model = await resolveModel(engine, {
+    configKey: 'models.dream.patterns',
+    deprecatedConfigKey: 'dream.patterns.model',
+    fallback: 'sonnet',
+  });
   return {
     enabled,
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,
@@ -217,13 +223,15 @@ async function collectChildPutPageSlugs(
   childIds: number[],
 ): Promise<string[]> {
   if (childIds.length === 0) return [];
+  // Handle both properly-stored jsonb objects (input->>'slug') and
+  // double-encoded jsonb strings from pre-fix data ((input #>> '{}')::jsonb->>'slug').
   const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT DISTINCT input->>'slug' AS slug
+    `SELECT DISTINCT
+            COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
        FROM subagent_tool_executions
       WHERE job_id = ANY($1::int[])
         AND tool_name = 'brain_put_page'
         AND status = 'complete'
-        AND input ? 'slug'
       ORDER BY 1`,
     [childIds],
   );

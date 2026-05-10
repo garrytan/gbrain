@@ -37,6 +37,12 @@ import {
   formatSoftDelete,
   SOFT_DELETE_TTL_HOURS,
 } from '../core/destructive-guard.ts';
+import {
+  addSource as opsAddSource,
+  recloneIfMissing,
+  SourceOpError,
+  type SourceRow as OpsSourceRow,
+} from '../core/sources-ops.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -109,62 +115,64 @@ async function countPages(engine: BrainEngine, sourceId: string): Promise<number
 async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated]');
+    console.error(
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url>] ' +
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>]',
+    );
     process.exit(2);
   }
-  validateSourceId(id);
 
   let localPath: string | null = null;
-  let displayName = id;
-  let federated: boolean | null = null; // null = default (false for new, opt-in via --federated)
+  let remoteUrl: string | undefined;
+  let displayName: string | undefined;
+  let federated: boolean | null = null;
+  let cloneDir: string | undefined;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
     if (a === '--path') { localPath = args[++i]; continue; }
+    if (a === '--url') { remoteUrl = args[++i]; continue; }
     if (a === '--name') { displayName = args[++i]; continue; }
     if (a === '--federated') { federated = true; continue; }
     if (a === '--no-federated') { federated = false; continue; }
+    if (a === '--clone-dir') { cloneDir = args[++i]; continue; }
     console.error(`Unknown flag: ${a}`);
     process.exit(2);
   }
 
-  // Overlapping path guard: reject if new path is inside or contains an
-  // existing source's local_path (per eng review §4 finding 4.1).
-  // Throwing (vs process.exit) keeps this testable via the standard
-  // CLI error-handling wrapper in src/cli.ts.
-  if (localPath) {
-    const others = await engine.executeRaw<{ id: string; local_path: string }>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND id != $1`,
-      [id],
-    );
-    for (const other of others) {
-      const a = localPath;
-      const b = other.local_path;
-      if (a === b || a.startsWith(b + '/') || b.startsWith(a + '/')) {
-        throw new Error(
-          `path "${a}" overlaps with existing source "${other.id}" at "${b}". ` +
-          `Overlapping sources are not allowed — same files would ingest twice under different source_ids.`,
-        );
-      }
-    }
+  if (remoteUrl && localPath) {
+    console.error('Error: --url and --path are mutually exclusive (--url manages its own clone path).');
+    process.exit(2);
   }
 
-  const config = federated === null ? {} : { federated };
-  await engine.executeRaw(
-    `INSERT INTO sources (id, name, local_path, config)
-         VALUES ($1, $2, $3, $4::jsonb)
-     ON CONFLICT (id) DO NOTHING`,
-    [id, displayName, localPath, JSON.stringify(config)],
-  );
+  // Throw on SourceOpError; cli.ts wraps every command in a try/catch that
+  // turns Error into the right exit code. Tests assert throw shape, so we
+  // intentionally propagate rather than process.exit here.
+  const created: OpsSourceRow = await opsAddSource(engine, {
+    id,
+    name: displayName,
+    localPath,
+    remoteUrl,
+    federated,
+    cloneDir,
+  });
 
-  const created = await fetchSource(engine, id);
-  if (!created) {
-    console.error(`Failed to create source "${id}" (conflict with existing id?)`);
-    process.exit(4);
-  }
   const fed = isFederated(created.config);
-  console.log(`Created source "${id}"${displayName !== id ? ` (name: ${displayName})` : ''}${localPath ? ` → ${localPath}` : ''}`);
-  console.log(`  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`);
+  const finalRemoteUrl = (created.config as Record<string, unknown>).remote_url as string | undefined;
+  const tail = finalRemoteUrl
+    ? ` ← cloned from ${finalRemoteUrl}`
+    : created.local_path
+      ? ` → ${created.local_path}`
+      : '';
+  console.log(
+    `Created source "${id}"${displayName && displayName !== id ? ` (name: ${displayName})` : ''}${tail}`,
+  );
+  if (finalRemoteUrl) {
+    console.log(`  clone path: ${created.local_path}`);
+  }
+  console.log(
+    `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
+  );
 }
 
 // ── Subcommand: list ────────────────────────────────────────
@@ -309,6 +317,25 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
 
   console.log(`Source "${id}" restored. ${noFederate ? 'Not re-federated.' : 'Re-federated.'}`);
   console.log(`All pages, chunks, and embeddings are intact.`);
+
+  // T4 (eng-review): if the source has a remote_url AND its clone dir was
+  // autopurged (e.g. operator rm -rf'd $GBRAIN_HOME/clones/), re-clone
+  // before declaring restore success. Without this, restore returns green
+  // but the source is unsyncable until a later sync path discovers the gap.
+  try {
+    const recloned = await recloneIfMissing(engine, id);
+    if (recloned) {
+      console.log(`  re-cloned from remote_url (clone dir was missing).`);
+    }
+  } catch (e) {
+    if (e instanceof SourceOpError) {
+      console.error(`  WARN: could not re-clone: ${e.message}`);
+      console.error(`  The DB row is restored but the on-disk clone is missing.`);
+      console.error(`  Try \`gbrain sync --source ${id}\` to recover, or remove + re-add.`);
+    } else {
+      throw e;
+    }
+  }
 }
 
 // ── Subcommand: purge ───────────────────────────────────────

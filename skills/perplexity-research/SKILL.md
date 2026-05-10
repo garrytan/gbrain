@@ -4,10 +4,12 @@ version: 0.1.0
 description: Brain-augmented web research. Sends brain context about a topic to Perplexity, which searches the web with citations and returns what is NEW vs what the brain already knows. Use for entity enrichment, current-state checks, deal monitoring, and freshness deltas. NOT for simple URL fetches (use web_fetch) or brain-only queries (use gbrain query).
 triggers:
   - "perplexity research"
+  - "perplexity-research"
   - "what's new about"
   - "current state of"
   - "web research"
   - "what changed about"
+  - "surface new developments"
 mutating: true
 writes_pages: true
 writes_to:

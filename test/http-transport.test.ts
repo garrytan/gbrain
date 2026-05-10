@@ -44,7 +44,12 @@ function hash(token: string): string {
 }
 
 interface FakeEngineConfig {
-  validTokens?: Map<string, { id: string; name: string }>;
+  /**
+   * v0.28: row shape mirrors the production SELECT, including the
+   * `permissions` JSONB column. Default permissions = {takes_holders: ['world']}
+   * when unset, matching the migration v33 default.
+   */
+  validTokens?: Map<string, { id: string; name: string; permissions?: { takes_holders?: string[] } }>;
   /** Tokens that are present but revoked (revoked_at IS NOT NULL — query returns empty). */
   revokedTokens?: Set<string>;
   /** If true, every SELECT throws (simulating DB outage). */
@@ -64,11 +69,19 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
       return [{ '?column?': 1 }];
     }
 
-    if (query.startsWith('SELECT id, name FROM access_tokens')) {
+    // v0.28: query now selects `permissions` too. Match either the legacy
+    // SELECT id, name shape OR the new SELECT id, name, permissions shape so
+    // older tests that haven't been updated still work; new tests can stash
+    // a `permissions` field on the validTokens row.
+    if (query.startsWith('SELECT id, name FROM access_tokens') ||
+        query.startsWith('SELECT id, name, permissions FROM access_tokens')) {
       const tokenHash = values[0] as string;
       if (revokedTokens.has(tokenHash)) return [];
       const row = validTokens.get(tokenHash);
-      return row ? [row] : [];
+      if (!row) return [];
+      // Default permissions to {takes_holders: ['world']} (matches migration v33 default).
+      const rowWithPerms = { ...row, permissions: row.permissions ?? { takes_holders: ['world'] } };
+      return [rowWithPerms];
     }
 
     if (query.startsWith('UPDATE access_tokens')) {

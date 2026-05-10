@@ -31,6 +31,23 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  /** AI gateway config (v0.14+). Default: "openai:text-embedding-3-large" / 1536 / "anthropic:claude-haiku-4-5-20251001". */
+  embedding_model?: string;
+  embedding_dimensions?: number;
+  expansion_model?: string;
+  /**
+   * Default chat model for `gateway.chat()` callers (v0.27+).
+   * Default: "anthropic:claude-sonnet-4-6-20250929".
+   */
+  chat_model?: string;
+  /**
+   * Optional silent-refusal fallback chain for `chatWithFallback()` (v0.27+).
+   * Each entry is a "provider:modelId" string. Blocked from critic/judge/
+   * synthesize flows in their respective handlers (per D13 review decision).
+   */
+  chat_fallback_chain?: string[];
+  /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
+  provider_base_urls?: Record<string, string>;
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
@@ -50,6 +67,55 @@ export interface GBrainConfig {
     /** false disables PII scrubbing before insert. Defaults to true. */
     scrub_pii?: boolean;
   };
+
+  /**
+   * v0.27.1 — multimodal ingestion flags. Default off; opt-in.
+   *
+   * Unlike `embedding_model` / `embedding_dimensions` (which size the
+   * schema and must be set before initSchema), these flags only affect
+   * runtime behavior. They live in the DB plane primarily — `gbrain config
+   * set embedding_multimodal true` flips the gate without touching the file.
+   * loadConfigWithEngine() merges DB config on top of file/env. Env vars
+   * still win as the operator escape hatch.
+   */
+  embedding_multimodal?: boolean;
+  /** Model override for multimodal embeddings (e.g. "voyage:voyage-multimodal-3"). */
+  embedding_multimodal_model?: string;
+  embedding_image_ocr?: boolean;
+  embedding_image_ocr_model?: string;
+
+  /**
+   * Thin-client mode (multi-topology v1). When set, this install does NOT
+   * have a local DB; it talks to a remote `gbrain serve --http` over MCP.
+   * The CLI dispatch guard in `src/cli.ts` checks for this field BEFORE
+   * `connectEngine` and refuses any DB-bound subcommand. The `engine` field
+   * above is still populated (default-inferred) but never used.
+   *
+   * Two URLs because OAuth discovery + `/token` live at the issuer root,
+   * while tool dispatch lives at `/mcp`. They compose from a common base
+   * in the typical setup but the config keeps them explicit so reverse-proxy
+   * topologies work.
+   *
+   * `oauth_client_secret` can also be supplied via the
+   * `GBRAIN_REMOTE_CLIENT_SECRET` env var (preferred for headless agents);
+   * env-var value wins when both are present.
+   */
+  remote_mcp?: {
+    issuer_url: string;
+    mcp_url: string;
+    oauth_client_id: string;
+    oauth_client_secret?: string;
+  };
+}
+
+/**
+ * True when this install is configured as a thin client of a remote
+ * `gbrain serve --http`. Single source of truth for the "is this a
+ * thin-client install?" check used by the CLI dispatch guard, doctor
+ * branch, and remote subcommands.
+ */
+export function isThinClient(config: GBrainConfig | null): boolean {
+  return !!config?.remote_mcp;
 }
 
 /**
@@ -72,14 +138,102 @@ export function loadConfig(): GBrainConfig | null {
   const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
     || (fileConfig?.database_path ? 'pglite' : 'postgres');
 
-  // Merge: env vars override config file
+  // Merge: env vars override config file. READ only — never mutate process.env.
   const merged = {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
+    ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
+    ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
+    ...(process.env.GBRAIN_CHAT_MODEL ? { chat_model: process.env.GBRAIN_CHAT_MODEL } : {}),
+    ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN
+      ? { chat_fallback_chain: process.env.GBRAIN_CHAT_FALLBACK_CHAIN.split(',').map(s => s.trim()).filter(Boolean) }
+      : {}),
+    ...(process.env.GBRAIN_EMBEDDING_MULTIMODAL
+      ? { embedding_multimodal: process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true' }
+      : {}),
+    ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR
+      ? { embedding_image_ocr: process.env.GBRAIN_EMBEDDING_IMAGE_OCR === 'true' }
+      : {}),
+    ...(process.env.GBRAIN_EMBEDDING_MULTIMODAL_MODEL
+      ? { embedding_multimodal_model: process.env.GBRAIN_EMBEDDING_MULTIMODAL_MODEL }
+      : {}),
+    ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL
+      ? { embedding_image_ocr_model: process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL }
+      : {}),
+    ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
+      ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
+      : {}),
   };
   return merged as GBrainConfig;
+}
+
+/**
+ * v0.27.1 — async config loader that overlays DB-plane config on top of the
+ * file/env config. Used by `gbrain` CLI's connectEngine() AFTER engine.connect()
+ * so flags written via `gbrain config set` actually take effect. Unlike the
+ * sync loadConfig(), this needs an engine handle to read the config table.
+ *
+ * Precedence: env > file > DB > defaults. Env stays the operator escape hatch;
+ * file is the durable per-machine config; DB is the user-mutable runtime knob.
+ *
+ * Today only the v0.27.1 multimodal flags participate in DB-merge. Existing
+ * fields (embedding_model, etc.) keep their file/env-only loading because they
+ * size the schema and must be stable across engine connect.
+ */
+export async function loadConfigWithEngine(
+  engine: { getConfig(key: string): Promise<string | null | undefined> },
+  base?: GBrainConfig | null,
+): Promise<GBrainConfig | null> {
+  const fileConfig = base !== undefined ? base : loadConfig();
+  if (!fileConfig) return null;
+
+  // DB-plane reads. Quiet failures — if the config table doesn't exist yet
+  // (pre-v36 brain mid-migration), treat as null and let file/env defaults
+  // win. The migration runner reads file/env directly anyway.
+  async function dbBool(key: string): Promise<boolean | undefined> {
+    try {
+      const v = await engine.getConfig(key);
+      if (v === undefined || v === null || v === '') return undefined;
+      return v === 'true';
+    } catch {
+      return undefined;
+    }
+  }
+  async function dbStr(key: string): Promise<string | undefined> {
+    try {
+      const v = await engine.getConfig(key);
+      if (v === undefined || v === null || v === '') return undefined;
+      return v;
+    } catch {
+      return undefined;
+    }
+  }
+
+  const dbMultimodal = await dbBool('embedding_multimodal');
+  const dbMultimodalModel = await dbStr('embedding_multimodal_model');
+  const dbOcr = await dbBool('embedding_image_ocr');
+  const dbOcrModel = await dbStr('embedding_image_ocr_model');
+
+  // DB applies only when env did NOT win. Env presence is detected by the
+  // sync loadConfig() already setting the field. For each flag, prefer the
+  // existing fileConfig value when defined; otherwise fall through to DB.
+  const merged: GBrainConfig = { ...fileConfig };
+  if (merged.embedding_multimodal === undefined && dbMultimodal !== undefined) {
+    merged.embedding_multimodal = dbMultimodal;
+  }
+  if (merged.embedding_multimodal_model === undefined && dbMultimodalModel !== undefined) {
+    merged.embedding_multimodal_model = dbMultimodalModel;
+  }
+  if (merged.embedding_image_ocr === undefined && dbOcr !== undefined) {
+    merged.embedding_image_ocr = dbOcr;
+  }
+  if (merged.embedding_image_ocr_model === undefined && dbOcrModel !== undefined) {
+    merged.embedding_image_ocr_model = dbOcrModel;
+  }
+  return merged;
 }
 
 export function saveConfig(config: GBrainConfig): void {

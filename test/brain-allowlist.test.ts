@@ -44,13 +44,19 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     expect(missing).toEqual([]);
   });
 
-  test('contains the read-only 10 + put_page', () => {
-    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(11);
+  test('contains the v0.15 read-only 10 + put_page + v0.29 salience pair', () => {
+    // v0.29 added get_recent_salience + find_anomalies (read-only).
+    // get_recent_transcripts is deliberately excluded — subagent calls always
+    // have ctx.remote=true, and the v0.29 trust gate rejects remote callers.
+    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(13);
     expect(BRAIN_TOOL_ALLOWLIST.has('query')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('search')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_page')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('list_pages')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('put_page')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_salience')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('find_anomalies')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_transcripts')).toBe(false);
   });
 
   test('does NOT contain destructive ops', () => {

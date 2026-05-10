@@ -16,6 +16,8 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import type { GraphPath } from '../core/types.ts';
+import { loadConfig, isThinClient } from '../core/config.ts';
+import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
 interface Args {
   slug?: string;
@@ -72,11 +74,26 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
     return;
   }
 
-  const paths = await engine.traversePaths(args.slug, {
-    depth: args.depth,
-    linkType: args.linkType,
-    direction: args.direction,
-  });
+  // v0.31.1 (Issue #734): on thin-client installs, route via MCP. The
+  // traverse_graph op returns GraphPath[] when link_type or direction is
+  // set (which the CLI always does); unpackToolResult parses the JSON.
+  let paths: GraphPath[];
+  const cfg = loadConfig();
+  if (isThinClient(cfg)) {
+    const raw = await callRemoteTool(cfg!, 'traverse_graph', {
+      slug: args.slug,
+      depth: args.depth,
+      link_type: args.linkType,
+      direction: args.direction,
+    }, { timeoutMs: 30_000 });
+    paths = unpackToolResult<GraphPath[]>(raw);
+  } else {
+    paths = await engine.traversePaths(args.slug, {
+      depth: args.depth,
+      linkType: args.linkType,
+      direction: args.direction,
+    });
+  }
 
   if (paths.length === 0) {
     console.log(`No edges found from ${args.slug}${args.linkType ? ` (--type ${args.linkType})` : ''}.`);

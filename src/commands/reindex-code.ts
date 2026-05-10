@@ -200,6 +200,7 @@ export async function runReindexCode(
           const result = await importCodeFile(engine, relPath, row.compiled_truth, {
             noEmbed: opts.noEmbed,
             force: opts.force,
+            sourceId: opts.sourceId,
           });
           if (result.status === 'imported') reindexed++;
           else if (result.status === 'skipped') skipped++;

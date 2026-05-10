@@ -166,3 +166,14 @@ psql "$DATABASE_URL" -c \
 `body_too_large`, `parse_error`, `unknown_method`. Failed-auth rows have
 `token_name = NULL`. Inserts are fire-and-forget so audit failures
 never block requests.
+
+**v0.26.9 redaction default.** The `params` column now stores
+`{redacted, kind, declared_keys, unknown_key_count, approx_bytes}` instead
+of raw JSON-RPC payloads. Declared keys (intersected against the operation's
+spec) preserve for debug visibility; unknown keys are counted but never
+named so attackers can't probe key existence; byte sizes bucket to 1KB so
+content sizes can't be binary-searched. The same shape is broadcast on the
+admin SSE feed at `/admin/events`. Operators on a personal laptop who want
+raw payloads back can pass `gbrain serve --http --log-full-params` (loud
+stderr warning at startup). Multi-tenant deployments should leave it
+on the redacted default.

@@ -3,6 +3,7 @@ import {
   extractEntityRefs,
   extractPageLinks,
   extractFrontmatterLinks,
+  imageOfCandidates,
   inferLinkType,
   makeResolver,
   parseTimelineEntries,
@@ -11,6 +12,43 @@ import {
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+
+// v0.27.1 cherry-3: image-to-page path-proximity heuristic.
+describe('imageOfCandidates', () => {
+  test('proposes parallel-directory swap from photos/ to meetings/', () => {
+    const out = imageOfCandidates('originals/photos/2026-05-04-foo.jpg');
+    expect(out).toContain('originals/meetings/2026-05-04-foo');
+  });
+
+  test('proposes same-directory text sibling as fallback', () => {
+    const out = imageOfCandidates('originals/photos/foo.png');
+    // photos/foo.png → photos/foo (same dir, basename without extension)
+    expect(out).toContain('originals/photos/foo');
+  });
+
+  test('returns [] when slug has no parent directory', () => {
+    expect(imageOfCandidates('foo.jpg')).toEqual([]);
+  });
+
+  test('strips image extension from candidate basenames', () => {
+    const out = imageOfCandidates('originals/screenshots/whiteboard.heic');
+    for (const c of out) {
+      expect(c.endsWith('.heic')).toBe(false);
+      expect(c.endsWith('.jpg')).toBe(false);
+    }
+  });
+
+  test('handles uppercase paths case-insensitively', () => {
+    const out = imageOfCandidates('Originals/Photos/Foo.JPG');
+    expect(out.some(s => s.includes('foo'))).toBe(true);
+  });
+});
+
+describe('inferLinkType — image type', () => {
+  test('image page type returns image_of', () => {
+    expect(inferLinkType('image' as any, 'a meeting photo')).toBe('image_of');
+  });
+});
 
 // ─── extractEntityRefs ─────────────────────────────────────────
 
