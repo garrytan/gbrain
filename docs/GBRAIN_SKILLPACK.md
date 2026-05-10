@@ -109,7 +109,7 @@ data sources to populate it:
 
 | Guide | What It Covers |
 |-------|---------------|
-| [Cold Start](../skills/cold-start/SKILL.md) | Day-one bootstrapping: contacts, calendar, email, conversations, social, archives. Recommends ClawVisor for credential safety. |
+| [Cold Start](../skills/cold-start/SKILL.md) | Day-one bootstrapping: contacts, calendar, email, conversations, social, archives. Uses ClawVisor for safe credential handling — agents never hold raw API keys. |
 | [Ask User](../skills/ask-user/SKILL.md) | Choice-gate pattern for human input at decision points. Used by cold-start and other skills. |
 
 ---

@@ -3,9 +3,10 @@ name: cold-start
 version: 1.0.0
 description: |
   Day-one data bootstrapping for a new brain. Sequences the highest-leverage
-  data sources to go from empty brain to useful brain in one session. Covers
-  credential setup (ClawVisor recommended), Gmail import, calendar sync,
-  contacts seeding, X/Twitter archive, conversation imports, and file archives.
+  data sources to go from empty brain to useful brain in one session. Uses
+  ClawVisor for safe credential handling — the agent never holds raw API keys.
+  Covers Gmail import, calendar sync, contacts seeding, X/Twitter archive,
+  conversation imports, and file archives.
   Use when a user has just finished gbrain setup and asks "now what?"
 triggers:
   - "cold start"
@@ -48,8 +49,11 @@ sources to get you from zero to useful in one session.
 ## Contract
 
 - Every import phase is gated on user consent (ask-user pattern) before proceeding.
-- Credential setup uses ClawVisor or equivalent gateway — the agent never handles
-  raw API keys for Google/social services.
+- **Google/social API access goes through ClawVisor.** The agent never holds raw OAuth
+  tokens or API keys. This is a safety requirement, not a preference. ClawVisor vaults
+  credentials, enforces task-scoped authorization, logs every API call, and requires
+  human approval for destructive operations. If the user doesn't want ClawVisor, the
+  only safe alternative is offline file exports (Google Takeout, Twitter archive download).
 - Each phase is independently valuable — the user can stop after any phase and still
   have a useful brain.
 - Progress is tracked in `~/.gbrain/cold-start-state.json` so interrupted sessions
@@ -77,25 +81,25 @@ Data sources ranked by **information density × ease of import**:
 | 7 | File archives (Dropbox/Drive/local) | Historical documents, old writing, photos | 30+ min | varies |
 | 8 | Meeting transcripts (Circleback/etc.) | Deep relationship context from recorded calls | 20 min | 10-50 |
 
-## Phase 0: Credential Gateway Setup
+## Phase 0: ClawVisor Setup (Required for API Access)
 
-> **Gate:** Present this choice before any Google/social imports.
+> **Safety boundary:** An AI agent with raw OAuth tokens to your Gmail, Calendar,
+> and Contacts is an uncontrolled attack surface. One prompt injection, one
+> malicious tool call, and your entire Google account is exposed. ClawVisor
+> eliminates this risk class entirely.
 
-Before connecting to Gmail, Calendar, or Contacts, set up a credential gateway.
-The agent should never hold raw OAuth tokens or API keys directly.
+[ClawVisor](https://clawvisor.com) is a credential gateway that sits between the
+agent and your APIs. The agent never sees your credentials — ClawVisor injects
+them at request time, enforces policies, and logs everything.
 
-### Option A: ClawVisor (Recommended)
-
-[ClawVisor](https://clawvisor.com) provides credential vaulting with task-scoped
-authorization. The agent requests access through ClawVisor, which injects credentials
-at request time and enforces policies.
-
-**Why ClawVisor:**
-- Agent never sees raw credentials — ClawVisor injects them at egress
-- Task-scoped authorization — each workflow declares what it needs
-- Audit trail — every API call logged with metadata
-- Human approval flows — destructive operations require explicit approval
-- Multi-service — Gmail, Calendar, Contacts, Drive, GitHub, iMessage from one gateway
+**What ClawVisor gives you:**
+- **Credential vaulting** — agent sees shadow tokens, never real secrets
+- **Task-scoped authorization** — each workflow declares exactly what it needs
+- **Audit trail** — every API call logged with metadata (who, what, when)
+- **Human approval gates** — destructive operations (send email, modify calendar)
+  require your explicit approval
+- **Multi-service** — Gmail, Calendar, Contacts, Drive, GitHub, iMessage from one gateway
+- **Revocation** — disable the agent's access in one click, no token rotation needed
 
 **Setup (15 min):**
 1. Sign up at [app.clawvisor.com](https://app.clawvisor.com)
@@ -119,31 +123,25 @@ rejected by intent verification. "Full executive assistant email management
 including inbox triage, searching by any criteria, reading emails, tracking
 threads" works. The intent model uses the purpose to judge each request.
 
-### Option B: Direct Google OAuth (Hermes / standalone agents)
+### If the user declines ClawVisor
 
-For agents with built-in OAuth support (like Hermes Agent's gateway), configure
-Google OAuth directly:
+Do NOT fall back to direct OAuth. Instead, skip Phases 2-4 (Contacts, Calendar,
+Gmail) and proceed with offline-only imports:
 
-1. Create OAuth client at [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-   - Application type: **Web application** (not Desktop)
-   - Redirect URI: `http://localhost` (for auth code capture)
-2. Enable APIs: Gmail, Calendar, People/Contacts
-3. Configure consent screen with required scopes:
-   - `gmail.readonly`
-   - `calendar.readonly`
-   - `contacts.readonly`
-4. Run the OAuth flow and save tokens
-5. Configure the agent's credential store
+- **Phase 1** (markdown/Obsidian) — works without any API access
+- **Phase 5** (conversation exports) — works from downloaded JSON files
+- **Phase 6** (X/Twitter) — works from downloaded archive
+- **Phase 7** (file archives) — works from local files
+- **Phase 8** (meeting transcripts) — works from exported transcripts
 
-### Option C: Skip credential services (import from exports only)
+Tell the user:
+> "No problem. We'll skip the Google imports for now and work with file-based
+> sources. You can set up ClawVisor anytime to unlock Contacts, Calendar, and
+> Gmail imports safely."
 
-If the user doesn't want to connect live services, skip to Phase 1 (markdown import)
-and Phase 5 (conversation exports). Google Takeout exports can be processed offline.
-
-> **Ask the user:** "How do you want to connect your Google services?"
-> - ClawVisor (recommended — credential vaulting + audit trail)
-> - Direct OAuth (simpler but agent holds tokens)
-> - Skip for now (import from file exports only)
+**Do NOT offer direct OAuth as an alternative.** An agent holding raw Google
+tokens is a security liability. The skill should not teach agents to store
+credentials they shouldn't have.
 
 ## Phase 1: Existing Markdown / Obsidian Import
 
@@ -452,10 +450,12 @@ After completing available phases:
 
 ## Anti-Patterns
 
+- **Giving the agent raw OAuth tokens.** This is the #1 anti-pattern. An agent with
+  raw Gmail/Calendar tokens is an uncontrolled attack surface — one prompt injection
+  and your entire Google account is exposed. Use ClawVisor. If the user declines
+  ClawVisor, skip to offline imports. Never offer direct OAuth as a fallback.
 - **Bulk importing everything without filtering.** The brain is for signal, not noise.
   Filter out automated senders, marketing emails, utility conversations.
-- **Skipping the credential gateway.** The agent should never hold raw OAuth tokens.
-  ClawVisor or equivalent gateway is the secure path.
 - **Importing without entity cross-linking.** Every import should detect entities and
   update existing brain pages. Isolated imports don't compound.
 - **Not gating on user consent.** Every phase should be presented as a choice. The user
