@@ -46,8 +46,8 @@ export function parseDoctorAgentArgs(args: string[]): { agent: boolean; agentCom
       const value = args[i + 1];
       if (value && !value.startsWith('--')) {
         agentCommand = value;
+        i += 1;
       }
-      i += 1;
     } else if (arg.startsWith('--agent-command=')) {
       const value = arg.slice('--agent-command='.length);
       if (value && !value.startsWith('--')) {
@@ -65,9 +65,9 @@ export function getExpectedAgentRulesVersion(): string {
 
 function loadAgentRules(): string | null {
   const candidates = [
-    join(process.cwd(), 'docs', 'MBRAIN_AGENT_RULES.md'),
     join(__dirname, '..', '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
     join(__dirname, '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
+    join(process.cwd(), 'docs', 'MBRAIN_AGENT_RULES.md'),
   ];
 
   for (const candidate of candidates) {

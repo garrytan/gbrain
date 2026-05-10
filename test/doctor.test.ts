@@ -340,6 +340,27 @@ describe('doctor command', () => {
     expect(getExpectedAgentRulesVersion()).toBe(docsVersion);
   });
 
+  test('doctor expected agent rules version ignores cwd docs marker', async () => {
+    const rulesContent = readFileSync(join(import.meta.dir, '..', 'docs', 'MBRAIN_AGENT_RULES.md'), 'utf-8');
+    const docsVersion = rulesContent.match(/<!-- mbrain-agent-rules-version: ([\d.]+) -->/)?.[1];
+    if (!docsVersion) throw new Error('docs/MBRAIN_AGENT_RULES.md is missing the rules version marker');
+
+    const originalCwd = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'mbrain-doctor-cwd-'));
+    try {
+      mkdirSync(join(tempDir, 'docs'), { recursive: true });
+      writeFileSync(join(tempDir, 'docs', 'MBRAIN_AGENT_RULES.md'), '<!-- mbrain-agent-rules-version: 9.9.9 -->\n');
+
+      process.chdir(tempDir);
+
+      expect(getExpectedAgentRulesVersion()).toBe(docsVersion);
+      expect(getExpectedAgentRulesVersion()).not.toBe('9.9.9');
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test('doctor agent args keep default command when agent command value is missing', async () => {
     expect(parseDoctorAgentArgs(['--agent']).agentCommand).toBe('mbrain');
     expect(parseDoctorAgentArgs(['--agent', '--agent-command', 'bun run src/cli.ts']).agentCommand)
@@ -347,6 +368,7 @@ describe('doctor command', () => {
     expect(parseDoctorAgentArgs(['--agent', '--agent-command', '--json']).agentCommand).toBe('mbrain');
     expect(parseDoctorAgentArgs(['--agent', '--agent-command=bun run src/cli.ts']).agentCommand)
       .toBe('bun run src/cli.ts');
+    expect(parseDoctorAgentArgs(['--agent-command', '--agent'])).toEqual({ agent: true, agentCommand: 'mbrain' });
   });
 
   test('LATEST_VERSION is importable from migrate', async () => {
