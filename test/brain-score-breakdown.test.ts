@@ -58,6 +58,26 @@ describe('Bug 11 — brain_score breakdown sums to total', () => {
     expect(sum).toBe(h.brain_score);
   });
 
+  test('timeline score follows entity timeline coverage, not all-page density', async () => {
+    await engine.putPage('entity-a', { type: 'person', title: 'Entity A', compiled_truth: 'person', frontmatter: {} });
+    await engine.putPage('entity-b', { type: 'company', title: 'Entity B', compiled_truth: 'company', frontmatter: {} });
+    for (let i = 0; i < 20; i += 1) {
+      await engine.putPage(`note-${i}`, { type: 'note', title: `Note ${i}`, compiled_truth: 'note', frontmatter: {} });
+    }
+
+    for (const slug of ['entity-a', 'entity-b']) {
+      const pageId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug=$1`, [slug])).rows[0].id;
+      await (engine as any).db.query(
+        `INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, $2, $3)`,
+        [pageId, '2026-05-09', 'timeline covered'],
+      );
+    }
+
+    const h = await engine.getHealth();
+    expect(h.timeline_coverage).toBe(1);
+    expect(h.timeline_coverage_score).toBe(15);
+  });
+
   test('brain_score caps at 100', async () => {
     const h = await engine.getHealth();
     expect(h.brain_score).toBeGreaterThanOrEqual(0);

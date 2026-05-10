@@ -2415,17 +2415,16 @@ export class PGLiteEngine implements BrainEngine {
     const orphanPages = Number(r.orphan_pages);
     const deadLinks = Number(r.dead_links);
     const linkCount = Number(r.link_count);
-    const pagesWithTimeline = Number(r.pages_with_timeline);
+    const timelineCoverage = Number(r.timeline_coverage);
 
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverageDensity = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
     const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Bug 11 — per-component points. Sum equals brainScore by construction
     // so `doctor` can render a breakdown that adds up to the total.
     const embedCoverageScore = pageCount === 0 ? 0 : Math.round(embedCoverage * 35);
     const linkDensityScore = pageCount === 0 ? 0 : Math.round(linkDensity * 25);
-    const timelineCoverageScore = pageCount === 0 ? 0 : Math.round(timelineCoverageDensity * 15);
+    const timelineCoverageScore = pageCount === 0 ? 0 : Math.round(timelineCoverage * 15);
     const noOrphansScore = pageCount === 0 ? 0 : Math.round(noOrphans * 15);
     const noDeadLinksScore = pageCount === 0 ? 0 : Math.round(noDeadLinks * 10);
     const brainScore = embedCoverageScore + linkDensityScore + timelineCoverageScore + noOrphansScore + noDeadLinksScore;
@@ -2439,7 +2438,7 @@ export class PGLiteEngine implements BrainEngine {
       brain_score: brainScore,
       dead_links: deadLinks,
       link_coverage: Number(r.link_coverage),
-      timeline_coverage: Number(r.timeline_coverage),
+      timeline_coverage: timelineCoverage,
       most_connected: (connected as { slug: string; link_count: number }[]).map(c => ({
         slug: c.slug,
         link_count: Number(c.link_count),
