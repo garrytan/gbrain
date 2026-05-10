@@ -102,6 +102,47 @@ export interface ParseResult {
 export const TAKES_FENCE_BEGIN = '<!--- gbrain:takes:begin -->';
 export const TAKES_FENCE_END   = '<!--- gbrain:takes:end -->';
 
+/**
+ * Holder grammar (v0.32 — EXP-4). The contract documented on ParsedTake.holder
+ * lifted to a runtime check.
+ *
+ * Valid (canonical):
+ *   `world` | `brain` | `people/<slug>` | `companies/<slug>`
+ *
+ * Valid (legacy compat — production brains shipped with bare-slug holders
+ * before the namespaced JSDoc landed in PR #795):
+ *   `<slug>` (single lowercase segment with no namespace prefix)
+ *
+ * Slug character class is sourced from sync.ts:SLUG_SEGMENT_PATTERN — the
+ * actual grammar `slugifySegment()` produces, NOT a stricter invented one
+ * (codex review #3 — `companies/acme.io` and `people/foo_bar` are valid;
+ * the original PR's `[a-z0-9-]+` would have warned on both).
+ *
+ * Catches the eval-flagged error modes:
+ *   - `Garry`            — uppercase letter (rejected: not in [a-z0-9._-])
+ *   - `people/Garry-Tan` — mixed case in slug (rejected for same reason)
+ *   - `world/garry-tan`  — `world` is a literal, no slash variant
+ *   - `users/garry`      — only `people/...` and `companies/...` are namespaced
+ *
+ * The legacy bare-slug form is reserved for v0.33 promotion to error;
+ * v0.32 emits warnings only.
+ */
+import { SLUG_SEGMENT_PATTERN } from './sync.ts';
+export const HOLDER_REGEX = new RegExp(
+  `^(?:world|brain|(?:people|companies)/${SLUG_SEGMENT_PATTERN.source}|${SLUG_SEGMENT_PATTERN.source})$`,
+);
+
+/**
+ * Returns true when `holder` matches the documented grammar. Used by
+ * parseTakesFence to surface TAKES_HOLDER_INVALID warnings in v0.32 (warning
+ * only — markdown source-of-truth contract preserves the row). Promoted to
+ * error in v0.33 once production sync-failures show warning rate trending
+ * to zero.
+ */
+export function isValidHolder(holder: string): boolean {
+  return HOLDER_REGEX.test(holder);
+}
+
 const KIND_VALUES: ReadonlySet<string> = new Set(['fact', 'take', 'bet', 'hunch']);
 const QUALITY_VALUES: ReadonlySet<string> = new Set(['correct', 'incorrect', 'partial']);
 
@@ -273,6 +314,19 @@ export function parseTakesFence(body: string): ParseResult {
     if (!KIND_VALUES.has(kind)) {
       warnings.push(`TAKES_TABLE_MALFORMED: unknown kind "${kindRaw}" (expected fact|take|bet|hunch)`);
       continue;
+    }
+
+    // v0.32 EXP-4: holder grammar check. Warning-only — preserve the row
+    // (markdown source-of-truth contract). Caller (extract-takes.ts) maps
+    // these into the failedFiles[] payload so the v0_28_0 migration's
+    // backfill phase emits sync-failures records and doctor's sync_failures
+    // check shows the breakdown by code (`TAKES_HOLDER_INVALID=N`).
+    const holderTrimmed = holderRaw.trim();
+    if (!isValidHolder(holderTrimmed)) {
+      warnings.push(
+        `TAKES_HOLDER_INVALID: "${holderTrimmed}" in row ${rowNumStr} (expected: world | brain | people/<slug> | companies/<slug>)`,
+      );
+      // Fall through — row is still parsed and stored.
     }
 
     const weight = parseFloat(weightRaw);
