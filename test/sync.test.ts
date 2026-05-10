@@ -148,6 +148,11 @@ describe('pathToSlug', () => {
   test('strips special characters', () => {
     expect(pathToSlug('notes/meeting (march 2024).md')).toBe('notes/meeting-march-2024');
   });
+
+  test('preserves non-ASCII filename segments instead of collapsing to parent slug', () => {
+    expect(pathToSlug('people/\ud55c\uae00-\uc608\uc2dc.md')).toBe('people/\ud55c\uae00-\uc608\uc2dc');
+    expect(pathToSlug('people/\ub2e4\ub978-\uc608\uc2dc.md')).toBe('people/\ub2e4\ub978-\uc608\uc2dc');
+  });
 });
 
 describe('isSyncable edge cases', () => {
