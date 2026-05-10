@@ -168,6 +168,123 @@ Now I'm meeting with [Bob](people/bob).
     expect(links[0].to_slug).toBe('people/bob');
   });
 
+  test('auto-link skips per-candidate addLink loop on identical re-write (status=skipped)', async () => {
+    // Seed target pages.
+    await engine.putPage('people/alice', { type: 'person', title: 'Alice', compiled_truth: '', timeline: '' });
+    await engine.putPage('companies/acme', { type: 'company', title: 'Acme', compiled_truth: '', timeline: '' });
+
+    const putOp = operationsByName['put_page'];
+    const content = `---
+type: meeting
+title: Idempotent Meeting
+---
+
+Attendees: [Alice](people/alice). Discussed [Acme](companies/acme).
+`;
+
+    // First write — establishes the links table state.
+    const first = await putOp.handler(makeContext(), { slug: 'meetings/idempotent', content });
+    expect((first as any).status).toBe('created_or_updated');
+    expect((first as any).auto_links.created).toBe(2);
+    expect((first as any).auto_links.errors).toBe(0);
+
+    // Wrap engine.transaction so we can count tx.addLink and tx.removeLink invocations
+    // ONLY during the second (identical) write. The optimization should skip both loops.
+    let addLinkCalls = 0;
+    let removeLinkCalls = 0;
+    const origTransaction = engine.transaction.bind(engine);
+    (engine as any).transaction = async (fn: any) => {
+      return origTransaction(async (tx: any) => {
+        const origAddLink = tx.addLink.bind(tx);
+        const origRemoveLink = tx.removeLink.bind(tx);
+        tx.addLink = async (...args: any[]) => {
+          addLinkCalls++;
+          return origAddLink(...args);
+        };
+        tx.removeLink = async (...args: any[]) => {
+          removeLinkCalls++;
+          return origRemoveLink(...args);
+        };
+        return fn(tx);
+      });
+    };
+
+    try {
+      // Second write — identical content. importFromContent should return status='skipped'
+      // and runAutoLink should detect existing == desired and skip the per-candidate loops.
+      const second = await putOp.handler(makeContext(), { slug: 'meetings/idempotent', content });
+      expect((second as any).status).toBe('skipped');
+      expect((second as any).auto_links.created).toBe(0);
+      expect((second as any).auto_links.removed).toBe(0);
+      expect((second as any).auto_links.errors).toBe(0);
+
+      // The optimization: zero tx.addLink and zero tx.removeLink calls on the re-write.
+      expect(addLinkCalls).toBe(0);
+      expect(removeLinkCalls).toBe(0);
+    } finally {
+      // Restore the original transaction method so later tests aren't affected.
+      (engine as any).transaction = origTransaction;
+    }
+
+    // Sanity: links table state is unchanged after the no-op re-write.
+    const links = await engine.getLinks('meetings/idempotent');
+    expect(links.length).toBe(2);
+    expect(new Set(links.map(l => l.to_slug))).toEqual(new Set(['people/alice', 'companies/acme']));
+  });
+
+  test('auto-link runs full reconciliation when content changed (drift path preserved)', async () => {
+    await engine.putPage('people/alice', { type: 'person', title: 'Alice', compiled_truth: '', timeline: '' });
+    await engine.putPage('people/bob', { type: 'person', title: 'Bob', compiled_truth: '', timeline: '' });
+
+    const putOp = operationsByName['put_page'];
+
+    // First write: links to Alice.
+    await putOp.handler(makeContext(), {
+      slug: 'notes/drift-test',
+      content: `---
+type: concept
+title: Drift Test
+---
+
+[Alice](people/alice).
+`,
+    });
+
+    // Second write: content CHANGED (Alice → Bob). Optimization MUST NOT apply.
+    let addLinkCalls = 0;
+    const origTransaction = engine.transaction.bind(engine);
+    (engine as any).transaction = async (fn: any) => {
+      return origTransaction(async (tx: any) => {
+        const origAddLink = tx.addLink.bind(tx);
+        tx.addLink = async (...args: any[]) => {
+          addLinkCalls++;
+          return origAddLink(...args);
+        };
+        return fn(tx);
+      });
+    };
+
+    try {
+      const result = await putOp.handler(makeContext(), {
+        slug: 'notes/drift-test',
+        content: `---
+type: concept
+title: Drift Test
+---
+
+[Bob](people/bob).
+`,
+      });
+      // Content changed — full reconciliation should run.
+      expect((result as any).auto_links.created).toBe(1);
+      expect((result as any).auto_links.removed).toBe(1);
+      // tx.addLink was called exactly once (for Bob).
+      expect(addLinkCalls).toBe(1);
+    } finally {
+      (engine as any).transaction = origTransaction;
+    }
+  });
+
   test('auto-timeline: put_page extracts + inserts timeline entries', async () => {
     const putOp = operationsByName['put_page'];
     const result = await putOp.handler(makeContext(), {
