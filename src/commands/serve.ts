@@ -29,8 +29,31 @@ export async function runServe(engine: BrainEngine, args: string[] = []) {
     // when set so the posture change is visible in stderr.
     const logFullParams = args.includes('--log-full-params');
 
+    // Runtime MCP access control. Default on: legacy clients and old
+    // rows resolve to Full, so existing grants keep working while
+    // lower-tier clients get a real boundary. Operators can use
+    // --audit-access-tiers / --no-enforce-access-tiers as an explicit
+    // dry-run escape hatch during rollout.
+    const auditAccessTiers = args.includes('--audit-access-tiers') || args.includes('--no-enforce-access-tiers');
+    const enforceAccessTiers = !auditAccessTiers || args.includes('--enforce-access-tiers');
+
+    // v47 OIDC end-user identity. All three flags must be set together to
+    // enable the federation path; missing flags leave gbrain on the legacy
+    // operator-trusted client_credentials posture. The OIDC client secret
+    // can also be sourced from GBRAIN_OIDC_CLIENT_SECRET so operators do
+    // not have to put it on argv where ps(1) sees it.
+    const oidcIssuerIdx = args.indexOf('--oidc-issuer');
+    const oidcIssuer = oidcIssuerIdx >= 0 ? args[oidcIssuerIdx + 1] : process.env.GBRAIN_OIDC_ISSUER;
+    const oidcClientIdIdx = args.indexOf('--oidc-client-id');
+    const oidcClientId = oidcClientIdIdx >= 0 ? args[oidcClientIdIdx + 1] : process.env.GBRAIN_OIDC_CLIENT_ID;
+    const oidcClientSecretIdx = args.indexOf('--oidc-client-secret');
+    const oidcClientSecret = oidcClientSecretIdx >= 0 ? args[oidcClientSecretIdx + 1] : process.env.GBRAIN_OIDC_CLIENT_SECRET;
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams });
+    await runServeHttp(engine, {
+      port, tokenTtl, enableDcr, publicUrl, logFullParams, enforceAccessTiers,
+      oidcIssuer, oidcClientId, oidcClientSecret,
+    });
   } else {
     console.error('Starting GBrain MCP server (stdio)...');
     await startMcpServer(engine);

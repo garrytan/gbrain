@@ -88,7 +88,11 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     }
     env.GBRAIN_HOME = hostHome;
     serverProc = Bun.spawn({
-      cmd: ['bun', 'run', CLI, 'serve', '--http', '--port', String(serverPort)],
+      cmd: [
+        'bun', 'run', CLI, 'serve', '--http',
+        '--port', String(serverPort),
+        '--public-url', `http://127.0.0.1:${serverPort}`,
+      ],
       env,
       stdin: 'ignore',
       stdout: 'pipe',

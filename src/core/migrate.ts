@@ -2161,6 +2161,153 @@ export const MIGRATIONS: Migration[] = [
     },
   },
   {
+    version: 47,
+    name: 'oauth_user_grants',
+    idempotent: true,
+    // End-user identity layer on top of v46's per-client access tier. v46
+    // grants a tier to an OAuth client (the agent); v47 grants a tier to a
+    // human (the email). When the /token endpoint exchanges an auth code
+    // that carried a federated identity (subject_email + subject_iss), the
+    // resulting bearer token snapshots the email's current grant tier into
+    // oauth_tokens.user_tier. Snapshot at mint time means revoking a grant
+    // affects only the next mint, not already-issued tokens. Operators
+    // revoke by setting oauth_user_grants.revoked_at; the application layer
+    // treats a non-null revoked_at as tier=None at the next exchange.
+    //
+    // Email normalization: oauth_user_grants.email is the lowercase
+    // canonical form. The CHECK (email = lower(email)) constraint is the
+    // simpler path versus a BEFORE INSERT trigger - it surfaces violations
+    // at the call site instead of silently rewriting input. The grants CLI
+    // and /token exchange both lower() before INSERT/lookup.
+    //
+    // Three-column extension to oauth_tokens AND oauth_codes uses
+    // ADD COLUMN IF NOT EXISTS so a partially-applied run on a wedged
+    // pooler is recoverable. The auth code carries subject_email +
+    // subject_iss + user_tier between /authorize and /token; /token reads
+    // those off the consumed code row and persists them onto the new
+    // oauth_tokens row.
+    //
+    // Verify hook: post-condition probe asserts oauth_user_grants table
+    // exists with the expected columns AND oauth_tokens.subject_email +
+    // oauth_codes.subject_email columns exist. current_schema() scoping
+    // matches v46 so multi-tenant deployments don't false-positive on a
+    // sibling schema's table.
+    sql: `
+      CREATE TABLE IF NOT EXISTS oauth_user_grants (
+        email        TEXT PRIMARY KEY,
+        access_tier  TEXT NOT NULL DEFAULT 'None'
+          CONSTRAINT oauth_user_grants_access_tier_check
+          CHECK (access_tier IN ('None', 'Family', 'Work', 'Full')),
+        granted_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        granted_by   TEXT,
+        revoked_at   TIMESTAMPTZ,
+        notes        TEXT,
+        CONSTRAINT oauth_user_grants_email_lowercase
+          CHECK (email = lower(email))
+      );
+
+      ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_email TEXT;
+      ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_iss   TEXT;
+      ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS user_tier     TEXT
+        CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
+
+      ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_email TEXT;
+      ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_iss   TEXT;
+      ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS user_tier     TEXT
+        CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
+
+      CREATE INDEX IF NOT EXISTS idx_oauth_tokens_subject_email
+        ON oauth_tokens(subject_email)
+        WHERE subject_email IS NOT NULL;
+    `,
+    verify: async (engine) => {
+      // 1. oauth_user_grants table + columns.
+      const grantCols = await engine.executeRaw<{ column_name: string; is_nullable: string }>(
+        `SELECT column_name, is_nullable
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'oauth_user_grants'`,
+      );
+      const grantNames = new Set(grantCols.map(r => r.column_name));
+      const wantGrant = ['email', 'access_tier', 'granted_at', 'granted_by', 'revoked_at', 'notes'];
+      for (const c of wantGrant) {
+        if (!grantNames.has(c)) return false;
+      }
+      // 2. oauth_tokens federated columns exist.
+      const tokRows = await engine.executeRaw<{ column_name: string }>(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'oauth_tokens'
+           AND column_name IN ('subject_email', 'subject_iss', 'user_tier')`,
+      );
+      const tokNames = new Set(tokRows.map(r => r.column_name));
+      for (const c of ['subject_email', 'subject_iss', 'user_tier']) {
+        if (!tokNames.has(c)) return false;
+      }
+      // 3. oauth_codes federated columns exist.
+      const codeRows = await engine.executeRaw<{ column_name: string }>(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'oauth_codes'
+           AND column_name IN ('subject_email', 'subject_iss', 'user_tier')`,
+      );
+      const codeNames = new Set(codeRows.map(r => r.column_name));
+      for (const c of ['subject_email', 'subject_iss', 'user_tier']) {
+        if (!codeNames.has(c)) return false;
+      }
+      // 4. oauth_tokens subject_email index exists.
+      const indexRows = await engine.executeRaw<{ indexname: string }>(
+        `SELECT indexname
+         FROM pg_indexes
+         WHERE schemaname = current_schema()
+           AND tablename = 'oauth_tokens'
+           AND indexname = 'idx_oauth_tokens_subject_email'`,
+      );
+      if (indexRows.length !== 1) return false;
+      return true;
+    },
+  },
+  {
+    version: 46,
+    name: 'oauth_clients_access_tier',
+    idempotent: true,
+    // Per-client access tier for runtime MCP access control. Adds
+    // the column and defaults existing rows to 'Full' so legacy
+    // clients keep their current invocation rights — operators
+    // tighten per-client via `gbrain auth register-client --tier
+    // <Full|Work|Family|None>` or the new `set-tier` subcommand.
+    // HTTP enforcement is default-on; `--audit-access-tiers` /
+    // `--no-enforce-access-tiers` is the rollout escape hatch.
+    //
+    // Column type TEXT (not an enum) so future tier-model evolutions
+    // don't require an ALTER TYPE migration; values are validated at
+    // the application layer via src/core/access-tier.ts.
+    //
+    // Verify hook: post-condition probe asserts the column exists +
+    // is NOT NULL, since a wedged DDL on Supabase pooler can leave
+    // a partially-applied state where the migration claims success
+    // but the column is absent or nullable.
+    sql: `
+      ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS access_tier TEXT NOT NULL DEFAULT 'Full';
+    `,
+    verify: async (engine) => {
+      const rows = await engine.executeRaw<{ is_nullable: string; column_default: string | null }>(
+        `SELECT is_nullable, column_default
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'oauth_clients'
+           AND column_name = 'access_tier'`,
+      );
+      if (rows.length !== 1) return false;
+      if (rows[0].is_nullable !== 'NO') return false;
+      // column_default may carry a typecast suffix ("'Full'::text"). Match flexibly.
+      const def = rows[0].column_default ?? '';
+      return def.includes("'Full'");
+    },
+  },
+  {
     version: 44,
     name: 'pages_emotional_weight_recomputed_at',
     idempotent: true,
@@ -2636,8 +2783,9 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
 
     // v0.30.1 (D6): post-condition probe. If a verify hook is declared, run
     // it before bumping config.version. When verify returns false, check
-    // idempotent — if true, log + retry the same migration once; if false,
-    // throw MigrationDriftError so operator runs --skip-verify deliberately.
+    // idempotent — if true, log + retry the same migration once and verify
+    // again; if false or the retry still fails, throw MigrationDriftError so
+    // operator runs --skip-verify deliberately.
     if (m.verify) {
       const verifyOk = await m.verify(engine).catch(() => false);
       if (!verifyOk) {
@@ -2646,8 +2794,14 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
           console.warn(`  [${m.version}] ⚠️  verify failed; re-running idempotent migration once`);
           if (sql) await runMigrationSQLWithRetry(engine, m, sql);
           if (m.handler) await m.handler(engine);
-          // Best-effort: don't double-throw if second run still fails verify.
-          // Operator's next run of doctor will re-detect drift.
+          const verifyRetryOk = await m.verify(engine).catch(() => false);
+          if (!verifyRetryOk) {
+            throw new MigrationDriftError(
+              m.version,
+              m.name,
+              `Schema still does not match expected post-condition after idempotent retry. Run with --skip-verify to force.`,
+            );
+          }
         } else {
           throw new MigrationDriftError(
             m.version,

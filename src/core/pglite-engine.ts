@@ -241,6 +241,8 @@ export class PGLiteEngine implements BrainEngine {
    *     (indexed by `idx_mcp_log_agent_time`) — v0.26.3
    *   - `subagent_messages.provider_id` column (indexed by
    *     `idx_subagent_messages_provider`) — v0.27
+   *   - `oauth_tokens.subject_email` + `subject_iss` + `user_tier`
+   *     columns (indexed by `idx_oauth_tokens_subject_email`) — v47
    *
    * **Maintenance contract:** when a future migration adds a column-with-index
    * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
@@ -280,7 +282,15 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='subagent_messages') AS subagent_messages_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='subagent_messages' AND column_name='provider_id') AS subagent_provider_id_exists
+                WHERE table_schema='public' AND table_name='subagent_messages' AND column_name='provider_id') AS subagent_provider_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='oauth_tokens') AS oauth_tokens_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_tokens' AND column_name='subject_email') AS oauth_tokens_subject_email_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_tokens' AND column_name='subject_iss') AS oauth_tokens_subject_iss_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_tokens' AND column_name='user_tier') AS oauth_tokens_user_tier_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -298,6 +308,10 @@ export class PGLiteEngine implements BrainEngine {
       agent_name_exists: boolean;
       subagent_messages_exists: boolean;
       subagent_provider_id_exists: boolean;
+      oauth_tokens_exists: boolean;
+      oauth_tokens_subject_email_exists: boolean;
+      oauth_tokens_subject_iss_exists: boolean;
+      oauth_tokens_user_tier_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -313,11 +327,16 @@ export class PGLiteEngine implements BrainEngine {
     // v0.27 (v36): idx_subagent_messages_provider in PGLITE_SCHEMA_SQL needs
     // provider_id (the SECOND column in the composite index `(job_id, provider_id)`).
     const needsSubagentProviderId = probe.subagent_messages_exists && !probe.subagent_provider_id_exists;
+    const needsOauthTokensV46Bootstrap = probe.oauth_tokens_exists
+      && (!probe.oauth_tokens_subject_email_exists
+        || !probe.oauth_tokens_subject_iss_exists
+        || !probe.oauth_tokens_user_tier_exists);
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsChunksEmbeddingImage
-        && !needsMcpLogBootstrap && !needsSubagentProviderId) return;
+        && !needsMcpLogBootstrap && !needsSubagentProviderId
+        && !needsOauthTokensV46Bootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -415,6 +434,19 @@ export class PGLiteEngine implements BrainEngine {
       // is idempotent.
       await this.db.exec(`
         ALTER TABLE subagent_messages ADD COLUMN IF NOT EXISTS provider_id TEXT;
+      `);
+    }
+
+    if (needsOauthTokensV46Bootstrap) {
+      // v47 adds federated end-user columns plus an index on subject_email.
+      // PGLITE_SCHEMA_SQL replays the index before migrations run, so old
+      // brains need the indexed column to exist first. Add all three v47
+      // token columns here so the later idempotent migration is a no-op.
+      await this.db.exec(`
+        ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_email TEXT;
+        ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_iss TEXT;
+        ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS user_tier TEXT
+          CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
       `);
     }
   }

@@ -117,6 +117,16 @@ gbrain auth register-client perplexity \
   --scopes "read write"
 ```
 
+For browser-based OAuth clients:
+
+```bash
+gbrain auth register-client chatgpt \
+  --grant-types authorization_code \
+  --redirect-uri https://client.example/oauth/callback \
+  --scopes "read write" \
+  --tier Work
+```
+
 Host-repo wrappers can register programmatically:
 
 ```ts

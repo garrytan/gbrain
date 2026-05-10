@@ -10,6 +10,13 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import {
+  OP_TIER_DEFAULT_REQUIRED,
+  filterResponseByTier,
+  tierImplies,
+  type AccessTier,
+} from '../core/access-tier.ts';
+import { hasScope } from '../core/scope.ts';
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -40,6 +47,19 @@ export interface DispatchOpts {
    * callers leave this unset (no filter — they own the brain).
    */
   takesHoldersAllowList?: string[];
+  /**
+   * Enforce the remote MCP operation boundary in this shared dispatcher.
+   * HTTP transports that accept bearer-token clients set this true with the
+   * token's scopes/tier. Stdio also sets this true with its fixed Work/read
+   * posture. Trusted local CLI/owner paths leave it false.
+   */
+  enforceRemoteAccess?: boolean;
+  /** Granted OAuth scopes for enforceRemoteAccess. */
+  scopes?: string[];
+  /** Granted runtime access tier for enforceRemoteAccess. */
+  tier?: AccessTier;
+  /** Stable caller id for attribution inside handlers. */
+  senderId?: string;
   /**
    * v0.31 (eD4): tenancy axis for facts hot memory ops (extract_facts,
    * recall, forget_fact). When set, the OperationContext receives a
@@ -204,6 +224,8 @@ export function buildOperationContext(
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    tier: opts.tier,
+    senderId: opts.senderId,
     sourceId: opts.sourceId,
     auth: opts.auth,
   };
@@ -235,6 +257,59 @@ export async function dispatchToolCall(
   }
 
   const safeParams = params || {};
+  if ((opts.remote ?? true) && op.localOnly) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'operation_unavailable',
+          message: `Operation ${name} is local-only and is not available over remote MCP`,
+        }, null, 2),
+      }],
+      isError: true,
+    };
+  }
+
+  if (opts.enforceRemoteAccess && (opts.remote ?? true)) {
+    const requiredScope = op.scope || 'read';
+    const scopes = opts.scopes ?? [];
+    if (!hasScope(scopes, requiredScope)) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'insufficient_scope',
+            message: `Operation ${name} requires '${requiredScope}' scope`,
+            your_scopes: scopes,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+
+    // Fail-closed default when the caller opted into enforceRemoteAccess
+    // but forgot to thread tier. The pre-fix default of ACCESS_TIER_DEFAULT
+    // ('Full') would silently grant the most permissive grant, defeating
+    // the boundary the caller asked us to enforce. Resolve to 'None' so an
+    // accidentally-untyped caller sees all-rejection rather than all-access
+    // — the operator's logs surface the misconfiguration loudly.
+    const callerTier = opts.tier ?? 'None';
+    const requiredTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
+    if (!tierImplies(callerTier, requiredTier)) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'insufficient_tier',
+            message: `Operation ${name} tier='${callerTier}' does not satisfy required '${requiredTier}'`,
+            your_tier: callerTier,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+  }
+
   const validationError = validateParams(op, safeParams);
   if (validationError) {
     return {
@@ -246,7 +321,18 @@ export async function dispatchToolCall(
   const ctx = buildOperationContext(engine, safeParams, opts);
 
   try {
-    const result = await op.handler(ctx, safeParams);
+    const rawResult = await op.handler(ctx, safeParams);
+    const result = opts.enforceRemoteAccess
+      ? await filterResponseByTier(name, rawResult, {
+        // Mirror the fail-closed default used by the gate above so the
+        // filter doesn't bypass on tier=undefined (filterResponseByTier
+        // treats undefined as "owner-trust path" and returns the result
+        // unfiltered — wrong here when the caller asked us to enforce).
+        tier: opts.tier ?? 'None',
+        requestSlug: typeof safeParams.slug === 'string' ? safeParams.slug : undefined,
+        includeDeleted: safeParams.include_deleted === true,
+      })
+      : rawResult;
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /

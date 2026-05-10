@@ -264,7 +264,14 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
     }
   }
 
-  await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+  await engine.transaction(async (tx) => {
+    // Do this explicitly as well as relying on the FK. Older/warm test brains can
+    // have files.source_id without the ON DELETE CASCADE constraint.
+    await tx.executeRaw(`DELETE FROM files WHERE source_id = $1`, [id]).catch((e: any) => {
+      if (e?.code !== '42P01' && e?.code !== '42703') throw e;
+    });
+    await tx.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+  });
   const pageCount = impact?.pageCount ?? 0;
   console.log(`Removed source "${id}" (${pageCount} pages + dependent rows cascaded).`);
 }
@@ -359,7 +366,12 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
       process.exit(5);
     }
 
-    await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+    await engine.transaction(async (tx) => {
+      await tx.executeRaw(`DELETE FROM files WHERE source_id = $1`, [id]).catch((e: any) => {
+        if (e?.code !== '42P01' && e?.code !== '42703') throw e;
+      });
+      await tx.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+    });
     console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);
     return;
   }

@@ -106,9 +106,9 @@ describe('v0.29 — redirect hints on existing ops', () => {
 });
 
 describe('v0.29 — subagent allow-list', () => {
-  test('includes get_recent_salience and find_anomalies', () => {
+  test('includes get_recent_salience but not find_anomalies', () => {
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_salience')).toBe(true);
-    expect(BRAIN_TOOL_ALLOWLIST.has('find_anomalies')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('find_anomalies')).toBe(false);
   });
 
   test('excludes get_recent_transcripts (codex C3 — would be a remote=true footgun)', () => {
@@ -118,10 +118,10 @@ describe('v0.29 — subagent allow-list', () => {
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_transcripts')).toBe(false);
   });
 
-  test('all v0.29 ops in the allow-list resolve to a registered Operation', () => {
+  test('v0.29 ops referenced by the allow-list resolve to a registered Operation', () => {
     // brain-allowlist invariant: every name maps to an entry in operations.ts
     // OPERATIONS array. This guard catches rename drift.
-    for (const name of ['get_recent_salience', 'find_anomalies']) {
+    for (const name of ['get_recent_salience']) {
       expect(operationsByName[name]).toBeDefined();
     }
   });
@@ -134,7 +134,7 @@ describe('v0.29 — subagent allow-list', () => {
 });
 
 describe('v0.29 — operations array carries the three new ops', () => {
-  test('all three are registered (one allow-listed pair + one local-only)', () => {
+  test('all three are registered (salience allow-listed, others restricted)', () => {
     const names = operations.map(o => o.name);
     expect(names).toContain('get_recent_salience');
     expect(names).toContain('find_anomalies');

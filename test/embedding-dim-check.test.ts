@@ -16,6 +16,7 @@ import {
   readContentChunksEmbeddingDim,
   embeddingMismatchMessage,
 } from '../src/core/embedding-dim-check.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 // Canonical pattern: single engine per file, init once, disconnect once.
 // The two tests below diverge in whether they want a migrated brain or a
@@ -41,17 +42,19 @@ describe('readContentChunksEmbeddingDim', () => {
   }, 30000);
 
   test('returns { exists: false, dims: null } on a fresh brain (no initSchema)', async () => {
-    // One-off engine for the fresh-brain case. Never call initSchema so
-    // content_chunks doesn't exist yet. Cleaned up at end of test.
-    const fresh = new PGLiteEngine();
-    await fresh.connect({});
-    try {
-      const result = await readContentChunksEmbeddingDim(fresh);
-      expect(result.exists).toBe(false);
-      expect(result.dims).toBeNull();
-    } finally {
-      await fresh.disconnect();
-    }
+    await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, async () => {
+      // One-off engine for the fresh-brain case. Never call initSchema so
+      // content_chunks doesn't exist yet. Cleaned up at end of test.
+      const fresh = new PGLiteEngine();
+      await fresh.connect({});
+      try {
+        const result = await readContentChunksEmbeddingDim(fresh);
+        expect(result.exists).toBe(false);
+        expect(result.dims).toBeNull();
+      } finally {
+        await fresh.disconnect();
+      }
+    });
   }, 30000);
 });
 

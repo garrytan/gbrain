@@ -58,7 +58,7 @@ async function phaseASchema(
         detail: 'expected facts table; not found. Re-run apply-migrations.',
       };
     }
-    return { name: 'schema', status: 'complete', detail: 'schema v40 applied; facts table present' };
+    return { name: 'schema', status: 'complete', detail: 'schema v45 applied; facts table present' };
   } catch (e) {
     return { name: 'schema', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
   }

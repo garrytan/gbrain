@@ -2646,8 +2646,9 @@ describe('MinionWorker: self-health-check behavior (v0.22.14)', () => {
     worker.on('unhealthy', (info) => { events.push(info); });
 
     const startPromise = worker.start();
-    // Window > stallExitAfterMs; if D1 fix wasn't applied, stall would fire.
-    await new Promise(r => setTimeout(r, 500));
+    // Window > stallExitAfterMs; Docker/CI can delay short interval timers
+    // enough that 500ms never reaches the stall-count query.
+    await new Promise(r => setTimeout(r, 1500));
     worker.stop();
     await startPromise;
 

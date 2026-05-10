@@ -42,6 +42,11 @@ import {
   embeddingMismatchMessage,
 } from '../../src/core/embedding-dim-check.ts';
 
+// This file exercises empty/pre-init PGLite state and custom embedding dims.
+// ci:local exports a fully migrated 1536-d snapshot for speed; using it here
+// would erase the historical states these regressions are meant to simulate.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+
 describe('v0.28.5 cluster A — PGLite upgrade wedge regression', () => {
   test('pre-v0.20 brain (missing v0.20+v0.26.3+v0.27 columns) re-runs initSchema cleanly', async () => {
     const engine = new PGLiteEngine();

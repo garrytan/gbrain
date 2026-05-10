@@ -4,7 +4,7 @@
  * Single source of truth: the MCP server already maps OPERATIONS → tool defs.
  * We reuse the same ParamDef-shape → JSONSchema conversion (lives in
  * buildToolDefs for MCP) and wrap each allowed op with an execute() that
- * invokes its handler under a subagent-tagged OperationContext.
+ * invokes it under a subagent-tagged OperationContext.
  *
  * Filtering is NAME-based (not by OperationContext.remote, which is a
  * call-time flag, not operation metadata — codex catch). The allow-list
@@ -24,18 +24,23 @@
 
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
-import { operations } from '../../operations.ts';
+import { filterResponseByTier, OP_TIER_DEFAULT_REQUIRED, tierImplies } from '../../access-tier.ts';
+import { operations, OperationError } from '../../operations.ts';
 import type { Operation, OperationContext } from '../../operations.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
+import { validateParams } from '../../../mcp/dispatch.ts';
 
 /**
  * v0.15 brain-tool allow-list. Review carefully when extending. Op names
  * verified against origin/master:src/core/operations.ts (post shell-jobs +
  * Knowledge Runtime).
  *
- * Read-only (all safe):
- *   query, search, get_page, list_pages, file_list, file_url,
- *   get_backlinks, traverse_graph, resolve_slugs, get_ingest_log
+ * Read-only:
+ *   query, search, get_page, list_pages, resolve_slugs, get_recent_salience
+ *
+ * Read tools are treated as untrusted Work-tier calls and pass through the
+ * same tier gate + response filter used by remote MCP. Do not add a read op
+ * here unless it is safe at Work tier and has a response-filter contract.
  *
  * Conditional write:
  *   put_page (namespace-enforced by the tool schema + server-side check)
@@ -49,20 +54,15 @@ export const BRAIN_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'search',
   'get_page',
   'list_pages',
-  'file_list',
-  'file_url',
-  'get_backlinks',
-  'traverse_graph',
   'resolve_slugs',
-  'get_ingest_log',
   'put_page',
-  // v0.29 — Salience + Anomaly Detection. Both read-only. `get_recent_transcripts`
-  // is intentionally NOT included: subagent calls always have ctx.remote=true,
-  // and the v0.29 trust gate rejects remote callers — adding it here would be
-  // a footgun (subagent calls op, gets permission_denied, looks like a bug).
-  // The cycle synthesize phase already calls discoverTranscripts directly.
+  // v0.29 — Salience is Work-tier filtered. `find_anomalies` is intentionally
+  // NOT included yet: its result shape carries `page_slugs` plus aggregate
+  // stats computed over the whole brain, so it needs SQL push-down or a
+  // dedicated filter before non-Full subagents can call it safely.
+  // `get_recent_transcripts` is also excluded because it is local-only and
+  // rejects remote=true callers.
   'get_recent_salience',
-  'find_anomalies',
 ]);
 
 /** Matches Anthropic's tool-name constraint. No dots. */
@@ -196,6 +196,33 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
   };
 }
 
+async function executeReadOpAtSubagentBoundary(
+  op: Operation,
+  opCtx: OperationContext,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  const scope = op.scope ?? 'read';
+  if (scope !== 'read') {
+    throw new OperationError('permission_denied', `Subagent brain tool ${op.name} requires '${scope}' scope`);
+  }
+
+  const callerTier = 'Work';
+  const requiredTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
+  if (!tierImplies(callerTier, requiredTier)) {
+    throw new OperationError(
+      'permission_denied',
+      `Subagent brain tool ${op.name} tier='${callerTier}' does not satisfy required '${requiredTier}'`,
+    );
+  }
+
+  const raw = await op.handler({ ...opCtx, tier: callerTier }, params);
+  return filterResponseByTier(op.name, raw, {
+    tier: callerTier,
+    requestSlug: typeof params.slug === 'string' ? params.slug : undefined,
+    includeDeleted: params.include_deleted === true,
+  });
+}
+
 /**
  * Build the subagent brain-tool registry. One ToolDef per allow-listed op,
  * with a namespace-wrapped schema for put_page.
@@ -206,7 +233,7 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
 export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
   const filter = opts.allowedNames ?? BRAIN_TOOL_ALLOWLIST;
   const picked: Operation[] = operations.filter(
-    op => BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
+    op => !op.localOnly && BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
   );
 
   return picked.map<ToolDef>(op => {
@@ -237,7 +264,14 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
         });
         const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
-        return op.handler(opCtx, params);
+        const validationError = validateParams(op, params);
+        if (validationError) {
+          throw new OperationError('invalid_params', validationError);
+        }
+        if (op.name === 'put_page') {
+          return op.handler(opCtx, params);
+        }
+        return executeReadOpAtSubagentBoundary(op, opCtx, params);
       },
     };
   });

@@ -19,13 +19,22 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+TMP_SRC="$(mktemp -d /tmp/gbrain-wasm-src.XXXXXX)"
 OUT_BIN="$(mktemp /tmp/gbrain-wasm-check.XXXXXX)"
-trap 'rm -f "$OUT_BIN"' EXIT
+trap 'rm -rf "$TMP_SRC"; rm -f "$OUT_BIN"' EXIT
+
+# Docker Desktop bind mounts can break `bun build --compile`'s internal
+# rename from its temporary `.bun-build` path to the requested outfile.
+# Build from a container-local copy so the source temp file and output binary
+# live on the same filesystem. Keep node_modules as a symlink so dependency
+# resolution still uses the installed tree.
+cp -R scripts src "$TMP_SRC"/
+ln -s "$REPO_ROOT/node_modules" "$TMP_SRC/node_modules"
 
 # Build a minimal smoketest binary that imports the chunker. We compile this
 # instead of the full gbrain CLI so the failure mode is laser-focused on
 # chunker + WASM path resolution, not unrelated CLI wiring.
-bun build --compile --outfile "$OUT_BIN" scripts/chunker-smoketest.ts >/dev/null 2>&1
+(cd "$TMP_SRC" && bun build --compile --outfile "$OUT_BIN" scripts/chunker-smoketest.ts) >/dev/null 2>&1
 
 # Run it and capture JSON output.
 OUTPUT="$("$OUT_BIN" 2>&1)"

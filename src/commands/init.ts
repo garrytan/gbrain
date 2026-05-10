@@ -270,7 +270,9 @@ async function initRemoteMcp(opts: {
   if (!jsonOutput) console.log(`  ✓ OAuth discovery (token_endpoint=${disco.metadata.token_endpoint})`);
 
   // 2. Token round-trip
-  const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, clientId, clientSecret);
+  const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, clientId, clientSecret, {
+    resource: mcpUrl,
+  });
   if (!tokenRes.ok) {
     fail(
       `token_${tokenRes.reason}`,

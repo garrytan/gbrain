@@ -97,6 +97,20 @@ export async function setupDB(): Promise<PostgresEngine> {
     INSERT INTO config (key, value) VALUES ('schema_version', '1')
     ON CONFLICT (key) DO NOTHING
   `);
+  await conn.unsafe(`
+    INSERT INTO sources (id, name, config)
+    VALUES ('default', 'default', '{"federated": true}'::jsonb)
+    ON CONFLICT (id) DO UPDATE
+      SET name = 'default',
+          local_path = NULL,
+          last_commit = NULL,
+          last_sync_at = NULL,
+          config = '{"federated": true}'::jsonb,
+          archived = false,
+          archived_at = NULL,
+          archive_expires_at = NULL
+  `);
+  await conn.unsafe(`DELETE FROM sources WHERE id != 'default'`);
 
   engine = new PostgresEngine();
   await engine.connect({ database_url: DATABASE_URL });

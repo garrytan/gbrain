@@ -510,7 +510,14 @@ export async function removeSource(
     }
   }
 
-  await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id]);
+  await engine.transaction(async (tx) => {
+    // Belt-and-suspenders for upgraded brains that have files.source_id but lost
+    // the FK cascade during an older migration window.
+    await tx.executeRaw(`DELETE FROM files WHERE source_id = $1`, [opts.id]).catch((e: any) => {
+      if (e?.code !== '42P01' && e?.code !== '42703') throw e;
+    });
+    await tx.executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id]);
+  });
 
   return {
     id: opts.id,

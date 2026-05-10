@@ -1,10 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
-import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers, hasPendingMigrations } from '../src/core/migrate.ts';
+import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers, hasPendingMigrations, MigrationDriftError } from '../src/core/migrate.ts';
 import type { IdleBlocker } from '../src/core/migrate.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { withEnv } from './helpers/with-env.ts';
 
 describe('migrate', () => {
   test('LATEST_VERSION is a number >= 1', () => {
@@ -50,16 +51,18 @@ describe('hasPendingMigrations', () => {
   }, 30000);
 
   test('returns true when version config is missing entirely (defensive default)', async () => {
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    try {
-      // Don't call initSchema. Probe against an empty PGlite — getConfig should
-      // either return null (treated as version=1) or throw on missing config
-      // table; either way the probe must say "yes pending."
-      expect(await hasPendingMigrations(engine)).toBe(true);
-    } finally {
-      await engine.disconnect();
-    }
+    await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, async () => {
+      const engine = new PGLiteEngine();
+      await engine.connect({});
+      try {
+        // Don't call initSchema. Probe against an empty PGlite — getConfig should
+        // either return null (treated as version=1) or throw on missing config
+        // table; either way the probe must say "yes pending."
+        expect(await hasPendingMigrations(engine)).toBe(true);
+      } finally {
+        await engine.disconnect();
+      }
+    });
   }, 30000);
 });
 
@@ -164,6 +167,23 @@ describe('migrate v33 — admin_dashboard_columns_v0_26_3', () => {
   test('v33 creates idx_mcp_log_agent_time for the new agent filter', () => {
     expect(v33!.sql).toContain('idx_mcp_log_agent_time');
     expect(v33!.sql).toContain('mcp_request_log(agent_name, created_at DESC)');
+  });
+
+  test('/admin/api/agents fallback avoids optional OAuth client columns on old schemas', () => {
+    const src = readFileSync(resolve('src/commands/serve-http.ts'), 'utf-8');
+    const fallbackStart = src.indexOf("!isUndefinedColumnError(e, 'access_tier')");
+    const fallbackEnd = src.indexOf('const legacyKeys = await sql`', fallbackStart);
+    expect(fallbackStart).toBeGreaterThan(0);
+    expect(fallbackEnd).toBeGreaterThan(fallbackStart);
+
+    const fallback = src.slice(fallbackStart, fallbackEnd);
+    expect(fallback).toContain("!isUndefinedColumnError(e, 'token_ttl')");
+    expect(fallback).toContain("!isUndefinedColumnError(e, 'deleted_at')");
+    expect(fallback).toContain('${null} as token_ttl');
+    expect(fallback).toContain("'active' as status");
+    expect(fallback).not.toContain('c.access_tier');
+    expect(fallback).not.toContain('c.token_ttl');
+    expect(fallback).not.toContain('c.deleted_at');
   });
 
   test('v33 uses ADD COLUMN IF NOT EXISTS so re-runs are idempotent', () => {
@@ -369,6 +389,38 @@ describe('migrate — ordering guarantee (v15 must NOT be skipped by v16)', () =
     const versions = MIGRATIONS.map(m => m.version);
     const uniq = new Set(versions);
     expect(uniq.size).toBe(versions.length);
+  });
+});
+
+describe('migrate — verify retry must pass before version bump', () => {
+  test('idempotent migration whose verify still fails after retry does not advance version', async () => {
+    const migration = {
+      version: LATEST_VERSION + 1,
+      name: 'test_verify_retry_failure',
+      sql: '',
+      idempotent: true,
+      handler: async () => {},
+      verify: async () => false,
+    };
+    const setVersions: string[] = [];
+    const engine = {
+      kind: 'pglite' as const,
+      async getConfig(_k: string) { return String(LATEST_VERSION); },
+      async setConfig(_k: string, value: string) { setVersions.push(value); },
+      async executeRaw() { return []; },
+      async transaction<T>(fn: (e: BrainEngine) => Promise<T>): Promise<T> { return fn(engine as unknown as BrainEngine); },
+      async runMigration() {},
+    } as unknown as BrainEngine;
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    MIGRATIONS.push(migration);
+    try {
+      await expect(runMigrations(engine)).rejects.toBeInstanceOf(MigrationDriftError);
+      expect(setVersions).not.toContain(String(migration.version));
+    } finally {
+      MIGRATIONS.pop();
+      warnSpy.mockRestore();
+    }
   });
 });
 
@@ -917,6 +969,11 @@ describe('PR #356 — LATEST_VERSION is max(versions), not array[-1]', () => {
     expect(LATEST_VERSION).toBe(expectedMax);
   });
 
+  test('migration versions are unique', () => {
+    const versions = MIGRATIONS.map(m => m.version);
+    expect(new Set(versions).size).toBe(versions.length);
+  });
+
   test('Math.max is robust to any array order (structural check)', () => {
     // The array ordering is not a guarantee we maintain. v0.18.0's v21/v22/v23
     // sat out-of-order in the middle of the array (release-order reasons);
@@ -1203,6 +1260,130 @@ describe('migration v40 — pages_emotional_weight (v0.29)', () => {
 
   test('LATEST_VERSION caught up to 40', () => {
     expect(LATEST_VERSION).toBeGreaterThanOrEqual(40);
+  });
+});
+
+// ============================================================
+// v0.31.1 - v46/v47 access-tier + oauth_user_grants
+// ============================================================
+// v45 is upstream v0.31 hot memory. v46 ships per-client access tier.
+// v47 layers per-email grants on top:
+// when /token exchanges an auth code carrying a federated identity, the
+// minted bearer token snapshots the email's grant tier into
+// oauth_tokens.user_tier. Snapshot semantics mean revoking a grant takes
+// effect on the next mint, not on already-issued tokens.
+describe('migrate v46 - oauth_clients_access_tier', () => {
+  const v46 = MIGRATIONS.find(m => m.version === 46);
+
+  test('v46 is registered with the expected name', () => {
+    expect(v46).toBeDefined();
+    expect(v46!.name).toContain('oauth_clients_access_tier');
+  });
+
+  test('v46 adds access_tier with the compatibility Full default', () => {
+    expect(v46!.sql).toContain("ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS access_tier TEXT NOT NULL DEFAULT 'Full'");
+    expect(v46!.idempotent).toBe(true);
+  });
+
+  test('v46 verify hook checks access_tier in current_schema()', () => {
+    expect(typeof v46!.verify).toBe('function');
+    const verifySrc = v46!.verify!.toString();
+    expect(verifySrc).toContain('oauth_clients');
+    expect(verifySrc).toContain('access_tier');
+    expect(verifySrc).toContain('current_schema()');
+  });
+});
+
+describe('migrate v47 - oauth_user_grants', () => {
+  const v47 = MIGRATIONS.find(m => m.version === 47);
+
+  test('v47 is registered with the expected name', () => {
+    expect(v47).toBeDefined();
+    expect(v47!.name).toContain('oauth_user_grants');
+  });
+
+  test('v47 creates oauth_user_grants table with the spec columns', () => {
+    const sql = v47!.sql;
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS oauth_user_grants');
+    expect(sql).toContain('email        TEXT PRIMARY KEY');
+    // Spec requires a NAMED CHECK so it is referenceable for diagnostics.
+    expect(sql).toContain('CONSTRAINT oauth_user_grants_access_tier_check');
+    expect(sql).toContain("CHECK (access_tier IN ('None', 'Family', 'Work', 'Full'))");
+    expect(sql).toContain('granted_at   TIMESTAMPTZ NOT NULL DEFAULT now()');
+    expect(sql).toContain('granted_by   TEXT');
+    expect(sql).toContain('revoked_at   TIMESTAMPTZ');
+    expect(sql).toContain('notes        TEXT');
+    // Lowercase-email invariant enforced as a CHECK (simpler than a trigger).
+    expect(sql).toContain('CONSTRAINT oauth_user_grants_email_lowercase');
+    expect(sql).toContain('CHECK (email = lower(email))');
+  });
+
+  test('v47 extends oauth_tokens with subject_email/subject_iss/user_tier (idempotent)', () => {
+    const sql = v47!.sql;
+    expect(sql).toContain('ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_email TEXT');
+    expect(sql).toContain('ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_iss');
+    expect(sql).toContain('ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS user_tier');
+    // user_tier check tolerates NULL (column is nullable until backfilled).
+    expect(sql).toContain("user_tier IS NULL OR user_tier IN ('None','Family','Work','Full')");
+  });
+
+  test('v47 extends oauth_codes with the same three columns (idempotent)', () => {
+    const sql = v47!.sql;
+    expect(sql).toContain('ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_email TEXT');
+    expect(sql).toContain('ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_iss');
+    expect(sql).toContain('ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS user_tier');
+  });
+
+  test('v47 ALTER TABLE statements all use ADD COLUMN IF NOT EXISTS (re-run safe)', () => {
+    const sql = v47!.sql;
+    const addColumnLines = sql.match(/ADD COLUMN[^,;]+/gi) || [];
+    // 3 cols on oauth_tokens + 3 on oauth_codes = 6.
+    expect(addColumnLines.length).toBeGreaterThanOrEqual(6);
+    for (const line of addColumnLines) {
+      expect(line).toContain('IF NOT EXISTS');
+    }
+  });
+
+  test('v47 creates idx_oauth_tokens_subject_email gated on IF NOT EXISTS', () => {
+    expect(v47!.sql).toContain('CREATE INDEX IF NOT EXISTS idx_oauth_tokens_subject_email');
+    expect(v47!.sql).toContain('ON oauth_tokens(subject_email)');
+  });
+
+  test('v47 declares idempotent: true', () => {
+    expect(v47!.idempotent).toBe(true);
+  });
+
+  test('v47 verify hook checks grants, federated columns, and subject index', () => {
+    expect(typeof v47!.verify).toBe('function');
+    // Source-shape probe: the hook must reference both child tables, all
+    // federated columns, the subject index, and the grants table so a
+    // partially-applied run on a wedged pooler is caught.
+    const verifySrc = v47!.verify!.toString();
+    expect(verifySrc).toContain('oauth_user_grants');
+    expect(verifySrc).toContain('oauth_tokens');
+    expect(verifySrc).toContain('oauth_codes');
+    expect(verifySrc).toContain('subject_email');
+    expect(verifySrc).toContain('subject_iss');
+    expect(verifySrc).toContain('user_tier');
+    expect(verifySrc).toContain('idx_oauth_tokens_subject_email');
+    // Spec mandates current_schema() scoping like v46.
+    expect(verifySrc).toContain('current_schema()');
+  });
+
+  test('v47 verify returns true on a freshly-migrated PGLite engine', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const ok = await v47!.verify!(engine);
+      expect(ok).toBe(true);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('LATEST_VERSION caught up to 47', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(47);
   });
 });
 

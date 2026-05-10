@@ -108,19 +108,17 @@ describe('v0.29 E2E — dispatchToolCall for the three new ops', () => {
     }
   });
 
-  test('get_recent_transcripts rejects with permission_denied when ctx.remote === true', async () => {
-    // Defense-in-depth: even though serve-http filters localOnly: true ops
-    // out of the MCP tool list, the in-handler ctx.remote check is the
-    // last line. dispatchToolCall defaults remote=true, which is what
-    // every MCP transport sets, so the reject must fire here.
+  test('get_recent_transcripts rejects when ctx.remote === true', async () => {
+    // dispatchToolCall now enforces localOnly metadata for every remote
+    // caller before the handler runs. The handler still has its own
+    // ctx.remote guard, but remote MCP should stop at the dispatcher.
     const result = await dispatchToolCall(engine, 'get_recent_transcripts', {
       days: 7,
     }, { remote: true });
 
     expect(result.isError).toBe(true);
     const err = JSON.parse(result.content[0].text);
-    // OperationError.toJSON() serializes the code as `error:`, not `code:`.
-    expect(err.error).toBe('permission_denied');
+    expect(err.error).toBe('operation_unavailable');
     expect(err.message.toLowerCase()).toContain('local-only');
   });
 

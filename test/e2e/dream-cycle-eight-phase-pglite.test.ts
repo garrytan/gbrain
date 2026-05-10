@@ -1,13 +1,11 @@
 /**
- * E2E full 8-phase cycle on PGLite, no API key required.
+ * E2E full cycle on PGLite, no API key required.
  *
- * Verifies that the v0.23 phase order — lint → backlinks → sync →
- * synthesize → extract → patterns → embed → orphans — is honored
- * end-to-end through runCycle when no API key is present (synthesize
- * + patterns skip cleanly, the other six phases run unchanged).
+ * Verifies that the documented phase order is honored end-to-end through
+ * runCycle when no API key is present.
  *
  * Two regression-relevant invariants:
- *   1. CycleReport.phases preserves the 8-phase order — no future
+ *   1. CycleReport.phases preserves phase order — no future
  *      reorder regresses without breaking this test.
  *   2. CycleReport.totals carries the new v0.23 fields:
  *      transcripts_processed, synth_pages_written, patterns_written.

@@ -21,12 +21,15 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { checkResourceAllowed, resourceUrlFromServerUrl } from '@modelcontextprotocol/sdk/shared/auth-utils.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError } from '../core/operations.ts';
-import type { OperationContext, AuthInfo } from '../core/operations.ts';
+import { operations } from '../core/operations.ts';
+import type { AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
+import { ACCESS_TIER_DEFAULT, OP_TIER_DEFAULT_REQUIRED, parseAccessTier, tierImplies, type AccessTier } from '../core/access-tier.ts';
+import { isUndefinedColumnError } from '../core/utils.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
@@ -161,10 +164,32 @@ interface ServeHttpOptions {
    * at startup so the privacy posture change is visible.
    */
   logFullParams?: boolean;
+  /**
+   * Runtime MCP access control. When true, MCP tools/call dispatch
+   * enforces the minimum tier declared on each Operation against the
+   * caller's `oauth_clients.access_tier` and filters tier-visible
+   * response rows. Default true for HTTP OAuth; legacy rows resolve
+   * to Full for compatibility. Set false only for explicit audit-only
+   * rollout.
+   */
+  enforceAccessTiers?: boolean;
+  /**
+   * v47 OIDC end-user identity federation. When all three are set, the
+   * /authorize endpoint redirects to the OIDC issuer instead of returning
+   * the gbrain code immediately, and /oauth/oidc/callback completes the
+   * dance against `oauth_user_grants`. When unset, gbrain runs the legacy
+   * client_credentials path (the operator labels clients; no end-user
+   * verification). Operators flip on with --oidc-issuer + --oidc-client-id
+   * + --oidc-client-secret.
+   */
+  oidcIssuer?: string;
+  oidcClientId?: string;
+  oidcClientSecret?: string;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  const { port, tokenTtl, enableDcr, publicUrl, logFullParams, enforceAccessTiers = true,
+          oidcIssuer, oidcClientId, oidcClientSecret } = options;
   const config = loadConfig() || { engine: 'pglite' as const };
 
   if (logFullParams) {
@@ -176,14 +201,51 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Get raw SQL connection for OAuth provider
   const sql = db.getConnection() as SqlQuery;
 
+  // v47 OIDC federation: build the verifier once if the operator passed
+  // --oidc-issuer + --oidc-client-id + --oidc-client-secret. The provider
+  // takes the verifier in its constructor; the callback route below
+  // delegates to provider.completeOidcCallback. publicUrl is required
+  // because OIDC issuers redirect to a fixed URL (the redirect_uri sent
+  // at /authorize must match the one sent at /token).
+  let oidcConfig: { verifier: import('../core/oidc.ts').OidcVerifier; clientId: string; publicUrl: string } | undefined;
+  const oidcAnySet = Boolean(oidcIssuer || oidcClientId || oidcClientSecret);
+  if (oidcAnySet && !(oidcIssuer && oidcClientId && oidcClientSecret)) {
+    throw new Error('--oidc-issuer, --oidc-client-id, and --oidc-client-secret must be set together');
+  }
+  if (oidcIssuer && oidcClientId && oidcClientSecret) {
+    if (!publicUrl) {
+      console.error('[serve-http] WARNING: --oidc-issuer is set but --public-url is missing. The OIDC redirect_uri will use http://localhost:<port>/oauth/oidc/callback which most issuers reject. Set --public-url to a stable URL the issuer accepts.');
+    }
+    const { OidcVerifier } = await import('../core/oidc.ts');
+    oidcConfig = {
+      verifier: new OidcVerifier({ issuerUrl: oidcIssuer, clientId: oidcClientId, clientSecret: oidcClientSecret }),
+      clientId: oidcClientId,
+      publicUrl: publicUrl || `http://localhost:${port}`,
+    };
+    console.error(`[serve-http] OIDC federation enabled: issuer=${oidcIssuer}, callback=${oidcConfig.publicUrl}/oauth/oidc/callback`);
+  }
+
+  // The issuer URL goes into discovery metadata + token iss claims. It MUST
+  // match the URL clients actually hit, or strict OAuth clients reject tokens
+  // (RFC 8414 §3.3). Honor --public-url for production deployments behind
+  // reverse proxies / tunnels; default to localhost for dev.
+  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
+  const resourceServerUrl = resourceUrlFromServerUrl(new URL('/mcp', issuerUrl));
+  const resourceMetadataUrl = new URL(
+    `/.well-known/oauth-protected-resource${resourceServerUrl.pathname === '/' ? '' : resourceServerUrl.pathname}`,
+    issuerUrl,
+  ).href;
+
   // Initialize OAuth provider. F12 cleanup: DCR-disable now flips a
   // constructor option instead of monkey-patching `_clientsStore` after
   // construction. Same outcome (no /register endpoint when --enable-dcr
   // is not passed); cleaner shape for tests and future maintainers.
   const oauthProvider = new GBrainOAuthProvider({
     sql,
+    resourceServerUrl,
     tokenTtl,
     dcrDisabled: !enableDcr,
+    oidc: oidcConfig,
   });
 
   // Sweep expired tokens on startup (non-blocking)
@@ -253,35 +315,108 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     message: 'Too many magic-link attempts. Wait a minute before trying again.',
   });
 
+  function tokenParam(body: Record<string, unknown>, key: string): string | undefined {
+    const value = body[key];
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+  }
+
+  function parseTokenResource(body: Record<string, unknown>, res: Response): URL | undefined {
+    const raw = tokenParam(body, 'resource');
+    if (!raw) {
+      res.status(400).json({ error: 'invalid_target', error_description: 'resource is required' });
+      return undefined;
+    }
+    let requestedResource: URL;
+    try {
+      requestedResource = new URL(raw);
+    } catch {
+      res.status(400).json({ error: 'invalid_target', error_description: 'resource must be an absolute URL' });
+      return undefined;
+    }
+    if (!checkResourceAllowed({ requestedResource, configuredResource: resourceServerUrl })) {
+      res.status(400).json({ error: 'invalid_target', error_description: 'resource is not served by this MCP server' });
+      return undefined;
+    }
+    return requestedResource;
+  }
+
+  function pkceS256(verifier: string): string {
+    return createHash('sha256')
+      .update(verifier)
+      .digest('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+  }
+
+  function tokenError(res: Response, e: unknown): void {
+    const msg = e instanceof Error ? e.message : 'Unknown error';
+    const isTarget = /resource|target/i.test(msg);
+    res.status(400).json({
+      error: isTarget ? 'invalid_target' : 'invalid_grant',
+      error_description: msg,
+    });
+  }
+
   app.post('/token', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
-    if (req.body?.grant_type !== 'client_credentials') {
-      return next(); // Fall through to SDK's token handler
+    const grantType = tokenParam(req.body || {}, 'grant_type');
+    if (!grantType || !['client_credentials', 'authorization_code', 'refresh_token'].includes(grantType)) {
+      return next();
     }
 
     try {
-      const { client_id, client_secret, scope } = req.body;
+      const client_id = tokenParam(req.body, 'client_id');
+      const client_secret = tokenParam(req.body, 'client_secret');
+      const scope = tokenParam(req.body, 'scope');
       if (!client_id || !client_secret) {
         res.status(400).json({ error: 'invalid_request', error_description: 'client_id and client_secret required' });
         return;
       }
 
-      const tokens = await oauthProvider.exchangeClientCredentials(client_id, client_secret, scope);
+      const requestedResource = parseTokenResource(req.body, res);
+      if (!requestedResource) return;
+
+      if (grantType === 'client_credentials') {
+        const tokens = await oauthProvider.exchangeClientCredentials(client_id, client_secret, scope, requestedResource);
+        res.json(tokens);
+        return;
+      }
+
+      const client = await oauthProvider.authenticateClientSecret(client_id, client_secret, 'authorization_code');
+      if (grantType === 'authorization_code') {
+        const code = tokenParam(req.body, 'code');
+        const redirectUri = tokenParam(req.body, 'redirect_uri');
+        const codeVerifier = tokenParam(req.body, 'code_verifier');
+        if (!code || !redirectUri || !codeVerifier) {
+          res.status(400).json({ error: 'invalid_request', error_description: 'code, redirect_uri, and code_verifier required' });
+          return;
+        }
+        const challenge = await oauthProvider.challengeForAuthorizationCode(client, code);
+        if (challenge !== pkceS256(codeVerifier)) {
+          res.status(400).json({ error: 'invalid_grant', error_description: 'Invalid code verifier' });
+          return;
+        }
+        const tokens = await oauthProvider.exchangeAuthorizationCode(client, code, codeVerifier, redirectUri, requestedResource);
+        res.json(tokens);
+        return;
+      }
+
+      const refreshToken = tokenParam(req.body, 'refresh_token');
+      if (!refreshToken) {
+        res.status(400).json({ error: 'invalid_request', error_description: 'refresh_token required' });
+        return;
+      }
+      const scopes = scope ? scope.split(/\s+/).filter(Boolean) : undefined;
+      const tokens = await oauthProvider.exchangeRefreshToken(client, refreshToken, scopes, requestedResource);
       res.json(tokens);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      res.status(400).json({ error: 'invalid_grant', error_description: msg });
+      tokenError(res, e);
     }
   });
 
   // ---------------------------------------------------------------------------
   // MCP SDK Auth Router (OAuth endpoints)
   // ---------------------------------------------------------------------------
-  // The issuer URL goes into discovery metadata + token iss claims. It MUST
-  // match the URL clients actually hit, or strict OAuth clients reject tokens
-  // (RFC 8414 §3.3). Honor --public-url for production deployments behind
-  // reverse proxies / tunnels; default to localhost for dev.
-  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
-
   // F9: cookie `secure` flag honors both the request's TLS state (req.secure
   // is set when express trust-proxy lands an X-Forwarded-Proto: https) AND
   // the operator's declared issuer protocol (so a Cloudflare-tunnel deploy
@@ -305,12 +440,47 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // ['read','write','admin'] list left those new scopes invisible.
     scopesSupported: [...ALLOWED_SCOPES_LIST],
     resourceName: 'GBrain MCP Server',
+    resourceServerUrl,
   };
 
   // F12: DCR disable lives on the provider's constructor option above. The
   // SDK's mcpAuthRouter reads provider.clientsStore once and only wires up
   // /register when the store exposes registerClient — so passing dcrDisabled
   // to the constructor is sufficient. No monkey-patching here.
+
+  // v47 OIDC callback. Registered BEFORE mcpAuthRouter so the SDK's catch-all
+  // doesn't intercept /oauth/oidc/callback. Only mounted when OIDC config is
+  // present; the path 404s naturally on non-OIDC deployments.
+  if (oidcConfig) {
+    app.get('/oauth/oidc/callback', async (req: Request, res: Response) => {
+      const code = typeof req.query.code === 'string' ? req.query.code : undefined;
+      const state = typeof req.query.state === 'string' ? req.query.state : undefined;
+      const idpError = typeof req.query.error === 'string' ? req.query.error : undefined;
+
+      // The IdP-error case (user denied consent, etc.) and the success case
+      // share the same shape on the wire: we look up the gbrain code via
+      // state, fetch the original redirect_uri, then redirect back with
+      // either error= or code=. completeOidcCallback handles both branches.
+      if (!state || (!code && !idpError)) {
+        res.status(400).send('Missing code or state');
+        return;
+      }
+      try {
+        const result = await oauthProvider.completeOidcCallback(code ?? '', state, idpError);
+        const finalRedirect = new URL(result.redirectUri);
+        if (result.error) {
+          finalRedirect.searchParams.set('error', result.error.code);
+          finalRedirect.searchParams.set('error_description', result.error.description);
+        } else if (result.gbrainCode) {
+          finalRedirect.searchParams.set('code', result.gbrainCode);
+        }
+        if (result.clientState) finalRedirect.searchParams.set('state', result.clientState);
+        res.redirect(finalRedirect.toString());
+      } catch (e) {
+        res.status(400).send('OIDC callback failed: ' + (e instanceof Error ? e.message : 'unknown'));
+      }
+    });
+  }
 
   const authRouter = mcpAuthRouter(authRouterOptions);
 
@@ -519,19 +689,39 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      // Unified view: OAuth clients + legacy API keys
-      const oauthClients = await sql`
-        SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-          c.grant_types, c.scope, c.created_at, c.token_ttl,
-          CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
-        FROM oauth_clients c ORDER BY c.created_at DESC
-      `;
+      // Unified view: OAuth clients + legacy API keys. During upgrade
+      // windows, OAuth client schemas may be missing one or more of the
+      // columns added after the original table shape. The fallback avoids
+      // all optional columns so the admin Agents page stays reachable until
+      // migrations apply.
+      let oauthClients;
+      try {
+        oauthClients = await sql`
+          SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
+            c.grant_types, c.scope, c.access_tier, c.created_at, c.token_ttl,
+            CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+            (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
+          FROM oauth_clients c ORDER BY c.created_at DESC
+        `;
+      } catch (e) {
+        if (!isUndefinedColumnError(e, 'access_tier') &&
+            !isUndefinedColumnError(e, 'token_ttl') &&
+            !isUndefinedColumnError(e, 'deleted_at')) throw e;
+        oauthClients = await sql`
+          SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
+            c.grant_types, c.scope, ${ACCESS_TIER_DEFAULT} as access_tier, c.created_at, ${null} as token_ttl,
+            'active' as status,
+            (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
+          FROM oauth_clients c ORDER BY c.created_at DESC
+        `;
+      }
       const legacyKeys = await sql`
         SELECT a.id, a.name, 'api_key' as auth_type,
-          '{"bearer"}' as grant_types, 'read write admin' as scope, a.created_at, null as token_ttl,
+          '{"bearer"}' as grant_types, 'read write admin' as scope, 'Full' as access_tier, a.created_at, null as token_ttl,
           CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           a.last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
@@ -665,18 +855,47 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes, tokenTtl } = req.body;
+      const { name, scopes, tokenTtl, accessTier, grantTypes, redirectUris } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      const requestedGrantTypes = Array.isArray(grantTypes)
+        ? grantTypes.map(String).map(s => s.trim()).filter(Boolean)
+        : typeof grantTypes === 'string' && grantTypes.trim()
+          ? grantTypes.split(',').map(s => s.trim()).filter(Boolean)
+          : ['client_credentials'];
+      if (requestedGrantTypes.length === 0) {
+        res.status(400).json({ error: 'At least one grant type is required' });
+        return;
+      }
+      const requestedRedirectUris = Array.isArray(redirectUris)
+        ? redirectUris.map(String).map(s => s.trim()).filter(Boolean)
+        : typeof redirectUris === 'string' && redirectUris.trim()
+          ? redirectUris.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
+          : [];
+      if (requestedGrantTypes.includes('authorization_code') && requestedRedirectUris.length === 0) {
+        res.status(400).json({ error: 'authorization_code clients require redirectUris' });
+        return;
+      }
+      let tier = ACCESS_TIER_DEFAULT;
+      if (accessTier !== undefined) {
+        try {
+          tier = parseAccessTier(String(accessTier)) ?? ACCESS_TIER_DEFAULT;
+        } catch (e) {
+          res.status(400).json({ error: e instanceof Error ? e.message : 'Invalid access tier' });
+          return;
+        }
+      }
       const result = await oauthProvider.registerClientManual(
-        name, ['client_credentials'], scopes || 'read', [],
+        name, requestedGrantTypes, scopes || 'read', requestedRedirectUris, tier,
       );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
         await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
       }
-      res.json({ ...result, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
+      res.json({ ...result, accessTier: tier, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
     } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Registration failed' });
+      const msg = e instanceof Error ? e.message : 'Registration failed';
+      const badRequest = /unsupported grant type|grant type is required|redirect_uri|redirectUris|invalid access tier|invalid scope/i.test(msg);
+      res.status(badRequest ? 400 : 500).json({ error: msg });
     }
   });
 
@@ -700,8 +919,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
       // Soft-delete the client
       await sql`UPDATE oauth_clients SET deleted_at = now() WHERE client_id = ${clientId} AND deleted_at IS NULL`;
-      // Revoke all active tokens for this client
+      // Revoke all active tokens AND outstanding authorization codes.
+      // Without the oauth_codes purge, an attacker who captured a code
+      // (10-min TTL) just before revocation could still redeem it at
+      // /token after revocation; verifyAccessToken's c.deleted_at gate
+      // catches the minted token at use time, but we shouldn't count
+      // on that single chokepoint when explicit cleanup is one query.
       await sql`DELETE FROM oauth_tokens WHERE client_id = ${clientId}`;
+      try {
+        await sql`DELETE FROM oauth_codes WHERE client_id = ${clientId}`;
+      } catch (codesErr) {
+        // Pre-DCR schemas may not have oauth_codes; ignore the missing
+        // table and continue. Any other error still surfaces.
+        const msg = codesErr instanceof Error ? codesErr.message : '';
+        if (!/relation "oauth_codes" does not exist/i.test(msg) && !/oauth_codes/.test(msg)) throw codesErr;
+      }
       res.json({ revoked: true });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
@@ -745,9 +977,26 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const mcpOperations = operations.filter(op => !op.localOnly);
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
+  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
+    if (!authInfo.resource) {
+      res.status(401).json({
+        error: 'invalid_token',
+        error_description: 'Token is not bound to this MCP resource',
+      });
+      return;
+    }
+    if (!checkResourceAllowed({
+      requestedResource: authInfo.resource,
+      configuredResource: resourceServerUrl,
+    })) {
+      res.status(401).json({
+        error: 'invalid_token',
+        error_description: 'Token resource does not match this MCP server',
+      });
+      return;
+    }
 
     // Human-readable agent name is now threaded through AuthInfo by
     // verifyAccessToken (which JOINs oauth_clients in its existing token
@@ -779,8 +1028,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         status: 'success',
         timestamp: new Date().toISOString(),
       });
+      const visibleOps = mcpOperations.filter((op) => {
+        const requiredScope = op.scope || 'read';
+        if (!hasScope(authInfo.scopes, requiredScope)) return false;
+        if (!enforceAccessTiers) return true;
+        const callerTier: AccessTier = authInfo.tier ?? ACCESS_TIER_DEFAULT;
+        const requiredTier: AccessTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
+        return tierImplies(callerTier, requiredTier);
+      });
       return {
-        tools: mcpOperations.map(op => ({
+        tools: visibleOps.map(op => ({
           name: op.name,
           description: op.description,
           inputSchema: {
@@ -860,6 +1117,48 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         };
       }
 
+      // Runtime MCP access control. Source of truth:
+      // `oauth_clients.access_tier`, threaded into AuthInfo by the
+      // OAuth provider. Default ACCESS_TIER_DEFAULT preserves the
+      // pre-v46 grant when the column is null (legacy rows). The
+      // op.tier check below enforces the boundary unless the operator
+      // explicitly starts audit-only mode; otherwise we log the
+      // would-be decision (to mcp_request_log + SSE + stderr) so
+      // operators can audit a rollout.
+      const callerTier: AccessTier = authInfo.tier ?? ACCESS_TIER_DEFAULT;
+      const requiredTier: AccessTier = op.tier ?? OP_TIER_DEFAULT_REQUIRED;
+      const tierAllowed = tierImplies(callerTier, requiredTier);
+      if (!tierAllowed && !enforceAccessTiers) {
+        const tierMsg = `tier='${callerTier}' does not satisfy required '${requiredTier}'`;
+        // Audit-only mode. Operators flipping enforcement need a SQL
+        // surface to query and a live SSE feed; stderr alone is not
+        // discoverable in container deployments. Write a `warn` row
+        // and broadcast a non-isError event with `would_reject: true`
+        // so the dashboard can surface it without confusing it with
+        // a real failure. latency_ms is the dispatch-side overhead
+        // (auth + scope + tier check) before the handler runs; the
+        // matching success row at end-of-request carries the full
+        // wall-clock latency. Operators reading the warn row see how
+        // much pre-handler cost the gate adds.
+        const auditLatency = Date.now() - startTime;
+        try {
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${auditLatency}, ${'warn'}, ${null}, ${`would_reject_tier: ${tierMsg}`})`;
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: name,
+          scopes: authInfo.scopes.join(','),
+          latency_ms: auditLatency,
+          status: 'warn',
+          would_reject: true,
+          tier_required: requiredTier,
+          tier_caller: callerTier,
+          timestamp: new Date().toISOString(),
+        });
+        console.error(`[serve-http] WARN: ${tierMsg} for op '${name}' (audit-only; remove --audit-access-tiers to reject)`);
+      }
+
       // F8: redact request payload by default (declared keys only via the
       // op's `params` allow-list; values + attacker-controlled key names
       // never written to mcp_request_log or the SSE feed). --log-full-params
@@ -888,6 +1187,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       try {
         toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
           remote: true,
+          enforceRemoteAccess: enforceAccessTiers,
+          scopes: authInfo.scopes,
+          tier: enforceAccessTiers ? callerTier : undefined,
+          senderId: authInfo.clientId,
           takesHoldersAllowList: tokenAllowList,
           sourceId: tokenSourceId,
           metaHook: getBrainHotMemoryMeta,

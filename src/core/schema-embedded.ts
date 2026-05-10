@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS sources (
 -- or the first \`sync\`.
 INSERT INTO sources (id, name, config)
   VALUES ('default', 'default', '{"federated": true}'::jsonb)
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE
+    SET config = sources.config || '{"federated": true}'::jsonb
+    WHERE NOT (sources.config ? 'federated');
 
 -- ============================================================
 -- pages: the core content table
@@ -422,21 +424,37 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   client_secret_expires_at BIGINT,
   token_ttl               INTEGER,
   deleted_at              TIMESTAMPTZ,
+  -- v46: runtime MCP access control. See src/core/access-tier.ts.
+  access_tier             TEXT NOT NULL DEFAULT 'Full',
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
-  token_hash   TEXT PRIMARY KEY,
-  token_type   TEXT NOT NULL,
-  client_id    TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
-  scopes       TEXT[],
-  expires_at   BIGINT,
-  resource     TEXT,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+  token_hash    TEXT PRIMARY KEY,
+  token_type    TEXT NOT NULL,
+  client_id     TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  scopes        TEXT[],
+  expires_at    BIGINT,
+  resource      TEXT,
+  -- v47: end-user identity captured at mint time (federated /authorize flow).
+  subject_email TEXT,
+  subject_iss   TEXT,
+  user_tier     TEXT CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- v47 replay safety: on existing brains CREATE TABLE IF NOT EXISTS is a no-op,
+-- so add the indexed federated columns before replaying their indexes.
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_email TEXT;
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS subject_iss   TEXT;
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS user_tier     TEXT
+  CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
 
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expiry ON oauth_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_tokens(client_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_subject_email
+  ON oauth_tokens(subject_email)
+  WHERE subject_email IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS oauth_codes (
   code_hash              TEXT PRIMARY KEY,
@@ -447,8 +465,34 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
   redirect_uri           TEXT NOT NULL,
   state                  TEXT,
   resource               TEXT,
+  -- v47: end-user identity carried from /authorize to /token.
+  subject_email          TEXT,
+  subject_iss            TEXT,
+  user_tier              TEXT CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full')),
   expires_at             BIGINT NOT NULL,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_email TEXT;
+ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS subject_iss   TEXT;
+ALTER TABLE oauth_codes ADD COLUMN IF NOT EXISTS user_tier     TEXT
+  CHECK (user_tier IS NULL OR user_tier IN ('None','Family','Work','Full'));
+
+-- v47: per-email access grants. The grants CLI normalizes email lowercase
+-- before INSERT; the CHECK enforces the invariant at the storage layer.
+-- revoked_at IS NOT NULL means the grant is revoked; the application
+-- treats that as tier=None at the next /token exchange.
+CREATE TABLE IF NOT EXISTS oauth_user_grants (
+  email        TEXT PRIMARY KEY,
+  access_tier  TEXT NOT NULL DEFAULT 'None'
+    CONSTRAINT oauth_user_grants_access_tier_check
+    CHECK (access_tier IN ('None', 'Family', 'Work', 'Full')),
+  granted_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  granted_by   TEXT,
+  revoked_at   TIMESTAMPTZ,
+  notes        TEXT,
+  CONSTRAINT oauth_user_grants_email_lowercase
+    CHECK (email = lower(email))
 );
 
 -- Composite indexes for admin dashboard request log queries

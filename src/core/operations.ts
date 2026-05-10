@@ -8,6 +8,7 @@ import { resolve, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
+import type { AccessTier } from './access-tier.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
@@ -216,6 +217,38 @@ export interface AuthInfo {
   clientName?: string;
   scopes: string[];
   expiresAt?: number;
+  /**
+   * RFC 8707 resource indicator bound to this access token. HTTP MCP uses this
+   * to reject a token minted for a different protected resource.
+   */
+  resource?: URL;
+  /**
+   * Access tier resolved at token-verification time (v46 schema).
+   * For OAuth clients this is `oauth_clients.access_tier`; for
+   * legacy access_tokens this is `'Full'` (grandfathered with the
+   * legacy admin grant). Defaults to `'Full'` when the column is
+   * null on pre-v46 rows so existing deployments behave identically
+   * until the operator opts into per-client tiers.
+   *
+   * v47: when the token was minted via OIDC code-grant from an
+   * end-user identity, the resolved tier is `min(client_tier,
+   * user_tier)` so the user grant can only narrow, never widen.
+   */
+  tier?: AccessTier;
+  /**
+   * Verified end-user email (v47). Populated when the token was
+   * minted via OIDC code-grant against `oauth_user_grants`.
+   * Undefined for client_credentials tokens where the OAuth client
+   * is the entire identity. The dispatch path uses this for
+   * audit attribution; tier resolution already folded the user-tier
+   * into AuthInfo.tier.
+   */
+  subjectEmail?: string;
+  /**
+   * The OIDC issuer that asserted `subjectEmail`. Undefined when
+   * subjectEmail is undefined.
+   */
+  subjectIss?: string;
 }
 
 export interface OperationContext {
@@ -317,6 +350,28 @@ export interface OperationContext {
    */
   brainId?: string;
   /**
+   * Runtime MCP access control: the verified tier the caller is
+   * operating at. Populated by the dispatch layer from the OAuth
+   * client row's `access_tier` column (HTTP MCP) or from the fixed
+   * stdio posture (`Work`). Left undefined only for trusted local
+   * CLI/owner paths and audit-only mode.
+   *
+   * Operations enforce a minimum required tier via the
+   * `Operation.tier` field. HTTP MCP enforcement is default-on; audit-only
+   * mode logs the would-be decision (mcp_request_log + SSE) and leaves this
+   * field undefined so handler-level filtering is passive too.
+   */
+  tier?: AccessTier;
+  /**
+   * Stable identifier of the caller behind the bearer token. Sourced
+   * from `oauth_clients.client_id` at OAuth verify time; surfaced here
+   * so per-op enforcement and audit hooks can attribute decisions
+   * without reading authInfo directly. Undefined for legacy access
+   * tokens, local CLI callers, and stdio callers that have no stable
+   * OAuth client id. Threaded alongside ctx.tier by the same dispatch path.
+   */
+  senderId?: string;
+  /**
    * v0.31 (eD4 / eE2): the in-DB tenancy axis for facts hot memory.
    * `sources.id` is TEXT (not INTEGER) — keep this as a string.
    *
@@ -350,6 +405,20 @@ export interface Operation {
    * because the trust boundary there is the OS, not OAuth scopes.
    */
   scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin';
+  /**
+   * Minimum runtime access tier required to invoke this op.
+   * Orthogonal to `scope`: scope is "what kind of action"
+   * (read/write/admin); tier is "how trusted is the caller"
+   * (Full/Work/Family/None). Both are enforced when both are present.
+   *
+   * Default when omitted: `Full` (most restrictive). Asymmetric with
+   * `scope` (which defaults to `read`) on purpose — tier governs
+   * sender identity, so a new op without an explicit tier annotation
+   * fails closed for non-Full callers until reviewed. Local CLI
+   * callers (ctx.remote === false) bypass tier enforcement, same as
+   * scope.
+   */
+  tier?: AccessTier;
   localOnly?: boolean;
   cliHints?: {
     name?: string;
@@ -378,7 +447,15 @@ const get_page: Operation = {
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
-      const candidates = await ctx.engine.resolveSlugs(slug);
+      let candidates = await ctx.engine.resolveSlugs(slug);
+      // Resolve ambiguity after applying the caller's tier visibility. If we
+      // decide "ambiguous" on the whole-brain candidate set first, a Work-tier
+      // caller with exactly one visible match can infer that hidden pages also
+      // matched the probe.
+      if (ctx.tier && ctx.tier !== 'Full') {
+        const { tierAllowsSlug } = await import('./access-tier.ts');
+        candidates = candidates.filter(candidate => tierAllowsSlug(candidate, ctx.tier!));
+      }
       if (candidates.length === 1) {
         page = await ctx.engine.getPage(candidates[0], { includeDeleted });
         resolved_slug = candidates[0];
@@ -395,6 +472,7 @@ const get_page: Operation = {
     return { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) };
   },
   scope: 'read',
+  tier: 'Work',
   cliHints: { name: 'get', positional: ['slug'] },
 };
 
@@ -899,6 +977,7 @@ const list_pages: Operation = {
     }));
   },
   scope: 'read',
+  tier: 'Work',
   cliHints: { name: 'list' },
 };
 
@@ -947,6 +1026,7 @@ const search: Operation = {
     return results;
   },
   scope: 'read',
+  tier: 'Work',
   cliHints: { name: 'search', positional: ['query'] },
 };
 
@@ -1087,6 +1167,7 @@ const query: Operation = {
     return results;
   },
   scope: 'read',
+  tier: 'Work',
   cliHints: { name: 'query', positional: ['query'] },
 };
 
@@ -1454,9 +1535,21 @@ const get_timeline: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getTimeline(p.slug as string);
+    const slug = p.slug as string;
+    // Input-side tier gate. TimelineEntry rows have no slug field, so
+    // response-side filtering cannot distinguish a personal page's
+    // timeline from a public page's. Hidden and absent slugs both return
+    // [] on this op, avoiding a slug-existence oracle.
+    if (ctx.tier && ctx.tier !== 'Full') {
+      const { tierAllowsSlug } = await import('./access-tier.ts');
+      if (!tierAllowsSlug(slug, ctx.tier)) {
+        return [];
+      }
+    }
+    return ctx.engine.getTimeline(slug);
   },
   scope: 'read',
+  tier: 'Family',
   cliHints: { name: 'timeline', positional: ['slug'] },
 };
 
@@ -1470,6 +1563,7 @@ const get_stats: Operation = {
     return ctx.engine.getStats();
   },
   scope: 'admin',
+  tier: 'Family',
   cliHints: { name: 'stats' },
 };
 
@@ -1481,6 +1575,7 @@ const get_health: Operation = {
     return ctx.engine.getHealth();
   },
   scope: 'admin',
+  tier: 'Family',
   cliHints: { name: 'health' },
 };
 
@@ -1616,6 +1711,7 @@ const resolve_slugs: Operation = {
     return ctx.engine.resolveSlugs(p.partial as string);
   },
   scope: 'read',
+  tier: 'Work',
 };
 
 const get_chunks: Operation = {
@@ -1625,9 +1721,21 @@ const get_chunks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getChunks(p.slug as string);
+    const slug = p.slug as string;
+    // Input-side tier gate. Chunks rows have no slug field, so the
+    // response-side filterResponseByTier cannot distinguish a personal
+    // page's chunks from a public page's chunks. Hidden and absent slugs
+    // both return [] on this op, avoiding a slug-existence oracle.
+    if (ctx.tier && ctx.tier !== 'Full') {
+      const { tierAllowsSlug } = await import('./access-tier.ts');
+      if (!tierAllowsSlug(slug, ctx.tier)) {
+        return [];
+      }
+    }
+    return ctx.engine.getChunks(slug);
   },
   scope: 'read',
+  tier: 'Work',
 };
 
 // --- Ingest Log ---
@@ -2019,6 +2127,7 @@ const find_orphans: Operation = {
     const { findOrphans } = await import('../commands/orphans.ts');
     return findOrphans(ctx.engine, { includePseudo: (p.include_pseudo as boolean) || false });
   },
+  tier: 'Work',
   cliHints: { name: 'orphans', hidden: true },
 };
 
@@ -2059,6 +2168,7 @@ const get_recent_salience: Operation = {
       recency_bias: recencyBias,
     });
   },
+  tier: 'Work',
   cliHints: { name: 'salience' },
 };
 
@@ -2134,7 +2244,7 @@ const whoami: Operation = {
   name: 'whoami',
   description:
     'Introspect the calling identity. Returns one of three transport shapes: ' +
-    '{transport: "oauth", client_id, client_name, scopes, expires_at}, ' +
+    '{transport: "oauth", client_id, client_name, scopes, expires_at, tier, subject_email?}, ' +
     '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
     '{transport: "local", scopes: []}. Throws unknown_transport when the ' +
     'context is ambiguous (remote=true without auth) — fail-closed posture ' +
@@ -2169,6 +2279,9 @@ const whoami: Operation = {
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
         scopes: ctx.auth.scopes,
         expires_at: ctx.auth.expiresAt ?? null,
+        tier: ctx.auth.tier ?? null,
+        ...(ctx.auth.subjectEmail ? { subject_email: ctx.auth.subjectEmail } : {}),
+        ...(ctx.auth.subjectIss ? { subject_iss: ctx.auth.subjectIss } : {}),
       };
     }
     return {
@@ -2178,6 +2291,7 @@ const whoami: Operation = {
       expires_at: null,
     };
   },
+  tier: 'Family',
   cliHints: { name: 'whoami' },
 };
 

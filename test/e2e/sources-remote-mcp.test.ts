@@ -195,6 +195,7 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
         client_id: cid,
         client_secret: secret,
         scope,
+        resource: `${BASE}/mcp`,
       });
       const r = await fetch(`${BASE}/token`, {
         method: 'POST',
