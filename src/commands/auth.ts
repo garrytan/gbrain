@@ -47,7 +47,17 @@ async function withConfiguredSql<T>(
     console.error('No GBrain config found. Run `gbrain init` first, or set DATABASE_URL / GBRAIN_DATABASE_URL.');
     process.exit(1);
   }
-  const engine = await createEngine(toEngineConfig(config));
+  const engineConfig = toEngineConfig(config);
+  const engine = await createEngine(engineConfig);
+  // v0.32: createEngine returns a disconnected instance. PostgresEngine's `sql`
+  // getter falls back to `db.getConnection()` (the module-level singleton)
+  // when `_sql` is unset, which throws "connect() has not been called" when
+  // db.connect() was never invoked either. Auth commands never go through
+  // cli.ts's connectEngine() path (early-routed at cli.ts:685), so we must
+  // connect the engine here. Without this call, every auth subcommand
+  // (create/list/revoke/register-client/revoke-client) crashes with the
+  // misleading "No database connection" error.
+  await engine.connect(engineConfig);
   const sql = sqlQueryForEngine(engine);
   try {
     return await fn(sql, engine);
