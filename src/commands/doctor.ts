@@ -3,7 +3,7 @@ import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
-import { autoDetectSkillsDir } from '../core/repo-root.ts';
+import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
@@ -295,16 +295,35 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // Use the same auto-detect as `check-resolvable` so doctor sees a
   // workspace/skills dir reachable via $OPENCLAW_WORKSPACE or
   // ~/.openclaw/workspace, not just a `skills/` walked up from cwd.
-  const detected = autoDetectSkillsDir();
+  // Read-only variant adds the install-path fallback so a hosted-CLI install
+  // run from `~` (e.g., `bun install -g github:garrytan/gbrain && cd ~ &&
+  // gbrain doctor`) can still find the bundled skills/ dir without warning.
+  const detected = autoDetectSkillsDirReadOnly();
   const skillsDir = detected.dir;
   if (skillsDir) {
 
     // --fix: run auto-repair BEFORE checkResolvable so the post-fix scan
     // reflects the new state. Auto-fix only targets DRY violations today;
     // other resolver issues are left to human repair.
+    //
+    // SAFETY GATE (v0.31.7 follow-up to D5): refuse --fix when the skills
+    // dir came from the install-path fallback. autoFixDryViolations writes
+    // to SKILL.md files; a user running `cd ~ && gbrain doctor --fix`
+    // without an explicit signal would have install_path resolve to the
+    // bundled gbrain repo and silently rewrite the install-tree skills.
+    // Codex caught this leak in the v0.31.7 ship review (D6 lock).
     if (doFix) {
-      autoFixReport = autoFixDryViolations(skillsDir, { dryRun });
-      printAutoFixReport(autoFixReport, dryRun, jsonOutput);
+      if (detected.source === 'install_path') {
+        process.stderr.write(
+          'gbrain doctor --fix refused: skills dir resolved via install-path fallback (read-only).\n' +
+          'The --fix flag writes to SKILL.md files; running it against the bundled install\n' +
+          'tree would silently mutate gbrain itself. Set $GBRAIN_SKILLS_DIR, $OPENCLAW_WORKSPACE,\n' +
+          'or pass --skills-dir <path> to point at the workspace you actually want to fix.\n',
+        );
+      } else {
+        autoFixReport = autoFixDryViolations(skillsDir, { dryRun });
+        printAutoFixReport(autoFixReport, dryRun, jsonOutput);
+      }
     }
 
     const report = checkResolvable(skillsDir);
@@ -963,18 +982,35 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
 
   // 9. Graph health (link + timeline coverage on entity pages).
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
+  //
+  // Skip when the brain has 0 entity pages (markdown-only wikis, journals,
+  // notes brains). The coverage formula divides by entity-page count, so it's
+  // structurally undefined when no entities exist — emitting WARN under that
+  // condition is a false positive. Closes #530.
   progress.heartbeat('graph_coverage');
   try {
     const health = await engine.getHealth();
+    const entityCount = (await engine.executeRaw<{ count: number }>(
+      "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')",
+    ))[0]?.count ?? 0;
+
     const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
     const timelinePct = ((health.timeline_coverage ?? 0) * 100).toFixed(0);
-    if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
+    if (entityCount === 0) {
+      // Markdown-only / journal / wiki brain — no entity pages to compute
+      // coverage against. Coverage formula is structurally inapplicable.
+      checks.push({
+        name: 'graph_coverage',
+        status: 'ok',
+        message: 'No entity pages — graph_coverage not applicable (markdown-only brain)',
+      });
+    } else if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
       checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%` });
     } else {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain extract links && gbrain extract timeline`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${entityCount} entity pages). Run: gbrain extract all`,
       });
     }
 
@@ -1227,6 +1263,99 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         name: 'eval_capture',
         status: 'warn',
         message: `Could not read eval_capture_failures: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
+  // 11a-bis-2. facts_extraction_health (v0.31.2 — codex P1 #3).
+  //
+  // Mirrors the eval_capture check shape but reads facts:absorb rows
+  // (written by writeFactsAbsorbLog from src/core/facts/absorb-log.ts).
+  // Iterates over EVERY source so multi-source brains see per-source
+  // failure rates instead of only 'default'. Threshold configurable via
+  // `facts.absorb_warn_threshold` (default 10 over the last 24h, per
+  // source, per reason). When the threshold is exceeded for any
+  // (source, reason) pair, status flips to warn and the message names
+  // the breakdown.
+  progress.heartbeat('facts_extraction_health');
+  try {
+    const thresholdRaw = await engine.getConfig('facts.absorb_warn_threshold');
+    const parsed = parseInt(thresholdRaw ?? '', 10);
+    const threshold = Number.isFinite(parsed) && parsed > 0 ? parsed : 10;
+
+    // Single SQL grouping by (source_id, reason) over the last 24h. The
+    // composite index v50 added (idx_ingest_log_source_type_created on
+    // source_id, source_type, created_at DESC) covers this query's
+    // filter + sort path.
+    const rows = await engine.executeRaw<{
+      source_id: string;
+      reason: string;
+      n: string | number;
+    }>(
+      `SELECT
+         source_id,
+         split_part(summary, ':', 1) AS reason,
+         COUNT(*)::text AS n
+       FROM ingest_log
+       WHERE source_type = 'facts:absorb'
+         AND created_at >= now() - INTERVAL '24 hours'
+       GROUP BY source_id, split_part(summary, ':', 1)
+       ORDER BY source_id, COUNT(*) DESC`,
+    );
+
+    if (rows.length === 0) {
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'ok',
+        message: 'No facts:absorb failures in the last 24h.',
+      });
+    } else {
+      // Group per source so the breakdown is operator-friendly.
+      const bySource = new Map<string, Array<{ reason: string; n: number }>>();
+      let anyOverThreshold = false;
+      for (const r of rows) {
+        const n = typeof r.n === 'number' ? r.n : parseInt(r.n, 10);
+        if (!Number.isFinite(n)) continue;
+        if (n >= threshold) anyOverThreshold = true;
+        if (!bySource.has(r.source_id)) bySource.set(r.source_id, []);
+        bySource.get(r.source_id)!.push({ reason: r.reason, n });
+      }
+      const summary = [...bySource.entries()]
+        .map(([sid, reasons]) =>
+          `${sid}: ${reasons.map(x => `${x.n} ${x.reason}`).join(', ')}`,
+        )
+        .join(' | ');
+      checks.push({
+        name: 'facts_extraction_health',
+        status: anyOverThreshold ? 'warn' : 'ok',
+        message: anyOverThreshold
+          ? `Facts:absorb failures over the threshold (${threshold}) in the last 24h: ${summary}. ` +
+            `Run \`gbrain recall --since 24h --json\` to inspect what landed; ` +
+            `tune the gate via \`gbrain config set facts.absorb_warn_threshold N\`.`
+          : `Facts:absorb activity in last 24h (under threshold ${threshold}): ${summary}.`,
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01' || code === '42703') {
+      // ingest_log missing entirely (extreme legacy) or source_id column
+      // missing (pre-v50 brain that hasn't run apply-migrations yet).
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'ok',
+        message: 'Skipped (ingest_log.source_id unavailable — run `gbrain apply-migrations --yes`).',
+      });
+    } else if (code === '42501') {
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'warn',
+        message: 'RLS denies SELECT on ingest_log. The check can\'t see facts:absorb rows. Run as a BYPASSRLS role or grant SELECT on this table.',
+      });
+    } else {
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'warn',
+        message: `Could not read ingest_log for facts:absorb: ${(err as Error)?.message ?? String(err)}`,
       });
     }
   }

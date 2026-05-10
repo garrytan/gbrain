@@ -95,6 +95,9 @@ export async function getBrainHotMemoryMeta(
         id: r.id,
         fact: r.fact,
         kind: r.kind,
+        // v0.31.2: surface notability so connected agents can filter or
+        // weight HIGH-tier facts in their context budget.
+        notability: r.notability,
         entity_slug: r.entity_slug,
         valid_from: r.valid_from.toISOString(),
         confidence: Number(effectiveConfidence(r, now).toFixed(3)),

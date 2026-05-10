@@ -56,6 +56,9 @@ const _modelCache = new Map<string, any>();
  */
 type EmbedManyFn = typeof embedMany;
 let _embedTransport: EmbedManyFn = embedMany;
+// Test-only seam for chat(). When set, chat() skips provider resolution and
+// returns this function's result directly. See __setChatTransportForTests.
+let _chatTransport: ((opts: ChatOpts) => Promise<ChatResult>) | null = null;
 
 /**
  * Per-recipe shrink-on-miss state. When a recipe's pre-split misses the
@@ -254,6 +257,7 @@ export function resetGateway(): void {
   _modelCache.clear();
   _shrinkState.clear();
   _embedTransport = embedMany;
+  _chatTransport = null;
   _warnedRecipes.clear();
 }
 
@@ -268,6 +272,23 @@ export function resetGateway(): void {
  */
 export function __setEmbedTransportForTests(fn: EmbedManyFn | null): void {
   _embedTransport = fn ?? embedMany;
+}
+
+/**
+ * Test-only seam mirroring `__setEmbedTransportForTests`. When set,
+ * `chat()` skips provider resolution and SDK invocation and calls the
+ * transport directly. Pass `null` to restore real provider routing.
+ *
+ * Used by smoke + parser-pin tests in `test/facts-extract*.test.ts` to
+ * drive prompt-drift fixtures without spending real API tokens. The
+ * transport receives the resolved `ChatOpts` and returns a `ChatResult`.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function __setChatTransportForTests(
+  fn: ((opts: ChatOpts) => Promise<ChatResult>) | null,
+): void {
+  _chatTransport = fn;
 }
 
 function requireConfig(): AIGatewayConfig {
@@ -316,6 +337,12 @@ export function getChatFallbackChain(): string[] {
  * Replaces scattered `!process.env.OPENAI_API_KEY` checks (Codex C3).
  */
 export function isAvailable(touchpoint: TouchpointKind): boolean {
+  // Test seam: when a transport stub is installed for this touchpoint, the
+  // gateway is "available" for tests that exercise the whole pipeline without
+  // configuring real providers. See __setChatTransportForTests /
+  // __setEmbedTransportForTests.
+  if (touchpoint === 'chat' && _chatTransport) return true;
+
   if (!_config) return false;
   try {
     const modelStr =
@@ -1191,6 +1218,13 @@ function mapStopReason(
  * blocks via the provider-neutral schema landing in commit 2a).
  */
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
+  // Test seam: when a test transport is installed, route through it without
+  // touching provider resolution, AI SDK, or any network. See
+  // __setChatTransportForTests. Production paths see _chatTransport === null.
+  if (_chatTransport) {
+    return _chatTransport(opts);
+  }
+
   const modelStr = opts.model ?? getChatModel();
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
 

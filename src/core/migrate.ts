@@ -2294,6 +2294,8 @@ export const MIGRATIONS: Migration[] = [
                             CHECK (kind IN ('event','preference','commitment','belief','fact')),
           visibility        TEXT        NOT NULL DEFAULT 'private'
                             CHECK (visibility IN ('private','world')),
+          notability        TEXT        NOT NULL DEFAULT 'medium'
+                            CHECK (notability IN ('high','medium','low')),
           context           TEXT,
           valid_from        TIMESTAMPTZ NOT NULL DEFAULT now(),
           valid_until       TIMESTAMPTZ,
@@ -2393,6 +2395,49 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 47,
+    name: 'facts_notability_alter',
+    // v0.31.2 (B2 ship-blocker fix). Renumbered from v46 → v47 after the
+    // merge from master picked up v0.31.3's mcp_request_log_params_jsonb_normalize
+    // at v46. facts.notability column shipped via v45's inline CREATE TABLE
+    // on fresh installs, but every brain that ran v45 BEFORE notability
+    // landed in v45's blob is now missing the column. INSERT crashes with
+    // "column does not exist" on first sync after upgrade.
+    //
+    // This migration is the ALTER counterpart for those existing brains.
+    // Idempotent under all states:
+    //   - Fresh install (v45 already added column): ADD COLUMN IF NOT EXISTS
+    //     no-ops; named CHECK probe finds existing constraint → skip.
+    //   - Old brain (no column): ADD COLUMN adds it with NOT NULL DEFAULT;
+    //     named CHECK probe finds nothing → adds CHECK.
+    //   - Partial state (column exists, no CHECK): ADD COLUMN no-ops;
+    //     CHECK probe adds the named constraint.
+    //
+    // CHECK constraint is named `facts_notability_check` (named, not autogen)
+    // so the idempotency probe can find it deterministically. If v45 inline
+    // already created an autogen CHECK with identical semantics, the named
+    // one is additive and non-conflicting (Postgres allows multiple CHECKs
+    // covering the same predicate).
+    //
+    // Both engines run the same SQL — PGLite is real Postgres in WASM and
+    // supports DO $$ blocks. PGLite users with older persistent brains hit
+    // the same bug.
+    sql: `
+      ALTER TABLE facts ADD COLUMN IF NOT EXISTS notability TEXT NOT NULL DEFAULT 'medium';
+
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'facts_notability_check'
+            AND conrelid = 'facts'::regclass
+        ) THEN
+          ALTER TABLE facts ADD CONSTRAINT facts_notability_check
+            CHECK (notability IN ('high','medium','low'));
+        END IF;
+      END $$;
+    `,
+  },
+  {
     version: 48,
     name: 'takes_weight_round_to_grid',
     // v0.32.0 — Takes v2 wave (renumbered from v46 → v48 after merging master's
@@ -2472,6 +2517,35 @@ export const MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS eval_takes_quality_runs_trend_idx
         ON eval_takes_quality_runs (rubric_version, created_at DESC);
+    `,
+  },
+  {
+    version: 50,
+    name: 'ingest_log_source_id',
+    // v0.31.2 (codex P1 #3). Renumbered from v47 → v50 after the merge from
+    // master picked up v0.31.3's v46 + the takes v2 wave's v48 + v49.
+    //
+    // facts:absorb logging (commit 13 + doctor's facts_extraction_health
+    // check in commit 12) needs source_id on ingest_log so multi-source
+    // brains can scope failure counts per source. Pre-fix the column doesn't
+    // exist; the schema.sql header even calls it out: "NOTE (v0.18.0 Step 1):
+    // ingest_log.source_id is NOT added yet — lands in v17 alongside the
+    // sync rewrite." Three years on, sync.ts writes ingest_log without
+    // source_id and doctor only checks 'default'. This migration adds the
+    // column + backfills existing rows to 'default' via NOT NULL DEFAULT.
+    //
+    // Idempotent under all states (matches v47's shape):
+    //   - Fresh install: ALTER no-ops on IF NOT EXISTS.
+    //   - Old brain (no column): ALTER adds it with NOT NULL DEFAULT 'default';
+    //     existing rows inherit the default.
+    //   - Re-run after success: IF NOT EXISTS short-circuits.
+    //
+    // Both engines run the same SQL; ingest_log is engine-agnostic.
+    sql: `
+      ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT 'default';
+
+      CREATE INDEX IF NOT EXISTS idx_ingest_log_source_type_created
+        ON ingest_log (source_id, source_type, created_at DESC);
     `,
   },
 ];

@@ -860,6 +860,41 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     } catch { /* extraction is best-effort */ }
   }
 
+  // v0.31.2: facts extraction now routes through the shared
+  // src/core/facts/backstop.ts helper (PR1 commit 6). Sync uses
+  // queue mode (fire-and-forget) + 'high-only' filter so a 50-page
+  // sync doesn't block on N sequential Sonnet calls. The pre-fix
+  // inline loop is gone — it carried (a) a dead-code type filter
+  // ('conversation'/'transcript'/'therapy'/'call' aren't real
+  // PageTypes), (b) a divergent eligibility shape from put_page,
+  // and (c) raw extract→insert without dedup/supersede.
+  if (!opts.noExtract && pagesAffected.length > 0 && pagesAffected.length <= 50) {
+    const { runFactsBackstop } = await import('../core/facts/backstop.ts');
+    const factsSourceId = opts.sourceId ?? 'default';
+    for (const slug of pagesAffected) {
+      try {
+        const page = await engine.getPage(slug);
+        if (!page) continue;
+        await runFactsBackstop(
+          {
+            slug,
+            type: page.type,
+            compiled_truth: page.compiled_truth ?? '',
+            frontmatter: page.frontmatter ?? {},
+          },
+          {
+            engine,
+            sourceId: factsSourceId,
+            sessionId: `sync:${slug}`,
+            source: 'sync:import',
+            mode: 'queue',
+            notabilityFilter: 'high-only',
+          },
+        );
+      } catch { /* per-page enqueue is best-effort */ }
+    }
+  }
+
   // Auto-embed (skip for large syncs — embedding calls OpenAI).
   // TODO(multi-source): runEmbed → src/commands/embed.ts:175 + :418 call
   // upsertChunks defaulting to source='default'. For non-default-source syncs

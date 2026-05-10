@@ -13,8 +13,14 @@
 # exist, so retries are reproducible. Hash is FNV-1a — pure shell, no jq.
 set -euo pipefail
 
+DRY_RUN_LIST=0
+if [ "${1:-}" = "--dry-run-list" ]; then
+  DRY_RUN_LIST=1
+  shift
+fi
+
 if [ "$#" -ne 2 ]; then
-  echo "usage: scripts/test-shard.sh <shard-index> <total-shards>" >&2
+  echo "usage: scripts/test-shard.sh [--dry-run-list] <shard-index> <total-shards>" >&2
   exit 1
 fi
 
@@ -33,16 +39,18 @@ fi
 cd "$(dirname "$0")/.."
 
 # Find all unit test files, deterministic order. Excludes test/e2e/ and
-# *.serial.test.ts (the concurrency-unsafe quarantine — those run via
-# scripts/run-serial-tests.sh after the parallel pass). Mirrors
-# scripts/run-unit-shard.sh's exclusion set; without this, serial files
-# leak module-level state across parallel shards in CI and racy
-# console.warn / fetch / mock interactions surface as flaky failures.
-# Portable: avoid `mapfile` (bash 4+) so this runs on macOS bash 3.2 too.
+# *.serial.test.ts. Serial files share file-wide state (top-level
+# mock.module, module singletons) that leaks across files in the same
+# `bun test` shard process — see scripts/check-test-isolation.sh R2.
+# CI runs them via `bun run test:serial` (scripts/run-serial-tests.sh) at
+# --max-concurrency=1 in a separate step on shard 1. Local `bun run test`
+# already excludes them from the parallel pass and runs them after the
+# same way. Portable: avoid `mapfile` (bash 4+) so this runs on macOS
+# bash 3.2 too.
 FILES=()
 while IFS= read -r line; do
   FILES+=("$line")
-done < <(find test -name '*.test.ts' -not -path 'test/e2e/*' -not -name '*.serial.test.ts' | sort)
+done < <(find test -name '*.test.ts' -not -name '*.serial.test.ts' -not -path 'test/e2e/*' | sort)
 
 if [ "${#FILES[@]}" -eq 0 ]; then
   echo "no test files found under test/" >&2
@@ -71,6 +79,14 @@ for f in "${FILES[@]}"; do
     SHARD_FILES+=("$f")
   fi
 done
+
+if [ "$DRY_RUN_LIST" = "1" ]; then
+  if [ "${#SHARD_FILES[@]}" -eq 0 ]; then
+    exit 0
+  fi
+  printf '%s\n' "${SHARD_FILES[@]}"
+  exit 0
+fi
 
 echo "shard $SHARD_INDEX/$TOTAL_SHARDS: ${#SHARD_FILES[@]}/${#FILES[@]} files"
 if [ "${#SHARD_FILES[@]}" -eq 0 ]; then
