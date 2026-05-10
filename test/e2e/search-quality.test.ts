@@ -10,12 +10,13 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { EMBEDDING_DIMENSIONS } from '../../src/core/embedding.ts';
 import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
 
 let engine: PGLiteEngine;
 
 // Create a basis vector embedding: dimension `idx` is 1.0, rest are 0.0
-function basisEmbedding(idx: number, dim = 1536): Float32Array {
+function basisEmbedding(idx: number, dim = EMBEDDING_DIMENSIONS()): Float32Array {
   const emb = new Float32Array(dim);
   emb[idx % dim] = 1.0;
   return emb;
@@ -171,7 +172,7 @@ describe('getEmbeddingsByChunkIds', () => {
     expect(embMap.size).toBeGreaterThan(0);
     for (const [id, emb] of embMap) {
       expect(emb).toBeInstanceOf(Float32Array);
-      expect(emb.length).toBe(1536);
+      expect(emb.length).toBe(EMBEDDING_DIMENSIONS());
     }
   });
 
