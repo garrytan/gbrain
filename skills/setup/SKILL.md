@@ -492,6 +492,7 @@ Health check: all OK / [specific failures]
 Verification: [GBRAIN_VERIFY.md results]
 
 Next steps:
+- Run `skills/cold-start/SKILL.md` to bootstrap your brain with data (contacts, calendar, email, conversations, social)
 - Read docs/GBRAIN_SKILLPACK.md for production agent patterns
 - [any pending items]
 ```

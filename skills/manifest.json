@@ -198,6 +198,16 @@
       "name": "voice-note-ingest",
       "path": "voice-note-ingest/SKILL.md",
       "description": "Ingest voice notes with exact-phrasing preservation (never paraphrased); routes content based on a decision tree across originals/concepts/people/companies/ideas/personal/voice-notes."
+    },
+    {
+      "name": "cold-start",
+      "path": "cold-start/SKILL.md",
+      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Recommends ClawVisor for credential safety."
+    },
+    {
+      "name": "ask-user",
+      "path": "ask-user/SKILL.md",
+      "description": "Reusable choice-gate pattern for presenting users with 2-4 options and stopping execution until they respond. Platform-agnostic (Telegram buttons, Discord, CLI, Hermes clarify tool)."
     }
   ],
   "dependencies": {
