@@ -348,6 +348,103 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     expect(staleChunkInUpsert.embedding).toBeInstanceOf(Float32Array);
   });
 
+  test('--stale embeds duplicate slugs by page id instead of ambiguous slug', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const stale = [
+      {
+        page_id: 202,
+        source_id: 'source-b',
+        slug: 'shared-slug',
+        chunk_index: 0,
+        chunk_text: 'stale in second source',
+        chunk_source: 'compiled_truth' as const,
+        model: null,
+        token_count: null,
+      },
+    ];
+    const chunksByPageId: Record<number, any[]> = {
+      202: [
+        { chunk_index: 0, chunk_text: 'stale in second source', chunk_source: 'compiled_truth', embedded_at: null, token_count: 6 },
+      ],
+    };
+    const upsertByPageCalls: Array<{ pageId: number; chunks: any[] }> = [];
+    let ambiguousSlugRead = false;
+    let ambiguousSlugWrite = false;
+    const engine = mockEngine({
+      countStaleChunks: async () => 1,
+      listStaleChunks: async () => stale,
+      getChunks: async () => {
+        ambiguousSlugRead = true;
+        return [
+          { chunk_index: 0, chunk_text: 'fresh first source', chunk_source: 'compiled_truth', embedded_at: '2026-01-01', token_count: 5 },
+          { chunk_index: 0, chunk_text: 'stale in second source', chunk_source: 'compiled_truth', embedded_at: null, token_count: 6 },
+        ];
+      },
+      upsertChunks: async () => {
+        ambiguousSlugWrite = true;
+        throw new Error('ambiguous slug upsert should not be used');
+      },
+      getChunksByPageId: async (pageId: number) => chunksByPageId[pageId] || [],
+      upsertChunksByPageId: async (pageId: number, chunks: any[]) => {
+        upsertByPageCalls.push({ pageId, chunks });
+      },
+    });
+
+    const result = await runEmbedCore(engine, { stale: true });
+
+    expect(result.embedded).toBe(1);
+    expect(result.pages_processed).toBe(1);
+    expect(ambiguousSlugRead).toBe(false);
+    expect(ambiguousSlugWrite).toBe(false);
+    expect(upsertByPageCalls).toHaveLength(1);
+    expect(upsertByPageCalls[0].pageId).toBe(202);
+    expect(upsertByPageCalls[0].chunks[0].embedding).toBeInstanceOf(Float32Array);
+  });
+
+  test('--stale groups fallback rows by source id and slug when page id is unavailable', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const stale = [
+      {
+        source_id: 'source-a',
+        slug: 'shared-slug',
+        chunk_index: 0,
+        chunk_text: 'stale in first source',
+        chunk_source: 'compiled_truth' as const,
+        model: null,
+        token_count: null,
+      },
+      {
+        source_id: 'source-b',
+        slug: 'shared-slug',
+        chunk_index: 0,
+        chunk_text: 'stale in second source',
+        chunk_source: 'compiled_truth' as const,
+        model: null,
+        token_count: null,
+      },
+    ];
+    const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
+    const engine = mockEngine({
+      countStaleChunks: async () => 2,
+      listStaleChunks: async () => stale,
+      getChunks: async () => [
+        { chunk_index: 0, chunk_text: 'stale fallback row', chunk_source: 'compiled_truth', embedded_at: null, token_count: 5 },
+      ],
+      upsertChunks: async (slug: string, chunks: any[]) => {
+        upsertCalls.push({ slug, chunks });
+      },
+    });
+
+    const result = await runEmbedCore(engine, { stale: true });
+
+    expect(result.embedded).toBe(2);
+    expect(result.pages_processed).toBe(2);
+    expect(totalEmbedCalls).toBe(2);
+    expect(upsertCalls).toHaveLength(2);
+    expect(upsertCalls.every(call => call.slug === 'shared-slug')).toBe(true);
+    expect(upsertCalls.every(call => call.chunks[0].embedding instanceof Float32Array)).toBe(true);
+  });
+
   test('--stale dry-run: counts stale via countStaleChunks, reports via listStaleChunks, no embedBatch or upsertChunks', async () => {
     const { runEmbedCore } = await import('../src/commands/embed.ts');
     const stale = [
