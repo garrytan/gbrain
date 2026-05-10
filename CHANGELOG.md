@@ -2,6 +2,72 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.30.3] - 2026-05-10
+
+**Multi-source sync stops misfiling pages into `source_id='default'`. Per-source brains now actually file pages in the source they came from. Mid-transaction duplicate-slug states stop exploding.**
+
+A user with five configured sources (`brain`, `goodoff`, `treply`, `career`, plus the federated `gstack-brain-...`) ran `gbrain sync --all` and watched 7 files fail on every single sync with `"more than one row returned by a subquery used as an expression"`. The error pointed at the `update_page_search_vector()` trigger, but the trigger was innocent — Postgres NOTICEs about `to_tsvector` skipping >2047-char tokens were drowning out the real failure.
+
+The real bug: `importFromContent` never passed a sourceId to `tx.putPage`. The schema DEFAULT `'default'` kicked in. Every page sync'd through the incremental path landed at `(default, slug)` — even when `(brain, slug)` already existed. Mid-transaction, two rows now matched `slug='design'`. The next call in the same transaction (`addLink`'s `(SELECT id FROM pages WHERE slug=$1)` scalar subquery) saw 2 rows and aborted the whole import. On the user's prod brain this hit 41 silently-misfiled pages in `source_id='default'` plus 7 hard-fail files per cycle since 2026-05-05.
+
+### What you can now do
+
+**Sync into the right source.** `gbrain sync --source goodoff` now writes pages at `(goodoff, slug)`, not `(default, slug)`. `--all` does the same for each registered source. The full-sync path (`--full`, first-sync, force-full) is fixed too — previously it went through a separate code path that silently leaked just like the incremental one.
+
+**Clean up the leak from prior versions.** `gbrain repair-default-source` walks every row in `source_id='default'`, finds its rightful source by checking which configured source's `local_path` holds the file, and either MOVES the row (if the target source has no existing `(source, slug)` row) or DELETES it as a duplicate (if a subsequent sync already wrote the rightful row). Run with `--dry-run` first to see the plan. Ambiguous rows (file present in multiple sources) and orphans (file no longer exists in any source) stay in `default` untouched — manual cleanup if you want.
+
+**Multi-source brains stop silently corrupting downstream operations.** `addLink`, `removeLink`, `getTags`, `addTag`, `removeTag`, `upsertChunks`, `getChunks`, `deleteChunks`, `getLinks`, `getBacklinks`, `createVersion`, `getVersions`, `revertToVersion`, `addTimelineEntry` all gained an optional `opts.sourceId` parameter. When the import path passes it (sync does now), these methods scope by `(source_id, slug)` end-to-end. When omitted (MCP `put_page`, direct CLI `gbrain import`), behavior is unchanged for single-source brains.
+
+```bash
+gbrain repair-default-source --dry-run        # preview what would change
+gbrain repair-default-source                  # apply the migration
+gbrain sync --all                             # now files into the right source
+```
+
+### How it works under the hood
+
+**Per-call source scoping via `SourceOpts`/`LinkSourceOpts`.** New shared types in `src/core/engine.ts`. Every method that takes a `slug` now accepts an optional `opts: SourceOpts` (or `LinkSourceOpts` for `addLink`/`removeLink`, which carry up to three slug args). Defaults preserve back-compat — writes target `source_id='default'` (the schema DEFAULT), reads scan all sources and take the first row by `source_id` ordering. With the import path now passing sourceId, sync's mid-transaction duplicate-slug states can't form in the first place.
+
+**Scalar-subquery patterns replaced with USING-joins.** The legacy `WHERE page_id = (SELECT id FROM pages WHERE slug=$1)` pattern was the actual explosion site. Six methods (addLink, removeLink, getTags, removeTag, deleteChunks, addTimelineEntry) ported to `USING pages p WHERE ... p.slug=$1 AND p.source_id=$N`. JOINs return 0..N rows and never error on "more than one row" — even if a future code path leaks a row.
+
+**Both engines updated in parity.** PostgresEngine and PGLiteEngine got the same surface area. Tests in `test/multi-source-import.test.ts` (9 cases) exercise the original failure mode on PGLite in-memory.
+
+### Out of scope (deferred)
+
+- `updateSlug` / `rewriteLinks` are not yet source-aware. Used by sync renames but not on the failing path.
+- MCP `put_page` operation still routes to `source_id='default'` — multi-source MCP writes would need a `source_id` param on the operation contract.
+- `gbrain import <dir>` CLI doesn't expose a `--source` flag yet (the helper function accepts it; CLI surface is a follow-up).
+
+### To take advantage of v0.30.3
+
+`gbrain upgrade` does most of it — the source-id plumbing is purely runtime behavior. After upgrading, run the migration to fix existing leaks:
+
+```bash
+gbrain repair-default-source --dry-run   # see the plan
+gbrain repair-default-source             # apply (idempotent, safe to re-run)
+```
+
+If `gbrain doctor` ever flags pages in `source_id='default'` that should be elsewhere, this is the command to run.
+
+### Itemized changes
+
+#### Engine surface
+- `SourceOpts` + `LinkSourceOpts` shared types in `src/core/engine.ts`
+- 13 method signatures extended with optional source opts (getPage already had it as of v0.26.5; this release adds putPage, deletePage, upsertChunks, getChunks, deleteChunks, addLink, removeLink, getLinks, getBacklinks, addTag, removeTag, getTags, addTimelineEntry, createVersion, getVersions, revertToVersion)
+- 6 scalar-subquery patterns → USING-join replacements in both engines
+
+#### Import pipeline
+- `importFromContent`, `importFromFile`, `importCodeFile` accept and thread `sourceId`
+- `sync.ts` passes `opts.sourceId` to every importFile call (incremental + full-sync paths)
+- `runImport` in `src/commands/import.ts` accepts `sourceId`
+- `reindex-code.ts` threads `sourceId` through
+
+#### New command
+- `gbrain repair-default-source [--dry-run] [--json]` — one-shot migration to relocate leaked rows
+
+#### Tests
+- `test/multi-source-import.test.ts` — 9 regression cases against PGLite in-memory
+
 ## [0.30.2] - 2026-05-08
 
 **Dream synthesize stops dropping fat transcripts. Subagents that overflow Anthropic's context die once, not three times. The queue stops clogging.**

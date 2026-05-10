@@ -194,8 +194,19 @@ export async function importFromContent(
      * disk path; the put_page MCP op derives it from the slug tail.
      */
     filename?: string;
+    /**
+     * v0.22.x — multi-source sync fix. When set, every engine call below
+     * scopes by `(source_id, slug)` so synced pages land in the right
+     * source instead of leaking to source_id='default'. The default-source
+     * leak in v0.18-v0.22 caused mid-transaction duplicate-slug states
+     * that exploded scalar subqueries downstream.
+     */
+    sourceId?: string;
   } = {},
 ): Promise<ImportResult> {
+  const sourceOpts = opts.sourceId !== undefined
+    ? { sourceId: opts.sourceId }
+    : undefined;
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -232,7 +243,7 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
-  const existing = await engine.getPage(slug);
+  const existing = await engine.getPage(slug, sourceOpts);
   if (existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
@@ -270,15 +281,9 @@ export async function importFromContent(
 
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
-    if (existing) await tx.createVersion(slug);
+    if (existing) await tx.createVersion(slug, sourceOpts);
 
     // v0.29.1 — compute effective_date from frontmatter precedence chain.
-    // Filename comes from importFromFile path (basename) or the slug tail
-    // (put_page MCP op fallback). updatedAt/createdAt use the existing
-    // page's timestamps when present; otherwise NOW() (the row about to
-    // be created). The result drives the recency boost and since/until
-    // filters when callers opt in; nothing in the default search path
-    // consults it.
     const filenameForChain = opts.filename ?? slug.split('/').pop() ?? slug;
     const nowDate = new Date();
     const { date: effectiveDate, source: effectiveDateSource } = computeEffectiveDate({
@@ -299,47 +304,52 @@ export async function importFromContent(
       effective_date: effectiveDate,
       effective_date_source: effectiveDateSource,
       import_filename: filenameForChain,
-    });
+    }, sourceOpts);
 
     // Tag reconciliation: remove stale, add current
-    const existingTags = await tx.getTags(slug);
+    const existingTags = await tx.getTags(slug, sourceOpts);
     const newTags = new Set(parsed.tags);
     for (const old of existingTags) {
-      if (!newTags.has(old)) await tx.removeTag(slug, old);
+      if (!newTags.has(old)) await tx.removeTag(slug, old, sourceOpts);
     }
     for (const tag of parsed.tags) {
-      await tx.addTag(slug, tag);
+      await tx.addTag(slug, tag, sourceOpts);
     }
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks);
+      await tx.upsertChunks(slug, chunks, sourceOpts);
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
-      await tx.deleteChunks(slug);
+      await tx.deleteChunks(slug, sourceOpts);
     }
 
-    // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
-    // (e.g. 'src/core/sync.ts:42'), create bidirectional edges to the code
-    // page. addLink throws when either endpoint is missing (master tightened
-    // this in v0.18.x), so we wrap each pair in try/catch — guides imported
-    // before their code repo syncs are common, and the missing edges land
-    // later via `gbrain reconcile-links` (Layer 8 D3, v0.21.0).
+    // v0.19.0 E1 — doc↔impl linking: bidirectional edges to the code page.
+    // v0.22.x: each addLink scopes the from/origin endpoints to the source
+    // we're importing into. `to` (codeSlug) endpoint may live in a sibling
+    // code source — left as 'default' for now; reconcile-links resolves
+    // cross-source code edges in a follow-up pass.
+    const linkOptsForward = opts.sourceId !== undefined
+      ? { fromSourceId: opts.sourceId, originSourceId: opts.sourceId }
+      : undefined;
+    const linkOptsReverse = opts.sourceId !== undefined
+      ? { toSourceId: opts.sourceId, originSourceId: opts.sourceId }
+      : undefined;
     const codeRefs = extractCodeRefs(parsed.compiled_truth + '\n' + (parsed.timeline || ''));
     for (const ref of codeRefs) {
       const codeSlug = slugifyCodePath(ref.path);
-      // Forward: markdown guide → code page (this guide documents that code)
       try {
         await tx.addLink(
           slug, codeSlug,
           ref.line ? `cited at ${ref.path}:${ref.line}` : ref.path,
           'documents', 'markdown', slug, 'compiled_truth',
+          linkOptsForward,
         );
       } catch { /* code page not yet imported — reconcile-links will catch it */ }
-      // Reverse: code page → markdown guide (this code is documented by the guide)
       try {
         await tx.addLink(
           codeSlug, slug,
           ref.path, 'documented_by', 'markdown', slug, 'compiled_truth',
+          linkOptsReverse,
         );
       } catch { /* same reason — silent skip */ }
     }
@@ -362,7 +372,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean; inferFrontmatter?: boolean } = {},
+  opts: { noEmbed?: boolean; inferFrontmatter?: boolean; sourceId?: string } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -431,11 +441,14 @@ export async function importCodeFile(
   engine: BrainEngine,
   relativePath: string,
   content: string,
-  opts: { noEmbed?: boolean; force?: boolean } = {},
+  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string } = {},
 ): Promise<ImportResult> {
   const slug = slugifyCodePath(relativePath);
   const lang = detectCodeLanguage(relativePath) || 'unknown';
   const title = `${relativePath} (${lang})`;
+  const sourceOpts = opts.sourceId !== undefined
+    ? { sourceId: opts.sourceId }
+    : undefined;
 
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
@@ -448,7 +461,7 @@ export async function importCodeFile(
     .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
     .digest('hex');
 
-  const existing = await engine.getPage(slug);
+  const existing = await engine.getPage(slug, sourceOpts);
   if (!opts.force && existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0 };
   }
@@ -486,7 +499,7 @@ export async function importCodeFile(
   // OpenAI API. Order matters: our chunk_index is semantic (tree-sitter
   // order), so a matching (chunk_index, text_hash) means a verbatim
   // preserved symbol.
-  const existingChunks = existing ? await engine.getChunks(slug) : [];
+  const existingChunks = existing ? await engine.getChunks(slug, sourceOpts) : [];
   const existingByKey = new Map<string, typeof existingChunks[number]>();
   for (const ec of existingChunks) {
     existingByKey.set(`${ec.chunk_index}:${ec.chunk_text}`, ec);
@@ -521,7 +534,7 @@ export async function importCodeFile(
 
   // Store
   await engine.transaction(async (tx) => {
-    if (existing) await tx.createVersion(slug);
+    if (existing) await tx.createVersion(slug, sourceOpts);
 
     await tx.putPage(slug, {
       type: 'code' as PageType,
@@ -531,15 +544,15 @@ export async function importCodeFile(
       timeline: '',
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
-    });
+    }, sourceOpts);
 
-    await tx.addTag(slug, 'code');
-    await tx.addTag(slug, lang);
+    await tx.addTag(slug, 'code', sourceOpts);
+    await tx.addTag(slug, lang, sourceOpts);
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks);
+      await tx.upsertChunks(slug, chunks, sourceOpts);
     } else {
-      await tx.deleteChunks(slug);
+      await tx.deleteChunks(slug, sourceOpts);
     }
   });
 
@@ -550,7 +563,7 @@ export async function importCodeFile(
   // chunk IDs are stable.
   if (extractedEdges.length > 0 && chunks.length > 0) {
     try {
-      const persistedChunks = await engine.getChunks(slug);
+      const persistedChunks = await engine.getChunks(slug, sourceOpts);
       const byIndex = new Map<number, { id?: number; symbol_name_qualified?: string | null; start_line?: number | null; end_line?: number | null }>();
       for (const pc of persistedChunks) {
         byIndex.set(pc.chunk_index, pc);

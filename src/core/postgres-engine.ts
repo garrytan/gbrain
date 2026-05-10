@@ -3,6 +3,7 @@ import type {
   BrainEngine,
   LinkBatchInput, TimelineBatchInput,
   ReservedConnection,
+  SourceOpts, LinkSourceOpts,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
@@ -497,16 +498,21 @@ export class PostgresEngine implements BrainEngine {
     return rowToPage(rows[0]);
   }
 
-  async putPage(slug: string, page: PageInput): Promise<Page> {
+  async putPage(slug: string, page: PageInput, opts?: SourceOpts): Promise<Page> {
     slug = validateSlug(slug);
     const sql = this.sql;
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
-    // v0.18.0 Step 2: source_id relies on schema DEFAULT 'default'. ON
-    // CONFLICT target becomes (source_id, slug) since global UNIQUE(slug)
-    // was dropped in migration v17.
+    // v0.18.0 Step 2 / v0.22.x source-id plumbing fix: when opts.sourceId is
+    // provided, INSERT lands in that exact source. When omitted, the schema
+    // DEFAULT 'default' kicks in. Pre-fix, sync paths called putPage without
+    // sourceId, leaking every imported page into source_id='default' even
+    // when the (source_id, slug) row already existed in the rightful source.
+    // ON CONFLICT (source_id, slug) DO UPDATE then created mid-transaction
+    // duplicate-slug rows that exploded scalar subqueries downstream.
     const pageKind = page.page_kind || 'markdown';
+    const sourceId = opts?.sourceId ?? 'default';
     // v0.29.1 — effective_date / effective_date_source / import_filename are
     // additive opt-in inputs from the importer (computeEffectiveDate). When
     // omitted, the ON CONFLICT path preserves any existing value via
@@ -516,8 +522,8 @@ export class PostgresEngine implements BrainEngine {
     const effectiveDateSource = page.effective_date_source ?? null;
     const importFilename = page.import_filename ?? null;
     const rows = await sql`
-      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename)
-      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename})
+      INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename)
+      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename})
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -535,9 +541,13 @@ export class PostgresEngine implements BrainEngine {
     return rowToPage(rows[0]);
   }
 
-  async deletePage(slug: string): Promise<void> {
+  async deletePage(slug: string, opts?: SourceOpts): Promise<void> {
     const sql = this.sql;
-    await sql`DELETE FROM pages WHERE slug = ${slug}`;
+    if (opts?.sourceId !== undefined) {
+      await sql`DELETE FROM pages WHERE slug = ${slug} AND source_id = ${opts.sourceId}`;
+    } else {
+      await sql`DELETE FROM pages WHERE slug = ${slug}`;
+    }
   }
 
   async softDeletePage(slug: string, opts?: { sourceId?: string }): Promise<{ slug: string } | null> {
@@ -1016,11 +1026,16 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Chunks
-  async upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void> {
+  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: SourceOpts): Promise<void> {
     const sql = this.sql;
 
-    // Get page_id
-    const pages = await sql`SELECT id FROM pages WHERE slug = ${slug}`;
+    // Get page_id, scoped by source when caller provides it. Without the
+    // source filter, multi-source brains would silently target whichever
+    // (source_id, slug) row sorted first — same root cause as the v0.18
+    // multi-source sync regression.
+    const pages = opts?.sourceId !== undefined
+      ? await sql`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${opts.sourceId} LIMIT 1`
+      : await sql`SELECT id FROM pages WHERE slug = ${slug} ORDER BY source_id LIMIT 1`;
     if (pages.length === 0) throw new Error(`Page not found: ${slug}`);
     const pageId = pages[0].id;
 
@@ -1117,14 +1132,21 @@ export class PostgresEngine implements BrainEngine {
     );
   }
 
-  async getChunks(slug: string): Promise<Chunk[]> {
+  async getChunks(slug: string, opts?: SourceOpts): Promise<Chunk[]> {
     const sql = this.sql;
-    const rows = await sql`
-      SELECT cc.* FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE p.slug = ${slug}
-      ORDER BY cc.chunk_index
-    `;
+    const rows = opts?.sourceId !== undefined
+      ? await sql`
+          SELECT cc.* FROM content_chunks cc
+          JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ${opts.sourceId}
+          ORDER BY cc.chunk_index
+        `
+      : await sql`
+          SELECT cc.* FROM content_chunks cc
+          JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = ${slug}
+          ORDER BY cc.chunk_index
+        `;
     return rows.map((r) => rowToChunk(r as Record<string, unknown>));
   }
 
@@ -1152,12 +1174,26 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as StaleChunkRow[];
   }
 
-  async deleteChunks(slug: string): Promise<void> {
+  async deleteChunks(slug: string, opts?: SourceOpts): Promise<void> {
     const sql = this.sql;
-    await sql`
-      DELETE FROM content_chunks
-      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
-    `;
+    // USING-join replaces the legacy `(SELECT id FROM pages WHERE slug=$1)`
+    // scalar subquery — that pattern blew up with "more than one row" the
+    // moment a slug existed in two sources mid-transaction.
+    if (opts?.sourceId !== undefined) {
+      await sql`
+        DELETE FROM content_chunks cc
+        USING pages p
+        WHERE cc.page_id = p.id
+          AND p.slug = ${slug}
+          AND p.source_id = ${opts.sourceId}
+      `;
+    } else {
+      await sql`
+        DELETE FROM content_chunks cc
+        USING pages p
+        WHERE cc.page_id = p.id AND p.slug = ${slug}
+      `;
+    }
   }
 
   // Links
@@ -1169,28 +1205,39 @@ export class PostgresEngine implements BrainEngine {
     linkSource?: string,
     originSlug?: string,
     originField?: string,
+    opts?: LinkSourceOpts,
   ): Promise<void> {
     const sql = this.sql;
-    // Pre-check existence so we can throw a clear error (ON CONFLICT DO UPDATE
-    // returns 0 rows when source SELECT is empty, indistinguishable from missing page).
+    const fromSourceId = opts?.fromSourceId ?? 'default';
+    const toSourceId = opts?.toSourceId ?? 'default';
+    const originSourceId = opts?.originSourceId ?? 'default';
+    // Pre-check existence scoped by (source_id, slug). The previous version
+    // used `SELECT 1 FROM pages WHERE slug=$1 INTERSECT SELECT 1 FROM pages
+    // WHERE slug=$2` which could pass even when neither slug was in the
+    // expected source.
     const exists = await sql`
-      SELECT 1 FROM pages WHERE slug = ${from}
+      SELECT 1 FROM pages WHERE slug = ${from} AND source_id = ${fromSourceId}
       INTERSECT
-      SELECT 1 FROM pages WHERE slug = ${to}
+      SELECT 1 FROM pages WHERE slug = ${to} AND source_id = ${toSourceId}
     `;
     if (exists.length === 0) {
       throw new Error(`addLink failed: page "${from}" or "${to}" not found`);
     }
-    // Default link_source to 'markdown' for back-compat with pre-v0.13 callers.
-    // origin_page_id resolves from originSlug via the pages join (NULL if no slug).
+    // The legacy version used `(SELECT id FROM pages WHERE slug=$1)` for
+    // origin_page_id — a scalar subquery that exploded with "more than one
+    // row returned" the moment the same slug existed in two sources. The
+    // LEFT JOIN below resolves origin_page_id by (slug, source_id).
     const src = linkSource ?? 'markdown';
     await sql`
       INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
       SELECT f.id, t.id, ${linkType || ''}, ${context || ''}, ${src},
-             (SELECT id FROM pages WHERE slug = ${originSlug ?? null}),
+             o.id,
              ${originField ?? null}
-      FROM pages f, pages t
-      WHERE f.slug = ${from} AND t.slug = ${to}
+      FROM pages f
+      CROSS JOIN pages t
+      LEFT JOIN pages o ON o.slug = ${originSlug ?? null} AND o.source_id = ${originSourceId}
+      WHERE f.slug = ${from} AND f.source_id = ${fromSourceId}
+        AND t.slug = ${to} AND t.source_id = ${toSourceId}
       ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO UPDATE SET
         context = EXCLUDED.context,
         origin_field = EXCLUDED.origin_field
@@ -1236,68 +1283,99 @@ export class PostgresEngine implements BrainEngine {
     return result.length;
   }
 
-  async removeLink(from: string, to: string, linkType?: string, linkSource?: string): Promise<void> {
+  async removeLink(from: string, to: string, linkType?: string, linkSource?: string, opts?: LinkSourceOpts): Promise<void> {
     const sql = this.sql;
-    // Build up filters dynamically. linkType + linkSource are independent
-    // optional constraints; all four combinations are valid.
+    const fromSourceId = opts?.fromSourceId ?? 'default';
+    const toSourceId = opts?.toSourceId ?? 'default';
+    // USING-join replaces the legacy scalar-subquery pattern on (slug).
     if (linkType !== undefined && linkSource !== undefined) {
       await sql`
-        DELETE FROM links
-        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
-          AND link_type = ${linkType}
-          AND link_source IS NOT DISTINCT FROM ${linkSource}
+        DELETE FROM links l
+        USING pages f, pages t
+        WHERE l.from_page_id = f.id AND l.to_page_id = t.id
+          AND f.slug = ${from} AND f.source_id = ${fromSourceId}
+          AND t.slug = ${to} AND t.source_id = ${toSourceId}
+          AND l.link_type = ${linkType}
+          AND l.link_source IS NOT DISTINCT FROM ${linkSource}
       `;
     } else if (linkType !== undefined) {
       await sql`
-        DELETE FROM links
-        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
-          AND link_type = ${linkType}
+        DELETE FROM links l
+        USING pages f, pages t
+        WHERE l.from_page_id = f.id AND l.to_page_id = t.id
+          AND f.slug = ${from} AND f.source_id = ${fromSourceId}
+          AND t.slug = ${to} AND t.source_id = ${toSourceId}
+          AND l.link_type = ${linkType}
       `;
     } else if (linkSource !== undefined) {
       await sql`
-        DELETE FROM links
-        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
-          AND link_source IS NOT DISTINCT FROM ${linkSource}
+        DELETE FROM links l
+        USING pages f, pages t
+        WHERE l.from_page_id = f.id AND l.to_page_id = t.id
+          AND f.slug = ${from} AND f.source_id = ${fromSourceId}
+          AND t.slug = ${to} AND t.source_id = ${toSourceId}
+          AND l.link_source IS NOT DISTINCT FROM ${linkSource}
       `;
     } else {
       await sql`
-        DELETE FROM links
-        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
+        DELETE FROM links l
+        USING pages f, pages t
+        WHERE l.from_page_id = f.id AND l.to_page_id = t.id
+          AND f.slug = ${from} AND f.source_id = ${fromSourceId}
+          AND t.slug = ${to} AND t.source_id = ${toSourceId}
       `;
     }
   }
 
-  async getLinks(slug: string): Promise<Link[]> {
+  async getLinks(slug: string, opts?: SourceOpts): Promise<Link[]> {
     const sql = this.sql;
-    const rows = await sql`
-      SELECT f.slug as from_slug, t.slug as to_slug,
-             l.link_type, l.context, l.link_source,
-             o.slug as origin_slug, l.origin_field
-      FROM links l
-      JOIN pages f ON f.id = l.from_page_id
-      JOIN pages t ON t.id = l.to_page_id
-      LEFT JOIN pages o ON o.id = l.origin_page_id
-      WHERE f.slug = ${slug}
-    `;
+    const rows = opts?.sourceId !== undefined
+      ? await sql`
+          SELECT f.slug as from_slug, t.slug as to_slug,
+                 l.link_type, l.context, l.link_source,
+                 o.slug as origin_slug, l.origin_field
+          FROM links l
+          JOIN pages f ON f.id = l.from_page_id
+          JOIN pages t ON t.id = l.to_page_id
+          LEFT JOIN pages o ON o.id = l.origin_page_id
+          WHERE f.slug = ${slug} AND f.source_id = ${opts.sourceId}
+        `
+      : await sql`
+          SELECT f.slug as from_slug, t.slug as to_slug,
+                 l.link_type, l.context, l.link_source,
+                 o.slug as origin_slug, l.origin_field
+          FROM links l
+          JOIN pages f ON f.id = l.from_page_id
+          JOIN pages t ON t.id = l.to_page_id
+          LEFT JOIN pages o ON o.id = l.origin_page_id
+          WHERE f.slug = ${slug}
+        `;
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string): Promise<Link[]> {
+  async getBacklinks(slug: string, opts?: SourceOpts): Promise<Link[]> {
     const sql = this.sql;
-    const rows = await sql`
-      SELECT f.slug as from_slug, t.slug as to_slug,
-             l.link_type, l.context, l.link_source,
-             o.slug as origin_slug, l.origin_field
-      FROM links l
-      JOIN pages f ON f.id = l.from_page_id
-      JOIN pages t ON t.id = l.to_page_id
-      LEFT JOIN pages o ON o.id = l.origin_page_id
-      WHERE t.slug = ${slug}
-    `;
+    const rows = opts?.sourceId !== undefined
+      ? await sql`
+          SELECT f.slug as from_slug, t.slug as to_slug,
+                 l.link_type, l.context, l.link_source,
+                 o.slug as origin_slug, l.origin_field
+          FROM links l
+          JOIN pages f ON f.id = l.from_page_id
+          JOIN pages t ON t.id = l.to_page_id
+          LEFT JOIN pages o ON o.id = l.origin_page_id
+          WHERE t.slug = ${slug} AND t.source_id = ${opts.sourceId}
+        `
+      : await sql`
+          SELECT f.slug as from_slug, t.slug as to_slug,
+                 l.link_type, l.context, l.link_source,
+                 o.slug as origin_slug, l.origin_field
+          FROM links l
+          JOIN pages f ON f.id = l.from_page_id
+          JOIN pages t ON t.id = l.to_page_id
+          LEFT JOIN pages o ON o.id = l.origin_page_id
+          WHERE t.slug = ${slug}
+        `;
     return rows as unknown as Link[];
   }
 
@@ -1573,11 +1651,14 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Tags
-  async addTag(slug: string, tag: string): Promise<void> {
+  async addTag(slug: string, tag: string, opts?: SourceOpts): Promise<void> {
     const sql = this.sql;
-    // Verify page exists before attempting insert (ON CONFLICT DO NOTHING
-    // swallows the "already tagged" case, but we still need to detect missing pages)
-    const page = await sql`SELECT id FROM pages WHERE slug = ${slug}`;
+    // Verify page exists, scoped by source when provided. Multi-source brains
+    // can have the same slug under two source_ids; the unscoped variant
+    // attached the tag to whichever row sorted first by source_id.
+    const page = opts?.sourceId !== undefined
+      ? await sql`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${opts.sourceId} LIMIT 1`
+      : await sql`SELECT id FROM pages WHERE slug = ${slug} ORDER BY source_id LIMIT 1`;
     if (page.length === 0) throw new Error(`addTag failed: page "${slug}" not found`);
     await sql`
       INSERT INTO tags (page_id, tag)
@@ -1586,22 +1667,43 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
-  async removeTag(slug: string, tag: string): Promise<void> {
+  async removeTag(slug: string, tag: string, opts?: SourceOpts): Promise<void> {
     const sql = this.sql;
-    await sql`
-      DELETE FROM tags
-      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
-        AND tag = ${tag}
-    `;
+    // USING-join replaces the legacy scalar subquery — multi-source-unsafe
+    // and a known explosion site for mid-transaction duplicate-slug states.
+    if (opts?.sourceId !== undefined) {
+      await sql`
+        DELETE FROM tags ts
+        USING pages p
+        WHERE ts.page_id = p.id AND p.slug = ${slug}
+          AND p.source_id = ${opts.sourceId}
+          AND ts.tag = ${tag}
+      `;
+    } else {
+      await sql`
+        DELETE FROM tags ts
+        USING pages p
+        WHERE ts.page_id = p.id AND p.slug = ${slug}
+          AND ts.tag = ${tag}
+      `;
+    }
   }
 
-  async getTags(slug: string): Promise<string[]> {
+  async getTags(slug: string, opts?: SourceOpts): Promise<string[]> {
     const sql = this.sql;
-    const rows = await sql`
-      SELECT tag FROM tags
-      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
-      ORDER BY tag
-    `;
+    const rows = opts?.sourceId !== undefined
+      ? await sql`
+          SELECT ts.tag FROM tags ts
+          JOIN pages p ON p.id = ts.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ${opts.sourceId}
+          ORDER BY ts.tag
+        `
+      : await sql`
+          SELECT ts.tag FROM tags ts
+          JOIN pages p ON p.id = ts.page_id
+          WHERE p.slug = ${slug}
+          ORDER BY ts.tag
+        `;
     return rows.map((r) => r.tag as string);
   }
 
@@ -1609,11 +1711,13 @@ export class PostgresEngine implements BrainEngine {
   async addTimelineEntry(
     slug: string,
     entry: TimelineInput,
-    opts?: { skipExistenceCheck?: boolean },
+    opts?: { skipExistenceCheck?: boolean; sourceId?: string },
   ): Promise<void> {
     const sql = this.sql;
     if (!opts?.skipExistenceCheck) {
-      const exists = await sql`SELECT 1 FROM pages WHERE slug = ${slug}`;
+      const exists = opts?.sourceId !== undefined
+        ? await sql`SELECT 1 FROM pages WHERE slug = ${slug} AND source_id = ${opts.sourceId} LIMIT 1`
+        : await sql`SELECT 1 FROM pages WHERE slug = ${slug} LIMIT 1`;
       if (exists.length === 0) {
         throw new Error(`addTimelineEntry failed: page "${slug}" not found`);
       }
@@ -1621,12 +1725,21 @@ export class PostgresEngine implements BrainEngine {
     // ON CONFLICT DO NOTHING via the (page_id, date, summary) unique index.
     // Returning 0 rows means either page missing OR duplicate; skipExistenceCheck
     // makes that ambiguity safe (caller asserts page exists).
-    await sql`
-      INSERT INTO timeline_entries (page_id, date, source, summary, detail)
-      SELECT id, ${entry.date}::date, ${entry.source || ''}, ${entry.summary}, ${entry.detail || ''}
-      FROM pages WHERE slug = ${slug}
-      ON CONFLICT (page_id, date, summary) DO NOTHING
-    `;
+    if (opts?.sourceId !== undefined) {
+      await sql`
+        INSERT INTO timeline_entries (page_id, date, source, summary, detail)
+        SELECT id, ${entry.date}::date, ${entry.source || ''}, ${entry.summary}, ${entry.detail || ''}
+        FROM pages WHERE slug = ${slug} AND source_id = ${opts.sourceId}
+        ON CONFLICT (page_id, date, summary) DO NOTHING
+      `;
+    } else {
+      await sql`
+        INSERT INTO timeline_entries (page_id, date, source, summary, detail)
+        SELECT id, ${entry.date}::date, ${entry.source || ''}, ${entry.summary}, ${entry.detail || ''}
+        FROM pages WHERE slug = ${slug}
+        ON CONFLICT (page_id, date, summary) DO NOTHING
+      `;
+    }
   }
 
   async addTimelineEntriesBatch(entries: TimelineBatchInput[]): Promise<number> {
@@ -2146,39 +2259,70 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Versions
-  async createVersion(slug: string): Promise<PageVersion> {
+  async createVersion(slug: string, opts?: SourceOpts): Promise<PageVersion> {
     const sql = this.sql;
-    const rows = await sql`
-      INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
-      SELECT id, compiled_truth, frontmatter
-      FROM pages WHERE slug = ${slug}
-      RETURNING *
-    `;
+    // The legacy version did `INSERT ... SELECT id ... FROM pages WHERE
+    // slug = $1` which inserts ONE row per matching page. In a multi-source
+    // brain that meant N versions per logical "page" — version history got
+    // cross-pollinated across sources for any colliding slug.
+    const rows = opts?.sourceId !== undefined
+      ? await sql`
+          INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
+          SELECT id, compiled_truth, frontmatter
+          FROM pages WHERE slug = ${slug} AND source_id = ${opts.sourceId}
+          RETURNING *
+        `
+      : await sql`
+          INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
+          SELECT id, compiled_truth, frontmatter
+          FROM pages WHERE slug = ${slug}
+          ORDER BY source_id LIMIT 1
+          RETURNING *
+        `;
     if (rows.length === 0) throw new Error(`createVersion failed: page "${slug}" not found`);
     return rows[0] as unknown as PageVersion;
   }
 
-  async getVersions(slug: string): Promise<PageVersion[]> {
+  async getVersions(slug: string, opts?: SourceOpts): Promise<PageVersion[]> {
     const sql = this.sql;
-    const rows = await sql`
-      SELECT pv.* FROM page_versions pv
-      JOIN pages p ON p.id = pv.page_id
-      WHERE p.slug = ${slug}
-      ORDER BY pv.snapshot_at DESC
-    `;
+    const rows = opts?.sourceId !== undefined
+      ? await sql`
+          SELECT pv.* FROM page_versions pv
+          JOIN pages p ON p.id = pv.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ${opts.sourceId}
+          ORDER BY pv.snapshot_at DESC
+        `
+      : await sql`
+          SELECT pv.* FROM page_versions pv
+          JOIN pages p ON p.id = pv.page_id
+          WHERE p.slug = ${slug}
+          ORDER BY pv.snapshot_at DESC
+        `;
     return rows as unknown as PageVersion[];
   }
 
-  async revertToVersion(slug: string, versionId: number): Promise<void> {
+  async revertToVersion(slug: string, versionId: number, opts?: SourceOpts): Promise<void> {
     const sql = this.sql;
-    await sql`
-      UPDATE pages SET
-        compiled_truth = pv.compiled_truth,
-        frontmatter = pv.frontmatter,
-        updated_at = now()
-      FROM page_versions pv
-      WHERE pages.slug = ${slug} AND pv.id = ${versionId} AND pv.page_id = pages.id
-    `;
+    if (opts?.sourceId !== undefined) {
+      await sql`
+        UPDATE pages SET
+          compiled_truth = pv.compiled_truth,
+          frontmatter = pv.frontmatter,
+          updated_at = now()
+        FROM page_versions pv
+        WHERE pages.slug = ${slug} AND pages.source_id = ${opts.sourceId}
+          AND pv.id = ${versionId} AND pv.page_id = pages.id
+      `;
+    } else {
+      await sql`
+        UPDATE pages SET
+          compiled_truth = pv.compiled_truth,
+          frontmatter = pv.frontmatter,
+          updated_at = now()
+        FROM page_versions pv
+        WHERE pages.slug = ${slug} AND pv.id = ${versionId} AND pv.page_id = pages.id
+      `;
+    }
   }
 
   // Stats + health

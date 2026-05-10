@@ -28,7 +28,7 @@ export interface RunImportResult {
   failures: Array<{ path: string; error: string }>;
 }
 
-export async function runImport(engine: BrainEngine, args: string[], opts: { commit?: string } = {}): Promise<RunImportResult> {
+export async function runImport(engine: BrainEngine, args: string[], opts: { commit?: string; sourceId?: string } = {}): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
@@ -111,7 +111,7 @@ export async function runImport(engine: BrainEngine, args: string[], opts: { com
       // unreachable when the gate is off; defense-in-depth check anyway.
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, relativePath, { noEmbed })
-        : await importFile(eng, filePath, relativePath, { noEmbed });
+        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId: opts.sourceId });
       if (result.status === 'imported') {
         imported++;
         chunksCreated += result.chunks;

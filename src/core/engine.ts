@@ -318,6 +318,33 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
+/**
+ * Per-call source scoping for v0.18+ multi-source brains.
+ *
+ * Schema enforces UNIQUE(source_id, slug); slugs alone are NOT unique. Methods
+ * that take a `slug` accept this opts to disambiguate. When omitted:
+ * - Writes default to `source_id='default'` (schema DEFAULT)
+ * - Reads scan all sources, returning the first row by source_id ordering
+ *
+ * v0.22.x fix: source-id-less queries used to use scalar subqueries
+ * `(SELECT id FROM pages WHERE slug=$1)` which exploded with "more than one row"
+ * the moment a slug appeared in two sources. Affected methods now filter by
+ * `(source_id, slug)` end-to-end.
+ */
+export interface SourceOpts {
+  sourceId?: string;
+}
+
+/**
+ * `addLink` / `removeLink` carry up to three slug args (from / to / origin),
+ * each potentially in a different source. Per-endpoint scoping.
+ */
+export interface LinkSourceOpts {
+  fromSourceId?: string;
+  toSourceId?: string;
+  originSourceId?: string;
+}
+
 export interface BrainEngine {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite';
@@ -343,7 +370,7 @@ export interface BrainEngine {
    * by `restore_page` flow, and by operator diagnostics.
    */
   getPage(slug: string, opts?: GetPageOpts): Promise<Page | null>;
-  putPage(slug: string, page: PageInput): Promise<Page>;
+  putPage(slug: string, page: PageInput, opts?: SourceOpts): Promise<Page>;
   /**
    * Hard-delete a page row. Cascades to content_chunks, page_links,
    * chunk_relations via existing FK ON DELETE CASCADE.
@@ -353,7 +380,7 @@ export interface BrainEngine {
    * as the underlying primitive used by `purgeDeletedPages` and by callers
    * that explicitly want hard-delete semantics (e.g. test setup teardown).
    */
-  deletePage(slug: string): Promise<void>;
+  deletePage(slug: string, opts?: SourceOpts): Promise<void>;
   /**
    * v0.26.5 — set `deleted_at = now()` on a page. Returns the slug if a row
    * was soft-deleted, null if no row matched (already soft-deleted OR not found).
@@ -392,8 +419,8 @@ export interface BrainEngine {
   getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>>;
 
   // Chunks
-  upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
-  getChunks(slug: string): Promise<Chunk[]>;
+  upsertChunks(slug: string, chunks: ChunkInput[], opts?: SourceOpts): Promise<void>;
+  getChunks(slug: string, opts?: SourceOpts): Promise<Chunk[]>;
   /**
    * Count chunks across the entire brain where embedded_at IS NULL.
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
@@ -409,7 +436,7 @@ export interface BrainEngine {
    * Bounded by an internal LIMIT of 100000 to mirror listPages.
    */
   listStaleChunks(): Promise<StaleChunkRow[]>;
-  deleteChunks(slug: string): Promise<void>;
+  deleteChunks(slug: string, opts?: SourceOpts): Promise<void>;
 
   // Links
   /**
@@ -425,6 +452,7 @@ export interface BrainEngine {
     linkSource?: string,
     originSlug?: string,
     originField?: string,
+    opts?: LinkSourceOpts,
   ): Promise<void>;
   /**
    * Bulk insert links via a single multi-row INSERT...SELECT FROM (VALUES) JOIN pages
@@ -441,9 +469,9 @@ export interface BrainEngine {
    * 'manual') — used by runAutoLink reconciliation to avoid deleting edges from
    * other provenances when pruning frontmatter-derived edges.
    */
-  removeLink(from: string, to: string, linkType?: string, linkSource?: string): Promise<void>;
-  getLinks(slug: string): Promise<Link[]>;
-  getBacklinks(slug: string): Promise<Link[]>;
+  removeLink(from: string, to: string, linkType?: string, linkSource?: string, opts?: LinkSourceOpts): Promise<void>;
+  getLinks(slug: string, opts?: SourceOpts): Promise<Link[]>;
+  getBacklinks(slug: string, opts?: SourceOpts): Promise<Link[]>;
   /**
    * Fuzzy-match a display name to a page slug using pg_trgm similarity.
    * Zero embedding cost, zero LLM cost — designed for the v0.13 resolver used
@@ -519,9 +547,9 @@ export interface BrainEngine {
   findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags
-  addTag(slug: string, tag: string): Promise<void>;
-  removeTag(slug: string, tag: string): Promise<void>;
-  getTags(slug: string): Promise<string[]>;
+  addTag(slug: string, tag: string, opts?: SourceOpts): Promise<void>;
+  removeTag(slug: string, tag: string, opts?: SourceOpts): Promise<void>;
+  getTags(slug: string, opts?: SourceOpts): Promise<string[]>;
 
   // Timeline
   /**
@@ -533,7 +561,7 @@ export interface BrainEngine {
   addTimelineEntry(
     slug: string,
     entry: TimelineInput,
-    opts?: { skipExistenceCheck?: boolean },
+    opts?: { skipExistenceCheck?: boolean; sourceId?: string },
   ): Promise<void>;
   /**
    * Bulk insert timeline entries via a single multi-row INSERT...SELECT FROM (VALUES)
@@ -670,9 +698,9 @@ export interface BrainEngine {
   putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void>;
 
   // Versions
-  createVersion(slug: string): Promise<PageVersion>;
-  getVersions(slug: string): Promise<PageVersion[]>;
-  revertToVersion(slug: string, versionId: number): Promise<void>;
+  createVersion(slug: string, opts?: SourceOpts): Promise<PageVersion>;
+  getVersions(slug: string, opts?: SourceOpts): Promise<PageVersion[]>;
+  revertToVersion(slug: string, versionId: number, opts?: SourceOpts): Promise<void>;
 
   // Stats + health
   getStats(): Promise<BrainStats>;
