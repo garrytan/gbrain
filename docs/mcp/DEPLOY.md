@@ -194,6 +194,7 @@ if compromised. Tokens are stored SHA-256 hashed in your database.
 - **Claude Code:** [setup guide](CLAUDE_CODE.md)
 - **Claude Desktop:** [setup guide](CLAUDE_DESKTOP.md) (must use GUI, not JSON config)
 - **Claude Cowork:** [setup guide](CLAUDE_COWORK.md)
+- **Nanobot:** [setup guide](NANOBOT.md)
 - **Perplexity:** [setup guide](PERPLEXITY.md)
 
 ### 4. Verify
