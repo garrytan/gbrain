@@ -2566,10 +2566,13 @@ export class PGLiteEngine implements BrainEngine {
 
   // Ingest log
   async logIngest(entry: IngestLogInput): Promise<void> {
+    // v0.31.2 (codex P1 #3): source_id threaded so multi-source brains can
+    // scope ingest_log queries. Default 'default' matches the column DEFAULT.
+    const sourceId = entry.source_id ?? 'default';
     await this.db.query(
-      `INSERT INTO ingest_log (source_type, source_ref, pages_updated, summary)
-       VALUES ($1, $2, $3::jsonb, $4)`,
-      [entry.source_type, entry.source_ref, JSON.stringify(entry.pages_updated), entry.summary]
+      `INSERT INTO ingest_log (source_id, source_type, source_ref, pages_updated, summary)
+       VALUES ($1, $2, $3, $4::jsonb, $5)`,
+      [sourceId, entry.source_type, entry.source_ref, JSON.stringify(entry.pages_updated), entry.summary]
     );
   }
 
@@ -2579,7 +2582,12 @@ export class PGLiteEngine implements BrainEngine {
       `SELECT * FROM ingest_log ORDER BY created_at DESC LIMIT $1`,
       [limit]
     );
-    return rows as unknown as IngestLogEntry[];
+    // Belt-and-suspenders source_id fallback for any pre-v47 row that
+    // somehow survived without the backfill.
+    return (rows as unknown as IngestLogEntry[]).map(r => ({
+      ...r,
+      source_id: r.source_id ?? 'default',
+    }));
   }
 
   // Sync

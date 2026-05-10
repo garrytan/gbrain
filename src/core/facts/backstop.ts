@@ -143,22 +143,42 @@ export async function runFactsBackstop(
     const { getFactsQueue } = await import('./queue.ts');
     const queue = getFactsQueue();
     const enqueued = queue.enqueue(async (signal) => {
-      // Inside the queue worker, run the full pipeline. Errors here are
-      // absorbed (the queue counter increments) and PR1 commit 13 will
-      // route them to ingest_log for cross-process visibility.
-      await runPipeline(parsedPage, ctx, signal);
+      // v0.31.2 (PR1 commit 13): facts:absorb writer wired here. Errors
+      // inside the queue worker were previously invisible (queue counter
+      // increments only). Now they land in ingest_log so doctor +
+      // dashboard surface failure modes per source.
+      try {
+        await runPipeline(parsedPage, ctx, signal);
+      } catch (err) {
+        const { classifyFactsAbsorbError, writeFactsAbsorbLog } = await import('./absorb-log.ts');
+        const reason = classifyFactsAbsorbError(err);
+        const msg = err instanceof Error ? err.message : String(err);
+        await writeFactsAbsorbLog(ctx.engine, parsedPage.slug, reason, msg, ctx.sourceId);
+      }
     }, ctx.sessionId ?? parsedPage.slug);
 
     if (enqueued < 0) {
       // -1 means the queue is shutting down OR cap-overflow drop fired.
       // Caller can disambiguate via getCounters() if they care; for now
-      // collapse to a single skipped reason.
+      // collapse to a single skipped reason and record the absorb event.
+      const { writeFactsAbsorbLog } = await import('./absorb-log.ts');
+      await writeFactsAbsorbLog(
+        ctx.engine,
+        parsedPage.slug,
+        'queue_overflow',
+        `queue capacity hit; enqueue dropped (sessionId=${ctx.sessionId ?? parsedPage.slug})`,
+        ctx.sourceId,
+      );
       return { mode: 'queue', enqueued: false, queueDepth: 0, skipped: 'queue_overflow' };
     }
     return { mode: 'queue', enqueued: true, queueDepth: enqueued };
   }
 
-  // 'inline' mode: caller awaits the full pipeline.
+  // 'inline' mode: caller awaits the full pipeline. Errors bubble to the
+  // caller — extract_facts MCP op surfaces them as op-error responses
+  // (the explicit-call contract). Unlike queue mode, we don't absorb-log
+  // here because the caller decides whether the failure is interesting
+  // enough to record (vs. retry, vs. surface directly to the user).
   const r = await runPipeline(parsedPage, ctx, ctx.abortSignal);
   return { mode: 'inline', ...r };
 }

@@ -674,6 +674,8 @@ export interface BrainHealth {
 // Ingest log
 export interface IngestLogEntry {
   id: number;
+  /** v0.31.2: brain source identifier; default 'default'. Added by migration v47. */
+  source_id: string;
   source_type: string;
   source_ref: string;
   pages_updated: string[];
@@ -682,6 +684,8 @@ export interface IngestLogEntry {
 }
 
 export interface IngestLogInput {
+  /** v0.31.2: brain source identifier; defaults to 'default' on the engine. */
+  source_id?: string;
   source_type: string;
   source_ref: string;
   pages_updated: string[];

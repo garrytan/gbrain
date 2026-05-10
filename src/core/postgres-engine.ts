@@ -2665,9 +2665,12 @@ export class PostgresEngine implements BrainEngine {
   // Ingest log
   async logIngest(entry: IngestLogInput): Promise<void> {
     const sql = this.sql;
+    // v0.31.2 (codex P1 #3): source_id threaded so multi-source brains can
+    // scope ingest_log queries. Default 'default' matches the column DEFAULT.
+    const sourceId = entry.source_id ?? 'default';
     await sql`
-      INSERT INTO ingest_log (source_type, source_ref, pages_updated, summary)
-      VALUES (${entry.source_type}, ${entry.source_ref}, ${sql.json(entry.pages_updated)}, ${entry.summary})
+      INSERT INTO ingest_log (source_id, source_type, source_ref, pages_updated, summary)
+      VALUES (${sourceId}, ${entry.source_type}, ${entry.source_ref}, ${sql.json(entry.pages_updated)}, ${entry.summary})
     `;
   }
 
@@ -2677,7 +2680,11 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT * FROM ingest_log ORDER BY created_at DESC LIMIT ${limit}
     `;
-    return rows as unknown as IngestLogEntry[];
+    // Belt-and-suspenders source_id fallback for any pre-v47 row.
+    return (rows as unknown as IngestLogEntry[]).map(r => ({
+      ...r,
+      source_id: r.source_id ?? 'default',
+    }));
   }
 
   // Sync
