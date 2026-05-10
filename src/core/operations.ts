@@ -924,10 +924,10 @@ const list_pages: Operation = {
 // --- Search ---
 
 /**
- * Validate the search/query `source` param. Resolves to the canonical
- * source id (string) when registered + not archived, or `undefined` when
- * the param is omitted (null/undefined/empty-string all mean "no filter",
- * matching the rest of the search-op param shape).
+ * v0.32 (#784): validate the search/query `source` param. Resolves to
+ * the canonical source id (string) when registered + not archived, or
+ * `undefined` when the param is omitted (null/undefined/empty-string all
+ * mean "no filter", matching the rest of the search-op param shape).
  *
  * Happy-path: one indexed `SELECT id FROM sources WHERE id = $1` — the
  * search/query path is hot, so we avoid listSources() (N+1: countPages
