@@ -13,7 +13,7 @@
  * commands (Steps 4/5), and the operation layer (Step 2+).
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, lstatSync, type Stats } from 'fs';
 import { join, dirname, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 
@@ -23,6 +23,38 @@ const DOTFILE = '.gbrain-source';
 // like `[wiki:slug]` can't have ugly edges like `[wiki-:slug]`.
 const SOURCE_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
+/**
+ * isTrustedDotfile rejects a candidate `.gbrain-source` path that an
+ * attacker could plant in a directory the victim's CWD walks through.
+ *
+ * Three conditions trip the check:
+ *   - the path is a symbolic link (an attacker-planted symlink can
+ *     redirect the resolver to a victim-owned file with hostile content)
+ *   - the file is not owned by the current process user (the most
+ *     common hijack: write `.gbrain-source` in `/tmp/foo/` while the
+ *     victim's CWD is `/tmp/foo/bar`)
+ *   - the file is world-writable (anyone can rewrite it after the
+ *     fact, even if it was created by the right user)
+ *
+ * On platforms without numeric uid/mode (Windows: `process.getuid` is
+ * undefined), the function returns `true` so existing setups keep
+ * working — the threat model is multi-user POSIX hosts where dotfile
+ * walks cross trust boundaries.
+ */
+function isTrustedDotfile(stats: Stats): boolean {
+  if (stats.isSymbolicLink()) return false;
+  if (typeof process.getuid !== 'function') return true;
+  const myUid = process.getuid();
+  // Allow root-owned files when running as root; otherwise the file
+  // must be owned by the current user. Cross-uid ownership is the
+  // hijack vector this whole helper exists to block.
+  if (stats.uid !== myUid && !(myUid === 0 && stats.uid === 0)) return false;
+  // World-writable bit set: any other user can clobber the contents
+  // even if the file is currently owned by the victim.
+  if ((stats.mode & 0o002) !== 0) return false;
+  return true;
+}
+
 function readDotfileWalk(startDir: string): string | null {
   let dir = resolve(startDir);
   // Guard against infinite loops on malformed paths.
@@ -30,10 +62,16 @@ function readDotfileWalk(startDir: string): string | null {
     const candidate = join(dir, DOTFILE);
     if (existsSync(candidate)) {
       try {
-        const content = readFileSync(candidate, 'utf8').trim().split('\n')[0].trim();
-        if (SOURCE_ID_RE.test(content)) return content;
+        // lstatSync (not statSync) so a symlink does not get
+        // followed-and-then-trusted. The owner / world-writable check
+        // applies to the dotfile itself.
+        const stats = lstatSync(candidate);
+        if (isTrustedDotfile(stats)) {
+          const content = readFileSync(candidate, 'utf8').trim().split('\n')[0].trim();
+          if (SOURCE_ID_RE.test(content)) return content;
+        }
       } catch {
-        // Unreadable dotfile — skip and keep walking.
+        // Unreadable dotfile or stat failure — skip and keep walking.
       }
     }
     const parent = dirname(dir);
@@ -171,5 +209,6 @@ export async function getDefaultSourcePath(
 /** Exposed for tests. */
 export const __testing = {
   readDotfileWalk,
+  isTrustedDotfile,
   SOURCE_ID_RE,
 };
