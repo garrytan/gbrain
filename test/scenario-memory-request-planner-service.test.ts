@@ -135,6 +135,17 @@ describe('scenario memory request planner', () => {
     expect(plan.next_tool).toBe('evaluate_scope_gate');
   });
 
+  test('plans auto accumulation through the writeback router', () => {
+    const plan = planScenarioMemoryRequest({
+      query: 'review this session for durable memory candidates',
+      source_kind: 'session_end',
+    });
+
+    expect(plan.classification.scenario).toBe('auto_accumulation');
+    expect(plan.next_tool).toBe('route_memory_writeback');
+    expect(plan.writeback_hint).toBe('create_candidate');
+  });
+
   test('decomposes mixed requests into ordered subplans', () => {
     const plan = planScenarioMemoryRequest({
       query: 'Continue the task and explain the mbrain project architecture',

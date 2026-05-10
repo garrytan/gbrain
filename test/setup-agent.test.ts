@@ -5,7 +5,7 @@ import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 
 const repoRoot = new URL('..', import.meta.url).pathname;
-const conciseStopHookReason = 'MBrain memory check (not a crash): if durable knowledge emerged, write it with sources/backlinks and sync; otherwise reply exactly MBRAIN-PASS: <short reason>.';
+const conciseStopHookReason = 'MBrain memory check (not a crash): route any durable session knowledge through route_memory_writeback with sources; otherwise reply exactly MBRAIN-PASS: <short reason>.';
 const originalEnv = { ...process.env };
 let tempHome: string;
 let tempBin: string;
@@ -108,7 +108,9 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('retrieve_context');
     expect(result.stdout).toContain('read_context');
     expect(result.stdout).toContain('chunks are not answer evidence');
-    expect(result.stdout).toContain('Write Back Durable Knowledge');
+    expect(result.stdout).toContain('Route Durable Writeback');
+    expect(result.stdout).toContain('route_memory_writeback');
+    expect(result.stdout).toContain('canonical_write_allowed');
     expect(result.stdout).toContain('Backlinks And Sync');
     expect(result.stdout).toContain('sync_brain');
     expect(result.stdout).toContain('no_pull: true');
@@ -131,6 +133,7 @@ describe('setup-agent', () => {
     expect(claudeMd).toContain('retrieve_context');
     expect(claudeMd).toContain('read_context');
     expect(claudeMd).toContain('chunks are not answer evidence');
+    expect(claudeMd).toContain('route_memory_writeback');
 
     expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh'))).toBe(true);
     expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh'))).toBe(true);
@@ -157,6 +160,38 @@ describe('setup-agent', () => {
     expect(agentsMd).toContain('retrieve_context');
     expect(agentsMd).toContain('read_context');
     expect(agentsMd).toContain('chunks are not answer evidence');
+    expect(agentsMd).toContain('route_memory_writeback');
+  });
+
+  test('setup-agent --codex replaces older same-file rules when rules version changes', async () => {
+    mkdirSync(join(tempHome, '.codex'), { recursive: true });
+    writeFileSync(
+      join(tempHome, '.codex', 'AGENTS.md'),
+      [
+        '# Existing Local Rules',
+        '',
+        '<!-- MBRAIN:RULES:START -->',
+        '<!-- mbrain-agent-rules-version: 0.5.5 -->',
+        '## 3. Write Back Durable Knowledge',
+        'Call put_page directly for durable facts.',
+        '<!-- MBRAIN:RULES:END -->',
+        '',
+        'Keep this local footer.',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await runSetupAgent(['--codex', '--skip-mcp']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('Rules: updated');
+
+    const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
+    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.6');
+    expect(agentsMd).toContain('Route Durable Writeback');
+    expect(agentsMd).toContain('route_memory_writeback');
+    expect(agentsMd).not.toContain('Call put_page directly for durable facts.');
+    expect(agentsMd).toContain('Keep this local footer.');
   });
 
   test('setup-agent explains Claude stop hook UX after installing it', async () => {

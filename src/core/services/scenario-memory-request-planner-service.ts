@@ -201,7 +201,7 @@ const ROUTES: Record<MaterialScenario, ScenarioRoute> = {
       'contradiction_records',
       'duplicate_supersession_records',
     ],
-    next_tool: 'create_memory_candidate_entry',
+    next_tool: 'route_memory_writeback',
     writeback_hint: 'create_candidate',
     trace_required: true,
     planned_activation_rules: [

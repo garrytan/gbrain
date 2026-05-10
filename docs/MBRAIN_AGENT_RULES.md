@@ -1,4 +1,4 @@
-<!-- mbrain-agent-rules-version: 0.5.5 -->
+<!-- mbrain-agent-rules-version: 0.5.6 -->
 <!-- source: https://raw.githubusercontent.com/meghendra6/mbrain/master/docs/MBRAIN_AGENT_RULES.md -->
 # MBrain Agent Rules
 
@@ -52,22 +52,21 @@ to `read_context` or `get_page`.
 Stop once you have enough context. Use web search, external APIs, or codebase
 search only for gaps MBrain cannot answer.
 
-## 3. Write Back Durable Knowledge
+## 3. Route Durable Writeback
 
-Write to MBrain when the conversation reveals durable knowledge:
+When durable knowledge appears, call `route_memory_writeback` before mutating
+memory. Use `apply: true` when source refs are available and the signal is
+inferred, ambiguous, contradictory, code-sensitive, session-end, trace-review,
+meeting/import-derived, or not ready for compiled truth.
 
-- new facts about an entity, project, system, or decision
-- the user's original wording for an idea, framework, thesis, or product thought
-- reusable technical findings, especially code paths or architecture patterns
-- corrections, contradictions, or resolved open questions
+Call `put_page` only after the router returns `canonical_write_allowed`, then
+write source-attributed compiled truth plus timeline evidence. If the router
+returns `create_candidate`, do not also call `put_page` for the same signal. If
+it returns `defer`, ask for or record the missing provenance, scope, or target.
+If it returns `no_write`, skip the write.
 
-Do not write transient task mechanics, private chain-of-thought, or generic facts
+Never write transient task mechanics, private chain-of-thought, or generic facts
 that do not belong in the user's knowledge graph.
-
-Do not write merely because a session is ending or a hook asked for a memory
-check. If the session was purely code editing, git operations, file management,
-library documentation, or general programming with no durable knowledge, skip
-the write.
 
 ## 4. Filing Rules
 
