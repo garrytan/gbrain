@@ -39,7 +39,8 @@ See `docs/JARVIS-NEXT-STEPS.md` §5 for full context and exit criteria.
 
 ## Prerequisites
 
-1. **gemini-embed-shim on 127.0.0.1:7222** — `gbrain put` auto-embeds
+1. **`GOOGLE_GENERATIVE_AI_API_KEY` in env** — native v0.27 Vercel AI SDK gateway
+   (`google:gemini-embedding-001` + 1536 dim) auto-embeds new chunks
 2. **kos-compat-api (or gbrain CLI) available** — reading existing pages
 3. **`ANTHROPIC_API_KEY`** in env — Haiku 4.5 does NER
 4. **`TAVILY_API_KEY`** in env — Tier 2 web augmentation

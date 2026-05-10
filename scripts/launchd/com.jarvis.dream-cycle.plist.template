@@ -31,6 +31,12 @@
     <dict>
         <key>PATH</key>
         <string>/Users/chenyuanquan/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>GOOGLE_GENERATIVE_AI_API_KEY</key>
+        <string><FILL:NANO_BANANA_API_KEY></string>
+        <key>GBRAIN_EMBEDDING_MODEL</key>
+        <string>google:gemini-embedding-001</string>
+        <key>GBRAIN_EMBEDDING_DIMENSIONS</key>
+        <string>1536</string>
     </dict>
     <!-- Daily 03:11 local. Off the :00 mark to avoid thundering herd
          with other personal cron jobs. Comfortably outside Notion

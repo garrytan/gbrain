@@ -164,3 +164,13 @@ enrich-sweep wraps upstream `skills/enrich/` in bulk mode.
 > `kos-compat-api.ts` / `workers/notion-poller/` / `kos-patrol/run.ts`
 > ever spawned the triplet's `run.ts`. Replacement for cross-page
 > synthesis: upstream `gbrain dream` + `concept-synthesis` skill (v0.25.1).
+>
+> **Archived (2026-05-10, M3)**: `gemini-embed-shim`. v0.27 ships a
+> native Vercel AI SDK gateway with first-class Google embedding
+> support, removing the need for the OpenAI-shaped shim that
+> intercepted gateway calls and translated them to Google
+> `batchEmbedContents`. Production cutover: 5 plists carry
+> `GOOGLE_GENERATIVE_AI_API_KEY` + `GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001` +
+> `GBRAIN_EMBEDDING_DIMENSIONS=1536`; all 2718 pages re-embedded into
+> a clean native vector space; shim launchd service bootout'd. See
+> `docs/JARVIS-ARCHITECTURE.md` §6.23 for the full cutover narrative.

@@ -18,10 +18,12 @@
         <string>7225</string>
         <key>KOS_API_TOKEN</key>
         <string><FILL:KOS_API_TOKEN></string>
-        <key>OPENAI_BASE_URL</key>
-        <string>http://127.0.0.1:7222/v1</string>
-        <key>OPENAI_API_KEY</key>
-        <string>stub-for-gemini-shim</string>
+        <key>GOOGLE_GENERATIVE_AI_API_KEY</key>
+        <string><FILL:NANO_BANANA_API_KEY></string>
+        <key>GBRAIN_EMBEDDING_MODEL</key>
+        <string>google:gemini-embedding-001</string>
+        <key>GBRAIN_EMBEDDING_DIMENSIONS</key>
+        <string>1536</string>
         <key>ANTHROPIC_BASE_URL</key>
         <string>https://crs.chenge.ink/api</string>
     </dict>

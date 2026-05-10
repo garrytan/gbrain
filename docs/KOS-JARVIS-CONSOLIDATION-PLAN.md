@@ -69,7 +69,7 @@ Columns:
 
 | # | Fork skill | Wired | Cover | Upstream feature | Decision | Notes |
 |---|---|---|---|---|---|---|
-| 1 | `gemini-embed-shim` | launchd persistent (PID 63403, port 7222) | ○ | none — `src/core/embedding.ts` hardcodes `new OpenAI()` | **KEEP** unique | Provider-neutrality bridge. Retire only if upstream adds an embedding provider abstraction (no signal yet — file an issue?) |
+| 1 | `gemini-embed-shim` | retired 2026-05-10 (M3) | ○ | v0.27 native Vercel AI SDK gateway with first-class Google provider | **ARCHIVED** | Cutover validated on Postgres pilot, then 5 plists swapped + 2718 pages re-embedded into native vector space + shim launchd bootout'd. See JARVIS-ARCHITECTURE §6.23. Dir at `skills/kos-jarvis/_archived/gemini-embed-shim/`. |
 | 2 | `_lib/brain-db.ts` | imported by 9 fork callers | ○ | `BrainEngine` interface (but heavyweight, MCP-bounded) | **KEEP** unique | Direct PGLite/Postgres reader, bypasses MCP 100-row cap. v0.25.0 added 5 eval-method mirrors as safety net (§6.20). |
 | 3 | `feishu-bridge` | docs only — archived 2026-05-05 | ○ | none — OpenClaw integration is fork-specific | **ARCHIVED** | OpenClaw `jarvis-feishu-signal-detector` extension retired 2026-05-05 (downstream `enrich-sweep` never wired to consume the queue, extension was generating garbage). Doc preserved at `skills/kos-jarvis/_archived/feishu-bridge/`. |
 | 4 | `dream-wrap` | launchd daily 03:11 | ◐ | `gbrain dream --json` (v0.17+, 8 phases in v0.23) writes its own archive | **KEEP** partial — fork value is launchd-glue + exit-code translation + `latest.json` symlink | Wrap is ~100 lines and survives clean. Fold the archive logic into upstream as a `gbrain dream --archive-dir` flag in a follow-up PR. |
@@ -353,24 +353,30 @@ candidates for retirement / consolidation by end of M2:
 
 ### Milestone M3 — provider abstraction (UNLOCKED 2026-05-09 by v0.27.0)
 
-**Status updated 2026-05-09**: v0.27.0 ships `src/core/ai/gateway.ts`
-(Vercel AI SDK), native Google embedding provider supported via
-`provider:model` config. Probe **passed** during v0.31.2 sync window
-(2026-05-09): `gbrain providers test --model google:gemini-embedding-001`
-returned 286ms / 768 dim green using existing `NANO_BANANA_API_KEY`.
+**Status updated 2026-05-10 — M3 milestone CLOSED.**
 
-Production cutover **deferred** to next session — local `/tmp/pilot-brain`
-PGLite end-to-end verification blocked by macOS 26.3 WASM #223 cold-start
-hang. Mitigation lined up: pilot via Postgres-backed throwaway DB
-(`gbrain init --supabase ...` against `gbrain_m3_pilot` on local
-Postgres) avoids PGLite entirely.
+v0.27.0 shipped `src/core/ai/gateway.ts` (Vercel AI SDK) with
+first-class Google embedding provider via `provider:model` config.
+Pilot validated 2026-05-10 morning on Postgres-backed throwaway DB
+(`gbrain_m3_pilot`); production cutover landed same day.
 
 - [x] Upstream provider abstraction landed (v0.27.0, commit `ee9ceb3`)
 - [x] Native Google probe pass (286ms, dim configurable via
   `--embedding-dimensions 1536`)
-- [ ] Production cutover (Postgres pilot → plist env switch → shim retire)
-  — see TODO `(M3) gemini-embed-shim 退役` for full step list
-- [ ] After cutover: KEEP-unique 5 → 4, fork active 14 → 13
+- [x] Pilot validated end-to-end on throwaway Postgres DB —
+  `vector_dims=1536`, English + Chinese retrieval working, shim log
+  delta 0 across pilot lifecycle (100% native traffic). See
+  `docs/JARVIS-ARCHITECTURE.md` §6.23 for verification details.
+- [x] Production cutover (2026-05-10): 5 plists swapped
+  (kos-compat-api / dream-cycle / enrich-sweep / kos-patrol / notion-poller)
+  to carry `GOOGLE_GENERATIVE_AI_API_KEY` + `GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001` +
+  `GBRAIN_EMBEDDING_DIMENSIONS=1536`; `kos-compat-api` plist additionally
+  dropped `OPENAI_BASE_URL` + `OPENAI_API_KEY=stub`.
+  `~/.gbrain/config.json` updated to match. All 2718 pages
+  (5548 chunks) re-embedded into a clean native vector space via
+  `gbrain embed --all`. Shim launchd service bootout'd, dir moved to
+  `skills/kos-jarvis/_archived/gemini-embed-shim/`.
+- [x] KEEP-unique 5 → 4, fork active **11 → 10**.
 
 ### Milestone M4 — v0.26.0 +60d retro
 

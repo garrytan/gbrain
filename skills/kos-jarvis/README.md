@@ -57,7 +57,6 @@ skills/kos-jarvis/
 ├── kos-patrol/                     # Week 2(phase 2 lint 已 noop,kos-lint archived 2026-05-10)
 ├── digest-to-memory/               # Week 3(保留澄清点)
 ├── notion-ingest-delta/            # Week 3 — SKILL.md 是 redirect,实现在 workers/notion-poller/
-├── gemini-embed-shim/              # Week 4 — OpenAI→Gemini embed 桥接(M3 退役 in flight)
 ├── enrich-sweep/                   # Phase 3 (2026-04-17) — G1 主收益
 └── _archived/                      # 退役 dirs(只读冷备)
     ├── feishu-bridge/              # 2026-05-05 — OpenClaw 飞书 command-mapping
@@ -67,7 +66,8 @@ skills/kos-jarvis/
     ├── slug-normalize/             # 2026-05-10 (M1) — one-shot 已用完(2026-04-23,7 strays renamed)
     ├── dikw-compile/               # 2026-05-10 (M2-A) — production dead code(0/2477 pages set dikw_layer);上游 `gbrain dream` + concept-synthesis 替代
     ├── evidence-gate/              # 2026-05-10 (M2-A) — production dead code(1/2477 pages set evidence_level)
-    └── confidence-score/           # 2026-05-10 (M2-A) — confidence 字段被 kos-compat-api.ts 硬编码模板,不是脚本算的
+    ├── confidence-score/           # 2026-05-10 (M2-A) — confidence 字段被 kos-compat-api.ts 硬编码模板,不是脚本算的
+    └── gemini-embed-shim/          # 2026-05-10 (M3) — v0.27 native Vercel AI SDK gateway 替代;production cutover + 2718 pages re-embedded into native vector space
 ```
 
 ## 与 GBrain 原生 skills 的关系
@@ -85,7 +85,20 @@ skills/kos-jarvis/
 3. 每月对 upstream CHANGELOG.md 做一次 review，评估是否有 upstream 新能力
    可以替代本 pack 某一项扩展（扩展应随时间自愿退场，而非永久膨胀）
 
-## 当前状态(2026-04-17)
+## 当前状态(2026-05-10 更新)
+
+- [x] **M3 (2026-05-10)**: gemini-embed-shim 退役,production cutover —
+      5 plists 切到 native v0.27 Vercel AI SDK gateway(GOOGLE_GENERATIVE_AI_API_KEY +
+      GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001 + 1536 dim),
+      shim launchd bootout,2718 pages re-embedded into clean native vector space.
+      Active dirs 11 → 10。
+- [x] **M2-A (2026-05-10)**: archive triplet (`dikw-compile` + `evidence-gate` +
+      `confidence-score`)— production probe 确认 100% dead code。Active 14 → 11。
+- [x] **M1 (2026-05-10)**: archive `kos-lint` (kos-patrol stderr 已天然 broken since 2026-04-29) +
+      `frontmatter-ref-fix` + `slug-normalize`(both one-shots)+ `notion-ingest-delta`
+      SKILL.md 缩成 5 行 redirect。Active dirs 14 → 11。
+
+## 历史 milestones
 
 - [x] Week 1: Fork,v1-frozen tag,bun install,gbrain init,5 页 import 冒烟(frontmatter 保真 100%)
 - [x] Week 2: 5 个核心 skill 移植

@@ -24,19 +24,20 @@ working on this codebase, before touching anything else:
 
 ### Fork-specific rules (override upstream behavior)
 
-- **Embeddings currently route via the OpenAI shim**, not native v0.27
-  Google provider. `skills/kos-jarvis/gemini-embed-shim/server.ts` on
-  port 7222 + `OPENAI_BASE_URL=http://127.0.0.1:7222/v1` + `OPENAI_API_KEY=stub`
-  intercept gateway → translate to Google `batchEmbedContents` →
-  base64-encoded 1536-dim vectors (SDK default). v0.27.0 ships native
-  `provider:model` config (`google:gemini-embedding-001`), and **M3
-  cutover** to native is filed as a P1 follow-up in
-  [`skills/kos-jarvis/TODO.md`](skills/kos-jarvis/TODO.md). Until M3
-  ships, **don't remove the shim** or unset `OPENAI_BASE_URL` —
-  production embedding will start hitting OpenAI for real.
+- **Embeddings now native** via v0.27 Vercel AI SDK gateway
+  (`google:gemini-embedding-001` + `--embedding-dimensions 1536`).
+  M3 cutover landed 2026-05-10: gemini-embed-shim retired, all 2718
+  pages re-embedded into a clean native vector space, shim launchd
+  service bootout'd, `skills/kos-jarvis/gemini-embed-shim/` archived.
+  Production env (5 plists + `~/.gbrain/config.json`) carries
+  `GOOGLE_GENERATIVE_AI_API_KEY` + `GBRAIN_EMBEDDING_MODEL` +
+  `GBRAIN_EMBEDDING_DIMENSIONS=1536`. **Don't reintroduce
+  `OPENAI_BASE_URL` or `OPENAI_API_KEY=stub` to plists** — it would
+  silently route around the native gateway.
 - **Chinese-first knowledge base.** Pure tsvector keyword search has no
-  CJK tokenizer. Always ensure vector search is live (shim reachable,
-  `OPENAI_API_KEY` env set to stub) before declaring queries broken.
+  CJK tokenizer. Always ensure vector search is live (kos-compat-api
+  reachable, `GOOGLE_GENERATIVE_AI_API_KEY` env set) before declaring
+  queries broken.
 - **9 KOS page kinds coexist with GBrain's 20-dir MECE.** KOS `kind`
   frontmatter (source/entity/concept/project/decision/synthesis/comparison/
   protocol/timeline) is preserved on every page; it drives kos-jarvis

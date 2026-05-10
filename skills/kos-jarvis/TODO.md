@@ -354,13 +354,50 @@ v0.27 Vercel AI SDK gateway** (NANO_BANANA_API_KEY for
    that field anyway (file/env-only by design,
    `src/core/config.ts:182-184`). Cosmetic, no impact.
 
-### [ ] (M3.cutover) gemini-embed-shim 退役 — production cutover
+### [x] (M3.cutover) gemini-embed-shim 退役 — DONE 2026-05-10
 
-**Status**: Pilot validated (see M3.pilot above). Cutover deferred —
-needs vector-space compat decision (mixed shim-era 1536-dim vs
-native-era 1536-dim chunks; both use Google `gemini-embedding-001` at
-same dim, HNSW is `vector_cosine_ops` so cosine-invariant under
-normalization differences — *probably* fine but unmeasured).
+**Cutover landed same day as pilot.**
+
+5 deployed plists (kos-compat-api / dream-cycle / enrich-sweep /
+kos-patrol / notion-poller) + 5 templates carry
+`GOOGLE_GENERATIVE_AI_API_KEY` (= NANO_BANANA_API_KEY) +
+`GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001` +
+`GBRAIN_EMBEDDING_DIMENSIONS=1536`. `kos-compat-api` plist
+additionally dropped `OPENAI_BASE_URL` + `OPENAI_API_KEY=stub`.
+`~/.gbrain/config.json` extended with embedding fields.
+`launchctl bootout` + `bootstrap` cycle of all 5 services. Re-embed
+of all 5548 chunks (`gbrain embed --all`) into clean native vector
+space — Google free-tier quota hit ~60% through the first run; retry
+covered the remaining shim-era chunks. `null_left=0` for all chunks
+throughout. Shim launchd service bootout'd, deployed plist deleted,
+`skills/kos-jarvis/gemini-embed-shim/` → `_archived/`,
+`scripts/launchd/com.jarvis.gemini-embed-shim.plist.template` →
+`scripts/launchd/_archived/`. Docs synced (RESOLVER, manifest,
+README, CLAUDE.md, CONSOLIDATION-PLAN, scripts/launchd/README,
+JARVIS-NEXT-STEPS, .env). Backups retained at
+`~/.gbrain/config.json.pre-m3-cutover-2026-05-10` +
+`/tmp/pg-pre-m3-cutover-2026-05-10.dump` (89 MB) +
+`/tmp/pre-m3-cutover-2026-05-10/` (6 plists).
+
+**Audit attestation**:
+- shim launchd service: gone (verified via `launchctl list`)
+- shim log line count: stayed at 6703 across cutover + re-embed
+  windows = 100% native traffic
+- query smoke (English + Chinese): top hits in healthy 0.7-0.9 band
+
+Active fork dirs: 11 → 10. **Story in `docs/JARVIS-ARCHITECTURE.md`
+§6.23 (M3.cutover landed same day continuation)**.
+
+### [ ] (M3.cutover-followup) Backfill any remaining shim-era chunks (low priority)
+
+**Why**: Re-embed of all 5548 chunks ran twice during M3.cutover but
+hit Google free-tier quota partway through each pass. Final state:
+all chunks have valid 1536-dim embeddings (`null_left=0`), but a
+fraction may still be shim-era vectors that didn't get retried before
+quota exhausted. Vector-space compat is *probably* fine (same
+`gemini-embedding-001` underneath, same dim, HNSW cosine-invariant
+under normalization differences) and query smoke passed in 0.7-0.9
+band — but a clean-up run is cheap.
 
 **What** (next session, ~2-3 h):
 

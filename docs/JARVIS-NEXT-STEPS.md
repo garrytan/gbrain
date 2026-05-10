@@ -23,10 +23,10 @@ below points at existing docs for the full story.
 6. [`skills/kos-jarvis/PLAN-ADJUSTMENTS.md`](../skills/kos-jarvis/PLAN-ADJUSTMENTS.md) — deltas discovered during migration (what the upstream docs get wrong vs reality)
 
 **Current state snapshot** (verify with commands before assuming):
-- 85 pages, 92 embedded chunks, 0 lint errors on frontmatter block
-- `launchctl list | grep com.jarvis` shows `kos-compat-api`, `gemini-embed-shim` healthy
+- 2718 pages, 5548 chunks, embedding via native v0.27 Vercel AI SDK gateway (`google:gemini-embedding-001`, 1536 dim) — gemini-embed-shim retired 2026-05-10 (M3)
+- `launchctl list | grep com.jarvis` shows `kos-compat-api` (KeepAlive) + 4 cron services (dream-cycle, kos-patrol, enrich-sweep, notion-poller) — no shim
 - `kos.chenge.ink` routes to port 7225 (v2 TypeScript)
-- OpenClaw 4 crons + Feishu skill migrated to HTTP on 2026-04-17
+- OpenClaw 4 crons + Feishu skill migrated to HTTP on 2026-04-17 (Feishu signal-detector retired 2026-05-05)
 - v1 frozen at tag `v1-frozen` in `~/Projects/jarvis-knowledge-os/`, repo untouched
 
 ---
@@ -97,13 +97,15 @@ curl -s -H "Authorization: Bearer $TOKEN" https://kos.chenge.ink/status \
   >> ~/brain/agent/uptime-log.txt
 
 # 4. Recent ingests compile cleanly?
-bun run ~/Projects/jarvis-knowledge-os-v2/skills/kos-jarvis/kos-lint/run.ts \
-  --check 1  # frontmatter-only check, fast
-# expect ≤ 4 errors (existing legacy)
+bun run ~/Projects/jarvis-knowledge-os-v2/src/cli.ts doctor
+# expect: status=ok or status=warnings (no critical errors)
+# (kos-lint retired 2026-05-10 M1; frontmatter check now via upstream
+# `frontmatter-guard` skill + `gbrain doctor`)
 
-# 5. Shim logs clean?
-tail -30 ~/Projects/jarvis-knowledge-os-v2/skills/kos-jarvis/gemini-embed-shim/shim.stderr.log
-# should be empty or just startup banner
+# 5. kos-compat-api logs clean?
+tail -30 ~/Projects/jarvis-knowledge-os-v2/server/kos-compat-api.stderr.log
+# should be empty or just startup banner. Native gateway means no shim
+# log to check post-M3 cutover.
 ```
 
 ### What to do if something breaks
@@ -195,10 +197,10 @@ distribution matches expectation, no duplicates merged-away.
 
 ### Pre-flight checks
 
-1. `skills/kos-jarvis/gemini-embed-shim/` is running (required for embedding
-   new stubs).
-2. `OPENAI_BASE_URL=http://127.0.0.1:7222/v1` and `OPENAI_API_KEY=stub-...`
-   available in the shell running the sweep.
+1. `GOOGLE_GENERATIVE_AI_API_KEY` available in the shell running the sweep
+   (native v0.27 Vercel AI SDK gateway path, post-M3 cutover 2026-05-10).
+2. `GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001` and
+   `GBRAIN_EMBEDDING_DIMENSIONS=1536` either in env or `~/.gbrain/config.json`.
 3. **External enrichment APIs**: check if Lucien has any of these configured:
    - Tavily / Brave / Exa (web search)
    - Crustdata / Proxycurl / People Data Labs (structured people data)

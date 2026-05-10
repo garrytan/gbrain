@@ -99,8 +99,8 @@ launchctl load ~/Library/LaunchAgents/com.jarvis.notion-poller.plist
 | NOTION_TOKEN missing | Logs `"NOTION_TOKEN not set, skipping run"`, exits 0 | Fill in `.env.local`, reload plist |
 | Integration not shared to DB | 404 from Notion API | Share integration: DB → Connections → Add connection |
 | kos-compat-api down | Connection refused | `launchctl kickstart -k gui/$(id -u)/com.jarvis.kos-compat-api` |
-| Gemini shim down | Ingest succeeds, embed fails | `launchctl kickstart -k gui/$(id -u)/com.jarvis.gemini-embed-shim` |
-| Rate limit | Notion 429 | Script respects `Retry-After`; if persistent, reduce poll interval |
+| Google embed quota | Embed fails with `exceeded your current quota` | Wait for next quota window (Google free-tier resets per-minute RPM + per-day TPM); rerun `gbrain embed --stale` to backfill |
+| Notion rate limit | 429 from Notion API | Script respects `Retry-After`; if persistent, reduce poll interval |
 
 ## Verification
 
