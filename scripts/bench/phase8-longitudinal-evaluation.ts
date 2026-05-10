@@ -47,8 +47,10 @@ export const PHASE_DEFINITIONS: readonly PhaseDefinition[] = [
     expected_benchmark_names: [
       'attempt_history',
       'decision_history',
+      'repeated_work_suppression',
       'resume_projection',
       'task_resume',
+      'trace_template_completeness',
     ],
     readiness_key: 'readiness_status',
     status_key: 'phase1_status',
