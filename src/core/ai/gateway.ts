@@ -43,7 +43,7 @@ const MAX_CHARS = 8000;
 const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
 const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
-const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6-20250929';
+const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
