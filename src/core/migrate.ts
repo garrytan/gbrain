@@ -1953,7 +1953,7 @@ export const MIGRATIONS: Migration[] = [
     handler: async (engine) => {
       // 1. ADD COLUMN x4. ALTER TABLE ADD COLUMN IF NOT EXISTS is idempotent.
       //    No defaults, all nullable, all metadata-only on PG 11+ and PGLite.
-      await engine.runMigration(38, `
+      await engine.runMigration(41, `
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS effective_date        TIMESTAMPTZ;
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS effective_date_source TEXT;
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS import_filename       TEXT;
@@ -1963,7 +1963,7 @@ export const MIGRATIONS: Migration[] = [
       // 2. Expression index for since/until date-range filters.
       if (engine.kind === 'postgres') {
         // Pre-drop any invalid index from a prior CONCURRENTLY failure.
-        await engine.runMigration(38, `
+        await engine.runMigration(41, `
           DO $$ BEGIN
             IF EXISTS (
               SELECT 1 FROM pg_index i
@@ -1974,12 +1974,12 @@ export const MIGRATIONS: Migration[] = [
             END IF;
           END $$;
         `);
-        await engine.runMigration(38, `
+        await engine.runMigration(41, `
           CREATE INDEX CONCURRENTLY IF NOT EXISTS pages_coalesce_date_idx
             ON pages ((COALESCE(effective_date, updated_at)));
         `);
       } else {
-        await engine.runMigration(38, `
+        await engine.runMigration(41, `
           CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
             ON pages ((COALESCE(effective_date, updated_at)));
         `);
