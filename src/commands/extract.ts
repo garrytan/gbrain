@@ -66,6 +66,7 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
   function walk(d: string) {
     for (const entry of readdirSync(d)) {
       if (entry.startsWith('.')) continue;
+      if (entry.startsWith('_')) continue;
       const full = join(d, entry);
       try {
         if (lstatSync(full).isDirectory()) {
