@@ -3,7 +3,10 @@ export type Phase1LatencyWorkloadName =
   | 'attempt_history'
   | 'decision_history';
 
-export type Phase1CorrectnessWorkloadName = 'resume_projection';
+export type Phase1CorrectnessWorkloadName =
+  | 'resume_projection'
+  | 'repeated_work_suppression'
+  | 'trace_template_completeness';
 export type Phase1WorkloadName = Phase1LatencyWorkloadName | Phase1CorrectnessWorkloadName;
 
 export interface Phase1LatencyWorkloadResult {
@@ -15,7 +18,7 @@ export interface Phase1LatencyWorkloadResult {
 }
 
 export interface Phase1CorrectnessWorkloadResult {
-  name: 'resume_projection';
+  name: Phase1CorrectnessWorkloadName;
   status: 'measured';
   unit: 'percent';
   success_rate: number;
@@ -32,6 +35,8 @@ export interface Phase1AcceptanceThresholds {
   attempt_history_p95_ms_max: number;
   decision_history_p95_ms_max: number;
   resume_projection_success_rate: number;
+  repeated_work_suppression_success_rate: number;
+  trace_template_completeness_success_rate: number;
   primary_improvement_threshold_pct: number;
 }
 
@@ -41,6 +46,8 @@ export interface Phase1AcceptanceCheck {
     | 'attempt_history_p95_ms'
     | 'decision_history_p95_ms'
     | 'resume_projection_success_rate'
+    | 'repeated_work_suppression_success_rate'
+    | 'trace_template_completeness_success_rate'
     | 'primary_improvement_threshold';
   status: Phase1AcceptanceStatus;
   actual?: number;
@@ -135,6 +142,14 @@ export const PHASE1_WORKLOADS: Phase1WorkloadDefinition[] = [
     name: 'resume_projection',
     unit: 'percent',
   },
+  {
+    name: 'repeated_work_suppression',
+    unit: 'percent',
+  },
+  {
+    name: 'trace_template_completeness',
+    unit: 'percent',
+  },
 ];
 
 export const PHASE1_ACCEPTANCE_THRESHOLDS: Phase1AcceptanceThresholds = {
@@ -142,6 +157,8 @@ export const PHASE1_ACCEPTANCE_THRESHOLDS: Phase1AcceptanceThresholds = {
   attempt_history_p95_ms_max: 5,
   decision_history_p95_ms_max: 5,
   resume_projection_success_rate: 100,
+  repeated_work_suppression_success_rate: 100,
+  trace_template_completeness_success_rate: 100,
   primary_improvement_threshold_pct: 10,
 };
 

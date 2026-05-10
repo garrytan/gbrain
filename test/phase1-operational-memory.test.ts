@@ -34,8 +34,10 @@ describe('phase1 operational-memory benchmark', () => {
     expect(names).toEqual([
       'attempt_history',
       'decision_history',
+      'repeated_work_suppression',
       'resume_projection',
       'task_resume',
+      'trace_template_completeness',
     ]);
 
     for (const workload of payload.workloads) {
@@ -52,6 +54,18 @@ describe('phase1 operational-memory benchmark', () => {
         expect(typeof workload.success_rate).toBe('number');
         expect(workload.success_rate).toBe(100);
       }
+
+      if (workload.name === 'repeated_work_suppression') {
+        expect(workload.unit).toBe('percent');
+        expect(typeof workload.success_rate).toBe('number');
+        expect(workload.success_rate).toBe(100);
+      }
+
+      if (workload.name === 'trace_template_completeness') {
+        expect(workload.unit).toBe('percent');
+        expect(typeof workload.success_rate).toBe('number');
+        expect(workload.success_rate).toBe(100);
+      }
     }
 
     expect(payload.acceptance).toHaveProperty('thresholds');
@@ -64,8 +78,10 @@ describe('phase1 operational-memory benchmark', () => {
       'attempt_history_p95_ms',
       'decision_history_p95_ms',
       'primary_improvement_threshold',
+      'repeated_work_suppression_success_rate',
       'resume_projection_success_rate',
       'task_resume_p95_ms',
+      'trace_template_completeness_success_rate',
     ]);
 
     const pendingCheck = payload.acceptance.checks.find((check: any) => check.name === 'primary_improvement_threshold');

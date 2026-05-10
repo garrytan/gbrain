@@ -15,6 +15,7 @@ import {
   PHASE1_WORKLOADS,
   type Phase1AcceptanceCheck,
   type Phase1AcceptanceReport,
+  type Phase1CorrectnessWorkloadName,
   type Phase1LatencyWorkloadName,
   type Phase1WorkloadResult,
 } from './phase1-workloads.ts';
@@ -51,6 +52,8 @@ try {
   workloads.push(await runLatencyWorkload(engine, 'attempt_history'));
   workloads.push(await runLatencyWorkload(engine, 'decision_history'));
   workloads.push(await runResumeProjectionWorkload(engine));
+  workloads.push(await runRepeatedWorkSuppressionWorkload(engine));
+  workloads.push(await runTraceTemplateCompletenessWorkload(engine));
 
   const payload = {
     generated_at: new Date().toISOString(),
@@ -145,7 +148,7 @@ async function runLatencyWorkload(
 
 async function runResumeProjectionWorkload(
   engine: BrainEngine,
-): Promise<Extract<Phase1WorkloadResult, { name: 'resume_projection' }>> {
+): Promise<Phase1CorrectnessWorkloadResult> {
   let passed = 0;
 
   for (const fixture of PHASE1_TASK_FIXTURES) {
@@ -163,6 +166,71 @@ async function runResumeProjectionWorkload(
 
   return {
     name: 'resume_projection',
+    status: 'measured',
+    unit: 'percent',
+    success_rate: roundTo((passed / PHASE1_TASK_FIXTURES.length) * 100, 2),
+  };
+}
+
+type Phase1CorrectnessWorkloadResult = Extract<Phase1WorkloadResult, { unit: 'percent' }>;
+
+async function runRepeatedWorkSuppressionWorkload(
+  engine: BrainEngine,
+): Promise<Phase1CorrectnessWorkloadResult> {
+  let passed = 0;
+
+  for (const fixture of PHASE1_TASK_FIXTURES) {
+    const resume = await buildTaskResumeCard(engine, fixture.thread.id);
+    const expectedWarnings = fixture.attempts
+      .filter((attempt) => attempt.outcome === 'failed')
+      .map((attempt) => `Do not repeat failed attempt: ${attempt.summary}`);
+
+    if (hasExactItems(resume.repeated_work_warnings, expectedWarnings)) {
+      passed += 1;
+    }
+  }
+
+  return {
+    name: 'repeated_work_suppression',
+    status: 'measured',
+    unit: 'percent',
+    success_rate: roundTo((passed / PHASE1_TASK_FIXTURES.length) * 100, 2),
+  };
+}
+
+async function runTraceTemplateCompletenessWorkload(
+  engine: BrainEngine,
+): Promise<Phase1CorrectnessWorkloadResult> {
+  let passed = 0;
+
+  for (const fixture of PHASE1_TASK_FIXTURES) {
+    const resume = await buildTaskResumeCard(engine, fixture.thread.id);
+    const template = resume.retrieval_trace_template;
+    const expectedRoute = ['task_thread', 'working_set', 'attempt_history', 'decision_history', 'retrieval_trace'];
+    const expectedSourceRefs = [
+      `task-thread:${fixture.thread.id}`,
+      `working-set:${fixture.thread.id}`,
+      ...fixture.attempts
+        .filter((attempt) => attempt.outcome === 'failed')
+        .map((attempt) => `task-attempt:${attempt.id}`),
+      ...fixture.decisions.map((decision) => `task-decision:${decision.id}`),
+      `retrieval_trace:${fixture.trace.id}`,
+    ];
+    const matches =
+      template.selected_intent === 'task_resume' &&
+      template.write_outcome === 'no_durable_write' &&
+      hasExactItems(template.route, expectedRoute) &&
+      hasExactItems(template.source_refs, expectedSourceRefs) &&
+      template.verification.includes('resume_card_built') &&
+      template.outcome.includes(fixture.thread.id);
+
+    if (matches) {
+      passed += 1;
+    }
+  }
+
+  return {
+    name: 'trace_template_completeness',
     status: 'measured',
     unit: 'percent',
     success_rate: roundTo((passed / PHASE1_TASK_FIXTURES.length) * 100, 2),
@@ -237,6 +305,30 @@ function evaluateAcceptance(
     threshold: {
       operator: '===',
       value: PHASE1_ACCEPTANCE_THRESHOLDS.resume_projection_success_rate,
+      unit: 'percent',
+    },
+  });
+
+  const repeatedWorkSuppression = getCorrectnessWorkload(workloads, 'repeated_work_suppression');
+  checks.push({
+    name: 'repeated_work_suppression_success_rate',
+    status: repeatedWorkSuppression.success_rate === PHASE1_ACCEPTANCE_THRESHOLDS.repeated_work_suppression_success_rate ? 'pass' : 'fail',
+    actual: repeatedWorkSuppression.success_rate,
+    threshold: {
+      operator: '===',
+      value: PHASE1_ACCEPTANCE_THRESHOLDS.repeated_work_suppression_success_rate,
+      unit: 'percent',
+    },
+  });
+
+  const traceTemplateCompleteness = getCorrectnessWorkload(workloads, 'trace_template_completeness');
+  checks.push({
+    name: 'trace_template_completeness_success_rate',
+    status: traceTemplateCompleteness.success_rate === PHASE1_ACCEPTANCE_THRESHOLDS.trace_template_completeness_success_rate ? 'pass' : 'fail',
+    actual: traceTemplateCompleteness.success_rate,
+    threshold: {
+      operator: '===',
+      value: PHASE1_ACCEPTANCE_THRESHOLDS.trace_template_completeness_success_rate,
       unit: 'percent',
     },
   });
@@ -351,8 +443,8 @@ function getLatencyWorkload(
 
 function getCorrectnessWorkload(
   workloads: Phase1WorkloadResult[],
-  name: 'resume_projection',
-): Extract<Phase1WorkloadResult, { name: 'resume_projection' }> {
+  name: Phase1CorrectnessWorkloadName,
+): Phase1CorrectnessWorkloadResult {
   const workload = workloads.find((entry) => entry.name === name);
   if (!workload || workload.unit !== 'percent') {
     throw new Error(`Missing correctness workload: ${name}`);
