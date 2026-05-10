@@ -496,7 +496,9 @@ rule blocks, and Claude stop-hook routing. The installed MCP smoke starts the
 configured command over stdio and verifies tool discovery, page lifecycle,
 search, and `route_memory_writeback` dry-run availability. If Codex or Claude is
 configured to call a different command, pass the same command to
-`--agent-command` and `MBRAIN_SMOKE_COMMAND`.
+`--agent-command` and `MBRAIN_SMOKE_COMMAND`. MCP registration checks accept the
+resolved executable path form of the same command, but fail registrations that
+are disabled or disconnected.
 
 For source-tree verification, run:
 

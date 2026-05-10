@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import {
   REQUIRED_AGENT_TOOLS,
   buildInstalledAgentReadinessReport,
+  collectInstalledAgentReadiness,
   parseAgentMcpRegistrationOutput,
   parseAgentRulesVersion,
   splitAgentCommand,
@@ -140,6 +144,109 @@ describe('installed-agent readiness service', () => {
     });
   });
 
+  test('accepts MCP registration that uses the resolved absolute command path', () => {
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources',
+      codexMcpRegistration: {
+        client: 'codex',
+        detected: true,
+        registered: true,
+        command: '/opt/homebrew/bin/mbrain serve',
+        source: 'codex mcp list',
+      },
+      expectedRulesVersion: '0.5.6',
+    });
+
+    expect(report.status).toBe('ok');
+    expect(report.checks.find((check) => check.name === 'codex_mcp_registration')).toMatchObject({
+      status: 'ok',
+    });
+  });
+
+  test('fails when Codex MCP registration is disabled', () => {
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources',
+      codexMcpRegistration: {
+        client: 'codex',
+        detected: true,
+        registered: true,
+        command: 'mbrain serve',
+        status: 'disabled',
+        source: 'codex mcp list',
+      },
+      expectedRulesVersion: '0.5.6',
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.checks.find((check) => check.name === 'codex_mcp_registration')).toMatchObject({
+      status: 'fail',
+    });
+  });
+
+  test('fails when Claude MCP registration reports a failed status', () => {
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources',
+      claudeMcpRegistration: {
+        client: 'claude',
+        detected: true,
+        registered: true,
+        command: 'mbrain serve',
+        status: 'Failed',
+        source: 'claude mcp get mbrain',
+      },
+      expectedRulesVersion: '0.5.6',
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.checks.find((check) => check.name === 'claude_mcp_registration')).toMatchObject({
+      status: 'fail',
+    });
+  });
+
+  test('accepts Claude MCP registration with decorated connected status', () => {
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandPath: '/opt/homebrew/bin/mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: rulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources',
+      claudeMcpRegistration: {
+        client: 'claude',
+        detected: true,
+        registered: true,
+        command: 'mbrain serve',
+        status: '\u2713 Connected',
+        source: 'claude mcp get mbrain',
+      },
+      expectedRulesVersion: '0.5.6',
+    });
+
+    expect(report.status).toBe('ok');
+    expect(report.checks.find((check) => check.name === 'claude_mcp_registration')).toMatchObject({
+      status: 'ok',
+    });
+  });
+
   test('parses Codex and Claude MCP registration output', () => {
     const codexOutput = [
       'Name          Command        Args   Env  Cwd  Status',
@@ -165,6 +272,68 @@ describe('installed-agent readiness service', () => {
     ].join('\n');
 
     expect(parseAgentMcpRegistrationOutput('codex', codexOutput)).toBe('bun run src/cli.ts serve');
+  });
+
+  test('collects failing MCP registration status from agent CLI output', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'mbrain-agent-readiness-'));
+    mkdirSync(join(home, '.codex'));
+    mkdirSync(join(home, '.claude'));
+
+    try {
+      const report = await collectInstalledAgentReadiness({
+        command: 'mbrain',
+        expectedRulesVersion: '0.5.6',
+        home,
+        resolveCommandPath: () => '/opt/homebrew/bin/mbrain',
+        runCommand: (command, args) => {
+          const invocation = [command, ...args].join(' ');
+          if (invocation === 'mbrain --version') {
+            return { stdout: 'mbrain 0.10.3', stderr: '', exitCode: 0 };
+          }
+          if (invocation === 'mbrain --tools-json') {
+            return {
+              stdout: JSON.stringify(REQUIRED_AGENT_TOOLS.map((name) => ({ name }))),
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          if (invocation === 'codex mcp list') {
+            return {
+              stdout: [
+                'Name          Command        Args   Env  Cwd  Status',
+                'mbrain        mbrain         serve  -    -    disabled',
+              ].join('\n'),
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          if (invocation === 'claude mcp get mbrain') {
+            return {
+              stdout: [
+                'mbrain:',
+                '  Scope: Local config (private to you in this project)',
+                '  Status: Failed',
+                '  Type: stdio',
+                '  Command: mbrain',
+                '  Args: serve',
+              ].join('\n'),
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          return { stdout: '', stderr: `Unexpected command: ${invocation}`, exitCode: 1 };
+        },
+      });
+
+      expect(report.checks.find((check) => check.name === 'codex_mcp_registration')).toMatchObject({
+        status: 'fail',
+      });
+      expect(report.checks.find((check) => check.name === 'claude_mcp_registration')).toMatchObject({
+        status: 'fail',
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('fails when route_memory_writeback is absent from MCP tools', () => {

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, realpathSync } from 'fs';
+import { basename, join } from 'path';
 
 export type InstalledAgentCheckStatus = 'ok' | 'warn' | 'fail';
 
@@ -18,6 +18,7 @@ export interface InstalledAgentMcpRegistration {
   detected: boolean;
   registered: boolean;
   command: string | null;
+  status?: string | null;
   source: string;
   error?: string;
 }
@@ -108,12 +109,14 @@ export function buildInstalledAgentReadinessReport(
       'Codex',
       input.codexMcpRegistration,
       input.command,
+      input.commandPath,
     )),
     ...optionalCheck(buildMcpRegistrationCheck(
       'claude_mcp_registration',
       'Claude',
       input.claudeMcpRegistration,
       input.command,
+      input.commandPath,
     )),
     codexPromptCheck,
     claudePromptCheck,
@@ -218,9 +221,7 @@ export function parseAgentMcpRegistrationOutput(
   client: InstalledAgentMcpRegistration['client'],
   stdout: string,
 ): string | null {
-  return client === 'codex'
-    ? parseCodexMcpListOutput(stdout)
-    : parseClaudeMcpGetOutput(stdout);
+  return parseAgentMcpRegistrationDetails(client, stdout)?.command ?? null;
 }
 
 function buildCommandVersionCheck(input: InstalledAgentReadinessInput): InstalledAgentCheck {
@@ -281,6 +282,7 @@ function buildMcpRegistrationCheck(
   label: string,
   registration: InstalledAgentMcpRegistration | null | undefined,
   expectedAgentCommand: string,
+  expectedAgentCommandPath?: string | null,
 ): InstalledAgentCheck | null {
   if (registration === undefined) return null;
   if (registration === null || !registration.detected) {
@@ -291,7 +293,8 @@ function buildMcpRegistrationCheck(
     };
   }
 
-  if (!registration.registered || !registration.command) {
+  const registrationCommand = registration.command;
+  if (!registration.registered || !registrationCommand) {
     return {
       name,
       status: 'fail',
@@ -299,27 +302,37 @@ function buildMcpRegistrationCheck(
     };
   }
 
-  const expectedServerCommand = `${expectedAgentCommand.trim()} serve`;
-  if (registrationCommandMatches(registration.command, expectedServerCommand)) {
+  const registrationStatusFailure = getRegistrationStatusFailure(registration);
+  if (registrationStatusFailure) {
     return {
       name,
-      status: 'ok',
-      message: `${label} MCP registration points to ${registration.command}`,
+      status: 'fail',
+      message: `${label} MCP registration status is ${registration.status}; expected ${registrationStatusFailure}`,
     };
   }
 
-  if (isDefaultMbrainServeCommand(registration.command)) {
+  const expectedServerCommands = buildExpectedServerCommands(expectedAgentCommand, expectedAgentCommandPath);
+  const expectedServerCommand = expectedServerCommands[0];
+  if (expectedServerCommands.some((expected) => registrationCommandMatches(registrationCommand, expected))) {
+    return {
+      name,
+      status: 'ok',
+      message: `${label} MCP registration points to ${registrationCommand}`,
+    };
+  }
+
+  if (isDefaultMbrainServeCommand(registrationCommand)) {
     return {
       name,
       status: 'warn',
-      message: `${label} MCP registration points to ${registration.command}; checked command is ${expectedServerCommand}`,
+      message: `${label} MCP registration points to ${registrationCommand}; checked command is ${expectedServerCommand}`,
     };
   }
 
   return {
     name,
     status: 'fail',
-    message: `${label} MCP registration points to ${registration.command}; expected ${expectedServerCommand}`,
+    message: `${label} MCP registration points to ${registrationCommand}; expected ${expectedServerCommand}`,
   };
 }
 
@@ -433,6 +446,11 @@ function summarizeStatus(checks: InstalledAgentCheck[]): InstalledAgentCheckStat
   return 'ok';
 }
 
+interface ParsedAgentMcpRegistration {
+  command: string;
+  status: string | null;
+}
+
 function optionalCheck(check: InstalledAgentCheck | null): InstalledAgentCheck[] {
   return check ? [check] : [];
 }
@@ -460,41 +478,62 @@ async function collectMcpRegistration(
     };
   }
 
-  const command = parseAgentMcpRegistrationOutput(client, result.stdout);
+  const parsed = parseAgentMcpRegistrationDetails(client, result.stdout);
   return {
     client,
     detected: true,
-    registered: command !== null,
-    command,
+    registered: parsed !== null,
+    command: parsed?.command ?? null,
+    status: parsed?.status ?? null,
     source,
   };
 }
 
-function parseCodexMcpListOutput(stdout: string): string | null {
+function parseAgentMcpRegistrationDetails(
+  client: InstalledAgentMcpRegistration['client'],
+  stdout: string,
+): ParsedAgentMcpRegistration | null {
+  return client === 'codex'
+    ? parseCodexMcpListOutput(stdout)
+    : parseClaudeMcpGetOutput(stdout);
+}
+
+function parseCodexMcpListOutput(stdout: string): ParsedAgentMcpRegistration | null {
   for (const line of stdout.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!/\bmbrain\b/.test(trimmed) || /^Name\s+/i.test(trimmed)) continue;
 
     const colonMatch = trimmed.match(/^mbrain\s*:\s*(.+)$/i);
     if (colonMatch) {
-      return cleanRegistrationCommand(colonMatch[1]);
+      return {
+        command: cleanRegistrationCommand(colonMatch[1]),
+        status: null,
+      };
     }
 
     const columns = trimmed.split(/\s{2,}/);
     if (columns[0] === 'mbrain' && columns[1]) {
       const args = columns[2] && columns[2] !== '-' ? columns[2] : '';
-      return cleanRegistrationCommand([columns[1], args].filter(Boolean).join(' '));
+      const status = columns[5] && columns[5] !== '-' ? columns[5] : null;
+      return {
+        command: cleanRegistrationCommand([columns[1], args].filter(Boolean).join(' ')),
+        status,
+      };
     }
   }
   return null;
 }
 
-function parseClaudeMcpGetOutput(stdout: string): string | null {
+function parseClaudeMcpGetOutput(stdout: string): ParsedAgentMcpRegistration | null {
   const command = stdout.match(/^\s*Command:\s*(.+)$/im)?.[1]?.trim();
   if (!command) return null;
 
   const args = stdout.match(/^\s*Args:\s*(.+)$/im)?.[1]?.trim();
-  return cleanRegistrationCommand([command, args].filter((part) => part && part !== '-').join(' '));
+  const status = stdout.match(/^\s*Status:\s*(.+)$/im)?.[1]?.trim() ?? null;
+  return {
+    command: cleanRegistrationCommand([command, args].filter((part) => part && part !== '-').join(' ')),
+    status,
+  };
 }
 
 function cleanRegistrationCommand(command: string): string {
@@ -508,11 +547,72 @@ function registrationCommandMatches(actual: string, expected: string): boolean {
   const actualParts = splitAgentCommand(cleanRegistrationCommand(actual));
   const expectedParts = splitAgentCommand(cleanRegistrationCommand(expected));
   return actualParts.length === expectedParts.length
-    && actualParts.every((part, index) => part === expectedParts[index]);
+    && actualParts.every((part, index) => (
+      index === 0
+        ? commandExecutableMatches(part, expectedParts[index])
+        : part === expectedParts[index]
+    ));
 }
 
 function isDefaultMbrainServeCommand(command: string): boolean {
   return registrationCommandMatches(command, 'mbrain serve');
+}
+
+function buildExpectedServerCommands(
+  expectedAgentCommand: string,
+  expectedAgentCommandPath?: string | null,
+): string[] {
+  const expectedCommands = [`${expectedAgentCommand.trim()} serve`];
+  const expectedParts = splitAgentCommand(expectedAgentCommand);
+  if (expectedAgentCommandPath && expectedParts.length > 0) {
+    expectedCommands.push([
+      expectedAgentCommandPath,
+      ...expectedParts.slice(1),
+      'serve',
+    ].join(' '));
+  }
+
+  return [...new Set(expectedCommands)];
+}
+
+function commandExecutableMatches(actual: string, expected: string): boolean {
+  if (actual === expected) return true;
+
+  const actualRealPath = realpathIfExisting(actual);
+  const expectedRealPath = realpathIfExisting(expected);
+  if (actualRealPath && expectedRealPath && actualRealPath === expectedRealPath) return true;
+
+  return basename(actual) === basename(expected);
+}
+
+function realpathIfExisting(path: string): string | null {
+  try {
+    return existsSync(path) ? realpathSync(path) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getRegistrationStatusFailure(registration: InstalledAgentMcpRegistration): string | null {
+  const status = normalizeRegistrationStatus(registration.status ?? '');
+  if (!status) return null;
+
+  if (registration.client === 'codex') {
+    return status === 'enabled' ? null : 'enabled';
+  }
+
+  return status === 'connected' || status === 'healthy'
+    ? null
+    : 'connected or healthy';
+}
+
+function normalizeRegistrationStatus(status: string): string {
+  return status
+    .trim()
+    .toLowerCase()
+    .replace(/^[^a-z0-9]+/, '')
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 function formatRegistrationError(registration: InstalledAgentMcpRegistration): string {
