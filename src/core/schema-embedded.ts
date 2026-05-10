@@ -350,17 +350,23 @@ CREATE INDEX IF NOT EXISTS idx_versions_page ON page_versions(page_id);
 -- ============================================================
 -- ingest_log
 -- ============================================================
--- NOTE (v0.18.0 Step 1): ingest_log.source_id is NOT added yet — lands
--- in v17 alongside the sync rewrite (Step 5), which starts writing
--- source-scoped entries.
+-- v0.31.2 (codex P1 #3): source_id added so facts:absorb logging
+-- (runFactsBackstop / writeFactsAbsorbLog) and doctor's
+-- facts_extraction_health check can scope failure counts per source.
+-- Migration v47 ALTERs existing brains; this inline definition covers
+-- fresh installs.
 CREATE TABLE IF NOT EXISTS ingest_log (
   id            SERIAL PRIMARY KEY,
+  source_id     TEXT    NOT NULL DEFAULT 'default',
   source_type   TEXT    NOT NULL,
   source_ref    TEXT    NOT NULL,
   pages_updated JSONB   NOT NULL DEFAULT '[]',
   summary       TEXT    NOT NULL DEFAULT '',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_ingest_log_source_type_created
+  ON ingest_log (source_id, source_type, created_at DESC);
 
 -- ============================================================
 -- config: brain-level settings

@@ -282,7 +282,11 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='subagent_messages') AS subagent_messages_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='subagent_messages' AND column_name='provider_id') AS subagent_provider_id_exists
+                WHERE table_schema='public' AND table_name='subagent_messages' AND column_name='provider_id') AS subagent_provider_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='ingest_log') AS ingest_log_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='ingest_log' AND column_name='source_id') AS ingest_log_source_id_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -301,6 +305,8 @@ export class PGLiteEngine implements BrainEngine {
       agent_name_exists: boolean;
       subagent_messages_exists: boolean;
       subagent_provider_id_exists: boolean;
+      ingest_log_exists: boolean;
+      ingest_log_source_id_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -320,12 +326,16 @@ export class PGLiteEngine implements BrainEngine {
     // PGLITE_SCHEMA_SQL references effective_date. Use effective_date_exists
     // as the proxy for the five v40 + v41 pages columns.
     const needsPagesRecency = probe.pages_exists && !probe.effective_date_exists;
+    // v0.31.2 (v47): idx_ingest_log_source_type_created in PGLITE_SCHEMA_SQL
+    // references source_id. Old brains have ingest_log without source_id;
+    // bootstrap adds the column before SCHEMA_SQL replay creates the index.
+    const needsIngestLogSourceId = probe.ingest_log_exists && !probe.ingest_log_source_id_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsChunksEmbeddingImage
         && !needsMcpLogBootstrap && !needsSubagentProviderId
-        && !needsPagesRecency) return;
+        && !needsPagesRecency && !needsIngestLogSourceId) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -440,6 +450,17 @@ export class PGLiteEngine implements BrainEngine {
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS effective_date_source TEXT;
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS import_filename       TEXT;
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS salience_touched_at   TIMESTAMPTZ;
+      `);
+    }
+
+    if (needsIngestLogSourceId) {
+      // v47 (ingest_log_source_id) adds source_id + the
+      // idx_ingest_log_source_type_created composite index.
+      // PGLITE_SCHEMA_SQL's CREATE INDEX (source_id, source_type, created_at)
+      // crashes without source_id. Bootstrap adds the column with NOT NULL
+      // DEFAULT 'default' so the index can build cleanly.
+      await this.db.exec(`
+        ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT 'default';
       `);
     }
   }
