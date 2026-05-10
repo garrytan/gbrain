@@ -923,6 +923,26 @@ const list_pages: Operation = {
 
 // --- Search ---
 
+async function resolveSourceFilter(
+  engine: BrainEngine,
+  source: unknown,
+): Promise<string | undefined> {
+  if (source === undefined || source === null || source === '') return undefined;
+  if (typeof source !== 'string') {
+    throw new OperationError('invalid_source', `'source' must be a string`);
+  }
+  const { listSources } = await import('./sources-ops.ts');
+  const known = await listSources(engine, {});
+  if (!known.some(s => s.id === source)) {
+    const available = known.map(s => s.id).join(', ') || '(none registered)';
+    throw new OperationError(
+      'unknown_source',
+      `unknown source '${source}'. Available: ${available}`,
+    );
+  }
+  return source;
+}
+
 const search: Operation = {
   name: 'search',
   description: SEARCH_DESCRIPTION,
@@ -930,13 +950,16 @@ const search: Operation = {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    source: { type: 'string', description: 'Filter to a single registered source id (see `gbrain sources list`). Throws unknown_source if the id is not registered.' },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
+    const sourceId = await resolveSourceFilter(ctx.engine, p.source);
     const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
+      sourceId,
     });
     const results = dedupResults(raw);
     const latency_ms = Date.now() - startedAt;
@@ -1025,6 +1048,7 @@ const query: Operation = {
       description:
         "v0.29.1 — filter to effective_date <= this. Same format as `since`. Replaces deprecated `beforeDate`. YYYY-MM-DD lands at end-of-day.",
     },
+    source: { type: 'string', description: 'Filter to a single registered source id (see `gbrain sources list`). Throws unknown_source if the id is not registered.' },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -1033,6 +1057,7 @@ const query: Operation = {
     const queryText = p.query as string | undefined;
     const imageData = p.image as string | undefined;
     const imageMime = (p.image_mime as string) || 'image/jpeg';
+    const sourceId = await resolveSourceFilter(ctx.engine, p.source);
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct
@@ -1046,6 +1071,7 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
+        sourceId,
       });
       return results;
     }
@@ -1073,6 +1099,7 @@ const query: Operation = {
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
       since: typeof p.since === 'string' ? p.since : undefined,
       until: typeof p.until === 'string' ? p.until : undefined,
+      sourceId,
       onMeta: (m) => { capturedMeta = m; },
     });
     const latency_ms = Date.now() - startedAt;

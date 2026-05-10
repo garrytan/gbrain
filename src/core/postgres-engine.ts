@@ -787,6 +787,11 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    let sourceIdClause = '';
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      sourceIdClause = `AND p.source_id = $${params.length}`;
+    }
     // v0.27.0: date filtering support
     let afterDateClause = '';
     if (opts?.afterDate) {
@@ -826,6 +831,7 @@ export class PostgresEngine implements BrainEngine {
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${languageClause}
           ${symbolKindClause}
+          ${sourceIdClause}
           ${afterDateClause}
           ${beforeDateClause}
           ${hardExcludeClause}
@@ -913,6 +919,11 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    let sourceIdClause = '';
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      sourceIdClause = `AND p.source_id = $${params.length}`;
+    }
     // v0.27.0: date filtering support
     let afterDateClause = '';
     if (opts?.afterDate) {
@@ -947,6 +958,7 @@ export class PostgresEngine implements BrainEngine {
         ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
         ${languageClause}
         ${symbolKindClause}
+        ${sourceIdClause}
         ${afterDateClause}
         ${beforeDateClause}
         ${hardExcludeClause}
@@ -1014,6 +1026,11 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    let sourceIdClause = '';
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      sourceIdClause = `AND p.source_id = $${params.length}`;
+    }
     // v0.27.0: date filtering support
     let afterDateClause = '';
     if (opts?.afterDate) {
@@ -1057,6 +1074,7 @@ export class PostgresEngine implements BrainEngine {
           ${excludeSlugsClause}
           ${languageClause}
           ${symbolKindClause}
+          ${sourceIdClause}
           ${afterDateClause}
           ${beforeDateClause}
           ${hardExcludeClause}

@@ -733,6 +733,10 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
     }
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
+    }
     // v0.29.1 — since/until date filter (Postgres parity, codex pass-1 #10).
     // Reads against COALESCE(effective_date, updated_at) so date filtering
     // matches user intent (a meeting was on its event_date, not when it
@@ -821,6 +825,10 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
     }
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
+    }
     // v0.29.1 since/until parity (codex pass-1 #10).
     if (opts?.afterDate) {
       params.push(opts.afterDate);
@@ -889,6 +897,10 @@ export class PGLiteEngine implements BrainEngine {
     if (opts?.symbolKind) {
       params.push(opts.symbolKind);
       extraFilter += ` AND cc.symbol_type = $${params.length}`;
+    }
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
     }
     // v0.29.1 since/until parity (codex pass-1 #10). Filter applied INSIDE
     // the inner CTE so HNSW's candidate pool already excludes out-of-range
