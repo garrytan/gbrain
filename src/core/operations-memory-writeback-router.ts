@@ -94,10 +94,35 @@ function optionalStringArray(
   value: unknown,
 ): string[] | undefined {
   if (value == null) return undefined;
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
+  if (Array.isArray(value)) {
+    if (!value.every((entry) => typeof entry === 'string')) {
+      throw invalidParams(deps, `${field} must be an array of strings`);
+    }
+    return value;
+  }
+  if (typeof value !== 'string') {
     throw invalidParams(deps, `${field} must be an array of strings`);
   }
-  return value;
+
+  const trimmed = value.trim();
+  if (trimmed === '') return [];
+  if (trimmed.startsWith('[')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw invalidParams(deps, `${field} must be valid JSON when passed as an array string`);
+    }
+    if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === 'string')) {
+      throw invalidParams(deps, `${field} must be an array of strings`);
+    }
+    return parsed;
+  }
+
+  return trimmed
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }
 
 function optionalNumber(

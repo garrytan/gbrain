@@ -61,6 +61,33 @@ describe('memory writeback router operation', () => {
     expect(result.created_candidate).toBeUndefined();
   });
 
+  test('accepts source_refs as a CLI JSON array string', async () => {
+    const engine = new Proxy({}, {
+      get() {
+        throw new Error('route_memory_writeback planning must not read the engine');
+      },
+    }) as unknown as OperationContext['engine'];
+
+    const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+      content: 'The router should accept source_refs from CLI JSON strings.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: JSON.stringify(sourceRefs),
+    }) as any;
+
+    expect(result.decision).toBe('create_candidate');
+    expect(result.candidate_input.source_refs).toEqual(sourceRefs);
+  });
+
+  test('rejects invalid source_refs JSON array strings', async () => {
+    const engine = {} as unknown as OperationContext['engine'];
+
+    await expect(operationsByName.route_memory_writeback.handler(ctx(engine), {
+      content: 'This source ref shape is invalid.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: '[123]',
+    })).rejects.toThrow(/source_refs/);
+  });
+
   test('dry run ignores apply true and does not create a candidate', async () => {
     await withEngine(async (engine) => {
       const result = await operationsByName.route_memory_writeback.handler(ctx(engine, true), {
