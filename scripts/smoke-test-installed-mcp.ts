@@ -15,6 +15,14 @@ import { splitAgentCommand } from '../src/core/services/installed-agent-readines
 
 const decoder = new TextDecoder();
 
+export const WRITEBACK_SMOKE_ARGUMENTS = {
+  content: 'Installed MCP smoke confirms route_memory_writeback availability.',
+  evidence_kind: 'direct_user_statement',
+  source_refs: ['Source: installed MCP smoke test, direct tool call, 2026-05-10 00:00 KST'],
+  dry_run: true,
+  apply: true,
+} as const;
+
 function runCli(parts: string[], args: string[], env: Record<string, string>): void {
   const result = Bun.spawnSync({
     cmd: [...parts, ...args],
@@ -46,149 +54,149 @@ function parseMcpText<T = any>(result: any): T {
   return JSON.parse(text) as T;
 }
 
-const commandText = process.env.MBRAIN_SMOKE_COMMAND || 'mbrain';
-const commandParts = splitAgentCommand(commandText);
-if (commandParts.length === 0) {
-  console.error('MBRAIN_SMOKE_COMMAND cannot be empty.');
-  process.exit(1);
-}
+export async function main(): Promise<void> {
+  const commandText = process.env.MBRAIN_SMOKE_COMMAND || 'mbrain';
+  const commandParts = splitAgentCommand(commandText);
+  if (commandParts.length === 0) {
+    console.error('MBRAIN_SMOKE_COMMAND cannot be empty.');
+    process.exit(1);
+  }
 
-const rootDir = mkdtempSync(join(tmpdir(), 'mbrain-installed-mcp-smoke-'));
-const homeDir = join(rootDir, 'home');
-const configDir = join(homeDir, '.mbrain');
-const dbPath = join(configDir, 'brain.db');
-const env: Record<string, string> = {
-  ...process.env,
-  HOME: homeDir,
-  MBRAIN_CONFIG_DIR: configDir,
-  MBRAIN_DATABASE_PATH: dbPath,
-  DATABASE_URL: 'postgresql://mbrain:ignored@127.0.0.1:9/not_used',
-  MBRAIN_DATABASE_URL: 'postgresql://mbrain:ignored@127.0.0.1:9/not_used',
-  OPENAI_API_KEY: '',
-  ANTHROPIC_API_KEY: '',
-};
+  const rootDir = mkdtempSync(join(tmpdir(), 'mbrain-installed-mcp-smoke-'));
+  const homeDir = join(rootDir, 'home');
+  const configDir = join(homeDir, '.mbrain');
+  const dbPath = join(configDir, 'brain.db');
+  const env: Record<string, string> = {
+    ...process.env,
+    HOME: homeDir,
+    MBRAIN_CONFIG_DIR: configDir,
+    MBRAIN_DATABASE_PATH: dbPath,
+    DATABASE_URL: 'postgresql://mbrain:ignored@127.0.0.1:9/not_used',
+    MBRAIN_DATABASE_URL: 'postgresql://mbrain:ignored@127.0.0.1:9/not_used',
+    OPENAI_API_KEY: '',
+    ANTHROPIC_API_KEY: '',
+  };
 
-let client: Client | null = null;
+  let client: Client | null = null;
 
-try {
-  console.log(`Using command: ${commandText}`);
-  runCli(commandParts, ['init', '--local', '--json'], env);
+  try {
+    console.log(`Using command: ${commandText}`);
+    runCli(commandParts, ['init', '--local', '--json'], env);
 
-  const transport = new StdioClientTransport({
-    command: commandParts[0],
-    args: [...commandParts.slice(1), 'serve'],
-    env,
-    stderr: 'pipe',
-  });
+    const transport = new StdioClientTransport({
+      command: commandParts[0],
+      args: [...commandParts.slice(1), 'serve'],
+      env,
+      stderr: 'pipe',
+    });
 
-  client = new Client(
-    { name: 'mbrain-installed-smoke', version: '0.0.0' },
-    { capabilities: {} },
-  );
-  await client.connect(transport);
+    client = new Client(
+      { name: 'mbrain-installed-smoke', version: '0.0.0' },
+      { capabilities: {} },
+    );
+    await client.connect(transport);
 
-  const tools = await client.listTools();
-  const toolNames = new Set(tools.tools.map(tool => tool.name));
-  for (const name of [
-    'get_health',
-    'put_page',
-    'get_page',
-    'search',
-    'delete_page',
-    'retrieve_context',
-    'read_context',
-    'record_retrieval_trace',
-    'route_memory_writeback',
-  ]) {
-    if (!toolNames.has(name)) {
-      throw new Error(`tools/list did not include ${name}`);
+    const tools = await client.listTools();
+    const toolNames = new Set(tools.tools.map(tool => tool.name));
+    for (const name of [
+      'get_health',
+      'put_page',
+      'get_page',
+      'search',
+      'delete_page',
+      'retrieve_context',
+      'read_context',
+      'record_retrieval_trace',
+      'route_memory_writeback',
+    ]) {
+      if (!toolNames.has(name)) {
+        throw new Error(`tools/list did not include ${name}`);
+      }
+    }
+    console.log(`tools/list: ${tools.tools.length} tools`);
+
+    const health = parseMcpText<any>(await client.callTool({ name: 'get_health', arguments: {} }));
+    if (!health || typeof health !== 'object') {
+      throw new Error('get_health did not return an object');
+    }
+    console.log('get_health: ok');
+
+    const writeback = parseMcpText<any>(await client.callTool({
+      name: 'route_memory_writeback',
+      arguments: WRITEBACK_SMOKE_ARGUMENTS,
+    }));
+    if (writeback?.dry_run !== true) {
+      throw new Error(`route_memory_writeback did not return dry_run true: ${JSON.stringify(writeback)}`);
+    }
+    console.log('route_memory_writeback: dry-run ok');
+
+    const slug = 'smoke/install-check';
+    const content = [
+      '---',
+      'title: Install Check',
+      'type: note',
+      '---',
+      '',
+      'Install smoke check. [Source: installed MCP smoke test, direct tool call, 2026-04-30 00:00 KST]',
+    ].join('\n');
+
+    parseMcpText(await client.callTool({
+      name: 'put_page',
+      arguments: { slug, content },
+    }));
+
+    const page = parseMcpText<any>(await client.callTool({
+      name: 'get_page',
+      arguments: { slug },
+    }));
+    if (page.slug !== slug || page.title !== 'Install Check') {
+      throw new Error(`get_page returned unexpected page: ${JSON.stringify(page)}`);
+    }
+    console.log('page lifecycle: write/read ok');
+
+    const searchResults = parseMcpText<any[]>(await client.callTool({
+      name: 'search',
+      arguments: { query: 'Install smoke check' },
+    }));
+    if (!Array.isArray(searchResults)) {
+      throw new Error('search did not return an array');
+    }
+    const foundSmokePage = searchResults.some((entry: any) =>
+      entry?.slug === slug ||
+      entry?.page?.slug === slug ||
+      entry?.title === 'Install Check'
+    );
+    if (!foundSmokePage) {
+      throw new Error(`search did not return ${slug}`);
+    }
+    console.log(`search: ${searchResults.length} result(s)`);
+
+    parseMcpText(await client.callTool({
+      name: 'delete_page',
+      arguments: { slug },
+    }));
+    console.log('cleanup: deleted smoke page');
+
+    await client.close();
+    client = null;
+    console.log('Installed MCP smoke test passed.');
+  } catch (e) {
+    try {
+      await client?.close();
+    } catch {
+      // Ignore cleanup failures so the root error remains visible.
+    }
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exitCode = 1;
+  } finally {
+    if (!process.env.MBRAIN_SMOKE_KEEP_TEMP) {
+      rmSync(rootDir, { recursive: true, force: true });
+    } else {
+      console.error(`Keeping temp directory: ${rootDir}`);
     }
   }
-  console.log(`tools/list: ${tools.tools.length} tools`);
+}
 
-  const health = parseMcpText<any>(await client.callTool({ name: 'get_health', arguments: {} }));
-  if (!health || typeof health !== 'object') {
-    throw new Error('get_health did not return an object');
-  }
-  console.log('get_health: ok');
-
-  const writeback = parseMcpText<any>(await client.callTool({
-    name: 'route_memory_writeback',
-    arguments: {
-      content: 'Installed MCP smoke confirms route_memory_writeback availability.',
-      evidence_kind: 'direct_user_statement',
-      source_refs: ['Source: installed MCP smoke test, direct tool call, 2026-05-10 00:00 KST'],
-      dry_run: true,
-      apply: true,
-    },
-  }));
-  if (writeback?.dry_run !== true) {
-    throw new Error(`route_memory_writeback did not return dry_run true: ${JSON.stringify(writeback)}`);
-  }
-  console.log('route_memory_writeback: dry-run ok');
-
-  const slug = 'smoke/install-check';
-  const content = [
-    '---',
-    'title: Install Check',
-    'type: note',
-    '---',
-    '',
-    'Install smoke check. [Source: installed MCP smoke test, direct tool call, 2026-04-30 00:00 KST]',
-  ].join('\n');
-
-  parseMcpText(await client.callTool({
-    name: 'put_page',
-    arguments: { slug, content },
-  }));
-
-  const page = parseMcpText<any>(await client.callTool({
-    name: 'get_page',
-    arguments: { slug },
-  }));
-  if (page.slug !== slug || page.title !== 'Install Check') {
-    throw new Error(`get_page returned unexpected page: ${JSON.stringify(page)}`);
-  }
-  console.log('page lifecycle: write/read ok');
-
-  const searchResults = parseMcpText<any[]>(await client.callTool({
-    name: 'search',
-    arguments: { query: 'Install smoke check' },
-  }));
-  if (!Array.isArray(searchResults)) {
-    throw new Error('search did not return an array');
-  }
-  const foundSmokePage = searchResults.some((entry: any) =>
-    entry?.slug === slug ||
-    entry?.page?.slug === slug ||
-    entry?.title === 'Install Check'
-  );
-  if (!foundSmokePage) {
-    throw new Error(`search did not return ${slug}`);
-  }
-  console.log(`search: ${searchResults.length} result(s)`);
-
-  parseMcpText(await client.callTool({
-    name: 'delete_page',
-    arguments: { slug },
-  }));
-  console.log('cleanup: deleted smoke page');
-
-  await client.close();
-  client = null;
-  console.log('Installed MCP smoke test passed.');
-} catch (e) {
-  try {
-    await client?.close();
-  } catch {
-    // Ignore cleanup failures so the root error remains visible.
-  }
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exitCode = 1;
-} finally {
-  if (!process.env.MBRAIN_SMOKE_KEEP_TEMP) {
-    rmSync(rootDir, { recursive: true, force: true });
-  } else {
-    console.error(`Keeping temp directory: ${rootDir}`);
-  }
+if (import.meta.main) {
+  await main();
 }

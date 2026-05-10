@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'bun';
-import { readFileSync } from 'fs';
+import { WRITEBACK_SMOKE_ARGUMENTS } from '../scripts/smoke-test-installed-mcp.ts';
 
 describe('installed MCP smoke script', () => {
   test('passes against the source CLI command', () => {
@@ -23,10 +23,7 @@ describe('installed MCP smoke script', () => {
   });
 
   test('route_memory_writeback smoke call exercises dry-run apply suppression', () => {
-    const script = readFileSync(import.meta.dir + '/../scripts/smoke-test-installed-mcp.ts', 'utf8');
-    const writebackCall = script.match(/name: 'route_memory_writeback'[\s\S]*?arguments: \{([\s\S]*?)\n    \},/);
-
-    expect(writebackCall?.[1]).toContain('dry_run: true');
-    expect(writebackCall?.[1]).toContain('apply: true');
+    expect(WRITEBACK_SMOKE_ARGUMENTS.dry_run).toBe(true);
+    expect(WRITEBACK_SMOKE_ARGUMENTS.apply).toBe(true);
   });
 });
