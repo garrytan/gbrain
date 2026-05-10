@@ -107,7 +107,14 @@ export function routeMemoryWriteback(
     });
   }
 
-  if (isCanonicalAllowed(input, sourceRefs, targetObjectType, targetObjectId, sensitivity)) {
+  const canonicalWriteRequirements = canonicalWriteRequirementsFor(
+    input,
+    sourceRefs,
+    targetObjectType,
+    targetObjectId,
+    sensitivity,
+  );
+  if (canonicalWriteRequirements) {
     return {
       ...baseResult(input, {
         decision: 'canonical_write_allowed',
@@ -118,15 +125,10 @@ export function routeMemoryWriteback(
         sensitivity,
         candidate_type: null,
         extraction_kind: null,
-        target_object_type: targetObjectType,
-        target_object_id: targetObjectId,
+        target_object_type: canonicalWriteRequirements.target_object_type,
+        target_object_id: canonicalWriteRequirements.target_object_id,
       }),
-      canonical_write_requirements: {
-        source_refs: sourceRefs,
-        target_object_type: targetObjectType,
-        target_object_id: targetObjectId,
-        sensitivity,
-      },
+      canonical_write_requirements: canonicalWriteRequirements,
     };
   }
 
@@ -257,20 +259,28 @@ function normalizeScore(value: number | undefined, fallback: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function isCanonicalAllowed(
+function canonicalWriteRequirementsFor(
   input: RouteMemoryWritebackInput,
   sourceRefs: string[],
   targetObjectType: MemoryCandidateTargetObjectType | null,
   targetObjectId: string | null,
   sensitivity: MemoryCandidateSensitivity,
-): targetObjectType is Exclude<MemoryCandidateTargetObjectType, 'other'> {
-  return input.allow_canonical_write === true
-    && (input.evidence_kind === 'direct_user_statement' || input.evidence_kind === 'source_extracted')
-    && sourceRefs.length > 0
-    && !!targetObjectType
-    && targetObjectType !== 'other'
-    && !!targetObjectId
-    && sensitivity !== 'unknown';
+): RouteMemoryWritebackResult['canonical_write_requirements'] | null {
+  if (input.allow_canonical_write !== true) return null;
+  if (input.evidence_kind !== 'direct_user_statement' && input.evidence_kind !== 'source_extracted') {
+    return null;
+  }
+  if (sourceRefs.length === 0) return null;
+  if (!targetObjectType || targetObjectType === 'other') return null;
+  if (!targetObjectId) return null;
+  if (sensitivity === 'unknown') return null;
+
+  return {
+    source_refs: sourceRefs,
+    target_object_type: targetObjectType,
+    target_object_id: targetObjectId,
+    sensitivity,
+  };
 }
 
 function canonicalMissingRequirements(
