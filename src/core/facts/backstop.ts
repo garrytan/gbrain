@@ -164,6 +164,33 @@ export async function runFactsBackstop(
 }
 
 /**
+ * Public pipeline entry-point — extract → resolve → dedup → insert.
+ *
+ * Used by:
+ *   - runFactsBackstop (above) — wraps with eligibility + kill-switch
+ *     gates and queue-mode dispatch.
+ *   - extract_facts MCP op — calls directly with raw turn_text. The op
+ *     is an explicit user request, not a page-write hook, so eligibility
+ *     doesn't apply (no slug, no PageType, no frontmatter). Operator-
+ *     level visibility filter (private vs world) and kill-switch gating
+ *     are the op's responsibility.
+ *
+ * Inputs come from extractFactsFromTurn — the LLM extractor — but this
+ * function itself is shape-agnostic: it takes a `turnText` and the same
+ * FactsBackstopCtx used elsewhere. AbortError re-thrown; gateway / parse
+ * / DB errors bubble (caller decides whether to absorb).
+ */
+export async function runFactsPipeline(
+  turnText: string,
+  ctx: FactsBackstopCtx,
+): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[] }> {
+  return runPipelineWithBody({
+    turnText,
+    isDreamGenerated: false,
+  }, ctx, ctx.abortSignal);
+}
+
+/**
  * Internal pipeline: extract → resolve → dedup → insert. Pure work
  * (no eligibility/kill-switch gates — those run upstream in the
  * exported entry point).
@@ -177,6 +204,26 @@ async function runPipeline(
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[] }> {
+  return runPipelineWithBody(
+    {
+      turnText: parsedPage.compiled_truth,
+      isDreamGenerated: false,  // eligibility check already rejected dream pages
+    },
+    ctx,
+    abortSignal,
+  );
+}
+
+/**
+ * Inner pipeline body. Shared between runFactsBackstop (page-shape entry)
+ * and runFactsPipeline (raw turn-text entry). Eligibility + kill-switch
+ * are upstream of this; we just extract → resolve → dedup → insert.
+ */
+async function runPipelineWithBody(
+  input: { turnText: string; isDreamGenerated: boolean },
+  ctx: FactsBackstopCtx,
+  abortSignal?: AbortSignal,
+): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[] }> {
   const { extractFactsFromTurn } = await import('./extract.ts');
   const { resolveEntitySlug } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
@@ -186,11 +233,11 @@ async function runPipeline(
   }
 
   const facts = await extractFactsFromTurn({
-    turnText: parsedPage.compiled_truth,
+    turnText: input.turnText,
     sessionId: ctx.sessionId,
     entityHints: ctx.entityHints,
     source: ctx.source,
-    isDreamGenerated: false,  // eligibility check already rejected dream pages
+    isDreamGenerated: input.isDreamGenerated,
     engine: ctx.engine,
     abortSignal,
     model: ctx.model,

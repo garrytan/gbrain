@@ -2368,8 +2368,8 @@ const extract_facts: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'extract_facts' };
-    const { extractFactsFromTurn, isFactsExtractionEnabled } = await import('./facts/extract.ts');
-    const { resolveEntitySlug } = await import('./entities/resolve.ts');
+    const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
+    const { runFactsPipeline } = await import('./facts/backstop.ts');
 
     // D15: kill switch. Operator can disable facts extraction across the
     // brain without binary downgrade by setting `facts.extraction_enabled`
@@ -2379,79 +2379,33 @@ const extract_facts: Operation = {
       return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'extraction_disabled' };
     }
 
-    const sourceId = ctx.sourceId ?? 'default';
-    const visibility = p.visibility === 'world' ? 'world' : 'private';
+    // v0.31.2: routed through the shared pipeline (PR1 commit 9). Anti-loop
+    // dream-generated check stays at the op layer because extract_facts is
+    // an explicit user op without a parsedPage — the eligibility predicate
+    // doesn't apply, but the dream-generated guard still does.
+    if (p.is_dream_generated === true) {
+      return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'dream_generated' };
+    }
 
-    const facts = await extractFactsFromTurn({
-      turnText: p.turn_text as string,
+    const sourceId = ctx.sourceId ?? 'default';
+    const visibility: 'private' | 'world' = p.visibility === 'world' ? 'world' : 'private';
+
+    const r = await runFactsPipeline(p.turn_text as string, {
+      engine: ctx.engine,
+      sourceId,
       sessionId: typeof p.session_id === 'string' ? p.session_id : null,
       entityHints: Array.isArray(p.entity_hints) ? (p.entity_hints as string[]) : undefined,
       source: 'mcp:extract_facts',
-      isDreamGenerated: p.is_dream_generated === true,
-      engine: ctx.engine,
+      visibility,
+      mode: 'inline',  // declarative; runFactsPipeline always inline
     });
 
-    let inserted = 0;
-    let duplicate = 0;
-    let superseded = 0;
-    const fact_ids: number[] = [];
-
-    for (const f of facts) {
-      const slug = f.entity_slug
-        ? await resolveEntitySlug(ctx.engine, sourceId, f.entity_slug)
-        : null;
-
-      const candidates = slug
-        ? await ctx.engine.findCandidateDuplicates(sourceId, slug, f.fact, {
-            embedding: f.embedding ?? undefined,
-            k: 5,
-          })
-        : [];
-
-      // Cosine fast-path inline for engine consistency. The classifier path
-      // is exercised by the offline `classifyAgainstCandidates` helper which
-      // ops can call when they want richer dedup; for the MCP op we ship
-      // with the cheap path + recency-only fallback to keep per-turn latency
-      // bounded. Tests pin the cheap-path threshold.
-      let matchedExisting: number | null = null;
-      if (f.embedding && candidates.length > 0) {
-        const { cosineSimilarity } = await import('./facts/classify.ts');
-        let topId: number | null = null;
-        let topScore = -1;
-        for (const c of candidates) {
-          if (!c.embedding) continue;
-          const s = cosineSimilarity(f.embedding, c.embedding);
-          if (s > topScore) { topScore = s; topId = c.id; }
-        }
-        if (topId !== null && topScore >= 0.95) matchedExisting = topId;
-      }
-
-      if (matchedExisting !== null) {
-        duplicate += 1;
-        fact_ids.push(matchedExisting);
-        continue;
-      }
-
-      const result = await ctx.engine.insertFact(
-        {
-          fact: f.fact,
-          kind: f.kind,
-          entity_slug: slug,
-          visibility,
-          source: f.source,
-          source_session: f.source_session ?? null,
-          confidence: f.confidence,
-          embedding: f.embedding ?? null,
-        },
-        { source_id: sourceId },
-      );
-      fact_ids.push(result.id);
-      if (result.status === 'inserted') inserted += 1;
-      else if (result.status === 'duplicate') duplicate += 1;
-      else superseded += 1;
-    }
-
-    return { inserted, duplicate, superseded, fact_ids };
+    return {
+      inserted: r.inserted,
+      duplicate: r.duplicate,
+      superseded: r.superseded,
+      fact_ids: r.fact_ids,
+    };
   },
 };
 
