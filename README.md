@@ -491,11 +491,12 @@ MBRAIN_SMOKE_COMMAND=mbrain bun run scripts/smoke-test-installed-mcp.ts
 ```
 
 `mbrain doctor --agent` checks the configured brain plus the installed command,
-required MCP tools, prompt rule blocks, and Claude stop-hook routing. The
-installed MCP smoke starts the configured command over stdio and verifies tool
-discovery, page lifecycle, search, and `route_memory_writeback` dry-run
-availability. If Codex or Claude is configured to call a different command,
-pass the same command to `--agent-command` and `MBRAIN_SMOKE_COMMAND`.
+resolved command path, Codex/Claude MCP registration, required MCP tools, prompt
+rule blocks, and Claude stop-hook routing. The installed MCP smoke starts the
+configured command over stdio and verifies tool discovery, page lifecycle,
+search, and `route_memory_writeback` dry-run availability. If Codex or Claude is
+configured to call a different command, pass the same command to
+`--agent-command` and `MBRAIN_SMOKE_COMMAND`.
 
 For source-tree verification, run:
 
@@ -503,6 +504,10 @@ For source-tree verification, run:
 bun run src/cli.ts doctor --agent --agent-command "bun run src/cli.ts" --json
 MBRAIN_SMOKE_COMMAND="bun run src/cli.ts" bun run scripts/smoke-test-installed-mcp.ts
 ```
+
+This source-tree check may warn when installed clients are registered to the
+global `mbrain serve` command; use the default `mbrain doctor --agent --json` to
+verify the installed command that Codex and Claude actually call.
 
 Remote MCP remains a managed/Postgres-oriented path. See `docs/mcp/DEPLOY.md`
 and the other guides in `docs/mcp/`.

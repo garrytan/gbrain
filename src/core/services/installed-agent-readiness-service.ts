@@ -13,13 +13,25 @@ export interface InstalledAgentTool {
   name: string;
 }
 
+export interface InstalledAgentMcpRegistration {
+  client: 'codex' | 'claude';
+  detected: boolean;
+  registered: boolean;
+  command: string | null;
+  source: string;
+  error?: string;
+}
+
 export interface InstalledAgentReadinessInput {
   command: string;
+  commandPath?: string | null;
   commandVersion: string | null;
   tools: InstalledAgentTool[];
   codexPrompt: string | null;
   claudePrompt: string | null;
   claudeStopHook: string | null;
+  codexMcpRegistration?: InstalledAgentMcpRegistration | null;
+  claudeMcpRegistration?: InstalledAgentMcpRegistration | null;
   expectedRulesVersion: string;
   expectedRulesContent?: string | null;
 }
@@ -39,6 +51,10 @@ export type InstalledAgentCommandRunner = (
   command: string,
   args: string[],
 ) => InstalledAgentCommandResult | Promise<InstalledAgentCommandResult>;
+
+export type InstalledAgentCommandPathResolver = (
+  command: string,
+) => string | null | Promise<string | null>;
 
 export const REQUIRED_AGENT_TOOLS = [
   'retrieve_context',
@@ -85,7 +101,20 @@ export function buildInstalledAgentReadinessReport(
   );
   const checks: InstalledAgentCheck[] = [
     buildCommandVersionCheck(input),
+    ...optionalCheck(buildCommandPathCheck(input)),
     buildRequiredToolsCheck(input.tools),
+    ...optionalCheck(buildMcpRegistrationCheck(
+      'codex_mcp_registration',
+      'Codex',
+      input.codexMcpRegistration,
+      input.command,
+    )),
+    ...optionalCheck(buildMcpRegistrationCheck(
+      'claude_mcp_registration',
+      'Claude',
+      input.claudeMcpRegistration,
+      input.command,
+    )),
     codexPromptCheck,
     claudePromptCheck,
     buildPromptCoverageCheck([codexPromptCheck, claudePromptCheck]),
@@ -104,23 +133,31 @@ export async function collectInstalledAgentReadiness({
   expectedRulesContent = null,
   home = process.env.HOME || process.env.USERPROFILE || '',
   runCommand = defaultCommandRunner,
+  resolveCommandPath = defaultCommandPathResolver,
 }: {
   command: string;
   expectedRulesVersion: string;
   expectedRulesContent?: string | null;
   home?: string;
   runCommand?: InstalledAgentCommandRunner;
+  resolveCommandPath?: InstalledAgentCommandPathResolver;
 }): Promise<InstalledAgentReadinessReport> {
+  const commandPath = await resolveCommandPath(command);
   const versionResult = await runCommand(command, ['--version']);
   const toolsResult = await runCommand(command, ['--tools-json']);
+  const codexMcpRegistration = await collectMcpRegistration('codex', home, runCommand);
+  const claudeMcpRegistration = await collectMcpRegistration('claude', home, runCommand);
 
   return buildInstalledAgentReadinessReport({
     command,
+    commandPath,
     commandVersion: versionResult.exitCode === 0 ? versionResult.stdout.trim() : null,
     tools: toolsResult.exitCode === 0 ? parseToolsJson(toolsResult.stdout) : [],
     codexPrompt: readOptionalFile(join(home, '.codex', 'AGENTS.md')),
     claudePrompt: readOptionalFile(join(home, '.claude', 'CLAUDE.md')),
     claudeStopHook: readOptionalFile(join(home, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh')),
+    codexMcpRegistration,
+    claudeMcpRegistration,
     expectedRulesVersion,
     expectedRulesContent,
   });
@@ -177,6 +214,15 @@ export function splitAgentCommand(command: string): string[] {
   return parts;
 }
 
+export function parseAgentMcpRegistrationOutput(
+  client: InstalledAgentMcpRegistration['client'],
+  stdout: string,
+): string | null {
+  return client === 'codex'
+    ? parseCodexMcpListOutput(stdout)
+    : parseClaudeMcpGetOutput(stdout);
+}
+
 function buildCommandVersionCheck(input: InstalledAgentReadinessInput): InstalledAgentCheck {
   if (!input.commandVersion?.trim()) {
     return {
@@ -190,6 +236,23 @@ function buildCommandVersionCheck(input: InstalledAgentReadinessInput): Installe
     name: 'command_version',
     status: 'ok',
     message: input.commandVersion.trim(),
+  };
+}
+
+function buildCommandPathCheck(input: InstalledAgentReadinessInput): InstalledAgentCheck | null {
+  if (input.commandPath === undefined) return null;
+  if (!input.commandPath) {
+    return {
+      name: 'agent_command_path',
+      status: 'fail',
+      message: `Could not resolve executable for agent command: ${input.command}`,
+    };
+  }
+
+  return {
+    name: 'agent_command_path',
+    status: 'ok',
+    message: `Resolved agent command executable: ${input.commandPath}`,
   };
 }
 
@@ -210,6 +273,53 @@ function buildRequiredToolsCheck(tools: InstalledAgentTool[]): InstalledAgentChe
     name: 'mcp_required_tools',
     status: 'ok',
     message: `Required MCP tools present: ${required}`,
+  };
+}
+
+function buildMcpRegistrationCheck(
+  name: string,
+  label: string,
+  registration: InstalledAgentMcpRegistration | null | undefined,
+  expectedAgentCommand: string,
+): InstalledAgentCheck | null {
+  if (registration === undefined) return null;
+  if (registration === null || !registration.detected) {
+    return {
+      name,
+      status: 'warn',
+      message: `${label} config directory not found; skipped MCP registration check`,
+    };
+  }
+
+  if (!registration.registered || !registration.command) {
+    return {
+      name,
+      status: 'fail',
+      message: `${label} MCP registration for mbrain was not found${formatRegistrationError(registration)}`,
+    };
+  }
+
+  const expectedServerCommand = `${expectedAgentCommand.trim()} serve`;
+  if (registrationCommandMatches(registration.command, expectedServerCommand)) {
+    return {
+      name,
+      status: 'ok',
+      message: `${label} MCP registration points to ${registration.command}`,
+    };
+  }
+
+  if (isDefaultMbrainServeCommand(registration.command)) {
+    return {
+      name,
+      status: 'warn',
+      message: `${label} MCP registration points to ${registration.command}; checked command is ${expectedServerCommand}`,
+    };
+  }
+
+  return {
+    name,
+    status: 'fail',
+    message: `${label} MCP registration points to ${registration.command}; expected ${expectedServerCommand}`,
   };
 }
 
@@ -323,6 +433,92 @@ function summarizeStatus(checks: InstalledAgentCheck[]): InstalledAgentCheckStat
   return 'ok';
 }
 
+function optionalCheck(check: InstalledAgentCheck | null): InstalledAgentCheck[] {
+  return check ? [check] : [];
+}
+
+async function collectMcpRegistration(
+  client: InstalledAgentMcpRegistration['client'],
+  home: string,
+  runCommand: InstalledAgentCommandRunner,
+): Promise<InstalledAgentMcpRegistration | null> {
+  const configDir = join(home, client === 'codex' ? '.codex' : '.claude');
+  if (!existsSync(configDir)) return null;
+
+  const source = client === 'codex' ? 'codex mcp list' : 'claude mcp get mbrain';
+  const result = client === 'codex'
+    ? await runCommand('codex', ['mcp', 'list'])
+    : await runCommand('claude', ['mcp', 'get', 'mbrain']);
+  if (result.exitCode !== 0) {
+    return {
+      client,
+      detected: true,
+      registered: false,
+      command: null,
+      source,
+      error: (result.stderr || result.stdout).trim(),
+    };
+  }
+
+  const command = parseAgentMcpRegistrationOutput(client, result.stdout);
+  return {
+    client,
+    detected: true,
+    registered: command !== null,
+    command,
+    source,
+  };
+}
+
+function parseCodexMcpListOutput(stdout: string): string | null {
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!/\bmbrain\b/.test(trimmed) || /^Name\s+/i.test(trimmed)) continue;
+
+    const colonMatch = trimmed.match(/^mbrain\s*:\s*(.+)$/i);
+    if (colonMatch) {
+      return cleanRegistrationCommand(colonMatch[1]);
+    }
+
+    const columns = trimmed.split(/\s{2,}/);
+    if (columns[0] === 'mbrain' && columns[1]) {
+      const args = columns[2] && columns[2] !== '-' ? columns[2] : '';
+      return cleanRegistrationCommand([columns[1], args].filter(Boolean).join(' '));
+    }
+  }
+  return null;
+}
+
+function parseClaudeMcpGetOutput(stdout: string): string | null {
+  const command = stdout.match(/^\s*Command:\s*(.+)$/im)?.[1]?.trim();
+  if (!command) return null;
+
+  const args = stdout.match(/^\s*Args:\s*(.+)$/im)?.[1]?.trim();
+  return cleanRegistrationCommand([command, args].filter((part) => part && part !== '-').join(' '));
+}
+
+function cleanRegistrationCommand(command: string): string {
+  return command
+    .replace(/\s+-\s+.*$/, '')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function registrationCommandMatches(actual: string, expected: string): boolean {
+  const actualParts = splitAgentCommand(cleanRegistrationCommand(actual));
+  const expectedParts = splitAgentCommand(cleanRegistrationCommand(expected));
+  return actualParts.length === expectedParts.length
+    && actualParts.every((part, index) => part === expectedParts[index]);
+}
+
+function isDefaultMbrainServeCommand(command: string): boolean {
+  return registrationCommandMatches(command, 'mbrain serve');
+}
+
+function formatRegistrationError(registration: InstalledAgentMcpRegistration): string {
+  return registration.error ? `: ${registration.error}` : '';
+}
+
 function readOptionalFile(path: string): string | null {
   return existsSync(path) ? readFileSync(path, 'utf-8') : null;
 }
@@ -363,6 +559,27 @@ function defaultCommandRunner(command: string, args: string[]): InstalledAgentCo
       stderr: error instanceof Error ? error.message : String(error),
       exitCode: 1,
     };
+  }
+}
+
+function defaultCommandPathResolver(command: string): string | null {
+  const commandParts = splitAgentCommand(command);
+  const executable = commandParts[0];
+  if (!executable) return null;
+  if (executable.includes('/')) {
+    return existsSync(executable) ? executable : null;
+  }
+
+  try {
+    const result = Bun.spawnSync({
+      cmd: ['which', executable],
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const resolved = result.stdout.toString().trim().split(/\r?\n/)[0];
+    return result.exitCode === 0 && resolved ? resolved : null;
+  } catch {
+    return null;
   }
 }
 
