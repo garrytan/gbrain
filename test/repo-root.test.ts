@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { autoDetectSkillsDir, findRepoRoot } from '../src/core/repo-root.ts';
+import { autoDetectSkillsDir, findRepoRoot, __testing } from '../src/core/repo-root.ts';
 
 describe('findRepoRoot', () => {
   const created: string[] = [];
@@ -158,5 +158,65 @@ describe('findRepoRoot', () => {
     // Source is still `env` — the distinction is which file was found,
     // and RESOLVER.md takes precedence inside resolveWorkspaceSkillsDir.
     expect(found.source).toBe('openclaw_workspace_env');
+  });
+
+  // Symlink confinement — auto-detect must not return a skills dir that
+  // canonicalizes outside the declared workspace. Without this guard,
+  // an attacker who controls $OPENCLAW_WORKSPACE can plant
+  // workspace/skills as a symlink to an arbitrary directory; downstream
+  // readFileSync / readdirSync calls would then load attacker-controlled
+  // SKILL.md files believing they came from the workspace.
+
+  it('symlink confinement: rejects workspace/skills that points outside the workspace', () => {
+    const workspace = scratch();
+    const attackerPayload = scratch();
+    // Plant a normal skills/ tree the resolver would happily accept,
+    // but inside the attacker-controlled directory.
+    const evilSkills = join(attackerPayload, 'skills');
+    mkdirSync(join(evilSkills, 'evil-skill'), { recursive: true });
+    writeFileSync(join(evilSkills, 'RESOLVER.md'), '# RESOLVER\n');
+    writeFileSync(join(evilSkills, 'evil-skill', 'SKILL.md'), '# evil\n');
+    // workspace/skills is a symlink that escapes the declared workspace.
+    symlinkSync(evilSkills, join(workspace, 'skills'));
+
+    const found = autoDetectSkillsDir(scratch(), { OPENCLAW_WORKSPACE: workspace });
+    // The escaping symlink must not be returned. Falling through to
+    // dir=null is the correct refusal; the operator gets a clear "no
+    // workspace found" instead of silently loading attacker code.
+    expect(found.dir).toBeNull();
+  });
+
+  it('symlink confinement: accepts workspace/skills that is a symlink WITHIN the workspace', () => {
+    // Legit local-dev pattern: workspace/skills -> workspace/_real-skills.
+    const workspace = scratch();
+    const realSkills = join(workspace, '_real-skills');
+    mkdirSync(realSkills, { recursive: true });
+    writeFileSync(join(realSkills, 'RESOLVER.md'), '# RESOLVER\n');
+    symlinkSync(realSkills, join(workspace, 'skills'));
+
+    const found = autoDetectSkillsDir(scratch(), { OPENCLAW_WORKSPACE: workspace });
+    expect(found.dir).toBe(join(workspace, 'skills'));
+    expect(found.source).toBe('openclaw_workspace_env');
+  });
+
+  it('isPathContained accepts equal + descendant paths, rejects siblings + parents', () => {
+    const root = scratch();
+    const child = join(root, 'a', 'b');
+    mkdirSync(child, { recursive: true });
+    expect(__testing.isPathContained(root, root)).toBe(true);
+    expect(__testing.isPathContained(root, child)).toBe(true);
+    // Sibling (different scratch dir).
+    const other = scratch();
+    expect(__testing.isPathContained(root, other)).toBe(false);
+    // Walking up via .. must not pass containment.
+    expect(__testing.isPathContained(child, root)).toBe(false);
+  });
+
+  it('isPathContained rejects symlink that escapes via realpath', () => {
+    const root = scratch();
+    const outside = scratch();
+    const link = join(root, 'pointing-out');
+    symlinkSync(outside, link);
+    expect(__testing.isPathContained(root, link)).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
-import { existsSync } from 'fs';
-import { isAbsolute, join, resolve as resolvePath } from 'path';
+import { existsSync, realpathSync } from 'fs';
+import { isAbsolute, join, relative, resolve as resolvePath, sep } from 'path';
 import { RESOLVER_FILENAMES, hasResolverFile } from './resolver-filenames.ts';
 
 /**
@@ -47,10 +47,55 @@ export interface SkillsDirDetection {
 }
 
 /**
+ * isPathContained returns true when `child` lexically resolves to a
+ * descendant of (or equal to) `parent` after canonicalization. Used by
+ * resolveWorkspaceSkillsDir to confirm that the skills dir we are
+ * about to hand back to readFileSync / readdirSync callers has not
+ * been symlinked outside the declared workspace.
+ *
+ * Uses the same idiom as src/core/operations.ts:92-100 for upload
+ * strict-mode confinement: realpath both ends, then path.relative
+ * must produce a non-`..`-prefixed, non-absolute result.
+ *
+ * On any realpathSync failure (missing dir, EACCES, ELOOP) we fall
+ * back to lexical containment via path.relative — better to refuse a
+ * legit-but-unstattable workspace than to silently trust an escape.
+ */
+function isPathContained(parent: string, child: string): boolean {
+  let realParent: string;
+  let realChild: string;
+  try {
+    realParent = realpathSync(parent);
+    realChild = realpathSync(child);
+  } catch {
+    // Lexical fallback: at minimum confirm the unresolved paths look
+    // contained. This catches the obvious escape attempts even when
+    // realpath cannot run (e.g. the symlink target does not yet exist).
+    realParent = resolvePath(parent);
+    realChild = resolvePath(child);
+  }
+  const rel = relative(realParent, realChild);
+  if (rel === '') return true;
+  if (rel.startsWith('..')) return false;
+  if (rel.startsWith(`..${sep}`)) return false;
+  if (isAbsolute(rel)) return false;
+  return true;
+}
+
+/**
  * Given a workspace root, resolve where the skills directory should
  * live. Returns the skills dir + the specific source variant. Returns
  * null if neither `workspace/skills/<RESOLVER|AGENTS>` nor
  * `workspace/<AGENTS|RESOLVER>` exists.
+ *
+ * Symlink confinement: the resolved skills dir must canonicalize to a
+ * path under the workspace root. Without this, an attacker who controls
+ * `$OPENCLAW_WORKSPACE` (multi-user host, npm postinstall, shell-rc
+ * poisoning) could plant `workspace/skills` as a symlink to an
+ * arbitrary directory. Downstream readFileSync / readdirSync calls
+ * follow symlinks by default, so the resolver, skillpack-check, and
+ * subagent loader would then read attacker-controlled SKILL.md files
+ * believing they came from the workspace.
  *
  * `sourceSubdir` / `sourceRoot` let callers distinguish "skills-dir
  * variant" from "workspace-root variant" for --verbose logging.
@@ -62,14 +107,14 @@ function resolveWorkspaceSkillsDir(
 ): SkillsDirDetection | null {
   // Preferred: workspace/skills with a resolver file inside it (gbrain-native).
   const subdir = join(workspace, 'skills');
-  if (hasResolverFile(subdir)) {
+  if (hasResolverFile(subdir) && isPathContained(workspace, subdir)) {
     return { dir: subdir, source: sourceSubdir };
   }
   // Fallback: resolver file at workspace root (OpenClaw-native layout).
   // The skills/ subtree still governs file layout even when routing lives
   // at workspace root. Return the skills subdir so downstream file lookups
   // work; the resolver parser knows how to look one level up.
-  if (hasResolverFile(workspace) && existsSync(subdir)) {
+  if (hasResolverFile(workspace) && existsSync(subdir) && isPathContained(workspace, subdir)) {
     return { dir: subdir, source: sourceRoot };
   }
   return null;
@@ -145,6 +190,11 @@ function isGbrainRepoRoot(dir: string): boolean {
  * messages when auto-detect fails. Mirrors the priority order used by
  * `autoDetectSkillsDir`.
  */
+/** Exposed for tests. */
+export const __testing = {
+  isPathContained,
+};
+
 export const AUTO_DETECT_HINT = [
   `  1. --skills-dir flag`,
   `  2. $OPENCLAW_WORKSPACE/{skills/,}{${RESOLVER_FILENAMES.join(',')}}`,
