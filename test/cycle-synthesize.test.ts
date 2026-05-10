@@ -86,10 +86,19 @@ describe('discoverTranscripts', () => {
     expect(out).toEqual([]);
   });
 
-  test('skips non-txt files', () => {
-    makeTranscript('2026-04-25-foo.md', 'a'.repeat(3000));
+  test('skips non-txt non-md files', () => {
+    // v0.30.3 (#708): .md files are now supported alongside .txt; only other
+    // extensions (e.g., .pdf, .doc) should be skipped by discovery.
+    makeTranscript('2026-04-25-foo.pdf', 'a'.repeat(3000));
     const out = discoverTranscripts({ corpusDir: tmpDir, minChars: 1000 });
     expect(out).toEqual([]);
+  });
+
+  test('discovers .md transcript files (#708)', () => {
+    makeTranscript('2026-04-25-foo.md', 'a'.repeat(3000));
+    const out = discoverTranscripts({ corpusDir: tmpDir, minChars: 1000 });
+    expect(out).toHaveLength(1);
+    expect(out[0].basename).toBe('2026-04-25-foo');
   });
 
   test('exclude_patterns filters out matched transcripts (word boundary)', () => {

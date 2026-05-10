@@ -4,8 +4,11 @@ version: 0.1.0
 description: Transform raw article text dumps in the brain into structured pages with executive summary, verbatim quotes, key insights, why-it-matters, and cross-references. Replaces walls-of-text with quotable, actionable brain pages.
 triggers:
   - "enrich this article"
+  - "enrich the article"
+  - "enriching the article"
   - "enrich brain pages"
   - "batch enrich"
+  - "enrich pass"
   - "make brain pages useful"
 mutating: true
 writes_pages: true

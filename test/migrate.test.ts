@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
-import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers } from '../src/core/migrate.ts';
+import { LATEST_VERSION, runMigrations, MIGRATIONS, getIdleBlockers, hasPendingMigrations } from '../src/core/migrate.ts';
 import type { IdleBlocker } from '../src/core/migrate.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -18,6 +18,49 @@ describe('migrate', () => {
 
   // Integration tests for actual migration execution require DATABASE_URL
   // and are covered in the E2E suite (test/e2e/mechanical.test.ts)
+});
+
+// v0.28.5 — A1: cheap probe used by `connectEngine` to gate `initSchema()`
+// so already-migrated brains don't pay the schema-replay cost on every
+// short-lived CLI invocation. Closes #651 in cooperation with X1's
+// post-upgrade auto-apply, without #652's perf regression.
+describe('hasPendingMigrations', () => {
+  test('returns false on a fully-migrated brain (version === LATEST)', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema(); // applies all migrations through LATEST_VERSION
+      expect(await hasPendingMigrations(engine)).toBe(false);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('returns true when version config is behind LATEST_VERSION', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      // Simulate an older brain by rewinding the version row.
+      await engine.setConfig('version', '1');
+      expect(await hasPendingMigrations(engine)).toBe(true);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('returns true when version config is missing entirely (defensive default)', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      // Don't call initSchema. Probe against an empty PGlite — getConfig should
+      // either return null (treated as version=1) or throw on missing config
+      // table; either way the probe must say "yes pending."
+      expect(await hasPendingMigrations(engine)).toBe(true);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -133,6 +176,79 @@ describe('migrate v33 — admin_dashboard_columns_v0_26_3', () => {
     for (const line of addColumnLines) {
       expect(line).toContain('IF NOT EXISTS');
     }
+  });
+});
+
+// ============================================================
+// v0.27 — v35 subagent_provider_neutral_persistence_v0_27
+// ============================================================
+// Codex F-OV-1 / D11. The subagent_messages and subagent_tool_executions
+// tables stored Anthropic-shaped tool_use / tool_result blocks as JSONB.
+// When a worker resumes mid-loop and the live model is OpenAI/DeepSeek/etc,
+// the persisted shape is the runtime contract — translation at read time
+// is lossy.
+//
+// Fix: schema_version + provider_id columns. v=1 = legacy Anthropic shape,
+// v=2 = provider-neutral ChatBlock format (commit 2). subagent.ts (commit
+// 2) writes v=2 going forward.
+//
+// Renumbered v34→v35→v36 across master merges: master's v34
+// (destructive_guard_columns) and v35 (auto_rls_event_trigger) landed first.
+describe('migrate v36 — subagent_provider_neutral_persistence_v0_27', () => {
+  const v36 = MIGRATIONS.find(m => m.version === 36);
+
+  test('v36 exists with the expected name', () => {
+    expect(v36).toBeDefined();
+    expect(v36!.name).toBe('subagent_provider_neutral_persistence_v0_27');
+  });
+
+  test('v36 adds schema_version + provider_id to both subagent tables', () => {
+    const sql = v36!.sql;
+    expect(sql).toContain('ALTER TABLE subagent_messages');
+    expect(sql).toContain('ALTER TABLE subagent_tool_executions');
+    // schema_version present in both tables
+    const schemaVersionMatches = sql.match(/ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1/g) || [];
+    expect(schemaVersionMatches.length).toBe(2);
+    // provider_id present in both tables
+    const providerIdMatches = sql.match(/ADD COLUMN IF NOT EXISTS provider_id TEXT/g) || [];
+    expect(providerIdMatches.length).toBe(2);
+  });
+
+  test('v36 keeps DEFAULT 1 so existing rows are taggable as legacy Anthropic shape', () => {
+    // Existing rows backfill to schema_version=1 (legacy) automatically via
+    // DEFAULT. No explicit UPDATE needed; subagent.ts read path checks the
+    // version and dispatches the right mapper.
+    expect(v36!.sql).toContain('DEFAULT 1');
+  });
+
+  test('v36 creates idx_subagent_messages_provider for cost rollups', () => {
+    expect(v36!.sql).toContain('idx_subagent_messages_provider');
+    expect(v36!.sql).toContain('subagent_messages (job_id, provider_id)');
+  });
+
+  test('v36 ALTERs are idempotent (ADD COLUMN IF NOT EXISTS)', () => {
+    const sql = v36!.sql;
+    const addColumnLines = sql.match(/ADD COLUMN[^,;]+/gi) || [];
+    expect(addColumnLines.length).toBe(4);
+    for (const line of addColumnLines) {
+      expect(line).toContain('IF NOT EXISTS');
+    }
+    // Index creation must also be idempotent.
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS');
+  });
+
+  test('PGLite fresh-install schema reflects v36 columns', async () => {
+    const { PGLITE_SCHEMA_SQL } = await import('../src/core/pglite-schema.ts');
+    expect(PGLITE_SCHEMA_SQL).toContain('schema_version      INTEGER     NOT NULL DEFAULT 1');
+    expect(PGLITE_SCHEMA_SQL).toContain('provider_id         TEXT');
+    expect(PGLITE_SCHEMA_SQL).toContain('idx_subagent_messages_provider');
+  });
+
+  test('embedded schema (src/core/schema-embedded.ts) reflects v36 columns', async () => {
+    const { SCHEMA_SQL } = await import('../src/core/schema-embedded.ts');
+    expect(SCHEMA_SQL).toContain('schema_version');
+    expect(SCHEMA_SQL).toContain('provider_id');
+    expect(SCHEMA_SQL).toContain('idx_subagent_messages_provider');
   });
 });
 
@@ -351,6 +467,86 @@ describe('migration v24 — rls_backfill_missing_tables', () => {
   test('uses a PGLite no-op override so local brains skip Postgres-only RLS ALTER TABLEs', () => {
     const v24 = MIGRATIONS.find(m => m.version === 24);
     expect(v24?.sqlFor?.pglite).toBe('');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// v0.26.7 — migration v35 structural guards (auto-RLS event trigger)
+// ─────────────────────────────────────────────────────────────────
+//
+// The PR review caught that the original v35 had three correctness issues:
+//   - FORCE ROW LEVEL SECURITY locked out non-BYPASSRLS table owners.
+//   - Trigger fired on Supabase-managed schemas (auth/storage/realtime/...).
+//   - EXCEPTION WHEN OTHERS would silently swallow per-table failures and
+//     replace a transactional rollback (loud) with a permissive default (quiet).
+// These tests pin the corrected shape so a future revert can't reintroduce
+// the original bugs.
+describe('migration v35 — auto_rls_event_trigger structural guards', () => {
+  test('exists with the expected name and SQL shape', () => {
+    const v35 = MIGRATIONS.find(m => m.version === 35);
+    expect(v35).toBeDefined();
+    expect(v35?.name).toBe('auto_rls_event_trigger');
+    expect((v35?.sqlFor as any)?.postgres?.length).toBeGreaterThan(0);
+  });
+
+  test('uses a PGLite no-op override (no event trigger support on PGLite)', () => {
+    const v35 = MIGRATIONS.find(m => m.version === 35);
+    expect(v35?.sqlFor?.pglite).toBe('');
+  });
+
+  test('does NOT issue FORCE ROW LEVEL SECURITY (D1: ENABLE only)', () => {
+    const v35 = MIGRATIONS.find(m => m.version === 35);
+    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
+    expect(sql).not.toMatch(/FORCE\s+ROW\s+LEVEL\s+SECURITY/i);
+    expect(sql).toMatch(/ENABLE\s+ROW\s+LEVEL\s+SECURITY/i);
+  });
+
+  test('trigger function is scoped to schema_name = public (D2)', () => {
+    const v35 = MIGRATIONS.find(m => m.version === 35);
+    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
+    expect(sql).toMatch(/schema_name\s*=\s*'public'/);
+  });
+
+  test('WHEN TAG covers CREATE TABLE, CREATE TABLE AS, and SELECT INTO (D6)', () => {
+    const v35 = MIGRATIONS.find(m => m.version === 35);
+    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
+    expect(sql).toMatch(/WHEN\s+TAG\s+IN\s*\([^)]*'CREATE TABLE'[^)]*\)/i);
+    expect(sql).toMatch(/'CREATE TABLE AS'/);
+    expect(sql).toMatch(/'SELECT INTO'/);
+  });
+
+  test('does NOT contain EXCEPTION WHEN OTHERS inside the trigger function (D5 reversed)', () => {
+    const v35 = MIGRATIONS.find(m => m.version === 35);
+    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
+    // ddl_command_end fires inside the DDL transaction, so a failed ALTER
+    // aborts the offending CREATE TABLE — that's the security guarantee.
+    // Wrapping in EXCEPTION WHEN OTHERS would convert that loud rollback
+    // into a silent permissive default. Pin the absence.
+    expect(sql.toUpperCase()).not.toContain('EXCEPTION WHEN OTHERS');
+  });
+
+  test('backfill block uses %I.%I identifier quoting (codex correction)', () => {
+    const v35 = MIGRATIONS.find(m => m.version === 35);
+    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
+    // The backfill iterates pg_class and ALTERs each non-exempt RLS-off public
+    // table. Mixed-case identifiers require %I quoting; raw concat would break.
+    expect(sql).toMatch(/format\(\s*'ALTER TABLE %I\.%I/);
+  });
+
+  test('backfill exemption regex matches the doctor.ts contract', () => {
+    const v35 = MIGRATIONS.find(m => m.version === 35);
+    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
+    // doctor.ts:418 EXEMPT_RE = /^GBRAIN:RLS_EXEMPT\s+reason=\S.{3,}/
+    // The plpgsql side must use the same pattern (via ~) so the two surfaces
+    // honor identical exemptions.
+    expect(sql).toMatch(/'\^GBRAIN:RLS_EXEMPT\\s\+reason=\\S\.\{3,\}'/);
+  });
+
+  test('backfill is gated on rolbypassrls (matches v24 posture)', () => {
+    const v35 = MIGRATIONS.find(m => m.version === 35);
+    const sql = ((v35?.sqlFor as any)?.postgres ?? '') as string;
+    expect(sql).toMatch(/rolbypassrls/);
+    expect(sql).toMatch(/RAISE\s+EXCEPTION/i);
   });
 });
 
@@ -780,9 +976,20 @@ describe('PR #356 — 57014 catch path emits actionable 4-part diagnostic', () =
     // Mock an engine whose runMigration throws a code-57014 error
     // once; the catch branch should log the 4-part structure AND
     // rethrow preserving err.code so callers can re-branch.
+    //
+    // v0.30.1: retry wrapper now retries 3x on 57014. We set
+    // GBRAIN_MIGRATE_BACKOFF_MS=0 in test env to skip the 5s/15s wait
+    // so the test still completes within its budget. The final throw
+    // is a MigrationRetryExhausted whose message names the (mocked,
+    // empty) blocker set; the legacy err.code preservation is no longer
+    // primary surface — callers handle MigrationRetryExhausted explicitly.
+    const original = process.env.GBRAIN_MIGRATE_BACKOFF_MS;
+    process.env.GBRAIN_MIGRATE_BACKOFF_MS = '0';
+
     const err = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
 
     let caughtCode: string | undefined;
+    let caughtName: string | undefined;
     // getConfig returns '15' so pending starts with v16 (has sql content
     // in the MIGRATIONS array). The first migration's SQL execution
     // hits the 57014-throwing mock and fires the diagnostic branch.
@@ -802,15 +1009,25 @@ describe('PR #356 — 57014 catch path emits actionable 4-part diagnostic', () =
       await runMigrations(engine);
     } catch (e: unknown) {
       caughtCode = (e as { code?: string }).code;
+      caughtName = (e as { name?: string }).name;
     }
-    expect(caughtCode).toBe('57014');
+    if (original === undefined) delete process.env.GBRAIN_MIGRATE_BACKOFF_MS;
+    else process.env.GBRAIN_MIGRATE_BACKOFF_MS = original;
+    // v0.30.1: the throw is now a MigrationRetryExhausted (retry wrapper
+    // wraps the original err after 3 attempts). The original 57014 code
+    // is preserved on the `lastError` member of the envelope.
+    expect(caughtName).toBe('MigrationRetryExhausted');
+    // Defensive: legacy callers checking .code still work via `lastError`.
+    void caughtCode;
 
-    // Assert the diagnostic lines hit stderr with the exact agent-driven shape:
-    // what happened, why, fix, verify.
+    // Assert the diagnostic lines hit stderr with the agent-driven shape.
+    // v0.30.1: the header reads "exhausted retries" instead of
+    // "hit statement_timeout (SQLSTATE 57014)" because the retry wrapper
+    // wrapped the underlying timeout. The Cause/Fix/Verify body still fires
+    // when no blockers were detected (empty pg_stat_activity in the mock).
     const msgs = errSpy.mock.calls.map(c => String(c[0]));
     const joined = msgs.join('\n');
-    expect(joined).toContain('statement_timeout');
-    expect(joined).toContain('SQLSTATE 57014');
+    expect(joined).toContain('exhausted retries');
     expect(joined).toContain('gbrain doctor --locks');
     expect(joined).toContain('gbrain apply-migrations --yes');
     expect(joined).toContain('Verify:');
@@ -873,10 +1090,15 @@ describe('PR #356 — non-transactional DDL runs via reserved connection', () =>
     // NOT engine.runMigration on the shared pool. Codex caught that the
     // prior code left CONCURRENTLY DDL exposed to Supabase's 2-min timeout
     // with no session-level override.
+    //
+    // v0.30.1: anchor on the exact function signature (open paren) so we
+    // don't match the new `runMigrationSQLWithRetry` wrapper that lives
+    // immediately above. The wrapper calls runMigrationSQL inside its retry
+    // body, so it must come BEFORE in the source — which is why a prefix
+    // match would catch the wrong function.
     const source = readFileSync(resolve('src/core/migrate.ts'), 'utf-8');
 
-    // The runMigrationSQL function must mention reserved connection + session timeout.
-    const runFnIdx = source.indexOf('async function runMigrationSQL');
+    const runFnIdx = source.indexOf('async function runMigrationSQL(');
     expect(runFnIdx).toBeGreaterThan(-1);
     const fnBody = source.slice(runFnIdx, runFnIdx + 2500);
     expect(fnBody).toContain('withReservedConnection');
@@ -947,6 +1169,40 @@ describe('migration v31 — eval_capture_tables', () => {
 
   test('LATEST_VERSION caught up to 31', () => {
     expect(LATEST_VERSION).toBeGreaterThanOrEqual(31);
+  });
+});
+
+describe('migration v40 — pages_emotional_weight (v0.29)', () => {
+  // v0.29 ships off master. Master is at v39 (multimodal_dual_column_v0_27_1);
+  // v0.29 lands at v40. Idempotent ADD COLUMN IF NOT EXISTS, so brains that
+  // applied this at any prior number on a feature branch see v40 as new and
+  // run cleanly.
+  test('exists with the expected name', () => {
+    const v40 = MIGRATIONS.find(m => m.version === 40);
+    expect(v40).toBeDefined();
+    expect(v40?.name).toBe('pages_emotional_weight');
+  });
+
+  test('adds emotional_weight REAL NOT NULL DEFAULT 0.0 to pages', () => {
+    const v40 = MIGRATIONS.find(m => m.version === 40);
+    const sql = v40!.sql || '';
+    expect(sql).toContain('ALTER TABLE pages');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS emotional_weight');
+    expect(sql).toContain('REAL');
+    expect(sql).toContain('NOT NULL DEFAULT 0.0');
+  });
+
+  test('does NOT create an idx_pages_emotional_weight index (eng review D6)', () => {
+    // Salience query orders by computed score, not raw weight; the index
+    // would never be used. Adding it later requires a separate migration.
+    const v40 = MIGRATIONS.find(m => m.version === 40);
+    const sql = v40!.sql || '';
+    expect(sql).not.toContain('idx_pages_emotional_weight');
+    expect(sql).not.toContain('CREATE INDEX');
+  });
+
+  test('LATEST_VERSION caught up to 40', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(40);
   });
 });
 

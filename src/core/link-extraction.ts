@@ -154,6 +154,55 @@ const CODE_REF_REGEX = /\b((?:src|lib|app|test|tests|scripts|docs|packages|inter
  * Extract code-path references (e.g. 'src/core/sync.ts:42') from markdown
  * prose. Deduped by path.
  */
+/**
+ * v0.27.1 (cherry-3): path-proximity auto-link candidate finder for image
+ * ingest. Given an image slug like `originals/photos/2026-05-04-foo.jpg`,
+ * proposes candidate sibling slugs for an `image_of` edge:
+ *   1. `originals/meetings/2026-05-04-foo.md` (parallel directory + same basename)
+ *   2. `<parent>/foo.md` (same directory + sibling basename minus extension)
+ *
+ * Returns slug candidates in priority order. Caller (importImageFile) checks
+ * which candidates exist as pages and emits the edge for the first match.
+ */
+export function imageOfCandidates(imageSlug: string): string[] {
+  const lower = imageSlug.toLowerCase();
+  const lastSlash = lower.lastIndexOf('/');
+  if (lastSlash < 0) return [];
+  const dir = lower.slice(0, lastSlash);
+  const file = lower.slice(lastSlash + 1);
+  // Strip image extension from basename to get a stable identifier.
+  const base = file.replace(/\.(png|jpg|jpeg|gif|webp|heic|heif|avif)$/i, '');
+  if (!base) return [];
+
+  const out: string[] = [];
+
+  // Heuristic 1: parallel directory swap. originals/photos/X → originals/meetings/X
+  const dirParts = dir.split('/');
+  const PHOTO_DIRS = new Set(['photos', 'images', 'screenshots', 'media']);
+  const SIBLING_DIRS = ['meetings', 'notes', 'daily', 'people', 'companies', 'deals', 'projects'];
+  for (let i = 0; i < dirParts.length; i++) {
+    if (PHOTO_DIRS.has(dirParts[i])) {
+      for (const sib of SIBLING_DIRS) {
+        const swapped = [...dirParts];
+        swapped[i] = sib;
+        out.push(`${swapped.join('/')}/${base}`);
+      }
+    }
+  }
+
+  // Heuristic 2: same directory, basename without ext as a markdown page.
+  out.push(`${dir}/${base}`);
+
+  // Deduplicate, drop the imageSlug itself if it accidentally roundtrips.
+  const seen = new Set<string>();
+  return out.filter(s => {
+    if (s === lower) return false;
+    if (seen.has(s)) return false;
+    seen.add(s);
+    return true;
+  });
+}
+
 export function extractCodeRefs(content: string): CodeRef[] {
   const seen = new Set<string>();
   const refs: CodeRef[] = [];
@@ -481,6 +530,11 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   if (pageType === 'media') {
     return 'mentions';
   }
+  // v0.27.1: image pages link to their text sibling via 'image_of' (the
+  // image is OF that meeting/note). Set explicitly by the import-image
+  // path-proximity helper, not by markdown extraction — but the type is
+  // declared here so graph-query knows the edge name.
+  if ((pageType as string) === 'image') return 'image_of';
   if ((pageType as string) === 'meeting') return 'attended';
   // Per-edge verb rules.
   if (FOUNDED_RE.test(context)) return 'founded';

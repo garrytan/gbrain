@@ -5,7 +5,47 @@
 // (e.g. "attended meetings" vs "received emails").
 // `code` (v0.19.0): tree-sitter-chunked source files; consumed by code-def /
 // code-refs / code-callers / code-callees + Cathedral II two-pass retrieval.
-export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media' | 'writing' | 'analysis' | 'guide' | 'hardware' | 'architecture' | 'meeting' | 'note' | 'email' | 'slack' | 'calendar-event' | 'code';
+// `image` (v0.27.1): multimodal-embedded images (PNG/JPG/HEIC/AVIF). One page
+// per image; chunk lives in content_chunks with modality='image' +
+// embedding_image vector(1024). Bytes never enter the DB; the brain repo
+// holds the file and `files.storage_path` references it.
+// `synthesis` (v0.28): think-generated provenance pages.
+export type PageType = 'person' | 'company' | 'deal' | 'yc' | 'civic' | 'project' | 'concept' | 'source' | 'media' | 'writing' | 'analysis' | 'guide' | 'hardware' | 'architecture' | 'meeting' | 'note' | 'email' | 'slack' | 'calendar-event' | 'code' | 'image' | 'synthesis';
+
+/**
+ * Canonical list of every PageType value. Kept in sync with the union above.
+ * Used by the v0.27.1 page-type-exhaustive contract test to walk every value
+ * through public surfaces (serialize, slug registry, frontmatter validate)
+ * and assert no surprise. Adding a value to PageType MUST also add it here —
+ * the contract test enforces parity.
+ */
+export const ALL_PAGE_TYPES: readonly PageType[] = [
+  'person', 'company', 'deal', 'yc', 'civic', 'project', 'concept',
+  'source', 'media', 'writing', 'analysis', 'guide', 'hardware',
+  'architecture', 'meeting', 'note', 'email', 'slack', 'calendar-event',
+  'code', 'image', 'synthesis',
+] as const;
+
+/**
+ * Exhaustiveness helper. Use in the default branch of any `switch (x.type)`
+ * to force the TypeScript compiler to error if the union grows. The CI guard
+ * scripts/check-pagetype-exhaustive.sh enforces that any new switch on a
+ * PageType-shaped discriminator imports and uses this helper in default.
+ *
+ *   switch (page.type) {
+ *     case 'person': return ...;
+ *     case 'company': return ...;
+ *     // ... every other PageType ...
+ *     default: return assertNever(page.type);
+ *   }
+ *
+ * If a new PageType is added without a corresponding case, `assertNever`
+ * fails to type-check (the parameter is no longer `never`), preventing the
+ * silent default-branch fall-through that bit gbrain v0.20 / v0.22.
+ */
+export function assertNever(x: never): never {
+  throw new Error(`Unhandled discriminant: ${JSON.stringify(x)}`);
+}
 
 export interface Page {
   id: number;
@@ -16,6 +56,8 @@ export interface Page {
   timeline: string;
   frontmatter: Record<string, unknown>;
   content_hash?: string;
+  /** v0.29 — deterministic 0..1 score; populated by the recompute_emotional_weight cycle phase. */
+  emotional_weight?: number;
   created_at: Date;
   updated_at: Date;
   /**
@@ -24,9 +66,46 @@ export interface Page {
    * The autopilot purge phase hard-deletes rows where `deleted_at < now() - 72h`.
    */
   deleted_at?: Date | null;
+  /**
+   * v0.29.1: content date computed from frontmatter precedence chain
+   * (event_date / date / published / filename / fallback). Populated by
+   * `computeEffectiveDate`; immune to auto-link updated_at churn. Read by
+   * the recency boost and since/until filter; nothing in the default search
+   * path consults it.
+   */
+  effective_date?: Date | null;
+  /**
+   * v0.29.1: which precedence step won (`event_date | date | published |
+   * filename | fallback`). Powers the doctor's `effective_date_health` check
+   * to detect pages that fell back to updated_at because frontmatter was
+   * unparseable.
+   */
+  effective_date_source?: EffectiveDateSource | null;
+  /**
+   * v0.29.1: basename without extension captured at import (e.g.
+   * "2024-03-15-acme-call"). Used by computeEffectiveDate for filename-date
+   * precedence on `daily/` and `meetings/` prefixes. NULL for older rows
+   * imported pre-v0.29.1.
+   */
+  import_filename?: string | null;
+  /**
+   * v0.29.1: bumped by `recompute_emotional_weight` when the page's
+   * emotional_weight changes. The salience query window uses
+   * `GREATEST(updated_at, salience_touched_at)` so newly-salient old pages
+   * surface in `get_recent_salience`.
+   */
+  salience_touched_at?: Date | null;
 }
 
-export type PageKind = 'markdown' | 'code';
+export type EffectiveDateSource =
+  | 'event_date'
+  | 'date'
+  | 'published'
+  | 'filename'
+  | 'fallback';
+
+// `image` (v0.27.1): multimodal ingestion path, parallel to markdown + code.
+export type PageKind = 'markdown' | 'code' | 'image';
 
 export interface PageInput {
   type: PageType;
@@ -42,6 +121,17 @@ export interface PageInput {
    * `query --lang` filtering.
    */
   page_kind?: PageKind;
+  /**
+   * v0.29.1: content date from frontmatter precedence (computed by importer
+   * via `computeEffectiveDate`). When omitted, putPage leaves the column
+   * unchanged on conflict (preserves any existing value); on insert the
+   * column is NULL. NULL is fine — recency paths COALESCE to updated_at.
+   */
+  effective_date?: Date | null;
+  /** v0.29.1: paired with effective_date; NULL when effective_date is NULL. */
+  effective_date_source?: EffectiveDateSource | null;
+  /** v0.29.1: basename without extension captured at import. */
+  import_filename?: string | null;
 }
 
 export interface PageFilters {
@@ -66,6 +156,13 @@ export interface PageFilters {
    * the 72h window before the autopilot purge phase hard-deletes them.
    */
   includeDeleted?: boolean;
+  /**
+   * v0.29: ORDER BY enum. Default `updated_desc` matches pre-v0.29 behavior
+   * (engines hardcoded `ORDER BY updated_at DESC`). New options: `updated_asc`,
+   * `created_desc`, `slug` (alphabetical, useful for stable pagination).
+   * Whitelisted enum — no SQL-injection risk; engines map to literal SQL fragments.
+   */
+  sort?: 'updated_desc' | 'updated_asc' | 'created_desc' | 'slug';
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */
@@ -74,6 +171,102 @@ export interface GetPageOpts {
   sourceId?: string;
   /** Include soft-deleted pages. Default false. See PageFilters.includeDeleted. */
   includeDeleted?: boolean;
+}
+
+/** v0.29: literal ORDER BY fragments for the PageFilters.sort enum. Whitelisted. */
+export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
+  updated_desc: 'p.updated_at DESC',
+  updated_asc:  'p.updated_at ASC',
+  created_desc: 'p.created_at DESC',
+  slug:         'p.slug ASC',
+};
+
+/**
+ * v0.29 — Salience: pages ranked by emotional + activity salience over a recency window.
+ * See `src/core/cycle/emotional-weight.ts` for the score formula and
+ * `engine.getRecentSalience` for the SQL.
+ */
+export interface SalienceOpts {
+  /** Window in days. Default 14. */
+  days?: number;
+  /** Max rows to return (clamped at 100). Default 20. */
+  limit?: number;
+  /** Optional slug-prefix filter (e.g., `personal`, `wiki/people`). */
+  slugPrefix?: string;
+  /**
+   * v0.29.1 — recency-decay treatment for the salience formula's third term.
+   *   - 'flat' (default): v0.29.0 behavior, `1.0 / (1 + days_old)` for every page
+   *   - 'on': per-prefix decay from DEFAULT_RECENCY_DECAY (concepts/originals
+   *     evergreen; daily/, media/x/ aggressive). Use when the agent wants
+   *     "recency-biased salience" — what's been mattering AND fresh.
+   * Default preserves v0.29.0 ranking; 'on' is opt-in.
+   */
+  recency_bias?: 'flat' | 'on';
+}
+
+export interface SalienceResult {
+  slug: string;
+  source_id: string;
+  title: string;
+  type: PageType;
+  updated_at: Date;
+  emotional_weight: number;
+  take_count: number;
+  take_avg_weight: number;
+  score: number;
+}
+
+/**
+ * v0.29 — Anomaly detection: cohorts (tag, type) with unusually-high activity in a window.
+ * Cohort baseline is computed over `lookback_days` excluding `since`; current count is
+ * the number of distinct pages touched on `since`. A cohort is anomalous when its
+ * current count exceeds `mean + sigma * stddev`. Year cohort deferred to v0.30.
+ */
+export interface AnomaliesOpts {
+  /** ISO date (YYYY-MM-DD). Default = today (UTC). */
+  since?: string;
+  /** Days of history for the baseline. Default 30. */
+  lookback_days?: number;
+  /** Sigma threshold. Default 3.0. */
+  sigma?: number;
+}
+
+export interface AnomalyResult {
+  cohort_kind: 'tag' | 'type';
+  cohort_value: string;
+  count: number;
+  baseline_mean: number;
+  baseline_stddev: number;
+  sigma_observed: number;
+  page_slugs: string[];
+}
+
+/**
+ * v0.29 — Per-page tag + take inputs to the emotional-weight formula.
+ * Returned in batch by `engine.batchLoadEmotionalInputs` so the cycle phase
+ * computes weights for many pages with two SQL round-trips total.
+ */
+export interface EmotionalWeightInputRow {
+  slug: string;
+  source_id: string;
+  tags: string[];
+  takes: {
+    holder: string;
+    weight: number;
+    kind: string;
+    active: boolean;
+  }[];
+}
+
+/**
+ * v0.29 — Multi-source-safe write batch. Composite-keyed on `(slug, source_id)`
+ * because `pages.slug` is only unique within a source. Slug-only UPDATE would
+ * fan out across sources.
+ */
+export interface EmotionalWeightWriteRow {
+  slug: string;
+  source_id: string;
+  weight: number;
 }
 
 // Chunks
@@ -117,10 +310,22 @@ export interface StaleChunkRow {
 export interface ChunkInput {
   chunk_index: number;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code';
+  /**
+   * 'image_asset' added in v0.27.1. Image chunks live in content_chunks
+   * alongside text/code chunks; modality='image' rows are filtered out of
+   * searchKeyword by default so OCR text doesn't drown text-page search.
+   */
+  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'image_asset';
   embedding?: Float32Array;
   model?: string;
   token_count?: number;
+  /**
+   * v0.27.1 multimodal. modality 'image' carries its 1024-dim Voyage vector
+   * in embedding_image (not embedding). Markdown + code chunks omit both
+   * fields and inherit modality='text' via column DEFAULT.
+   */
+  modality?: 'text' | 'image';
+  embedding_image?: Float32Array;
   /**
    * v0.19.0: optional code-chunk metadata. Populated by importCodeFile from
    * the tree-sitter AST; NULL for markdown chunks. Drives `query --lang`,
@@ -208,6 +413,50 @@ export interface SearchOpts {
    * undefined to search all sources.
    */
   sourceId?: string;
+  /**
+   * v0.27.1: target column for vector search. 'embedding' (default) hits
+   * the brain's primary text-embedding column. 'embedding_image' targets
+   * the multimodal column populated by importImageFile. The two columns
+   * may live in different dim spaces (e.g. OpenAI 1536 + Voyage 1024)
+   * which is why the dual-column schema landed in v0.27.1. searchKeyword
+   * is unaffected — modality filtering on the keyword path is independent.
+   */
+  embeddingColumn?: 'embedding' | 'embedding_image';
+  /**
+   * @deprecated v0.29.1: use `since` instead. Removed in v0.30.
+   * v0.27.0: filter results to pages updated/created after this date. ISO-8601 string.
+   */
+  afterDate?: string;
+  /**
+   * @deprecated v0.29.1: use `until` instead. Removed in v0.30.
+   * v0.27.0: filter results to pages updated/created before this date. ISO-8601 string.
+   */
+  beforeDate?: string;
+  /**
+   * @deprecated v0.29.1: use `recency` ('off' | 'on' | 'strong') instead. Removed in v0.30.
+   * v0.27.0: recency boost strength. 0 = off, 1 = moderate, 2 = aggressive.
+   */
+  recencyBoost?: 0 | 1 | 2;
+  /**
+   * v0.29.1: salience boost on emotional_weight + take_count. Independent of recency.
+   * 'off' (default) disables; 'on' applies a moderate boost; 'strong' more aggressive.
+   */
+  salience?: 'off' | 'on' | 'strong';
+  /**
+   * v0.29.1: recency boost on per-prefix age decay. Independent of salience.
+   * 'off' (default) disables; 'on' applies the per-prefix decay map; 'strong' multiplies by 1.5.
+   */
+  recency?: 'off' | 'on' | 'strong';
+  /**
+   * v0.29.1: ISO-8601 date OR relative duration ('7d', '2w', '1y'). Filter to
+   * pages whose effective_date >= this time. Replaces afterDate (kept as alias).
+   */
+  since?: string;
+  /**
+   * v0.29.1: same shape as `since`. Filter to effective_date <= this time.
+   * Boundary semantics: end-of-day for plain YYYY-MM-DD.
+   */
+  until?: string;
 }
 
 /**
@@ -391,6 +640,35 @@ export interface BrainHealth {
   timeline_coverage_score: number;   // 0-15
   no_orphans_score: number;          // 0-15
   no_dead_links_score: number;       // 0-10
+  /**
+   * v0.30.1 (Cherry D7 + Codex C3): explicit migrations diagnostic surface
+   * exposed to MCP get_health callers so remote agents can detect a wedged
+   * brain WITHOUT shelling SSH + gbrain doctor. Two ledgers (schema +
+   * orchestrator) per Codex T5 namespacing.
+   *
+   * `schema_version` ("1") on the parent BrainHealth pins the additive
+   * contract — clients should default-handle missing fields and never
+   * assume removed ones.
+   */
+  schema_version?: '1';
+  migrations?: {
+    schema: {
+      /** Current numeric config.version. */
+      version: number;
+      /** Latest available migration. */
+      latest_version: number;
+      /**
+       * Optional drift evidence — names of columns/tables a verify hook
+       * surfaced as missing on opt-in migrations. Empty array means no
+       * drift detected (or no verify hook ran).
+       */
+      verify_drift?: string[];
+    };
+    orchestrator: {
+      pending: Array<{ version: string; name: string; status: 'pending' | 'partial' }>;
+      wedged: Array<{ version: string; name: string; consecutive_partials: number }>;
+    };
+  };
 }
 
 // Ingest log

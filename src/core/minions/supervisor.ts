@@ -27,6 +27,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { detectTini, buildSpawnInvocation } from './spawn-helpers.ts';
 import {
   closeSync,
   existsSync,
@@ -138,6 +139,8 @@ export class MinionSupervisor {
   private child: ChildProcess | null = null;
   private crashCount = 0;
   private lastStartTime = 0;
+  /** Path to tini binary for zombie reaping, or empty string when absent. */
+  private readonly tiniPath: string;
   private stopping = false;
   private inBackoff = false;
   private healthInFlight = false;
@@ -151,6 +154,22 @@ export class MinionSupervisor {
   constructor(engine: BrainEngine, opts: Partial<SupervisorOpts> & { cliPath: string }) {
     this.engine = engine;
     this.opts = { ...DEFAULTS, ...opts };
+
+    // Detect tini for zombie reaping. Resolved once at construction so we
+    // don't shell out on every respawn. Belt-and-suspenders with the
+    // SIGCHLD handler in cli.ts — tini catches children spawned by native
+    // addons that bypass the JS event loop.
+    this.tiniPath = detectTini();
+  }
+
+  /**
+   * Read-only accessor for whether tini was detected at construction.
+   * Used by `test/supervisor-tini.test.ts` to verify the wiring without
+   * exposing the resolved path. Returns true when `worker_spawned` events
+   * will include `tini: true` in their payload.
+   */
+  get isTiniDetected(): boolean {
+    return this.tiniPath !== '';
   }
 
   /**
@@ -439,9 +458,17 @@ export class MinionSupervisor {
 
       this.lastStartTime = Date.now();
 
+      // Wrap with tini when available — reaps zombie children that the
+      // SIGCHLD handler in cli.ts might miss (native addons, edge cases).
+      const { cmd: spawnCmd, args: spawnArgs } = buildSpawnInvocation(
+        this.tiniPath,
+        this.opts.cliPath,
+        args,
+      );
+
       let child: ChildProcess;
       try {
-        child = spawn(this.opts.cliPath, args, {
+        child = spawn(spawnCmd, spawnArgs, {
           stdio: 'inherit',
           env,
         });
@@ -459,7 +486,11 @@ export class MinionSupervisor {
 
       this.child = child;
 
-      this.emit('worker_spawned', { pid: child.pid, cli_path: this.opts.cliPath });
+      this.emit('worker_spawned', {
+        pid: child.pid,
+        cli_path: this.opts.cliPath,
+        ...(this.tiniPath ? { tini: true } : {}),
+      });
 
       // Async spawn errors (ENOENT, EACCES after the fork/exec). Node fires
       // 'error' first, then 'exit' with code=null. We log the error; the

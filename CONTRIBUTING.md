@@ -270,6 +270,16 @@ without captured data can still replay), and cost considerations. The
 NDJSON wire format is documented in
 [`docs/eval-capture.md`](./docs/eval-capture.md).
 
+For public benchmark coverage on top of replay, `gbrain eval longmemeval
+<dataset.jsonl>` (v0.28.1) runs LongMemEval against gbrain's hybrid
+retrieval. One in-memory PGLite per question, runtime-enumerated
+`TRUNCATE` between questions, ground-truth scoring via LongMemEval's
+published `evaluate_qa.py`. Use it alongside replay when changes affect
+retrieval quality on long-context conversational data — replay catches
+regressions on YOUR queries, LongMemEval catches them on a public set the
+benchmark community already cites. See the "Public benchmarks: LongMemEval"
+section in [`docs/eval-bench.md`](./docs/eval-bench.md).
+
 ## Welcome PRs
 
 - SQLite engine implementation

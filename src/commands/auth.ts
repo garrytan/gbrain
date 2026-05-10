@@ -34,27 +34,66 @@ function generateToken(): string {
   return 'gbrain_' + randomBytes(32).toString('hex');
 }
 
-async function create(name: string) {
-  if (!name) { console.error('Usage: auth create <name>'); process.exit(1); }
+async function create(name: string, opts: { takesHolders?: string[] } = {}) {
+  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry]'); process.exit(1); }
   const sql = postgres(getDatabaseUrl(true)!);
   const token = generateToken();
   const hash = hashToken(token);
 
   try {
+    // v0.28: persist per-token takes-holder allow-list. Default ['world'] keeps
+    // private hunches hidden from MCP-bound tokens.
+    const takesHolders = opts.takesHolders && opts.takesHolders.length > 0
+      ? opts.takesHolders
+      : ['world'];
+    const permissions = { takes_holders: takesHolders };
     await sql`
-      INSERT INTO access_tokens (name, token_hash)
-      VALUES (${name}, ${hash})
+      INSERT INTO access_tokens (name, token_hash, permissions)
+      VALUES (${name}, ${hash}, ${sql.json(permissions as Parameters<typeof sql.json>[0])})
     `;
-    console.log(`Token created for "${name}":\n`);
+    console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}):\n`);
     console.log(`  ${token}\n`);
     console.log('Save this token — it will not be shown again.');
     console.log(`Revoke with: bun run src/commands/auth.ts revoke "${name}"`);
+    console.log(`Update visibility: bun run src/commands/auth.ts permissions "${name}" set-takes-holders world,garry`);
   } catch (e: any) {
     if (e.code === '23505') {
       console.error(`A token named "${name}" already exists. Revoke it first or use a different name.`);
     } else {
       console.error('Error:', e.message);
     }
+    process.exit(1);
+  } finally {
+    await sql.end();
+  }
+}
+
+async function permissions(name: string, action: string, value: string | undefined) {
+  if (!name || action !== 'set-takes-holders' || !value) {
+    console.error('Usage: auth permissions <name> set-takes-holders world,garry,brain');
+    process.exit(1);
+  }
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    const list = value.split(',').map(s => s.trim()).filter(Boolean);
+    if (list.length === 0) {
+      console.error('takes-holders list cannot be empty (use "world" for default-deny on private)');
+      process.exit(1);
+    }
+    const perms = { takes_holders: list };
+    const result = await sql`
+      UPDATE access_tokens
+        SET permissions = ${sql.json(perms as Parameters<typeof sql.json>[0])}
+        WHERE name = ${name}
+      RETURNING id
+    `;
+    if (result.length === 0) {
+      console.error(`Token "${name}" not found.`);
+      process.exit(1);
+    }
+    console.log(`Updated "${name}": takes_holders = ${JSON.stringify(list)}`);
+  } catch (e: any) {
+    console.error('Error:', e.message);
     process.exit(1);
   } finally {
     await sql.end();
@@ -292,9 +331,23 @@ async function registerClient(name: string, args: string[]) {
 export async function runAuth(args: string[]): Promise<void> {
   const [cmd, ...rest] = args;
   switch (cmd) {
-    case 'create': await create(rest[0]); return;
+    case 'create': {
+      // v0.28: optional --takes-holders world,garry,brain (default: world only)
+      const takesIdx = rest.indexOf('--takes-holders');
+      const takesHolders = takesIdx >= 0 && rest[takesIdx + 1]
+        ? rest[takesIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
+        : undefined;
+      const positional = rest.find(a => !a.startsWith('--') && a !== rest[takesIdx + 1]);
+      await create(positional || '', { takesHolders });
+      return;
+    }
     case 'list': await list(); return;
     case 'revoke': await revoke(rest[0]); return;
+    case 'permissions': {
+      // gbrain auth permissions <name> set-takes-holders world,garry
+      await permissions(rest[0] || '', rest[1] || '', rest[2]);
+      return;
+    }
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
     case 'test': {
@@ -308,10 +361,16 @@ export async function runAuth(args: string[]): Promise<void> {
       console.log(`GBrain Token Management
 
 Usage:
-  gbrain auth create <name>                                Create a legacy bearer token
+  gbrain auth create <name> [--takes-holders world,garry,brain]
+                                                          Create a legacy bearer token. v0.28: --takes-holders
+                                                          sets the per-token allow-list for the takes.holder
+                                                          field (default: ["world"]). MCP-bound calls to
+                                                          takes_list / takes_search / query filter by this.
   gbrain auth list                                         List all tokens
   gbrain auth revoke <name>                                Revoke a legacy token
-  gbrain auth register-client <name> [options]            Register an OAuth 2.1 client
+  gbrain auth permissions <name> set-takes-holders <h1,h2,h3>
+                                                          Update visibility for an existing token
+  gbrain auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
      --grant-types <client_credentials,authorization_code> (default: client_credentials)
      --scopes "<read write admin>"                         (default: read)
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)

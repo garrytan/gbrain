@@ -45,7 +45,7 @@ GBrain is those patterns, generalized. 34 skills. Install in 30 minutes. Your ag
 
 **New in v0.25.0 — BrainBench-Real (session capture, contributor opt-in):** with `GBRAIN_CONTRIBUTOR_MODE=1` set in your shell, every real `query` + `search` call through MCP, CLI, or the subagent tool-bridge gets captured (PII-scrubbed) into an `eval_candidates` table. Snapshot with `gbrain eval export`, replay against your code change with `gbrain eval replay`. Three numbers come back: mean Jaccard@k between captured and current retrieved slugs, top-1 stability, and latency Δ. **Off by default** for production users — no surprise data accumulation. Walkthrough: [docs/eval-bench.md](docs/eval-bench.md). NDJSON wire format: [docs/eval-capture.md](docs/eval-capture.md).
 
-**New in v0.25.0 — BrainBench-Real (session capture, contributor opt-in):** with `GBRAIN_CONTRIBUTOR_MODE=1` set in your shell, every real `query` + `search` call through MCP, CLI, or the subagent tool-bridge gets captured (PII-scrubbed) into an `eval_candidates` table. Snapshot with `gbrain eval export`, replay against your code change with `gbrain eval replay`. Three numbers come back: mean Jaccard@k between captured and current retrieved slugs, top-1 stability, and latency Δ. **Off by default** for production users — no surprise data accumulation. Walkthrough: [docs/eval-bench.md](docs/eval-bench.md). NDJSON wire format: [docs/eval-capture.md](docs/eval-capture.md).
+**New in v0.28.8 — LongMemEval in the box:** `gbrain eval longmemeval <dataset.jsonl>` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against gbrain's hybrid retrieval. One in-memory PGLite per run, `TRUNCATE` between questions (runtime-enumerated tables, schema-migration-safe), 25.9ms p50 per question on Apple Silicon. Your `~/.gbrain` brain is never touched. Retrieved chat content is sanitized with the same `INJECTION_PATTERNS` that protect takes — one source of truth for prompt-injection defense. Hand the JSONL output to LongMemEval's `evaluate_qa.py` to score.
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
@@ -87,6 +87,14 @@ gbrain query "what themes show up across my notes?"
 postinstall hook on global installs, so schema migrations never run and the CLI
 aborts with `Aborted()` the first time it opens PGLite. Use `git clone + bun install
 && bun link` as shown above. See [#218](https://github.com/garrytan/gbrain/issues/218).
+
+**Do NOT use `bun add -g gbrain` or `npm install -g gbrain`.** The npm registry
+has an unrelated package squatting that name (`gbrain@1.3.x`) — you'd silently
+install the wrong binary and overwrite the canonical one. v0.28.5+ detects this
+and prints a recovery message on `gbrain upgrade`, but the `git clone + bun link`
+path above is the only reliable install method until we publish under
+`@garrytan/gbrain` (tracked v0.29 follow-up). See
+[#658](https://github.com/garrytan/gbrain/issues/658).
 
 ```
 3 results (hybrid search, 0.12s):
@@ -476,6 +484,7 @@ GBrain ships integration recipes that your agent sets up for you. Each recipe te
 | [X-to-Brain](recipes/x-to-brain.md) | — | Twitter timeline + mentions + deletions |
 | [Calendar-to-Brain](recipes/calendar-to-brain.md) | credential-gateway | Google Calendar to searchable daily pages |
 | [Meeting Sync](recipes/meeting-sync.md) | — | Circleback transcripts to brain pages with attendees |
+| [Restart Sweep](recipes/restart-sweep.md) | OpenClaw + Telegram | Detect dropped Telegram messages after OpenClaw gateway restarts |
 
 **Data research recipes** extract structured data from email into tracked brain pages. Built-in recipes for investor updates (MRR, ARR, runway, headcount), expense tracking, and company metrics. Create your own with `gbrain research init`.
 
@@ -510,6 +519,8 @@ Run `gbrain integrations` to see status.
 ```
 
 The repo is the system of record. GBrain is the retrieval layer. The agent reads and writes through both. Human always wins... edit any markdown file and `gbrain sync` picks up the changes.
+
+For multi-machine setups (cross-machine thin client) and multi-worktree setups (per-worktree code engine + shared remote artifacts), see [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
 ## The Knowledge Model
 
@@ -758,6 +769,15 @@ SKILLS (v0.19)
                                         SKILLIFY_STUB). Accepts RESOLVER.md OR AGENTS.md.
   gbrain routing-eval [--llm] [--json]  Intent→skill routing accuracy on fixtures
 
+EVAL
+  gbrain eval --qrels <path>            Legacy IR-eval (P@k, R@k, MRR, nDCG@k against ground truth)
+  gbrain eval export [--since DUR]      Stream captured eval_candidates as NDJSON (BrainBench-Real)
+  gbrain eval prune --older-than DUR    Retention cleanup for eval_candidates (requires window)
+  gbrain eval replay --against FILE     Replay captured queries vs current build (Jaccard@k, top-1, latency Δ)
+  gbrain eval longmemeval <dataset>     Run public LongMemEval against gbrain hybrid retrieval (v0.28.8)
+                                        [--limit N] [--retrieval-only] [--keyword-only] [--expansion]
+                                        [--top-k K] [--model M] [--output FILE]
+
 ADMIN
   gbrain doctor [--json] [--fast]       Health checks (resolver, skills, DB, embeddings)
   gbrain doctor --fix [--dry-run]       Auto-fix DRY violations (delegate inlined rules to conventions)
@@ -766,7 +786,7 @@ ADMIN
   gbrain serve                          MCP server (stdio)
   gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
                                         [--token-ttl 3600] [--enable-dcr]
-                                        [--public-url URL]
+                                        [--public-url URL] [--log-full-params]
   gbrain auth create|list|revoke|test   Legacy bearer token management
   gbrain auth register-client <name>    Register an OAuth 2.1 client
         --grant-types client_credentials,authorization_code
@@ -777,11 +797,31 @@ ADMIN
   # programmatically via oauthProvider.registerClientManual() for host-repo wrappers.
   gbrain integrations                   Integration recipe dashboard
   gbrain sources list|add|remove|...    Multi-source brain management (v0.18)
-  gbrain dream [--dry-run] [--phase N]  8-phase maintenance cycle (lint→backlinks→sync→synthesize
-                                        →extract→patterns→embed→orphans). v0.23 added synthesize +
-                                        patterns: transcripts → reflections + cross-session themes.
+                                        v0.28.2: --url <https://...> registers a federated
+                                        remote git repo; clone is auto-managed under
+                                        $GBRAIN_HOME/clones/<id>/ and re-cloned on sync if
+                                        it goes missing. Also exposed via MCP for remote
+                                        agent setup (whoami + sources_{add,list,remove,status}).
+  gbrain dream [--dry-run] [--phase N]  11-phase maintenance cycle (lint→backlinks→sync→synthesize
+                                        →extract→patterns→recompute_emotional_weight→consolidate
+                                        →embed→orphans→purge). v0.23 added synthesize + patterns.
+                                        v0.29 added emotional-weight recompute. v0.30.2: synthesize
+                                        chunks fat transcripts. v0.31: consolidate promotes hot facts
+                                        into takes overnight.
   gbrain dream --input <file>           Ad-hoc transcript synthesis (implies --phase synthesize)
   gbrain dream --date YYYY-MM-DD        Synthesize a single day; --from/--to for backfill ranges
+
+  # v0.31 Hot Memory: cross-session facts queryable in real time.
+  gbrain recall <entity>                List active facts for an entity (newest first)
+  gbrain recall --since "1h ago"        Recency-filtered recall
+  gbrain recall --session <id>          Facts captured in a session id
+  gbrain recall --today                 Markdown render with kind icons (📅🎯🤝💭📌)
+  gbrain recall --supersessions         Audit log of auto-overwritten facts
+  gbrain recall --grep <text>           Substring filter (case-insensitive)
+  gbrain recall --as-context            Prompt-injection-ready markdown for headless agents
+  gbrain recall --json                  Structured output with effective_confidence per row
+  gbrain forget <fact-id>               Expire a fact (soft delete; never hard-DELETE)
+
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
   gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)

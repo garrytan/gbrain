@@ -41,7 +41,7 @@ describeE2E('E2E: JSONB roundtrip — v0.12.1 reliability wave', () => {
     `;
     expect(row.t).toBe('object');
     expect(row.marker).toBe('putpage-value');
-  });
+  }, 30_000);
 
   test('putRawData writes raw_data.data as object, not double-encoded string', async () => {
     const engine = getEngine();

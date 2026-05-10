@@ -119,131 +119,18 @@ export function expandVars(s: string): string {
 }
 
 // --- SSRF Protection ---
+// Helpers extracted to src/core/url-safety.ts in v0.28 so src/core/git-remote.ts
+// can reuse them without inverting the layering boundary. Re-exported here for
+// backward compat with existing callers + test/integrations.test.ts imports.
 
-/** Parse an IPv4 octet from decimal, hex (0x prefix), or octal (leading 0) notation. */
-export function parseOctet(s: string): number {
-  if (s.length === 0) return NaN;
-  if (s.startsWith('0x') || s.startsWith('0X')) {
-    if (!/^0[xX][0-9a-fA-F]+$/.test(s)) return NaN;
-    return parseInt(s, 16);
-  }
-  if (s.length > 1 && s.startsWith('0')) {
-    if (!/^0[0-7]+$/.test(s)) return NaN;
-    return parseInt(s, 8);
-  }
-  if (!/^\d+$/.test(s)) return NaN;
-  return parseInt(s, 10);
-}
+export {
+  parseOctet,
+  hostnameToOctets,
+  isPrivateIpv4,
+  isInternalUrl,
+} from '../core/url-safety.ts';
 
-/**
- * Convert an IPv4 hostname to 4 octets. Handles bypass encodings:
- *   - Dotted decimal: 127.0.0.1
- *   - Single decimal: 2130706433 (= 0x7f000001)
- *   - Hex: 0x7f000001
- *   - Per-octet hex/octal: 0x7f.0.0.1, 0177.0.0.1
- * Returns null for non-IP hostnames (fall through to hostname-based checks).
- */
-export function hostnameToOctets(hostname: string): number[] | null {
-  // Single integer form
-  if (/^\d+$/.test(hostname)) {
-    const n = parseInt(hostname, 10);
-    if (Number.isFinite(n) && n >= 0 && n <= 0xFFFFFFFF) {
-      return [(n >>> 24) & 0xFF, (n >>> 16) & 0xFF, (n >>> 8) & 0xFF, n & 0xFF];
-    }
-    return null;
-  }
-  // Hex integer form (0x prefix, no dots)
-  if (/^0[xX][0-9a-fA-F]+$/.test(hostname)) {
-    const n = parseInt(hostname, 16);
-    if (Number.isFinite(n) && n >= 0 && n <= 0xFFFFFFFF) {
-      return [(n >>> 24) & 0xFF, (n >>> 16) & 0xFF, (n >>> 8) & 0xFF, n & 0xFF];
-    }
-    return null;
-  }
-  // Dotted notation with possible octal/hex per octet
-  const parts = hostname.split('.');
-  if (parts.length === 4) {
-    const octets = parts.map(parseOctet);
-    if (octets.every(o => Number.isFinite(o) && o >= 0 && o <= 255)) return octets;
-  }
-  return null;
-}
-
-/** Classify an IPv4 address as internal/private/reserved. */
-export function isPrivateIpv4(octets: number[]): boolean {
-  const [a, b] = octets;
-  if (a === 127) return true;              // 127.0.0.0/8 loopback
-  if (a === 10) return true;               // 10.0.0.0/8 RFC1918
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 RFC1918
-  if (a === 192 && b === 168) return true; // 192.168.0.0/16 RFC1918
-  if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local (incl. AWS metadata)
-  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
-  if (a === 0) return true;                // 0.0.0.0/8 unspecified
-  return false;
-}
-
-/** Returns true if the URL targets an internal/metadata endpoint or uses a non-http(s) scheme. Fail-closed on parse errors. */
-export function isInternalUrl(urlStr: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(urlStr);
-  } catch {
-    return true; // malformed → block
-  }
-  // B4: scheme allowlist — block file:, data:, blob:, ftp:, gopher:, javascript:, etc.
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return true;
-
-  let host = url.hostname.toLowerCase();
-
-  // Block known metadata hostnames
-  const metadataHostnames = new Set([
-    'metadata.google.internal',
-    'metadata.google',
-    'metadata',
-    'instance-data',
-    'instance-data.ec2.internal',
-  ]);
-  if (metadataHostnames.has(host)) return true;
-
-  // localhost aliases
-  if (host === 'localhost' || host.endsWith('.localhost')) return true;
-
-  // Strip IPv6 brackets if present (WHATWG URL returns hostname with brackets for IPv6)
-  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
-
-  // IPv6 loopback (and any all-zeros form that resolves to loopback-adjacent)
-  if (host === '::1' || host === '::') return true;
-
-  // Handle IPv4-mapped IPv6. WHATWG URL canonicalizes `::ffff:127.0.0.1` to `::ffff:7f00:1`
-  // (two hex hextets), so we must parse hex hextets back to IPv4 octets.
-  if (host.startsWith('::ffff:')) {
-    const tail = host.slice(7);
-    // Mixed form: ::ffff:A.B.C.D (if parser preserved dotted notation)
-    const dotted = hostnameToOctets(tail);
-    if (dotted && isPrivateIpv4(dotted)) return true;
-    // Hex-compressed form: ::ffff:XXXX:YYYY → two 16-bit hextets
-    const hextets = tail.split(':');
-    if (hextets.length === 2 && hextets.every(h => /^[0-9a-f]{1,4}$/.test(h))) {
-      const hi = parseInt(hextets[0], 16);
-      const lo = parseInt(hextets[1], 16);
-      const octets = [(hi >> 8) & 0xff, hi & 0xff, (lo >> 8) & 0xff, lo & 0xff];
-      if (isPrivateIpv4(octets)) return true;
-    }
-  }
-
-  // IPv4 range check (handles hex, octal, single decimal bypass forms)
-  const octets = hostnameToOctets(host);
-  if (octets && isPrivateIpv4(octets)) return true;
-
-  // Trailing dot on numeric-looking hostname — strip and re-check
-  if (host.endsWith('.')) {
-    const stripped = host.slice(0, -1);
-    const strippedOctets = hostnameToOctets(stripped);
-    if (strippedOctets && isPrivateIpv4(strippedOctets)) return true;
-  }
-
-  return false;
-}
+import { isInternalUrl } from '../core/url-safety.ts';
 
 export async function executeHealthCheck(
   check: HealthCheck,

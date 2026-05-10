@@ -85,6 +85,15 @@ Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
 and per-client config export.
 
+> **v0.26.9+:** `mcp_request_log.params` and the live SSE activity feed default
+> to a redacted summary `{redacted, kind, declared_keys, unknown_key_count, approx_bytes}`.
+> Declared param keys are kept (intersected against the operation's spec); unknown
+> keys are counted but never named, and byte sizes round up to 1KB so size-probe
+> attacks can't binary-search secret content. Operators on a personal laptop who
+> want raw payloads back can pass `gbrain serve --http --log-full-params` (loud
+> stderr warning fires at startup). Multi-tenant deployments should leave it on
+> the redacted default.
+
 ### 2. Register OAuth clients
 
 Register clients from the **`/admin` dashboard**:

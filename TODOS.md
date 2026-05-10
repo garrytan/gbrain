@@ -1,5 +1,429 @@
 # TODOS
 
+## v0.31.2 follow-ups
+
+### Investigate: `gbrain query <common-keyword>` infinite loop
+**Priority:** P1
+**Filed:** 2026-05-08 from v0.31.2 bug report (separate from the sync hang).
+
+**Evidence:** Two `bun /Users/garrytan/.bun/bin/gbrain query the` processes
+(PIDs 39429, 46624) on the user's Mac were pegged at 99% CPU for 7
+straight days before being killed manually. Each used 6+ GB resident
+memory. Originated from the `algiers-v3` worktree. Not walker-related
+(query path doesn't traverse files), so the v0.31.2 fix doesn't address
+it.
+
+**Likely candidates:**
+- Query-expansion regex catastrophic backtracking on common single words
+  (`src/core/search/expansion.ts` calls Haiku then post-processes with
+  regex; a one-token query plus an unhelpful expansion could feed a
+  pathological input back into the search pipeline)
+- Hybrid-search RRF reciprocal-rank-fusion loop iterating over a result
+  set that never shrinks (`src/core/search/hybrid.ts`)
+- `postgres.js` cursor that never closes when the result set is large
+  (the 6GB RES on `query` smells like accumulated rows in JS memory, not
+  WASM allocation)
+
+**To reproduce:** create a brain with at least a few thousand pages, run
+`gbrain query the` and watch CPU + RSS. If it pegs and grows, capture
+`process.report.getReport()` and a stack trace via `kill -SIGUSR2 <pid>`
+before killing.
+
+**Out of scope for v0.31.2** because the user's primary symptom (sync
+hang) was the higher-evidence bug. Pick this up as v0.31.3 once the
+sync fix is verified working in production.
+
+### v0.31.3: PGLite + Postgres E2E for amarillo-shape regression
+**Priority:** P2
+**Filed:** 2026-05-08 from v0.31.2 plan (deferred).
+
+**What:** Plan called for two regression tests pinning the user's exact
+repro topology: `test/sync-walker-amarillo-shape.test.ts` (PGLite,
+fast-loop) and `test/e2e/sync-amarillo-shape.test.ts` (real-Postgres,
+skip-on-no-DB). Unit-level walker + chunker tests landed in v0.31.2
+(`test/sync-walker-symlink.test.ts` + `test/chunker-timeout.test.ts`),
+but the engine-integrated regression for the user's exact 1500-file
+self-symlink topology is still pending. Add when the next sync-related
+PR is in flight.
+
+## Thin-client mode follow-ups (v0.31.1, Issue #734)
+
+- [ ] **v0.31.x: routed-call timing telemetry.** `GBRAIN_TIMING=1` prints
+  `token_mint=Xms http=Yms server=Zms total=Wms` per routed MCP call.
+  Audit log at `~/.gbrain/audit/routed-calls-YYYY-Www.jsonl`. Cherry-pick
+  C from #734 plan; deferred from v0.31.1 to keep scope tight.
+
+- [ ] **v0.31.2: job-submission routing for `gbrain dream` etc.** Route
+  long-running ops (`dream`, `embed --stale`, `extract`) via `submit_job`
+  + poll, mirroring the existing `gbrain remote ping` autopilot-cycle
+  pattern. Cherry-pick D from #734 plan. Adds a thin-client async-job
+  render layer (progress events + spinner).
+
+- [ ] **Per-subcommand thin-client routing for `takes` and `sources`.**
+  CDX-2 audit identified the READ subcommands (`takes_list`, `takes_search`,
+  `sources_list`, `sources_status`) as routable; mutate subcommands edit
+  local files. v0.31.1 refuses both at the top level with hints. Split
+  is a v0.31.x release.
+
+- [ ] **Privacy decision: lift `localOnly: true` on `get_recent_transcripts`?**
+  Raw chat exports leaving the host is a real tradeoff. Needs explicit
+  per-token scope (`scope: 'transcripts'`) and consent UX. Out of v0.31.1.
+
+- [ ] **Trust-boundary policy review for remote-caller gates.** Server
+  intentionally disables `think.--save`/`--take` for remote callers
+  (operations.ts:1103-1135) and skips `put_page` auto-link/auto-timeline
+  for remote callers without `trustedWorkspace` (operations.ts:434-451).
+  Subagent-isolation reasons; blocks full thin-client parity. Policy
+  decision, not a routing fix.
+
+- [ ] **v0.32.0: flip `gbrain auth register-client` default scope from
+  `read` to `read,write,admin`.** Breaking for existing read-only scrapers;
+  ship deprecation warning in v0.31.x. The v0.31.1 `oauth_client_scopes_probe`
+  doctor check surfaces the gap with pinpoint remediation in the meantime.
+
+- [ ] **v0.31.x: cross-process OAuth token cache at
+  `~/.gbrain/oauth-token-cache.json`.** Cuts ~200ms cold-start cost for
+  shell-loop usage on thin-client installs. Today the in-memory cache is
+  per-process; every `gbrain` invocation pays a fresh token mint.
+
+- [ ] **v0.31.x: parity test (`test/thin-client-parity.test.ts`).** Plan
+  called for ~400 LOC byte-equal stdout assertions for 12+ ops via an
+  in-process MCP server pointed at the same PGLite as the local-engine
+  path. Harder than expected because it needs MCP server setup that the
+  current test infrastructure doesn't expose. v0.31.1 ships without it;
+  ENG-2's JSON-shape normalization + per-command test coverage is the
+  interim guard.
+
+## LongMemEval benchmark follow-ups (v0.28.12)
+
+### Closed: full 500-question 4-adapter run published
+
+The full 500-question, 4-adapter LongMemEval `_s` benchmark landed in
+[gbrain-evals#main:ced01f0](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-07-longmemeval-s.md).
+gbrain-hybrid: 97.60% R@5, beating MemPal raw 96.6% by 1.0pt on the same
+dataset, K, and n with no LLM in the retrieval loop. Honest null result on
+query expansion (97.60% with vs without). Closing this entry; remaining
+follow-ups below.
+
+### Timeline-aware retrieval signal for temporal-reasoning questions
+**Priority:** P2
+
+**What:** gbrain's `links` table + `gbrain extract timeline` already build a
+graph of dated events. Feed that signal into `searchKeyword` / `searchVector`
+ranking so questions like "what was the FIRST issue I had after my new
+car's first service?" get a temporal boost on session ordering.
+
+**Why:** LongMemEval temporal-reasoning is the only question type where MemPal-raw
+beats gbrain-hybrid (96.2% vs 94.7%, -1.5pt). Embeddings carry topic
+similarity; "first" / "before" / "last week" need ordering signal that
+vector cosine doesn't surface. We have the data infrastructure to fix this
+(the timeline extraction code), just don't pipe it into search ranking.
+
+**Pros:** Closes the only categorical loss to MemPal on the public benchmark.
+Generalizes beyond LongMemEval — every personal-knowledge agent gets
+temporal questions and most fail them. This is a structural advantage.
+
+**Cons:** Requires a new SQL ranking factor in `src/core/search/sql-ranking.ts`
+and signal-extraction work in the query-time path (parsing temporal hints
+from the question). Maybe ~200 lines + a benchmark line on the gbrain-evals
+report once it ships.
+
+**Context:** Per-type breakdown in
+`gbrain-evals/docs/benchmarks/2026-05-07-longmemeval-s.md` shows we tie
+or beat MemPal-raw on 5 of 6 types and lose temporal by 1.5pt. Also:
+`src/core/link-extraction.ts` already extracts dated timeline entries via
+`parseTimelineEntries`. They land in `timeline_entries` table but aren't
+used during retrieval ranking.
+
+**Depends on:** Nothing blocking.
+
+### Per-question batch consolidation (latency optimization)
+**Priority:** P3
+
+**What:** `importFromContent` calls `embedBatch` once per page. Each LongMemEval
+question imports ~50 sessions = 50 separate API calls. Pre-chunk all sessions
+for a question, embed in one OpenAI call, then bulk-write.
+
+**Why:** Drops per-question latency from ~14s to ~3s on a cold cache.
+Currently the runner ships a 700MB SQLite warm-cache to avoid this; a faster
+cold path would let CI run the benchmark daily without a fixture.
+
+**Pros:** Daily benchmark CI gate becomes practical. Cuts cold-cache cost by
+~10x. Faster iteration when tuning ranking parameters.
+
+**Cons:** ~80 lines of batch-consolidation code that lives in the runner, not
+gbrain core. Touches `eval/runner/longmemeval.ts:run()` per-question loop.
+Less generalizable than the timeline-aware ranker work.
+
+**Context:** Right now the warm-cache mitigates this in practice (subsequent
+runs are sub-1-min). The optimization matters only when re-running with a
+different gbrain version that re-keys the cache.
+
+**Depends on:** Nothing blocking.
+
+### LongMemEval `_m` split (200 distractor sessions per haystack)
+**Priority:** P3
+
+**What:** Run the existing 4-adapter benchmark against the harder `_m` split
+where each haystack has ~200 distractor sessions instead of ~50.
+
+**Why:** Pushes retrieval into the regime where gbrain's pipeline either
+holds up or doesn't. MemPal hasn't published `_m` numbers; we'd have a
+clean head-to-head once we run it. Also stresses the noise-rejection
+(source-boost / hard-exclude) layer of gbrain harder than `_s` does.
+
+**Pros:** Differentiated benchmark line. Forces signal-vs-noise behavior we
+can't measure on `_s`. Free with our existing runner.
+
+**Cons:** ~$10-20 in OpenAI embeddings (4x more chunks per question). Cache
+file grows to ~3GB. ~6-8 hours wall time for the embedding-heavy runs even
+parallel-3.
+
+**Depends on:** Nothing blocking. Could ship same shape as `_s` report.
+
+### Cheaper embedding-model recipe for benchmarks
+**Priority:** P4
+
+**What:** Pin `text-embedding-3-small` (or Voyage-3-lite via the v0.27
+pluggable provider stack) as a benchmark-only embedding model so the
+cold-cache cost drops 10x. Compare recall against `text-embedding-3-large`
+and publish the recall-cost tradeoff curve.
+
+**Why:** "What's the cheapest embedding model that still wins this
+benchmark?" is a real builder question. We'd publish the answer.
+
+**Pros:** Useful tradeoff line for users picking gbrain in a cost-sensitive
+deployment. Validates the v0.27 pluggable-provider work end-to-end.
+
+**Cons:** Multiple full-benchmark runs ($30+ in API spend) to chart the
+curve.
+
+**Depends on:** v0.27 pluggable embedding provider work (already shipped,
+verify Voyage adapter integration in `src/core/ai/recipes/voyage.ts`).
+## multimodal embedding follow-ups (v0.28.11 / PR #719)
+
+### `gbrain doctor`: warn on misconfigured multimodal model
+**Priority:** P2
+
+**What:** Add two checks in `src/commands/doctor.ts`. (1) When `embedding_multimodal_model` is set, verify the recipe's required API key is present in the env. (2) When `embedding_multimodal: true` is set but no `embedding_multimodal_model` AND the primary `embedding_model` recipe doesn't declare `supports_multimodal`, surface that gap.
+
+**Why:** Today these misconfigurations surface only on first image ingest, after the user has already pushed image content into the brain. Doctor catching them at install/upgrade time saves a round of confusion.
+
+**Pros:** Both checks are read-only and cheap (one env probe + one recipe lookup). Same pattern as existing doctor checks. Surfaces problems before they ship.
+**Cons:** Doctor's check list grows; needs a `--fast` opt-out path if added to the default scan. ~40 lines.
+**Context:** PR #719 added the multimodal_model routing key. The recipe-level + model-level validation in `embedMultimodal()` already throws clear errors at runtime, but only when image content hits the gateway. v0.28.x candidate.
+**Depends on:** None.
+
+### Reclassify Voyage HTTP 4xx as `AIConfigError` (Codex F2 from PR #719 review)
+**Priority:** P2
+
+**What:** `src/core/ai/gateway.ts:626` currently throws `AITransientError` for any non-401/403 4xx response from Voyage's /multimodalembeddings endpoint. Replace with a 4xx-non-429 → `AIConfigError` branch matching `normalizeAIError`'s contract at `src/core/ai/errors.ts:54`.
+
+**Why:** A config bug (malformed body, unsupported field, model the caller forgot to add to `multimodal_models`) currently presents to the caller as transient and triggers retry storms. PR #719's Change 3 closes the specific wrong-multimodal-model case locally via the `multimodal_models` allow-list, but other 4xx reasons still misclassify.
+
+**Pros:** Aligns the embedMultimodal error classifier with `normalizeAIError`. Eliminates retry-on-permanent-bug behavior. ~10 lines + 1 test.
+**Cons:** Changes runtime error class for some failures; existing callers that catch `AITransientError` for these codes now must catch `AIConfigError`. Search before merging.
+**Context:** Pre-existing in v0.27.1; surfaced because PR #719's new key makes the misclass more reachable. v0.28.x candidate.
+**Depends on:** None.
+
+### `gbrain config unset <key>` subcommand (Codex F6 from PR #719 review)
+**Priority:** P3
+
+**What:** Add `unset` action alongside `show|get|set` in `src/commands/config.ts`. Calls `engine.setConfig(key, '')` (loadConfigWithEngine treats empty string as undefined) so a user who set a key by mistake can clear it. Empty-string write is the minimum-diff implementation; a real DELETE would be cleaner if the engine grows one.
+
+**Why:** Once a user runs `gbrain config set X val`, there's no normal CLI path to clear it. Empty string is rejected by the current `set` validator (`action === 'set' && key && value` where value is truthy). PR #719 added another DB-merge key (`embedding_multimodal_model`) and surfaces this UX gap.
+
+**Pros:** Closes a pre-existing UX hole that applies to every DB-merge key (`embedding_multimodal`, `embedding_image_ocr*`, now `embedding_multimodal_model`). Trivial implementation, ~15 lines.
+**Cons:** Need to decide whether `unset` is a real DELETE (cleaner) or empty-string write (simpler).
+**Context:** Pre-existing in v0.27.x. Worth doing alongside the doctor checks above so users have a working escape hatch.
+**Depends on:** None.
+
+## cross-modal-eval (v0.27.x follow-ups from PR #674 plan)
+
+### `--budget-usd` hard cap + per-call cost telemetry (T11=B follow-up)
+**Priority:** P2
+
+**What:** `gbrain eval cross-modal` ships in v0.27.x with a partial cost guardrail: default `--cycles 1` in non-TTY plus a stderr cost-estimate printed before each run. The full `--budget-usd N` hard cap (refuse to start the next cycle if estimated spend would exceed) and per-call actual-cost telemetry written into the receipt are intentionally deferred.
+
+**Why:** Codex pushback on the original P2=B "defer everything" decision was right — even with `>=2/3` success required for a verdict (Q3=A), 3 cycles × 3 calls = 9 frontier calls per run, repeated across N skills if anyone scripts a bulk audit. The TTY/non-TTY cycle default catches the worst case; the hard cap catches the next class of mistakes.
+
+**Pros:** Deterministic spend ceiling. Real per-call cost in the receipt drives a feedback loop that lets us refine the price-table constant in `src/core/cross-modal-eval/runner.ts:estimateCost`. Future bulk-audit integrations get a safety net by default.
+**Cons:** ~80 lines of pricing-table + parsing + threading. Pricing values drift; the file becomes a small maintenance burden between model-family bumps.
+**Context:** Pricing table lives at `src/core/cross-modal-eval/runner.ts:estimateCost`. Once we have real telemetry from a few weeks of usage, we can switch the table to "last observed" instead of "list price" and get more accurate caps. v0.27.x candidate.
+**Depends on:** Nothing.
+
+### Subagent integration (recovers cross-process rate-leases — T4 deferred)
+**Priority:** P2
+
+**What:** Wire `gbrain eval cross-modal` to be invokable as a `gbrain agent run` child job. Today the CLI runs synchronously and bypasses `src/core/minions/rate-leases.ts` because the lease helper requires a `minion_jobs.id` that the CLI path doesn't have (T4=A in plans/radiant-napping-lerdorf.md).
+
+**Why:** Cross-process concurrency cap. A user running `gbrain eval cross-modal` in one terminal alongside `gbrain agent run` in another can hit Anthropic 429s due to combined load. As a minion job, the eval gets the rate-lease behavior for free, plus stagger / quiet-hours / retry surface from the existing Minions queue.
+
+**Pros:** No new helper API; reuses what's already there. Closes the cross-process gap that today's `Promise.allSettled` design intentionally leaves open.
+**Cons:** Requires a job handler registration + receipt-path threading through job context. Probably ~150 lines plus tests. Behavior parity (verdict / receipt shape) needs to be pinned with a parametrized test.
+**Context:** Pattern is the same as `src/core/minions/handlers/subagent.ts`. v0.27.x candidate.
+**Depends on:** Nothing.
+
+### Skill adoption telemetry (revisit T7=C with data)
+**Priority:** P3
+
+**What:** Track how many skills land cross-modal eval receipts. If adoption stalls at, say, <30% of skills after 30 days, consider flipping the 11th item from `required:false` (T7=C, current) to `required:true` (T7=A) in v0.28.x.
+
+**Why:** T7=C ships the gate as informational so existing audits don't regress. The forcing function is documentation alone. We don't yet know if that's enough.
+
+**Pros:** Data-driven decision instead of guessing. Lightweight: count receipt files in `gbrainPath('eval-receipts')` against the count of skills under `skills/*/SKILL.md`.
+**Cons:** "Adoption stalled" is a judgment call without a baseline. Could become a debate.
+**Context:** New check in `gbrain doctor` would surface the count. v0.28.x candidate.
+**Depends on:** None.
+
+### `docs/cross-modal-eval.md` user guide
+**Priority:** P3
+
+**What:** Add a user-facing guide. Cover the gateway-config flow, receipt forensics, the `<slug>-<sha8>.json` filename convention, default models + how to override them, the relationship to `skills/cross-modal-review/SKILL.md`, and worked examples on a real skill.
+
+**Why:** SKILL.md teaches the workflow but lives under `skills/skillify/`. CLAUDE.md "Key files" entries are agent-facing, not human-facing. A `docs/cross-modal-eval.md` is the natural home for "I'm a user, how do I use this command?" answers.
+
+**Pros:** Discoverable from CLAUDE.md "Key files" reference. Mirrors `docs/eval-bench.md` precedent.
+**Cons:** Doc-write task; ~250 lines of prose.
+**Context:** v0.27.x candidate.
+**Depends on:** None.
+
+## /health endpoint hardening (v0.28.1 follow-up)
+
+### Cancel `engine.getStats()` when /health times out
+**Priority:** P2
+
+**What:** `probeHealth()` in `src/commands/serve-http.ts` races `engine.getStats()` against a 3s timeout. When the timeout wins, the original `getStats()` keeps running on a saturated pool. Under sustained probe traffic with a slow DB, timed-out probes pile up expensive `count(*)` queries that turn a partial slowdown into a total outage.
+
+**Why:** Both adversarial reviewers (Claude + Codex) flagged this independently during the v0.28.1 ship. Deferred because cancellation requires `AbortController` plumbing through `BrainEngine.getStats()` which doesn't exist yet — wider blast radius than v0.28.1's zombie-reaping scope justified.
+
+**Pros:** Closes the self-DoS path. /health returning 503 stops contributing to pool saturation.
+**Cons:** Touches the BrainEngine interface (PostgresEngine + PGLiteEngine implementations). Needs postgres.js or PgBouncer-level query cancellation. Wider blast radius.
+**Context:** Drop-in replacement for `Promise.race([getStats(), timeout])` is `getStats({ signal })` consumed via AbortController. Reviewer findings: see PR #637 (v0.28.1) adversarial review section.
+**Depends on:** AbortController plumbing in BrainEngine interface.
+
+### Replace `/health` with a lighter liveness probe
+**Priority:** P3
+
+**What:** `engine.getStats()` does `count(*) FROM pages, content_chunks, links, tags, timeline_entries` plus `GROUP BY type`. On a large but otherwise healthy brain, this can normally exceed 3s and cause false-positive 503s + orchestrator restart loops.
+
+**Why:** Codex flagged that the new 3s timeout is aggressive for the cost of the probe. Pre-existing behavior (the /health endpoint was already doing full stats in v0.27 with no timeout). Worth splitting probe purpose: `/health` for liveness (`SELECT 1`), `/stats` for the full counts.
+
+**Pros:** Liveness probe stays under 100ms even on saturated pools. Operators get a separate `/stats` for the count breakdown when they actually want it.
+**Cons:** Behavior change for orchestrator setups that scrape /health as both liveness AND count source.
+**Context:** PR #637 (v0.28.1) adversarial review. Pair with the AbortController follow-up above.
+## Remote-source MCP follow-ups (v0.28.2)
+
+### Token rotation: `gbrain auth rotate <name>` + `rotate_token` MCP op
+**Priority:** P2
+
+**What:** Atomic rotate for legacy + OAuth tokens. Issue a new token in the same TX as the revocation of the old, no overlap window. Refresh-token rotation already exists for OAuth; this is the unified user-facing surface (CLI + MCP).
+
+**Why:** Today rotation is `revoke + create`, with a window where neither token works. For long-lived bearer keys handed to agents, that's a reload outage every time the key gets rotated.
+
+**Pros:** Single command does the right thing. Atomic cutover. Operators stop scripting around the gap.
+**Cons:** Needs careful testing of the legacy `access_tokens` UPDATE path (returns single-use new token before the row mutates) plus an MCP op that grants a new token bound to the original client_id without requiring a new authorize round trip.
+**Context:** Item 4 from the gstack /setup-gbrain v1.28.1.0 enhancement request. v0.28.x candidate.
+**Depends on:** Nothing.
+
+### Migration introspection in `get_health`
+**Priority:** P3
+
+**What:** Extend `BrainEngine.getHealth()` return shape with `migrations: { pending: [...], wedged: [...] }`. `gbrain doctor` already shows this; expose it via the MCP op so remote agents can detect partial-migration state without invoking `doctor` separately.
+
+**Why:** Closes a remote-diagnostic gap. gstack /setup-gbrain Path 4 hit a wedged-migration brain mid-session; the only readback was SSH + `gbrain doctor`. With this, the same diagnostic flows through MCP.
+
+**Pros:** Pure additive change to the `get_health` op shape. No new op surface. Consumers ignore the new field if they don't care.
+**Cons:** Wedged detection logic lives in `gbrain doctor`'s code today; need to extract or duplicate. Care needed not to leak migration internals to non-admin scopes (current op is admin-only — fine).
+**Context:** Item 5 from the gstack /setup-gbrain v1.28.1.0 enhancement request.
+**Depends on:** Nothing.
+
+### Accept-header friendliness on `/mcp`
+**Priority:** P3
+
+**What:** MCP SDK rejects requests missing `text/event-stream` in the Accept header with a generic 406 Not Acceptable. Pre-check the header at the express middleware layer and return a 400 with a descriptive hint pointing at the spec.
+
+**Why:** Other MCP clients (curl scripts, custom integrations) hit the SDK's 406 and get no diagnostic. gstack's verify-helper sets both headers correctly so the headline path works.
+
+**Pros:** Operator UX improvement. Faster debugging when clients fail discovery.
+**Cons:** Tight coupling to the SDK behavior — if it later loosens, the pre-check becomes redundant.
+**Context:** Item 6 from the gstack /setup-gbrain v1.28.1.0 enhancement request.
+**Depends on:** Nothing.
+
+### `gbrain sources rebase-clone <id>`
+**Priority:** P3
+
+**What:** Recover from `url-drift` (config.remote_url updated but the on-disk clone still points at the old origin). Currently `sync` refuses with a structured error pointing at this command — but the command itself doesn't exist yet. Implement: prompt for confirmation (rm-rf the clone is destructive), then re-clone via the same temp-dir + rename atomicity contract as `sources add --url`.
+
+**Why:** Closes the loop on the URL-drift code path the v0.28.2 sync added. Without it, operators have to `sources remove --confirm-destructive` + `sources add --url` (loses page count, history).
+
+**Pros:** Cleaner UX for URL changes. Preserves the source row + history.
+**Cons:** Destructive on-disk; needs `--confirm-destructive` gate. Edge case: what if sync is mid-run when rebase fires? The existing sync-lock guards this, but worth pinning in tests.
+**Context:** v0.28.2 plan filed this explicitly as a follow-up.
+**Depends on:** Nothing.
+
+### `--filter=blob:none` partial-clone option for federated sources
+**Priority:** P3
+
+**What:** v0.28.2 defaults `gbrain sources add --url` to `--depth=1` (no history). For users who want commit-aware features later (page-state-at-commit-X, blame, who-edited-what), expose `--filter=blob:none` as an opt-in: keeps full graph metadata, lazy-fetches blobs.
+
+**Why:** `--depth=1` is a one-way door — once cloned, you can't reconstruct history without re-cloning the whole repo. Partial clones preserve history while staying small.
+
+**Pros:** Forward-compat for commit-aware brain features. Negligible cost on first clone for typical brain repos. Better than the alternative (full clones for everyone).
+**Cons:** First-clone latency is higher on long-history repos. Adds one more flag to the `add` surface.
+**Context:** Eng review A5 — the boring choice for v0.28.2 was `--depth=1`. This is the unboring follow-up.
+**Depends on:** Nothing.
+
+### DNS rebinding defense for `parseRemoteUrl`
+**Priority:** P3
+
+**What:** `isInternalUrl` (`src/core/url-safety.ts`) does lexical/string-based classification only — no DNS resolution. An attacker who controls a public hostname's A/AAAA records can resolve to internal IPs (`127.0.0.1`, `169.254.169.254`, RFC 1918) and bypass the SSRF gate. The gate catches direct IP literals + metadata hostnames; it doesn't catch `https://attacker-controlled.example/repo.git` where DNS points internal.
+
+**Why:** Defense in depth. The current gate is sufficient for naive abuse (typing `192.168.1.1` directly), but a deliberate attacker with DNS control can bypass it. Adding async DNS resolution + revalidation closes the hole.
+
+**Pros:** Closes the cleanest remaining SSRF bypass. Mirrors the redirect-revalidation pattern at `integrations.ts:289`. Pinned by a future test using a mock resolver.
+**Cons:** Async DNS makes `parseRemoteUrl` `async`. Every caller (CLI, MCP op, test) needs to update. ~50-line change.
+**Context:** Codex finding from v0.28.2 ship adversarial review. The IPv6 ULA + link-local portion of the same finding shipped in v0.28.2; DNS rebinding deferred.
+**Depends on:** Nothing.
+
+### `sources.chunker_version` PGLite-schema parity
+**Priority:** P3
+
+**What:** `src/schema.sql:33` declares `sources.chunker_version` and `src/commands/sync.ts:253` reads/writes it, but `src/core/pglite-schema.ts:28` omits the column. PGLite users hit a schema-mismatch error on the sync write path.
+
+**Why:** Pre-existing bug surfaced during the v0.28.2 codex review. Not introduced by remote-source work, but adjacent to source-sync code. Worth fixing as a small parity PR before more source-local state lands.
+
+**Pros:** Closes a quiet schema drift between the two engine implementations. ~10 lines.
+**Cons:** Needs a migration entry to add the column to existing PGLite brains. Migration version bump.
+**Context:** Codex D5 from v0.28.2 plan review.
+**Depends on:** Nothing.
+
+## OAuth/MCP hardening (v0.26.7 follow-up)
+
+### F11 — `auth register-client --redirect-uri` flag
+**Priority:** P3
+
+**What:** `gbrain auth register-client` always passes `[]` for redirect URIs; there is no CLI flag to set them. Operators who want to register an `authorization_code` client without DCR have to hand-edit the database.
+
+**Why:** Operator UX gap, not a trust-boundary issue. Codex C11 correctly flagged it as scope creep on the v0.26.7 hardening pass — kept out of that PR but worth doing.
+
+**Pros:** Closes the operator-experience gap. Validates `https://` or loopback per RFC 6749 §3.1.2.1 at registration time. Repeatable flag.
+**Cons:** ~30 lines of argv parsing + URL validation. Adds one more flag to the `auth register-client` surface. Low value relative to the OAuth provider hardening that already shipped.
+**Context:** Eva-brain has the implementation under `src/commands/auth.ts:registerClient`. Lift verbatim — the `localhost`/`127.0.0.1`/`::1` exact-match validation is correct; codex spot-check confirmed it does NOT match `localhost.evil.com`. v0.27 candidate.
+**Depends on:** Nothing.
+
+### F13 — `gbrain serve --http` argv positive-int validator
+**Priority:** P3
+
+**What:** `parseInt(args[idx + 1])` on `--port` and `--token-ttl` accepts the next flag as the value if the argument is missing (e.g., `--port --token-ttl 100` parses port as NaN → fallback 3131). Negative integers like `--port -1` parse to -1, server fails to bind with a confusing error.
+
+**Why:** Hygiene, not security. Codex C11 flagged as scope creep. Cheap to do later.
+
+**Pros:** Replaces `parseInt(...)  || fallback` with a `parsePositiveIntOption(args, flag, fallback, {max?})` helper that validates the next arg isn't a flag, matches `^[1-9]\d*$`, and clamps to a max. Exits 2 with a clear error.
+**Cons:** ~20 lines of helper + threading through `serve.ts`. Behavior change: previously-silent bad input now exits loud. Probably fine; no consumer relies on the silent fallback.
+**Context:** Eva-brain has the helper at `src/commands/serve.ts`. v0.27 candidate.
+**Depends on:** Nothing.
+
 ## destructive-guard (v0.26.5 follow-up)
 
 ### Adjacent 2 — Storage objects orphan on hard purge

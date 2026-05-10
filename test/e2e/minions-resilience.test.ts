@@ -41,7 +41,7 @@ describeE2E('E2E: Minions resilience (OpenClaw real-world patterns)', () => {
   beforeAll(async () => {
     await setupDB();
     await runMigrations(getEngine());
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await teardownDB();

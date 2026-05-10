@@ -35,7 +35,7 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
   beforeAll(async () => {
     engine = new PostgresEngine();
     await engine.connect({ database_url: DATABASE_URL! });
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();

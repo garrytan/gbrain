@@ -74,6 +74,10 @@ async function seedReflections(engine: PGLiteEngine, count: number): Promise<voi
 
 describe('E2E patterns — disabled', () => {
   test('skipped when dream.patterns.enabled=false', async () => {
+    // 30s timeout: a fresh PGLiteEngine + initSchema (36 migrations,
+    // pgvector WASM cold start) clears in ~3s but spikes to 6-15s under
+    // full-e2e-suite load contention. Default 5s timeout was eating the
+    // happy path.
     const rig = await setupRig();
     try {
       await rig.engine.setConfig('dream.patterns.enabled', 'false');
@@ -86,7 +90,7 @@ describe('E2E patterns — disabled', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 
   test('default-enabled when config key unset', async () => {
     const rig = await setupRig();
@@ -102,7 +106,7 @@ describe('E2E patterns — disabled', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 });
 
 describe('E2E patterns — insufficient_evidence', () => {
@@ -118,7 +122,7 @@ describe('E2E patterns — insufficient_evidence', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 
   test('skipped with reflections below min_evidence', async () => {
     const rig = await setupRig();
@@ -134,7 +138,7 @@ describe('E2E patterns — insufficient_evidence', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 });
 
 describe('E2E patterns — no API key', () => {
@@ -153,7 +157,7 @@ describe('E2E patterns — no API key', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 });
 
 describe('E2E patterns — dry-run', () => {
@@ -172,5 +176,5 @@ describe('E2E patterns — dry-run', () => {
     } finally {
       await rig.cleanup();
     }
-  });
+  }, 30_000);
 });

@@ -34,6 +34,85 @@ docs/guides/rls-and-you.md for the GBRAIN:RLS_EXEMPT comment escape hatch.
 
 99% of the time, you want the fix. Run the SQL. Re-run `gbrain doctor`. Done.
 
+## v0.26.7 — auto-RLS event trigger and one-time backfill
+
+Starting in v0.26.7 (migration v35), gbrain ships two changes that close the
+gap where a table could exist in your `public` schema without RLS for any
+amount of time at all.
+
+**1. The event trigger.** A Postgres DDL event trigger named
+`auto_rls_on_create_table` runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY`
+on every newly created `public.*` table. It covers `CREATE TABLE`,
+`CREATE TABLE AS … SELECT`, and `SELECT … INTO` — every syntax Postgres
+reports as a table-creation command. Tables created by gbrain itself, by
+your other apps sharing the same Supabase project (Baku, Hermes, anything),
+or by a human running raw SQL all get RLS enabled the moment they exist.
+Non-`public` schemas (`auth`, `storage`, `realtime`, etc.) are explicitly
+ignored — Supabase manages those, and we should not touch them.
+
+**2. The one-time backfill.** When you upgrade to v0.26.7, the migration
+walks every existing `public.*` base table whose RLS is off and whose comment
+doesn't carry the `GBRAIN:RLS_EXEMPT` exemption (see below) and enables RLS
+on each. After the upgrade, `gbrain doctor`'s `rls` check should be a no-op
+on every brain.
+
+### Breaking change: read this before upgrading
+
+If you have public tables that are intentionally RLS-off and you want them
+to stay that way, you MUST add the `GBRAIN:RLS_EXEMPT` comment **before**
+running `gbrain upgrade` to v0.26.7. The backfill flips RLS on for any public
+table that doesn't carry the exact comment contract documented below. There
+is no `--dry-run` flag on the migration.
+
+The minimum cost of getting this wrong is one round-trip: the operator runs
+the SQL to enable RLS on a table that should have been exempt, then
+`ALTER TABLE … DISABLE ROW LEVEL SECURITY` and adds the exempt comment to
+prevent a re-flip on a later doctor run. No data is lost.
+
+### Cross-app implications
+
+If a non-gbrain app (Baku, Hermes, a script you wrote, anything) creates
+tables in the same Supabase project, the trigger will enable RLS on those
+tables too. Two ways to handle that:
+
+1. **The app's connection role has BYPASSRLS** (e.g. it's also using the
+   `postgres` role). Newly created tables get RLS on but the app reads/writes
+   freely because BYPASSRLS bypasses policies entirely.
+2. **The app's role does NOT have BYPASSRLS.** Then the app needs to add a
+   `CREATE POLICY` immediately after creating the table, granting itself
+   the read/write access it needs. The trigger does NOT add policies — it
+   only enables RLS, leaving the deny-by-default posture in place until the
+   app's policy lands.
+
+If neither condition holds, the app will fail to read its own freshly-created
+tables. The fix is at the app side, not gbrain's: either grant BYPASSRLS or
+ship a policy.
+
+### What if the trigger gets dropped?
+
+`gbrain doctor` includes a new `rls_event_trigger` check that verifies the
+trigger is installed and enabled. If you drop it manually for any reason
+(debugging, migration testing, anything), doctor warns and gives you the
+recovery command:
+
+```
+gbrain apply-migrations --force-retry 35
+```
+
+Re-running migration v35 is idempotent — it `DROP EVENT TRIGGER IF EXISTS`
+and recreates cleanly.
+
+### Why no FORCE ROW LEVEL SECURITY?
+
+Postgres has two RLS dials. `ENABLE` blocks anon/authenticated; `FORCE` also
+blocks the table OWNER unless they hold BYPASSRLS. We use `ENABLE` only,
+matching the posture in `src/schema.sql`, migrations v24, and v29. `FORCE`
+would lock non-BYPASSRLS apps out of their own freshly-created tables (the
+trigger function inherits the caller's role, not the gbrain role) — which
+defeats the cross-app coexistence story above. If you want defense-in-depth
+`FORCE` on a specific gbrain-owned table, add it explicitly in your own
+migration; gbrain's auto-RLS does not opt you in by default.
+
 ## The 1% case: deliberate exemption
 
 Sometimes a public table is supposed to be readable by the anon key. An

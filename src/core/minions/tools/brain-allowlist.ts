@@ -56,6 +56,13 @@ export const BRAIN_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'resolve_slugs',
   'get_ingest_log',
   'put_page',
+  // v0.29 — Salience + Anomaly Detection. Both read-only. `get_recent_transcripts`
+  // is intentionally NOT included: subagent calls always have ctx.remote=true,
+  // and the v0.29 trust gate rejects remote callers — adding it here would be
+  // a footgun (subagent calls op, gets permission_denied, looks like a bug).
+  // The cycle synthesize phase already calls discoverTranscripts directly.
+  'get_recent_salience',
+  'find_anomalies',
 ]);
 
 /** Matches Anthropic's tool-name constraint. No dots. */

@@ -1,11 +1,11 @@
 /**
- * gbrain skillify check — 10-item post-task audit.
+ * gbrain skillify check — 11-item post-task audit.
  *
  * Promoted from `scripts/skillify-check.ts` (D-CX-2). The legacy
  * script stays as a thin shim so existing callers keep working, but
  * the CLI entry point is now `gbrain skillify check`.
  *
- * 10-item checklist (essay Step 3-10):
+ * 11-item checklist (essay Step 3-10 + v0.27.x cross-modal eval):
  *   1. SKILL.md exists
  *   2. Code file exists at target path
  *   3. Unit tests exist
@@ -16,11 +16,23 @@
  *   8. check-resolvable gate (runs `gbrain check-resolvable --json`)
  *   9. E2E smoke (required copy of #4 for required-gate semantics)
  *  10. Brain filing (only when the script writes pages)
+ *  11. Cross-modal eval (INFORMATIONAL; required:false). Looks for a
+ *      receipt at `gbrainPath('eval-receipts')/<slug>-<sha8>.json`
+ *      bound to the current SKILL.md content hash (T10=A,T7=C in
+ *      plans/radiant-napping-lerdorf.md). A missing or stale receipt
+ *      surfaces as a non-blocking note, not a failure.
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
 import { spawnSync } from 'child_process';
+
+import { gbrainPath } from '../core/config.ts';
+import {
+  describeReceiptStatus,
+  findReceiptForSkill,
+  type ReceiptStatus,
+} from '../core/cross-modal-eval/receipt-name.ts';
 
 interface CheckItem {
   name: string;
@@ -259,6 +271,18 @@ function runSkillifyCheckTarget(target: string, root: string): CheckResult {
     ),
   );
 
+  // Item 11: cross-modal eval (informational, T7=C). The receipt is bound
+  // to (slug, sha8 of SKILL.md). The audit doesn't fail on a missing or
+  // stale receipt — it just surfaces the status.
+  const crossModalReceipt = lookupCrossModalReceipt(skillMd, skillName);
+  items.push(
+    checkOptional(
+      'Cross-modal eval (informational)',
+      crossModalReceipt.passed,
+      crossModalReceipt.detail,
+    ),
+  );
+
   const passed = items.filter(i => i.passed).length;
   const total = items.length;
   const missing = items.filter(i => !i.passed && i.required).map(i => i.name);
@@ -273,6 +297,46 @@ function runSkillifyCheckTarget(target: string, root: string): CheckResult {
   }
 
   return { path: target, skillName, items, score: passed, total, recommendation };
+}
+
+/**
+ * Item 11 helper: look up the cross-modal eval receipt for this skill.
+ * `passed` is true when a current-sha receipt exists. Stale or missing
+ * receipts return passed=true *for the audit* — item 11 is informational
+ * (T7=C) — but the detail string makes the status visible.
+ *
+ * Reads the receipt from `gbrainPath('eval-receipts')` (T5 correction:
+ * this resolves to <GBRAIN_HOME>/.gbrain/eval-receipts/, NOT the legacy
+ * <GBRAIN_HOME>/eval-receipts/ that the original plan claimed).
+ */
+function lookupCrossModalReceipt(
+  skillMdPath: string,
+  skillName: string,
+): { passed: boolean; detail: string } {
+  if (!existsSync(skillMdPath)) {
+    return { passed: true, detail: 'no SKILL.md — skipping cross-modal eval check' };
+  }
+  let status: ReceiptStatus;
+  try {
+    status = findReceiptForSkill(skillMdPath, gbrainPath('eval-receipts'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { passed: true, detail: `receipt lookup failed: ${msg}` };
+  }
+  switch (status.status) {
+    case 'found':
+      return { passed: true, detail: describeReceiptStatus(skillName, status) };
+    case 'stale':
+      return {
+        passed: false, // visually marked as not-yet-rerun but item is required:false
+        detail: describeReceiptStatus(skillName, status),
+      };
+    case 'missing':
+      return {
+        passed: false,
+        detail: describeReceiptStatus(skillName, status),
+      };
+  }
 }
 
 function recentlyModified(root: string, days: number = 7): string[] {

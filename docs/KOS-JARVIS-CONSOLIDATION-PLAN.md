@@ -351,12 +351,26 @@ candidates for retirement / consolidation by end of M2:
 - `notion-ingest-delta` → SKILL.md → 5-line redirect (M1)
 - Phase 4-5 (not yet built) → replaced by upstream `archive-crawler` config (M2-C)
 
-### Milestone M3 — provider abstraction probe (no fixed date)
+### Milestone M3 — provider abstraction (UNLOCKED 2026-05-09 by v0.27.0)
 
-- [ ] If upstream lands an embedding provider abstraction (not in v0.25.0
-  roadmap signals; would be a major refactor), retire
-  `gemini-embed-shim` in the next sync after the abstraction lands.
-- [ ] Until then: `gemini-embed-shim` is permanent.
+**Status updated 2026-05-09**: v0.27.0 ships `src/core/ai/gateway.ts`
+(Vercel AI SDK), native Google embedding provider supported via
+`provider:model` config. Probe **passed** during v0.31.2 sync window
+(2026-05-09): `gbrain providers test --model google:gemini-embedding-001`
+returned 286ms / 768 dim green using existing `NANO_BANANA_API_KEY`.
+
+Production cutover **deferred** to next session — local `/tmp/pilot-brain`
+PGLite end-to-end verification blocked by macOS 26.3 WASM #223 cold-start
+hang. Mitigation lined up: pilot via Postgres-backed throwaway DB
+(`gbrain init --supabase ...` against `gbrain_m3_pilot` on local
+Postgres) avoids PGLite entirely.
+
+- [x] Upstream provider abstraction landed (v0.27.0, commit `ee9ceb3`)
+- [x] Native Google probe pass (286ms, dim configurable via
+  `--embedding-dimensions 1536`)
+- [ ] Production cutover (Postgres pilot → plist env switch → shim retire)
+  — see TODO `(M3) gemini-embed-shim 退役` for full step list
+- [ ] After cutover: KEEP-unique 5 → 4, fork active 14 → 13
 
 ### Milestone M4 — v0.26.0 +60d retro
 

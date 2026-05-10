@@ -127,7 +127,7 @@ function listTextFiles(dir: string): string[] {
   }
   const out: string[] = [];
   for (const name of entries) {
-    if (!name.endsWith('.txt')) continue;
+    if (!name.endsWith('.txt') && !name.endsWith('.md')) continue;
     const full = join(dir, name);
     try {
       if (statSync(full).isFile()) out.push(full);
@@ -161,7 +161,8 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
   const results: DiscoveredTranscript[] = [];
   for (const dir of dirs) {
     for (const filePath of listTextFiles(dir)) {
-      const baseName = basename(filePath, '.txt');
+      const ext = filePath.endsWith('.md') ? '.md' : '.txt';
+      const baseName = basename(filePath, ext);
       const dateMatch = DATE_RE.exec(baseName);
       const inferredDate = dateMatch ? dateMatch[1] : null;
       if (!isInDateRange(inferredDate, opts)) continue;
@@ -214,12 +215,14 @@ export function readSingleTranscript(
   }
   if (content.length < minChars) return null;
   if (isDreamOutput(content, bypass)) {
-    const baseName = basename(filePath, '.txt');
+    const ext = filePath.endsWith('.md') ? '.md' : '.txt';
+      const baseName = basename(filePath, ext);
     process.stderr.write(`[dream] readSingleTranscript skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
     return null;
   }
   if (matchesAnyExclude(content, excludeRes)) return null;
-  const baseName = basename(filePath, '.txt');
+  const ext = filePath.endsWith('.md') ? '.md' : '.txt';
+      const baseName = basename(filePath, ext);
   const dateMatch = DATE_RE.exec(baseName);
   return {
     filePath,

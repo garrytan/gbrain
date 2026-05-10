@@ -142,3 +142,52 @@ describe('walkMarkdownFiles', () => {
     expect(typeof walkMarkdownFiles).toBe('function');
   });
 });
+
+describe('extractLinksFromFile — slug normalization (T-OBS-1 regression)', () => {
+  // Regression coverage for the bug where CAPS-named files (ETHOS.md, AGENTS.md)
+  // generated CAPS slugs from `relPath.replace('.md', '')` while the DB stores
+  // pages.slug lowercase via pathToSlug() in core/sync.ts. The mismatch caused
+  // INSERT ... JOIN pages ON pages.slug = v.from_slug to silently drop links.
+  // Fix: extractor now uses pathToSlug() consistently for from_slug AND allSlugs.
+
+  it('lowercases from_slug when relPath has CAPS filename', async () => {
+    // Note: link targets are kept lowercase (the convention used by the
+    // wikilink migration); this test focuses on from_slug derivation.
+    const content = 'See [agents](agents.md) for the matrix.';
+    const allSlugs = new Set(['ethos', 'agents']);
+    const links = await extractLinksFromFile(content, 'ETHOS.md', allSlugs);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    // Critical: from_slug must be lowercase regardless of the source file casing.
+    expect(links[0].from_slug).toBe('ethos');
+  });
+
+  it('lowercases from_slug for mixed-case filename', async () => {
+    const content = 'Reference [hermes](hermes_nest.md).';
+    const allSlugs = new Set(['hermes_nest', 'foo']);
+    const links = await extractLinksFromFile(content, 'Foo.md', allSlugs);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    expect(links[0].from_slug).toBe('foo');
+  });
+
+  it('is idempotent for already-lowercase filenames', async () => {
+    const content = 'See [bar](bar.md).';
+    const allSlugs = new Set(['foo', 'bar']);
+    const links = await extractLinksFromFile(content, 'foo.md', allSlugs);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    expect(links[0].from_slug).toBe('foo');
+  });
+
+  it('lowercases nested path slug with mixed-case segment', async () => {
+    // relPath has mixed-case directory + filename. Link target is in the same
+    // directory (no .. traversal) so resolveSlug can hit allSlugs cleanly.
+    const content = 'See [other](other.md).';
+    const allSlugs = new Set(['decisions/0001-living-repo-pattern', 'decisions/other']);
+    const links = await extractLinksFromFile(
+      content,
+      'decisions/0001-Living-Repo-Pattern.md',
+      allSlugs,
+    );
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    expect(links[0].from_slug).toBe('decisions/0001-living-repo-pattern');
+  });
+});
