@@ -221,27 +221,42 @@ synthesis"`. `skills/kos-jarvis/README.md` `_archived/` tree expanded
 with M2-A entries. `skills/kos-jarvis/_lib/brain-db.ts` caller list
 updated. **Active fork dirs: 14 → 11.**
 
-### [ ] (M2-A.pilot) concept-synthesis pilot run on 188 concept pages
+### [x] (M2-A.pilot) concept-synthesis pilot — DONE 2026-05-10, decision (b)
 
-**Why**: With the dead triplet retired, the empirical question becomes:
-does v0.25.1 `concept-synthesis` (T1-T4 tier system, 4-phase dedup +
-score + synth + cluster) produce useful signal on the 188 `concepts/`
-pages? Output drives the wiring decision.
+**Verdict**: option **(b) Keep ad-hoc** — do NOT wire to dream-cycle.
 
-**What**:
-1. Invoke `concept-synthesis` skill agent on `~/brain/concepts/`
-   (188 pages, mutating skill — `writes_pages: true`,真改 brain)
-2. Output → `~/brain/.agent/reports/concept-synthesis-pilot-2026-05-10.md`
-3. 看 T1/T2/T3/T4 分布 + dedup ratio + 主观相关性
-4. Decision: (a) wire 到 dream-cycle (cron 集成) / (b) 留 ad-hoc /
-   (c) 上游不够用,fork 自己写
+Pilot ran deterministic-only (Phase 1 + Phase 2) on 181 concept pages
+via a transient script `/tmp/m2a-pilot.ts`. No LLM calls, no brain
+page mutations.
 
-**Acceptance**: Pilot report 写到 brain,decision 落地。若 (a) → 加
-P1.5 实施任务。
+**Tier distribution**: T1=0, T2=0, T3=11, T4=170 (93.9% single-mention).
+Zero concepts cleared the multi-month-recurrence threshold required to
+justify Phase 3 LLM synthesis. Mention-count algo only counts slug-string
+references in `~/brain/sources/`, not natural-language prose mentions —
+so absolute counts undershoot, but the **shape** (long-tail T4 dominance)
+is robust.
 
-**Scope**: 1 h pilot + 30 min 写 report。Total 1.5 h。需要本机
-ANTHROPIC_API_KEY。Brain 改动会写入 brain repo(不是 fork repo),
-单独一轮 brain-side commit。
+**Phase 1 dedup wins**: 22 Jaccard ≥0.5 + 11 substring pairs = 33
+candidate merges (~18% of corpus). Concrete cases: `office-3f-ap01` ⊂
+`ap-office-3f-ap01`, the 5 `fsct-2025-*` ticket pages, the
+`dashboard` ⊂ `dashboard-site` ⊂ `dashboard-site-health` chain. These
+are real garbage that one-pass cleanup (LLM or rule-based) can address.
+
+**Why not (a) wire-to-cron**: optimizes for a use case (sustained T1/T2
+evolution narratives) that doesn't exist in this brain. Premature
+automation. Phase 3+4 LLM cost (~$1-3/week) for zero candidates.
+
+**Why not (c) fork-own-version**: would add new fork-local code on the
+same day we just deleted 7 dirs (M1+M2-A+M3). Net surface increase. The
+deterministic Phase 1+2 already lives in `/tmp/m2a-pilot.ts` (not
+committed to fork — transient artifact); Lucien can re-run any time.
+
+**Decision evidence**: `~/brain/.agent/reports/concept-synthesis-pilot-2026-05-10.md`
+(brain commit `b9e32d8aa7`).
+
+If the corpus shifts later (signal-detector + voice-note-ingest accumulate
+enough recurring concept stubs across multiple months), reopen and
+re-evaluate (a) or (c) with new evidence.
 
 ### [ ] (M2-B) `kos-compat-api` ↔ `gbrain serve --http` + thin translator 评估
 
