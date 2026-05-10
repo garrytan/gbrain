@@ -38,6 +38,7 @@ import type {
 import { resolveRecipe, assertTouchpoint } from './model-resolver.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { runCodexOAuthChat } from './codex-oauth.ts';
 
 const MAX_CHARS = 8000;
 const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
@@ -737,6 +738,9 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         apiKey: apiKey ?? 'unauthenticated',
       }).languageModel(modelId);
     }
+    case 'codex-oauth': {
+      throw new AIConfigError('OpenAI Codex OAuth does not support expansion.', recipe.setup_hint);
+    }
   }
 }
 
@@ -942,6 +946,9 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
         apiKey: apiKey ?? 'unauthenticated',
       }).languageModel(modelId);
     }
+    case 'codex-oauth': {
+      return { __codexOAuth: true, modelId };
+    }
     default:
       throw new AIConfigError(`Unknown implementation: ${(recipe as any).implementation}`);
   }
@@ -981,6 +988,36 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
   const useCache = !!opts.cacheSystem && supportsCache;
+
+  if (recipe.implementation === 'codex-oauth') {
+    if (opts.tools && opts.tools.length > 0) {
+      throw new AIConfigError(
+        'OpenAI Codex OAuth provider does not support GBrain tool calling yet.',
+        'Use Anthropic/OpenAI API-key providers for subagent tool loops until Codex tool replay is verified.',
+      );
+    }
+    const result = await runCodexOAuthChat({
+      model: modelId,
+      system: opts.system,
+      messages: opts.messages,
+      maxTokens: opts.maxTokens ?? 4096,
+      abortSignal: opts.abortSignal,
+    });
+    return {
+      text: result.text,
+      blocks: result.text ? [{ type: 'text', text: result.text }] : [],
+      stopReason: result.stopReason,
+      usage: {
+        input_tokens: result.usage.input_tokens,
+        output_tokens: result.usage.output_tokens,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+      },
+      model: `${recipe.id}:${modelId}`,
+      providerId: recipe.id,
+      providerMetadata: result.providerMetadata as Record<string, any> | undefined,
+    };
+  }
 
   // Build messages. Anthropic prompt-cache markers ride on system + last tool
   // via providerOptions; the AI SDK accepts the system as a string for

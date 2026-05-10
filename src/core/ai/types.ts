@@ -21,6 +21,7 @@ export type Implementation =
   | 'native-openai'
   | 'native-google'
   | 'native-anthropic'
+  | 'codex-oauth'
   | 'openai-compatible';
 
 export interface EmbeddingTouchpoint {
