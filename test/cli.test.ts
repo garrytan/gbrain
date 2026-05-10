@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -108,6 +108,85 @@ describe('CLI dispatch integration', () => {
     const exitCode = await proc.exited;
     expect(stdout).toContain('Usage: gbrain get');
     expect(exitCode).toBe(0);
+  });
+
+  test('put --help documents --file input', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'put', '--help'], {
+      cwd: repoRoot,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    expect(stdout).toContain('Usage: gbrain put');
+    expect(stdout).toContain('--file <path>');
+    expect(exitCode).toBe(0);
+  });
+
+  test('unknown shared-op flags fail before DB connection', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-unknown-flag-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'get', 'people/alice', '--bogus'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stderr).toContain('Unknown option for gbrain get: --bogus');
+      expect(stderr).not.toContain('No brain configured');
+      expect(exitCode).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('put --file writes markdown content from the file', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-put-file-'));
+    const pagePath = join(home, 'page.md');
+    writeFileSync(pagePath, `---
+type: concept
+title: File Flag Page
+tags: [cli-file]
+---
+
+Body loaded from --file.
+`);
+    try {
+      const init = Bun.spawn(['bun', 'run', 'src/cli.ts', 'init'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      expect(await init.exited).toBe(0);
+
+      const put = Bun.spawn(['bun', 'run', 'src/cli.ts', 'put', 'concepts/file-flag-page', '--file', pagePath], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const putStdout = await new Response(put.stdout).text();
+      const putStderr = await new Response(put.stderr).text();
+      expect(await put.exited).toBe(0);
+      expect(putStderr).not.toContain('Error');
+      expect(putStdout).toContain('concepts/file-flag-page');
+
+      const get = Bun.spawn(['bun', 'run', 'src/cli.ts', 'get', 'concepts/file-flag-page'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const getStdout = await new Response(get.stdout).text();
+      expect(await get.exited).toBe(0);
+      expect(getStdout).toContain('File Flag Page');
+      expect(getStdout).toContain('Body loaded from --file.');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('upgrade --help prints usage without running upgrade', async () => {

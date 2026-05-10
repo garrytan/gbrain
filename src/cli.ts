@@ -446,17 +446,52 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
   let posIdx = 0;
+  const cliName = op.cliHints?.name || op.name;
+  const MAX_STDIN = 5_000_000; // 5MB
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith('--')) {
       const key = arg.slice(2).replace(/-/g, '_');
+      if (op.name === 'put_page' && key === 'file') {
+        if (i + 1 >= args.length || args[i + 1].startsWith('--')) {
+          console.error('Error: --file requires a path.');
+          process.exit(1);
+        }
+        if (params.content !== undefined) {
+          console.error('Error: use only one of --file, --content, or stdin for gbrain put content.');
+          process.exit(1);
+        }
+        const content = readFileSync(args[++i], 'utf-8');
+        if (Buffer.byteLength(content, 'utf-8') > MAX_STDIN) {
+          console.error(`Error: file content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
+          process.exit(1);
+        }
+        params.content = content;
+        continue;
+      }
+
       const paramDef = op.params[key];
+      if (!paramDef) {
+        if (op.mutating && key === 'dry_run') {
+          params.dry_run = true;
+          continue;
+        }
+        console.error(`Unknown option for gbrain ${cliName}: ${arg}`);
+        process.exit(1);
+      }
       if (paramDef?.type === 'boolean') {
         params[key] = true;
       } else if (i + 1 < args.length) {
+        if (op.name === 'put_page' && key === 'content' && params.content !== undefined) {
+          console.error('Error: use only one of --file, --content, or stdin for gbrain put content.');
+          process.exit(1);
+        }
         params[key] = args[++i];
         if (paramDef?.type === 'number') params[key] = Number(params[key]);
+      } else {
+        console.error(`Error: ${arg} requires a value.`);
+        process.exit(1);
       }
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
@@ -468,7 +503,6 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   // Read stdin for content params
   if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
     const stdinContent = readFileSync('/dev/stdin', 'utf-8');
-    const MAX_STDIN = 5_000_000; // 5MB
     if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
       console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
       process.exit(1);
@@ -1294,6 +1328,9 @@ function printOpHelp(op: Operation) {
       const req = def.required ? ' (required)' : '';
       const prefix = isPos ? `  <${key}>` : `  --${key.replace(/_/g, '-')}`;
       console.log(`${prefix.padEnd(28)} ${def.description || ''}${req}`);
+    }
+    if (op.name === 'put_page') {
+      console.log(`${'  --file <path>'.padEnd(28)} Read markdown content from a file instead of --content or stdin`);
     }
   }
 }
