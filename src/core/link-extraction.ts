@@ -148,7 +148,7 @@ export interface CodeRef {
 // The extension list is aligned with detectCodeLanguage in chunkers/code.ts.
 // Paths NOT matching these extensions are ignored because they wouldn't
 // have a code page to edge to anyway.
-const CODE_REF_REGEX = /\b((?:src|lib|app|test|tests|scripts|docs|packages|internal|cmd|examples)\/[\w\-./]+\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|go|rs|java|cs|cpp|cc|hpp|c|h|php|swift|kt|scala|lua|ex|exs|elm|ml|dart|zig|sol|sh|bash|css|html|vue|json|yaml|yml|toml))(?::(\d+))?\b/g;
+const CODE_REF_REGEX = /\b((?:src|lib|app|test|tests|scripts|docs|packages|internal|cmd|examples)\/[\w\-./]+\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|py|rb|go|rs|java|cs|cpp|cc|hpp|c|h|php|swift|kt|scala|lua|ex|exs|elm|ml|dart|zig|sol|sh|bash|css|html|vue|astro|json|yaml|yml|toml))(?::(\d+))?\b/g;
 
 /**
  * Extract code-path references (e.g. 'src/core/sync.ts:42') from markdown

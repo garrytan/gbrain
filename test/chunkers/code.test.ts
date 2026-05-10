@@ -28,7 +28,7 @@ describe('detectCodeLanguage', () => {
       'foo.scala': 'scala', 'foo.lua': 'lua', 'foo.ex': 'elixir',
       'foo.elm': 'elm', 'foo.ml': 'ocaml', 'foo.dart': 'dart',
       'foo.zig': 'zig', 'foo.sol': 'solidity', 'foo.sh': 'bash',
-      'foo.css': 'css', 'foo.html': 'html', 'foo.vue': 'vue',
+      'foo.css': 'css', 'foo.html': 'html', 'foo.vue': 'vue', 'foo.astro': 'html',
       'foo.json': 'json', 'foo.yaml': 'yaml', 'foo.toml': 'toml',
     };
     for (const [path, expected] of Object.entries(cases)) {

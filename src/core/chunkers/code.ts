@@ -436,6 +436,7 @@ export function detectCodeLanguage(filePath: string, content?: string): Supporte
   if (lower.endsWith('.css')) return 'css';
   if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
   if (lower.endsWith('.vue')) return 'vue';
+  if (lower.endsWith('.astro')) return 'html';
   if (lower.endsWith('.json')) return 'json';
   if (lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'yaml';
   if (lower.endsWith('.toml')) return 'toml';
