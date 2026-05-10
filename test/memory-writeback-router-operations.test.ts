@@ -1,0 +1,128 @@
+import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+
+const sourceRefs = ['Source: User, direct message, 2026-05-10 12:00 KST'];
+
+async function withEngine<T>(run: (engine: SQLiteEngine) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-writeback-router-op-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    return await run(engine);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function ctx(engine: OperationContext['engine'], dryRun = false): OperationContext {
+  return {
+    engine,
+    config: {} as OperationContext['config'],
+    logger: console,
+    dryRun,
+  };
+}
+
+describe('memory writeback router operation', () => {
+  test('is registered as a mutating operation with CLI hint', () => {
+    const op = operationsByName.route_memory_writeback;
+    expect(op).toBeDefined();
+    expect(op.mutating).toBe(true);
+    expect(op.cliHints?.name).toBe('route-memory-writeback');
+    expect(op.params.evidence_kind.enum).toContain('agent_inferred');
+    expect(op.params.apply.type).toBe('boolean');
+  });
+
+  test('apply false does not read or mutate the engine', async () => {
+    const engine = new Proxy({}, {
+      get() {
+        throw new Error('route_memory_writeback planning must not read the engine');
+      },
+    }) as unknown as OperationContext['engine'];
+
+    const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+      content: 'The router should create candidates for inferred claims.',
+      evidence_kind: 'agent_inferred',
+      source_refs: sourceRefs,
+      target_object_type: 'curated_note',
+      target_object_id: 'systems/mbrain',
+    }) as any;
+
+    expect(result.decision).toBe('create_candidate');
+    expect(result.applied).toBe(false);
+    expect(result.created_candidate).toBeUndefined();
+  });
+
+  test('dry run ignores apply true and does not create a candidate', async () => {
+    await withEngine(async (engine) => {
+      const result = await operationsByName.route_memory_writeback.handler(ctx(engine, true), {
+        content: 'The router should keep dry-run planning non-mutating.',
+        evidence_kind: 'agent_inferred',
+        source_refs: sourceRefs,
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        apply: true,
+      }) as any;
+
+      expect(result.dry_run).toBe(true);
+      expect(result.applied).toBe(false);
+      expect(await engine.listMemoryCandidateEntries({ limit: 10 })).toEqual([]);
+    });
+  });
+
+  test('apply true creates a candidate and status event with interaction id', async () => {
+    await withEngine(async (engine) => {
+      const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'The router stores inferred durable claims as reviewable candidates.',
+        evidence_kind: 'agent_inferred',
+        source_refs: sourceRefs,
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        interaction_id: 'trace-router-1',
+        apply: true,
+      }) as any;
+
+      expect(result.decision).toBe('create_candidate');
+      expect(result.applied).toBe(true);
+      expect(result.created_candidate).toMatchObject({
+        candidate_type: 'fact',
+        source_refs: sourceRefs,
+        extraction_kind: 'inferred',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+      });
+      expect(result.duplicate_review.decision).toBeDefined();
+
+      const events = await engine.listMemoryCandidateStatusEvents({
+        candidate_id: result.created_candidate.id,
+        limit: 10,
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.interaction_id).toBe('trace-router-1');
+    });
+  });
+
+  test('missing provenance defers and does not create a candidate', async () => {
+    await withEngine(async (engine) => {
+      const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'This inferred claim has no source.',
+        evidence_kind: 'agent_inferred',
+        apply: true,
+      }) as any;
+
+      expect(result.decision).toBe('defer');
+      expect(result.applied).toBe(false);
+      expect(result.missing_requirements).toEqual(['source_refs']);
+      expect(await engine.listMemoryCandidateEntries({ limit: 10 })).toEqual([]);
+    });
+  });
+});

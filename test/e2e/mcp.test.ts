@@ -105,6 +105,11 @@ describe('E2E: MCP Tool Generation', () => {
     expect(createRedactionPlan?.inputSchema.required).toContain('query');
     const applyRedactionPlan = tools.find((tool) => tool.name === 'apply_memory_redaction_plan');
     expect((applyRedactionPlan?.inputSchema.properties as any).actor.type).toBe('string');
+    const routeWriteback = tools.find((tool) => tool.name === 'route_memory_writeback');
+    expect(routeWriteback?.inputSchema.required).toContain('content');
+    expect(routeWriteback?.inputSchema.required).toContain('evidence_kind');
+    expect((routeWriteback?.inputSchema.properties as any).evidence_kind.enum).toContain('agent_inferred');
+    expect((routeWriteback?.inputSchema.properties as any).apply.type).toBe('boolean');
   });
 
   test('MCP server module can be imported', async () => {

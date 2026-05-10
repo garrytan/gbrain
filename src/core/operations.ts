@@ -31,6 +31,7 @@ import { getAtlasOrientationCard } from './services/atlas-orientation-card-servi
 import { getAtlasOrientationBundle } from './services/atlas-orientation-bundle-service.ts';
 import { createBrainLoopAuditOperations } from './operations-brain-loop-audit.ts';
 import { createMemoryInboxOperations, DEFAULT_MEMORY_INBOX_SCOPE_ID } from './operations-memory-inbox.ts';
+import { createMemoryWritebackRouterOperations } from './operations-memory-writeback-router.ts';
 import { createMemoryControlPlaneOperations } from './operations-memory-control-plane.ts';
 import { createMemoryMutationLedgerOperations } from './operations-memory-mutation-ledger.ts';
 import { assertMemoryWriteAllowed, MemoryAccessPolicyError } from './services/memory-access-policy-service.ts';
@@ -3053,6 +3054,11 @@ const memoryInboxOperations = createMemoryInboxOperations({
   OperationError,
 });
 
+const memoryWritebackRouterOperations = createMemoryWritebackRouterOperations({
+  defaultScopeId: DEFAULT_MEMORY_INBOX_SCOPE_ID,
+  OperationError,
+});
+
 const brainLoopAuditOperations = createBrainLoopAuditOperations({
   OperationError,
 });
@@ -5105,7 +5111,7 @@ export const operations: Operation[] = [
   // Resolution & chunks
   resolve_slugs, get_chunks,
   // Profile memory
-  get_profile_memory_entry, list_profile_memory_entries, upsert_profile_memory_entry, delete_profile_memory_entry, ...memoryInboxOperations, write_profile_memory_entry,
+  get_profile_memory_entry, list_profile_memory_entries, upsert_profile_memory_entry, delete_profile_memory_entry, ...memoryInboxOperations, ...memoryWritebackRouterOperations, write_profile_memory_entry,
   // Personal episodes
   get_personal_episode_entry, list_personal_episode_entries, record_personal_episode, delete_personal_episode_entry, write_personal_episode_entry,
   // Note manifest
