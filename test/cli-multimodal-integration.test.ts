@@ -25,6 +25,9 @@ import type { AIGatewayConfig } from '../src/core/ai/types.ts';
 // e2e behavior these tests care about (DB-set value lands in gateway) still
 // holds, but a helper-shape test would also catch the drift in PR review.
 function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
+  const env = { ...process.env };
+  if (!env.OPENAI_API_KEY && c.openai_api_key) env.OPENAI_API_KEY = c.openai_api_key;
+  if (!env.ANTHROPIC_API_KEY && c.anthropic_api_key) env.ANTHROPIC_API_KEY = c.anthropic_api_key;
   return {
     embedding_model: c.embedding_model,
     embedding_dimensions: c.embedding_dimensions,
@@ -33,7 +36,7 @@ function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     chat_model: c.chat_model,
     chat_fallback_chain: c.chat_fallback_chain,
     base_urls: c.provider_base_urls,
-    env: { ...process.env },
+    env,
   };
 }
 

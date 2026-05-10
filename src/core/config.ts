@@ -108,6 +108,129 @@ export interface GBrainConfig {
   };
 }
 
+export type EnvFileSource = 'gbrain' | 'hermes';
+export interface EnvFileLoadResult {
+  source: EnvFileSource;
+  path: string;
+  keys: string[];
+}
+
+const SHARED_PROVIDER_ENV_KEYS = new Set([
+  // Native providers
+  'OPENAI_API_KEY',
+  'OPENAI_ORG_ID',
+  'OPENAI_PROJECT',
+  'ANTHROPIC_API_KEY',
+  'GOOGLE_GENERATIVE_AI_API_KEY',
+  'VOYAGE_API_KEY',
+  // OpenAI-compatible providers with auth
+  'DEEPSEEK_API_KEY',
+  'GROQ_API_KEY',
+  'TOGETHER_API_KEY',
+  // Local/proxy providers where auth/base-url may be optional but useful.
+  'LITELLM_BASE_URL',
+  'LITELLM_API_KEY',
+  'OLLAMA_BASE_URL',
+  'OLLAMA_API_KEY',
+]);
+
+function parseDotenv(raw: string): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  for (const originalLine of raw.split(/\r?\n/)) {
+    let line = originalLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('export ')) line = line.slice('export '.length).trim();
+
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+
+    let value = line.slice(eq + 1).trim();
+    const quote = value[0];
+    if ((quote === '"' || quote === "'") && value.endsWith(quote)) {
+      value = value.slice(1, -1);
+      if (quote === '"') {
+        value = value
+          .replace(/\\n/g, '\n')
+          .replace(/\\r/g, '\r')
+          .replace(/\\t/g, '\t')
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, '\\');
+      }
+    }
+    entries.push([key, value]);
+  }
+  return entries;
+}
+
+function loadEnvFile(path: string, onlyKeys?: ReadonlySet<string>): string[] {
+  if (!existsSync(path)) return [];
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf-8');
+  } catch {
+    return [];
+  }
+
+  const loaded: string[] = [];
+  for (const [key, value] of parseDotenv(raw)) {
+    if (onlyKeys && !onlyKeys.has(key)) continue;
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = value;
+    loaded.push(key);
+  }
+  return loaded;
+}
+
+/**
+ * Load key=value pairs from ~/.gbrain/.env into process.env.
+ *
+ * This is intentionally separate from loadConfig(): loadConfig remains a pure
+ * reader of the current environment/config file, while the CLI may opt in to
+ * a one-time dotenv-style bootstrap before command dispatch. Values already
+ * present in the process environment win over the file.
+ */
+export function loadGbrainEnvFile(path = configEnvPath()): string[] {
+  return loadEnvFile(path);
+}
+
+export function hermesEnvPath(): string {
+  const home = process.env.HERMES_HOME?.trim() || join(homedir(), '.hermes');
+  return join(home, '.env');
+}
+
+/**
+ * Bridge provider credentials from local env files into CLI-launched gbrain.
+ *
+ * Precedence is explicit and narrow:
+ *   process.env > ~/.gbrain/.env > ${HERMES_HOME:-~/.hermes}/.env
+ *
+ * The Hermes file is treated as a shared provider-credential source only. We do
+ * not wholesale import unrelated Hermes secrets (Telegram tokens, gateway
+ * webhooks, etc.) into gbrain's process.
+ */
+export function loadSharedProviderEnvFiles(opts: {
+  gbrainEnvPath?: string;
+  hermesEnvPath?: string;
+} = {}): EnvFileLoadResult[] {
+  const results: EnvFileLoadResult[] = [];
+
+  const gbrainPath = opts.gbrainEnvPath ?? configEnvPath();
+  const gbrainKeys = loadGbrainEnvFile(gbrainPath);
+  if (gbrainKeys.length > 0) {
+    results.push({ source: 'gbrain', path: gbrainPath, keys: gbrainKeys });
+  }
+
+  const hermesPath = opts.hermesEnvPath ?? hermesEnvPath();
+  const hermesKeys = loadEnvFile(hermesPath, SHARED_PROVIDER_ENV_KEYS);
+  if (hermesKeys.length > 0) {
+    results.push({ source: 'hermes', path: hermesPath, keys: hermesKeys });
+  }
+
+  return results;
+}
+
 /**
  * True when this install is configured as a thin client of a remote
  * `gbrain serve --http`. Single source of truth for the "is this a
@@ -151,6 +274,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(dbUrl ? { database_url: dbUrl } : {}),
     ...(dbUrl ? { database_path: undefined } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
@@ -282,6 +406,10 @@ export function configDir(): string {
 
 export function configPath(): string {
   return join(configDir(), 'config.json');
+}
+
+export function configEnvPath(): string {
+  return join(configDir(), '.env');
 }
 
 /**
