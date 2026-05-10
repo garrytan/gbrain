@@ -133,6 +133,28 @@ describe('parseMarkdown validation surface', () => {
       const parsed = parseMarkdown(md, undefined, { validate: true });
       expect(parsed.errors!.map(e => e.code)).not.toContain('NESTED_QUOTES');
     });
+
+    // Regression for #529: flow-sequence arrays of quoted strings are
+    // legitimate YAML and must not trigger NESTED_QUOTES even though the
+    // line contains 3+ unescaped double quotes.
+    test('flow-array of quoted IDs does not trigger (#529)', () => {
+      const md = `${fence}\ntype: law\nrelated: ["LAW-001", "LAW-009", "LAW-013"]\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).not.toContain('NESTED_QUOTES');
+    });
+
+    test('flow-array of quoted wikilinks does not trigger (#529)', () => {
+      const md = `${fence}\ntype: spec\nrelated: ["[[skill-a]]", "[[skill-b]]", "[[skill-c]]"]\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).not.toContain('NESTED_QUOTES');
+    });
+
+    test('inline-style genuine nested-quote on single value still triggers', () => {
+      // Single value (NOT a flow-array) with inner unescaped quote — real bug.
+      const md = `${fence}\ntype: concept\ntitle: "He said "hello" loudly"\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).toContain('NESTED_QUOTES');
+    });
   });
 
   describe('EMPTY_FRONTMATTER', () => {
