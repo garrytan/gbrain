@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { operationsByName, parseOpArgs, type OperationContext } from '../src/core/operations.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 const sourceRefs = ['Source: User, direct message, 2026-05-10 12:00 KST'];
@@ -39,6 +39,25 @@ describe('memory writeback router operation', () => {
     expect(op.cliHints?.name).toBe('route-memory-writeback');
     expect(op.params.evidence_kind.enum).toContain('agent_inferred');
     expect(op.params.apply.type).toBe('boolean');
+    expect(op.params.dry_run.type).toBe('boolean');
+  });
+
+  test('CLI parser accepts dry-run for the router operation', () => {
+    const warnings: string[] = [];
+    const params = parseOpArgs(operationsByName.route_memory_writeback, [
+      '--content',
+      'The router should expose dry-run through CLI parsing.',
+      '--evidence-kind',
+      'direct_user_statement',
+      '--source-refs',
+      JSON.stringify(sourceRefs),
+      '--apply',
+      '--dry-run',
+    ], { warn: (msg) => warnings.push(msg) });
+
+    expect(warnings).toEqual([]);
+    expect(params.apply).toBe(true);
+    expect(params.dry_run).toBe(true);
   });
 
   test('apply false does not read or mutate the engine', async () => {
@@ -135,6 +154,25 @@ describe('memory writeback router operation', () => {
       });
       expect(events).toHaveLength(1);
       expect(events[0]?.interaction_id).toBe('trace-router-1');
+    });
+  });
+
+  test('duplicate review failure does not leave behind a created candidate', async () => {
+    await withEngine(async (engine) => {
+      (engine as any).listPages = async () => {
+        throw new Error('duplicate review failed');
+      };
+
+      await expect(operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'The router should not create candidates when duplicate review fails.',
+        evidence_kind: 'agent_inferred',
+        source_refs: sourceRefs,
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        apply: true,
+      })).rejects.toThrow('duplicate review failed');
+
+      expect(await engine.listMemoryCandidateEntries({ limit: 10 })).toEqual([]);
     });
   });
 

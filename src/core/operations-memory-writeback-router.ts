@@ -230,6 +230,7 @@ export function createMemoryWritebackRouterOperations(
       interaction_id: { type: 'string', description: 'Optional retrieval trace id for lifecycle event attribution' },
       allow_canonical_write: { type: 'boolean', description: 'Whether the router may return canonical write requirements' },
       apply: { type: 'boolean', description: 'Create the routed memory candidate when the route decision allows it' },
+      dry_run: { type: 'boolean', description: 'Preview routing and candidate creation without mutating memory' },
     },
     mutating: true,
     handler: async (ctx, params) => {
@@ -252,7 +253,6 @@ export function createMemoryWritebackRouterOperations(
         ...routed.candidate_input,
         id: routed.candidate_input.id ?? randomUUID(),
       };
-      const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
       const duplicateReview = await reviewDuplicateMemory(ctx.engine, {
         scope_id: candidateInput.scope_id,
         subject_kind: 'memory_candidate',
@@ -266,6 +266,7 @@ export function createMemoryWritebackRouterOperations(
         include_candidates: true,
         limit: 5,
       });
+      const created = await createMemoryCandidateEntryWithStatusEvent(ctx.engine, candidateInput);
 
       return {
         ...routed,
