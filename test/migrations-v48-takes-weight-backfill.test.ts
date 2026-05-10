@@ -1,5 +1,5 @@
 /**
- * Migration v46 (takes_weight_round_to_grid) — behavioral test on PGLite.
+ * Migration v48 (takes_weight_round_to_grid) — behavioral test on PGLite.
  *
  * Cross-modal eval over 100K production takes (v0.31) flagged 0.74, 0.82-style
  * weights as false precision. PR #795 added engine-layer rounding to the 0.05
@@ -35,7 +35,7 @@ async function seedRawTake(slug: string, rowNum: number, weight: number) {
   await engine.putPage(slug, {
     type: 'note',
     title: slug,
-    compiled_truth: 'seed body for v46 migration test',
+    compiled_truth: 'seed body for v48 migration test',
     frontmatter: {},
   });
   const pageRows = await engine.executeRaw<{ id: number }>(
@@ -64,8 +64,8 @@ async function readWeights(slug: string): Promise<number[]> {
 }
 
 async function runV46(slugFilter?: string): Promise<number> {
-  const v46 = MIGRATIONS.find(m => m.version === 46);
-  if (!v46) throw new Error('v46 migration not found');
+  const v48 = MIGRATIONS.find(m => m.version === 48);
+  if (!v48) throw new Error('v48 migration not found');
   // Tolerance-matched count of rows the migration WOULD touch — same
   // predicate as the migration's WHERE clause. Optionally scoped to a slug
   // so independent test fixtures don't leak counts into each other.
@@ -79,13 +79,13 @@ async function runV46(slugFilter?: string): Promise<number> {
         AND abs(t.weight::numeric - ROUND(t.weight::numeric * 20) / 20) > 0.001
         ${filter}`,
   );
-  await engine.executeRaw(v46.sql);
+  await engine.executeRaw(v48.sql);
   return before[0]?.off_grid ?? 0;
 }
 
-describe('v46 takes weight backfill (behavioral)', () => {
+describe('v48 takes weight backfill (behavioral)', () => {
   test('rounds 0.74 → 0.75, 0.82 → 0.80, leaves 0.5 / 1.0 / 0.0 / 0.025 → 0.05', async () => {
-    const slug = 'wiki/takes-v46-rounding';
+    const slug = 'wiki/takes-v48-rounding';
     await seedRawTake(slug, 1, 0.74);
     await seedRawTake(slug, 2, 0.82);
     await seedRawTake(slug, 3, 0.5);
@@ -106,7 +106,7 @@ describe('v46 takes weight backfill (behavioral)', () => {
   });
 
   test('Codex #2: re-run idempotency — second invocation is a zero-row UPDATE', async () => {
-    const slug = 'wiki/takes-v46-idempotency';
+    const slug = 'wiki/takes-v48-idempotency';
     await seedRawTake(slug, 1, 0.74);
     await seedRawTake(slug, 2, 0.82);
 
@@ -125,7 +125,7 @@ describe('v46 takes weight backfill (behavioral)', () => {
   });
 
   test('preserves on-grid weights exactly — 0.05 boundaries are NOT touched', async () => {
-    const slug = 'wiki/takes-v46-on-grid';
+    const slug = 'wiki/takes-v48-on-grid';
     const onGrid = [0.0, 0.05, 0.10, 0.25, 0.50, 0.75, 0.85, 0.95, 1.0];
     for (let i = 0; i < onGrid.length; i++) {
       await seedRawTake(slug, i + 1, onGrid[i]);

@@ -2,6 +2,340 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.31.3] - 2026-05-09
+
+**`gbrain serve` stops leaking the PGLite write lock when the parent disconnects, and `gbrain auth` + `gbrain serve --http` work against PGLite brains.**
+
+Two community PRs (#676 stdio cleanup, #681 engine-aware auth SQL) landed in one focused PR with two atomic commits. Both fixed real bugs that were biting users in production: stdio MCP servers held the PGLite write lock indefinitely after Claude Desktop / Cursor / launchd-managed gateways disconnected, forcing a 5-minute stale-lock wait on the next start. And `gbrain auth` + the OAuth admin server silently routed every SQL through the postgres.js singleton, which made `gbrain serve --http` Postgres-only even though the schema supported PGLite.
+
+### What you can now do
+
+**Restart your MCP server without waiting 5 minutes.** Stdio EOF, SIGTERM, SIGINT, SIGHUP, and parent-process death (every reparent case ... PID 1, launchd subreaper, systemd, tmux, or a parent shell with PR_SET_CHILD_SUBREAPER) all funnel into one idempotent shutdown that releases the engine and the lock dir within 5 seconds. Closes #413 and #446. Credit @Aragorn2046 (origin features in #591) and @seungsu-kr (rebased submitter, Bun ppid workaround).
+
+**Run `gbrain serve --http` against a PGLite brain.** Auth (`gbrain auth create/list/revoke/permissions`), OAuth 2.1 client registration + token mint, the admin SPA, file uploads, and the legacy bearer-auth HTTP transport all run through the active engine now via a deliberately-narrow `SqlQuery` adapter (`src/core/sql-query.ts`) that calls `engine.executeRaw`. Previously, with `DATABASE_URL` set but the config file pointing at PGLite, auth commands silently hit the wrong brain. Credit codex-bot.
+
+**`gbrain auth permissions ... set-takes-holders` and the four `mcp_request_log.params` INSERTs write real JSONB objects.** Pre-v0.31.3 they wrote `JSON.stringify(...)` strings into JSONB columns via the postgres.js template tag's loose typing ... the column was technically JSONB but stored as a quoted string, so reads via `params->>'op'` returned the encoded string `"search"` instead of `search`. Migration v46 normalizes the entire backlog of pre-v0.31.3 string-shaped rows up to objects so the `/admin/api/requests` endpoint returns one consistent shape to the SPA. Idempotent.
+
+**Bun's `process.ppid` cache no longer creates a phantom watchdog.** Bun (and Node ... see [oven-sh/bun#30305](https://github.com/oven-sh/bun/issues/30305)) caches `process.ppid` at process creation and never refreshes when the kernel re-parents. The watchdog now runs `spawnSync('ps','-o','ppid=','-p',PID)` per tick to read the live kernel PPID. A one-shot startup probe verifies ps is available; if it isn't (stripped containers, busybox without procps), the watchdog skips installing entirely AND emits a loud stderr line ... instead of silently running every 5 seconds and never firing.
+
+**Startup probe for stripped-container deployments.** If `ps` isn't on PATH, `gbrain serve` prints `[gbrain serve] watchdog disabled: ps unavailable, parent-death detection unavailable ... child will rely on stdin EOF / signals only` once at startup. Operators see the degraded mode at boot instead of wondering why their phantom watchdog never fires.
+
+### Numbers that matter
+
+| Failure mode | Before v0.31.3 | After v0.31.3 |
+|---|---|---|
+| Parent dies, stdin still open (launchd/cron orphan) | Lock held forever, next `gbrain serve` blocks 5+ minutes | Watchdog fires within 5s, lock released, next start clean |
+| Parent reparents to subreaper PID 47 (systemd, tmux) | Watchdog silently no-op (only checked `ppid === 1`) | Watchdog fires (`ppid !== initialParentPid`) |
+| `gbrain serve --http` against PGLite brain | Hard fail at startup, "Postgres only" | Works |
+| `gbrain auth create` with `DATABASE_URL` set + PGLite config file | Silently writes to PGLite, env var ignored | DATABASE_URL wins, infers Postgres engine, clears stale `database_path` |
+| Read `mcp_request_log.params` in admin SPA after a pre-v0.31.3 row was logged | Returned a JSON-encoded string `"{\"op\":\"search\"}"` | Returns the object `{op:'search'}` |
+| `params->>'op'` SQL on pre-v0.31.3 rows | Returned the encoded string `"search"` (with quotes) | After v46 migration: returns `search` |
+| `bun test test/serve-stdio-lifecycle.test.ts` | (test file did not exist) | 22 cases, all green |
+
+### What this means for your workflow
+
+If your editor talks to gbrain over stdio MCP ... Claude Desktop, Cursor, MCP gateway ... you'll notice restarts happen instantly instead of hanging on lock contention. If you've been running gbrain on PGLite (the default for new installs), `gbrain auth create`, OAuth client registration, and the `--http` admin dashboard all work now. Run `gbrain upgrade` to land both fixes plus the v46 migration that normalizes any string-shaped `mcp_request_log.params` rows you accumulated.
+
+### Important note for upgraders
+
+`gbrain upgrade` runs the v46 normalizer migration automatically. If you have a long history of `gbrain serve --http` requests in `mcp_request_log`, the UPDATE could touch many rows on first run ... it's a single statement filtered to `jsonb_typeof = 'string'` and won't lock the table for long, but you may see a brief CPU spike on Supabase Postgres if the table is large. Subsequent upgrades find no string-shaped rows and the migration is a no-op.
+
+### How it works under the hood
+
+`SqlQuery` is a deliberately narrow tagged-template adapter (`src/core/sql-query.ts`) that builds positional SQL with `$N` placeholders and calls `engine.executeRaw(sql, params)`. Scalar binds only ... the contract is the feature. JSONB writes go through a separate `executeRawJsonb(engine, sql, scalarParams, jsonbParams)` helper that composes positional `$N::jsonb` casts and passes JS objects through. The v0.12.0 double-encode bug class doesn't apply to positional binding through postgres.js's `unsafe()` (verified by `test/e2e/auth-permissions.test.ts:67` on Postgres and `test/sql-query.test.ts` on PGLite).
+
+`scripts/check-jsonb-pattern.sh` doesn't fire because `executeRawJsonb(...)` is a method call, not the banned literal-template-tag interpolation pattern.
+
+The watchdog reparent check is `getParentPid() !== initialParentPid`, capturing the initial ppid once at install time and firing on any change. The previous `=== 1` check missed the subreaper case that surfaced under launchd / systemd PR_SET_CHILD_SUBREAPER environments.
+
+### Tests
+
+- `test/serve-stdio-lifecycle.test.ts` (22 cases) ... signals (SIGTERM/SIGINT/SIGHUP), stdin EOF / close, TTY skip, watchdog reparent-to-1 AND reparent-to-subreaper-PID-47, ps-unavailable startup probe, idempotent shutdown under racing signals, 5s cleanup deadline when `disconnect()` rejects, `--stdio-idle-timeout` strict parse rejects (`abc`, `30junk`, `-1`, `1.5`, blank, missing).
+- `test/sql-query.test.ts` (7 cases) ... scalar binds round-trip, array/promise/object rejection, `executeRawJsonb` JSONB round-trip with `jsonb_typeof = 'object'` and `->>` semantics, v0.12.0 double-encode regression guard, null JSONB handling, scalars-then-jsonb call shape.
+- `test/config-env.test.ts` (5 cases, migrated to `withEnv()` helper per CLAUDE.md R1) ... `DATABASE_URL` + `GBRAIN_DATABASE_URL` precedence, file-only config, env-only config, no-config null path.
+- `test/e2e/auth-takes-holders-pglite.test.ts` (6 cases against in-memory PGLite, no DATABASE_URL gate) ... full takes-holders create/update round-trip, mcp_request_log.params object + null writes, migration v46 normalizer (seed string-shaped row, run UPDATE, assert object shape; second-run no-op for idempotency).
+- `test/http-transport.test.ts` (24 cases, mock updated to intercept `engine.executeRaw`) ... bearer auth, /health DB probe, 401 paths, rate limit, body cap, mcp_request_log audit.
+
+### To take advantage of v0.31.3
+
+`gbrain upgrade` runs the v46 migration automatically on first start. Verify:
+
+```bash
+gbrain upgrade
+gbrain doctor                                    # confirm migration v46 is applied
+```
+
+If you're on PGLite and want to confirm `gbrain serve --http` works:
+
+```bash
+gbrain auth register-client test --grant-types client_credentials --scopes read
+gbrain serve --http &
+# Mint a token via the OAuth /token endpoint, hit /mcp with a real op.
+```
+
+If `gbrain doctor` flags anything after upgrade, file an issue: https://github.com/garrytan/gbrain/issues with `~/.gbrain/upgrade-errors.jsonl` if it exists and which step broke.
+
+### For contributors
+
+This PR went through `/plan-eng-review` (5 issues, all addressed) and `/codex` outside-voice consult-mode plan review (10 findings, 9 closed by re-design ... including reversing the original "extend SqlQuery with .json()" plan to "ship a separate `executeRawJsonb` helper" because codex argued the SqlQuery adapter should stay scalar-only or it drifts into a partial postgres.js clone). Decision log lives at `~/.claude/plans/system-instruction-you-are-working-peppy-moore.md`. Two atomic bisect-friendly commits in one PR.
+
+Closes #413, #446. Supersedes #591. Closes the architectural intent of #676 and #681.
+
+## [0.31.2] - 2026-05-08
+
+**`gbrain sync --strategy code` no longer hangs on big repos. Code-strategy first-sync actually indexes code files. Walker hardened. Tree-sitter is now bounded.**
+
+A 1500-file gstack repo could pin `gbrain sync --strategy code` at 99% CPU on a single thread for hours, with zero disk writes and zero TCP, and a `page_count` that stayed at 0. Three real defects, fixed together: tree-sitter's WASM loop had no wall-clock cap, so a single pathological file could wedge the whole sync indefinitely. Code-strategy first-sync silently fed only `.md` files into the import pipeline, so even when sync didn't hang, no code page was produced. The walker that powered sync's cost preview was weaker than the import walker for no good reason. v0.31.2 closes all three.
+
+### What you can now do
+
+**Run `gbrain sync --strategy code` on big symlink-rich repos without wedging.** Per-file tree-sitter parsing is bounded by a 30-second wall-clock cap via `parser.setTimeoutMicros`. When a file's parse exceeds the cap, the chunker logs `[gbrain chunker] timeout parsing <path> after 30000ms; falling back to recursive chunks` to stderr and falls back to the recursive text chunker. Search quality on that one file degrades; the sync keeps going. Override the default with `GBRAIN_CHUNKER_TIMEOUT_MS=60000`.
+
+**Code-strategy first-sync now imports code files.** Previously `performFullSync` called `runImport(repoPath)` with no strategy, which silently fell through to a markdown-only walker. Now strategy threads end-to-end (`performSync → performFullSync → runImport`), through the full-sync write path AND the dry-run preview. `gbrain sync --strategy code --dry-run` finally reports the right number.
+
+**Walker survives self-referencing symlinks.** The new `collectSyncableFiles` is the single source of truth across import, full-sync dry-run, and cost preview. Three layered defenses: `lstatSync` rejects every symlink before recursion; an inode-cycle Map keyed on `${st_dev}:${st_ino}` catches non-symlink loops (bind mounts, ZFS snapshots); `MAX_WALK_DEPTH=32` is the structural backstop. Output is sorted so `runImport`'s checkpoint resume stays deterministic across runs. Override the depth cap with `GBRAIN_MAX_WALK_DEPTH=64`.
+
+**Phase logs surface where time goes.** Strategic stderr lines (`[gbrain phase] sync.git_pull start`, `sync.fullsync.import done 12345ms imported=602 skipped=3 errors=0`, `import.collect_files done 187ms files=1503`, `import.process_file slow 7234ms src/big.ts`) tell you which phase a stuck sync is in. The next hang reproduction will name the phase, not produce zero data.
+
+### Important note for upgraders
+
+After `gbrain upgrade`, the first sync against any source registered with `--strategy code` will now actually import code files that previously got skipped. On a 1500-file repo this means a one-time embed-cost spike proportional to your code-file count (rough order: ~1500 code files × ~1500 tokens average = 2.25M tokens × $0.13/1M = $0.30 with `text-embedding-3-large`). Run with `--dry-run` first to preview the file count. The CHANGELOG-and-actually-correct behavior is now aligned.
+
+### How it works under the hood
+
+`parser.setTimeoutMicros(timeoutMs * 1000)` is the canonical web-tree-sitter API for wall-clock parser caps; `parser.parse()` returns null when exceeded. `parseWithTimeout` (the new pure-function seam in `src/core/chunkers/code.ts`) wraps the call, throws `ChunkerTimeoutError` on null, and the caller's `try/finally` reaps the parser+tree WASM allocation. The pre-fix `chunkCodeTextFull` did manual `delete()` on success and on null, but the catch block returned without cleanup — codex caught the leak before it shipped.
+
+`isCollectibleForWalker(path, strategy, multimodal)` surfaces the markdown+multimodal carve-out at one site instead of leaking it across two filters. `isSyncable` (incremental diff path) admits images only on `auto`; the walker historically admitted them on markdown too when `GBRAIN_EMBEDDING_MULTIMODAL=true`. Same behavior, one source of truth.
+
+### Tests
+
+- `test/sync-walker-symlink.test.ts` (7 cases) — self-referencing symlink, symlink chain through real dirs, max-depth bailout, strategy filter, dot-dir + node_modules skip, multimodal preservation under markdown strategy, deterministic ordering.
+- `test/chunker-timeout.test.ts` (7 cases) — parser-stub timeout seam, ChunkerTimeoutError shape, env wiring under `GBRAIN_CHUNKER_TIMEOUT_MS=1`, fallback-to-recursive behavior, fail-loud regression for missing `setTimeoutMicros`, repeated-timeout cleanup smoke test.
+
+### To take advantage of v0.31.2
+
+`gbrain upgrade` then re-run any previously-stuck `gbrain sync --strategy code`. Should complete in ~25-35 minutes on a 1500-file repo. If it doesn't, the `[gbrain phase] *` log lines will name the phase that wedged — file an issue with the relevant log section.
+
+```bash
+gbrain upgrade
+cd <your-source-repo>
+gbrain sync --strategy code --dry-run --source <id>   # preview the file count
+gbrain sync --strategy code --source <id>             # the real run
+```
+
+### For contributors
+
+Codex's adversarial review caught five bug-grade findings in the original plan that hadn't survived eng review: parser cleanup leak under thrown timeout, an internal contradiction between `isSyncable` and the multimodal walker behavior, a missed dry-run plumbing site, deterministic-order requirement for checkpoint resume, and machine-speed-dependent timeout tests. All five folded into the shipped fix without re-litigating the bundle decision. Cross-model review on every nontrivial plan change continues to pay.
+
+## [0.31.1.1-fixwave] - 2026-05-09
+
+**Security upgrade priority: closes an authorization-code scope-escalation in `gbrain serve --http`. Plus 18 community fix-wave PRs covering upgrade-path correctness, multi-source sync, takes-fence privacy, dream cycle reliability, and CLI hygiene.**
+
+Versioned as `0.31.1.1-fixwave` to communicate intent: this is a fix wave on top of v0.31.1, not a new minor or patch slot. The next regular release slot (v0.31.2) stays free for in-flight feature work. Originally assembled as v0.30.3 against master at v0.30.2; master then advanced through v0.31.0 (hot-memory facts) and v0.31.1 (thin-client mode) before merge. Wave content unchanged across the rebase.
+
+49 community PRs accumulated since v0.28. This fix wave lands the highest-leverage subset: 19 PRs across 5 lanes, single PR, atomic per-PR commits for full bisect granularity. The headline is a real security fix: any OAuth client with a `read` scope could mint an authorization code asking for `admin` and the code landed in the database ungated. The fix wave closes that.
+
+### Upgrade priority — auth-code scope-escalation (#727)
+
+If you run `gbrain serve --http` with OAuth, **upgrade now**. The pre-fix `authorize()` wrote `params.scopes` straight into `oauth_codes` with zero intersection against the registered `client.scope`. Per RFC 6749 §3.3, the granted scope must be a subset of the client's allowed scope. Now it is. Existing tokens are unaffected (they were minted under the registered scope); the fix only narrows what new authorization codes can grant. Contributed by [@garagon](https://github.com/garagon).
+
+### What you can now do
+
+**Postgres `21000` mid-import is fixed.** Multi-source brains running `gbrain sync --full` against more than one source were hitting `Postgres error 21000` because `performFullSync` didn't thread `sourceId` through per-page transactions. The fix supersedes #639 + #707 with full surface coverage including `runImport` and the post-sync extract phase. Closes #497, #540. Contributed by [@jeremyknows](https://github.com/jeremyknows) (rebases work from [@100yenadmin](https://github.com/100yenadmin) and [@mdcruz88](https://github.com/mdcruz88)).
+
+**Old PGLite brains upgrade cleanly through v39-v41.** `applyForwardReferenceBootstrap` was missing six column-with-index forward references in the embedded schema blob: `content_chunks.modality`, `pages.emotional_weight`, `pages.effective_date`, `pages.effective_date_source`, `pages.import_filename`, `pages.salience_touched_at`. Brains stuck at `config.version < 39` (Postgres) or `< 41` (PGLite) wedged with `column "..." does not exist` before migrations could advance. Reproduced end-to-end on a PlanetScale Postgres brain at v34 trying to upgrade to v0.30.0. Contributed by [@lanceretter](https://github.com/lanceretter).
+
+**`gbrain upgrade` no longer crashes mid-migration on the v0.29.1 backfill.** Phase B and Phase C of the v0.29.1 migration created an engine via `createEngine(...)` but never called `engine.connect(...)` before use. The image-decoder dependencies (`@jsquash/png`, `heic-decode`) were missing from `package.json`. The backfill used bare `BEGIN`/`COMMIT` instead of `engine.transaction()`, which is unsafe on pooled connections. All three are fixed plus a regression test pinning the connect invariant. Contributed by [@lanceretter](https://github.com/lanceretter) and [@alexandreroumieu-codeapprentice](https://github.com/alexandreroumieu-codeapprentice).
+
+**Takes-fence redaction on remote reads.** Per-token MCP allow-list tokens minted since v0.28.6 were getting takes content through `get_page` and `get_versions` because those handlers were raw passthroughs. The privacy fix strips the takes fence whenever the calling token carries an allow-list. Contributed by [@garagon](https://github.com/garagon).
+
+**Other quality-of-life fixes.**
+
+- **`gbrain sync` on detached-HEAD repos** ingests the working tree instead of crashing on `git pull`. ([#635](https://github.com/garrytan/gbrain/pull/635), [@tmchow](https://github.com/tmchow))
+- **`gbrain sync --skip-failed`** now eagerly acks pre-existing unacked failures so the bookmark advances on the same run. ([#686](https://github.com/garrytan/gbrain/pull/686), [@brandonlipman](https://github.com/brandonlipman))
+- **`gbrain extract`** defaults `--dir` to the configured brain dir and prints an actionable error when no source is configured. ([#688](https://github.com/garrytan/gbrain/pull/688), [@brandonlipman](https://github.com/brandonlipman))
+- **Slug normalization in extract** lowercases via `pathToSlug()` so `Capital-Filename.md` doesn't write a different slug than every other call site. ([#736](https://github.com/garrytan/gbrain/pull/736), [@Freddy-Cach](https://github.com/Freddy-Cach))
+- **`gbrain init --help`** doesn't execute init anymore. CLI_ONLY commands short-circuit on `--help` instead of running. ([#634](https://github.com/garrytan/gbrain/pull/634), [@tmchow](https://github.com/tmchow))
+- **`gbrain doctor`** auto-detects the skills directory so it works inside OpenClaw workspaces without `--dir`. Fixes the `graph_coverage` warn message typo too. ([#684](https://github.com/garrytan/gbrain/pull/684), [#687](https://github.com/garrytan/gbrain/pull/687), [@brandonlipman](https://github.com/brandonlipman))
+- **Stdio MCP server** exits cleanly on stdin-close / SIGTERM instead of leaving an orphan process holding the PGLite advisory lock. ([#692](https://github.com/garrytan/gbrain/pull/692), [@joshsteinvc](https://github.com/joshsteinvc))
+- **`detectBunLink`** survives `bun`'s symlink resolution in `argv[1]` so postinstall doesn't silently fail on bun-linked installs. ([#704](https://github.com/garrytan/gbrain/pull/704), [@MrAladdin](https://github.com/MrAladdin))
+- **RESOLVER triggers** broadened: 37 routing-eval misses → 0 (100% top-1 accuracy). ([#718](https://github.com/garrytan/gbrain/pull/718), [@mgunnin](https://github.com/mgunnin))
+- **Dream transcript discovery** picks up `.md` files alongside `.txt`. ([#708](https://github.com/garrytan/gbrain/pull/708), [@joelwp](https://github.com/joelwp))
+- **Dream cycle slug lookup** survives double-encoded jsonb in `subagent_tool_executions.input`. The orchestrator no longer silently writes nothing on the "queue green, brain empty" failure mode. ([#745](https://github.com/garrytan/gbrain/pull/745), [@joelwp](https://github.com/joelwp))
+- **Voyage embedding adapter** translates between the OpenAI-compat SDK shape and Voyage's actual contract for `encoding_format`. ([#735](https://github.com/garrytan/gbrain/pull/735), [@Freddy-Cach](https://github.com/Freddy-Cach))
+
+### To take advantage of v0.31.1.1-fixwave
+
+```bash
+gbrain upgrade
+```
+
+If `gbrain doctor` warns about a partial migration after upgrade:
+
+```bash
+gbrain apply-migrations --yes
+```
+
+If you were stuck on v34-era PGLite or hitting `column "modality" does not exist` mid-upgrade, the bootstrap fix means the next `gbrain upgrade` walks forward cleanly. No manual recovery needed.
+
+If you run `gbrain serve --http` with OAuth, your existing tokens stay valid. New authorization codes minted after upgrade will be scope-clamped per RFC 6749 §3.3.
+
+### Closed as superseded
+
+- **#682** (forward-reference bootstrap v0.20 + v0.26.3) — every column it added is already in master through prior fix waves; verified during cherry-pick. Codex C7's `subagent_messages.provider_id` check satisfied without merging.
+- **#683** (chmod +x cli.ts) — already executable in master.
+- **#743** — superseded by #740's UNSAFE_TRANSACTION + connect fixes.
+- **#668** — superseded by #682 + #741 union (v0.20 + v0.26.3 + v39-v41 coverage).
+- **#639, #707** — superseded by #757 (full superset including `performFullSync` gap).
+- **#748** — superseded by v0.30.2 / #754 (synthesize chunking).
+
+### Deferred to follow-up
+
+- **#681** (route HTTP auth SQL through active engine) — real architectural conflict between pr-681's narrow `SqlQuery` abstraction and v0.28's `sql.json()` writes for takes-holders. Re-author needed in a follow-up that extends `SqlQuery` to support JSONB or routes JSONB writes through `engine.executeRaw`. Will ship as its own focused PR.
+- **#676** (stdio MCP cleanup on disconnect, 658 lines) — chronic real bug; deferred this round to keep wave size manageable. Will ship as its own focused PR.
+
+### For contributors
+
+The v0.31.1.1-fixwave wave shipped after three review passes: CEO scope review (`/plan-ceo-review`), engineering review (`/plan-eng-review`), and codex outside-voice (`/codex`). The codex pass surfaced 9 findings prior reviews missed — most importantly that #727 was misclassified as RFC polish when it's a real auth-code scope-escalation, and that the original commit-shape plan (lane-squashes via `git reset --soft`) would have degraded `git blame` provenance. All 9 codex findings were resolved as decisions C1-C9 in the approved plan; #727 was reclassified to Lane 1 P0 and the wave shipped as 22+ atomic per-PR commits.
+
+The wave was assembled by cherry-picking each PR onto a wave branch, resolving conflicts where master had moved on (the bootstrap chain, the `auth.ts` JSONB-writes seam, the `extract.ts` slug normalization × multi-source sourceId interaction, and the dream-cycle synthesize.ts query merge). Three companion commits patch test expectations or RESOLVER frontmatter declarations that the cherry-picks needed but didn't ship: a `frontmatter` + `check-resolvable` `CLI_ONLY_SELF_HELP` extension (companion to #634), a `discoverTranscripts` test update for `.md` support (companion to #708), and missing RESOLVER trigger declarations in 6 skill frontmatters (companion to #718).
+
+Tests: 4570 unit pass / 1 pre-existing master flake (`BrainRegistry — lazy init > empty/null/undefined id routes to host`, present on master before this wave). The 5 wave-introduced failures from the cherry-pick assembly are all fixed in companion commits.
+
+## [0.31.1] - 2026-05-08
+
+**Thin-client mode actually works now. `gbrain init --mcp-only` is no longer a half-built bridge.**
+**Every read + write + admin op routes through MCP; refused commands carry pinpoint hints.**
+
+Hermes/Neuromancer hit this in production: thin-client install of wintermute (102k pages,
+265k chunks). Every CLI search returned zero rows. Exit code 0. No warning. The agent
+configured `gbrain init --mcp-only`, then walked into a wall of "no results found" against
+a brain that had everything it needed. The CLI was opening the empty local PGLite,
+running 38 migrations, and reporting "No results." while the real brain sat untouched
+behind an HTTPS endpoint.
+
+v0.31.1 fixes the silent-empty-results bug class for every operation surface gbrain has.
+The CLI dispatch layer now routes every non-localOnly op through `callRemoteTool` when
+`isThinClient(cfg)` is true, before opening any local engine. Read ops, write ops, admin
+ops — all routed. Local-only commands (sync, embed, dream, integrity, etc) refuse with
+pinpoint hints naming the closest path: "sync runs on the host. To trigger a remote
+cycle, run `gbrain remote ping` (queues an autopilot-cycle job)."
+
+### The numbers that matter
+
+Reproducible against any host with a populated brain. Spin `gbrain serve --http`,
+register an OAuth client with `read,write,admin`, then from a second `GBRAIN_HOME`:
+
+| Behavior | v0.30.0 (broken) | v0.31.1 (fixed) |
+|---|---|---|
+| `gbrain search "X"` against 102k-page host | "No results." (exit 0) | Real rows + identity banner |
+| `gbrain stats` on thin-client | Pages: 0, Chunks: 0 | Real numbers from host |
+| `gbrain salience` | "(no pages touched in the salience window)" | Real salience output |
+| `gbrain put 'wiki/test/foo' --content '...'` | Hits empty local DB | Persists on host |
+| `gbrain sync` | Falls into PGLite migrations | Refuses with `gbrain remote ping` hint |
+| `gbrain remote doctor` checks | 4 (config, oauth, discovery, smoke) | 5 (+ scope-probe with pinpoint remediation) |
+| Identity feedback per command | None | `[thin-client → host:3131 · brain: 102k pages, 265k chunks · v0.31.1]` |
+
+Per-call latency adds ~50-200ms warm (token cache hit), ~250-500ms cold (token mint).
+Documented; users who want sub-50ms loops should run on the host.
+
+### What this means for thin-client users
+
+A thin-client `gbrain` install is now functionally substitutable for a local install
+on the read+write+admin op surface. Agents get the topology signal up-front via the
+identity banner; humans get pinpoint hints when something is genuinely local-only.
+The OAuth-scope-mismatch class of failures (v0.29.2/v0.30.0 thin-clients registered
+with `read+write` only and now hitting `gbrain stats`) surfaces during
+`gbrain remote doctor` instead of mid-command, with an exact remediation:
+
+  `On the host: gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin`
+
+## To take advantage of v0.31.1
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain remote doctor`
+warns about the new `oauth_client_scopes_probe` check:
+
+1. **On the THIN CLIENT** — re-run doctor to surface scope mismatches:
+   ```bash
+   gbrain remote doctor
+   ```
+   The new `oauth_client_scopes_probe` check reports per-tier status. If admin is
+   missing, the check tells you the exact host-side command to run.
+
+2. **On the HOST (if doctor warned about admin scope)** — re-register your thin-client's
+   OAuth client with broader scopes:
+   ```bash
+   gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin
+   ```
+   Then update the thin-client's `~/.gbrain/config.json` `remote_mcp.oauth_client_id`
+   and (env-var or config) `oauth_client_secret` with the new credentials.
+
+3. **Verify routing works** — run a representative read op that previously returned zero:
+   ```bash
+   gbrain search "anything you know is in the brain"
+   gbrain stats
+   ```
+   Both should now show real numbers and an identity banner like
+   `[thin-client → wintermute:3131 · brain: 102k pages, 265k chunks · v0.31.1]`.
+
+4. **If any step fails or the numbers look wrong**, file an issue at
+   https://github.com/garrytan/gbrain/issues with `gbrain remote doctor` output.
+
+### Itemized changes
+
+#### Routing
+- New `THIN_CLIENT_REFUSE_HINTS` table in `src/cli.ts` with pinpoint hints for every
+  refused command (sync/embed/extract/migrate/repair-jsonb/integrity/serve/dream/
+  orphans/transcripts/storage/takes/sources). Hints name the closest remote path
+  (e.g. `gbrain remote ping`) or specific MCP tools (e.g. `find_orphans`).
+- New `runThinClientRouted` in cli.ts hooks INTO the existing op-dispatch path
+  (CDX-1: no parallel module). Every non-localOnly op routes through `callRemoteTool`
+  on thin-client installs.
+- CLI-only commands with MCP equivalents (`think`, `salience`, `anomalies`,
+  `graph-query`) get per-command thin-client routing branches.
+- ENG-2 renderer parity: local-engine path runs `JSON.parse(JSON.stringify(result))`
+  before formatting so renderers see the same shape on both paths.
+
+#### New ops
+- `get_brain_identity` (read scope, banner-only): cheap counter packet
+  `{version, engine, page_count, chunk_count, last_sync_iso}` for the thin-client
+  identity banner.
+
+#### Banner
+- Identity banner prints to stderr before each routed command. 60s TTL in-memory
+  cache keyed by mcp_url. Suppression: `--quiet`, `GBRAIN_NO_BANNER=1`, non-TTY
+  default (override with `GBRAIN_BANNER=1`).
+
+#### Doctor
+- New `oauth_client_scopes_probe` check (CDX-5) in `gbrain remote doctor`. Surfaces
+  v0.29.2/v0.30.0 thin-clients without admin scope BEFORE they hit
+  `gbrain stats`/`gbrain history` mid-command.
+
+#### Error handling
+- Hardened `callRemoteTool` (CDX-4): all transport errors normalized to
+  `RemoteMcpError` with stable `reason` union and `kind`/`code` sub-tags on detail.
+  Dispatcher's exhaustive TS `never` switch produces canned, actionable messages.
+- New `--timeout=Ns` global flag (ENG-4); SIGINT aborts via AbortController.
+
+#### Tests
+- New `test/get-brain-identity.test.ts` (9), `test/oauth-scope-probe.test.ts` (8).
+- Updated `test/cli-options.test.ts` (+8 --timeout cases, 28 total).
+- Updated `test/cli-dispatch-thin-client.test.ts` (14 cases, refreshed for new
+  pinpoint-hint format).
+
+### For contributors
+- Plan + decision history at `~/.claude/plans/how-to-make-mcp-iterative-liskov.md`.
+  Records 6 CEO-review decisions (D1-D6), 5 eng-review decisions (ENG-1..5), and
+  6 codex outside-voice decisions (CDX-1..6). Codex's #1+#8 forced an architecture
+  rewrite (no parallel `src/core/thin-client/` module; route inline in cli.ts).
+  Codex's #2+#7 forced honest framing (no false "Liskov substitutability" claim
+  — server intentionally treats remote callers differently for `think.--save`/
+  `--take` and `put_page` auto-link, both trust-boundary policy decisions).
+  Codex's #5 caught a false premise in the error-model design.
+- Per-subcommand thin-client routing for `takes` and `sources` is a v0.31.x
+  follow-up TODO. v0.31.1 refuses both at the top level with hints pointing at
+  MCP tools.
+
 ## [0.31.0] - 2026-05-08
 
 **Hot memory ships. Your brain remembers what you said today, across sessions.**
@@ -196,7 +530,7 @@ gbrain jobs prune --status dead --queue default                 # one-time clean
 
 **Cap-hit skips don't poison the verdict cache.** When chunks exceed `max_chunks_per_transcript` (default 24), the orchestrator logs + skips without writing to `dream_verdicts`. Next cycle re-attempts under whatever budget is then current — closes the cache-poisoning class entirely.
 
-### Out of scope (deferred to v0.30.3+)
+### Out of scope (deferred to v0.31.2+)
 
 - **Per-turn token-budget guard in subagent.ts.** This release bounds the INITIAL prompt size only. Tool-loop accumulation (search/get_page results bloating each subsequent turn) can still hit `prompt_too_long` mid-conversation; the terminal-error classification catches it then, just less cleanly.
 - **Tighter token estimator for code/JSON/CJK-dense content.** The 3.5 chars/token ratio is close to safe for English transcripts but can underflow on dense content. Production telemetry will tell us if a per-recipe override is needed.
@@ -389,7 +723,7 @@ https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` and
   - `takes_resolution_consistency` CHECK constraint enforces (quality, outcome) tuple consistency at the DB layer.
   - Backfill: legacy `resolved_outcome=true` → `resolved_quality='correct'`; `false` → `'incorrect'`.
   - Partial index `idx_takes_scorecard ON takes (holder, kind, resolved_quality) WHERE resolved_quality IS NOT NULL` — scorecard hot path.
-  - New table `drift_decisions` (audit log for the upcoming v0.30.3 drift LLM judge; defined now so C1 carries no migration).
+  - New table `drift_decisions` (audit log for the upcoming v0.31.2 drift LLM judge; defined now so C1 carries no migration).
 - New module `src/core/takes-resolution.ts` — pure helpers (`deriveResolutionTuple`, `finalizeScorecard`, `PARTIAL_RATE_WARNING_THRESHOLD`) shared between Postgres + PGLite engines.
 
 #### Changed

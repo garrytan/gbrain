@@ -130,10 +130,6 @@ export function isCodeFilePath(path: string): boolean {
   return false;
 }
 
-function isMarkdownFilePath(path: string): boolean {
-  return path.endsWith('.md') || path.endsWith('.mdx');
-}
-
 /**
  * v0.27.1: image extensions are admitted only when the multimodal config
  * gate is on. The runtime gate flips through `process.env.GBRAIN_EMBEDDING_MULTIMODAL`
@@ -141,7 +137,7 @@ function isMarkdownFilePath(path: string): boolean {
  * (or env directly when the operator overrides). When the gate is off,
  * existing brains keep their current "markdown + code only" sync behavior.
  */
-function isImageFilePath(path: string): boolean {
+export function isImageFilePath(path: string): boolean {
   const lower = path.toLowerCase();
   return (
     lower.endsWith('.png') ||
@@ -153,6 +149,10 @@ function isImageFilePath(path: string): boolean {
     lower.endsWith('.heif') ||
     lower.endsWith('.avif')
   );
+}
+
+export function isMarkdownFilePath(path: string): boolean {
+  return path.endsWith('.md') || path.endsWith('.mdx');
 }
 
 function isMultimodalEnabled(): boolean {

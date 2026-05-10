@@ -24,13 +24,12 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/serv
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
+import type { SqlQuery, SqlValue } from './sql-query.ts';
+export type { SqlQuery, SqlValue };
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** Raw SQL query function — works with both PGLite and postgres tagged templates */
-export type SqlQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
 
 /**
  * Convert a JS array to a PostgreSQL array literal for PGLite compat.
@@ -241,11 +240,24 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const codeHash = hashToken(code);
     const expiresAt = Math.floor(Date.now() / 1000) + 600; // 10 minute TTL
 
+    // Scope clamp (RFC 6749 §3.3): the SDK's authorize handler splits
+    // `?scope=...` verbatim and forwards the raw list to the provider, so
+    // the provider MUST clamp against the client's registered grant. Without
+    // this, a `read`-registered client requesting `?scope=admin` would have
+    // `['admin']` stored in oauth_codes and returned by exchangeAuthorizationCode
+    // as a fully-admin access token. Mirrors the filter pattern already used
+    // by exchangeClientCredentials (this file) and exchangeRefreshToken's F3
+    // subset enforcement (RFC 6749 §6) so all three grant entry points clamp
+    // consistently. Empty/omitted requested scope inherits the empty-stored
+    // shape (existing behavior; not a security boundary).
+    const allowedScopes = parseScopeString(client.scope);
+    const grantedScopes = (params.scopes || []).filter(s => hasScope(allowedScopes, s));
+
     await this.sql`
       INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
                                 code_challenge_method, redirect_uri, state, resource, expires_at)
       VALUES (${codeHash}, ${client.client_id},
-              ${pgArray(params.scopes || [])},
+              ${pgArray(grantedScopes)},
               ${params.codeChallenge}, ${'S256'},
               ${params.redirectUri}, ${params.state || null},
               ${params.resource?.toString() || null}, ${expiresAt})

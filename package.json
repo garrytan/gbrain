@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.31.0",
+  "version": "0.31.3",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -75,6 +75,7 @@
     "@dqbd/tiktoken": "^1.0.22",
     "@electric-sql/pglite": "0.4.3",
     "@jsquash/avif": "^2.1.1",
+    "@jsquash/png": "^3.1.1",
     "@modelcontextprotocol/sdk": "1.29.0",
     "ai": "^6.0.168",
     "cookie-parser": "^1.4.7",
@@ -84,6 +85,7 @@
     "express": "^5.1.0",
     "express-rate-limit": "^7.5.0",
     "gray-matter": "^4.0.3",
+    "heic-decode": "^2.1.0",
     "marked": "^18.0.0",
     "openai": "^4.0.0",
     "pgvector": "^0.2.0",

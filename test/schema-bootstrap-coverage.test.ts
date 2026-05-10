@@ -77,6 +77,10 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
   // WHERE embedding_image IS NOT NULL`.
   { kind: 'column', table: 'content_chunks', column: 'embedding_image' },
+  // v0.27.1 — added in the same migration as embedding_image. Sibling column;
+  // not directly forward-referenced by an index but the bootstrap adds it
+  // alongside embedding_image for the v39 contract.
+  { kind: 'column', table: 'content_chunks', column: 'modality' },
   // v0.26.3 (v33) — forward-referenced by `CREATE INDEX idx_mcp_log_agent_time
   // ON mcp_request_log(agent_name, created_at DESC)`.
   { kind: 'column', table: 'mcp_request_log', column: 'agent_name' },
@@ -86,6 +90,19 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // by default, which is why this fix wave's Step 3 replaces this with a
   // SQL parser that extracts every column referenced by any DDL.
   { kind: 'column', table: 'subagent_messages', column: 'provider_id' },
+  // v0.29 (v40) — pages.emotional_weight populated by recompute_emotional_weight;
+  // bootstrapped alongside the v41 columns since they share the v0.29.1 wave.
+  { kind: 'column', table: 'pages', column: 'emotional_weight' },
+  // v0.29.1 (v41) — forward-referenced by `CREATE INDEX pages_coalesce_date_idx
+  // ON pages ((COALESCE(effective_date, updated_at)))`. The expression-index
+  // claim from earlier plan iterations was wrong; PG's planner won't use a
+  // partial index for the negative side of a COALESCE — expression index is.
+  { kind: 'column', table: 'pages', column: 'effective_date' },
+  // v0.29.1 (v41) — sibling columns added in the same migration as
+  // effective_date; bootstrap adds them all together.
+  { kind: 'column', table: 'pages', column: 'effective_date_source' },
+  { kind: 'column', table: 'pages', column: 'import_filename' },
+  { kind: 'column', table: 'pages', column: 'salience_touched_at' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -139,6 +156,13 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
 
       DROP INDEX IF EXISTS idx_subagent_messages_provider;
       ALTER TABLE subagent_messages DROP COLUMN IF EXISTS provider_id;
+
+      DROP INDEX IF EXISTS pages_coalesce_date_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS effective_date;
+      ALTER TABLE pages DROP COLUMN IF EXISTS effective_date_source;
+      ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
+      ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
+      ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
     `);
 
     // Run bootstrap in isolation (NOT initSchema). This is what we're testing.
@@ -198,6 +222,13 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       DROP INDEX IF EXISTS idx_chunks_embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS modality;
+
+      DROP INDEX IF EXISTS pages_coalesce_date_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS effective_date;
+      ALTER TABLE pages DROP COLUMN IF EXISTS effective_date_source;
+      ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
+      ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
+      ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.

@@ -140,6 +140,35 @@ describe('Bug 9 — sync.ts CLI flag wiring', () => {
     expect(source).toContain('retryFailed');
   });
 
+  test('runSync acks pre-existing unacked failures up-front when --skip-failed is set', async () => {
+    // Without this gate, a user who fixes their broken YAML, re-runs sync
+    // (which finds nothing new and prints "Already up to date."), and then
+    // runs `gbrain sync --skip-failed` to clear the log gets a no-op —
+    // performSync's inner ack path only fires when failedFiles.length > 0
+    // in the current run. This test pins the up-front ack at the top of
+    // runSync so the flag means "ack whatever is currently flagged".
+    const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
+    // Ensure the up-front check exists before the syncAll / performSync
+    // dispatch, gated on skipFailed.
+    expect(source).toMatch(/if \(skipFailed\) \{[\s\S]*?unacknowledgedSyncFailures\(\)[\s\S]*?acknowledgeSyncFailures\(\)/);
+  });
+
+  test('acknowledgeSyncFailures clears stale failures end-to-end', async () => {
+    // Behavioral pin: the helper that --skip-failed delegates to must
+    // clear failures regardless of any current-run state. Mirrors the
+    // recovery flow: file fixed → sync clean → user wants log cleared.
+    const { recordSyncFailures, acknowledgeSyncFailures, unacknowledgedSyncFailures } = await import('../src/core/sync.ts');
+    recordSyncFailures([
+      { path: 'people/old-broken.md', error: 'YAML: bad block mapping' },
+      { path: 'people/old-broken.md', error: 'YAML: bad block mapping' }, // dup, dedup'd by recordSyncFailures
+      { path: 'meetings/stale.md',    error: 'YAML: multiline key' },
+    ], 'old-commit');
+    expect(unacknowledgedSyncFailures().length).toBe(2);
+    const result = acknowledgeSyncFailures();
+    expect(result.count).toBe(2);
+    expect(unacknowledgedSyncFailures().length).toBe(0);
+  });
+
   test('performSync gates sync.last_commit on failedFiles.length', async () => {
     const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
     // The gate exists and references the failure set.

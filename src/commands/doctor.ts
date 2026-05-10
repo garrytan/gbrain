@@ -3,7 +3,7 @@ import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
-import { findRepoRoot } from '../core/repo-root.ts';
+import { autoDetectSkillsDir } from '../core/repo-root.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
@@ -83,7 +83,7 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  *   - off_grid / total > 1%  → warn
  *   - else → ok
  *
- * Tolerance matches migration v46: any value with abs(weight - on_grid) > 1e-3
+ * Tolerance matches migration v48: any value with abs(weight - on_grid) > 1e-3
  * is genuinely off-grid (the 0.05 grid is 5e-2; float32 noise is ~1e-7).
  */
 export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> {
@@ -292,9 +292,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // --- Filesystem checks (always run, no DB needed) ---
 
   // 1. Resolver health
-  const repoRoot = findRepoRoot();
-  if (repoRoot) {
-    const skillsDir = join(repoRoot, 'skills');
+  // Use the same auto-detect as `check-resolvable` so doctor sees a
+  // workspace/skills dir reachable via $OPENCLAW_WORKSPACE or
+  // ~/.openclaw/workspace, not just a `skills/` walked up from cwd.
+  const detected = autoDetectSkillsDir();
+  const skillsDir = detected.dir;
+  if (skillsDir) {
 
     // --fix: run auto-repair BEFORE checkResolvable so the post-fix scan
     // reflects the new state. Auto-fix only targets DRY violations today;
@@ -332,8 +335,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   }
 
   // 2. Skill conformance
-  if (repoRoot) {
-    const skillsDir = join(repoRoot, 'skills');
+  if (skillsDir) {
     const conformanceResult = checkSkillConformance(skillsDir);
     checks.push(conformanceResult);
   }
@@ -939,7 +941,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain link-extract && gbrain timeline-extract`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain extract links && gbrain extract timeline`,
       });
     }
 
@@ -1046,7 +1048,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   //
   // Cross-modal eval over 100K production takes flagged 0.74, 0.82-style
   // weights as false precision. v0.31's engine layer rounds to 0.05 on
-  // insert (PR #795); v0.32's migration v46 backfills pre-existing data.
+  // insert (PR #795); v0.32's migration v48 backfills pre-existing data.
   // This check is the post-backfill drift detector — if a downstream
   // extraction agent or hand-edit re-introduces off-grid values, we want
   // the warning to surface before it pollutes scorecard / calibration math.

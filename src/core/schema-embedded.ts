@@ -792,7 +792,7 @@ CREATE INDEX IF NOT EXISTS idx_eval_capture_failures_ts ON eval_capture_failures
 -- so re-running the same run is a no-op (ON CONFLICT DO NOTHING) and a
 -- future rubric tweak segregates trend rows cleanly. receipt_json carries
 -- the full receipt blob so \`replay\` can reconstruct when the disk artifact
--- is missing. Mirrored in src/core/pglite-schema.ts + migration v47.
+-- is missing. Mirrored in src/core/pglite-schema.ts + migration v49.
 CREATE TABLE IF NOT EXISTS eval_takes_quality_runs (
   id                    BIGSERIAL    PRIMARY KEY,
   receipt_sha8_corpus   TEXT         NOT NULL,

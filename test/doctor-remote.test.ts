@@ -17,6 +17,14 @@ import { collectRemoteDoctorReport } from '../src/core/doctor-remote.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { withEnv } from './helpers/with-env.ts';
 
+// v0.31.1: the new oauth_client_scopes_probe check uses the MCP SDK Client
+// against /mcp, which the test fixture only mocks at JSON-RPC initialize
+// level (no full tools/call). Every collectRemoteDoctorReport call here
+// passes {skipScopeProbe: true} via SKIP_PROBE_OPTS. Probe behavior is
+// covered separately in test/oauth-scope-probe.test.ts (pure-function
+// buildScopeCheck against synthetic ScopeProbeResult inputs).
+const SKIP_PROBE_OPTS = { skipScopeProbe: true };
+
 let server: Server;
 let port: number;
 
@@ -97,7 +105,7 @@ function makeConfig(overrides: Partial<NonNullable<GBrainConfig['remote_mcp']>> 
 describe('collectRemoteDoctorReport', () => {
   test('happy path — all four checks pass', async () => {
     reset();
-    const report = await collectRemoteDoctorReport(makeConfig());
+    const report = await collectRemoteDoctorReport(makeConfig(), SKIP_PROBE_OPTS);
     expect(report.status).toBe('ok');
     expect(report.mode).toBe('thin-client');
     expect(report.schema_version).toBe(2);
@@ -114,7 +122,7 @@ describe('collectRemoteDoctorReport', () => {
   test('discovery 404 — fails with reason=http and short-circuits', async () => {
     reset();
     discoveryStatus = 404;
-    const report = await collectRemoteDoctorReport(makeConfig());
+    const report = await collectRemoteDoctorReport(makeConfig(), SKIP_PROBE_OPTS);
     expect(report.status).toBe('fail');
     const disco = report.checks.find(c => c.name === 'oauth_discovery')!;
     expect(disco.status).toBe('fail');
@@ -128,7 +136,7 @@ describe('collectRemoteDoctorReport', () => {
   test('discovery returns malformed body — fails with reason=parse', async () => {
     reset();
     discoveryBody = { not_a_token_endpoint: 'whoops' };
-    const report = await collectRemoteDoctorReport(makeConfig());
+    const report = await collectRemoteDoctorReport(makeConfig(), SKIP_PROBE_OPTS);
     expect(report.status).toBe('fail');
     const disco = report.checks.find(c => c.name === 'oauth_discovery')!;
     expect(disco.detail?.reason).toBe('parse');
@@ -138,7 +146,7 @@ describe('collectRemoteDoctorReport', () => {
     reset();
     tokenStatus = 401;
     tokenBody = { error: 'invalid_client' };
-    const report = await collectRemoteDoctorReport(makeConfig());
+    const report = await collectRemoteDoctorReport(makeConfig(), SKIP_PROBE_OPTS);
     expect(report.status).toBe('fail');
     const token = report.checks.find(c => c.name === 'oauth_token')!;
     expect(token.status).toBe('fail');
@@ -150,7 +158,7 @@ describe('collectRemoteDoctorReport', () => {
   test('mcp 401 — bearer rejected; fails with reason=auth', async () => {
     reset();
     mcpStatus = 401;
-    const report = await collectRemoteDoctorReport(makeConfig());
+    const report = await collectRemoteDoctorReport(makeConfig(), SKIP_PROBE_OPTS);
     expect(report.status).toBe('fail');
     const mcp = report.checks.find(c => c.name === 'mcp_smoke')!;
     expect(mcp.status).toBe('fail');
@@ -160,7 +168,7 @@ describe('collectRemoteDoctorReport', () => {
   test('mcp 500 — server error; fails with reason=http', async () => {
     reset();
     mcpStatus = 500;
-    const report = await collectRemoteDoctorReport(makeConfig());
+    const report = await collectRemoteDoctorReport(makeConfig(), SKIP_PROBE_OPTS);
     expect(report.status).toBe('fail');
     const mcp = report.checks.find(c => c.name === 'mcp_smoke')!;
     expect(mcp.detail?.reason).toBe('http');
@@ -210,7 +218,7 @@ describe('collectRemoteDoctorReport', () => {
 
   test('schema_version is 2 (matches local doctor schema_version)', async () => {
     reset();
-    const report = await collectRemoteDoctorReport(makeConfig());
+    const report = await collectRemoteDoctorReport(makeConfig(), SKIP_PROBE_OPTS);
     expect(report.schema_version).toBe(2);
   });
 
@@ -218,7 +226,7 @@ describe('collectRemoteDoctorReport', () => {
     reset();
     await withEnv({ GBRAIN_REMOTE_CLIENT_SECRET: 'env-supplied-secret' }, async () => {
       const config = makeConfig({ oauth_client_secret: 'config-file-secret' });
-      const report = await collectRemoteDoctorReport(config);
+      const report = await collectRemoteDoctorReport(config, SKIP_PROBE_OPTS);
       const creds = report.checks.find(c => c.name === 'oauth_credentials')!;
       expect(creds.status).toBe('ok');
       expect(creds.message).toContain('secret_source=env');

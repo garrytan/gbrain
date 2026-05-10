@@ -16,6 +16,8 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import { loadConfig, isThinClient } from '../core/config.ts';
+import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
 interface RunOpts {
   since?: string;
@@ -67,11 +69,23 @@ export async function runAnomalies(engine: BrainEngine, args: string[]): Promise
     console.log(HELP);
     return;
   }
-  const rows = await engine.findAnomalies({
-    since: parsed.since,
-    lookback_days: parsed.lookbackDays,
-    sigma: parsed.sigma,
-  });
+  // v0.31.1 (Issue #734): on thin-client installs, route via MCP.
+  let rows;
+  const cfg = loadConfig();
+  if (isThinClient(cfg)) {
+    const raw = await callRemoteTool(cfg!, 'find_anomalies', {
+      since: parsed.since,
+      lookback_days: parsed.lookbackDays,
+      sigma: parsed.sigma,
+    }, { timeoutMs: 30_000 });
+    rows = unpackToolResult<Awaited<ReturnType<BrainEngine['findAnomalies']>>>(raw);
+  } else {
+    rows = await engine.findAnomalies({
+      since: parsed.since,
+      lookback_days: parsed.lookbackDays,
+      sigma: parsed.sigma,
+    });
+  }
   if (parsed.json) {
     console.log(JSON.stringify(rows, null, 2));
     return;

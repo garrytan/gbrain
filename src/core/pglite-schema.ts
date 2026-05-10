@@ -476,7 +476,7 @@ CREATE INDEX IF NOT EXISTS idx_eval_capture_failures_ts ON eval_capture_failures
 
 -- ============================================================
 -- eval_takes_quality_runs (v0.32 — EXP-5): DB-authoritative receipts for
--- the takes-quality eval CLI. Schema mirrors src/schema.sql + migration v47.
+-- the takes-quality eval CLI. Schema mirrors src/schema.sql + migration v49.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS eval_takes_quality_runs (
   id                    BIGSERIAL    PRIMARY KEY,

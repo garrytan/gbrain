@@ -3,7 +3,7 @@
  *
  * Pure-PGLite tests already cover the receipt-write contract; this E2E
  * verifies that the same code path works against actual Postgres:
- *   - migration v47 lands the eval_takes_quality_runs table
+ *   - migration v49 lands the eval_takes_quality_runs table
  *   - INSERT with receipt_json JSONB roundtrips correctly
  *   - 4-sha UNIQUE constraint enforces ON CONFLICT DO NOTHING idempotency
  *   - trend SELECT path returns expected shape
@@ -79,7 +79,7 @@ function fixture(opts: {
 }
 
 d('v0.32 EXP-5 — eval_takes_quality_runs on real Postgres', () => {
-  test('migration v47 created the table with expected columns', async () => {
+  test('migration v49 created the table with expected columns', async () => {
     const engine = getEngine();
     const cols = await engine.executeRaw<{ column_name: string; data_type: string }>(
       `SELECT column_name, data_type FROM information_schema.columns

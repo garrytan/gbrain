@@ -15,12 +15,20 @@ export interface CliOptions {
   quiet: boolean;
   progressJson: boolean;
   progressInterval: number; // ms
+  /**
+   * v0.31.1 (Issue #734, ENG-4): user-supplied per-call timeout for thin-client
+   * routed MCP calls. `null` means "use the per-command default" (30s for most
+   * ops, 180s for `think`). When set, applies to every routed call in the
+   * current invocation.
+   */
+  timeoutMs: number | null;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
   quiet: false,
   progressJson: false,
   progressInterval: 1000,
+  timeoutMs: null,
 };
 
 /**
@@ -71,10 +79,50 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
       rest.push(a);
       continue;
     }
+    // v0.31.1: --timeout=Ns or --timeout Ns. Accepts plain ms, "30s", "2m".
+    if (a === '--timeout' && i + 1 < argv.length) {
+      const next = argv[i + 1];
+      const parsed = parseTimeout(next);
+      if (parsed !== null) {
+        cliOpts.timeoutMs = parsed;
+        i++;
+        continue;
+      }
+      rest.push(a);
+      continue;
+    }
+    if (a.startsWith('--timeout=')) {
+      const val = a.slice('--timeout='.length);
+      const parsed = parseTimeout(val);
+      if (parsed !== null) {
+        cliOpts.timeoutMs = parsed;
+        continue;
+      }
+      rest.push(a);
+      continue;
+    }
     rest.push(a);
   }
 
   return { cliOpts, rest };
+}
+
+/**
+ * v0.31.1: parse a timeout value. Accepts:
+ *   "30000" / "30000ms" → 30000
+ *   "30s"               → 30000
+ *   "2m"                → 120000
+ *   "1.5s"              → 1500
+ * Returns null on parse failure (caller decides whether to error or fall through).
+ */
+export function parseTimeout(s: string): number | null {
+  const m = /^([0-9]+(?:\.[0-9]+)?)(ms|s|m)?$/.exec(s.trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const unit = m[2] ?? 'ms';
+  const ms = unit === 'ms' ? n : unit === 's' ? n * 1000 : n * 60_000;
+  return Math.floor(ms);
 }
 
 function parseInterval(s: string): number | null {

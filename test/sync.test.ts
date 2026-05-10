@@ -359,6 +359,90 @@ describe('performSync dry-run never writes', () => {
     // Structural assertion: the contract includes `embedded: number`.
     expect(typeof result.embedded).toBe('number');
   });
+
+  test('detached HEAD skips git pull and ingests local working-tree files', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const seeded = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(seeded.status).toBe('first_sync');
+
+    execSync('git checkout --detach HEAD', { cwd: repoPath, stdio: 'pipe' });
+    writeFileSync(join(repoPath, 'people/detached-local.md'), [
+      '---',
+      'type: person',
+      'title: Detached Local',
+      '---',
+      '',
+      'This file exists only in the detached working tree.',
+    ].join('\n'));
+
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+    };
+
+    try {
+      const result = await performSync(engine, {
+        repoPath,
+        noEmbed: true,
+        noExtract: true,
+      });
+
+      expect(result.status).toBe('synced');
+      expect(result.added).toBe(1);
+      expect(result.pagesAffected).toContain('people/detached-local');
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(errors.join('\n')).toContain(`Detached HEAD on ${repoPath}; skipping git pull. Syncing from local working tree.`);
+    expect(errors.join('\n')).not.toContain('git pull failed');
+
+    const page = await engine.getPage('people/detached-local');
+    expect(page).not.toBeNull();
+    expect(page!.title).toBe('Detached Local');
+  });
+
+  test('detached HEAD with --no-pull also ingests local working-tree files', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const seeded = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(seeded.status).toBe('first_sync');
+
+    execSync('git checkout --detach HEAD', { cwd: repoPath, stdio: 'pipe' });
+    writeFileSync(join(repoPath, 'people/detached-nopull.md'), [
+      '---',
+      'type: person',
+      'title: Detached NoPull',
+      '---',
+      '',
+      'Only in detached working tree, --no-pull caller.',
+    ].join('\n'));
+
+    const result = await performSync(engine, {
+      repoPath,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+
+    expect(result.status).toBe('synced');
+    expect(result.added).toBe(1);
+    expect(result.pagesAffected).toContain('people/detached-nopull');
+
+    const page = await engine.getPage('people/detached-nopull');
+    expect(page).not.toBeNull();
+    expect(page!.title).toBe('Detached NoPull');
+  });
 });
 
 describe('sync regression — #132 nested transaction deadlock', () => {

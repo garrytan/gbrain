@@ -36,6 +36,7 @@ const DATABASE_URL = process.env.DATABASE_URL ?? '';
 
 let tmp: string;
 let origHome: string | undefined;
+let origGbrainHome: string | undefined;
 let origPath: string | undefined;
 let fakeBinDir: string;
 const CLI_PATH = join(import.meta.dir, '..', '..', 'src', 'cli.ts');
@@ -61,7 +62,12 @@ if (!SKIP) {
 
 function freshTempHome(label: string) {
   const dir = mkdtempSync(join(tmpdir(), `gbrain-e2e-migration-${label}-`));
+  // preferences.ts's gbrainDir() returns `$HOME/.gbrain` when GBRAIN_HOME
+  // is unset. Test fixtures write to `$dir/.gbrain/...`, so set HOME only
+  // and clear any inherited GBRAIN_HOME (which would route prefs to $dir
+  // directly, no .gbrain suffix).
   process.env.HOME = dir;
+  delete process.env.GBRAIN_HOME;
   // Seed config so Phase A's `gbrain init --migrate-only` has a target.
   mkdirSync(join(dir, '.gbrain'), { recursive: true });
   writeFileSync(
@@ -78,12 +84,15 @@ beforeAll(() => {
     return;
   }
   origHome = process.env.HOME;
+  origGbrainHome = process.env.GBRAIN_HOME;
 });
 
 afterAll(() => {
   if (SKIP) return;
   if (origHome === undefined) delete process.env.HOME;
   else process.env.HOME = origHome;
+  if (origGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = origGbrainHome;
   if (origPath === undefined) delete process.env.PATH;
   else process.env.PATH = origPath;
   try { if (fakeBinDir) rmSync(fakeBinDir, { recursive: true, force: true }); } catch { /* best-effort */ }

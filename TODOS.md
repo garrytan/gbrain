@@ -1,5 +1,99 @@
 # TODOS
 
+## v0.31.2 follow-ups
+
+### Investigate: `gbrain query <common-keyword>` infinite loop
+**Priority:** P1
+**Filed:** 2026-05-08 from v0.31.2 bug report (separate from the sync hang).
+
+**Evidence:** Two `bun /Users/garrytan/.bun/bin/gbrain query the` processes
+(PIDs 39429, 46624) on the user's Mac were pegged at 99% CPU for 7
+straight days before being killed manually. Each used 6+ GB resident
+memory. Originated from the `algiers-v3` worktree. Not walker-related
+(query path doesn't traverse files), so the v0.31.2 fix doesn't address
+it.
+
+**Likely candidates:**
+- Query-expansion regex catastrophic backtracking on common single words
+  (`src/core/search/expansion.ts` calls Haiku then post-processes with
+  regex; a one-token query plus an unhelpful expansion could feed a
+  pathological input back into the search pipeline)
+- Hybrid-search RRF reciprocal-rank-fusion loop iterating over a result
+  set that never shrinks (`src/core/search/hybrid.ts`)
+- `postgres.js` cursor that never closes when the result set is large
+  (the 6GB RES on `query` smells like accumulated rows in JS memory, not
+  WASM allocation)
+
+**To reproduce:** create a brain with at least a few thousand pages, run
+`gbrain query the` and watch CPU + RSS. If it pegs and grows, capture
+`process.report.getReport()` and a stack trace via `kill -SIGUSR2 <pid>`
+before killing.
+
+**Out of scope for v0.31.2** because the user's primary symptom (sync
+hang) was the higher-evidence bug. Pick this up as v0.31.3 once the
+sync fix is verified working in production.
+
+### v0.31.3: PGLite + Postgres E2E for amarillo-shape regression
+**Priority:** P2
+**Filed:** 2026-05-08 from v0.31.2 plan (deferred).
+
+**What:** Plan called for two regression tests pinning the user's exact
+repro topology: `test/sync-walker-amarillo-shape.test.ts` (PGLite,
+fast-loop) and `test/e2e/sync-amarillo-shape.test.ts` (real-Postgres,
+skip-on-no-DB). Unit-level walker + chunker tests landed in v0.31.2
+(`test/sync-walker-symlink.test.ts` + `test/chunker-timeout.test.ts`),
+but the engine-integrated regression for the user's exact 1500-file
+self-symlink topology is still pending. Add when the next sync-related
+PR is in flight.
+
+## Thin-client mode follow-ups (v0.31.1, Issue #734)
+
+- [ ] **v0.31.x: routed-call timing telemetry.** `GBRAIN_TIMING=1` prints
+  `token_mint=Xms http=Yms server=Zms total=Wms` per routed MCP call.
+  Audit log at `~/.gbrain/audit/routed-calls-YYYY-Www.jsonl`. Cherry-pick
+  C from #734 plan; deferred from v0.31.1 to keep scope tight.
+
+- [ ] **v0.31.2: job-submission routing for `gbrain dream` etc.** Route
+  long-running ops (`dream`, `embed --stale`, `extract`) via `submit_job`
+  + poll, mirroring the existing `gbrain remote ping` autopilot-cycle
+  pattern. Cherry-pick D from #734 plan. Adds a thin-client async-job
+  render layer (progress events + spinner).
+
+- [ ] **Per-subcommand thin-client routing for `takes` and `sources`.**
+  CDX-2 audit identified the READ subcommands (`takes_list`, `takes_search`,
+  `sources_list`, `sources_status`) as routable; mutate subcommands edit
+  local files. v0.31.1 refuses both at the top level with hints. Split
+  is a v0.31.x release.
+
+- [ ] **Privacy decision: lift `localOnly: true` on `get_recent_transcripts`?**
+  Raw chat exports leaving the host is a real tradeoff. Needs explicit
+  per-token scope (`scope: 'transcripts'`) and consent UX. Out of v0.31.1.
+
+- [ ] **Trust-boundary policy review for remote-caller gates.** Server
+  intentionally disables `think.--save`/`--take` for remote callers
+  (operations.ts:1103-1135) and skips `put_page` auto-link/auto-timeline
+  for remote callers without `trustedWorkspace` (operations.ts:434-451).
+  Subagent-isolation reasons; blocks full thin-client parity. Policy
+  decision, not a routing fix.
+
+- [ ] **v0.32.0: flip `gbrain auth register-client` default scope from
+  `read` to `read,write,admin`.** Breaking for existing read-only scrapers;
+  ship deprecation warning in v0.31.x. The v0.31.1 `oauth_client_scopes_probe`
+  doctor check surfaces the gap with pinpoint remediation in the meantime.
+
+- [ ] **v0.31.x: cross-process OAuth token cache at
+  `~/.gbrain/oauth-token-cache.json`.** Cuts ~200ms cold-start cost for
+  shell-loop usage on thin-client installs. Today the in-memory cache is
+  per-process; every `gbrain` invocation pays a fresh token mint.
+
+- [ ] **v0.31.x: parity test (`test/thin-client-parity.test.ts`).** Plan
+  called for ~400 LOC byte-equal stdout assertions for 12+ ops via an
+  in-process MCP server pointed at the same PGLite as the local-engine
+  path. Harder than expected because it needs MCP server setup that the
+  current test infrastructure doesn't expose. v0.31.1 ships without it;
+  ENG-2's JSON-shape normalization + per-command test coverage is the
+  interim guard.
+
 ## LongMemEval benchmark follow-ups (v0.28.12)
 
 ### Closed: full 500-question 4-adapter run published

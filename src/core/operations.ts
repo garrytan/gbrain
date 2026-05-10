@@ -16,7 +16,9 @@ import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { stripTakesFence } from './takes-fence.ts';
 import * as db from './db.ts';
+import { VERSION } from '../version.ts';
 import {
   GET_RECENT_SALIENCE_DESCRIPTION,
   FIND_ANOMALIES_DESCRIPTION,
@@ -392,7 +394,19 @@ const get_page: Operation = {
     }
 
     const tags = await ctx.engine.getTags(page.slug);
-    return { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) };
+    // Privacy boundary for the per-token takes-holder allow-list (v0.28.6).
+    // takes_list / takes_search / think.gather filter rows by holder at the
+    // SQL layer, but takes are also rendered as a markdown table inside the
+    // page body between TAKES_FENCE markers — `extract-takes.ts` ("markdown
+    // is canonical, the takes table is a derived index"). A read-only token
+    // restricted to e.g. `world` could call `get_page <slug>` and recover
+    // every non-`world` claim verbatim from the body. Strip the fence here
+    // when the caller carries an allow-list (i.e. the remote MCP path).
+    // Local CLI callers leave takesHoldersAllowList unset and see the fence.
+    const visibleBody = ctx.takesHoldersAllowList
+      ? { ...page, compiled_truth: stripTakesFence(page.compiled_truth) }
+      : page;
+    return { ...visibleBody, tags, ...(resolved_slug ? { resolved_slug } : {}) };
   },
   scope: 'read',
   cliHints: { name: 'get', positional: ['slug'] },
@@ -1485,6 +1499,37 @@ const get_health: Operation = {
 };
 
 /**
+ * v0.31.1 (Issue #734): lightweight identity packet for the thin-client
+ * banner. Read-scope so any authenticated client can surface "thin-client →
+ * <host> · brain: 102k pages, 265k chunks · v0.31.1" without needing admin.
+ *
+ * Reuses engine.getStats() for counters (banner cache TTL bounds frequency
+ * to ≤1/60s per CLI process; well below the Fly.io health-check cadence
+ * that motivated the `getStats` cost warning in CLAUDE.md).
+ *
+ * No CLI surface (no cliHints) — this op exists only for thin-client banner
+ * data. `last_sync_iso` deferred (no canonical source field today; would
+ * need autopilot cycle to write a config key — TODO in v0.31.x).
+ */
+const get_brain_identity: Operation = {
+  name: 'get_brain_identity',
+  description: 'Brain identity + counters for thin-client banner. Returns version, engine kind, and page/chunk counts. Read-scope.',
+  params: {},
+  handler: async (ctx) => {
+    const stats = await ctx.engine.getStats();
+    return {
+      version: VERSION,
+      engine: ctx.engine.kind,
+      page_count: stats.page_count,
+      chunk_count: stats.chunk_count,
+      last_sync_iso: null as string | null,
+    };
+  },
+  scope: 'read',
+  // intentionally no cliHints — banner-only op
+};
+
+/**
  * Multi-topology v1 (Tier B): structured doctor report for remote callers.
  *
  * First read-only diagnostic op exposed over HTTP MCP. Wraps the focused
@@ -1520,7 +1565,13 @@ const get_versions: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getVersions(p.slug as string);
+    const versions = await ctx.engine.getVersions(p.slug as string);
+    // Same takes-allow-list privacy boundary as get_page. Snapshots persist
+    // historical compiled_truth verbatim, including the takes fence, so
+    // a remote token bypassing get_page via /history would re-introduce
+    // the same leak across every prior version.
+    if (!ctx.takesHoldersAllowList) return versions;
+    return versions.map(v => ({ ...v, compiled_truth: stripTakesFence(v.compiled_truth) }));
   },
   scope: 'read',
   cliHints: { name: 'history', positional: ['slug'] },
@@ -2591,6 +2642,8 @@ export const operations: Operation[] = [
   add_timeline_entry, get_timeline,
   // Admin
   get_stats, get_health, run_doctor, get_versions, revert_version,
+  // v0.31.1 (Issue #734): thin-client banner identity packet (read-scope, banner-only)
+  get_brain_identity,
   // Sync
   sync_brain,
   // Raw data

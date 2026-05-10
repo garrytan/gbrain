@@ -8,6 +8,7 @@ triggers:
   - "academic verify"
   - "validate citation"
   - "is this study real"
+  - "Retraction Watch"
 mutating: true
 writes_pages: true
 writes_to:
