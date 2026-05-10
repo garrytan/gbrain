@@ -4,7 +4,13 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildDoctorReport } from '../src/core/services/doctor-service.ts';
 import { resolveOfflineProfile } from '../src/core/offline-profile.ts';
-import { getAgentRulesCandidatePaths, getExpectedAgentRulesVersion, parseDoctorAgentArgs } from '../src/commands/doctor.ts';
+import {
+  EMBEDDED_AGENT_RULES_VERSION,
+  getAgentRulesCandidatePaths,
+  getExpectedAgentRulesVersion,
+  getExpectedAgentRulesVersionFromCandidates,
+  parseDoctorAgentArgs,
+} from '../src/commands/doctor.ts';
 
 
 const originalEnv = { ...process.env };
@@ -338,6 +344,18 @@ describe('doctor command', () => {
 
     if (!docsVersion) throw new Error('docs/MBRAIN_AGENT_RULES.md is missing the rules version marker');
     expect(getExpectedAgentRulesVersion()).toBe(docsVersion);
+  });
+
+  test('doctor embedded agent rules version matches docs marker', async () => {
+    const rulesContent = readFileSync(join(import.meta.dir, '..', 'docs', 'MBRAIN_AGENT_RULES.md'), 'utf-8');
+    const docsVersion = rulesContent.match(/<!-- mbrain-agent-rules-version: ([\d.]+) -->/)?.[1];
+
+    if (!docsVersion) throw new Error('docs/MBRAIN_AGENT_RULES.md is missing the rules version marker');
+    expect(EMBEDDED_AGENT_RULES_VERSION).toBe(docsVersion);
+  });
+
+  test('doctor expected agent rules version falls back to embedded version without candidate files', async () => {
+    expect(getExpectedAgentRulesVersionFromCandidates([])).toBe(EMBEDDED_AGENT_RULES_VERSION);
   });
 
   test('doctor expected agent rules version ignores cwd docs marker', async () => {

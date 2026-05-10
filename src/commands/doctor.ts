@@ -10,6 +10,7 @@ import {
 import { collectInstalledAgentReadiness } from '../core/services/installed-agent-readiness-service.ts';
 
 const MARKER_VERSION_RE = /<!-- mbrain-agent-rules-version: ([\d.]+) -->/;
+export const EMBEDDED_AGENT_RULES_VERSION = '0.5.6';
 
 export async function runDoctor(engine: BrainEngine, args: string[]) {
   const jsonOutput = args.includes('--json');
@@ -60,19 +61,18 @@ export function parseDoctorAgentArgs(args: string[]): { agent: boolean; agentCom
 }
 
 export function getExpectedAgentRulesVersion(): string {
-  return loadAgentRules()?.match(MARKER_VERSION_RE)?.[1] ?? 'unknown';
+  return getExpectedAgentRulesVersionFromCandidates(getAgentRulesCandidatePaths());
 }
 
-function loadAgentRules(): string | null {
-  const candidates = getAgentRulesCandidatePaths();
-
-  for (const candidate of candidates) {
+export function getExpectedAgentRulesVersionFromCandidates(candidatePaths: string[]): string {
+  for (const candidate of candidatePaths) {
     if (existsSync(candidate)) {
-      return readFileSync(candidate, 'utf-8');
+      const version = readFileSync(candidate, 'utf-8').match(MARKER_VERSION_RE)?.[1];
+      if (version) return version;
     }
   }
 
-  return null;
+  return EMBEDDED_AGENT_RULES_VERSION;
 }
 
 export function getAgentRulesCandidatePaths(): string[] {
