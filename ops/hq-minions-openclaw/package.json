@@ -1,0 +1,27 @@
+{
+  "name": "hq-minions-openclaw",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-only OpenClaw/HQ operator layer for GBrain Minions",
+  "scripts": {
+    "cli": "bun src/cli.ts",
+    "doctor": "bun src/cli.ts doctor",
+    "health": "bun src/cli.ts health",
+    "worker": "bun src/worker.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "bootstrap": "bash scripts/bootstrap-local.sh",
+    "verify": "bash scripts/verify.sh",
+    "backup": "bash scripts/backup.sh"
+  },
+  "dependencies": {
+    "gbrain": "file:../..",
+    "zod": "^3.24.1",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.3"
+  }
+}
