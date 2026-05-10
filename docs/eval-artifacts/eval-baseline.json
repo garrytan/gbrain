@@ -1,0 +1,346 @@
+{
+  "run_at": "2026-04-28T13:54:08.190Z",
+  "corpus": "5 ML textbooks (2872 chunks) embedded in GBrain (Supabase+pgvector+text-embedding-3-small)",
+  "elapsed_sec": 77.9,
+  "aggregate": {
+    "questions": 20,
+    "mean_ndcg5": 0.7012522984129118,
+    "mean_recall10": 0.8,
+    "mean_mrr": 0.6833333333333333,
+    "mean_marker_hits_top10": 0.05,
+    "top1_hits": 12,
+    "any_hit": 16,
+    "misses": 4
+  },
+  "per_question": [
+    {
+      "id": "q01",
+      "expected_book": "books/murphy-probabilistic-perspective",
+      "metrics": {
+        "mrr": 0,
+        "recall10": 0,
+        "ndcg5": 0,
+        "firstRelIdx": -1,
+        "numRelInTop10": 0,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "geron-hands-on-ml",
+        "murphy-probabilistic-advanced",
+        "bishop-prml"
+      ]
+    },
+    {
+      "id": "q02",
+      "expected_book": "books/murphy-probabilistic-perspective",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-perspective"
+      ]
+    },
+    {
+      "id": "q03",
+      "expected_book": "books/murphy-probabilistic-perspective",
+      "metrics": {
+        "mrr": 0.5,
+        "recall10": 1,
+        "ndcg5": 0.6309297535714575,
+        "firstRelIdx": 1,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-advanced",
+        "murphy-probabilistic-perspective"
+      ]
+    },
+    {
+      "id": "q04",
+      "expected_book": "books/murphy-probabilistic-perspective",
+      "metrics": {
+        "mrr": 0.3333333333333333,
+        "recall10": 1,
+        "ndcg5": 0.5,
+        "firstRelIdx": 2,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-advanced",
+        "bishop-prml",
+        "murphy-probabilistic-perspective"
+      ]
+    },
+    {
+      "id": "q05",
+      "expected_book": "books/bishop-prml",
+      "metrics": {
+        "mrr": 0.3333333333333333,
+        "recall10": 1,
+        "ndcg5": 0.5,
+        "firstRelIdx": 2,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-advanced",
+        "geron-hands-on-ml",
+        "bishop-prml"
+      ]
+    },
+    {
+      "id": "q06",
+      "expected_book": "books/bishop-prml",
+      "metrics": {
+        "mrr": 0,
+        "recall10": 0,
+        "ndcg5": 0,
+        "firstRelIdx": -1,
+        "numRelInTop10": 0,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-advanced",
+        "murphy-probabilistic-perspective"
+      ]
+    },
+    {
+      "id": "q07",
+      "expected_book": "books/bishop-prml",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "bishop-prml",
+        "murphy-probabilistic-perspective",
+        "murphy-probabilistic-advanced"
+      ]
+    },
+    {
+      "id": "q08",
+      "expected_book": "books/bishop-prml",
+      "metrics": {
+        "mrr": 0.5,
+        "recall10": 1,
+        "ndcg5": 0.6240505200038379,
+        "firstRelIdx": 1,
+        "numRelInTop10": 2,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-advanced",
+        "bishop-prml",
+        "murphy-probabilistic-perspective",
+        "murphy-probabilistic-perspective-toc",
+        "bishop-prml-toc"
+      ]
+    },
+    {
+      "id": "q09",
+      "expected_book": "books/murphy-probabilistic-advanced",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-advanced"
+      ]
+    },
+    {
+      "id": "q10",
+      "expected_book": "books/murphy-probabilistic-advanced",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-advanced",
+        "bishop-prml",
+        "murphy-probabilistic-perspective"
+      ]
+    },
+    {
+      "id": "q11",
+      "expected_book": "books/murphy-probabilistic-advanced",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 0.9197207891481876,
+        "firstRelIdx": 0,
+        "numRelInTop10": 2,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-advanced",
+        "geron-hands-on-ml",
+        "murphy-probabilistic-advanced-toc",
+        "murphy-probabilistic-perspective"
+      ]
+    },
+    {
+      "id": "q12",
+      "expected_book": "books/murphy-probabilistic-advanced",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-advanced",
+        "bishop-prml",
+        "murphy-probabilistic-perspective"
+      ]
+    },
+    {
+      "id": "q13",
+      "expected_book": "books/huyen-designing-ml-systems",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 0.8503449055347546,
+        "firstRelIdx": 0,
+        "numRelInTop10": 2,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "huyen-designing-ml-systems",
+        "murphy-probabilistic-advanced",
+        "geron-hands-on-ml",
+        "bishop-prml",
+        "huyen-designing-ml-systems-toc"
+      ]
+    },
+    {
+      "id": "q14",
+      "expected_book": "books/huyen-designing-ml-systems",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "huyen-designing-ml-systems",
+        "murphy-probabilistic-perspective"
+      ]
+    },
+    {
+      "id": "q15",
+      "expected_book": "books/huyen-designing-ml-systems",
+      "metrics": {
+        "mrr": 0,
+        "recall10": 0,
+        "ndcg5": 0,
+        "firstRelIdx": -1,
+        "numRelInTop10": 0,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": []
+    },
+    {
+      "id": "q16",
+      "expected_book": "books/huyen-designing-ml-systems",
+      "metrics": {
+        "mrr": 0,
+        "recall10": 0,
+        "ndcg5": 0,
+        "firstRelIdx": -1,
+        "numRelInTop10": 0,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "murphy-probabilistic-perspective",
+        "murphy-probabilistic-advanced"
+      ]
+    },
+    {
+      "id": "q17",
+      "expected_book": "books/geron-hands-on-ml",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "geron-hands-on-ml"
+      ]
+    },
+    {
+      "id": "q18",
+      "expected_book": "books/geron-hands-on-ml",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "geron-hands-on-ml",
+        "murphy-probabilistic-perspective",
+        "huyen-designing-ml-systems"
+      ]
+    },
+    {
+      "id": "q19",
+      "expected_book": "books/geron-hands-on-ml",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 1
+      },
+      "top5_slugs": [
+        "geron-hands-on-ml",
+        "huyen-designing-ml-systems"
+      ]
+    },
+    {
+      "id": "q20",
+      "expected_book": "books/geron-hands-on-ml",
+      "metrics": {
+        "mrr": 1,
+        "recall10": 1,
+        "ndcg5": 1,
+        "firstRelIdx": 0,
+        "numRelInTop10": 1,
+        "markerHitsTop10": 0
+      },
+      "top5_slugs": [
+        "geron-hands-on-ml",
+        "murphy-probabilistic-advanced"
+      ]
+    }
+  ]
+}
