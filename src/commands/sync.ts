@@ -858,7 +858,7 @@ async function performFullSync(
     const allFiles = collectMarkdownFiles(repoPath);
     const syncableRelPaths = allFiles
       .map(abs => relative(repoPath, abs))
-      .filter(rel => isSyncable(rel));
+      .filter(rel => isSyncable(rel, { strategy: opts.strategy }));
     console.log(
       `Full-sync dry run: ${syncableRelPaths.length} file(s) would be imported ` +
       `from ${repoPath} @ ${headCommit.slice(0, 8)}.`,
@@ -889,7 +889,7 @@ async function performFullSync(
   const importArgs = [repoPath];
   if (opts.noEmbed) importArgs.push('--no-embed');
   if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
-  const result = await runImport(engine, importArgs, { commit: headCommit });
+  const result = await runImport(engine, importArgs, { commit: headCommit, strategy: opts.strategy });
 
   // Bug 9 — gate the full-sync bookmark on success. runImport already
   // writes its own sync.last_commit conditionally (import.ts), but

@@ -32,7 +32,13 @@ export async function findCodeDef(
   opts: { limit?: number; language?: string } = {},
 ): Promise<CodeDefResult[]> {
   const limit = opts.limit ?? 20;
-  const DEF_TYPES = ['function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract'];
+  const DEF_TYPES = [
+    'function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract',
+    // tree-sitter emits multi-word symbol_types for class members; without these
+    // any class method (~3200 chunks in a typical brain) returns 0 results
+    // even though chunks exist with the correct symbol_name.
+    'method definition', 'method signature', 'field definition', 'public field definition',
+  ];
   const params: unknown[] = [symbol, limit];
   let whereLang = '';
   if (opts.language) {
