@@ -448,7 +448,21 @@ MBRAIN_STOP_HOOK=0 claude
 
 ### 설정 후 확인
 
-AI 클라이언트에서 새 세션을 시작한 뒤:
+먼저 shell에서 설치된 명령, 클라이언트 MCP 등록, 프롬프트 규칙, Claude
+Stop hook을 확인합니다:
+
+```bash
+mbrain doctor --agent --json
+MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
+```
+
+`doctor --agent`는 Codex와 Claude가 동작하는 `mbrain serve` 명령에
+등록되어 있는지, 등록 상태가 enabled/connected인지, 관리되는 prompt
+rules가 설치되어 있는지 확인합니다. smoke 명령은 설치된 MCP 서버를
+stdio로 실행하여 tool discovery, page lifecycle, search,
+`route_memory_writeback` dry-run을 확인합니다.
+
+그 다음 AI 클라이언트에서 새 세션을 시작한 뒤:
 
 - MBrain 도구 목록 조회 요청 (`search`, `query`, `get_page` 등이 보여야 함)
 - brain에 있는 사람이나 주제에 대해 질문
@@ -546,6 +560,7 @@ mbrain health
 긴 lifecycle E2E test 대신 설치된 명령과 stdio MCP 서버만 빠르게 확인하려면:
 
 ```bash
+mbrain doctor --agent --json
 MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 ```
 

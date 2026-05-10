@@ -465,7 +465,21 @@ To disable it for specific working directories, add absolute paths to `~/.claude
 
 ### After setup
 
-Start a new session in your AI client and verify:
+First verify the installed command, client MCP registration, prompt rules, and
+Claude stop hook from the shell:
+
+```bash
+mbrain doctor --agent --json
+MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
+```
+
+`doctor --agent` checks that Codex and Claude are registered to a working
+`mbrain serve` command, that the registration is enabled/connected, and that the
+managed prompt rules are installed. The smoke command starts the installed MCP
+server over stdio and exercises tool discovery, a page lifecycle, search, and
+`route_memory_writeback` dry-run availability.
+
+Then start a new session in your AI client and verify:
 
 - ask it to list MBrain tools (should see `search`, `query`, `get_page`, etc.)
 - ask it about someone or something in your brain
@@ -566,6 +580,7 @@ For an installed-command smoke check that exercises the stdio MCP server without
 running the full lifecycle E2E test:
 
 ```bash
+mbrain doctor --agent --json
 MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 ```
 

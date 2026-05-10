@@ -158,13 +158,8 @@ MBrain applies `search_document:` and `search_query:` prefixes internally for
 
 ### 7. Connect an agent
 
-For Codex, Claude Code, or another stdio MCP client:
-
-```bash
-mbrain serve
-```
-
-Or let MBrain register the local MCP server and install the agent rules:
+For Codex, Claude Code, or another stdio MCP client, let MBrain register the
+local MCP server and install the agent rules:
 
 ```bash
 mbrain setup-agent
@@ -175,6 +170,14 @@ mbrain setup-agent --claude
 The agent rules matter. The MCP tools give an agent access to the brain; the
 rules teach it when to read, when to write, how to cite, and how to avoid
 writing the wrong thing into memory.
+
+Then verify the installed command, MCP registration, prompt rules, and Claude
+stop hook:
+
+```bash
+mbrain doctor --agent --json
+MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
+```
 
 ## What You Can Ask
 
