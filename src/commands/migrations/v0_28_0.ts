@@ -101,11 +101,30 @@ async function phaseBBackfill(
     // the table populated for upgrade-time doctor checks.
     const { extractTakes } = await import('../../core/cycle/extract-takes.ts');
     const result = await extractTakes(engine, { source: 'db' });
-    return {
-      name: 'backfill',
-      status: 'complete',
-      detail: `extract-takes scanned ${result.pagesScanned} pages; ${result.pagesWithTakes} had fenced takes; upserted ${result.takesUpserted} rows`,
-    };
+
+    // v0.32 EXP-4 producer seam (codex review #4). Holder grammar validation
+    // emits TAKES_HOLDER_INVALID warnings during fence parsing; capture them
+    // in sync-failures.jsonl so doctor's `sync_failures` check shows the
+    // breakdown by code. Best-effort: persistence failure does NOT fail the
+    // backfill phase (the upserts already succeeded).
+    if (result.failedFiles && result.failedFiles.length > 0) {
+      try {
+        const { recordSyncFailures } = await import('../../core/sync.ts');
+        // Migration runs against the brain DB, not necessarily a checkout.
+        // Use 'migration:v0.28.0-backfill' as the commit sentinel so the
+        // dedup key separates these from regular sync-failures and a future
+        // re-run doesn't clobber the original detection.
+        recordSyncFailures(result.failedFiles, 'migration:v0.28.0-backfill');
+      } catch {
+        // Persisting sync-failures is informational; never block the migration.
+      }
+    }
+
+    const holderInvalidCount = result.failedFiles?.length ?? 0;
+    const detail = holderInvalidCount > 0
+      ? `extract-takes scanned ${result.pagesScanned} pages; ${result.pagesWithTakes} had fenced takes; upserted ${result.takesUpserted} rows; ${holderInvalidCount} holder warning(s) recorded to sync-failures.jsonl`
+      : `extract-takes scanned ${result.pagesScanned} pages; ${result.pagesWithTakes} had fenced takes; upserted ${result.takesUpserted} rows`;
+    return { name: 'backfill', status: 'complete', detail };
   } catch (e) {
     return { name: 'backfill', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
   }

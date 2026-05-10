@@ -13,6 +13,7 @@ import type {
 } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
+import { normalizeWeightForStorage } from './takes-fence.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
@@ -2142,9 +2143,9 @@ export class PostgresEngine implements BrainEngine {
     const kinds     = rowsIn.map(r => r.kind);
     const holders   = rowsIn.map(r => r.holder);
     const weights   = rowsIn.map(r => {
-      const w = r.weight ?? 0.5;
-      if (w < 0 || w > 1) { weightClamped++; return Math.max(0, Math.min(1, w)); }
-      return w;
+      const { weight, clamped } = normalizeWeightForStorage(r.weight);
+      if (clamped) weightClamped++;
+      return weight;
     });
     const sinces    = rowsIn.map(r => r.since_date ?? null);
     const untils    = rowsIn.map(r => r.until_date ?? null);
@@ -2303,9 +2304,12 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<void> {
     const sql = this.sql;
     let weight = fields.weight;
-    if (weight !== undefined && (weight < 0 || weight > 1)) {
-      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → [0,1]\n`);
-      weight = Math.max(0, Math.min(1, weight));
+    if (weight !== undefined) {
+      const norm = normalizeWeightForStorage(weight);
+      if (norm.clamped) {
+        process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → ${norm.weight}\n`);
+      }
+      weight = norm.weight;
     }
     const result = await sql`
       UPDATE takes SET

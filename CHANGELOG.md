@@ -42,6 +42,85 @@ Cold-start originated as PR #802. The branch shipped three commits including one
 
 The version slot is deliberate. v0.31.4 through v0.31.9 are reserved for in-flight work; v0.31.10 was chosen so this user-facing skillpack expansion lands clearly above the patch-train.
 
+## [0.31.3] - 2026-05-09
+
+**`gbrain serve` stops leaking the PGLite write lock when the parent disconnects, and `gbrain auth` + `gbrain serve --http` work against PGLite brains.**
+
+Two community PRs (#676 stdio cleanup, #681 engine-aware auth SQL) landed in one focused PR with two atomic commits. Both fixed real bugs that were biting users in production: stdio MCP servers held the PGLite write lock indefinitely after Claude Desktop / Cursor / launchd-managed gateways disconnected, forcing a 5-minute stale-lock wait on the next start. And `gbrain auth` + the OAuth admin server silently routed every SQL through the postgres.js singleton, which made `gbrain serve --http` Postgres-only even though the schema supported PGLite.
+
+### What you can now do
+
+**Restart your MCP server without waiting 5 minutes.** Stdio EOF, SIGTERM, SIGINT, SIGHUP, and parent-process death (every reparent case ... PID 1, launchd subreaper, systemd, tmux, or a parent shell with PR_SET_CHILD_SUBREAPER) all funnel into one idempotent shutdown that releases the engine and the lock dir within 5 seconds. Closes #413 and #446. Credit @Aragorn2046 (origin features in #591) and @seungsu-kr (rebased submitter, Bun ppid workaround).
+
+**Run `gbrain serve --http` against a PGLite brain.** Auth (`gbrain auth create/list/revoke/permissions`), OAuth 2.1 client registration + token mint, the admin SPA, file uploads, and the legacy bearer-auth HTTP transport all run through the active engine now via a deliberately-narrow `SqlQuery` adapter (`src/core/sql-query.ts`) that calls `engine.executeRaw`. Previously, with `DATABASE_URL` set but the config file pointing at PGLite, auth commands silently hit the wrong brain. Credit codex-bot.
+
+**`gbrain auth permissions ... set-takes-holders` and the four `mcp_request_log.params` INSERTs write real JSONB objects.** Pre-v0.31.3 they wrote `JSON.stringify(...)` strings into JSONB columns via the postgres.js template tag's loose typing ... the column was technically JSONB but stored as a quoted string, so reads via `params->>'op'` returned the encoded string `"search"` instead of `search`. Migration v46 normalizes the entire backlog of pre-v0.31.3 string-shaped rows up to objects so the `/admin/api/requests` endpoint returns one consistent shape to the SPA. Idempotent.
+
+**Bun's `process.ppid` cache no longer creates a phantom watchdog.** Bun (and Node ... see [oven-sh/bun#30305](https://github.com/oven-sh/bun/issues/30305)) caches `process.ppid` at process creation and never refreshes when the kernel re-parents. The watchdog now runs `spawnSync('ps','-o','ppid=','-p',PID)` per tick to read the live kernel PPID. A one-shot startup probe verifies ps is available; if it isn't (stripped containers, busybox without procps), the watchdog skips installing entirely AND emits a loud stderr line ... instead of silently running every 5 seconds and never firing.
+
+**Startup probe for stripped-container deployments.** If `ps` isn't on PATH, `gbrain serve` prints `[gbrain serve] watchdog disabled: ps unavailable, parent-death detection unavailable ... child will rely on stdin EOF / signals only` once at startup. Operators see the degraded mode at boot instead of wondering why their phantom watchdog never fires.
+
+### Numbers that matter
+
+| Failure mode | Before v0.31.3 | After v0.31.3 |
+|---|---|---|
+| Parent dies, stdin still open (launchd/cron orphan) | Lock held forever, next `gbrain serve` blocks 5+ minutes | Watchdog fires within 5s, lock released, next start clean |
+| Parent reparents to subreaper PID 47 (systemd, tmux) | Watchdog silently no-op (only checked `ppid === 1`) | Watchdog fires (`ppid !== initialParentPid`) |
+| `gbrain serve --http` against PGLite brain | Hard fail at startup, "Postgres only" | Works |
+| `gbrain auth create` with `DATABASE_URL` set + PGLite config file | Silently writes to PGLite, env var ignored | DATABASE_URL wins, infers Postgres engine, clears stale `database_path` |
+| Read `mcp_request_log.params` in admin SPA after a pre-v0.31.3 row was logged | Returned a JSON-encoded string `"{\"op\":\"search\"}"` | Returns the object `{op:'search'}` |
+| `params->>'op'` SQL on pre-v0.31.3 rows | Returned the encoded string `"search"` (with quotes) | After v46 migration: returns `search` |
+| `bun test test/serve-stdio-lifecycle.test.ts` | (test file did not exist) | 22 cases, all green |
+
+### What this means for your workflow
+
+If your editor talks to gbrain over stdio MCP ... Claude Desktop, Cursor, MCP gateway ... you'll notice restarts happen instantly instead of hanging on lock contention. If you've been running gbrain on PGLite (the default for new installs), `gbrain auth create`, OAuth client registration, and the `--http` admin dashboard all work now. Run `gbrain upgrade` to land both fixes plus the v46 migration that normalizes any string-shaped `mcp_request_log.params` rows you accumulated.
+
+### Important note for upgraders
+
+`gbrain upgrade` runs the v46 normalizer migration automatically. If you have a long history of `gbrain serve --http` requests in `mcp_request_log`, the UPDATE could touch many rows on first run ... it's a single statement filtered to `jsonb_typeof = 'string'` and won't lock the table for long, but you may see a brief CPU spike on Supabase Postgres if the table is large. Subsequent upgrades find no string-shaped rows and the migration is a no-op.
+
+### How it works under the hood
+
+`SqlQuery` is a deliberately narrow tagged-template adapter (`src/core/sql-query.ts`) that builds positional SQL with `$N` placeholders and calls `engine.executeRaw(sql, params)`. Scalar binds only ... the contract is the feature. JSONB writes go through a separate `executeRawJsonb(engine, sql, scalarParams, jsonbParams)` helper that composes positional `$N::jsonb` casts and passes JS objects through. The v0.12.0 double-encode bug class doesn't apply to positional binding through postgres.js's `unsafe()` (verified by `test/e2e/auth-permissions.test.ts:67` on Postgres and `test/sql-query.test.ts` on PGLite).
+
+`scripts/check-jsonb-pattern.sh` doesn't fire because `executeRawJsonb(...)` is a method call, not the banned literal-template-tag interpolation pattern.
+
+The watchdog reparent check is `getParentPid() !== initialParentPid`, capturing the initial ppid once at install time and firing on any change. The previous `=== 1` check missed the subreaper case that surfaced under launchd / systemd PR_SET_CHILD_SUBREAPER environments.
+
+### Tests
+
+- `test/serve-stdio-lifecycle.test.ts` (22 cases) ... signals (SIGTERM/SIGINT/SIGHUP), stdin EOF / close, TTY skip, watchdog reparent-to-1 AND reparent-to-subreaper-PID-47, ps-unavailable startup probe, idempotent shutdown under racing signals, 5s cleanup deadline when `disconnect()` rejects, `--stdio-idle-timeout` strict parse rejects (`abc`, `30junk`, `-1`, `1.5`, blank, missing).
+- `test/sql-query.test.ts` (7 cases) ... scalar binds round-trip, array/promise/object rejection, `executeRawJsonb` JSONB round-trip with `jsonb_typeof = 'object'` and `->>` semantics, v0.12.0 double-encode regression guard, null JSONB handling, scalars-then-jsonb call shape.
+- `test/config-env.test.ts` (5 cases, migrated to `withEnv()` helper per CLAUDE.md R1) ... `DATABASE_URL` + `GBRAIN_DATABASE_URL` precedence, file-only config, env-only config, no-config null path.
+- `test/e2e/auth-takes-holders-pglite.test.ts` (6 cases against in-memory PGLite, no DATABASE_URL gate) ... full takes-holders create/update round-trip, mcp_request_log.params object + null writes, migration v46 normalizer (seed string-shaped row, run UPDATE, assert object shape; second-run no-op for idempotency).
+- `test/http-transport.test.ts` (24 cases, mock updated to intercept `engine.executeRaw`) ... bearer auth, /health DB probe, 401 paths, rate limit, body cap, mcp_request_log audit.
+
+### To take advantage of v0.31.3
+
+`gbrain upgrade` runs the v46 migration automatically on first start. Verify:
+
+```bash
+gbrain upgrade
+gbrain doctor                                    # confirm migration v46 is applied
+```
+
+If you're on PGLite and want to confirm `gbrain serve --http` works:
+
+```bash
+gbrain auth register-client test --grant-types client_credentials --scopes read
+gbrain serve --http &
+# Mint a token via the OAuth /token endpoint, hit /mcp with a real op.
+```
+
+If `gbrain doctor` flags anything after upgrade, file an issue: https://github.com/garrytan/gbrain/issues with `~/.gbrain/upgrade-errors.jsonl` if it exists and which step broke.
+
+### For contributors
+
+This PR went through `/plan-eng-review` (5 issues, all addressed) and `/codex` outside-voice consult-mode plan review (10 findings, 9 closed by re-design ... including reversing the original "extend SqlQuery with .json()" plan to "ship a separate `executeRawJsonb` helper" because codex argued the SqlQuery adapter should stay scalar-only or it drifts into a partial postgres.js clone). Decision log lives at `~/.claude/plans/system-instruction-you-are-working-peppy-moore.md`. Two atomic bisect-friendly commits in one PR.
+
+Closes #413, #446. Supersedes #591. Closes the architectural intent of #676 and #681.
+
 ## [0.31.2] - 2026-05-08
 
 **`gbrain sync --strategy code` no longer hangs on big repos. Code-strategy first-sync actually indexes code files. Walker hardened. Tree-sitter is now bounded.**

@@ -69,6 +69,70 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  * pending demand. Local doctor is unchanged — operators on the host machine
  * still get the full check set.
  */
+/**
+ * Doctor check: takes.weight grid integrity (v0.32 — EXP-2).
+ *
+ * Pure helper — no `process.exit`, no side effects beyond the SQL probe.
+ * `runDoctor` calls this and pushes the result onto its check list.
+ * Tests can target this directly with a stubbed engine (codex review #7).
+ *
+ * Branches:
+ *   - takes table doesn't exist (fresh brain pre-v37) → warn, "skipped"
+ *   - 0 takes total → ok, "no takes yet" (avoids divide-by-zero)
+ *   - off_grid / total > 10% → fail
+ *   - off_grid / total > 1%  → warn
+ *   - else → ok
+ *
+ * Tolerance matches migration v48: any value with abs(weight - on_grid) > 1e-3
+ * is genuinely off-grid (the 0.05 grid is 5e-2; float32 noise is ~1e-7).
+ */
+export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ off_grid: string | number; total: string | number }>(
+      `SELECT
+         count(*) FILTER (WHERE weight IS NOT NULL
+                          AND abs(weight::numeric - ROUND(weight::numeric * 20) / 20) > 0.001)::int AS off_grid,
+         count(*)::int AS total
+       FROM takes`,
+    );
+    const total = Number(rows[0]?.total ?? 0);
+    const offGrid = Number(rows[0]?.off_grid ?? 0);
+    if (total === 0) {
+      return { name: 'takes_weight_grid', status: 'ok', message: 'No takes yet' };
+    }
+    const ratio = offGrid / total;
+    if (ratio > 0.10) {
+      return {
+        name: 'takes_weight_grid',
+        status: 'fail',
+        message: `${offGrid}/${total} takes off the 0.05 grid (${(ratio * 100).toFixed(1)}%). Fix: gbrain apply-migrations --yes`,
+      };
+    }
+    if (ratio > 0.01) {
+      return {
+        name: 'takes_weight_grid',
+        status: 'warn',
+        message: `${offGrid}/${total} takes off the 0.05 grid (${(ratio * 100).toFixed(1)}%). Fix: gbrain apply-migrations --yes`,
+      };
+    }
+    return {
+      name: 'takes_weight_grid',
+      status: 'ok',
+      message: offGrid === 0
+        ? `${total} take(s) on grid`
+        : `${total} take(s) on grid (${offGrid} within tolerance)`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // takes table missing on a fresh pre-v37 brain — warn, don't fail.
+    return {
+      name: 'takes_weight_grid',
+      status: 'warn',
+      message: `Could not check takes weight grid: ${msg}`,
+    };
+  }
+}
+
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -979,6 +1043,20 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   } catch {
     checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
   }
+
+  // 10b. Takes weight grid integrity (v0.32 — EXP-2).
+  //
+  // Cross-modal eval over 100K production takes flagged 0.74, 0.82-style
+  // weights as false precision. v0.31's engine layer rounds to 0.05 on
+  // insert (PR #795); v0.32's migration v48 backfills pre-existing data.
+  // This check is the post-backfill drift detector — if a downstream
+  // extraction agent or hand-edit re-introduces off-grid values, we want
+  // the warning to surface before it pollutes scorecard / calibration math.
+  //
+  // Pure helper so the test surface targets `takesWeightGridCheck(engine)`
+  // directly rather than the full `runDoctor` pipeline (codex review #7).
+  progress.heartbeat('takes_weight_grid');
+  checks.push(await takesWeightGridCheck(engine));
 
   // 11. Markdown body completeness (v0.12.3 reliability wave).
   // v0.12.0's splitBody ate everything after the first `---` horizontal rule,
