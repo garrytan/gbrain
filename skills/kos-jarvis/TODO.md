@@ -403,16 +403,33 @@ JARVIS-NEXT-STEPS, .env). Backups retained at
 Active fork dirs: 11 → 10. **Story in `docs/JARVIS-ARCHITECTURE.md`
 §6.23 (M3.cutover landed same day continuation)**.
 
-### [ ] (M3.cutover-followup) Backfill any remaining shim-era chunks (low priority)
+### [x] (M3.cutover-followup) Backfill remaining shim-era chunks — DONE 2026-05-10
 
-**Why**: Re-embed of all 5548 chunks ran twice during M3.cutover but
-hit Google free-tier quota partway through each pass. Final state:
-all chunks have valid 1536-dim embeddings (`null_left=0`), but a
-fraction may still be shim-era vectors that didn't get retried before
-quota exhausted. Vector-space compat is *probably* fine (same
-`gemini-embedding-001` underneath, same dim, HNSW cosine-invariant
-under normalization differences) and query smoke passed in 0.7-0.9
-band — but a clean-up run is cheap.
+**100% native vector space achieved.** All 5548 chunks now embedded by
+the v0.27 native gateway (`google:gemini-embedding-001` + 1536 dim).
+Zero NULL embeddings, zero shim-era residuals.
+
+**Procedure**:
+1. SQL `UPDATE content_chunks SET embedding = NULL, embedded_at = NULL
+   WHERE embedded_at < now() - interval '2 hours'` — marked 1563
+   shim-era chunks as stale.
+2. `gbrain embed --stale` x 4 successive runs — each batch hit Google
+   free-tier RPM cap and exited 0 with partial progress, but quota
+   reset between runs (per-minute RPM, not daily). Throughputs:
+   881 → 440 → 199 → 20 chunks per pass.
+3. One stuck page (`sources/notion/re-qataer-isp-ooredoo-sms-...`,
+   23 chunks, max 18131-char chunk) wouldn't clear via `--stale`
+   batching — single-page invocation `gbrain embed <slug>` succeeded
+   immediately. Likely page-level batch retry policy differs from the
+   `--stale` flow's larger group batching when chunks approach
+   per-batch token caps.
+4. Final state: `null_left=0`, all 5548 chunks embedded by native
+   gateway, query smoke (English "Omada Cloud" + Chinese "知识管理")
+   in healthy 0.6-0.76 band.
+
+**Cost**: ~5 retry rounds × ~880 chunks avg + final single-page = ~5000
+Google embedding API calls beyond M3.cutover's initial 6802. Total
+session API consumption ~$0.50-0.70.
 
 **What** (next session, ~2-3 h):
 

@@ -2776,9 +2776,68 @@ that column.
 moved into `skills/kos-jarvis/_archived/`. Active skill dirs with
 `SKILL.md` shrank from 11 to 7 (digest-to-memory, dream-wrap,
 enrich-sweep, kos-patrol, notion-ingest-delta-now-redirect,
-orphan-reducer, url-fetcher). M2-A.pilot (concept-synthesis run on
-188 concept pages) still pending — that one is a brain-side cycle,
-not a fork-side commit.
+orphan-reducer, url-fetcher).
+
+### M3.cutover-followup — 100% native vector space (2026-05-10 evening)
+
+The deferred cleanup of 1334 lingering shim-era chunks landed same
+session. Procedure:
+
+1. `UPDATE content_chunks SET embedding = NULL, embedded_at = NULL
+   WHERE embedded_at < now() - interval '2 hours'` — marked 1563
+   shim-era rows stale (the residuals from M3.cutover's
+   quota-truncated re-embeds).
+2. `gbrain embed --stale` × 4 passes. Google free-tier RPM resets
+   between passes, but each pass hits the cap mid-batch and exits 0
+   with partial progress. Throughput per pass: 881 → 440 → 199 → 20
+   chunks. Standard `--stale` flow processes a discrete batch then
+   exits cleanly even if more remain.
+3. One page (`sources/notion/re-qataer-isp-ooredoo-sms-...`,
+   23 chunks, max 18131 chars per chunk) repeatedly errored under
+   `--stale` batching. Single-page invocation `gbrain embed <slug>`
+   succeeded on first try — page-level batch retry policy must
+   differ from the `--stale` flow's group batching when chunks
+   approach per-batch token caps.
+4. Final: `null_left=0`, query smoke (English "Omada Cloud" + Chinese
+   "知识管理") in 0.6-0.76 band.
+
+**100% native vector space achieved**, no remaining residual.
+
+**Operational lesson recorded for next time**: Google free-tier RPM
+is per-minute, not daily — repeated `--stale` retries clear a
+shim-era backlog within 5-10 minutes of wall time. Don't conclude
+"daily quota exhausted" on the first hit. For pages with very large
+chunks (>15k chars), use single-page `gbrain embed <slug>` rather
+than `--stale` group batching.
+
+### M2-A.pilot — concept-synthesis on 181 concept pages (2026-05-10)
+
+Decision: option **(b) ad-hoc**, do not wire to dream-cycle.
+
+Pilot ran Phase 1+2 deterministic-only (no LLM, no brain page
+mutations) via a transient `/tmp/m2a-pilot.ts` script. Tier
+distribution: T1=0, T2=0, T3=11, T4=170 (93.9% single-mention).
+Zero concepts cleared the multi-month-recurrence threshold required
+to justify Phase 3 LLM synthesis. Phase 1 dedup is the real win —
+22 Jaccard ≥0.5 + 11 substring pairs = 33 candidate merges (~18%
+of corpus): the `fsct-2025-*` ticket pages, `dashboard` ⊂
+`dashboard-site` ⊂ `dashboard-site-health` chain,
+`office-3f-ap01` ⊂ `ap-office-3f-ap01`.
+
+Why not (a) wire-to-cron: optimizes for sustained T1/T2 evolution
+narratives that don't exist in this brain. Premature automation.
+
+Why not (c) fork-own-version: would add new fork-local code on the
+same day we deleted 7 dirs in M1+M2-A+M3. Net surface increase. The
+deterministic Phase 1+2 already lives in `/tmp/m2a-pilot.ts`,
+runnable any time.
+
+Brain-side commit: `b9e32d8aa7` (report at
+`~/brain/.agent/reports/concept-synthesis-pilot-2026-05-10.md`).
+Fork-side commit: `ba91239`.
+
+Reopen if signal-detector + voice-note-ingest grow recurring concept
+stubs across multiple months that produce real T1/T2 candidates.
 
 ---
 
