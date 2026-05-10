@@ -8,6 +8,8 @@ import {
   makeResolver,
   parseTimelineEntries,
   isAutoLinkEnabled,
+  getEntityLinkDirs,
+  DEFAULT_ENTITY_LINK_DIRS,
   FRONTMATTER_LINK_MAP,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
@@ -109,6 +111,46 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
   });
+
+  test('respects custom entityDirs for markdown links', () => {
+    const content = 'See [GBrain adoption](01 Projects/gbrain-adoption).';
+    expect(extractEntityRefs(content)).toEqual([]);
+
+    const refs = extractEntityRefs(content, { entityDirs: ['01 Projects', 'people'] });
+    expect(refs).toEqual([
+      { name: 'GBrain adoption', slug: '01 Projects/gbrain-adoption', dir: '01 Projects' },
+    ]);
+  });
+
+  test('respects custom entityDirs for wikilinks', () => {
+    const content = 'See [[03 Resources/email-digest|Email digest]].';
+    expect(extractEntityRefs(content)).toEqual([]);
+
+    const refs = extractEntityRefs(content, { entityDirs: ['03 Resources', 'people'] });
+    expect(refs).toEqual([
+      { name: 'Email digest', slug: '03 Resources/email-digest', dir: '03 Resources' },
+    ]);
+  });
+
+  test('respects custom entityDirs for qualified wikilinks', () => {
+    const content = 'See [[wiki:03 Resources/email-digest|Email digest]].';
+    expect(extractEntityRefs(content)).toEqual([]);
+
+    const refs = extractEntityRefs(content, { entityDirs: ['03 Resources', 'people'] });
+    expect(refs).toEqual([
+      { name: 'Email digest', slug: '03 Resources/email-digest', dir: '03 Resources', sourceId: 'wiki' },
+    ]);
+  });
+
+  test('escapes custom entityDirs before building regexes', () => {
+    const content = 'See [[Projects (Active)/gbrain-pr|GBrain PR]].';
+    const refs = extractEntityRefs(content, { entityDirs: ['Projects (Active)'] });
+    expect(refs).toEqual([
+      { name: 'GBrain PR', slug: 'Projects (Active)/gbrain-pr', dir: 'Projects (Active)' },
+    ]);
+
+    expect(extractEntityRefs('See [[Projects Active/gbrain-pr]].', { entityDirs: ['Projects (Active)'] })).toEqual([]);
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────
@@ -180,6 +222,23 @@ describe('extractPageLinks', () => {
     );
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
     expect(aliceLink!.linkType).toBe('attended');
+  });
+
+  test('respects custom entityDirs for bare slug extraction', async () => {
+    const content = 'See 03 Resources/email-digest for details.';
+    const baseline = await extractPageLinks('docs/x', content, {}, 'concept', nullResolver);
+    expect(baseline.candidates).toEqual([]);
+
+    const { candidates } = await extractPageLinks(
+      'docs/x',
+      content,
+      {},
+      'concept',
+      nullResolver,
+      { entityDirs: ['03 Resources', 'people'] },
+    );
+    const digest = candidates.find(c => c.targetSlug === '03 Resources/email-digest');
+    expect(digest).toBeDefined();
   });
 });
 
@@ -436,6 +495,23 @@ function makeFakeEngine(configMap: Map<string, string | null>): BrainEngine {
     getConfig: async (key: string) => configMap.get(key) ?? null,
   } as unknown as BrainEngine;
 }
+
+describe('getEntityLinkDirs', () => {
+  test('uses defaults when config is unset', async () => {
+    const engine = makeFakeEngine(new Map());
+    expect(await getEntityLinkDirs(engine)).toEqual([...DEFAULT_ENTITY_LINK_DIRS]);
+  });
+
+  test('uses defaults when config is empty after trimming', async () => {
+    const engine = makeFakeEngine(new Map([['extract.link_dirs', ' ,  \n  , ']]));
+    expect(await getEntityLinkDirs(engine)).toEqual([...DEFAULT_ENTITY_LINK_DIRS]);
+  });
+
+  test('parses comma/newline-separated custom dirs and de-dupes case-insensitively', async () => {
+    const engine = makeFakeEngine(new Map([['extract.link_dirs', 'people, 01 Projects\n03 Resources\npeople\n03 resources']]));
+    expect(await getEntityLinkDirs(engine)).toEqual(['people', '01 Projects', '03 Resources']);
+  });
+});
 
 describe('isAutoLinkEnabled', () => {
   test('null/undefined -> true (default on)', async () => {

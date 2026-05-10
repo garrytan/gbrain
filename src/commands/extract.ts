@@ -23,7 +23,7 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
-  extractFrontmatterLinks,
+  extractFrontmatterLinks, getEntityLinkDirs,
   type UnresolvedFrontmatterRef,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
@@ -716,6 +716,7 @@ async function extractLinksFromDB(
   opts?: { includeFrontmatter?: boolean },
 ): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const includeFrontmatter = opts?.includeFrontmatter ?? false;
+  const entityDirs = await getEntityLinkDirs(engine);
   // Batch resolver: pg_trgm + exact only, NO search fallback. Dodges the
   // N-thousand API call trap on 46K-page brains. Resolver has a per-run
   // cache so duplicate names (same person appearing on many pages) resolve
@@ -769,7 +770,7 @@ async function extractLinksFromDB(
     // user-invoked `gbrain extract links` stays outgoing-only.
     const activeResolver = includeFrontmatter ? resolver : nullResolver;
     const extracted = await extractPageLinks(
-      slug, fullContent, page.frontmatter, page.type, activeResolver,
+      slug, fullContent, page.frontmatter, page.type, activeResolver, { entityDirs },
     );
     unresolved.push(...extracted.unresolved);
 

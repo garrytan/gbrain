@@ -55,6 +55,9 @@ to the graph (`links` table) with inferred relationship types. Stale links
 - The `put_page` MCP response includes `auto_links: { created, removed, errors }`
   so the agent can verify outcomes.
 - To disable: `gbrain config set auto_link false`. Default is on.
+- To customize which top-level directories count as path-based entity refs:
+  `gbrain config set extract.link_dirs 'people,companies,01 Projects,03 Resources'`.
+  Leave unset or empty to use the built-in defaults.
 - Timeline entries with specific dates still need explicit `gbrain timeline-add`
   (or batch via `gbrain extract timeline --source db`).
 ```
