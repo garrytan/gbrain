@@ -40,7 +40,7 @@ import type { Page, PageType } from '../types.ts';
 
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
-const SUMMARY_SLUG_RE = /^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)*$/;
+const SUMMARY_SLUG_RE = /^[\p{L}\p{N}][\p{L}\p{N}\-]*(\/[\p{L}\p{N}][\p{L}\p{N}\-]*)*$/u;  // i18n (#738)
 
 // ── Model context budget (D1, D5, D7, D9) ─────────────────────────────
 

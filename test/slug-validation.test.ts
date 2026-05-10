@@ -51,6 +51,37 @@ describe('slugifySegment', () => {
   test('handles curly quotes and ellipsis', () => {
     expect(slugifySegment('she\u2026said \u201chello\u201d')).toBe('shesaid-hello');
   });
+
+  // i18n (#738): preserve Unicode letters/numbers (CJK, Cyrillic, Devanagari, ...)
+  test('preserves Japanese (Hiragana / Katakana / Kanji)', () => {
+    expect(slugifySegment('\u3072\u3089\u304c\u306a')).toBe('\u3072\u3089\u304c\u306a');
+    expect(slugifySegment('\u30ab\u30bf\u30ab\u30ca')).toBe('\u30ab\u30bf\u30ab\u30ca');
+    expect(slugifySegment('\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8')).toBe('\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8');
+  });
+
+  test('preserves Chinese (Han)', () => {
+    expect(slugifySegment('\u54c1\u724c\u5723\u7ecf')).toBe('\u54c1\u724c\u5723\u7ecf');
+    expect(slugifySegment('\u9500\u552e\u8bba\u8bc1\u6587\u6863')).toBe('\u9500\u552e\u8bba\u8bc1\u6587\u6863');
+  });
+
+  test('preserves Korean (Hangul)', () => {
+    expect(slugifySegment('\ud55c\uae00\ud14c\uc2a4\ud2b8')).toBe('\ud55c\uae00\ud14c\uc2a4\ud2b8');
+  });
+
+  test('preserves Cyrillic', () => {
+    expect(slugifySegment('\u041f\u0440\u0438\u0432\u0435\u0442 \u043c\u0438\u0440')).toBe('\u043f\u0440\u0438\u0432\u0435\u0442-\u043c\u0438\u0440');
+  });
+
+  test('mixed CJK + ASCII: lowercase ASCII, preserve CJK, space \u2192 hyphen', () => {
+    expect(slugifySegment('ICP-\u7406\u60f3\u5ba2\u6237\u753b\u50cf')).toBe('icp-\u7406\u60f3\u5ba2\u6237\u753b\u50cf');
+    expect(slugifySegment('\u4f60\u597d world')).toBe('\u4f60\u597d-world');
+  });
+
+  test('two different CJK names produce different slugs (no collision)', () => {
+    // Regression: prior to #738, both pure-CJK names collapsed to empty string
+    // and silently overwrote each other during gbrain import.
+    expect(slugifySegment('\u54c1\u724c\u5723\u7ecf')).not.toBe(slugifySegment('\u9500\u552e\u8bba\u8bc1\u6587\u6863'));
+  });
 });
 
 describe('slugifyPath', () => {
@@ -109,6 +140,24 @@ describe('slugifyPath', () => {
   test('meetings transcript example', () => {
     expect(slugifyPath('meetings/transcripts/2026-01-21 maria - california c4 collaboration discussion.md'))
       .toBe('meetings/transcripts/2026-01-21-maria-california-c4-collaboration-discussion');
+  });
+
+  // i18n (#738): pure-CJK / non-ASCII paths must round-trip
+  test('pure-CJK filenames keep their characters', () => {
+    expect(slugifyPath('inbox/品牌圣经.md')).toBe('inbox/品牌圣经');
+    expect(slugifyPath('inbox/日本語テスト.md')).toBe('inbox/日本語テスト');
+  });
+
+  test('pure-CJK filenames do not collide', () => {
+    // Regression: prior to #738, both pure-CJK files collapsed to the parent
+    // directory slug (e.g., "inbox") and silently overwrote each other.
+    const a = slugifyPath('inbox/品牌圣经.md');
+    const b = slugifyPath('inbox/销售论证文档.md');
+    expect(a).not.toBe(b);
+  });
+
+  test('CJK directory names also preserved', () => {
+    expect(slugifyPath('会议/2026-04-14.md')).toBe('会议/2026-04-14');
   });
 });
 

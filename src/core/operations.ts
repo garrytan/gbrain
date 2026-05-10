@@ -142,8 +142,8 @@ export function validatePageSlug(slug: string): void {
   if (slug.length > 255) {
     throw new OperationError('invalid_params', 'page_slug exceeds 255 characters');
   }
-  if (!/^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)*$/i.test(slug)) {
-    throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: alphanumeric, hyphens, forward-slash separated segments)`);
+  if (!/^[\p{L}\p{N}][\p{L}\p{N}\-]*(\/[\p{L}\p{N}][\p{L}\p{N}\-]*)*$/u.test(slug)) {  // i18n (#738)
+    throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: Unicode letters/numbers, hyphens, forward-slash separated segments)`);
   }
 }
 

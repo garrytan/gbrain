@@ -71,7 +71,7 @@ export class SlugRegistryError extends Error {
 // SlugRegistry
 // ---------------------------------------------------------------------------
 
-const SLUG_RE = /^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)+$/;
+const SLUG_RE = /^[\p{L}\p{N}][\p{L}\p{N}\-]*(\/[\p{L}\p{N}][\p{L}\p{N}\-]*)+$/u;  // i18n (#738)
 
 export class SlugRegistry {
   constructor(private engine: BrainEngine) {}
