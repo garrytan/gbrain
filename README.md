@@ -443,6 +443,7 @@ GBrain ships integration recipes that your agent sets up for you. Each recipe te
 | Recipe | Requires | What It Does |
 |--------|----------|-------------|
 | [Public Tunnel](recipes/ngrok-tunnel.md) | — | Fixed URL for MCP + voice (ngrok Hobby $8/mo) |
+| [Tailnet HTTPS](recipes/tailscale-setup.md) | — | Stable tailnet-only HTTPS URL for GBrain MCP |
 | [Credential Gateway](recipes/credential-gateway.md) | — | Gmail + Calendar access |
 | [Voice-to-Brain](recipes/twilio-voice-brain.md) | ngrok-tunnel | Phone calls to brain pages (Twilio + OpenAI Realtime) |
 | [Email-to-Brain](recipes/email-to-brain.md) | credential-gateway | Gmail to entity pages |

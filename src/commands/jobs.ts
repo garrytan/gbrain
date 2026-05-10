@@ -178,6 +178,8 @@ HANDLER TYPES (built in)
   lint              Run page linter; --params '{"dir":"...","fix":true}'
   import            Bulk import markdown; --params '{"dir":"..."}'
   extract           Extract links + timeline entries; '{"mode":"all"}'
+  extract-takes     Backfill typed takes from fenced markdown; '{"source":"db","rebuild":true}'
+                    For fs source, pass '{"source":"fs","repoPath":"..."}'
   backlinks         Check or fix back-links; '{"action":"fix"}'
   autopilot-cycle   One autopilot pass (sync+extract+embed+backlinks)
   shell             Run a command or argv. Requires GBRAIN_ALLOW_SHELL_JOBS=1
@@ -1043,6 +1045,22 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
       ? job.data.dir
       : (await engine.getConfig('sync.repo_path')) ?? '.';
     return await runExtractCore(engine, { mode, dir, dryRun: !!job.data.dryRun });
+  });
+
+  worker.register('extract-takes', async (job) => {
+    const { extractTakes } = await import('../core/cycle/extract-takes.ts');
+    const source = job.data.source === 'fs' ? 'fs' : 'db';
+    const rebuild = !!job.data.rebuild;
+    if (source === 'fs') {
+      const repoPath = typeof job.data.repoPath === 'string'
+        ? job.data.repoPath
+        : (await engine.getConfig('sync.repo_path')) ?? undefined;
+      if (!repoPath) {
+        throw new Error('extract-takes source=fs requires repoPath or configured sync.repo_path');
+      }
+      return await extractTakes(engine, { source: 'fs', repoPath, rebuild });
+    }
+    return await extractTakes(engine, { source: 'db', rebuild });
   });
 
   worker.register('backlinks', async (job) => {

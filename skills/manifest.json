@@ -198,6 +198,11 @@
       "name": "voice-note-ingest",
       "path": "voice-note-ingest/SKILL.md",
       "description": "Ingest voice notes with exact-phrasing preservation (never paraphrased); routes content based on a decision tree across originals/concepts/people/companies/ideas/personal/voice-notes."
+    },
+    {
+      "name": "linkedin-enrichment",
+      "path": "linkedin-enrichment/SKILL.md",
+      "description": "Finds a person's LinkedIn profile via web search, extracts current roles, and safely updates their brain page."
     }
   ],
   "dependencies": {

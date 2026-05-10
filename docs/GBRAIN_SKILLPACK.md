@@ -87,6 +87,7 @@ Wiring up your life.
 |-------|---------------|
 | [Credential Gateway](integrations/credential-gateway.md) | ClawVisor / Hermes for Gmail, Calendar, Contacts |
 | [Meeting & Call Webhooks](integrations/meeting-webhooks.md) | Circleback transcripts + Quo/OpenPhone SMS/calls |
+| [Tailnet HTTPS](../recipes/tailscale-setup.md) | Stable tailnet-only HTTPS URL for GBrain MCP using Tailscale, a reverse proxy, and an MCP bridge |
 | [Voice-to-Brain](../recipes/twilio-voice-brain.md) | Phone calls + WebRTC browser calls create brain pages. 25 production patterns: identity separation, bid system, conversation timing, proactive advisor, prompt compression, caller routing, dynamic VAD, real-time logging, belt-and-suspenders post-call |
 | [Email-to-Brain](../recipes/email-to-brain.md) | Gmail messages flow into entity pages via deterministic collector |
 | [X-to-Brain](../recipes/x-to-brain.md) | Twitter monitoring with deletion detection + engagement velocity |
