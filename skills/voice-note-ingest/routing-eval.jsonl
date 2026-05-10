@@ -6,3 +6,8 @@
 {"intent":"Save this audio note as a brain page with the original audio attached","expected_skill":"voice-note-ingest"}
 {"intent":"Run voice note ingest on what I just sent — preserve my words verbatim","expected_skill":"voice-note-ingest"}
 {"intent":"This voice note has a thought I want preserved word-for-word","expected_skill":"voice-note-ingest"}
+{"intent":"Save this — what I just said about the agent stack — verbatim into the brain","expected_skill":"voice-note-ingest"}
+{"intent":"Pin this snippet of our conversation, the bit where I framed the three stages","expected_skill":"voice-note-ingest"}
+{"intent":"幫我記下來這段，我剛剛講的東西","expected_skill":"voice-note-ingest"}
+{"intent":"記下來這個觀察，等等我會回來看","expected_skill":"voice-note-ingest"}
+{"intent":"capture this snippet from our chat, no URL just my words","expected_skill":"voice-note-ingest"}
