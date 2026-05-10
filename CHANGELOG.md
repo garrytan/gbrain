@@ -42,6 +42,83 @@ Cold-start originated as PR #802. The branch shipped three commits including one
 
 The version slot is deliberate. v0.31.4 through v0.31.9 are reserved for in-flight work; v0.31.10 was chosen so this user-facing skillpack expansion lands clearly above the patch-train.
 
+## [0.31.8] - 2026-05-10
+
+**Multi-source brains stop misrouting writes, and `gbrain doctor` finally tells you when it does.**
+
+Two-pass eng + codex review on the v0.31.1.1-fixwave follow-ups caught 8 issues a single pass would have shipped with. The biggest: every CLI/MCP-driven write op (put_page, add_tag, add_link, add_timeline_entry, revert_version, put_raw_data) was silently ignoring `ctx.sourceId` on multi-source brains, landing rows at `(default, slug)` regardless of caller intent. Read ops on the same brains returned arbitrary rows when the same slug existed across sources. Plus voyage embedding responses hit `JSON.parse` before any size cap, and operators wedged on v0.29.1 got the wrong recovery hint.
+
+### What you can now do
+
+**`gbrain link`, `gbrain tag`, `gbrain timeline-add` and every other CLI write op respect your active source.** Set `GBRAIN_SOURCE=jarvis-memory` (or use a `.gbrain-source` dotfile, or pass `--source` to `gbrain call`) and the op lands on the right row. Without a source signal, behavior is identical to pre-v0.31.8 — strictly additive. Closes the silent multi-source misroute that was the headline P2 from the parent fix-wave's adversarial review.
+
+**`gbrain doctor` warns when a multi-source brain has misrouted pages.** The new `multi_source_drift` check walks each non-default source's `local_path`, finds slugs that exist at `(default, slug)` but NOT at `(X, slug)`, and surfaces them with verification steps. Two possible causes are flagged honestly: pre-v0.30.3 putPage misroute, OR a source X that never finished its initial sync. The warning suggests `gbrain sources status` and `gbrain sync --source X --full` rather than a destructive auto-fix. Skipped on single-source brains. Propagates to `doctorReportRemote` so thin-client operators see the same check.
+
+**`gbrain doctor` gives operators wedged on v0.29.1 (or any future migration) the hint that actually unsticks them.** Pre-v0.31.8 the message said `Run: gbrain apply-migrations --yes` regardless of how partial the migration was. The apply-migrations runner refuses to advance past 3 consecutive partials, so the hint was wrong. Now the doctor detects the wedge condition in place — without breaking the existing forward-progress override that suppresses stale alerts on installs that moved past — and emits `Run: gbrain apply-migrations --force-retry <v>` chained with `&&` for multiple wedges. Same shape in both local and remote-doctor paths.
+
+**Voyage embedding responses can't OOM the worker.** A 256 MB Content-Length pre-check fires BEFORE `resp.clone().json()`, gating the JSON.parse vector that pre-fix would have allocated arbitrary heap on a malicious or compromised endpoint. A per-embedding base64 cap stays as defense-in-depth for chunked-encoding responses with no Content-Length header. Sized as "unambiguously not legit" — voyage-3-large × 16K embeddings (~200 MB raw) fits within the cap, anything larger is unambiguous misuse.
+
+### Numbers that matter
+
+Two passes of eng + codex review caught **2 + 6 = 8** additional issues beyond what a single review would have shipped with. False-positive count across the entire two-pass flow: **2** (lane B agent's OAuth claim, original P2-4 cwd attack premise — both verified and rejected). 22 AskUserQuestion decisions, 0 unresolved. The `multi_source_drift` check uses a single batched SQL query with a VALUES clause — sub-second on a 10K-file source instead of the 20K-round-trip N+1 the original plan would have written.
+
+### What this means for operators
+
+If you run a multi-source brain, run `gbrain doctor` after upgrading. Any `multi_source_drift` warnings are evidence of pre-v0.30.3 silent corruption that the parent fix-wave couldn't backfill. Use `gbrain sources status` to verify, then `gbrain sync --source <id> --full` to populate the right rows.
+
+### To take advantage of v0.31.8
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Set `GBRAIN_SOURCE=<id>` in your shell** (or write it to `.gbrain-source` in your brain repo root, or pass `--source <id>` to `gbrain call`) if you want CLI ops to operate on a non-default source. Without this, ops continue to default to `'default'` exactly like pre-v0.31.8.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+4. **If `gbrain doctor` reports `multi_source_drift` warnings,** verify with `gbrain sources status` then either re-sync the affected source (`gbrain sync --source <id> --full`) or `gbrain delete <slug>` if the default-source row is the misroute. A `gbrain sources rehome` cleanup command is tracked for v0.32.0.
+5. **If any step fails or the numbers look wrong,** please file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+### Itemized changes
+
+#### Multi-source threading (codex OV-1, OV-2, OV-3, OV-9, OV-10 fixed)
+
+- **`src/core/engine.ts`:** read-surface signatures gain `opts?: { sourceId?: string }`. Affected methods: `getLinks`, `getBacklinks`, `getTimeline`, `getRawData`, `getVersions`, `getAllSlugs`, `revertToVersion`, `putRawData`. Plus `TimelineOpts.sourceId` in `src/core/types.ts`.
+- **`src/core/pglite-engine.ts` + `src/core/postgres-engine.ts`:** every read method uses a **two-branch query**. Without `opts.sourceId`, NO source filter applies (preserves pre-v0.31.8 cross-source semantics for back-link validators and any caller that hasn't threaded sourceId yet). With `opts.sourceId`, scoped to that source — the new path used by reconcileLinks and ctx.sourceId-aware op handlers. The flat-default-to-`'default'` shape from the original plan would have silently regressed every multi-source brain's getLinks/getBacklinks callers.
+- **`src/core/operations.ts`:** thread `const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};` through 16+ op handlers including the read surface (`get_page`, `get_tags`, `get_links`, `get_backlinks`, `get_timeline`, `get_versions`, `get_raw_data`, `get_chunks`) plus `runAutoLink`/`reconcileLinks` source-aware reads.
+- **`src/cli.ts`:** `makeContext` is async, calls `resolveSourceId()` from `src/core/source-resolver.ts:58` (the canonical 6-tier chain: `--source` flag → `GBRAIN_SOURCE` env → `.gbrain-source` dotfile → path-match → brain default → `'default'`).
+- **`src/commands/call.ts`:** `runCall` accepts `--source <id>` flag.
+- **`src/mcp/server.ts`:** `handleToolCall` accepts `opts.sourceId`.
+
+#### Doctor checks
+
+- **`src/core/multi-source-drift.ts` (new):** `findMisroutedPages` walks each non-default source's `local_path` for `.md` AND `.mdx` files (matches `src/core/sync.ts`), wraps the walk in try/catch so unreadable directories don't crash doctor, and runs ONE batched SQL query with VALUES clause to check existence at default vs intended source. Bounded by 10K files OR 5s timeout.
+- **`src/commands/doctor.ts`:** new `multi_source_drift` check (local + remote), `minions_migration` extended in place with 3-consecutive-partials wedge detection emitting `gbrain apply-migrations --force-retry` hints. Forward-progress override at the existing block stays byte-identical so installs that moved past an old v0.11 partial don't light up with stale alerts.
+
+#### Voyage adapter
+
+- **`src/core/ai/gateway.ts`:** `MAX_VOYAGE_RESPONSE_BYTES = 256 * 1024 * 1024`. Layer 1 Content-Length pre-check fires BEFORE `resp.clone().json()`. Layer 2 per-embedding base64 cap as defense-in-depth.
+
+#### Tests
+
+- **`test/source-id-tx-regression.test.ts`:** 8 new op-handler-layer cases extending the v0.18.0+ engine-layer coverage. Covers `add_tag`/`get_tags`/`add_link`/`get_links`/`delete_page`/`put_raw_data` routing under `ctx.sourceId='X'` vs unset, plus D16's two-branch back-compat invariant.
+- **`test/multi-source-drift.test.ts` (new):** 7 PGLite cases covering single-source skip, no-misroutes ok, 2-misroutes warn, healthy same-slug-across-sources is NOT a false positive (the codex OV4 redesign case), FS walk truncation, unreadable local_path, and `.mdx` walking.
+- **`test/doctor.test.ts`:** 4 wedge-hint regression cases including the D19 anti-regression guard that no `import { statusForVersion }` from apply-migrations.ts exists. The prior plan would have introduced this import; keeping it out means doctor stays decoupled from per-version semantics that don't encode the cross-version forward-progress override.
+- **`test/voyage-response-cap.test.ts` (new):** 5 structural source-pin cases including the critical D10 invariant: "Content-Length pre-check appears BEFORE `const json: any = await resp.clone().json()`."
+
+### For contributors
+
+Two passes of `/plan-eng-review` + outside-voice codex review caught issues a single pass would have shipped with — D16 (read-surface back-compat regression in the original D12 plan), D17 (N+1 risk in the original D8 batch-query wording), D19 (statusForVersion replacement would have regressed the existing forward-progress override), D20 (more read-side op handlers than D16 alone covered), D21 (`putRawData` engine signature was bare and would have broken compilation), D22 (`gbrain call` had no `--source` flag in its grammar so D11's test cases were unreachable). Documented decisions D1–D22 in the plan file at `~/.claude/plans/system-instruction-you-are-working-polished-lerdorf.md`.
+
+The deferred `gbrain sources rehome <X>` command stays tracked as a v0.32.0 follow-up alongside `embed.ts` source-aware threading and `reconcile-links.ts` `--source` flag exposure. The new `@garrytan/gbrain` scoped-name npm publishing TODO captures the structural fix for the npm-name-squatter problem that `classifyBunInstall` warns about.
+
 ## [0.31.7] - 2026-05-09
 
 **`gbrain doctor` stops crying wolf, period — and finds itself on every deployment shape. Five community PRs land one cohesive narrative: every false-positive class on disk today, plus the install-path footgun that bit every hosted-CLI user who ever ran `gbrain doctor` from `~`.**

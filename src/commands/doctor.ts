@@ -197,6 +197,51 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     });
   }
 
+  // 3b. Migration wedge hint (v0.31.8 — D14 + D19). The brain server's
+  // filesystem holds the migration ledger; the wedge condition (>=3 consecutive
+  // partials with no later complete) needs the force-retry hint, not plain
+  // --yes. Same shape as the local doctor at line ~336.
+  try {
+    const completed = loadCompletedMigrations();
+    const byVersion = new Map<string, { complete: boolean; partial: boolean }>();
+    for (const entry of completed) {
+      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false };
+      if (entry.status === 'complete') seen.complete = true;
+      if (entry.status === 'partial') seen.partial = true;
+      byVersion.set(entry.version, seen);
+    }
+    const completedVersions = Array.from(byVersion.entries()).filter(([, s]) => s.complete).map(([v]) => v);
+    const stuck = Array.from(byVersion.entries())
+      .filter(([v, s]) => {
+        if (!s.partial || s.complete) return false;
+        const supersededBy = completedVersions.find(cv => compareVersions(cv, v) >= 0);
+        return supersededBy === undefined;
+      })
+      .map(([v]) => v);
+    const wedged: string[] = [];
+    for (const v of stuck) {
+      const partialCount = completed.filter(e => e.version === v && e.status === 'partial').length;
+      if (partialCount >= 3) wedged.push(v);
+    }
+    if (wedged.length > 0) {
+      const cmd = wedged.map(v => `gbrain apply-migrations --force-retry ${v}`).join(' && ');
+      checks.push({
+        name: 'minions_migration',
+        status: 'fail',
+        message: `WEDGED MIGRATION(s) on brain host: ${wedged.join(', ')}. Run on the host: ${cmd}`,
+      });
+    } else if (stuck.length > 0) {
+      checks.push({
+        name: 'minions_migration',
+        status: 'fail',
+        message: `MINIONS HALF-INSTALLED on brain host: ${stuck.join(', ')}. Run on the host: gbrain apply-migrations --yes`,
+      });
+    }
+  } catch {
+    // Best-effort. A broken JSONL on the brain server should not stop the
+    // remote doctor.
+  }
+
   // 4. Sync failures (file-plane state, not in-DB; see src/core/sync.ts).
   // Read the JSONL file directly at the canonical path; cheap and engine-agnostic.
   try {
@@ -222,6 +267,48 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     });
   } catch {
     checks.push({ name: 'sync_failures', status: 'ok', message: 'No failures recorded' });
+  }
+
+  // 4b. Multi-source drift (v0.31.8 — D8 + D14). Same shape as the local
+  // doctor's check at the same name. Runs server-side; the result is
+  // returned to the thin-client over MCP.
+  try {
+    const { findMisroutedPages } = await import('../core/multi-source-drift.ts');
+    const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
+      `SELECT id, local_path FROM sources`,
+    );
+    const nonDefaultWithPath = sources.filter(s => s.id !== 'default' && s.local_path);
+    if (sources.length > 1 && nonDefaultWithPath.length > 0) {
+      const result = await findMisroutedPages(
+        engine,
+        nonDefaultWithPath.map(s => ({ id: s.id, local_path: s.local_path as string })),
+      );
+      if (result.walk_truncated) {
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'warn',
+          message: 'Multi-source drift check skipped — FS walk hit limit/timeout on the brain server.',
+        });
+      } else if (result.count > 0) {
+        const sampleStr = result.sample.map(s => `${s.slug} (intended=${s.intended_source})`).join(', ');
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'warn',
+          message:
+            `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
+            `(e.g., ${sampleStr}). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ` +
+            `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id> --full\`.`,
+        });
+      } else {
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'ok',
+          message: 'No cross-source slug drift detected.',
+        });
+      }
+    }
+  } catch {
+    // Best-effort, like the rest of doctorReportRemote.
   }
 
   // 5. Queue health (Postgres-only). PGLite has no minion_jobs in the same
@@ -395,7 +482,36 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         return supersededBy === undefined;
       })
       .map(([v]) => v);
-    if (stuck.length > 0) {
+
+    // v0.31.8 (D19): detect 3-consecutive-partials shape (the apply-migrations
+    // wedge condition). The `stuck` filter above already excludes
+    // forward-progress-superseded versions, so we only count actual unresolved
+    // partials per version. A version with >=3 trailing partials needs
+    // `gbrain apply-migrations --force-retry <v>` once before plain --yes
+    // will succeed (the 3-consecutive-partials guard in apply-migrations.ts
+    // is still active). Without this hint, operators wedged on v0.29.1 (and
+    // any future migration that hits the same guard) get "run --yes" advice
+    // that won't unstick them.
+    const wedged: string[] = [];
+    for (const v of stuck) {
+      const partialCount = completed.filter(
+        e => e.version === v && e.status === 'partial',
+      ).length;
+      if (partialCount >= 3) wedged.push(v);
+    }
+
+    if (wedged.length > 0) {
+      // The wedged set is a STRICT subset of the stuck set, so a wedged
+      // version is also stuck. Surface the force-retry hint instead of the
+      // generic --yes hint; chained with `&&` when multiple versions are
+      // wedged so the operator can copy-paste a single line.
+      const cmd = wedged.map(v => `gbrain apply-migrations --force-retry ${v}`).join(' && ');
+      checks.push({
+        name: 'minions_migration',
+        status: 'fail',
+        message: `WEDGED MIGRATION(s): ${wedged.join(', ')} (>=3 consecutive partials). Run: ${cmd}`,
+      });
+    } else if (stuck.length > 0) {
       checks.push({
         name: 'minions_migration',
         status: 'fail',
@@ -530,6 +646,59 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   } catch {
     // Best-effort. A broken JSONL should not stop doctor.
+  }
+
+  // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
+  // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
+  // For each non-default source with local_path set, walk the FS and surface
+  // slugs that exist at default but NOT at the intended source. Only runs
+  // on multi-source brains (sources count > 1). Single-source brains skip.
+  // Engine is nullable in runDoctor (--fast / DB-down skip the DB phase);
+  // bail silently here when engine is null since the check needs DB access.
+  if (engine !== null) try {
+    const { findMisroutedPages } = await import('../core/multi-source-drift.ts');
+    const sources = await engine!.executeRaw<{ id: string; local_path: string | null }>(
+      `SELECT id, local_path FROM sources`,
+    );
+    const nonDefaultWithPath = sources.filter(s => s.id !== 'default' && s.local_path);
+    if (sources.length > 1 && nonDefaultWithPath.length > 0) {
+      const result = await findMisroutedPages(
+        engine!,
+        nonDefaultWithPath.map(s => ({ id: s.id, local_path: s.local_path as string })),
+      );
+      if (result.walk_truncated) {
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'warn',
+          message:
+            `Multi-source drift check skipped — FS walk hit limit/timeout. ` +
+            `Re-run on a quieter brain or shorter walk via GBRAIN_DRIFT_LIMIT/GBRAIN_DRIFT_TIMEOUT_MS.`,
+        });
+      } else if (result.count > 0) {
+        const sampleStr = result.sample.map(s => `${s.slug} (intended=${s.intended_source})`).join(', ');
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'warn',
+          message:
+            `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
+            `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
+            `(2) source X never completed initial sync and the default page is unrelated. ` +
+            `Verify with 'gbrain sources status', then either re-sync with ` +
+            `'gbrain sync --source <id> --full' or 'gbrain delete <slug>' if the default-source ` +
+            `row is the misroute. (A 'gbrain sources rehome' cleanup command is tracked for v0.32.0.)`,
+        });
+      } else {
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'ok',
+          message: 'No cross-source slug drift detected.',
+        });
+      }
+    }
+  } catch {
+    // Best-effort. A broken sources table or unreadable local_path should
+    // not stop doctor. The walk itself catches per-directory errors; this
+    // outer try covers the executeRaw path.
   }
 
   // 3c. Orphan clone temp dirs (v0.28 P1). `gbrain sources add --url` clones

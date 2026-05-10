@@ -157,7 +157,7 @@ async function main() {
   // Local engine path (unchanged behavior for local installs).
   const engine = await connectEngine();
   try {
-    const ctx = makeContext(engine, params);
+    const ctx = await makeContext(engine, params);
     const rawResult = await op.handler(ctx, params);
     // ENG-2 (renderer parity by data shape): JSON-round-trip the local-engine
     // path's return value so renderers see the same shape they'd see on the
@@ -479,7 +479,24 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   return params;
 }
 
-function makeContext(engine: BrainEngine, params: Record<string, unknown>): OperationContext {
+async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
+  // v0.31.8 (D11): resolve sourceId via the canonical 6-tier chain. Honors
+  // --source / GBRAIN_SOURCE / .gbrain-source / path-match / brain default /
+  // 'default'. Wrapped in try/catch so a doctor / single-source brain that
+  // never set up sources still returns 'default' silently.
+  let sourceId: string | undefined;
+  try {
+    const { resolveSourceId } = await import('./core/source-resolver.ts');
+    // params.source is set when a CLI flag was parsed for the op (rare; most
+    // CLI ops don't take --source). Falls through to env/dotfile/path-match.
+    const explicit = (params.source as string | undefined) ?? null;
+    sourceId = await resolveSourceId(engine, explicit);
+  } catch {
+    // Source resolution failed (e.g. sources table doesn't exist on a fresh
+    // pre-init brain). Leave sourceId unset; engine read methods fall through
+    // to the cross-source view (D16 back-compat path).
+    sourceId = undefined;
+  }
   return {
     engine,
     config: loadConfig() || { engine: 'postgres' },
@@ -489,6 +506,7 @@ function makeContext(engine: BrainEngine, params: Record<string, unknown>): Oper
     // confinement (e.g., cwd-locked file_upload).
     remote: false,
     cliOpts: getCliOptions(),
+    ...(sourceId ? { sourceId } : {}),
   };
 }
 

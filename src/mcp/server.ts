@@ -72,10 +72,14 @@ export async function startMcpServer(engine: BrainEngine) {
 }
 
 // Backward compat: used by `gbrain call` command (trusted local path).
+// v0.31.8 (D22): accept opts.sourceId so `gbrain call --source X <op> <json>`
+// can scope the op handler to that source. resolveSourceId() in call.ts is
+// the upstream resolver; this layer just passes the resolved id through.
 export async function handleToolCall(
   engine: BrainEngine,
   tool: string,
   params: Record<string, unknown>,
+  opts?: { sourceId?: string },
 ): Promise<unknown> {
   const op = operations.find(o => o.name === tool);
   if (!op) throw new Error(`Unknown tool: ${tool}`);
@@ -86,6 +90,7 @@ export async function handleToolCall(
   const ctx = buildOperationContext(engine, params, {
     remote: false,
     logger: { info: console.log, warn: console.warn, error: console.error },
+    ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
   });
 
   return op.handler(ctx, params);

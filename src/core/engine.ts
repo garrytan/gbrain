@@ -490,8 +490,13 @@ export interface BrainEngine {
    * Returns the slug of every page in the brain. Used by batch commands as a
    * mutation-immune iteration source (alternative to listPages OFFSET pagination,
    * which is unstable when ordering by updated_at and writes are happening).
+   *
+   * v0.31.8 (D12): `opts.sourceId` scopes the result to a single source
+   * (used by the source-aware reconcileLinks path so wikilink resolution
+   * doesn't span unrelated sources). When omitted, returns the union of
+   * slugs across every source (pre-v0.31.8 behavior).
    */
-  getAllSlugs(): Promise<Set<string>>;
+  getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>>;
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
@@ -579,8 +584,19 @@ export interface BrainEngine {
     linkSource?: string,
     opts?: { fromSourceId?: string; toSourceId?: string },
   ): Promise<void>;
-  getLinks(slug: string): Promise<Link[]>;
-  getBacklinks(slug: string): Promise<Link[]>;
+  /**
+   * v0.31.8 (D12 + D16): `opts.sourceId` source-scopes the from-page lookup.
+   * When omitted, the read returns links from every same-slug page across
+   * sources (pre-v0.31.8 behavior; preserved via two-branch query in both
+   * engines). When set, the from-page filter becomes
+   * `WHERE f.slug = $1 AND f.source_id = $X`.
+   */
+  getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]>;
+  /**
+   * v0.31.8 (D12 + D16): same `opts.sourceId` semantics as `getLinks`,
+   * applied to the to-page side of the join.
+   */
+  getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]>;
   /**
    * Fuzzy-match a display name to a page slug using pg_trgm similarity.
    * Zero embedding cost, zero LLM cost — designed for the v0.13 resolver used
@@ -695,8 +711,19 @@ export interface BrainEngine {
   getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]>;
 
   // Raw data
-  putRawData(slug: string, source: string, data: object): Promise<void>;
-  getRawData(slug: string, source?: string): Promise<RawData[]>;
+  /**
+   * v0.31.8 (D21): `opts.sourceId` source-scopes the page-id lookup. When
+   * omitted, the write targets the bare slug (pre-v0.31.8 behavior); the
+   * Postgres 21000 hazard for multi-source brains exists on this path.
+   * Multi-source callers MUST pass sourceId to land on the intended row.
+   */
+  putRawData(slug: string, source: string, data: object, opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * v0.31.8 (D21): `opts.sourceId` source-scopes the page-id lookup. Without
+   * it, multi-source brains return raw_data rows from every same-slug page
+   * (preserved via two-branch query for back-compat).
+   */
+  getRawData(slug: string, source?: string, opts?: { sourceId?: string }): Promise<RawData[]>;
 
   // Files (v0.27.1: binary asset metadata + storage_path. Image bytes never
   // enter the DB; storage_path references a path inside the brain repo or an
@@ -908,8 +935,18 @@ export interface BrainEngine {
    * first when the slug exists across multiple sources.
    */
   createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion>;
-  getVersions(slug: string): Promise<PageVersion[]>;
-  revertToVersion(slug: string, versionId: number): Promise<void>;
+  /**
+   * v0.31.8 (D12 + D16): `opts.sourceId` source-scopes the page-id lookup.
+   * When omitted, returns versions for every same-slug page across sources
+   * (pre-v0.31.8 behavior; preserved via two-branch query).
+   */
+  getVersions(slug: string, opts?: { sourceId?: string }): Promise<PageVersion[]>;
+  /**
+   * v0.31.8 (D12): `opts.sourceId` source-scopes both the version lookup
+   * and the page revert. Without it, multi-source brains can revert the
+   * wrong row when the slug exists in 2+ sources.
+   */
+  revertToVersion(slug: string, versionId: number, opts?: { sourceId?: string }): Promise<void>;
 
   // Stats + health
   getStats(): Promise<BrainStats>;
