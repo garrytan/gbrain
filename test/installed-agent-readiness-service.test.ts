@@ -3,6 +3,7 @@ import {
   REQUIRED_AGENT_TOOLS,
   buildInstalledAgentReadinessReport,
   parseAgentRulesVersion,
+  splitAgentCommand,
 } from '../src/core/services/installed-agent-readiness-service.ts';
 
 const rulesBlock = [
@@ -17,6 +18,12 @@ describe('installed-agent readiness service', () => {
   test('parses agent rules version from prompt content', () => {
     expect(parseAgentRulesVersion(rulesBlock)).toBe('0.5.6');
     expect(parseAgentRulesVersion('no marker')).toBeNull();
+  });
+
+  test('splits agent command strings for the default runner', () => {
+    expect(splitAgentCommand('mbrain')).toEqual(['mbrain']);
+    expect(splitAgentCommand('bun run src/cli.ts')).toEqual(['bun', 'run', 'src/cli.ts']);
+    expect(splitAgentCommand('  bun   run  src/cli.ts  ')).toEqual(['bun', 'run', 'src/cli.ts']);
   });
 
   test('reports healthy when required tools, prompts, and hook are present', () => {

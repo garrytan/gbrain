@@ -112,6 +112,10 @@ export function parseToolsJson(stdout: string): InstalledAgentTool[] {
   }
 }
 
+export function splitAgentCommand(command: string): string[] {
+  return command.trim().split(/\s+/).filter(Boolean);
+}
+
 function buildCommandVersionCheck(input: InstalledAgentReadinessInput): InstalledAgentCheck {
   if (!input.commandVersion?.trim()) {
     return {
@@ -227,9 +231,18 @@ function readOptionalFile(path: string): string | null {
 }
 
 function defaultCommandRunner(command: string, args: string[]): InstalledAgentCommandResult {
+  const commandParts = splitAgentCommand(command);
+  if (commandParts.length === 0) {
+    return {
+      stdout: '',
+      stderr: 'Agent command is empty',
+      exitCode: 1,
+    };
+  }
+
   try {
     const result = Bun.spawnSync({
-      cmd: [command, ...args],
+      cmd: [...commandParts, ...args],
       stdout: 'pipe',
       stderr: 'pipe',
     });
