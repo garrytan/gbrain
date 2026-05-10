@@ -452,6 +452,23 @@ export async function importFromFile(
  * Uses tree-sitter code chunker for semantic splitting.
  * Page type is 'code', slug includes file extension.
  */
+/**
+ * v0.31.2 (PR1 commit 10): facts backstop wiring decision.
+ *
+ * Code pages have `type: 'code'` which the `isFactsBackstopEligible`
+ * predicate (src/core/facts/eligibility.ts) rejects with `kind:code`.
+ * Wiring `runFactsBackstop` here would always produce a no-op envelope.
+ * The wiring is intentionally omitted — when README extraction or
+ * doc-comment extraction is added in a future release, the eligibility
+ * predicate is the single place to update.
+ *
+ * Sibling decisions: `file_upload` doesn't write a page (uploads to
+ * storage; the page itself is written via separate put_page); `gbrain
+ * import` (bulk markdown import) intentionally skips the backstop to
+ * avoid a cost spike on first-time imports of large brain repos. The
+ * user runs `gbrain dream` or the consolidate phase to backfill facts
+ * from bulk-imported pages.
+ */
 export async function importCodeFile(
   engine: BrainEngine,
   relativePath: string,
