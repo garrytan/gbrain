@@ -44,8 +44,35 @@ export interface ParsedTake {
   rowNum: number;
   claim: string;        // strikethrough markers stripped; inner text only
   kind: TakeKind;
-  holder: string;       // 'world' | 'garry' | 'brain' | <slug>
-  weight: number;       // 0..1 (raw — may be out of range; engine clamps)
+  /**
+   * Who HOLDS this belief — the person asserting/endorsing it.
+   * NOT the person the belief is ABOUT (that's the subject, implicit in the claim).
+   *
+   * Cross-modal eval (2026-05-10, 3 frontier models on 100K takes) found
+   * holder/subject confusion was the #1 attribution error (6.5/10).
+   *
+   * The test: "Did this person SAY or CLEARLY IMPLY this?"
+   *   YES → holder = people/slug
+   *   NO, it's your analysis of them → holder = brain
+   *
+   * Examples:
+   *   ✅ holder=people/garry-tan claim="AI will replace 50% of coding" (Garry SAID this)
+   *   ✅ holder=brain claim="Garry has a hero/rescuer pattern" (analysis OF Garry)
+   *   ✅ holder=people/bo-lu claim="We can hit $10M ARR" (Bo Lu SAID this)
+   *   ❌ holder=people/garry-tan claim="Garry has a hero/rescuer pattern" (not his belief)
+   *   ❌ holder=companies/hermes claim="Latency is 15-20s" (Zain said it → people/zain)
+   *
+   * Values: 'world' (consensus fact) | 'people/<slug>' (individual's stated belief) |
+   *         'companies/<slug>' (institutional fact, no individual claimant) |
+   *         'brain' (AI-inferred when holder is genuinely ambiguous)
+   *
+   * Additional rules from production eval:
+   *   - Amplification ≠ endorsement: retweet-only → max weight 0.55
+   *   - Self-reported ≠ verified: "Saif reports 7 figures" → people/saif, NOT world
+   *   - Founder describing company → people/founder, NOT companies/slug
+   */
+  holder: string;
+  weight: number;       // 0..1 (raw — may be out of range; engine clamps). Prefer 0.05 increments.
   sinceDate?: string;   // ISO 'YYYY-MM-DD' or 'YYYY-MM' (caller's choice)
   untilDate?: string;
   source?: string;

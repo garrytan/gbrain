@@ -1928,9 +1928,10 @@ export class PGLiteEngine implements BrainEngine {
     const kinds     = rowsIn.map(r => r.kind);
     const holders   = rowsIn.map(r => r.holder);
     const weights   = rowsIn.map(r => {
-      const w = r.weight ?? 0.5;
-      if (w < 0 || w > 1) { weightClamped++; return Math.max(0, Math.min(1, w)); }
-      return w;
+      let w = r.weight ?? 0.5;
+      if (w < 0 || w > 1) { weightClamped++; w = Math.max(0, Math.min(1, w)); }
+      // Round to 0.05 increments (cross-modal eval: no false precision)
+      return Math.round(w * 20) / 20;
     });
     const sinces    = rowsIn.map(r => r.since_date ?? null);
     const untils    = rowsIn.map(r => r.until_date ?? null);
