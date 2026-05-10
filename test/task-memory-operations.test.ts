@@ -517,6 +517,23 @@ test('formatResult renders a resume card', () => {
     next_steps: ['add shared operations'],
     failed_attempts: ['CLI-only task path'],
     active_decisions: ['keep working set canonical in DB'],
+    repeated_work_warnings: ['Do not repeat failed attempt: CLI-only task path'],
+    decision_reuse: ['Reuse decision: keep working set canonical in DB'],
+    verification_warnings: ['Working set has not been verified in the current workspace.'],
+    retrieval_trace_template: {
+      selected_intent: 'task_resume',
+      write_outcome: 'no_durable_write',
+      route: ['task_thread', 'working_set', 'attempt_history', 'decision_history', 'retrieval_trace'],
+      source_refs: [
+        'task-thread:task-1',
+        'working-set:task-1',
+        'task-attempt:attempt-1',
+        'task-decision:decision-1',
+      ],
+      derived_consulted: [],
+      verification: ['resume_card_built', 'Working set has not been verified in the current workspace.'],
+      outcome: 'resume card assembled for task task-1',
+    },
     latest_trace_route: ['task_thread', 'working_set', 'attempts', 'decisions'],
     code_claim_verification: [
       {
@@ -533,6 +550,10 @@ test('formatResult renders a resume card', () => {
   expect(output).toContain('operations');
   expect(output).toContain('should resume emit trace ids');
   expect(output).toContain('CLI-only task path');
+  expect(output).toContain('Repeated-work warnings: Do not repeat failed attempt: CLI-only task path');
+  expect(output).toContain('Decision reuse: Reuse decision: keep working set canonical in DB');
+  expect(output).toContain('Verification warnings: Working set has not been verified in the current workspace.');
+  expect(output).toContain('Trace template: task_resume');
   expect(output).toContain('Code claims: stale:src/core/operations.ts:operations:symbol_missing:trace-1');
   expect(output).toContain('stale');
 });

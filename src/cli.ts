@@ -50,6 +50,8 @@ const DOCTOR_CLI_SPEC: Operation = {
   description: 'Run health checks against the configured brain and exit non-zero when failures are found.',
   params: {
     json: { type: 'boolean', description: 'Emit JSON instead of human-readable output' },
+    agent: { type: 'boolean', description: 'Include installed Codex/Claude MCP and prompt readiness checks' },
+    agent_command: { type: 'string', description: 'Installed mbrain command to verify (default: mbrain)' },
   },
   handler: noopHandler,
   cliHints: { name: 'doctor' },

@@ -46,9 +46,13 @@ export const PHASE_DEFINITIONS: readonly PhaseDefinition[] = [
     path: 'scripts/bench/phase1-operational-memory.ts',
     expected_benchmark_names: [
       'attempt_history',
+      'decision_reuse',
       'decision_history',
+      'repeated_work_suppression',
       'resume_projection',
       'task_resume',
+      'trace_template_completeness',
+      'verification_warnings',
     ],
     readiness_key: 'readiness_status',
     status_key: 'phase1_status',

@@ -103,6 +103,83 @@ test('resume reads task state before raw-source expansion', async () => {
   expect(resume.stale).toBe(true);
 });
 
+test('resume returns repeated-work signals and retrieval trace template', async () => {
+  const engine = {
+    getTaskThread: async () => ({
+      id: 'task-1',
+      scope: 'work',
+      title: 'Installed-agent smoke',
+      goal: 'Avoid repeating broken resume work',
+      status: 'active',
+      repo_path: null,
+      branch_name: 'main',
+      current_summary: 'Need installed-agent smoke guardrails',
+      created_at: new Date('2026-04-26T00:00:00.000Z'),
+      updated_at: new Date('2026-04-26T00:01:00.000Z'),
+    }),
+    getTaskWorkingSet: async () => ({
+      task_id: 'task-1',
+      active_paths: [],
+      active_symbols: [],
+      blockers: [],
+      open_questions: [],
+      next_steps: ['check installed-agent smoke'],
+      verification_notes: [],
+      last_verified_at: null,
+      updated_at: new Date('2026-04-26T00:01:00.000Z'),
+    }),
+    listTaskAttempts: async () => [
+      {
+        id: 'attempt-1',
+        task_id: 'task-1',
+        summary: 'Trusted installed mbrain without checking tools/list',
+        outcome: 'failed',
+        applicability_context: {},
+        evidence: [],
+        created_at: new Date('2026-04-26T00:01:00.000Z'),
+      },
+    ],
+    listTaskDecisions: async () => [
+      {
+        id: 'decision-1',
+        task_id: 'task-1',
+        summary: 'Installed-agent smoke must check route_memory_writeback',
+        rationale: 'tools/list is the source of truth',
+        consequences: [],
+        validity_context: {},
+        created_at: new Date('2026-04-26T00:01:00.000Z'),
+      },
+    ],
+    listRetrievalTraces: async () => [],
+  } as any;
+
+  const resume = await buildTaskResumeCard(engine, 'task-1');
+
+  expect(resume.repeated_work_warnings).toEqual([
+    'Do not repeat failed attempt: Trusted installed mbrain without checking tools/list',
+  ]);
+  expect(resume.decision_reuse).toEqual([
+    'Reuse decision: Installed-agent smoke must check route_memory_writeback',
+  ]);
+  expect(resume.verification_warnings).toContain('Working set has not been verified in the current workspace.');
+  expect(resume.retrieval_trace_template).toMatchObject({
+    selected_intent: 'task_resume',
+    write_outcome: 'no_durable_write',
+    route: ['task_thread', 'working_set', 'attempt_history', 'decision_history', 'retrieval_trace'],
+    source_refs: [
+      'task-thread:task-1',
+      'working-set:task-1',
+      'task-attempt:attempt-1',
+      'task-decision:decision-1',
+    ],
+    verification: [
+      'resume_card_built',
+      'Working set has not been verified in the current workspace.',
+    ],
+    outcome: 'resume card assembled for task task-1',
+  });
+});
+
 test('resume reports branch-sensitive code claim verification from recent traces', async () => {
   const repoPath = mkdtempSync(join(tmpdir(), 'mbrain-task-resume-code-claim-'));
 

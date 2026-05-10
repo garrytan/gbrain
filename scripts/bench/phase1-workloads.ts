@@ -3,7 +3,12 @@ export type Phase1LatencyWorkloadName =
   | 'attempt_history'
   | 'decision_history';
 
-export type Phase1CorrectnessWorkloadName = 'resume_projection';
+export type Phase1CorrectnessWorkloadName =
+  | 'resume_projection'
+  | 'repeated_work_suppression'
+  | 'decision_reuse'
+  | 'verification_warnings'
+  | 'trace_template_completeness';
 export type Phase1WorkloadName = Phase1LatencyWorkloadName | Phase1CorrectnessWorkloadName;
 
 export interface Phase1LatencyWorkloadResult {
@@ -15,7 +20,7 @@ export interface Phase1LatencyWorkloadResult {
 }
 
 export interface Phase1CorrectnessWorkloadResult {
-  name: 'resume_projection';
+  name: Phase1CorrectnessWorkloadName;
   status: 'measured';
   unit: 'percent';
   success_rate: number;
@@ -32,6 +37,10 @@ export interface Phase1AcceptanceThresholds {
   attempt_history_p95_ms_max: number;
   decision_history_p95_ms_max: number;
   resume_projection_success_rate: number;
+  repeated_work_suppression_success_rate: number;
+  decision_reuse_success_rate: number;
+  verification_warnings_success_rate: number;
+  trace_template_completeness_success_rate: number;
   primary_improvement_threshold_pct: number;
 }
 
@@ -41,6 +50,10 @@ export interface Phase1AcceptanceCheck {
     | 'attempt_history_p95_ms'
     | 'decision_history_p95_ms'
     | 'resume_projection_success_rate'
+    | 'repeated_work_suppression_success_rate'
+    | 'decision_reuse_success_rate'
+    | 'verification_warnings_success_rate'
+    | 'trace_template_completeness_success_rate'
     | 'primary_improvement_threshold';
   status: Phase1AcceptanceStatus;
   actual?: number;
@@ -111,6 +124,8 @@ export interface Phase1TaskFixture {
     stale: boolean;
     failed_attempts: string[];
     active_decisions: string[];
+    decision_reuse: string[];
+    verification_warnings: string[];
     latest_trace_route: string[];
   };
 }
@@ -135,6 +150,22 @@ export const PHASE1_WORKLOADS: Phase1WorkloadDefinition[] = [
     name: 'resume_projection',
     unit: 'percent',
   },
+  {
+    name: 'repeated_work_suppression',
+    unit: 'percent',
+  },
+  {
+    name: 'decision_reuse',
+    unit: 'percent',
+  },
+  {
+    name: 'verification_warnings',
+    unit: 'percent',
+  },
+  {
+    name: 'trace_template_completeness',
+    unit: 'percent',
+  },
 ];
 
 export const PHASE1_ACCEPTANCE_THRESHOLDS: Phase1AcceptanceThresholds = {
@@ -142,6 +173,10 @@ export const PHASE1_ACCEPTANCE_THRESHOLDS: Phase1AcceptanceThresholds = {
   attempt_history_p95_ms_max: 5,
   decision_history_p95_ms_max: 5,
   resume_projection_success_rate: 100,
+  repeated_work_suppression_success_rate: 100,
+  decision_reuse_success_rate: 100,
+  verification_warnings_success_rate: 100,
+  trace_template_completeness_success_rate: 100,
   primary_improvement_threshold_pct: 10,
 };
 
@@ -205,6 +240,11 @@ export const PHASE1_TASK_FIXTURES: Phase1TaskFixture[] = [
       stale: true,
       failed_attempts: ['Reconstructed resume state from raw notes only'],
       active_decisions: ['Keep resume state in additive task tables'],
+      decision_reuse: ['Reuse decision: Keep resume state in additive task tables'],
+      verification_warnings: [
+        'Working set has not been verified in the current workspace.',
+        '6 code claim(s) could not be verified in the current workspace.',
+      ],
       latest_trace_route: ['task_thread', 'working_set', 'attempt_history', 'decision_history'],
     },
   },
@@ -257,6 +297,8 @@ export const PHASE1_TASK_FIXTURES: Phase1TaskFixture[] = [
       stale: false,
       failed_attempts: ['Skipped task traces and relied on memory alone'],
       active_decisions: ['Publish a focused Phase 1 benchmark before Phase 2 work'],
+      decision_reuse: ['Reuse decision: Publish a focused Phase 1 benchmark before Phase 2 work'],
+      verification_warnings: ['2 code claim(s) could not be verified in the current workspace.'],
       latest_trace_route: ['task_thread', 'working_set', 'retrieval_trace'],
     },
   },

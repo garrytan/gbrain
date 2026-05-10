@@ -41,6 +41,10 @@ describe('phase8 acceptance-pack benchmark', () => {
           { name: 'attempt_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
           { name: 'decision_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
           { name: 'resume_projection', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'repeated_work_suppression', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'decision_reuse', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'verification_warnings', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'trace_template_completeness', status: 'measured', unit: 'percent', success_rate: 100 },
         ],
       }, null, 2));
 

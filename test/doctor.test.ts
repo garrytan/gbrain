@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, test, expect, mock } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildDoctorReport } from '../src/core/services/doctor-service.ts';
 import { resolveOfflineProfile } from '../src/core/offline-profile.ts';
+import {
+  EMBEDDED_AGENT_RULES_VERSION,
+  getAgentRulesCandidatePaths,
+  getExpectedAgentRulesVersion,
+  getExpectedAgentRulesVersionFromCandidates,
+  parseDoctorAgentArgs,
+} from '../src/commands/doctor.ts';
 
 
 const originalEnv = { ...process.env };
@@ -82,6 +89,86 @@ describe('doctor command', () => {
 
     expect(report.status).toBe('healthy');
     expect(report.checks.some((check) => check.name === 'offline_profile')).toBe(true);
+  });
+
+  test('buildDoctorReport includes installed-agent readiness checks when provided', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 1,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: null,
+      profile: null,
+      rawPostgresChecksSupported: false,
+      latestVersion: 4,
+      schemaVersion: '4',
+      health: {
+        page_count: 1,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+      installedAgent: {
+        status: 'ok',
+        checks: [{
+          name: 'mcp_required_tools',
+          status: 'ok',
+          message: 'Required tools available: retrieve_context, read_context, record_retrieval_trace, route_memory_writeback',
+        }],
+      },
+    });
+
+    const agentCheck = report.checks.find((check) => check.name === 'agent:mcp_required_tools');
+    expect(report.status).toBe('healthy');
+    expect(agentCheck?.status).toBe('ok');
+  });
+
+  test('buildDoctorReport fails when installed-agent readiness has failing checks', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 1,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: null,
+      profile: null,
+      rawPostgresChecksSupported: false,
+      latestVersion: 4,
+      schemaVersion: '4',
+      health: {
+        page_count: 1,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+      installedAgent: {
+        status: 'fail',
+        checks: [{
+          name: 'mcp_required_tools',
+          status: 'fail',
+          message: 'Missing required MCP tools: read_context',
+        }],
+      },
+    });
+
+    const agentCheck = report.checks.find((check) => check.name === 'agent:mcp_required_tools');
+    expect(report.status).toBe('unhealthy');
+    expect(agentCheck?.status).toBe('fail');
   });
 
   test('buildDoctorReport surfaces the execution envelope and contract surface', () => {
@@ -251,6 +338,72 @@ describe('doctor command', () => {
     expect(typeof runDoctor).toBe('function');
   });
 
+  test('doctor expected agent rules version matches docs marker', async () => {
+    const rulesContent = readFileSync(join(import.meta.dir, '..', 'docs', 'MBRAIN_AGENT_RULES.md'), 'utf-8');
+    const docsVersion = rulesContent.match(/<!-- mbrain-agent-rules-version: ([\d.]+) -->/)?.[1];
+
+    if (!docsVersion) throw new Error('docs/MBRAIN_AGENT_RULES.md is missing the rules version marker');
+    expect(getExpectedAgentRulesVersion()).toBe(docsVersion);
+  });
+
+  test('doctor embedded agent rules version matches docs marker', async () => {
+    const rulesContent = readFileSync(join(import.meta.dir, '..', 'docs', 'MBRAIN_AGENT_RULES.md'), 'utf-8');
+    const docsVersion = rulesContent.match(/<!-- mbrain-agent-rules-version: ([\d.]+) -->/)?.[1];
+
+    if (!docsVersion) throw new Error('docs/MBRAIN_AGENT_RULES.md is missing the rules version marker');
+    expect(EMBEDDED_AGENT_RULES_VERSION).toBe(docsVersion);
+  });
+
+  test('doctor expected agent rules version falls back to embedded version without candidate files', async () => {
+    expect(getExpectedAgentRulesVersionFromCandidates([])).toBe(EMBEDDED_AGENT_RULES_VERSION);
+  });
+
+  test('doctor expected agent rules version ignores cwd docs marker', async () => {
+    const rulesContent = readFileSync(join(import.meta.dir, '..', 'docs', 'MBRAIN_AGENT_RULES.md'), 'utf-8');
+    const docsVersion = rulesContent.match(/<!-- mbrain-agent-rules-version: ([\d.]+) -->/)?.[1];
+    if (!docsVersion) throw new Error('docs/MBRAIN_AGENT_RULES.md is missing the rules version marker');
+
+    const originalCwd = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'mbrain-doctor-cwd-'));
+    try {
+      mkdirSync(join(tempDir, 'docs'), { recursive: true });
+      writeFileSync(join(tempDir, 'docs', 'MBRAIN_AGENT_RULES.md'), '<!-- mbrain-agent-rules-version: 9.9.9 -->\n');
+
+      process.chdir(tempDir);
+
+      expect(getExpectedAgentRulesVersion()).toBe(docsVersion);
+      expect(getExpectedAgentRulesVersion()).not.toBe('9.9.9');
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('doctor agent rules candidate paths do not include cwd fallback', async () => {
+    const originalCwd = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'mbrain-doctor-candidates-'));
+    try {
+      process.chdir(tempDir);
+
+      const candidatePaths = getAgentRulesCandidatePaths();
+      expect(candidatePaths.some((candidate: string) => candidate.startsWith(tempDir))).toBe(false);
+      expect(candidatePaths).not.toContain(join(tempDir, 'docs', 'MBRAIN_AGENT_RULES.md'));
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('doctor agent args keep default command when agent command value is missing', async () => {
+    expect(parseDoctorAgentArgs(['--agent']).agentCommand).toBe('mbrain');
+    expect(parseDoctorAgentArgs(['--agent', '--agent-command', 'bun run src/cli.ts']).agentCommand)
+      .toBe('bun run src/cli.ts');
+    expect(parseDoctorAgentArgs(['--agent', '--agent-command', '--json']).agentCommand).toBe('mbrain');
+    expect(parseDoctorAgentArgs(['--agent', '--agent-command=bun run src/cli.ts']).agentCommand)
+      .toBe('bun run src/cli.ts');
+    expect(parseDoctorAgentArgs(['--agent-command', '--agent'])).toEqual({ agent: true, agentCommand: 'mbrain' });
+  });
+
   test('LATEST_VERSION is importable from migrate', async () => {
     const { LATEST_VERSION } = await import('../src/core/migrate.ts');
     expect(typeof LATEST_VERSION).toBe('number');
@@ -383,5 +536,17 @@ describe('doctor command', () => {
     });
     const stdout = new TextDecoder().decode(result.stdout);
     expect(stdout).toContain('doctor');
+  });
+
+  test('doctor help exposes installed-agent readiness flags', async () => {
+    const result = Bun.spawnSync({
+      cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--help'],
+      cwd: import.meta.dir + '/..',
+    });
+    const stdout = new TextDecoder().decode(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain('--agent');
+    expect(stdout).toContain('--agent-command');
   });
 });

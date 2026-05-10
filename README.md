@@ -480,6 +480,37 @@ The MCP server includes compact instructions that tell agents when to prefer
 MBrain over web search or codebase grep. For durable behavior, also install the
 agent rules with `mbrain setup-agent`.
 
+### Agent Readiness Verification
+
+For an installed `mbrain` command, verify the command your agents are expected
+to call:
+
+```bash
+mbrain doctor --agent --json
+MBRAIN_SMOKE_COMMAND=mbrain bun run scripts/smoke-test-installed-mcp.ts
+```
+
+`mbrain doctor --agent` checks the configured brain plus the installed command,
+resolved command path, Codex/Claude MCP registration, required MCP tools, prompt
+rule blocks, and Claude stop-hook routing. The installed MCP smoke starts the
+configured command over stdio and verifies tool discovery, page lifecycle,
+search, and `route_memory_writeback` dry-run availability. If Codex or Claude is
+configured to call a different command, pass the same command to
+`--agent-command` and `MBRAIN_SMOKE_COMMAND`. MCP registration checks accept the
+resolved executable path form of the same command, but fail registrations that
+are disabled or disconnected.
+
+For source-tree verification, run:
+
+```bash
+bun run src/cli.ts doctor --agent --agent-command "bun run src/cli.ts" --json
+MBRAIN_SMOKE_COMMAND="bun run src/cli.ts" bun run scripts/smoke-test-installed-mcp.ts
+```
+
+This source-tree check may warn when installed clients are registered to the
+global `mbrain serve` command; use the default `mbrain doctor --agent --json` to
+verify the installed command that Codex and Claude actually call.
+
 Remote MCP remains a managed/Postgres-oriented path. See `docs/mcp/DEPLOY.md`
 and the other guides in `docs/mcp/`.
 
@@ -533,12 +564,31 @@ bun run test:e2e:sqlite
 bunx tsc --noEmit --pretty false
 ```
 
-For install validation of an already installed command, run the bounded MCP
-smoke check instead of the long lifecycle E2E test:
+For install validation of an already installed command, use Agent Readiness
+Verification above. The smoke step is also available through the package script:
 
 ```bash
 MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 ```
+
+### Phase 1 Task Resume Benchmark
+
+Run the operational-memory benchmark with:
+
+```bash
+bun run scripts/bench/phase1-operational-memory.ts --json
+bun run scripts/bench/phase1-operational-memory.ts --json --write-baseline /tmp/mbrain-phase1-baseline.json
+bun run scripts/bench/phase1-operational-memory.ts --json --baseline /tmp/mbrain-phase1-baseline.json
+```
+
+It reports task-resume latency, attempt and decision history latency, resume
+projection correctness, repeated-work suppression, decision reuse, verification
+warnings, and retrieval-trace template completeness. The first command is a local
+readiness run; without a comparable baseline its JSON output keeps
+`phase1_status: "pending_baseline"`. Full Phase 1 acceptance requires a
+comparable baseline and `phase1_status: "pass"`. Do not accept Phase 1 if the
+benchmark passes only by weakening local/offline behavior, provenance, or scope
+boundaries.
 
 The SQLite E2E suite covers:
 
