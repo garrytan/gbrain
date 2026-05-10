@@ -1120,6 +1120,99 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
+  // 11a-bis-2. facts_extraction_health (v0.31.2 — codex P1 #3).
+  //
+  // Mirrors the eval_capture check shape but reads facts:absorb rows
+  // (written by writeFactsAbsorbLog from src/core/facts/absorb-log.ts).
+  // Iterates over EVERY source so multi-source brains see per-source
+  // failure rates instead of only 'default'. Threshold configurable via
+  // `facts.absorb_warn_threshold` (default 10 over the last 24h, per
+  // source, per reason). When the threshold is exceeded for any
+  // (source, reason) pair, status flips to warn and the message names
+  // the breakdown.
+  progress.heartbeat('facts_extraction_health');
+  try {
+    const thresholdRaw = await engine.getConfig('facts.absorb_warn_threshold');
+    const parsed = parseInt(thresholdRaw ?? '', 10);
+    const threshold = Number.isFinite(parsed) && parsed > 0 ? parsed : 10;
+
+    // Single SQL grouping by (source_id, reason) over the last 24h. The
+    // composite index v47 added (idx_ingest_log_source_type_created on
+    // source_id, source_type, created_at DESC) covers this query's
+    // filter + sort path.
+    const rows = await engine.executeRaw<{
+      source_id: string;
+      reason: string;
+      n: string | number;
+    }>(
+      `SELECT
+         source_id,
+         split_part(summary, ':', 1) AS reason,
+         COUNT(*)::text AS n
+       FROM ingest_log
+       WHERE source_type = 'facts:absorb'
+         AND created_at >= now() - INTERVAL '24 hours'
+       GROUP BY source_id, split_part(summary, ':', 1)
+       ORDER BY source_id, COUNT(*) DESC`,
+    );
+
+    if (rows.length === 0) {
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'ok',
+        message: 'No facts:absorb failures in the last 24h.',
+      });
+    } else {
+      // Group per source so the breakdown is operator-friendly.
+      const bySource = new Map<string, Array<{ reason: string; n: number }>>();
+      let anyOverThreshold = false;
+      for (const r of rows) {
+        const n = typeof r.n === 'number' ? r.n : parseInt(r.n, 10);
+        if (!Number.isFinite(n)) continue;
+        if (n >= threshold) anyOverThreshold = true;
+        if (!bySource.has(r.source_id)) bySource.set(r.source_id, []);
+        bySource.get(r.source_id)!.push({ reason: r.reason, n });
+      }
+      const summary = [...bySource.entries()]
+        .map(([sid, reasons]) =>
+          `${sid}: ${reasons.map(x => `${x.n} ${x.reason}`).join(', ')}`,
+        )
+        .join(' | ');
+      checks.push({
+        name: 'facts_extraction_health',
+        status: anyOverThreshold ? 'warn' : 'ok',
+        message: anyOverThreshold
+          ? `Facts:absorb failures over the threshold (${threshold}) in the last 24h: ${summary}. ` +
+            `Run \`gbrain recall --since 24h --json\` to inspect what landed; ` +
+            `tune the gate via \`gbrain config set facts.absorb_warn_threshold N\`.`
+          : `Facts:absorb activity in last 24h (under threshold ${threshold}): ${summary}.`,
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01' || code === '42703') {
+      // ingest_log missing entirely (extreme legacy) or source_id column
+      // missing (pre-v47 brain that hasn't run apply-migrations yet).
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'ok',
+        message: 'Skipped (ingest_log.source_id unavailable — run `gbrain apply-migrations --yes`).',
+      });
+    } else if (code === '42501') {
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'warn',
+        message: 'RLS denies SELECT on ingest_log. The check can\'t see facts:absorb rows. Run as a BYPASSRLS role or grant SELECT on this table.',
+      });
+    } else {
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'warn',
+        message: `Could not read ingest_log for facts:absorb: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
   // 11a-2. effective_date_health (v0.29.1).
   //
   // Detects pages where computeEffectiveDate fell back to updated_at even
