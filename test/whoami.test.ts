@@ -55,6 +55,15 @@ describe('whoami op contract', () => {
     expect(result.scopes).toEqual([]);
   });
 
+  test('stdio MCP transport returns local shape without per-token auth', async () => {
+    const result = (await whoami.handler(
+      ctxWith({ remote: true, transport: 'stdio', auth: undefined }),
+      {},
+    )) as any;
+    expect(result.transport).toBe('local');
+    expect(result.scopes).toEqual([]);
+  });
+
   test('oauth transport returns full client identity', async () => {
     const auth: AuthInfo = {
       token: 'gbrain_at_xxx',
@@ -94,10 +103,10 @@ describe('whoami op contract', () => {
     expect(result.expires_at).toBeNull();
   });
 
-  // Q3: ambiguous transport — fail-closed. The footgun this guards against
-  // is a future transport that lands without threading auth, where a buggy
-  // caller might trust whoami's output to gate sensitive ops.
-  test('unknown_transport throws when remote=true AND auth is missing', async () => {
+  // Q3: ambiguous non-stdio remote transport — fail-closed. The footgun this
+  // guards against is a future transport that lands without threading auth,
+  // where a buggy caller might trust whoami's output to gate sensitive ops.
+  test('unknown_transport throws when remote=true AND auth is missing outside stdio', async () => {
     try {
       await whoami.handler(ctxWith({ remote: true, auth: undefined }), {});
       throw new Error('expected throw');
