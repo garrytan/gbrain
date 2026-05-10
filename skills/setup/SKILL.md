@@ -456,6 +456,38 @@ each check: [list results]. Everything is working / [specific item] needs attent
 
 If already configured or user declines, skip.
 
+## Phase J: Cold Start — Populate Your Brain (AUTOMATIC)
+
+Setup is done. The brain works. But it's empty. **This is the most important
+moment** — an empty brain is useless. Transition directly to the cold-start
+skill to fill it with the user's actual data.
+
+**Do not end setup without offering cold-start.** The user just invested 15+
+minutes in setup. The payoff is seeing their brain come alive with their own
+data. Stopping here is like installing a phone and never adding contacts.
+
+Present this immediately after verification passes:
+
+> "✅ GBrain is set up and verified. Now let's fill it with your data.
+>
+> I can connect your Google services (contacts, calendar, email), import
+> your existing notes, pull in conversations from ChatGPT/Claude, and
+> archive your tweets — all in one session. Each step is optional.
+>
+> **Ready to populate your brain?**"
+
+If the user says yes (or anything affirmative):
+→ **Load and execute `skills/cold-start/SKILL.md`** immediately. Do not
+just print a reference — actually run the cold-start skill.
+
+If the user says no or wants to stop:
+→ Record in `~/.gbrain/cold-start-state.json`:
+```json
+{"deferred": true, "deferred_at": "ISO-timestamp", "phases_completed": []}
+```
+→ Tell them: "You can run cold-start anytime by asking me to 'fill my brain'
+or 'cold start'."
+
 ## Schema State Tracking
 
 After presenting the recommended directories (Phase C/E) and the user selects which
@@ -471,6 +503,7 @@ re-suggesting things the user already declined.
 
 ## Anti-Patterns
 
+- **Ending setup without offering cold-start.** An empty brain is useless. Phase J (cold-start) is where setup pays off. Always present the "Ready to populate?" prompt after verification. Skipping this is like installing an app and never logging in.
 - **Asking for the Supabase anon key.** GBrain connects directly to Postgres over the wire protocol, not through the REST API. Only the database connection string is needed.
 - **Skipping live sync setup.** If sync doesn't run automatically, the vector DB falls behind and search returns stale answers. Phase H is not optional.
 - **Declaring setup complete without verification.** "The command ran" is not the same as "it worked." Push a test change, wait for sync, search for the corrected text.
@@ -491,11 +524,13 @@ Live sync: [configured / method]
 Health check: all OK / [specific failures]
 Verification: [GBRAIN_VERIFY.md results]
 
-Next steps:
-- Run `skills/cold-start/SKILL.md` to bootstrap your brain with data (contacts, calendar, email, conversations, social)
-- Read docs/GBRAIN_SKILLPACK.md for production agent patterns
-- [any pending items]
+🧠 Ready to populate your brain? I can connect your Google services,
+import your notes, and pull in your conversations — all in one session.
+→ Launching cold-start...
 ```
+
+**The output should transition directly into cold-start (Phase J), not end
+with a bullet list.** The bullet list is for when the user defers cold-start.
 
 ## Tools Used
 
