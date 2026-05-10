@@ -333,8 +333,8 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
 
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'embedding', parsed.modelId);
   const cfg = requireConfig();
+  assertTouchpoint(recipe, 'embedding', parsed.modelId, !!cfg.base_urls?.[recipe.id]);
 
   const cacheKey = `emb:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
   const cached = _modelCache.get(cacheKey);
@@ -353,7 +353,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         `OpenAI embedding requires OPENAI_API_KEY.`,
         recipe.setup_hint,
       );
-      const client = createOpenAI({ apiKey });
+      const baseUrl = cfg.base_urls?.[recipe.id];
+      const client = createOpenAI({ apiKey, ...(baseUrl ? { baseURL: baseUrl } : {}) });
       // AI SDK v6: use .textEmbeddingModel() for embeddings
       return (client as any).textEmbeddingModel
         ? (client as any).textEmbeddingModel(modelId)
@@ -457,7 +458,7 @@ export async function embed(texts: string[]): Promise<Float32Array[]> {
   const cfg = requireConfig();
   const { model, recipe, modelId } = await resolveEmbeddingProvider(getEmbeddingModel());
   const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
-  const providerOpts = dimsProviderOptions(recipe.implementation, modelId, cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS);
+  const providerOpts = dimsProviderOptions(recipe.implementation, modelId, cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS, !!cfg.base_urls?.[recipe.id]);
   const expected = cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
 
   const embedding = recipe.touchpoints?.embedding;
@@ -800,8 +801,8 @@ void MULTIMODAL_MAX_IMAGE_BYTES;
 
 async function resolveExpansionProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'expansion', parsed.modelId);
   const cfg = requireConfig();
+  assertTouchpoint(recipe, 'expansion', parsed.modelId, !!cfg.base_urls?.[recipe.id]);
 
   const cacheKey = `exp:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
   const cached = _modelCache.get(cacheKey);
@@ -817,7 +818,8 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
       if (!apiKey) throw new AIConfigError(`OpenAI expansion requires OPENAI_API_KEY.`, recipe.setup_hint);
-      return createOpenAI({ apiKey }).languageModel(modelId);
+      const baseUrl = cfg.base_urls?.[recipe.id];
+      return createOpenAI({ apiKey, ...(baseUrl ? { baseURL: baseUrl } : {}) }).languageModel(modelId);
     }
     case 'native-google': {
       const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -1003,8 +1005,8 @@ export interface ChatOpts {
 
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'chat', parsed.modelId);
   const cfg = requireConfig();
+  assertTouchpoint(recipe, 'chat', parsed.modelId, !!cfg.base_urls?.[recipe.id]);
 
   const cacheKey = `chat:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
   const cached = _modelCache.get(cacheKey);
@@ -1020,7 +1022,8 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
       if (!apiKey) throw new AIConfigError(`OpenAI chat requires OPENAI_API_KEY.`, recipe.setup_hint);
-      return createOpenAI({ apiKey }).languageModel(modelId);
+      const baseUrl = cfg.base_urls?.[recipe.id];
+      return createOpenAI({ apiKey, ...(baseUrl ? { baseURL: baseUrl } : {}) }).languageModel(modelId);
     }
     case 'native-google': {
       const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;

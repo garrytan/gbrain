@@ -64,7 +64,7 @@ function getTouchpoint(recipe: Recipe, touchpoint: TouchpointKind): EmbeddingTou
 }
 
 /** Assert the resolved recipe actually offers the requested touchpoint. */
-export function assertTouchpoint(recipe: Recipe, touchpoint: TouchpointKind, modelId: string): void {
+export function assertTouchpoint(recipe: Recipe, touchpoint: TouchpointKind, modelId: string, hasCustomBaseUrl?: boolean): void {
   const tp = getTouchpoint(recipe, touchpoint);
   if (!tp) {
     throw new AIConfigError(
@@ -79,7 +79,9 @@ export function assertTouchpoint(recipe: Recipe, touchpoint: TouchpointKind, mod
   const supportedModels = tp.models ?? [];
   if (supportedModels.length > 0 && !supportedModels.includes(modelId)) {
     // Non-fatal: providers like ollama/litellm accept arbitrary model ids. We only warn for native providers.
-    if (recipe.tier === 'native') {
+    // When a custom base_url is configured, the user is routing through an OpenAI-compatible
+    // endpoint (e.g. SiliconFlow, Azure OpenAI, vLLM) and may use non-standard model names.
+    if (recipe.tier === 'native' && !hasCustomBaseUrl) {
       throw new AIConfigError(
         `Model "${modelId}" is not listed for ${recipe.name} ${touchpoint}.`,
         `Known models: ${supportedModels.join(', ')}. Use one of these or add it to the recipe (or add an alias).`,

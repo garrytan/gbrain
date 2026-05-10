@@ -28,16 +28,24 @@ const VOYAGE_OUTPUT_DIMENSION_MODELS = new Set([
  * asked to return reduced-dim vectors. Anthropic does not take a dimension
  * parameter. Most openai-compatible providers do not either, but Voyage's
  * OpenAI-compatible embeddings endpoint accepts `output_dimension`.
+ *
+ * When `hasCustomBaseUrl` is true, the native-openai path is being routed to
+ * an OpenAI-compatible endpoint (e.g. SiliconFlow, Azure OpenAI, vLLM). These
+ * endpoints often support the `dimensions` parameter even for non-OpenAI models
+ * (e.g. Qwen3-Embedding), so we pass it unconditionally.
  */
 export function dimsProviderOptions(
   implementation: Implementation,
   modelId: string,
   dims: number,
+  hasCustomBaseUrl?: boolean,
 ): Record<string, any> | undefined {
   switch (implementation) {
     case 'native-openai': {
-      // text-embedding-3-* supports dimensions; text-embedding-ada-002 does not.
-      if (modelId.startsWith('text-embedding-3')) {
+      // text-embedding-3-* supports dimensions natively.
+      // When routing through a custom base_url, assume the endpoint supports
+      // the dimensions parameter (common for OpenAI-compatible providers).
+      if (modelId.startsWith('text-embedding-3') || hasCustomBaseUrl) {
         return { openai: { dimensions: dims } };
       }
       return undefined;
