@@ -57,15 +57,17 @@ skills/kos-jarvis/
 ├── dikw-compile/                   # Week 2
 ├── evidence-gate/                  # Week 2
 ├── confidence-score/               # Week 2
-├── kos-lint/                       # Week 2
-├── kos-patrol/                     # Week 2
+├── kos-patrol/                     # Week 2(phase 2 lint 已 noop,kos-lint archived 2026-05-10)
 ├── digest-to-memory/               # Week 3(保留澄清点)
-├── notion-ingest-delta/            # Week 3
+├── notion-ingest-delta/            # Week 3 — SKILL.md 是 redirect,实现在 workers/notion-poller/
 ├── gemini-embed-shim/              # Week 4 — OpenAI→Gemini embed 桥接
 ├── enrich-sweep/                   # Phase 3 (2026-04-17) — G1 主收益
-└── _archived/                      # 已退役:feishu-bridge + pending-enrich (2026-05-05)
-    ├── feishu-bridge/              # OpenClaw 飞书 skill command-mapping (Week 3)
-    └── pending-enrich/             # Phase 2↔3 Feishu 实体队列 schema
+└── _archived/                      # 退役 dirs(只读冷备)
+    ├── feishu-bridge/              # 2026-05-05 — OpenClaw 飞书 command-mapping
+    ├── pending-enrich/             # 2026-05-05 — Phase 2↔3 Feishu 队列 schema
+    ├── kos-lint/                   # 2026-05-10 (M1) — 4/6 check 已被 frontmatter-guard + gbrain doctor + BrainWriter linkValidator + gbrain orphans 覆盖
+    ├── frontmatter-ref-fix/        # 2026-05-10 (M1) — one-shot 已用完(2026-04-27 v1+v2,ERRORs 4→0)
+    └── slug-normalize/             # 2026-05-10 (M1) — one-shot 已用完(2026-04-23,7 strays renamed)
 ```
 
 ## 与 GBrain 原生 skills 的关系

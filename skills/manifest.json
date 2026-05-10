@@ -215,11 +215,6 @@
       "description": "Auto-score high/medium/low confidence plus compile grade. KOS-Jarvis fork extension."
     },
     {
-      "name": "kos-jarvis/kos-lint",
-      "path": "kos-jarvis/kos-lint/SKILL.md",
-      "description": "Six-check lint: frontmatter, dupes, dead-links, orphans, weak-links, evidence. KOS-Jarvis fork extension."
-    },
-    {
       "name": "kos-jarvis/kos-patrol",
       "path": "kos-jarvis/kos-patrol/SKILL.md",
       "description": "Daily patrol with staleness, gap detection, and MEMORY digest. KOS-Jarvis fork extension."

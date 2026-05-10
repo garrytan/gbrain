@@ -16,7 +16,6 @@
  * patrol — it does NOT write to the brain. Only report files under
  * ~/brain/.agent/ are created.
  */
-import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -25,8 +24,6 @@ import { BrainDb } from "../_lib/brain-db.ts";
 const BRAIN = process.env.GBRAIN_HOME ?? join(homedir(), "brain");
 const DASH_DIR = join(BRAIN, ".agent", "dashboards");
 const DIGEST_DIR = join(BRAIN, ".agent", "digests");
-const REPO_ROOT = join(import.meta.dirname ?? ".", "..", "..", "..");
-const KOS_LINT = join(REPO_ROOT, "skills/kos-jarvis/kos-lint/run.ts");
 
 const TODAY = new Date().toISOString().slice(0, 10);
 const STALE_DAYS = 180;
@@ -127,25 +124,20 @@ function phase1(pages: Page[]): Inventory {
 
 // ─────────────────────────── Phase 2: Lint ───────────────────────────
 
+/**
+ * kos-lint retired 2026-05-10 (M1 milestone). Six-check coverage moved to:
+ *   - check 1 (frontmatter): upstream `frontmatter-guard` skill + `gbrain doctor`
+ *   - check 2 (duplicate id): `gbrain doctor` schema integrity
+ *   - check 3 (dead links): upstream BrainWriter linkValidator (sync gate)
+ *   - check 4 (orphans): `gbrain orphans` + dream-cycle phase
+ *   - check 5 (weak links), check 6 (evidence gap): not yet rehomed; future
+ *     `kos-quality` ~150 LOC shim if Lucien wants them back.
+ *
+ * Phase 2 is now a no-op so dashboard/digest signatures remain stable. The
+ * old runner is archived at skills/kos-jarvis/_archived/kos-lint/.
+ */
 function phase2(): LintSummary {
-  const r = spawnSync("bun", ["run", KOS_LINT, "--json"], { encoding: "utf-8" });
-  // kos-lint prints progress on stdout before the JSON block; the top-level
-  // "{" is the first one at column 0 (nested braces are indented)
-  const out = r.stdout || "";
-  const start = out.indexOf("\n{\n");
-  try {
-    const slice = start >= 0 ? out.slice(start + 1) : out;
-    const parsed = JSON.parse(slice);
-    return {
-      rows: parsed.rows ?? 0,
-      findings: parsed.findings ?? [],
-      errors: parsed.errors ?? 0,
-      warns: parsed.warns ?? 0,
-    };
-  } catch (e) {
-    console.error(`[2] kos-lint JSON parse failed; exit=${r.status}`);
-    return { rows: 0, findings: [], errors: 0, warns: 0 };
-  }
+  return { rows: 0, findings: [], errors: 0, warns: 0 };
 }
 
 // ─────────────────────────── Phase 3: Staleness ───────────────────────────

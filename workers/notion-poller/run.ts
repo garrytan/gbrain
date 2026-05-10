@@ -2,14 +2,41 @@
 /**
  * notion-poller — 5-min cron pull from Notion DBs into the brain.
  *
- * Flow per monitored DB:
+ * Replaces the old "weekly manual scan" pattern from KOS v1 with an ambient
+ * push: any page saved in a monitored DB lands in the brain within 5 min.
+ * Original design contract previously lived in
+ * skills/kos-jarvis/notion-ingest-delta/SKILL.md (now a 5-line redirect).
+ *
+ * ## Two-mode design (per @notionhq/workers backfill+delta pattern)
+ *
+ *   Mode      | Schedule | Filter                              | Purpose
+ *   ----------|----------|-------------------------------------|--------------------
+ *   backfill  | manual   | (none)                              | one-time full crawl
+ *   delta     | 5 min    | last_edited_time > cursor (per DB)  | normal operation
+ *
+ * Flow per monitored DB (delta mode shown):
  *   databases.query(sort=last_edited_time desc, filter last_edited_time > cursor)
- *     → for each page, retrieve page + all children blocks
+ *     → for each page, retrieve page + all children blocks (paginate has_more)
  *     → flatten blocks to markdown
  *     → POST /ingest { markdown, title, source:"notion:<id>", notion_id, kind }
- *     → update cursor
+ *     → update cursor on success
  *
- * See ./README.md for config and failure modes.
+ * ## /ingest payload shape
+ *
+ * The kos-compat-api /ingest endpoint detects `markdown` and skips its
+ * usual fetch step, writing the supplied body straight to staging with
+ * Notion-sourced frontmatter (id=source-notion-<slug>, kind=source,
+ * source_of_truth=notion, source_refs=[notion URL, notion_id], tags=[notion-ingest]).
+ *
+ * ## Failure modes (handled here)
+ *
+ * - Notion page references other Notion pages → unfurl as plain text links
+ * - Large pages (>100 blocks) → paginate fetch via `has_more`
+ * - Rate limits → in-process pacer (kos-worker has its own)
+ * - Deletes in Notion → DO NOT delete from gbrain (sources are immutable);
+ *   downstream may mark status=deprecated on the source page instead
+ *
+ * See ./README.md for config (env vars, run modes, launchd plist).
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";

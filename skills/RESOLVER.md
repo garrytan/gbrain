@@ -138,17 +138,23 @@ upstream sections above; KOS extensions are append-only by policy.
 | Post-ingest strong-link compilation, A/B/C/F grading | `skills/kos-jarvis/dikw-compile/SKILL.md` |
 | Evidence-level gate (E0-E4) for decision/protocol pages | `skills/kos-jarvis/evidence-gate/SKILL.md` |
 | Auto-score high/medium/low confidence + compile grade | `skills/kos-jarvis/confidence-score/SKILL.md` |
-| Six-check lint (frontmatter/dupes/dead-links/orphans/weak-links/evidence) | `skills/kos-jarvis/kos-lint/SKILL.md` |
 | Daily patrol + staleness + gap detection + MEMORY digest | `skills/kos-jarvis/kos-patrol/SKILL.md` |
 | Weekly push KOS digest → OpenClaw MEMORY.md 近期层 | `skills/kos-jarvis/digest-to-memory/SKILL.md` |
 | Notion → gbrain 5-min incremental sync | `skills/kos-jarvis/notion-ingest-delta/SKILL.md` |
 | Batch scan brain, extract entities, create people/company stubs (G1 payoff) | `skills/kos-jarvis/enrich-sweep/SKILL.md` |
 
 These chain into upstream skills: dikw-compile runs after idea-ingest;
-kos-lint extends maintain; digest-to-memory reads patrol output;
-enrich-sweep wraps upstream `skills/enrich/` in bulk mode.
+digest-to-memory reads patrol output; enrich-sweep wraps upstream
+`skills/enrich/` in bulk mode.
 
 > **Archived (2026-05-05)**: `feishu-bridge` + `pending-enrich` skills
 > moved to `skills/kos-jarvis/_archived/`. Phase 2 Feishu signal-fork
 > design was superseded by retiring the OpenClaw extension; brain-side
 > contract docs survive at `_archived/` for historical reference.
+>
+> **Archived (2026-05-10, M1)**: `kos-lint` (six-check lint — checks 1-3
+> covered by upstream `frontmatter-guard` + `gbrain doctor` + BrainWriter
+> linkValidator, check 4 by `gbrain orphans` + dream-cycle; checks 5-6
+> not yet rehomed), `frontmatter-ref-fix` (one-shot, ran 2026-04-27),
+> `slug-normalize` (one-shot, ran 2026-04-23). All under
+> `skills/kos-jarvis/_archived/`.
