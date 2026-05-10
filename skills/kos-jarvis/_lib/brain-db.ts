@@ -17,9 +17,9 @@
  * close" is gone. We still call `close()` for cleanup hygiene.
  *
  * Surface API is unchanged from the PGLite-only version — current callers
- * (kos-patrol, dikw-compile, evidence-gate, confidence-score, orphan-reducer,
- * server/kos-compat-api) keep working. kos-lint + slug-normalize +
- * frontmatter-ref-fix archived 2026-05-10 (M1).
+ * (kos-patrol, orphan-reducer, server/kos-compat-api) keep working.
+ * Archived: kos-lint + slug-normalize + frontmatter-ref-fix (M1, 2026-05-10);
+ * dikw-compile + evidence-gate + confidence-score (M2-A, 2026-05-10).
  */
 import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";

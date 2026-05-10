@@ -200,21 +200,6 @@
       "description": "Ingest voice notes with exact-phrasing preservation (never paraphrased); routes content based on a decision tree across originals/concepts/people/companies/ideas/personal/voice-notes."
     },
     {
-      "name": "kos-jarvis/dikw-compile",
-      "path": "kos-jarvis/dikw-compile/SKILL.md",
-      "description": "Post-ingest strong-link compilation with A/B/C/F grading. KOS-Jarvis fork extension."
-    },
-    {
-      "name": "kos-jarvis/evidence-gate",
-      "path": "kos-jarvis/evidence-gate/SKILL.md",
-      "description": "Evidence-level gate (E0-E4) for decision/protocol pages. KOS-Jarvis fork extension."
-    },
-    {
-      "name": "kos-jarvis/confidence-score",
-      "path": "kos-jarvis/confidence-score/SKILL.md",
-      "description": "Auto-score high/medium/low confidence plus compile grade. KOS-Jarvis fork extension."
-    },
-    {
       "name": "kos-jarvis/kos-patrol",
       "path": "kos-jarvis/kos-patrol/SKILL.md",
       "description": "Daily patrol with staleness, gap detection, and MEMORY digest. KOS-Jarvis fork extension."

@@ -597,7 +597,7 @@ ${plain}
     commit: commit.msg,
     output: syncRes.stdout + (embedded ? "" : `\n[embed retry failed] ${embedRes.stdout}`),
     next: embedded
-      ? "page is searchable via keyword + vector; dikw-compile recommended for strong-link network"
+      ? "page is searchable via keyword + vector; use `gbrain dream` for cross-page synthesis"
       : "page synced (may already be embedded by sync) — retry `gbrain embed " + fullSlug + "` manually if vector search misses",
   });
 }

@@ -196,31 +196,39 @@ Cross-checked: `kos-compat-api.ts`, `workers/notion-poller`,
 (updated 2026-05-04) + `docs/JARVIS-ARCHITECTURE.md` §6.21 末尾
 "M2-A resolution"段。
 
-### [ ] (M2-A.execute) Archive triplet + concept-synthesis pilot
+### [x] (M2-A.archive) Archive triplet — DONE 2026-05-10
 
-**Why**: M2-A wire-status 已查清,需要把决议落地。3 个 skill dirs
-搬到 `_archived/`,触发器从 RESOLVER + manifest 摘掉。然后跑一次
-concept-synthesis 看 188 个 concept pages 跑出什么。
+3 dead skill dirs (`dikw-compile`, `evidence-gate`, `confidence-score`)
+moved to `skills/kos-jarvis/_archived/`. Triggers removed from
+`skills/RESOLVER.md` `## KOS-Jarvis extensions` table (with M2-A archive
+note). `skills/manifest.json` three entries deleted (49 → 46). Prompt
+string in `server/kos-compat-api.ts:600` rewritten:
+`"dikw-compile recommended"` → `"use \`gbrain dream\` for cross-page
+synthesis"`. `skills/kos-jarvis/README.md` `_archived/` tree expanded
+with M2-A entries. `skills/kos-jarvis/_lib/brain-db.ts` caller list
+updated. **Active fork dirs: 14 → 11.**
+
+### [ ] (M2-A.pilot) concept-synthesis pilot run on 188 concept pages
+
+**Why**: With the dead triplet retired, the empirical question becomes:
+does v0.25.1 `concept-synthesis` (T1-T4 tier system, 4-phase dedup +
+score + synth + cluster) produce useful signal on the 188 `concepts/`
+pages? Output drives the wiring decision.
 
 **What**:
-1. `mv skills/kos-jarvis/{dikw-compile,confidence-score,evidence-gate}
-   skills/kos-jarvis/_archived/`
-2. 删 RESOLVER.md `## KOS-Jarvis extensions` 段三件套触发器
-3. `skills/manifest.json` 三件套标 `archived: true` 或删
-4. 改 `server/kos-compat-api.ts:600` 提示字符串:
-   `"dikw-compile recommended"` →
-   `"page is searchable; use 'gbrain dream' for cross-page synthesis"`
-5. Pilot run: invoke `concept-synthesis` skill agent on `~/brain/concepts/`
-   (188 pages),输出 → `~/brain/.agent/reports/concept-synthesis-pilot-<date>.md`
-6. 看 T1/T2/T3/T4 分布,判断是否要 wire 到 dream-cycle (P1.5)
-7. README + 架构 doc 反映:active skills 11 → 8
+1. Invoke `concept-synthesis` skill agent on `~/brain/concepts/`
+   (188 pages, mutating skill — `writes_pages: true`,真改 brain)
+2. Output → `~/brain/.agent/reports/concept-synthesis-pilot-2026-05-10.md`
+3. 看 T1/T2/T3/T4 分布 + dedup ratio + 主观相关性
+4. Decision: (a) wire 到 dream-cycle (cron 集成) / (b) 留 ad-hoc /
+   (c) 上游不够用,fork 自己写
 
-**Acceptance**: triplet dirs 在 `_archived/`,RESOLVER 不再触发,
-49 → 46 manifest skills (或 49 - 3 retired)。Pilot report 写到
-brain。
+**Acceptance**: Pilot report 写到 brain,decision 落地。若 (a) → 加
+P1.5 实施任务。
 
-**Scope**: 30 min mechanical retire + 1 h pilot + 30 min 写 report。
-Total 2 h。
+**Scope**: 1 h pilot + 30 min 写 report。Total 1.5 h。需要本机
+ANTHROPIC_API_KEY。Brain 改动会写入 brain repo(不是 fork repo),
+单独一轮 brain-side commit。
 
 ### [ ] (M2-B) `kos-compat-api` ↔ `gbrain serve --http` + thin translator 评估
 

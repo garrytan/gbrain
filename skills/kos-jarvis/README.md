@@ -54,20 +54,20 @@ skills/kos-jarvis/
 │   ├── comparison-page.md
 │   ├── protocol-page.md
 │   └── timeline-page.md
-├── dikw-compile/                   # Week 2
-├── evidence-gate/                  # Week 2
-├── confidence-score/               # Week 2
 ├── kos-patrol/                     # Week 2(phase 2 lint 已 noop,kos-lint archived 2026-05-10)
 ├── digest-to-memory/               # Week 3(保留澄清点)
 ├── notion-ingest-delta/            # Week 3 — SKILL.md 是 redirect,实现在 workers/notion-poller/
-├── gemini-embed-shim/              # Week 4 — OpenAI→Gemini embed 桥接
+├── gemini-embed-shim/              # Week 4 — OpenAI→Gemini embed 桥接(M3 退役 in flight)
 ├── enrich-sweep/                   # Phase 3 (2026-04-17) — G1 主收益
 └── _archived/                      # 退役 dirs(只读冷备)
     ├── feishu-bridge/              # 2026-05-05 — OpenClaw 飞书 command-mapping
     ├── pending-enrich/             # 2026-05-05 — Phase 2↔3 Feishu 队列 schema
     ├── kos-lint/                   # 2026-05-10 (M1) — 4/6 check 已被 frontmatter-guard + gbrain doctor + BrainWriter linkValidator + gbrain orphans 覆盖
     ├── frontmatter-ref-fix/        # 2026-05-10 (M1) — one-shot 已用完(2026-04-27 v1+v2,ERRORs 4→0)
-    └── slug-normalize/             # 2026-05-10 (M1) — one-shot 已用完(2026-04-23,7 strays renamed)
+    ├── slug-normalize/             # 2026-05-10 (M1) — one-shot 已用完(2026-04-23,7 strays renamed)
+    ├── dikw-compile/               # 2026-05-10 (M2-A) — production dead code(0/2477 pages set dikw_layer);上游 `gbrain dream` + concept-synthesis 替代
+    ├── evidence-gate/              # 2026-05-10 (M2-A) — production dead code(1/2477 pages set evidence_level)
+    └── confidence-score/           # 2026-05-10 (M2-A) — confidence 字段被 kos-compat-api.ts 硬编码模板,不是脚本算的
 ```
 
 ## 与 GBrain 原生 skills 的关系

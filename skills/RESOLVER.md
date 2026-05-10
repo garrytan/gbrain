@@ -135,17 +135,13 @@ upstream sections above; KOS extensions are append-only by policy.
 
 | Trigger | Skill |
 |---------|-------|
-| Post-ingest strong-link compilation, A/B/C/F grading | `skills/kos-jarvis/dikw-compile/SKILL.md` |
-| Evidence-level gate (E0-E4) for decision/protocol pages | `skills/kos-jarvis/evidence-gate/SKILL.md` |
-| Auto-score high/medium/low confidence + compile grade | `skills/kos-jarvis/confidence-score/SKILL.md` |
 | Daily patrol + staleness + gap detection + MEMORY digest | `skills/kos-jarvis/kos-patrol/SKILL.md` |
 | Weekly push KOS digest → OpenClaw MEMORY.md 近期层 | `skills/kos-jarvis/digest-to-memory/SKILL.md` |
 | Notion → gbrain 5-min incremental sync | `skills/kos-jarvis/notion-ingest-delta/SKILL.md` |
 | Batch scan brain, extract entities, create people/company stubs (G1 payoff) | `skills/kos-jarvis/enrich-sweep/SKILL.md` |
 
-These chain into upstream skills: dikw-compile runs after idea-ingest;
-digest-to-memory reads patrol output; enrich-sweep wraps upstream
-`skills/enrich/` in bulk mode.
+These chain into upstream skills: digest-to-memory reads patrol output;
+enrich-sweep wraps upstream `skills/enrich/` in bulk mode.
 
 > **Archived (2026-05-05)**: `feishu-bridge` + `pending-enrich` skills
 > moved to `skills/kos-jarvis/_archived/`. Phase 2 Feishu signal-fork
@@ -158,3 +154,13 @@ digest-to-memory reads patrol output; enrich-sweep wraps upstream
 > not yet rehomed), `frontmatter-ref-fix` (one-shot, ran 2026-04-27),
 > `slug-normalize` (one-shot, ran 2026-04-23). All under
 > `skills/kos-jarvis/_archived/`.
+>
+> **Archived (2026-05-10, M2-A)**: `dikw-compile` + `evidence-gate` +
+> `confidence-score` (the KOS quality triplet). Production probe
+> 2026-05-04 confirmed they were 100% dead code: `frontmatter.dikw_layer`
+> set on 0 / 2477 pages, `evidence_level` on 1 / 2477, `confidence` on
+> 2470 / 2477 but values are hardcoded template strings from
+> `kos-compat-api.ts` (not script-computed). No production caller in
+> `kos-compat-api.ts` / `workers/notion-poller/` / `kos-patrol/run.ts`
+> ever spawned the triplet's `run.ts`. Replacement for cross-page
+> synthesis: upstream `gbrain dream` + `concept-synthesis` skill (v0.25.1).
