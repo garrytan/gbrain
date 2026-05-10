@@ -26,7 +26,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'remote']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'remote', 'recall', 'forget']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -915,6 +915,17 @@ async function handleCliOnly(command: string, args: string[]) {
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
 
+  // v0.32 EXP-5 (codex review #10): `eval takes-quality replay <receipt>`
+  // is the ONLY sub-subcommand that doesn't need a brain — it reads a
+  // receipt JSON file from disk and re-renders it. Bypass connectEngine
+  // here so users can replay a receipt on a machine without DATABASE_URL.
+  // run/trend/regress need the brain and fall through to the regular
+  // engine-required path below.
+  if (command === 'eval' && args[0] === 'takes-quality' && args[1] === 'replay') {
+    const { runReplayNoBrain } = await import('./commands/eval-takes-quality.ts');
+    process.exit(await runReplayNoBrain(args.slice(2)));
+  }
+
   // v0.28.8: longmemeval brings its own in-memory PGLite. Bypassing
   // connectEngine here keeps `gbrain eval longmemeval --help` and benchmark
   // runs working on machines that have no `~/.gbrain/config.json` configured.
@@ -970,6 +981,16 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       case 'eval': {
+        // v0.32 EXP-5: `eval takes-quality {run,trend,regress}` requires a
+        // brain (samples takes from DB / reads runs table). `replay` was
+        // already routed through the no-DB bypass above and never reaches
+        // this case. Other `eval` subcommands (export/prune/replay-capture/
+        // longmemeval/cross-modal) go to the generic dispatcher.
+        if (args[0] === 'takes-quality') {
+          const { runEvalTakesQuality } = await import('./commands/eval-takes-quality.ts');
+          await runEvalTakesQuality(engine, args.slice(1));
+          break;
+        }
         const { runEvalCommand } = await import('./commands/eval.ts');
         await runEvalCommand(engine, args);
         break;

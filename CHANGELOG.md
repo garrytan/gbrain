@@ -2,6 +2,131 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.31.3] - 2026-05-09
+
+**`gbrain serve` stops leaking the PGLite write lock when the parent disconnects, and `gbrain auth` + `gbrain serve --http` work against PGLite brains.**
+
+Two community PRs (#676 stdio cleanup, #681 engine-aware auth SQL) landed in one focused PR with two atomic commits. Both fixed real bugs that were biting users in production: stdio MCP servers held the PGLite write lock indefinitely after Claude Desktop / Cursor / launchd-managed gateways disconnected, forcing a 5-minute stale-lock wait on the next start. And `gbrain auth` + the OAuth admin server silently routed every SQL through the postgres.js singleton, which made `gbrain serve --http` Postgres-only even though the schema supported PGLite.
+
+### What you can now do
+
+**Restart your MCP server without waiting 5 minutes.** Stdio EOF, SIGTERM, SIGINT, SIGHUP, and parent-process death (every reparent case ... PID 1, launchd subreaper, systemd, tmux, or a parent shell with PR_SET_CHILD_SUBREAPER) all funnel into one idempotent shutdown that releases the engine and the lock dir within 5 seconds. Closes #413 and #446. Credit @Aragorn2046 (origin features in #591) and @seungsu-kr (rebased submitter, Bun ppid workaround).
+
+**Run `gbrain serve --http` against a PGLite brain.** Auth (`gbrain auth create/list/revoke/permissions`), OAuth 2.1 client registration + token mint, the admin SPA, file uploads, and the legacy bearer-auth HTTP transport all run through the active engine now via a deliberately-narrow `SqlQuery` adapter (`src/core/sql-query.ts`) that calls `engine.executeRaw`. Previously, with `DATABASE_URL` set but the config file pointing at PGLite, auth commands silently hit the wrong brain. Credit codex-bot.
+
+**`gbrain auth permissions ... set-takes-holders` and the four `mcp_request_log.params` INSERTs write real JSONB objects.** Pre-v0.31.3 they wrote `JSON.stringify(...)` strings into JSONB columns via the postgres.js template tag's loose typing ... the column was technically JSONB but stored as a quoted string, so reads via `params->>'op'` returned the encoded string `"search"` instead of `search`. Migration v46 normalizes the entire backlog of pre-v0.31.3 string-shaped rows up to objects so the `/admin/api/requests` endpoint returns one consistent shape to the SPA. Idempotent.
+
+**Bun's `process.ppid` cache no longer creates a phantom watchdog.** Bun (and Node ... see [oven-sh/bun#30305](https://github.com/oven-sh/bun/issues/30305)) caches `process.ppid` at process creation and never refreshes when the kernel re-parents. The watchdog now runs `spawnSync('ps','-o','ppid=','-p',PID)` per tick to read the live kernel PPID. A one-shot startup probe verifies ps is available; if it isn't (stripped containers, busybox without procps), the watchdog skips installing entirely AND emits a loud stderr line ... instead of silently running every 5 seconds and never firing.
+
+**Startup probe for stripped-container deployments.** If `ps` isn't on PATH, `gbrain serve` prints `[gbrain serve] watchdog disabled: ps unavailable, parent-death detection unavailable ... child will rely on stdin EOF / signals only` once at startup. Operators see the degraded mode at boot instead of wondering why their phantom watchdog never fires.
+
+### Numbers that matter
+
+| Failure mode | Before v0.31.3 | After v0.31.3 |
+|---|---|---|
+| Parent dies, stdin still open (launchd/cron orphan) | Lock held forever, next `gbrain serve` blocks 5+ minutes | Watchdog fires within 5s, lock released, next start clean |
+| Parent reparents to subreaper PID 47 (systemd, tmux) | Watchdog silently no-op (only checked `ppid === 1`) | Watchdog fires (`ppid !== initialParentPid`) |
+| `gbrain serve --http` against PGLite brain | Hard fail at startup, "Postgres only" | Works |
+| `gbrain auth create` with `DATABASE_URL` set + PGLite config file | Silently writes to PGLite, env var ignored | DATABASE_URL wins, infers Postgres engine, clears stale `database_path` |
+| Read `mcp_request_log.params` in admin SPA after a pre-v0.31.3 row was logged | Returned a JSON-encoded string `"{\"op\":\"search\"}"` | Returns the object `{op:'search'}` |
+| `params->>'op'` SQL on pre-v0.31.3 rows | Returned the encoded string `"search"` (with quotes) | After v46 migration: returns `search` |
+| `bun test test/serve-stdio-lifecycle.test.ts` | (test file did not exist) | 22 cases, all green |
+
+### What this means for your workflow
+
+If your editor talks to gbrain over stdio MCP ... Claude Desktop, Cursor, MCP gateway ... you'll notice restarts happen instantly instead of hanging on lock contention. If you've been running gbrain on PGLite (the default for new installs), `gbrain auth create`, OAuth client registration, and the `--http` admin dashboard all work now. Run `gbrain upgrade` to land both fixes plus the v46 migration that normalizes any string-shaped `mcp_request_log.params` rows you accumulated.
+
+### Important note for upgraders
+
+`gbrain upgrade` runs the v46 normalizer migration automatically. If you have a long history of `gbrain serve --http` requests in `mcp_request_log`, the UPDATE could touch many rows on first run ... it's a single statement filtered to `jsonb_typeof = 'string'` and won't lock the table for long, but you may see a brief CPU spike on Supabase Postgres if the table is large. Subsequent upgrades find no string-shaped rows and the migration is a no-op.
+
+### How it works under the hood
+
+`SqlQuery` is a deliberately narrow tagged-template adapter (`src/core/sql-query.ts`) that builds positional SQL with `$N` placeholders and calls `engine.executeRaw(sql, params)`. Scalar binds only ... the contract is the feature. JSONB writes go through a separate `executeRawJsonb(engine, sql, scalarParams, jsonbParams)` helper that composes positional `$N::jsonb` casts and passes JS objects through. The v0.12.0 double-encode bug class doesn't apply to positional binding through postgres.js's `unsafe()` (verified by `test/e2e/auth-permissions.test.ts:67` on Postgres and `test/sql-query.test.ts` on PGLite).
+
+`scripts/check-jsonb-pattern.sh` doesn't fire because `executeRawJsonb(...)` is a method call, not the banned literal-template-tag interpolation pattern.
+
+The watchdog reparent check is `getParentPid() !== initialParentPid`, capturing the initial ppid once at install time and firing on any change. The previous `=== 1` check missed the subreaper case that surfaced under launchd / systemd PR_SET_CHILD_SUBREAPER environments.
+
+### Tests
+
+- `test/serve-stdio-lifecycle.test.ts` (22 cases) ... signals (SIGTERM/SIGINT/SIGHUP), stdin EOF / close, TTY skip, watchdog reparent-to-1 AND reparent-to-subreaper-PID-47, ps-unavailable startup probe, idempotent shutdown under racing signals, 5s cleanup deadline when `disconnect()` rejects, `--stdio-idle-timeout` strict parse rejects (`abc`, `30junk`, `-1`, `1.5`, blank, missing).
+- `test/sql-query.test.ts` (7 cases) ... scalar binds round-trip, array/promise/object rejection, `executeRawJsonb` JSONB round-trip with `jsonb_typeof = 'object'` and `->>` semantics, v0.12.0 double-encode regression guard, null JSONB handling, scalars-then-jsonb call shape.
+- `test/config-env.test.ts` (5 cases, migrated to `withEnv()` helper per CLAUDE.md R1) ... `DATABASE_URL` + `GBRAIN_DATABASE_URL` precedence, file-only config, env-only config, no-config null path.
+- `test/e2e/auth-takes-holders-pglite.test.ts` (6 cases against in-memory PGLite, no DATABASE_URL gate) ... full takes-holders create/update round-trip, mcp_request_log.params object + null writes, migration v46 normalizer (seed string-shaped row, run UPDATE, assert object shape; second-run no-op for idempotency).
+- `test/http-transport.test.ts` (24 cases, mock updated to intercept `engine.executeRaw`) ... bearer auth, /health DB probe, 401 paths, rate limit, body cap, mcp_request_log audit.
+
+### To take advantage of v0.31.3
+
+`gbrain upgrade` runs the v46 migration automatically on first start. Verify:
+
+```bash
+gbrain upgrade
+gbrain doctor                                    # confirm migration v46 is applied
+```
+
+If you're on PGLite and want to confirm `gbrain serve --http` works:
+
+```bash
+gbrain auth register-client test --grant-types client_credentials --scopes read
+gbrain serve --http &
+# Mint a token via the OAuth /token endpoint, hit /mcp with a real op.
+```
+
+If `gbrain doctor` flags anything after upgrade, file an issue: https://github.com/garrytan/gbrain/issues with `~/.gbrain/upgrade-errors.jsonl` if it exists and which step broke.
+
+### For contributors
+
+This PR went through `/plan-eng-review` (5 issues, all addressed) and `/codex` outside-voice consult-mode plan review (10 findings, 9 closed by re-design ... including reversing the original "extend SqlQuery with .json()" plan to "ship a separate `executeRawJsonb` helper" because codex argued the SqlQuery adapter should stay scalar-only or it drifts into a partial postgres.js clone). Decision log lives at `~/.claude/plans/system-instruction-you-are-working-peppy-moore.md`. Two atomic bisect-friendly commits in one PR.
+
+Closes #413, #446. Supersedes #591. Closes the architectural intent of #676 and #681.
+
+## [0.31.2] - 2026-05-08
+
+**`gbrain sync --strategy code` no longer hangs on big repos. Code-strategy first-sync actually indexes code files. Walker hardened. Tree-sitter is now bounded.**
+
+A 1500-file gstack repo could pin `gbrain sync --strategy code` at 99% CPU on a single thread for hours, with zero disk writes and zero TCP, and a `page_count` that stayed at 0. Three real defects, fixed together: tree-sitter's WASM loop had no wall-clock cap, so a single pathological file could wedge the whole sync indefinitely. Code-strategy first-sync silently fed only `.md` files into the import pipeline, so even when sync didn't hang, no code page was produced. The walker that powered sync's cost preview was weaker than the import walker for no good reason. v0.31.2 closes all three.
+
+### What you can now do
+
+**Run `gbrain sync --strategy code` on big symlink-rich repos without wedging.** Per-file tree-sitter parsing is bounded by a 30-second wall-clock cap via `parser.setTimeoutMicros`. When a file's parse exceeds the cap, the chunker logs `[gbrain chunker] timeout parsing <path> after 30000ms; falling back to recursive chunks` to stderr and falls back to the recursive text chunker. Search quality on that one file degrades; the sync keeps going. Override the default with `GBRAIN_CHUNKER_TIMEOUT_MS=60000`.
+
+**Code-strategy first-sync now imports code files.** Previously `performFullSync` called `runImport(repoPath)` with no strategy, which silently fell through to a markdown-only walker. Now strategy threads end-to-end (`performSync → performFullSync → runImport`), through the full-sync write path AND the dry-run preview. `gbrain sync --strategy code --dry-run` finally reports the right number.
+
+**Walker survives self-referencing symlinks.** The new `collectSyncableFiles` is the single source of truth across import, full-sync dry-run, and cost preview. Three layered defenses: `lstatSync` rejects every symlink before recursion; an inode-cycle Map keyed on `${st_dev}:${st_ino}` catches non-symlink loops (bind mounts, ZFS snapshots); `MAX_WALK_DEPTH=32` is the structural backstop. Output is sorted so `runImport`'s checkpoint resume stays deterministic across runs. Override the depth cap with `GBRAIN_MAX_WALK_DEPTH=64`.
+
+**Phase logs surface where time goes.** Strategic stderr lines (`[gbrain phase] sync.git_pull start`, `sync.fullsync.import done 12345ms imported=602 skipped=3 errors=0`, `import.collect_files done 187ms files=1503`, `import.process_file slow 7234ms src/big.ts`) tell you which phase a stuck sync is in. The next hang reproduction will name the phase, not produce zero data.
+
+### Important note for upgraders
+
+After `gbrain upgrade`, the first sync against any source registered with `--strategy code` will now actually import code files that previously got skipped. On a 1500-file repo this means a one-time embed-cost spike proportional to your code-file count (rough order: ~1500 code files × ~1500 tokens average = 2.25M tokens × $0.13/1M = $0.30 with `text-embedding-3-large`). Run with `--dry-run` first to preview the file count. The CHANGELOG-and-actually-correct behavior is now aligned.
+
+### How it works under the hood
+
+`parser.setTimeoutMicros(timeoutMs * 1000)` is the canonical web-tree-sitter API for wall-clock parser caps; `parser.parse()` returns null when exceeded. `parseWithTimeout` (the new pure-function seam in `src/core/chunkers/code.ts`) wraps the call, throws `ChunkerTimeoutError` on null, and the caller's `try/finally` reaps the parser+tree WASM allocation. The pre-fix `chunkCodeTextFull` did manual `delete()` on success and on null, but the catch block returned without cleanup — codex caught the leak before it shipped.
+
+`isCollectibleForWalker(path, strategy, multimodal)` surfaces the markdown+multimodal carve-out at one site instead of leaking it across two filters. `isSyncable` (incremental diff path) admits images only on `auto`; the walker historically admitted them on markdown too when `GBRAIN_EMBEDDING_MULTIMODAL=true`. Same behavior, one source of truth.
+
+### Tests
+
+- `test/sync-walker-symlink.test.ts` (7 cases) — self-referencing symlink, symlink chain through real dirs, max-depth bailout, strategy filter, dot-dir + node_modules skip, multimodal preservation under markdown strategy, deterministic ordering.
+- `test/chunker-timeout.test.ts` (7 cases) — parser-stub timeout seam, ChunkerTimeoutError shape, env wiring under `GBRAIN_CHUNKER_TIMEOUT_MS=1`, fallback-to-recursive behavior, fail-loud regression for missing `setTimeoutMicros`, repeated-timeout cleanup smoke test.
+
+### To take advantage of v0.31.2
+
+`gbrain upgrade` then re-run any previously-stuck `gbrain sync --strategy code`. Should complete in ~25-35 minutes on a 1500-file repo. If it doesn't, the `[gbrain phase] *` log lines will name the phase that wedged — file an issue with the relevant log section.
+
+```bash
+gbrain upgrade
+cd <your-source-repo>
+gbrain sync --strategy code --dry-run --source <id>   # preview the file count
+gbrain sync --strategy code --source <id>             # the real run
+```
+
+### For contributors
+
+Codex's adversarial review caught five bug-grade findings in the original plan that hadn't survived eng review: parser cleanup leak under thrown timeout, an internal contradiction between `isSyncable` and the multimodal walker behavior, a missed dry-run plumbing site, deterministic-order requirement for checkpoint resume, and machine-speed-dependent timeout tests. All five folded into the shipped fix without re-litigating the bundle decision. Cross-model review on every nontrivial plan change continues to pay.
+
 ## [0.31.1.1-fixwave] - 2026-05-09
 
 **Security upgrade priority: closes an authorization-code scope-escalation in `gbrain serve --http`. Plus 18 community fix-wave PRs covering upgrade-path correctness, multi-source sync, takes-fence privacy, dream cycle reliability, and CLI hygiene.**

@@ -24,13 +24,12 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/serv
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
+import type { SqlQuery, SqlValue } from './sql-query.ts';
+export type { SqlQuery, SqlValue };
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** Raw SQL query function — works with both PGLite and postgres tagged templates */
-export type SqlQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
 
 /**
  * Convert a JS array to a PostgreSQL array literal for PGLite compat.
