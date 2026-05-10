@@ -2,6 +2,103 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.31.4.1] - 2026-05-10
+
+**Takes v2: lessons from a 100K-take production extraction folded back into the runtime, and `gbrain auth` works on Postgres again.**
+
+The first full production takes extraction (28,256 pages, 100,720 takes, $361 on Azure GPT-5.5) plus a cross-modal eval (GPT-5.5 + Opus 4.6 against a 5-dim rubric, 6.8/10 overall) surfaced five concrete things to fix in the runtime. Holder grammar is now enforced at parse time. Weights round to a 0.05 grid on insert at all four write sites, and migration v46 backfills pre-v0.32 rows to the same grid. Synthesize auto-enables when a corpus dir is configured, so the silent footgun ("I set the dir, why is nothing happening?") is gone. `recall` and `forget` actually route now (v0.31 added them to `handleCliOnly()` but forgot the `CLI_ONLY` gate set). And the `gbrain auth` regression that crashed every OAuth subcommand on Postgres with a misleading `connect() has not been called` error is fixed.
+
+This release is also the v0.31.4.1 dot-suffix slot we needed because the previous merge subject claimed `v0.31.4` without bumping VERSION or `package.json`. Going forward, gbrain versions adopt `MAJOR.MINOR.PATCH.MICRO` so dot-suffix follow-ups land cleanly without churning the patch number.
+
+### What you can now do
+
+**`gbrain eval takes-quality`** ships as a real CLI surface. `run` scores a sample with three frontier models against the 5-dim rubric. `replay` re-verifies a receipt without the brain (CI-friendly, no `DATABASE_URL` needed). `trend` shows quality over time segregated by `rubric_version`. `regress --against <receipt> --threshold T` exits 1 when any dim drops past the threshold, so you can gate a PR on "is the new prompt actually better, or am I overfitting to one example?". Receipts persist DB-authoritative in `eval_takes_quality_runs` (migration v47); the disk artifact is best-effort. The 4-sha receipt name (corpus + prompt + models + rubric) means a rubric tweak segregates trend rows instead of silently corrupting the graph.
+
+**`gbrain doctor` warns when takes weights drift off the 0.05 grid.** Post-migration drift detector. More than 10% off-grid fails with an `apply-migrations` fix hint, 1-10% warns, less than 1% is ok. Tolerance comparison (abs > 1e-3) avoids float32 representation noise so a healthy brain doesn't look broken.
+
+**Bad takes holders surface as sync failures instead of silent quality drag.** Strings like `Garry`, `people/Garry-Tan`, `world/garry-tan`, whitespace-only, embedded slashes all bucket into the new `TAKES_HOLDER_INVALID` code in `~/.gbrain/sync-failures.jsonl` and show up in `gbrain doctor`. Legacy bare-slug holders (`garry`, `alice`) are preserved as v0.32 transition compat. Dotted and underscore slugs (`companies/acme.io`, `people/foo_bar`) stay valid because `SLUG_SEGMENT_PATTERN` is now a single source of truth shared with sync.
+
+**`gbrain auth register-client` works on Postgres.** Pre-fix every OAuth subcommand crashed with `Error: No database connection: connect() has not been called.` because `withConfiguredSql` created a `PostgresEngine` but never called `engine.connect()`. The error pointed users at `gbrain init` and made the regression invisible. The fix unblocks three previously-failing E2E suites (`serve-http-oauth.test.ts` 0/28 → 28/28, `sources-remote-mcp.test.ts` 0/14 → 14/14, `thin-client.test.ts` 0/7 → 6/7 + 1 documented skip).
+
+### Numbers that matter
+
+Cross-modal eval over the first full production extraction, 100,720 takes scored on a 5-dim rubric with GPT-5.5 and Opus 4.6 as judges. The "fix shipped" column is what v0.31.4.1 does about each dimension:
+
+| Dimension | GPT-5.5 | Opus 4.6 | Avg | Fix shipped |
+|---|---|---|---|---|
+| Accuracy | 7 | 8 | 7.5 | `docs/takes-vs-facts.md` architectural split |
+| Attribution | 6 | 7 | 6.5 | Holder grammar enforced at parser |
+| Weight calibration | 7 | 7 | 7.0 | 0.05 grid on insert + v46 backfill |
+| Kind classification | 6 | 7 | 6.5 | Filing-rules anchor + JSDoc examples |
+| Signal density | 7 | 6 | 6.5 | Synthesize auto-enables on corpus dir |
+
+Attribution at 6.5/10 was the dominant failure mode, and the eval flagged holder/subject confusion specifically (the model writing a fact as `holder=people/Founder-Name` when the right answer is "this person holds this belief"). v0.31.4.1 makes that a sync-failure record an operator can see instead of a silent calibration drag.
+
+### What this means for you
+
+If you run takes extraction in production, upgrade. The runtime fixes (weight rounding, holder validation, synthesize auto-enable) close real footgun classes, and v46 + v47 bring existing data and schema to the same bar without manual work. Run `gbrain upgrade && gbrain doctor` and watch the new `takes_weight_grid` slice confirm the backfill landed. Then capture a baseline with `gbrain eval takes-quality run` so the next prompt change has something to regress against.
+
+## To take advantage of v0.31.4.1
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor                                              # takes_weight_grid + sync_failures slices
+   gbrain eval takes-quality run --limit 20 --cycles 1        # capture a baseline receipt
+   ```
+3. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+#### Takes v2 runtime
+- Holder grammar enforced at parse time. `parseTakesFence()` emits `TAKES_HOLDER_INVALID` warnings on non-matching holders; the row is preserved (markdown source-of-truth contract). `HOLDER_REGEX` wraps the shared `SLUG_SEGMENT_PATTERN` exported from `src/core/sync.ts` so it accepts every legitimate slug `slugifySegment()` produces.
+- Producer seam: `extractTakesFromDb` and `extractTakesFromFs` populate `ExtractTakesResult.failedFiles[]` from the parser warnings. Migration v0.28.0's `phaseBBackfill` calls `recordSyncFailures(result.failedFiles, 'migration:v0.28.0-backfill')` so doctor's `sync_failures` slice surfaces post-upgrade drift.
+- `classifyErrorCode` extends with `TAKES_HOLDER_INVALID`, `TAKES_TABLE_MALFORMED`, `TAKES_ROW_NUM_COLLISION`, `TAKES_FENCE_UNBALANCED`. Previously these warnings bucketed to `UNKNOWN`.
+- `normalizeWeightForStorage()` extracted to `src/core/takes-fence.ts` as the single source of truth for all four takes write sites: `addTakesBatch` + `updateTake` on PGLite + Postgres. Guards `!Number.isFinite()` BEFORE the [0,1] clamp so NaN no longer survives to the DB. Also rounds to 0.05 grid; preserves 0.0 and 1.0 exactly.
+- Migration v46 (`takes_weight_round_to_grid`) backfills pre-v0.32 rows to the 0.05 grid. Tolerance comparison (`abs > 1e-3`) avoids the float32 representation-noise re-touch loop. Runs with `transaction: false` so the migration runner doesn't hold a long-lived transaction blocking other gbrain processes.
+
+#### Takes v2 documentation
+- `docs/takes-vs-facts.md` documents the two epistemological layers, why they must never be conflated, how the dream cycle bridges them, and the production extraction data (model selection, eval dimensions, key learnings for extraction prompts).
+- `skills/_brain-filing-rules.md` gains a "Takes attribution" section distilling the 6 rules into a terse contract for downstream agents.
+- `src/core/takes-fence.ts` JSDoc expanded with concrete right/wrong holder examples from the cross-modal eval (amplification ≠ endorsement, self-reported ≠ verified, founder describing company → `people/founder` not `companies/slug`).
+
+#### Takes v2 fixes
+- `recall` and `forget` added to the `CLI_ONLY` gate set. v0.31 added them to `handleCliOnly()` but the gate set was missed, so both fell through to `cliOps.get()` → `'Unknown command'`.
+- `synthesize` auto-enables when `session_corpus_dir` is configured. Explicit `enabled=false` still wins.
+
+#### Takes-quality eval CLI
+- `gbrain eval takes-quality {run,replay,trend,regress}` (`src/commands/eval-takes-quality.ts` + `src/core/takes-quality-eval/`).
+- Migration v47 creates `eval_takes_quality_runs`. DB-authoritative receipt persistence (full receipt JSON in a JSONB column) with a 4-sha UNIQUE constraint that supports `ON CONFLICT DO NOTHING` idempotency and rubric-version segregation.
+- `replay` is the only sub-subcommand that doesn't need a brain. Routes through `cli.ts`'s no-DB bypass directly to `runReplayNoBrain`, exits 0/1/2 cleanly without ever touching the engine.
+- Pricing fail-closed: any model not in `pricing.ts` produces a `PricingNotFoundError` BEFORE any HTTP call fires (only when `--budget-usd` is set; null budget skips the gate).
+- Aggregate requires all 5 declared rubric dimensions per model. Missing-dim drops the contribution, treated identically to a parse failure. Empty-scores PASS regression guard preserved.
+- `parseModelJSON` + `ParsedScore` + `ParsedModelResult` types hoisted from `cross-modal-eval/json-repair.ts` to `eval-shared/json-repair.ts`. The original module re-exports both function and types for compatibility.
+
+#### Doctor
+- New `takes_weight_grid` slice. Pure exported `takesWeightGridCheck(engine: BrainEngine)` so tests can target the helper directly with stubbed engines and against real PGLite for the four ratio bands. Branches: 0 takes → ok, >10% off-grid → fail with `apply-migrations` fix hint, 1-10% → warn, ≤1% → ok, missing table (pre-v37) → graceful skip.
+
+#### Auth (Postgres regression fix)
+- `withConfiguredSql` in `src/commands/auth.ts` now calls `engine.connect()` before invoking the SQL adapter. Pre-fix every `gbrain auth` subcommand on Postgres crashed because `PostgresEngine.sql` fell back to the module-level singleton (`db.getConnection()`) when its instance `_sql` was unset, and `db.connect()` wasn't called either. Anyone with a Postgres-backed brain hit this. Verified with `gbrain auth register-client` round-trip: before, `Error: No database connection`; after, credentials printed.
+
+#### Tests
+- 200+ new cases. Highlights: takes-quality boundaries / runner / receipt-write, takes-holder-validation (26 cases including codex-review-#3 dotted-slug positives and HOLDER_REGEX anchoring guard), engine-weight-rounding integration (15 cases mirroring the real-Postgres E2E), v46 + v47 structural assertions, real-Postgres E2E for `eval_takes_quality_runs` (8 cases including the postgres.js JSONB encoding round-trip), real-Postgres takes-weight-rounding write-path (6 cases covering the `unnest()` bind shape PGLite doesn't exercise), extract-takes producer seam (7 cases).
+- `withEnv()` adoption: `test/eval-takes-quality-receipt-write.test.ts` refactored from direct `process.env.GBRAIN_HOME = ...` mutation to the helper, complying with the v0.32.0 test-isolation lint contract (`scripts/check-test-isolation.sh` R1).
+- `test/eval-takes-quality-runner.serial.test.ts` quarantined as `*.serial.test.ts` because `mock.module(...)` leaks across files in the same shard process (R2 in the lint contract).
+
+#### Versioning convention
+- gbrain versions move to `MAJOR.MINOR.PATCH.MICRO`. The `.MICRO` slot lets dot-suffix follow-ups land without churning the patch number when a release like #795 ships its commit subject ahead of its VERSION bump. Existing 3-level versions remain valid in history.
+
 ## [0.31.3] - 2026-05-09
 
 **`gbrain serve` stops leaking the PGLite write lock when the parent disconnects, and `gbrain auth` + `gbrain serve --http` work against PGLite brains.**

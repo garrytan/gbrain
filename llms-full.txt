@@ -513,7 +513,7 @@ Five tiers of test commands, each with a clear scope:
 
 ### CI vs local: intentionally divergent file sets
 
-- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` 4-way, which uses FNV-1a hash bucketing and INCLUDES `*.slow.test.ts`. CI is the ground truth for "did everything pass."
+- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` 4-way, which uses FNV-1a hash bucketing and INCLUDES `*.slow.test.ts`. As of v0.31.4.1, CI EXCLUDES `*.serial.test.ts` from the hash buckets and runs them on shard 1 via `bun run test:serial` at `--max-concurrency=1`. Before that, serial files were hashed in alongside parallel files, which broke the `mock.module` quarantine (top-level mocks in serial files leaked into the parallel files they shared a shard process with — most visibly, `eval-takes-quality-runner.serial.test.ts` stubbed `gateway.ts` and broke every `gateway.embedMultimodal` test in `voyage-multimodal.test.ts` on shard 2). CI is the ground truth for "did everything pass."
 - **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses round-robin-by-index sharding and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Local trades coverage for inner-loop speed; CI catches what local skips.
 
 This divergence is intentional. Don't try to make them equal — the two scripts deliberately solve different problems. The regression test at `test/scripts/run-unit-shard.test.ts` pins what the local fast loop should and shouldn't include.
@@ -875,15 +875,26 @@ sync. `/ship` enforces this via Step 12's idempotency check (VERSION vs
 package.json drift), but the canonical list lives here so future runs and
 the auto-update agent know where to look.
 
+**Version format is mandatory: `MAJOR.MINOR.PATCH.MICRO` (four numeric
+segments, dot-separated, no leading `v`).** Every new release MUST use the
+4-segment form. The `.MICRO` slot is the dot-suffix follow-up channel: when
+a release ships its commit subject ahead of its VERSION bump (e.g. PR #795
+landing as `v0.31.4` without bumping the file), the corrective ship lands
+as `0.31.4.1` rather than churning the patch number to `0.31.5`. Suffixes
+like `-fixwave` are still allowed as needed (`0.31.1.1-fixwave`), but the
+four numeric segments are required first. Historical 3-segment versions
+(`0.31.3`, `0.22.1`) remain valid in `git log` and migration filenames
+(`skills/migrations/v0.21.0.md`); do NOT rewrite them. Going forward only.
+
 **Required (every release must update all five):**
 
 | File | What lives there | Format |
 |---|---|---|
-| `VERSION` | The single source of truth. Read first by `/ship`, the binary, and CI version-gate. | Bare 4-digit string `MAJOR.MINOR.PATCH.MICRO` (e.g. `0.22.1`), no leading `v`, no trailing newline-sensitivity issues. |
-| `package.json` | Bun/npm package version. `gbrain --version` reads it via the compiled binary's bundled package metadata. CI version-gate cross-checks this against `VERSION` and fails if they drift. | `"version": "0.22.1"` |
-| `CHANGELOG.md` | Top entry header `## [0.22.1] - YYYY-MM-DD` plus the "To take advantage of v0.22.1" block. | Standard Keep-a-Changelog header. |
-| `TODOS.md` | Any TODO entries that mention "follow-up from vX.Y.Z" use the version of the release that filed them. Update only when filing NEW follow-up TODOs. | Inline `vX.Y.Z` references in TODO bodies. |
-| `CLAUDE.md` | The Key Files section's per-file annotations carry `vX.Y.Z (#NNN)` tags noting which release introduced a behavior. Update whenever a wave's annotations get folded in. | Inline `vX.Y.Z (#NNN, contributed by @user)` references. |
+| `VERSION` | The single source of truth. Read first by `/ship`, the binary, and CI version-gate. | Bare 4-segment string `MAJOR.MINOR.PATCH.MICRO` (e.g. `0.31.4.1`), no leading `v`. |
+| `package.json` | Bun/npm package version. `gbrain --version` reads it via the compiled binary's bundled package metadata. CI version-gate cross-checks this against `VERSION` and fails if they drift. | `"version": "0.31.4.1"` |
+| `CHANGELOG.md` | Top entry header `## [0.31.4.1] - YYYY-MM-DD` plus the "To take advantage of v0.31.4.1" block. | Standard Keep-a-Changelog header. |
+| `TODOS.md` | Any TODO entries that mention "follow-up from vX.Y.Z.W" use the version of the release that filed them. Update only when filing NEW follow-up TODOs. | Inline `vX.Y.Z.W` references in TODO bodies. |
+| `CLAUDE.md` | The Key Files section's per-file annotations carry `vX.Y.Z.W (#NNN)` tags noting which release introduced a behavior. Update whenever a wave's annotations get folded in. | Inline `vX.Y.Z.W (#NNN, contributed by @user)` references. |
 
 **Auto-derived (no manual edit; refreshed by their own commands):**
 
