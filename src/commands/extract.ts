@@ -720,11 +720,15 @@ async function extractLinksFromDB(
   // N-thousand API call trap on 46K-page brains. Resolver has a per-run
   // cache so duplicate names (same person appearing on many pages) resolve
   // once, not once per mention.
+  //
+  // Used for BOTH body wikilink resolution (always-on now — see #769 follow-up:
+  // generic `[[bare-name]]` refs need fuzzy matching against canonical slugs)
+  // and frontmatter resolution (gated by --include-frontmatter via skipFrontmatter
+  // opt below). Pre-fix nullResolver was used to suppress frontmatter; that's now
+  // moved into extractPageLinks's opts.skipFrontmatter so body refs always have a
+  // working resolver.
   const resolver = makeResolver(engine, { mode: 'batch' });
   const unresolved: UnresolvedFrontmatterRef[] = [];
-  const nullResolver = {
-    resolve: async () => null as string | null,
-  };
   const allSlugs = await engine.getAllSlugs();
   const slugList = Array.from(allSlugs);
   let processed = 0, created = 0;
@@ -767,9 +771,11 @@ async function extractLinksFromDB(
     // --include-frontmatter default OFF in v0.13 (codex tension 5, back-compat).
     // Migration orchestrator explicitly enables it for the one-time backfill;
     // user-invoked `gbrain extract links` stays outgoing-only.
-    const activeResolver = includeFrontmatter ? resolver : nullResolver;
+    // Body wikilinks (#769 follow-up) ALWAYS get the resolver — opts.skipFrontmatter
+    // gates the frontmatter pass independently.
     const extracted = await extractPageLinks(
-      slug, fullContent, page.frontmatter, page.type, activeResolver,
+      slug, fullContent, page.frontmatter, page.type, resolver,
+      { skipFrontmatter: !includeFrontmatter },
     );
     unresolved.push(...extracted.unresolved);
 

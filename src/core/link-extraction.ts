@@ -32,6 +32,15 @@ export interface EntityRef {
    *   - sourceId null  → 'unqualified'
    */
   sourceId?: string | null;
+  /**
+   * Set when the ref came from the generic `[[anything]]` pass (not gated by
+   * DIR_PATTERN). The slug field holds the literal wikilink text — callers
+   * MUST run it through a resolver (pg_trgm + getPage fuzzy match) before
+   * persisting, since the brain may store the page under a longer path
+   * (`topics/.../actual-slug`) than the wikilink writes. Untagged refs
+   * already match a known entity dir and need no resolution.
+   */
+  needsResolution?: boolean;
 }
 
 /** v0.17.0: how a link's target source was pinned at extraction time. */
@@ -90,6 +99,20 @@ const QUALIFIED_WIKILINK_RE = new RegExp(
   `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
+
+/**
+ * Generic Obsidian-style wikilink — matches `[[anything]]` without
+ * DIR_PATTERN whitelisting. Wiki/topic/learning pages frequently link via
+ * `[[bare-name]]` or `[[2026-05-07-cost-plan]]` where the literal text
+ * isn't a canonical slug; the resolver is responsible for fuzzy-matching
+ * to the real page (e.g. `topics/dragon-pilot/raw/notes/2026-05-07-cost-plan`).
+ *
+ * Used AFTER QUALIFIED_WIKILINK_RE and WIKILINK_RE pick off their cases —
+ * the masked-ranges pass in extractEntityRefs prevents double-emission.
+ * Refs from this pass are tagged `needsResolution: true` so callers know
+ * to run them through a SlugResolver before the page-existence check.
+ */
+const WIKILINK_GENERIC_RE = /\[\[([^|\]#\n[]+?)(?:#[^|\]]*?)?(?:\|([^\]]+?))?\]\]/g;
 
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
@@ -264,6 +287,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
 
   // 2b. Unqualified Obsidian wikilinks: [[path]] or [[path|Display Text]]
   //     Same shape rule: omit sourceId when unqualified.
+  const unqualifiedRanges: Array<[number, number]> = [];
   const unmasked = maskRanges(stripped, qualifiedRanges);
   const wikiPattern = new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags);
   while ((match = wikiPattern.exec(unmasked)) !== null) {
@@ -274,6 +298,26 @@ export function extractEntityRefs(content: string): EntityRef[] {
     const displayName = (match[2] || slug).trim();
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir });
+    unqualifiedRanges.push([match.index, match.index + match[0].length]);
+  }
+
+  // 2c. Generic wikilinks: `[[anything]]` not gated by DIR_PATTERN. Wiki +
+  //     topic + learning content frequently writes `[[bare-name]]` where
+  //     the text isn't a canonical brain slug. We tag these for resolver
+  //     fuzzy-matching downstream. Mask out ranges already claimed by 2a/2b
+  //     so we don't double-emit, and skip qualified-syntax tokens (anything
+  //     containing `:`) that would have matched 2a if its source was known.
+  const genericMasked = maskRanges(stripped, [...qualifiedRanges, ...unqualifiedRanges]);
+  const genericPattern = new RegExp(WIKILINK_GENERIC_RE.source, WIKILINK_GENERIC_RE.flags);
+  while ((match = genericPattern.exec(genericMasked)) !== null) {
+    let slug = match[1].trim();
+    if (!slug) continue;
+    if (slug.includes('://')) continue;
+    if (slug.includes(':')) continue; // qualified-syntax token; 2a's job
+    if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+    const displayName = (match[2] || slug).trim();
+    const dir = slug.includes('/') ? slug.split('/')[0] : '';
+    refs.push({ name: displayName, slug, dir, needsResolution: true });
   }
 
   return refs;
@@ -362,11 +406,25 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
+  opts: { skipFrontmatter?: boolean } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
   // 1. Markdown entity refs.
   for (const ref of extractEntityRefs(content)) {
+    let targetSlug = ref.slug;
+    let linkSource = 'markdown';
+    // Generic wikilinks (`[[bare-name]]` outside DIR_PATTERN) carry the raw
+    // text in ref.slug, not a real page slug. Run them through the resolver
+    // so brains that link by short name can still produce edges. If the
+    // resolver returns null the candidate is dropped — better to silently
+    // skip an unresolvable link than to leave dangling rows in the table.
+    if (ref.needsResolution) {
+      const resolved = await resolver.resolve(ref.name, ref.dir || undefined);
+      if (!resolved) continue;
+      targetSlug = resolved;
+      linkSource = 'wikilink-resolved';
+    }
     const idx = content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that
     // appear at sentence-or-paragraph distance from the slug — common in
@@ -374,10 +432,10 @@ export async function extractPageLinks(
     // then portfolio companies are listed in subsequent sentences.
     const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
     candidates.push({
-      targetSlug: ref.slug,
-      linkType: inferLinkType(pageType, context, content, ref.slug),
+      targetSlug,
+      linkType: inferLinkType(pageType, context, content, targetSlug),
       context,
-      linkSource: 'markdown',
+      linkSource,
     });
   }
 
@@ -404,9 +462,15 @@ export async function extractPageLinks(
   }
 
   // 3. Frontmatter-derived edges (v0.13). Includes the legacy `source:`
-  // field along with the full field map.
-  const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
-  candidates.push(...fm.candidates);
+  // field along with the full field map. Caller can suppress via
+  // opts.skipFrontmatter — extract.ts uses this to keep "--include-frontmatter
+  // off" semantics now that body wikilinks need an active resolver.
+  let fmUnresolved: UnresolvedFrontmatterRef[] = [];
+  if (!opts.skipFrontmatter) {
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
+    candidates.push(...fm.candidates);
+    fmUnresolved = fm.unresolved;
+  }
 
   // Within-page dedup: same (fromSlug, targetSlug, linkType, linkSource)
   // collapses to one entry. First occurrence wins.
@@ -418,7 +482,7 @@ export async function extractPageLinks(
     seen.add(key);
     result.push(c);
   }
-  return { candidates: result, unresolved: fm.unresolved };
+  return { candidates: result, unresolved: fmUnresolved };
 }
 
 /** Excerpt a window of `width` chars around `idx`, collapsed to one line. */
@@ -663,6 +727,35 @@ export function makeResolver(
   opts: { mode: 'batch' | 'live' } = { mode: 'live' },
 ): SlugResolver {
   const cache = new Map<string, string | null>();
+  // Lazy-built tail index: { '2026-05-07-cost-plan' → 'topics/dragon-pilot/raw/notes/2026-05-07-cost-plan' }
+  // First call to step 2.5 builds it; subsequent calls reuse. Built-once
+  // per resolver instance — extract.ts and runAutoLink each create their
+  // own resolver, so per-run cost is bounded.
+  let tailIndex: Map<string, string> | null = null;
+  async function ensureTailIndex(): Promise<Map<string, string>> {
+    if (tailIndex !== null) return tailIndex;
+    const tail = new Map<string, string>();
+    // Defensive: legacy engines / test mocks may not implement getAllSlugs.
+    // Fall back to an empty index — slug-tail match is best-effort, not load-bearing.
+    if (typeof engine.getAllSlugs !== 'function') {
+      tailIndex = tail;
+      return tail;
+    }
+    try {
+      const all = await engine.getAllSlugs();
+      for (const s of all) {
+        const t = s.includes('/') ? s.slice(s.lastIndexOf('/') + 1) : s;
+        // First-write wins on collision. With ~thousands of pages, tail
+        // collisions are rare; deterministic is more important than perfect.
+        if (!tail.has(t)) tail.set(t, s);
+      }
+    } catch {
+      // Index build failed (e.g. DB error) — empty map → step 2.5 finds nothing,
+      // resolver continues to step 3. Never throw out of the resolver.
+    }
+    tailIndex = tail;
+    return tail;
+  }
 
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
 
@@ -695,6 +788,27 @@ export function makeResolver(
         if (page) {
           cache.set(cacheKey, candidate);
           return candidate;
+        }
+      }
+
+      // Step 2.5: slug-tail match. Wikilinks like `[[2026-05-07-cost-plan]]`
+      // or `[[eeva-direct-competitor]]` write a basename, but the canonical
+      // page lives at `topics/dragon-pilot/raw/notes/2026-05-07-cost-plan`
+      // or `topics/dragon-pilot/wiki/topics/eeva-direct-competitor`.
+      // pg_trgm title-fuzzy (step 3) misses these because the human-friendly
+      // title diverges from the slug-tail. Index slugs by their tail once and
+      // look up by both raw and slugified name. Cheap (one getAllSlugs per
+      // resolver instance, then in-memory map lookups).
+      const tIdx = await ensureTailIndex();
+      const tailMatch = tIdx.get(slugified) ?? tIdx.get(trimmed);
+      if (tailMatch) {
+        // Honor dir hints: if hints provided, only return when the matched
+        // slug's dir-prefix is one of the hints. Otherwise unrelated dirs
+        // could cross-link (e.g. a wikilink in a meeting page hitting an
+        // unrelated topic page that shares a basename).
+        if (hints.length === 0 || hints.some(h => tailMatch.startsWith(`${h}/`)) || !tailMatch.includes('/')) {
+          cache.set(cacheKey, tailMatch);
+          return tailMatch;
         }
       }
 
