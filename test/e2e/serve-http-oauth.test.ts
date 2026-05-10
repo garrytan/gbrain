@@ -180,11 +180,12 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
   test('expired/invalid token is rejected at /mcp', async () => {
     const res = await mcpCall('gbrain_at_totally_fake_token', 'tools/list');
-    // Invalid tokens should not return 200 with tool results
     const body = await res.text();
+    // Invalid bearer tokens must be clean auth failures, not 500s. The MCP
+    // SDK maps InvalidTokenError to 401 with the OAuth error payload.
+    expect(res.status).toBe(401);
     expect(body).not.toContain('"tools"');
-    // Should be an error status (401, 403, or 500 depending on SDK error mapping)
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(body).toContain('invalid_token');
   });
 
   test('missing Authorization header returns 401', async () => {
