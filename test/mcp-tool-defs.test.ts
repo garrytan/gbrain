@@ -64,4 +64,14 @@ describe('buildToolDefs', () => {
       expect(Array.isArray(def.inputSchema.required)).toBe(true);
     }
   });
+
+  test('array parameters always declare item schemas for OpenAI-compatible clients', () => {
+    for (const def of buildToolDefs(operations)) {
+      for (const [name, schema] of Object.entries(def.inputSchema.properties) as Array<[string, any]>) {
+        if (schema.type !== 'array') continue;
+        expect(schema.items, `${def.name}.${name} is missing items`).toBeDefined();
+        expect(typeof schema.items.type, `${def.name}.${name}.items.type`).toBe('string');
+      }
+    }
+  });
 });
