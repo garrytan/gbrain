@@ -73,6 +73,13 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // v0.26.5 — forward-referenced by `CREATE INDEX pages_deleted_at_purge_idx
   // ON pages (deleted_at) WHERE deleted_at IS NOT NULL`.
   { kind: 'column', table: 'pages', column: 'deleted_at' },
+  // v0.29.1 — forward-referenced by `CREATE INDEX pages_coalesce_date_idx
+  // ON pages (COALESCE(effective_date, updated_at))` and used by the recency
+  // backfill/importer path.
+  { kind: 'column', table: 'pages', column: 'effective_date' },
+  { kind: 'column', table: 'pages', column: 'effective_date_source' },
+  { kind: 'column', table: 'pages', column: 'import_filename' },
+  { kind: 'column', table: 'pages', column: 'salience_touched_at' },
   // v0.27.1 — forward-referenced by `CREATE INDEX idx_chunks_embedding_image
   // ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
   // WHERE embedding_image IS NOT NULL`.
@@ -126,6 +133,12 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
 
       DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
       ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at;
+
+      DROP INDEX IF EXISTS pages_coalesce_date_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS effective_date;
+      ALTER TABLE pages DROP COLUMN IF EXISTS effective_date_source;
+      ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
+      ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
 
       DROP INDEX IF EXISTS idx_chunks_embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image;
@@ -194,6 +207,12 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE links DROP COLUMN IF EXISTS origin_page_id;
       DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
       ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at;
+
+      DROP INDEX IF EXISTS pages_coalesce_date_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS effective_date;
+      ALTER TABLE pages DROP COLUMN IF EXISTS effective_date_source;
+      ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
+      ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
 
       DROP INDEX IF EXISTS idx_chunks_embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image;
@@ -359,21 +378,29 @@ function parseIndexColumnReferences(sql: string): Array<{ table: string; column:
       //   `col`                        — plain identifier
       //   `col vector_cosine_ops`      — column followed by operator class (HNSW)
       //   `col COLLATE "C"`            — column with collation
-      //   `lower(col)`                 — function-wrapped
-      // For shapes 1-3, the column is the LEADING identifier. For shape 4,
-      // the column is the LAST identifier before a close paren.
-      let col: string | null = null;
+      //   `lower(col)` / `COALESCE(a, b)` — function/expression-wrapped
+      // For shapes 1-3, the column is the LEADING identifier. For expression
+      // wrappers, every non-function identifier is treated as a referenced
+      // column so composite expressions don't hide forward references.
+      const cols: string[] = [];
       if (partClean.includes('(')) {
-        // Function-wrapped: `lower(col)` → grab the last identifier inside.
-        const fnMatch = partClean.match(/(\w+)\s*\)\s*$/);
-        if (fnMatch) col = fnMatch[1];
+        // Function/expression-wrapped: `lower(col)` or
+        // `COALESCE(effective_date, updated_at)` → grab identifier arguments,
+        // excluding common SQL function names and literals.
+        const identifiers = partClean.match(/\b[a-zA-Z_]\w*\b/g) ?? [];
+        for (const ident of identifiers) {
+          if (/^(coalesce|lower|upper|true|false|null|asc|desc)$/i.test(ident)) continue;
+          cols.push(ident);
+        }
       } else {
         // Plain or operator-class-suffixed: leading identifier wins.
         const leadMatch = partClean.match(/^["`]?(\w+)["`]?/);
-        if (leadMatch) col = leadMatch[1];
+        if (leadMatch) cols.push(leadMatch[1]);
       }
-      if (col && !/^(true|false|null|asc|desc)$/i.test(col)) {
-        result.push({ table, column: col.toLowerCase() });
+      for (const col of cols) {
+        if (!/^(true|false|null|asc|desc)$/i.test(col)) {
+          result.push({ table, column: col.toLowerCase() });
+        }
       }
     }
   }
@@ -481,6 +508,11 @@ test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE 
   expect(indexRefs).toContainEqual({ table: 'subagent_messages', column: 'provider_id' });
   expect(bootstrapAdds).toContainEqual({ table: 'subagent_messages', column: 'provider_id' });
   expect(covered('subagent_messages', 'provider_id')).toBe(true);
+  // Regression for v0.29.1: expression indexes must unwrap COALESCE(...) and
+  // require bootstrap coverage for older brains missing effective_date.
+  expect(indexRefs).toContainEqual({ table: 'pages', column: 'effective_date' });
+  expect(bootstrapAdds).toContainEqual({ table: 'pages', column: 'effective_date' });
+  expect(covered('pages', 'effective_date')).toBe(true);
 
   // The actual contract: every index column reference must be covered.
   const uncovered: Array<{ table: string; column: string }> = [];
