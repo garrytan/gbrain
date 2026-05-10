@@ -175,14 +175,14 @@ export async function backfillEffectiveDate(
     if (!opts.dryRun) {
       // Compute effective_date for each row, then UPDATE in a batch wrapped
       // in its own transaction (so SET LOCAL statement_timeout scopes to it).
-      // postgres.js's `transaction` would be cleaner but we're using executeRaw
-      // for engine portability; explicit BEGIN/COMMIT does the same on both.
-      if (isPostgres) {
-        await engine.executeRaw(`BEGIN`);
-        await engine.executeRaw(`SET LOCAL statement_timeout = '600s'`);
-      }
-
-      try {
+      // postgres.js v3 refuses ad-hoc BEGIN/COMMIT spread across executeRaw
+      // calls on pooled connections (UNSAFE_TRANSACTION) — must go through
+      // engine.transaction() so all statements share one backend. PGLite path
+      // skips the wrapper (single-writer; no SET LOCAL scoping needed).
+      const applyBatch = async (exec: BrainEngine) => {
+        if (isPostgres) {
+          await exec.executeRaw(`SET LOCAL statement_timeout = '600s'`);
+        }
         for (const r of rows) {
           const fm = parseFrontmatter(r.frontmatter);
           const filename = r.import_filename
@@ -204,20 +204,19 @@ export async function backfillEffectiveDate(
 
           if (!opts.force && datesMatch && sourcesMatch) continue;
 
-          await engine.executeRaw(
+          await exec.executeRaw(
             `UPDATE pages SET effective_date = $1::timestamptz, effective_date_source = $2 WHERE id = $3`,
             [computed.date ? computed.date.toISOString() : null, computed.source, r.id],
           );
           touched++;
           if (computed.source === 'fallback') fallback++;
         }
+      };
 
-        if (isPostgres) await engine.executeRaw(`COMMIT`);
-      } catch (e) {
-        if (isPostgres) {
-          try { await engine.executeRaw(`ROLLBACK`); } catch { /* ignore */ }
-        }
-        throw e;
+      if (isPostgres) {
+        await engine.transaction(applyBatch);
+      } else {
+        await applyBatch(engine);
       }
     } else {
       // Dry run: still count what WOULD change.
