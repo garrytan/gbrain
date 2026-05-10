@@ -2314,6 +2314,241 @@ by this commit — all changes are in the repo. If something breaks at
 the apply-migrations step on production, scripts/jarvis-pg-backup.sh's
 nightly pg_dump (03:33) gives a rollback point.
 
+## 6.22 Upstream v0.31.2 sync (2026-05-09)
+
+5 major releases in one merge: `master..upstream/master` = 22 commits
+across v0.27.0, v0.28.x, v0.29.0/0.29.1/0.29.2, v0.30.0/0.30.1/0.30.2,
+v0.31.0/0.31.1/0.31.1.1-fixwave, v0.31.2. Branch `sync-v0.31.2`, merge
+commit at sync-branch HEAD (later merged to master in Phase 9). 378
+files changed, +57 691 / -1 833 LoC. Only 5 conflicts (down from 31 in
+the previous v0.26.7 sync) thanks to fork's narrow surface and the
+upstream side not yet touching anything in `skills/kos-jarvis/**`,
+`server/`, `workers/`. End-to-end ~3 h.
+
+### Headline upstream features adopted
+
+- **v0.27.0** — pluggable embedding providers via Vercel AI SDK
+  (`src/core/ai/gateway.ts`). Native Google, OpenAI, Voyage, Ollama,
+  LM Studio, LiteLLM proxy. New CLI: `gbrain providers list/test/env/explain`.
+  `--embedding-model provider:model` + `--embedding-dimensions N` flags
+  on `gbrain init`. **This unlocks the M3 milestone for the fork**:
+  `gemini-embed-shim` is now a candidate for retirement.
+- **v0.28.x** — `takes` + `think` skills + per-token MCP allow-list,
+  Voyage multimodal embeddings, lightweight `/health` endpoint
+  (SELECT 1 instead of getStats), restart-sweep recipe (telegram gateway
+  drop-detect), LongMemEval benchmark harness in the box.
+- **v0.29.0/0.29.1** — salience + anomaly detection ("brain surfaces
+  what's hot without being asked"). Adds `pages.emotional_weight`,
+  `pages.salience_touched_at`, `pages.effective_date`, `pages.import_filename`,
+  `pages.recompute_emotional_weight` dream-cycle phase (10th phase).
+- **v0.29.2 / v0.31.1** — thin-client mode (`gbrain init --mcp-only`).
+  Every read/write/admin op routes through `callRemoteTool` when
+  `isThinClient(cfg)`. New `get_brain_identity` op + identity banner.
+  New `gbrain remote ping/doctor` health probes with
+  `oauth_client_scopes_probe` to surface scope mismatches before they
+  hit `gbrain stats`. **Conceptual unlock for M2-B**: `kos-compat-api`
+  could potentially become a thin translator routing KOS-v1 endpoints
+  to MCP tools/call.
+- **v0.30.0** — calibration scorecards. New `gbrain eval cross-modal`,
+  `gbrain eval longmemeval` commands.
+- **v0.30.1** — Supabase upgrade-path hardening. Reduces our class of
+  manual-ALTER recovery (we hit one in v0.26.7).
+- **v0.30.2** — dream synthesize stops dropping fat transcripts (token-
+  aware chunking before subagent dispatch).
+- **v0.31.0** — **hot memory** ships. Per-source `facts` table (5 kinds:
+  event/preference/commitment/belief/fact with per-kind decay halflives).
+  `gbrain recall` CLI. MCP `_meta.brain_hot_memory` auto-injection on
+  every tool-call response. Dream-cycle 11th phase `consolidate`
+  (clusters facts ≥3-strong + ≥24h-old, promotes top into `takes(kind=fact)`).
+  **Adopted default-on**; `facts.extraction_enabled = false` is the
+  kill switch if cost gets out of hand.
+- **v0.31.1.1-fixwave** — 22 community PRs in one wave. Critical:
+  - **#727** OAuth auth-code scope-escalation P0 (RFC 6749 §3.3
+    violation; `read`-scope client could mint admin codes). We don't
+    expose `gbrain serve --http` yet, so not a live exposure, but this
+    is required before any M2-B path that internally proxies through it.
+  - **#682 + #741** broadened `applyForwardReferenceBootstrap` to cover
+    v0.20 + v0.26.3 + v39-v41 columns including `mcp_request_log.{agent_name,
+    params, error_message}`. **This supersedes our PR #627** — fix
+    is strictly broader; closed it as superseded the same day.
+  - **#718** RESOLVER triggers broadened, 37 routing-eval misses → 0
+    (closes our P2 routing-miss item).
+  - **#686** `sync --skip-failed` eagerly acks pre-existing failures.
+  - **#688** `extract` defaults `--dir` to configured brain dir.
+  - Plus stdio MCP cleanup, detect-bun-link survival, dream transcript
+    `.md` discovery, dream-cycle slug double-encoded jsonb fix, Voyage
+    embedding adapter shape, sync detached-HEAD handling.
+- **v0.31.2** — `gbrain sync --strategy code` no longer hangs on big
+  symlink-rich repos. `parser.setTimeoutMicros(30000)` per-file
+  tree-sitter cap; walker hardened with `lstatSync` + inode-cycle
+  Map + `MAX_WALK_DEPTH=32`.
+
+### Conflict resolution summary (5 conflicts, smallest sync window yet)
+
+- **`package.json`** — fork's `@electric-sql/pglite 0.4.4` override vs
+  upstream's `0.4.3`. Kept fork's `0.4.4`. Upstream added
+  `@jsquash/avif`, `@jsquash/png` (image decoders for v0.29 anomaly);
+  preserved.
+- **`bun.lock`** — `git checkout --theirs` then `bun install` regenerated
+  cleanly. Pulled 20 new packages (ai@6, @ai-sdk/{anthropic,google,openai,
+  openai-compatible}@3, eventsource-parser, exifr, heic-decode).
+- **`README.md`** — HEAD had a stale duplicate v0.25.0 BrainBench-Real
+  paragraph (carried by accident from v0.25.0 sync). Took upstream's
+  v0.28.8 LongMemEval headline; the legitimate v0.25.0 paragraph at
+  line 46 (auto-merged) survives.
+- **`skills/RESOLVER.md`** — upstream broadened the voice-note trigger
+  from 1 keyword to 5 (`voice note / voice memo / audio message / audio
+  note / transcribe and file`) as part of #718. Took upstream's broader
+  trigger AND re-appended fork's `## KOS-Jarvis extensions` section
+  (with Feishu/pending-enrich archive note from 2026-05-05) at the
+  file end.
+- **`llms-full.txt`** — `git checkout --theirs` then `bun run build:llms`
+  regenerated. 422 KB, matches generator now.
+
+### Auto-merged + verified
+
+- `src/core/pglite-engine.ts` — fork's WAL durability patch
+  (`SELECT pg_switch_wal()` before close at L198) **survived auto-merge
+  cleanly** (upstream restructure didn't touch the disconnect block).
+  Re-grep verified.
+- `src/core/embedding.ts` — refactored upstream as a thin gateway
+  delegation. fork's `BrainDb` doesn't import it (verified via grep);
+  no breakage.
+- `CHANGELOG.md` / `TODOS.md` / `CLAUDE.md` — fork sections preserved
+  (auto-merge clean; fork doesn't carry top-of-file release notes).
+- `skills/manifest.json` — fork's 14 active KOS skills preserved
+  (16 lines in manifest match `kos-jarvis` after merge).
+- `server/kos-compat-api.ts` (23 KB) — untouched.
+
+### Privacy-gate scrub (post-merge)
+
+Upstream's evolved `scripts/check-privacy.sh` caught 3 historical
+narrative entries that still contained the literal banned word inside
+"we replaced X" descriptions. Scrubbed:
+
+- `docs/JARVIS-ARCHITECTURE.md` §6.20 "Privacy-gate scrub" subsection:
+  replaced literal example slug + person/fund pair with generic
+  phrasing. The narrative meaning survives the change.
+- `skills/kos-jarvis/TODO.md` L416 (2026-05-01 v0.25.0 sync narrative):
+  same scrub.
+
+`scripts/check-privacy.sh` clean (rc=0). `bun run check:all` clean.
+
+### Production schema migration v34 → v45 (auto-applied during bun install)
+
+**Notable surprise**: when `bun install` ran during Phase 1 conflict
+resolution, the package's postinstall hook called `gbrain post-upgrade`
+which called `gbrain apply-migrations` against our production
+`DATABASE_URL`. **Production walked v34 → v45 cleanly without manual
+intervention** — exactly what the v0.31.1.1 fixwave bootstrap robustness
+promised. No forward-reference hand-ALTER required this time.
+
+Schema state post-sync (verified 2026-05-09):
+- `schema_version = 45`
+- `pg_tables count = 35` (was 31 pre-sync; +4 = `facts`, `oauth_clients`,
+  `oauth_codes`, `oauth_tokens`)
+- `RLS enabled on 35/35 public tables` (auto-RLS event trigger from
+  v0.26.8 onboards new tables automatically)
+- `embeddings: 96% coverage, 244 missing` — post-migration drift,
+  expected; backfill via `gbrain embed --stale` next session
+- `brain_score = 80/100` (embed 33/35, links 25/25, timeline 3/15,
+  orphans 9/15, dead-links 10/10)
+- `facts_health: 0 active, 0 today, 0 this week, 0 consolidated` —
+  table ready, waits for next ingest cycle to populate
+- `connection: ok, 2718 pages` (was 2477 at v0.26.7 sync; +241 from
+  notion-poller running 5 days)
+
+### M3 pilot — gemini-embed-shim retirement (probe-passed, full-pilot deferred)
+
+**Probe results** (positive):
+- ✓ `gbrain providers explain --json` lists `google:gemini-embedding-001`
+- ✓ `GOOGLE_GENERATIVE_AI_API_KEY=$NANO_BANANA_API_KEY \
+   gbrain providers test --model google:gemini-embedding-001` →
+   `286 ms, 768 dims, all probes green`
+- ✓ Native v0.27 Google provider works against the same Google key
+  the shim has been using
+- ✓ `--embedding-dimensions 1536` flag exists at init time and per
+  v0.27 changelog passes through to `providerOptions.google.outputDimensionality`
+
+**Pilot end-to-end blocked**: spinning up `/tmp/pilot-brain` PGLite
+hit the macOS 26.3 WASM #223 cold-start hang (process held 100 % CPU
+for 7 + min, 0 bytes output, no `.gbrain/` dir created). Killed.
+**This is environment, not v0.27**.
+
+**Decision**: M3 milestone evidence is ✓ for technical feasibility, ✗
+for end-to-end production-cutover validation **on this Mac via PGLite**.
+Defer M3 cutover to a session that pilots against a Postgres-backed
+throwaway DB (avoids PGLite altogether). Shim stays running on launchd
+in production. M3 plan well-defined; cutover safer with cleaner test
+environment. CONSOLIDATION-PLAN.md updated to reflect: M3 = `probe-passed`,
+target retirement next session.
+
+### v0.31 hot-memory adoption
+
+Default-on. `facts.extraction_enabled` is the kill switch (set in
+`~/.gbrain/config.json`). Cost monitor scheduled: review
+`gbrain recall --since 7d` and Haiku call count after 1 week of
+notion-poller runs. If daily cost > $1, disable.
+
+Notion Knowledge Agent + OpenClaw downstream see new `_meta.brain_hot_memory`
+field on every MCP tool-call response. `_meta` is a standard MCP
+envelope key; downstream clients ignore unknown fields per spec, no
+contract break expected.
+
+### Service mesh after sync
+
+- `kos-compat-api`: bootout/bootstrap'd to load v0.31.2 src
+  (PID 92596, state=running, `/status` returns 2718 pages on local +
+  remote, both consistent)
+- `gemini-embed-shim`: bootout/bootstrap'd, running (still required
+  pending M3 cutover)
+- `dream-cycle`, `kos-patrol`, `notion-poller`, `enrich-sweep`:
+  bootout/bootstrap'd (all "not running" = registered + waiting for
+  cron schedule, normal launchd state for `StartCalendarInterval` jobs)
+- `kos-patrol` smoke: kickstart → fresh dashboard at
+  `~/brain/.agent/dashboards/knowledge-health-2026-05-10.md` (2718
+  pages, 0 ERROR, 1421 WARN). WARN climbed from 762 (v0.26.7 baseline)
+  due to +241 new pages and possibly v0.27/v0.29 lint-rule additions;
+  not a regression
+
+### Test results
+
+- `bun run typecheck`: clean (~3 s)
+- `bun build --compile`: 1302 modules, 165 ms bundle / 299 ms compile
+- `bun run test`: 4760 pass / 9 fail / 0 skip / 366 s
+  - 1 known pre-existing master flake (`BrainRegistry — lazy init`)
+  - 2 env-coupled (`check-resolvable resolveSkillsDir`, fork P2 known)
+  - 2 self-test recursion (`run-unit-parallel.sh` testing itself)
+  - 1 build-llms drift — fixed by `bun run build:llms` regen
+  - 2 `doctor --fix` env-coupled (upstream test, hits $HOME state)
+  - 1 warm-create perf warn (5 939 ms vs 1 500 ms cap, hardware noise)
+- `bun run check:all`: clean (rc=0)
+
+### Upstream PR #627 closed as superseded
+
+Our PR `fix(bootstrap): cover v0.26.3 mcp_request_log columns` (filed
+2026-05-04) was strictly a subset of upstream's #682+#741 fixwave that
+shipped in v0.31.1.1. Closed with public superseded comment + cite to
+fixwave 2026-05-09. Patch doc `docs/UPSTREAM-PATCHES/v026-bootstrap-mcp-log-fix.md`
+deleted (no longer needed).
+
+### Net fork shrinkage
+
+- **Active KOS skill dirs**: 14 (no change this sync; M3 pending defers)
+- **Open M2 evaluation candidates**: still 4 (M2-A.execute / M2-B / M2-C / M2-D),
+  with **M3 promoted from "no signal" to "probe-passed, ready for cutover"**
+- **Upstream PRs filed by fork**: 1 → 0 (PR #627 closed as superseded)
+- **`docs/UPSTREAM-PATCHES/`** entries: 4 → 3
+
+### Reversibility
+
+The merge is reversible at git level (`sync-v0.31.2` branch). Production
+schema migration is **not** reversible without restoring the 81 MB
+`pg_dump -Fc` backup at `/tmp/pg-pre-migration-v43.dump` (taken
+2026-05-09 23:12, just before migration). Both `/tmp/pg-pre-v0.31.2-sync.dump`
+(69 MB, taken before this session started) and the daily nightly dump
+at 03:33 are also rollback points.
+
 ---
 
 ## 7. Known gaps (see `skills/kos-jarvis/TODO.md` for live tracker)

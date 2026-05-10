@@ -8,7 +8,7 @@ description: |
   daily lint/patrol, and the MEMORY reflux bridge to OpenClaw.
 type: extension-pack
 owner: lucien
-upstream_compat: garrytan/gbrain >= 0.20.4 (last verified 2026-04-25)
+upstream_compat: garrytan/gbrain >= 0.31.2 (last verified 2026-05-09)
 ---
 
 # kos-jarvis — KOS extension pack over GBrain
