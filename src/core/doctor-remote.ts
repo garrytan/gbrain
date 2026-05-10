@@ -14,7 +14,9 @@
 
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from './remote-mcp-probe.ts';
-import { callRemoteTool, RemoteMcpError } from './mcp-client.ts';
+import { callRemoteTool, RemoteMcpError, unpackToolResult } from './mcp-client.ts';
+import { safeCompare, driftLevel, loadPromptState } from './thin-client-upgrade-prompt.ts';
+import { VERSION } from '../version.ts';
 
 export interface RemoteCheck {
   name: string;
@@ -218,7 +220,97 @@ export async function collectRemoteDoctorReport(
     checks.push(buildScopeCheck(grantedScope, scopeResult));
   }
 
+  // 6. v0.31.11: thin-client version-drift check. Calls get_brain_identity
+  // to compare local CLI version against remote brain version. Reports:
+  //   - 'ok' when local >= remote OR drift is 'patch' (D8 policy: only
+  //     minor/major drift is meaningful enough to flag in doctor)
+  //   - 'warn' when minor/major drift detected; fix hint points at
+  //     `gbrain upgrade` (or, if state shows a prior 'failed' attempt,
+  //     points at the manual install path)
+  //   - 'ok' (informational) when network unreachable / fetch throws —
+  //     doctor MUST NOT fail loud on transient network issues; this check
+  //     is informational, the earlier mcp_smoke would have already failed
+  //     hard if the remote is genuinely down.
+  if (!skipProbe) {
+    checks.push(await runUpgradeDriftCheck(config));
+  }
+
   return finalize(remote, checks, tokenRes.token.scope);
+}
+
+/**
+ * v0.31.11: thin-client version-drift check. Surfaces remote-brain drift in
+ * `gbrain doctor` so quiet/non-TTY users (who don't see the interactive
+ * prompt) still learn about minor/major bumps. Pure data fetch + compare.
+ *
+ * Errors are non-fatal: any failure returns an 'ok' status with a
+ * `network_error` detail. The earlier `mcp_smoke` check covers the
+ * "remote is genuinely unreachable" case with a 'fail' status.
+ */
+export async function runUpgradeDriftCheck(config: GBrainConfig): Promise<RemoteCheck> {
+  let remoteVersion: string;
+  try {
+    const raw = await callRemoteTool(config, 'get_brain_identity', {}, { timeoutMs: 2000 });
+    const identity = unpackToolResult<{ version: string }>(raw);
+    remoteVersion = identity.version;
+  } catch (e) {
+    return {
+      name: 'thin_client_upgrade_drift',
+      status: 'ok',
+      message: 'could not fetch remote version (network or scope error); see other checks',
+      detail: { error: e instanceof Error ? e.message : String(e), inconclusive: true },
+    };
+  }
+
+  const cmp = safeCompare(VERSION, remoteVersion);
+  if (cmp === null) {
+    return {
+      name: 'thin_client_upgrade_drift',
+      status: 'ok',
+      message: `version comparison inconclusive (local=${VERSION}, remote=${remoteVersion})`,
+      detail: { local: VERSION, remote: remoteVersion, inconclusive: true },
+    };
+  }
+  if (cmp >= 0) {
+    return {
+      name: 'thin_client_upgrade_drift',
+      status: 'ok',
+      message: `local v${VERSION} ≥ remote v${remoteVersion}`,
+      detail: { local: VERSION, remote: remoteVersion },
+    };
+  }
+  const level = driftLevel(VERSION, remoteVersion);
+  if (level === 'patch') {
+    return {
+      name: 'thin_client_upgrade_drift',
+      status: 'ok',
+      message: `local v${VERSION}, remote v${remoteVersion} (patch drift; not flagged)`,
+      detail: { local: VERSION, remote: remoteVersion, level },
+    };
+  }
+
+  // Minor or major drift. Check the prompt-state file: if a prior 'failed'
+  // attempt is recorded for this remote+version, point users at the manual
+  // install path instead of the auto-upgrade command.
+  let priorFailed = false;
+  try {
+    const state = loadPromptState();
+    const entry = state.entries[config.remote_mcp?.mcp_url ?? ''];
+    if (entry && entry.last_response === 'failed' && entry.last_prompted_remote_version === remoteVersion) {
+      priorFailed = true;
+    }
+  } catch { /* state read is best-effort */ }
+
+  const fixHint = priorFailed
+    ? `Prior \`gbrain upgrade\` did not advance the binary. See https://github.com/garrytan/gbrain/releases for manual install.`
+    : `Run \`gbrain upgrade\` to install v${remoteVersion}.`;
+
+  return {
+    name: 'thin_client_upgrade_drift',
+    status: 'warn',
+    message: `${level} upgrade available: local v${VERSION} → remote v${remoteVersion}. ${fixHint}`,
+    detail: { local: VERSION, remote: remoteVersion, level, prior_failed: priorFailed },
+  };
 }
 
 /**
