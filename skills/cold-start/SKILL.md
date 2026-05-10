@@ -17,6 +17,7 @@ triggers:
   - "get started"
   - "what should I import first"
   - "populate brain"
+  - "now what?"
 tools:
   - search
   - query

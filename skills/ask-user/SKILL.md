@@ -16,6 +16,16 @@ priority: 50
 
 # Ask User — Choice Gate Pattern
 
+## Contract
+
+- Present 2-4 options (no more — decision paralysis kicks in past 4).
+- Always include an escape hatch (Skip, Cancel, or "none of these").
+- Stop the turn immediately after presenting choices. No follow-up tool calls,
+  no preemptive action, no default-and-proceed.
+- The user's response triggers the next turn. Acknowledge briefly, then branch.
+- One question per message — never stack multiple choice gates.
+- Self-explanatory option labels: action verb plus brief qualifier, not "Option 1".
+
 ## What This Is
 
 A **formalized pattern** for presenting users with 2-4 options and **stopping
@@ -205,3 +215,39 @@ This pattern is used by:
 
 When building a new skill that needs user input at a decision point,
 reference this pattern rather than inventing a new one.
+
+## Anti-Patterns
+
+- **Continuing the turn after presenting choices.** "While you decide, I'll start on..."
+  defeats the gate. Stop. Wait. The whole point is that the user controls what happens next.
+- **Picking a default and proceeding silently.** If the question matters enough to ask,
+  it matters enough to wait. Silent defaults erode trust the next time you do ask.
+- **More than 4 options.** Decision paralysis is real. Group, summarize, or split into
+  staged questions instead.
+- **No escape hatch.** Every choice gate must let the user decline. "None of these"
+  / "Skip" / "Cancel" is mandatory.
+- **Stacking multiple choice gates in one message.** The user can only answer one
+  question per turn. Multi-question gates either get half-answered or dropped entirely.
+- **Cryptic option labels.** "Option 1" forces re-reading the context. "Merge into
+  existing page" is self-explanatory.
+- **Asking about low-stakes decisions.** If the wrong answer costs nothing, just pick
+  the best option and mention it. Reserve gates for forks where rework is expensive.
+
+## Output Format
+
+The skill's "output" is the choice-gate message itself, structured as:
+
+```
+{emoji-prefix} **{question}**
+
+{1-3 lines of context}
+
+1. **{Option A label}** — {short qualifier}
+2. **{Option B label}** — {short qualifier}
+3. **{Skip / Cancel}** — {what skipping means}
+```
+
+After emitting this, the skill stops the turn. No further tool calls, no
+preemptive action, no follow-up message until the user responds. The
+user's response triggers the next turn, where the calling skill branches
+on the chosen option.
