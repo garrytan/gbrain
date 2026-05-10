@@ -59,8 +59,10 @@ gbrain embed --all
 ```
 
 For cutover (Week 4.2), register both the shim and kos-compat-api as
-launchd services so they start on boot. See feishu-bridge/SKILL.md §
-Cutover checklist for the full plist rotation.
+launchd services so they start on boot. See
+`_archived/feishu-bridge/SKILL.md` § Cutover checklist for the historical
+plist rotation (the cutover itself completed 2026-04 and was later
+archived along with the Feishu signal-detector extension on 2026-05-05).
 
 ## Dimensions check
 

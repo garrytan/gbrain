@@ -134,5 +134,6 @@ ntn workers exec kosIngest --local -d '{"url":"https://example.com"}'
 - [`workers/notion-poller/`](../notion-poller/) —
   in-repo 同伴 worker（push 模式：cron 推 Notion 改动到 brain）。
   本 worker 是 pull 模式（Notion AI agent 主动调）。
-- [`skills/kos-jarvis/feishu-bridge/SKILL.md`](../../skills/kos-jarvis/feishu-bridge/SKILL.md) —
-  OpenClaw 飞书走的是另一条直连 cloudflared 路径，不经过本 worker。
+- [`skills/kos-jarvis/_archived/feishu-bridge/SKILL.md`](../../skills/kos-jarvis/_archived/feishu-bridge/SKILL.md) —
+  归档:OpenClaw 飞书 skill 的 command-mapping 文档,2026-05-05 随
+  Feishu signal-detector extension 退役一并归档。

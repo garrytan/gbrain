@@ -71,10 +71,10 @@ Columns:
 |---|---|---|---|---|---|---|
 | 1 | `gemini-embed-shim` | launchd persistent (PID 63403, port 7222) | ○ | none — `src/core/embedding.ts` hardcodes `new OpenAI()` | **KEEP** unique | Provider-neutrality bridge. Retire only if upstream adds an embedding provider abstraction (no signal yet — file an issue?) |
 | 2 | `_lib/brain-db.ts` | imported by 9 fork callers | ○ | `BrainEngine` interface (but heavyweight, MCP-bounded) | **KEEP** unique | Direct PGLite/Postgres reader, bypasses MCP 100-row cap. v0.25.0 added 5 eval-method mirrors as safety net (§6.20). |
-| 3 | `feishu-bridge` | docs only | ○ | none — OpenClaw integration is fork-specific | **KEEP** unique | Migration manifest for `~/.openclaw/workspace/skills/knowledge-os/`. No runtime; doesn't bloat. |
+| 3 | `feishu-bridge` | docs only — archived 2026-05-05 | ○ | none — OpenClaw integration is fork-specific | **ARCHIVED** | OpenClaw `jarvis-feishu-signal-detector` extension retired 2026-05-05 (downstream `enrich-sweep` never wired to consume the queue, extension was generating garbage). Doc preserved at `skills/kos-jarvis/_archived/feishu-bridge/`. |
 | 4 | `dream-wrap` | launchd daily 03:11 | ◐ | `gbrain dream --json` (v0.17+, 8 phases in v0.23) writes its own archive | **KEEP** partial — fork value is launchd-glue + exit-code translation + `latest.json` symlink | Wrap is ~100 lines and survives clean. Fold the archive logic into upstream as a `gbrain dream --archive-dir` flag in a follow-up PR. |
 | 5 | `url-fetcher` | imported by `server/kos-compat-api.ts` | ○ | none — upstream `ingest` skill assumes caller fetches | **KEEP** unique | UltimateSearchSkill bridge for X/Twitter + FlareSolverr-protected sites. kos-compat-api specific. |
-| 6 | `pending-enrich` | docs (queue schema) — producer = OpenClaw, consumer = `enrich-sweep` | ○ | upstream `signal-detector` is per-message inline | **KEEP** unique | OpenClaw Feishu bridge contract; deferred-batch mode is the inverse of upstream's per-message inline. |
+| 6 | `pending-enrich` | docs (queue schema) — archived 2026-05-05 | ○ | upstream `signal-detector` is per-message inline | **ARCHIVED** | Producer (OpenClaw extension) retired 2026-05-05; consumer (`enrich-sweep`) never wired in cron. Schema doc preserved at `skills/kos-jarvis/_archived/pending-enrich/`. |
 | 7 | `digest-to-memory` | manual (planned weekly Sun 22:00, not yet wired in cron) | ○ | none — KOS → OpenClaw `MEMORY.md` 回流 | **KEEP** unique | Cross-system reflux; upstream has no equivalent because OpenClaw is a downstream of the fork. |
 | 8 | `enrich-sweep` | launchd weekly Sun 22:13 | ◐ | upstream `enrich` covers per-entity (Tier 1/2/3 via Tavily) | **KEEP** partial — bulk-mode value | SKILL.md self-acknowledges "IS the bulk-mode variant; does not fork the logic, wraps it". Justified. |
 | 9 | `orphan-reducer` | manual weekly | ◐ | `gbrain orphans` only **detects**; v0.23 `patterns` phase finds themes, not edges | **KEEP** partial — Haiku-classified active reduction | Different concept from upstream patterns phase; reduces orphan count by inserting typed edges. |
@@ -90,10 +90,14 @@ Columns:
 
 ## 5. Decision categories
 
-### 5.1 KEEP — unique value (7)
+### 5.1 KEEP — unique value (5)
 
-`gemini-embed-shim`, `_lib/brain-db.ts`, `feishu-bridge`,
-`url-fetcher`, `pending-enrich`, `digest-to-memory`, `templates/`.
+`gemini-embed-shim`, `_lib/brain-db.ts`, `url-fetcher`,
+`digest-to-memory`, `templates/`.
+
+(Originally 7. Reduced 2026-05-05 — `feishu-bridge` + `pending-enrich`
+moved to ARCHIVED when the upstream OpenClaw `jarvis-feishu-signal-detector`
+extension was retired.)
 
 These exist because upstream has zero equivalent, AND that gap is
 unlikely to close near-term (provider-abstracted embed needs core

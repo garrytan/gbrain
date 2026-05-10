@@ -235,19 +235,9 @@
       "description": "Notion to gbrain 5-minute incremental sync. KOS-Jarvis fork extension."
     },
     {
-      "name": "kos-jarvis/feishu-bridge",
-      "path": "kos-jarvis/feishu-bridge/SKILL.md",
-      "description": "OpenClaw Feishu skill command mapping (one-time migration). KOS-Jarvis fork extension."
-    },
-    {
       "name": "kos-jarvis/enrich-sweep",
       "path": "kos-jarvis/enrich-sweep/SKILL.md",
       "description": "Batch scan brain, extract entities, create people/company stubs. KOS-Jarvis fork extension."
-    },
-    {
-      "name": "kos-jarvis/pending-enrich",
-      "path": "kos-jarvis/pending-enrich/SKILL.md",
-      "description": "JSONL queue format for Feishu ambient entity mentions. KOS-Jarvis fork extension."
     }
   ],
   "dependencies": {

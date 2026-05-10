@@ -142,11 +142,13 @@ upstream sections above; KOS extensions are append-only by policy.
 | Daily patrol + staleness + gap detection + MEMORY digest | `skills/kos-jarvis/kos-patrol/SKILL.md` |
 | Weekly push KOS digest → OpenClaw MEMORY.md 近期层 | `skills/kos-jarvis/digest-to-memory/SKILL.md` |
 | Notion → gbrain 5-min incremental sync | `skills/kos-jarvis/notion-ingest-delta/SKILL.md` |
-| OpenClaw 飞书 skill command-mapping (one-time migration) | `skills/kos-jarvis/feishu-bridge/SKILL.md` |
 | Batch scan brain, extract entities, create people/company stubs (G1 payoff) | `skills/kos-jarvis/enrich-sweep/SKILL.md` |
-| JSONL queue format for Feishu ambient entity mentions | `skills/kos-jarvis/pending-enrich/SKILL.md` |
 
 These chain into upstream skills: dikw-compile runs after idea-ingest;
 kos-lint extends maintain; digest-to-memory reads patrol output;
-enrich-sweep wraps upstream `skills/enrich/` in bulk mode and consumes
-the `pending-enrich` queue as an optional v1.1 input.
+enrich-sweep wraps upstream `skills/enrich/` in bulk mode.
+
+> **Archived (2026-05-05)**: `feishu-bridge` + `pending-enrich` skills
+> moved to `skills/kos-jarvis/_archived/`. Phase 2 Feishu signal-fork
+> design was superseded by retiring the OpenClaw extension; brain-side
+> contract docs survive at `_archived/` for historical reference.

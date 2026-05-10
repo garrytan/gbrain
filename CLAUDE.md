@@ -40,8 +40,9 @@ working on this codebase, before touching anything else:
 - **`kos.chenge.ink` is the stable external boundary.** External systems
   (Notion Knowledge Agent, OpenClaw feishu cron) never talk to gbrain
   directly — they hit the compat-api. If you change request/response
-  shape, update `skills/kos-jarvis/feishu-bridge/SKILL.md` with the new
-  mapping and notify Lucien.
+  shape, notify Lucien. The historical command-mapping doc at
+  `skills/kos-jarvis/_archived/feishu-bridge/SKILL.md` (archived
+  2026-05-05) records the v1→v2 cutover layout for reference.
 - **Secrets stay out of git.** `scripts/launchd/*.plist` is gitignored;
   only `*.plist.template` is tracked. `.env.local` (contains
   `NANO_BANANA_API_KEY`) is also gitignored.

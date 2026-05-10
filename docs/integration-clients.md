@@ -241,9 +241,10 @@ server.
   three rules).
 - [`server/kos-compat-api.ts`](../server/kos-compat-api.ts) — server
   source.
-- [`skills/kos-jarvis/feishu-bridge/SKILL.md`](../skills/kos-jarvis/feishu-bridge/SKILL.md)
-  — the migration manifest for the OpenClaw 飞书 skill (lives outside
-  this repo at `~/.openclaw/workspace/skills/knowledge-os/`).
+- [`skills/kos-jarvis/_archived/feishu-bridge/SKILL.md`](../skills/kos-jarvis/_archived/feishu-bridge/SKILL.md)
+  — archived 2026-05-05: migration manifest for the OpenClaw 飞书 skill
+  (the OpenClaw extension was retired at the same time; doc preserved
+  for historical reference).
 - `docs/JARVIS-ARCHITECTURE.md` §6.18 — Postgres migration story
   (explains why ingest latency was lower on PGLite under low load but
   caps higher under contention).

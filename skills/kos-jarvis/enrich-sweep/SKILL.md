@@ -157,8 +157,10 @@ Write `~/brain/agent/reports/enrich-sweep-<YYYY-MM-DD>.md` (mkdir -p):
   it wraps it.
 - `skills/signal-detector/SKILL.md` (upstream) — mental model for NER
 - `skills/kos-jarvis/type-mapping.md` — KOS kind ↔ GBrain dir
-- `skills/kos-jarvis/pending-enrich/SKILL.md` — v1.1 future: consume
-  queue file alongside brain scan
+- `skills/kos-jarvis/_archived/pending-enrich/SKILL.md` — archived
+  2026-05-05: queue-file v1.1 input was retired with the OpenClaw
+  Feishu signal-detector extension; enrich-sweep now relies on brain
+  scan only.
 
 ## Rollback
 
