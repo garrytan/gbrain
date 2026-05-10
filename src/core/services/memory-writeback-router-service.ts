@@ -42,6 +42,14 @@ const ACCUMULATION_SOURCE_KINDS = new Set<MemoryScenarioSourceKind>([
   'session_end',
   'trace_review',
 ]);
+const PAGE_BACKED_CANONICAL_TARGET_TYPES = new Set<MemoryCandidateTargetObjectType>([
+  'curated_note',
+  'procedure',
+]);
+const PERSONAL_ONLY_TARGET_TYPES = new Set<MemoryCandidateTargetObjectType>([
+  'profile_memory',
+  'personal_episode',
+]);
 
 export function routeMemoryWriteback(
   input: RouteMemoryWritebackInput,
@@ -169,6 +177,23 @@ export function routeMemoryWriteback(
     });
   }
 
+  const personalTargetMissing = personalTargetMissingRequirements(input, scopeId, sensitivity, targetObjectType);
+  if (personalTargetMissing.length > 0) {
+    return baseResult(input, {
+      decision: 'defer',
+      intended_operation: 'none',
+      reasons: personalTargetMissingReasons(personalTargetMissing),
+      missing_requirements: personalTargetMissing,
+      source_kind: sourceKind,
+      scope_id: scopeId,
+      sensitivity,
+      candidate_type: null,
+      extraction_kind: null,
+      target_object_type: targetObjectType,
+      target_object_id: targetObjectId,
+    });
+  }
+
   const candidateType = input.candidate_type ?? defaultCandidateType(input.evidence_kind);
   const extractionKind = defaultExtractionKind(input.evidence_kind);
   const reasons = candidateReasons(candidateRoute, input.evidence_kind, targetObjectType);
@@ -272,6 +297,7 @@ function canonicalWriteRequirementsFor(
   }
   if (sourceRefs.length === 0) return null;
   if (!targetObjectType || targetObjectType === 'other') return null;
+  if (!isPageBackedCanonicalTargetType(targetObjectType)) return null;
   if (!targetObjectId) return null;
   if (sensitivity === 'unknown') return null;
 
@@ -294,6 +320,9 @@ function canonicalMissingRequirements(
   const missing: string[] = [];
   if (sourceRefs.length === 0) missing.push('source_refs');
   if (!targetObjectType || targetObjectType === 'other') missing.push('target_object_type');
+  if (targetObjectType && targetObjectType !== 'other' && !isPageBackedCanonicalTargetType(targetObjectType)) {
+    missing.push('canonical_page_target');
+  }
   if (!targetObjectId) missing.push('target_object_id');
   if (sensitivity === 'unknown') missing.push('sensitivity');
   if (input.evidence_kind !== 'direct_user_statement' && input.evidence_kind !== 'source_extracted') {
@@ -308,9 +337,38 @@ function canonicalMissingReasons(missing: string[]): string[] {
   if (missing.includes('target_object_type') || missing.includes('target_object_id')) {
     reasons.add('canonical_target_required');
   }
+  if (missing.includes('canonical_page_target')) reasons.add('canonical_target_not_page_backed');
   if (missing.includes('sensitivity')) reasons.add('canonical_sensitivity_required');
   if (missing.includes('canonical_evidence_kind')) reasons.add('canonical_evidence_kind_not_allowed');
   return [...reasons];
+}
+
+function personalTargetMissingRequirements(
+  input: RouteMemoryWritebackInput,
+  scopeId: string,
+  sensitivity: MemoryCandidateSensitivity,
+  targetObjectType: MemoryCandidateTargetObjectType | null,
+): string[] {
+  if (!targetObjectType || !PERSONAL_ONLY_TARGET_TYPES.has(targetObjectType)) return [];
+  const missing: string[] = [];
+  if (!normalizeOptionalString(input.scope_id) || !scopeId.startsWith('personal:')) {
+    missing.push('scope_id');
+  }
+  if (input.sensitivity === undefined || sensitivity === 'work' || sensitivity === 'unknown') {
+    missing.push('sensitivity');
+  }
+  return missing;
+}
+
+function personalTargetMissingReasons(missing: string[]): string[] {
+  const reasons = new Set<string>();
+  if (missing.includes('scope_id')) reasons.add('personal_target_scope_required');
+  if (missing.includes('sensitivity')) reasons.add('personal_target_sensitivity_required');
+  return [...reasons];
+}
+
+function isPageBackedCanonicalTargetType(targetObjectType: MemoryCandidateTargetObjectType): boolean {
+  return PAGE_BACKED_CANONICAL_TARGET_TYPES.has(targetObjectType);
 }
 
 function candidateRouteReason(

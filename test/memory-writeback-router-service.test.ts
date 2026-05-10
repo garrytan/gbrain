@@ -177,6 +177,42 @@ describe('memory writeback router service', () => {
     expect(result.candidate_input).toBeUndefined();
   });
 
+  test('defers personal canonical targets instead of routing them to put_page', () => {
+    const profile = routeMemoryWriteback({
+      content: 'The user prefers private weekend planning notes.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      allow_canonical_write: true,
+      target_object_type: 'profile_memory',
+      target_object_id: 'profile:user-preferences',
+      scope_id: 'personal:default',
+      sensitivity: 'personal',
+    });
+
+    expect(profile.decision).toBe('defer');
+    expect(profile.intended_operation).toBe('none');
+    expect(profile.reasons).toContain('canonical_target_not_page_backed');
+    expect(profile.missing_requirements).toContain('canonical_page_target');
+    expect(profile.canonical_write_requirements).toBeUndefined();
+
+    const episode = routeMemoryWriteback({
+      content: 'The user described a personal episode that should not become a page.',
+      evidence_kind: 'source_extracted',
+      source_refs: sourceRefs,
+      allow_canonical_write: true,
+      target_object_type: 'personal_episode',
+      target_object_id: 'episode:weekend-planning',
+      scope_id: 'personal:default',
+      sensitivity: 'personal',
+    });
+
+    expect(episode.decision).toBe('defer');
+    expect(episode.intended_operation).toBe('none');
+    expect(episode.reasons).toContain('canonical_target_not_page_backed');
+    expect(episode.missing_requirements).toContain('canonical_page_target');
+    expect(episode.canonical_write_requirements).toBeUndefined();
+  });
+
   test('defers direct canonical request without target metadata', () => {
     const result = routeMemoryWriteback({
       content: 'The user provided a direct durable statement.',
@@ -189,6 +225,44 @@ describe('memory writeback router service', () => {
     expect(result.reasons).toContain('canonical_target_required');
     expect(result.missing_requirements).toContain('target_object_type');
     expect(result.missing_requirements).toContain('target_object_id');
+  });
+
+  test('defers personal target candidates without explicit personal scope and sensitivity', () => {
+    const result = routeMemoryWriteback({
+      content: 'The user prefers private weekend planning notes.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      target_object_type: 'profile_memory',
+      target_object_id: 'profile:user-preferences',
+    });
+
+    expect(result.decision).toBe('defer');
+    expect(result.intended_operation).toBe('none');
+    expect(result.reasons).toContain('personal_target_scope_required');
+    expect(result.reasons).toContain('personal_target_sensitivity_required');
+    expect(result.missing_requirements).toContain('scope_id');
+    expect(result.missing_requirements).toContain('sensitivity');
+    expect(result.candidate_input).toBeUndefined();
+  });
+
+  test('creates personal target candidates when personal scope and sensitivity are explicit', () => {
+    const result = routeMemoryWriteback({
+      content: 'The user prefers private weekend planning notes.',
+      evidence_kind: 'direct_user_statement',
+      source_refs: sourceRefs,
+      target_object_type: 'profile_memory',
+      target_object_id: 'profile:user-preferences',
+      scope_id: 'personal:default',
+      sensitivity: 'personal',
+    });
+
+    expect(result.decision).toBe('create_candidate');
+    expect(result.candidate_input).toMatchObject({
+      scope_id: 'personal:default',
+      sensitivity: 'personal',
+      target_object_type: 'profile_memory',
+      target_object_id: 'profile:user-preferences',
+    });
   });
 
   test('captures direct sourced signals as candidates when canonical write is not requested', () => {

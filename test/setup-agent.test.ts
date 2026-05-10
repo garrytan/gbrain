@@ -163,6 +163,37 @@ describe('setup-agent', () => {
     expect(agentsMd).toContain('route_memory_writeback');
   });
 
+  test('setup-agent --codex replaces older same-file rules when rules version changes', async () => {
+    mkdirSync(join(tempHome, '.codex'), { recursive: true });
+    writeFileSync(
+      join(tempHome, '.codex', 'AGENTS.md'),
+      [
+        '# Existing Local Rules',
+        '',
+        '<!-- MBRAIN:RULES:START -->',
+        '<!-- mbrain-agent-rules-version: 0.5.5 -->',
+        '## 3. Write Back Durable Knowledge',
+        'Call put_page directly for durable facts.',
+        '<!-- MBRAIN:RULES:END -->',
+        '',
+        'Keep this local footer.',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await runSetupAgent(['--codex', '--skip-mcp']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('Rules: updated');
+
+    const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
+    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.6');
+    expect(agentsMd).toContain('Route Durable Writeback');
+    expect(agentsMd).toContain('route_memory_writeback');
+    expect(agentsMd).not.toContain('Call put_page directly for durable facts.');
+    expect(agentsMd).toContain('Keep this local footer.');
+  });
+
   test('setup-agent explains Claude stop hook UX after installing it', async () => {
     const result = await runSetupAgent(['--claude', '--skip-mcp']);
 
