@@ -99,8 +99,10 @@ const DEFAULT_SAFETY_FACTOR = 0.8;
  *
  * `touchpoint` is included in the error message so users know which call path
  * triggered the missing-env error.
+ *
+ * @internal exported for tests; not part of the public gateway API.
  */
-function defaultResolveAuth(
+export function defaultResolveAuth(
   recipe: Recipe,
   env: Record<string, string | undefined>,
   touchpoint: 'embedding' | 'expansion' | 'chat',
@@ -132,8 +134,10 @@ function defaultResolveAuth(
  * `createOpenAICompatible` options. Authorization-Bearer style returns
  * `{apiKey}` (the SDK's native path); custom-header style returns `{headers}`
  * with NO apiKey to avoid double-auth.
+ *
+ * @internal exported for tests; not part of the public gateway API.
  */
-function applyResolveAuth(
+export function applyResolveAuth(
   recipe: Recipe,
   cfg: AIGatewayConfig,
   touchpoint: 'embedding' | 'expansion' | 'chat',
