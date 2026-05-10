@@ -213,6 +213,21 @@ describe('scanBrainSources (PGLite)', () => {
     expect(report.per_source[0]!.total).toBe(0);
   });
 
+  test('skips dependency and build artifact directories', async () => {
+    mkdirSync(join(tmp, 'src'), { recursive: true });
+    mkdirSync(join(tmp, 'node_modules/pkg'), { recursive: true });
+    mkdirSync(join(tmp, 'dist'), { recursive: true });
+    mkdirSync(join(tmp, 'build'), { recursive: true });
+    writeFileSync(join(tmp, 'src', 'good.md'), `${fence}\ntype: x\ntitle: ok\n${fence}\n\nbody`);
+    writeFileSync(join(tmp, 'node_modules/pkg', 'package-notes.md'), '# vendored package');
+    writeFileSync(join(tmp, 'dist', 'generated-doc.md'), '# generated docs');
+    writeFileSync(join(tmp, 'build', 'generated-doc.md'), '# generated docs');
+    await registerSource('js-project', tmp);
+
+    const report = await scanBrainSources(engine);
+    expect(report.total).toBe(0);
+  });
+
   test('AbortSignal mid-scan stops walking', async () => {
     const src = join(tmp, 'big');
     mkdirSync(src, { recursive: true });
