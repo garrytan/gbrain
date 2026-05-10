@@ -40,11 +40,17 @@ async function phaseASchema(
   try {
     const versionStr = await engine.getConfig('version');
     const v = parseInt(versionStr || '0', 10);
-    if (v < 40) {
+    // v0.31.2 (B3 ship-blocker fix): the gate's semantic precondition is
+    // "facts table exists," which is migration v45 (`facts_hot_memory_v0_31`).
+    // Column shape (v46 adds notability column + CHECK) is enforced by that
+    // migration alone — see MIGRATIONS[v46]. The orchestrator does not need
+    // to gate on column shape; v46 is idempotent and runs as part of the
+    // same `gbrain apply-migrations --yes` invocation.
+    if (v < 45) {
       return {
         name: 'schema',
         status: 'failed',
-        detail: `expected schema version >= 40 (facts hot memory + notability); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
+        detail: `expected schema version >= 45 (facts hot memory); got ${v}. Run \`gbrain apply-migrations --yes\` to apply.`,
       };
     }
     // Post-condition: facts table exists.
@@ -58,7 +64,7 @@ async function phaseASchema(
         detail: 'expected facts table; not found. Re-run apply-migrations.',
       };
     }
-    return { name: 'schema', status: 'complete', detail: 'schema v40 applied; facts table present' };
+    return { name: 'schema', status: 'complete', detail: 'schema v45+ applied; facts table present' };
   } catch (e) {
     return { name: 'schema', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
   }
