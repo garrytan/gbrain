@@ -102,6 +102,20 @@ describe('SQLite-first product messaging', () => {
     }
   });
 
+  test('agent setup docs include installed-command readiness verification', () => {
+    const readme = readRepoFile('README.md');
+    const english = readRepoFile('docs/local-offline.md');
+    const korean = readRepoFile('docs/local-offline.ko.md');
+
+    for (const doc of [readme, english, korean]) {
+      expect(doc).toContain('mbrain doctor --agent --json');
+      expect(doc).toContain('MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp');
+    }
+
+    expect(english).toContain('route_memory_writeback');
+    expect(korean).toContain('route_memory_writeback');
+  });
+
   test('setup skill reflects local SQLite support instead of stale Postgres-only guidance', () => {
     const setupSkill = readRepoFile('skills/setup/SKILL.md');
 
