@@ -1608,6 +1608,7 @@ export type MemoryNextTool =
   | 'query_context_map'
   | 'get_precision_lookup_route'
   | 'create_memory_candidate_entry'
+  | 'route_memory_writeback'
   | 'rank_memory_candidate_entries'
   | 'evaluate_scope_gate'
   | 'answer_now';
@@ -1622,6 +1623,77 @@ export type MemoryWritebackHint =
   | 'update_canonical_direct'
   | 'defer_for_review'
   | 'sync_after_write';
+
+export type MemoryWritebackEvidenceKind =
+  | 'direct_user_statement'
+  | 'source_extracted'
+  | 'agent_inferred'
+  | 'ambiguous'
+  | 'contradicts_existing'
+  | 'code_sensitive'
+  | 'task_mechanics';
+
+export type MemoryWritebackDecision =
+  | 'create_candidate'
+  | 'canonical_write_allowed'
+  | 'no_write'
+  | 'defer';
+
+export type MemoryWritebackIntendedOperation =
+  | 'create_memory_candidate_entry'
+  | 'put_page'
+  | 'none';
+
+export interface RouteMemoryWritebackInput {
+  content: string;
+  source_refs?: string[];
+  source_kind?: MemoryScenarioSourceKind;
+  evidence_kind: MemoryWritebackEvidenceKind;
+  candidate_type?: MemoryCandidateType;
+  target_object_type?: MemoryCandidateTargetObjectType;
+  target_object_id?: string;
+  scope_id?: string;
+  sensitivity?: MemoryCandidateSensitivity;
+  confidence_score?: number;
+  importance_score?: number;
+  recurrence_score?: number;
+  interaction_id?: string;
+  allow_canonical_write?: boolean;
+  apply?: boolean;
+}
+
+export interface RouteMemoryWritebackCandidateInput
+  extends Omit<MemoryCandidateEntryInput, 'id'> {
+  id?: string;
+  interaction_id?: string | null;
+}
+
+export interface RouteMemoryWritebackResult {
+  decision: MemoryWritebackDecision;
+  intended_operation: MemoryWritebackIntendedOperation;
+  applied: boolean;
+  reasons: string[];
+  missing_requirements: string[];
+  normalized_signal: {
+    evidence_kind: MemoryWritebackEvidenceKind;
+    source_kind: MemoryScenarioSourceKind | null;
+    scope_id: string;
+    sensitivity: MemoryCandidateSensitivity;
+    candidate_type: MemoryCandidateType | null;
+    extraction_kind: MemoryCandidateExtractionKind | null;
+    target_object_type: MemoryCandidateTargetObjectType | null;
+    target_object_id: string | null;
+  };
+  candidate_input?: RouteMemoryWritebackCandidateInput;
+  created_candidate?: MemoryCandidateEntry;
+  duplicate_review?: unknown;
+  canonical_write_requirements?: {
+    source_refs: string[];
+    target_object_type: MemoryCandidateTargetObjectType;
+    target_object_id: string;
+    sensitivity: MemoryCandidateSensitivity;
+  };
+}
 
 export interface MemoryActivationArtifact {
   id: string;
