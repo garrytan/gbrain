@@ -883,69 +883,39 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     } catch { /* extraction is best-effort */ }
   }
 
-  // Auto-extract facts from eligible pages (real-time hot memory).
-  // Only HIGH notability facts are inserted during sync; MEDIUM waits
-  // for the dream cycle; LOW is dropped entirely.
+  // v0.31.2: facts extraction now routes through the shared
+  // src/core/facts/backstop.ts helper (PR1 commit 6). Sync uses
+  // queue mode (fire-and-forget) + 'high-only' filter so a 50-page
+  // sync doesn't block on N sequential Sonnet calls. The pre-fix
+  // inline loop is gone — it carried (a) a dead-code type filter
+  // ('conversation'/'transcript'/'therapy'/'call' aren't real
+  // PageTypes), (b) a divergent eligibility shape from put_page,
+  // and (c) raw extract→insert without dedup/supersede.
   if (!opts.noExtract && pagesAffected.length > 0 && pagesAffected.length <= 50) {
-    try {
-      const { extractFactsFromTurn, isFactsExtractionEnabled, getFactsExtractionModel } = await import('../core/facts/extract.ts');
-      const enabled = await isFactsExtractionEnabled(engine);
-      if (enabled) {
-        const model = await getFactsExtractionModel(engine);
-        const factsSourceId = opts.sourceId ?? 'default';
-        let factsInserted = 0;
-        for (const slug of pagesAffected) {
-          try {
-            // Read the page content
-            const page = await engine.getPage(slug);
-            if (!page?.compiled_truth) continue;
-            // Skip non-eligible types: only meetings, conversations, personal pages
-            const pageType = page.frontmatter?.type as string | undefined;
-            const eligibleTypes = ['meeting', 'conversation', 'transcript', 'personal', 'therapy', 'call'];
-            const isEligible = pageType && eligibleTypes.includes(pageType);
-            // Also check path-based eligibility for meetings/ and personal/
-            const pathEligible = slug.startsWith('meetings/') || slug.startsWith('personal/');
-            if (!isEligible && !pathEligible) continue;
-            // Skip dream-generated pages
-            if (page.frontmatter?.dream_generated) continue;
-            const facts = await extractFactsFromTurn({
-              turnText: page.compiled_truth,
-              sessionId: `sync:${slug}`,
-              source: 'sync:import',
-              isDreamGenerated: false,
-              model,
-              engine,
-            });
-            for (const f of facts) {
-              // Notability gate: only HIGH during sync
-              if (f.notability !== 'high') continue;
-              const resolvedSlug = f.entity_slug
-                ? await (async () => {
-                    try {
-                      const { resolveEntitySlug } = await import('../core/entities/resolve.ts');
-                      return await resolveEntitySlug(engine, factsSourceId, f.entity_slug!);
-                    } catch { return f.entity_slug; }
-                  })()
-                : null;
-              await engine.insertFact({
-                entity_slug: resolvedSlug ?? null,
-                fact: f.fact,
-                kind: f.kind,
-                confidence: f.confidence,
-                notability: f.notability,
-                source: 'sync:import',
-                source_session: `sync:${slug}`,
-                visibility: 'private',
-              }, { source_id: factsSourceId });
-              factsInserted++;
-            }
-          } catch { /* per-page facts extraction is best-effort */ }
-        }
-        if (factsInserted > 0) {
-          console.log(`  Extracted: ${factsInserted} high-notability facts`);
-        }
-      }
-    } catch { /* facts extraction is best-effort */ }
+    const { runFactsBackstop } = await import('../core/facts/backstop.ts');
+    const factsSourceId = opts.sourceId ?? 'default';
+    for (const slug of pagesAffected) {
+      try {
+        const page = await engine.getPage(slug);
+        if (!page) continue;
+        await runFactsBackstop(
+          {
+            slug,
+            type: page.type,
+            compiled_truth: page.compiled_truth ?? '',
+            frontmatter: page.frontmatter ?? {},
+          },
+          {
+            engine,
+            sourceId: factsSourceId,
+            sessionId: `sync:${slug}`,
+            source: 'sync:import',
+            mode: 'queue',
+            notabilityFilter: 'high-only',
+          },
+        );
+      } catch { /* per-page enqueue is best-effort */ }
+    }
   }
 
   // Auto-embed (skip for large syncs — embedding calls OpenAI).
