@@ -71,7 +71,7 @@ describeE2E('http-transport E2E (real Postgres)', () => {
     );
 
     srv = await startServer();
-  });
+  }, 30_000);
 
   afterAll(async () => {
     if (srv) await srv.stop();

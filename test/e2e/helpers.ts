@@ -35,6 +35,9 @@ const FIXTURES_DIR = resolve(import.meta.dir, 'fixtures');
 let engine: PostgresEngine | null = null;
 
 const ALL_TABLES = [
+  // v0.31: facts must come BEFORE pages too (FK to sources, but tests
+  // seed via direct SQL so the row stays referenced until truncated).
+  'facts',
   // v0.28: takes + synthesis_evidence MUST come BEFORE pages because they FK pages.id
   'synthesis_evidence',
   'takes',

@@ -1012,6 +1012,20 @@ async function handleCliOnly(command: string, args: string[]) {
         await runThinkCli(engine, args);
         break;
       }
+      case 'recall': {
+        // v0.31: hot memory recall surface — `gbrain recall <entity>`,
+        // `--since DUR`, `--session ID`, `--today`, `--grep TEXT`,
+        // `--supersessions`, `--include-expired`, `--as-context`, `--json`.
+        const { runRecall } = await import('./commands/recall.ts');
+        await runRecall(engine, args);
+        break;
+      }
+      case 'forget': {
+        // v0.31: shorthand for expireFact. `gbrain forget <fact-id>`.
+        const { runForget } = await import('./commands/recall.ts');
+        await runForget(engine, args);
+        break;
+      }
       case 'sources': {
         const { runSources } = await import('./commands/sources.ts');
         await runSources(engine, args);

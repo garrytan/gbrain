@@ -6,6 +6,7 @@ import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
+import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -35,6 +36,14 @@ export async function startMcpServer(engine: BrainEngine) {
     return dispatchToolCall(engine, name, params, {
       remote: true,
       takesHoldersAllowList: ['world'],
+      // v0.31: source defaults to 'default' for stdio (no per-token scope).
+      // Operators who want a different source on stdio MCP should set
+      // GBRAIN_SOURCE in the env or use --source via `gbrain call`.
+      sourceId: process.env.GBRAIN_SOURCE || 'default',
+      // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
+      // Code see the brain's relevant hot memory automatically alongside
+      // every tool-call response. Best-effort; absorbs errors.
+      metaHook: getBrainHotMemoryMeta,
     });
   });
 

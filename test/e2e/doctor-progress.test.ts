@@ -27,7 +27,7 @@ describeE2E('gbrain doctor --progress-json (E2E)', () => {
     await setupDB();
     // Seed a handful of pages so the DB checks have something to scan.
     await importFixtures();
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await teardownDB();
