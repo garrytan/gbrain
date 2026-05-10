@@ -86,9 +86,9 @@ If the platform supports interactive buttons, use them:
 }
 ```
 
-### With the `clarify` tool (Hermes Agent)
+### With the `clarify` tool (OpenClaw agents)
 
-Hermes agents have a built-in `clarify` tool that presents choices natively:
+Some OpenClaw agents have a built-in `clarify` tool that presents choices natively:
 
 ```
 clarify(

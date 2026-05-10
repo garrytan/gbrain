@@ -207,7 +207,7 @@
     {
       "name": "ask-user",
       "path": "ask-user/SKILL.md",
-      "description": "Reusable choice-gate pattern for presenting users with 2-4 options and stopping execution until they respond. Platform-agnostic (Telegram buttons, Discord, CLI, Hermes clarify tool)."
+      "description": "Reusable choice-gate pattern for presenting users with 2-4 options and stopping execution until they respond. Platform-agnostic (Telegram buttons, Discord, CLI, OpenClaw clarify tool)."
     }
   ],
   "dependencies": {
