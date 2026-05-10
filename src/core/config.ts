@@ -134,9 +134,24 @@ export function loadConfig(): GBrainConfig | null {
 
   if (!fileConfig && !dbUrl) return null;
 
-  // Infer engine type if not explicitly set
-  const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
-    || (fileConfig?.database_path ? 'pglite' : 'postgres');
+  // Infer engine type.
+  // HARD RULE: if a Postgres URL is available (env or config), engine is
+  // always 'postgres'. PGLite is a fallback for zero-config local-only
+  // setups that have no Postgres URL at all. A config file that says
+  // engine:'pglite' while a database_url exists is a misconfiguration —
+  // Postgres wins unconditionally.
+  const hasPostgresUrl = !!(dbUrl || fileConfig?.database_url);
+  const inferredEngine: 'postgres' | 'pglite' = hasPostgresUrl
+    ? 'postgres'
+    : (fileConfig?.engine || (fileConfig?.database_path ? 'pglite' : 'postgres'));
+
+  // Warn if config says pglite but we're overriding to postgres
+  if (hasPostgresUrl && fileConfig?.engine === 'pglite') {
+    console.error(
+      '[gbrain] WARNING: config says engine:pglite but a Postgres URL is available. ' +
+      'Overriding to postgres. Remove engine/database_path from config to silence this.'
+    );
+  }
 
   // Merge: env vars override config file. READ only — never mutate process.env.
   const merged = {
