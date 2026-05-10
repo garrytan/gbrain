@@ -2,6 +2,46 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.31.10] - 2026-05-10
+
+**Setup hands you a real bootstrap, not an empty brain. New `cold-start` skill sequences day-1 imports across markdown, contacts, calendar, email, conversations, X, archives, and meeting transcripts. New `ask-user` choice-gate pattern. Phase J in `setup` auto-launches cold-start when verification passes.**
+
+The setup skill has always ended with a working brain that's empty, leaving every new user asking "now what?" v0.31.10 closes that gap. After `gbrain doctor` confirms a healthy install, the agent now offers to populate the brain through a priority-ranked sequence of data sources, gated on user consent at every phase. Each phase delegates to existing recipes (`email-to-brain.md`, `calendar-to-brain.md`, `x-to-brain.md`) and skills (`meeting-ingestion`); cold-start is orchestration, not reimplementation. Resume state at `~/.gbrain/cold-start-state.json` matches the existing `update-state.json` convention.
+
+### What you can now do
+
+**Bootstrap a brain from scratch in one session.** The new `cold-start` skill sequences eight phases ranked by information density times ease: existing markdown / Obsidian (Tier 1) → Google Contacts → Google Calendar (90-day lookback) → Gmail (smart sample) → conversation exports (ChatGPT / Claude) → X / Twitter archive → file archives (Dropbox / Drive / local) → meeting transcripts (Circleback / Otter / Fireflies). Each phase is independently valuable; stop after any phase and resume from `~/.gbrain/cold-start-state.json` later. Trigger with "cold start", "fill my brain", or "what should I import first".
+
+**Setup auto-launches cold-start (Phase J).** After `gbrain doctor` passes, the setup skill no longer ends with "next steps: read the docs." It asks "Ready to populate your brain?" and transitions directly into cold-start. Decline once and it is deferred to `~/.gbrain/cold-start-state.json` with a `deferred` flag. Invoke later with the same trigger phrase.
+
+**Choice-gate pattern is now a documented convention.** `skills/ask-user/SKILL.md` codifies the "present 2-4 options, stop, wait" pattern that cold-start uses at every phase boundary. Platform-agnostic across Telegram inline buttons, Discord, CLI numbered options, and agent-native clarify tools.
+
+### How it works under the hood
+
+Cold-start is an orchestration skill, not a CLI command. The phase ordering ranks by information density times ease: existing markdown delivers the most pages per minute (already structured, no API), file archives deliver the fewest. Each phase delegates to a recipe (for direct OAuth setups) or to ClawVisor (for credential-vaulted setups). The skill never holds raw OAuth tokens; that posture is encoded at Phase 0. State persists across agent-loop crashes via `~/.gbrain/cold-start-state.json`; the resume protocol picks up at the first phase where `completed: false`.
+
+### Known limitations (will be addressed in follow-ups)
+
+**ClawVisor is currently required for the API-backed phases (Contacts, Calendar, Gmail).** The recipes (`recipes/email-to-brain.md`, `recipes/calendar-to-brain.md`) document a dual A / B pattern with direct-OAuth as Option B. Cold-start's Phase 0 will be relaxed to mirror that pattern in v0.32. If you do not want to use ClawVisor today, skip Phases 2-4 and run Phases 1, 5-8 for offline-only sources.
+
+**Phase-level resume granularity.** A mid-phase failure (e.g., contact 487 of 600) restarts the phase from contact 1. Idempotent slug writes prevent duplicates, but the round-trip cost is real. Per-item resume lands with the `gbrain cold-start` CLI counterpart in v0.32.
+
+### To take advantage of v0.31.10
+
+```bash
+gbrain upgrade
+```
+
+Then ask the agent to "fill my brain" or "cold start" to launch the new orchestration. If you have already run setup, run it again to get the new Phase J handoff, or invoke cold-start directly with the trigger phrase. State files live at `~/.gbrain/cold-start-state.json` and survive restarts.
+
+If you do not want ClawVisor today, run Phases 1 (markdown) and 5-8 (conversations, X, archives, transcripts) directly. Phases 2-4 (Contacts / Calendar / Gmail) will become opt-in to direct OAuth in v0.32.
+
+### For contributors
+
+Cold-start originated as PR #802. The branch shipped three commits including one that flipped ClawVisor from "recommended" to "required for API access." Codex outside-voice review of the v0.31.10 ship plan flagged that as vendor-coupling that prematurely cements ClawVisor as the public contract. The known-limitation above is the bridge: v0.31.10 ships the contributor's posture, v0.32 restores the dual-recipe pattern. Privacy scrub on the merging PR replaced "Hermes Agent" references in the new `ask-user` skill (which conflated the public NousResearch agent with private deployment names) with the canonical "OpenClaw agents" phrasing per CLAUDE.md doctrine.
+
+The version slot is deliberate. v0.31.4 through v0.31.9 are reserved for in-flight work; v0.31.10 was chosen so this user-facing skillpack expansion lands clearly above the patch-train.
+
 ## [0.31.8] - 2026-05-10
 
 **Multi-source brains stop misrouting writes, and `gbrain doctor` finally tells you when it does.**
