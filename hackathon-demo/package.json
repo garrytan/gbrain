@@ -1,0 +1,15 @@
+{
+  "name": "gbrain-hackathon-demo",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run server.ts",
+    "test-gbrain": "bun run test-gbrain-connection.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0"
+  },
+  "engines": {
+    "bun": ">=1.3.10"
+  }
+}
