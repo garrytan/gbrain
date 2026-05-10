@@ -68,6 +68,8 @@ describe('E2E: MCP Tool Generation', () => {
     expect(recordMutationEvent?.inputSchema.required).toContain('source_refs');
     expect((recordMutationEvent?.inputSchema.properties as any).source_ref).toBeUndefined();
     expect((recordMutationEvent?.inputSchema.properties as any).mutation_dry_run.type).toBe('boolean');
+    const putPage = tools.find((tool) => tool.name === 'put_page');
+    expect((putPage?.inputSchema.properties as any).expected_content_hash.type).toEqual(['string', 'null']);
     const dryRunMutation = tools.find((tool) => tool.name === 'dry_run_memory_mutation');
     expect(dryRunMutation?.inputSchema.required).toEqual([
       'session_id',
@@ -110,6 +112,7 @@ describe('E2E: MCP Tool Generation', () => {
     expect(routeWriteback?.inputSchema.required).toContain('evidence_kind');
     expect((routeWriteback?.inputSchema.properties as any).evidence_kind.enum).toContain('agent_inferred');
     expect((routeWriteback?.inputSchema.properties as any).apply.type).toBe('boolean');
+    expect((routeWriteback?.inputSchema.properties as any).target_snapshot_hash.type).toEqual(['string', 'null']);
   });
 
   test('MCP server module can be imported', async () => {
