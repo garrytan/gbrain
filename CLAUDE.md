@@ -802,10 +802,15 @@ four numeric segments are required first. Historical 3-segment versions
 
 - `bun.lock` — root-package version is auto-pinned from `package.json`. After
   bumping `package.json`, run `bun install` to refresh the lockfile.
-- `llms-full.txt` / `llms.txt` — auto-generated documentation bundles. After
-  any release ship that touches the Key Files annotations in `CLAUDE.md`,
-  run `bun run build:llms` to regenerate. The bundles do not contain a
-  version pin per se; they reflect the current state of the docs they index.
+- `llms-full.txt` / `llms.txt` — auto-generated documentation bundles. **Any
+  CLAUDE.md edit MUST be followed by `bun run build:llms` in the same commit
+  (or a follow-up commit before push).** The committed bundles are checked
+  against fresh generator output by `test/build-llms.test.ts`, which runs in
+  CI shard 1. If you edited CLAUDE.md and didn't regenerate, CI will fail.
+  This has bitten the wave 3 times — every CLAUDE.md edit gets a `bun run
+  build:llms` chaser, no exceptions. (The `verify` gate doesn't run this
+  test; only the full unit suite does. So `bun run typecheck` clean is NOT
+  enough to know you can push after a CLAUDE.md edit.)
 
 **Historical (DO NOT bump on release):**
 
