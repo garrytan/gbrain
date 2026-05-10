@@ -64,11 +64,7 @@ export function getExpectedAgentRulesVersion(): string {
 }
 
 function loadAgentRules(): string | null {
-  const candidates = [
-    join(__dirname, '..', '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
-    join(__dirname, '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
-    join(process.cwd(), 'docs', 'MBRAIN_AGENT_RULES.md'),
-  ];
+  const candidates = getAgentRulesCandidatePaths();
 
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
@@ -77,4 +73,11 @@ function loadAgentRules(): string | null {
   }
 
   return null;
+}
+
+export function getAgentRulesCandidatePaths(): string[] {
+  return [
+    join(__dirname, '..', '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
+    join(__dirname, '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
+  ];
 }

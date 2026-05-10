@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildDoctorReport } from '../src/core/services/doctor-service.ts';
 import { resolveOfflineProfile } from '../src/core/offline-profile.ts';
-import { getExpectedAgentRulesVersion, parseDoctorAgentArgs } from '../src/commands/doctor.ts';
+import { getAgentRulesCandidatePaths, getExpectedAgentRulesVersion, parseDoctorAgentArgs } from '../src/commands/doctor.ts';
 
 
 const originalEnv = { ...process.env };
@@ -355,6 +355,21 @@ describe('doctor command', () => {
 
       expect(getExpectedAgentRulesVersion()).toBe(docsVersion);
       expect(getExpectedAgentRulesVersion()).not.toBe('9.9.9');
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('doctor agent rules candidate paths do not include cwd fallback', async () => {
+    const originalCwd = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'mbrain-doctor-candidates-'));
+    try {
+      process.chdir(tempDir);
+
+      const candidatePaths = getAgentRulesCandidatePaths();
+      expect(candidatePaths.some((candidate: string) => candidate.startsWith(tempDir))).toBe(false);
+      expect(candidatePaths).not.toContain(join(tempDir, 'docs', 'MBRAIN_AGENT_RULES.md'));
     } finally {
       process.chdir(originalCwd);
       rmSync(tempDir, { recursive: true, force: true });
