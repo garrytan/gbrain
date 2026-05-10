@@ -508,8 +508,9 @@ the operating loop:
 - detect entities, systems, concepts, tasks, and memory candidates
 - search or query MBrain before falling back to web search or repo grep
 - read compiled truth first, then inspect timeline evidence when needed
-- write new facts with source attribution
+- route durable writeback through `route_memory_writeback`
 - put uncertain claims into the Memory Inbox
+- call `put_page` only after canonical write is allowed
 - promote only claims with provenance
 - sync after writes and backfill embeddings when needed
 - audit the loop periodically

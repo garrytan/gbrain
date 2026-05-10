@@ -115,9 +115,9 @@ if ! mbrain_is_relevant; then
   exit 0
 fi
 
-REASON='MBrain memory check (not a crash): if durable knowledge emerged, write it with sources/backlinks and sync; otherwise reply exactly MBRAIN-PASS: <short reason>.'
+REASON='MBrain memory check (not a crash): route any durable session knowledge through route_memory_writeback with sources; otherwise reply exactly MBRAIN-PASS: <short reason>.'
 
 log_line "block" "$SESSION_ID" "gate-passed"
 
-printf '%s\n' '{"decision":"block","reason":"MBrain memory check (not a crash): if durable knowledge emerged, write it with sources/backlinks and sync; otherwise reply exactly MBRAIN-PASS: <short reason>."}'
+printf '%s\n' '{"decision":"block","reason":"MBrain memory check (not a crash): route any durable session knowledge through route_memory_writeback with sources; otherwise reply exactly MBRAIN-PASS: <short reason>."}'
 `;

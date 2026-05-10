@@ -105,6 +105,22 @@ describe('scenario memory orchestration operations', () => {
     expect(plan.next_tool).toBe('resume_task');
   });
 
+  test('plan_scenario_memory_request exposes route_memory_writeback for session-end accumulation', async () => {
+    const result = await operationsByName.plan_scenario_memory_request.handler(ctx, {
+      query: '이번 세션에서 장기 기억 후보를 남길 내용을 검토하세요',
+      source_kind: 'session_end',
+    });
+
+    const plan = result as {
+      classification: { scenario: string };
+      next_tool: string;
+      writeback_hint: string;
+    };
+    expect(plan.classification.scenario).toBe('auto_accumulation');
+    expect(plan.next_tool).toBe('route_memory_writeback');
+    expect(plan.writeback_hint).toBe('create_candidate');
+  });
+
   test('rejects invalid scenario enum', async () => {
     await expect(operationsByName.select_activation_policy.handler(ctx, {
       scenario: 'not-real',
