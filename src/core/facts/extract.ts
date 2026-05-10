@@ -221,7 +221,12 @@ interface RawExtracted {
   notability?: string;
 }
 
-function parseExtractorJson(raw: string): RawExtracted[] | null {
+/**
+ * @internal Exported for tests. Parses the LLM's strict-JSON output and
+ * returns a list of raw extracted candidates, including notability when
+ * the model included it. Production callers should use extractFactsFromTurn.
+ */
+export function parseExtractorJson(raw: string): RawExtracted[] | null {
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
   // Strict.
   const direct = tryArrayShape(cleaned);
@@ -251,6 +256,7 @@ function tryArrayShape(s: string): RawExtracted[] | null {
         kind: o.kind,
         entity: typeof o.entity === 'string' ? o.entity : null,
         confidence: typeof o.confidence === 'number' ? o.confidence : 1.0,
+        notability: typeof o.notability === 'string' ? o.notability : undefined,
       });
     }
     return out;
