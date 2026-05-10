@@ -536,47 +536,41 @@ const put_page: Operation = {
     // a fact-extraction job into the bounded queue. Skipped on dry-run,
     // dream-generated content (anti-loop), and non-eligible kinds (sync,
     // ingest, file uploads, code pages). Never blocks the put_page response.
+    // v0.31.2: routed through runFactsBackstop (PR1 commit 6) so put_page
+    // and sync share the same eligibility/extract/dedup/insert pipeline.
+    // Queue mode preserves the prior fire-and-forget shape (caller's
+    // put_page response stays fast). Default 'all' notability filter
+    // (MEDIUM facts wait for the dream cycle but DO land via put_page,
+    // matching the pre-fix behavior on this surface).
     let factsQueued: { queued: boolean } | { skipped: string } | undefined;
     try {
-      const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
-      const enabled = await isFactsExtractionEnabled(ctx.engine);
-      const eligible = enabled
-        ? isFactsBackstopEligible(slug, result.parsedPage)
-        : { ok: false as const, reason: 'extraction_disabled' };
-      if (!eligible.ok) {
-        factsQueued = { skipped: eligible.reason };
-      } else {
-        const { getFactsQueue } = await import('./facts/queue.ts');
-        const { extractFactsFromTurn } = await import('./facts/extract.ts');
-        const { resolveEntitySlug } = await import('./entities/resolve.ts');
-        const sourceId = ctx.sourceId ?? 'default';
-        const sessionId = (ctx as { source_session?: string }).source_session ?? null;
-        // result.parsedPage non-null is a precondition of backstop eligibility,
-        // verified above; the type narrows for the inner closure.
-        const body = result.parsedPage?.compiled_truth ?? '';
-        const enqueued = getFactsQueue().enqueue(async (signal) => {
-          if (signal.aborted) return;
-          const facts = await extractFactsFromTurn({
-            turnText: body,
-            sessionId,
-            source: 'mcp:put_page',
-            isDreamGenerated: false,
-            engine: ctx.engine,
-            abortSignal: signal,
-          });
-          for (const f of facts) {
-            if (signal.aborted) return;
-            const resolvedSlug = f.entity_slug
-              ? await resolveEntitySlug(ctx.engine, sourceId, f.entity_slug)
-              : null;
-            await ctx.engine.insertFact({
-              ...f,
-              entity_slug: resolvedSlug,
-              visibility: 'private',
-            }, { source_id: sourceId });
-          }
-        }, sessionId ?? slug);
-        factsQueued = enqueued > -1 ? { queued: true } : { skipped: 'queue_shutdown' };
+      const { runFactsBackstop } = await import('./facts/backstop.ts');
+      const r = await runFactsBackstop(
+        {
+          slug,
+          type: result.parsedPage!.type,
+          compiled_truth: result.parsedPage!.compiled_truth,
+          frontmatter: result.parsedPage!.frontmatter,
+        },
+        {
+          engine: ctx.engine,
+          sourceId: ctx.sourceId ?? 'default',
+          sessionId: (ctx as { source_session?: string }).source_session ?? null,
+          source: 'mcp:put_page',
+          mode: 'queue',
+        },
+      );
+      if (r.mode === 'queue' && r.enqueued) {
+        factsQueued = { queued: true };
+      } else if (r.mode === 'queue' && r.skipped) {
+        // Preserve the pre-v0.31.2 response shape for MCP clients:
+        // 'kind:guide' / 'too_short' / 'subagent_namespace' / 'dream_generated'
+        // (bare reasons), not the helper's namespaced 'eligibility_failed:...'
+        // discriminator. Map back here.
+        const bare = r.skipped.startsWith('eligibility_failed:')
+          ? r.skipped.slice('eligibility_failed:'.length)
+          : r.skipped;
+        factsQueued = { skipped: bare };
       }
     } catch {
       factsQueued = { skipped: 'backstop_error' };
