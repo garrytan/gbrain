@@ -18,7 +18,7 @@ describe('memory writeback router service', () => {
     expect(result.candidate_input).toBeUndefined();
   });
 
-  test('routes inferred sourced signals to captured candidates', () => {
+  test('routes targeted inferred sourced signals to candidates', () => {
     const result = routeMemoryWriteback({
       content: 'The agent inferred that Memory Inbox routing is underspecified.',
       evidence_kind: 'agent_inferred',
@@ -42,7 +42,7 @@ describe('memory writeback router service', () => {
       importance_score: 0.8,
       recurrence_score: 0,
       sensitivity: 'work',
-      status: 'captured',
+      status: 'candidate',
       target_object_type: 'curated_note',
       target_object_id: 'systems/mbrain',
       reviewed_at: null,

@@ -390,7 +390,6 @@ function candidateStatus(
 ): 'captured' | 'candidate' {
   if (
     evidenceKind === 'ambiguous'
-    || evidenceKind === 'agent_inferred'
     || evidenceKind === 'contradicts_existing'
     || evidenceKind === 'code_sensitive'
     || sensitivity === 'unknown'
