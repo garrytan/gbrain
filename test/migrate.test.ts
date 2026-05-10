@@ -1258,6 +1258,55 @@ describe('migration v46 — takes_weight_round_to_grid (v0.32)', () => {
   });
 });
 
+describe('migration v47 — eval_takes_quality_runs (v0.32)', () => {
+  // v0.32 EXP-5 — DB-authoritative receipts table for `gbrain eval takes-quality`.
+  // Codex review #6 corrected the original two-phase split-brain plan: DB row
+  // is the source of truth (carries full receipt JSON), disk artifact is
+  // best-effort. The 4-sha unique key (corpus, prompt, models, rubric) makes
+  // re-running identical evals an `INSERT ... ON CONFLICT DO NOTHING` no-op.
+  test('exists with the expected name', () => {
+    const v47 = MIGRATIONS.find(m => m.version === 47);
+    expect(v47).toBeDefined();
+    expect(v47?.name).toBe('eval_takes_quality_runs');
+  });
+
+  test('creates the table with all 4 receipt sha columns + receipt_json JSONB', () => {
+    const v47 = MIGRATIONS.find(m => m.version === 47);
+    const sql = v47!.sql || '';
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS eval_takes_quality_runs');
+    expect(sql).toContain('receipt_sha8_corpus');
+    expect(sql).toContain('receipt_sha8_prompt');
+    expect(sql).toContain('receipt_sha8_models');
+    expect(sql).toContain('receipt_sha8_rubric');
+    expect(sql).toContain('receipt_json          JSONB');
+  });
+
+  test('has 4-sha UNIQUE constraint (idempotent re-runs)', () => {
+    const v47 = MIGRATIONS.find(m => m.version === 47);
+    const sql = v47!.sql || '';
+    expect(sql).toContain('UNIQUE (receipt_sha8_corpus, receipt_sha8_prompt, receipt_sha8_models, receipt_sha8_rubric)');
+  });
+
+  test('verdict column has CHECK constraint for the 3 verdict values', () => {
+    const v47 = MIGRATIONS.find(m => m.version === 47);
+    const sql = v47!.sql || '';
+    expect(sql).toContain("CHECK (verdict IN ('pass','fail','inconclusive'))");
+  });
+
+  test('trend index orders by (rubric_version, created_at DESC)', () => {
+    // Codex review #3 — trend mode segregates by rubric_version + reads
+    // ordered DESC. Index shape must match the query shape exactly.
+    const v47 = MIGRATIONS.find(m => m.version === 47);
+    const sql = v47!.sql || '';
+    expect(sql).toContain('eval_takes_quality_runs_trend_idx');
+    expect(sql).toContain('(rubric_version, created_at DESC)');
+  });
+
+  test('LATEST_VERSION caught up to 47', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(47);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // PR #363 regression guards — session timeouts via startup parameters
 // resolveSessionTimeouts — GBRAIN_*_TIMEOUT env overrides

@@ -576,6 +576,17 @@ async function handleCliOnly(command: string, args: string[]) {
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
 
+  // v0.32 EXP-5 (codex review #10): `eval takes-quality replay <receipt>`
+  // is the ONLY sub-subcommand that doesn't need a brain — it reads a
+  // receipt JSON file from disk and re-renders it. Bypass connectEngine
+  // here so users can replay a receipt on a machine without DATABASE_URL.
+  // run/trend/regress need the brain and fall through to the regular
+  // engine-required path below.
+  if (command === 'eval' && args[0] === 'takes-quality' && args[1] === 'replay') {
+    const { runReplayNoBrain } = await import('./commands/eval-takes-quality.ts');
+    process.exit(await runReplayNoBrain(args.slice(2)));
+  }
+
   // v0.28.8: longmemeval brings its own in-memory PGLite. Bypassing
   // connectEngine here keeps `gbrain eval longmemeval --help` and benchmark
   // runs working on machines that have no `~/.gbrain/config.json` configured.
@@ -631,6 +642,16 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       case 'eval': {
+        // v0.32 EXP-5: `eval takes-quality {run,trend,regress}` requires a
+        // brain (samples takes from DB / reads runs table). `replay` was
+        // already routed through the no-DB bypass above and never reaches
+        // this case. Other `eval` subcommands (export/prune/replay-capture/
+        // longmemeval/cross-modal) go to the generic dispatcher.
+        if (args[0] === 'takes-quality') {
+          const { runEvalTakesQuality } = await import('./commands/eval-takes-quality.ts');
+          await runEvalTakesQuality(engine, args.slice(1));
+          break;
+        }
         const { runEvalCommand } = await import('./commands/eval.ts');
         await runEvalCommand(engine, args);
         break;
