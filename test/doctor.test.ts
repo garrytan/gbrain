@@ -84,6 +84,86 @@ describe('doctor command', () => {
     expect(report.checks.some((check) => check.name === 'offline_profile')).toBe(true);
   });
 
+  test('buildDoctorReport includes installed-agent readiness checks when provided', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 1,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: null,
+      profile: null,
+      rawPostgresChecksSupported: false,
+      latestVersion: 4,
+      schemaVersion: '4',
+      health: {
+        page_count: 1,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+      installedAgent: {
+        status: 'ok',
+        checks: [{
+          name: 'mcp_required_tools',
+          status: 'ok',
+          message: 'Required tools available: retrieve_context, read_context, record_retrieval_trace, route_memory_writeback',
+        }],
+      },
+    });
+
+    const agentCheck = report.checks.find((check) => check.name === 'agent:mcp_required_tools');
+    expect(report.status).toBe('healthy');
+    expect(agentCheck?.status).toBe('ok');
+  });
+
+  test('buildDoctorReport fails when installed-agent readiness has failing checks', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 1,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: null,
+      profile: null,
+      rawPostgresChecksSupported: false,
+      latestVersion: 4,
+      schemaVersion: '4',
+      health: {
+        page_count: 1,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+      installedAgent: {
+        status: 'fail',
+        checks: [{
+          name: 'mcp_required_tools',
+          status: 'fail',
+          message: 'Missing required MCP tools: read_context',
+        }],
+      },
+    });
+
+    const agentCheck = report.checks.find((check) => check.name === 'agent:mcp_required_tools');
+    expect(report.status).toBe('unhealthy');
+    expect(agentCheck?.status).toBe('fail');
+  });
+
   test('buildDoctorReport surfaces the execution envelope and contract surface', () => {
     const report = buildDoctorReport({
       connectionOk: true,
@@ -383,5 +463,17 @@ describe('doctor command', () => {
     });
     const stdout = new TextDecoder().decode(result.stdout);
     expect(stdout).toContain('doctor');
+  });
+
+  test('doctor help exposes installed-agent readiness flags', async () => {
+    const result = Bun.spawnSync({
+      cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--help'],
+      cwd: import.meta.dir + '/..',
+    });
+    const stdout = new TextDecoder().decode(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain('--agent');
+    expect(stdout).toContain('--agent-command');
   });
 });

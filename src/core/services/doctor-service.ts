@@ -5,6 +5,7 @@ import { supportsRawPostgresAccess } from '../engine-factory.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import { resolveOfflineProfile, type OfflineProfile } from '../offline-profile.ts';
 import type { BrainHealth, BrainStats } from '../types.ts';
+import type { InstalledAgentReadinessReport } from './installed-agent-readiness-service.ts';
 import * as db from '../db.ts';
 
 export interface DoctorCheck {
@@ -30,6 +31,7 @@ export interface DoctorInputs {
   schemaVersion?: string | null;
   latestVersion: number;
   health?: BrainHealth;
+  installedAgent?: InstalledAgentReadinessReport;
 }
 
 interface DoctorServiceDeps {
@@ -136,6 +138,7 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
       status: 'fail',
       message: input.connectionError || 'Unknown connection error',
     });
+    appendInstalledAgentChecks(checks, input.installedAgent);
     return {
       status: 'unhealthy',
       checks,
@@ -263,10 +266,27 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
     }
   }
 
+  appendInstalledAgentChecks(checks, input.installedAgent);
+
   return {
     status: checks.some((check) => check.status === 'fail') ? 'unhealthy' : 'healthy',
     checks,
   };
+}
+
+function appendInstalledAgentChecks(
+  checks: DoctorCheck[],
+  installedAgent: InstalledAgentReadinessReport | undefined,
+) {
+  if (!installedAgent) return;
+
+  for (const check of installedAgent.checks) {
+    checks.push({
+      name: `agent:${check.name}`,
+      status: check.status,
+      message: check.message,
+    });
+  }
 }
 
 export function formatDoctorReport(report: DoctorReport): string {
