@@ -107,15 +107,16 @@ describe('thin-client dispatch guard refuses DB-bound commands', () => {
   ];
 
   for (const args of refusedCommands) {
-    test(`refuses \`gbrain ${args.join(' ')}\` with canonical error`, async () => {
+    test(`refuses \`gbrain ${args.join(' ')}\` with pinpoint hint`, async () => {
       seedThinClientConfig();
       const r = await run(args);
       expect(r.exitCode).toBe(1);
-      // Canonical message must name the command + the remote URL.
+      // v0.31.1 (Issue #734): refusal carries an actionable hint via
+      // THIN_CLIENT_REFUSE_HINTS instead of a generic "run on the remote
+      // host" message. Hint format: "`gbrain <cmd>` is not routable. <hint>"
       expect(r.stderr).toContain(`gbrain ${args[0]}`);
-      expect(r.stderr).toContain('thin client');
-      expect(r.stderr).toContain('https://brain-host.example/mcp');
-      expect(r.stderr).toContain('Run `' + args[0] + '` on the remote host');
+      expect(r.stderr).toContain('thin-client of https://brain-host.example/mcp');
+      expect(r.stderr).toContain('not routable');
     });
   }
 });

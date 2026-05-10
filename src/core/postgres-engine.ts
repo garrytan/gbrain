@@ -8,6 +8,8 @@ import type {
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
+  FactRow, FactKind, FactVisibility, FactInsertStatus,
+  NewFact, FactListOpts, FactsHealth,
 } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
@@ -301,6 +303,7 @@ export class PostgresEngine implements BrainEngine {
       pages_exists: boolean;
       source_id_exists: boolean;
       deleted_at_exists: boolean;
+      effective_date_exists: boolean;
       links_exists: boolean;
       link_source_exists: boolean;
       origin_page_id_exists: boolean;
@@ -308,6 +311,7 @@ export class PostgresEngine implements BrainEngine {
       symbol_name_exists: boolean;
       language_exists: boolean;
       search_vector_exists: boolean;
+      embedding_image_exists: boolean;
       mcp_log_exists: boolean;
       agent_name_exists: boolean;
       subagent_messages_exists: boolean;
@@ -320,6 +324,8 @@ export class PostgresEngine implements BrainEngine {
                 WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'source_id') AS source_id_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'deleted_at') AS deleted_at_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'effective_date') AS effective_date_exists,
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'links') AS links_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
@@ -334,6 +340,8 @@ export class PostgresEngine implements BrainEngine {
                 WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'language') AS language_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'search_vector') AS search_vector_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'embedding_image') AS embedding_image_exists,
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'mcp_request_log') AS mcp_log_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
@@ -358,8 +366,19 @@ export class PostgresEngine implements BrainEngine {
     // v0.27 (v36): idx_subagent_messages_provider in SCHEMA_SQL needs provider_id
     // (the SECOND column in the composite index `(job_id, provider_id)`).
     const needsSubagentProviderId = probe.subagent_messages_exists && !probe.subagent_provider_id_exists;
+    // v0.27.1 (v39): idx_chunks_embedding_image partial HNSW in SCHEMA_SQL
+    // references embedding_image. Use embedding_image_exists as the proxy for
+    // both v39 columns; modality is added in the same migration.
+    const needsChunksEmbeddingImage = probe.chunks_exists && !probe.embedding_image_exists;
+    // v0.29.1 (v40 + v41): pages_coalesce_date_idx expression index in SCHEMA_SQL
+    // references effective_date. Use effective_date_exists as the proxy for the
+    // five v40 + v41 pages columns (emotional_weight, effective_date,
+    // effective_date_source, import_filename, salience_touched_at).
+    const needsPagesRecency = probe.pages_exists && !probe.effective_date_exists;
 
-    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId) return;
+    if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
+        && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
+        && !needsChunksEmbeddingImage && !needsPagesRecency) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -447,6 +466,35 @@ export class PostgresEngine implements BrainEngine {
         ALTER TABLE subagent_messages ADD COLUMN IF NOT EXISTS provider_id TEXT;
       `);
     }
+
+    if (needsChunksEmbeddingImage) {
+      // v39 (multimodal_dual_column_v0_27_1) adds modality + embedding_image
+      // columns to content_chunks plus a partial HNSW index that references
+      // embedding_image. Bootstrap mirrors enough state for SCHEMA_SQL's
+      // `CREATE INDEX idx_chunks_embedding_image ... WHERE embedding_image IS NOT NULL`
+      // not to crash. v39 runs later via runMigrations and is idempotent.
+      await conn.unsafe(`
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS modality TEXT NOT NULL DEFAULT 'text';
+        ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_image vector(1024);
+      `);
+    }
+
+    if (needsPagesRecency) {
+      // v40 (pages_emotional_weight) adds emotional_weight; v41
+      // (pages_recency_columns) adds effective_date + effective_date_source +
+      // import_filename + salience_touched_at and the
+      // `pages_coalesce_date_idx ON pages ((COALESCE(effective_date, updated_at)))`
+      // expression index. SCHEMA_SQL's CREATE INDEX for that expression crashes
+      // before v41 runs. Bootstrap adds all five additive columns; v40 + v41
+      // run later via runMigrations and are idempotent.
+      await conn.unsafe(`
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS emotional_weight      REAL NOT NULL DEFAULT 0.0;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS effective_date        TIMESTAMPTZ;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS effective_date_source TEXT;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS import_filename       TEXT;
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS salience_touched_at   TIMESTAMPTZ;
+      `);
+    }
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
@@ -497,15 +545,20 @@ export class PostgresEngine implements BrainEngine {
     return rowToPage(rows[0]);
   }
 
-  async putPage(slug: string, page: PageInput): Promise<Page> {
+  async putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page> {
     slug = validateSlug(slug);
     const sql = this.sql;
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
+    const sourceId = opts?.sourceId ?? 'default';
 
-    // v0.18.0 Step 2: source_id relies on schema DEFAULT 'default'. ON
-    // CONFLICT target becomes (source_id, slug) since global UNIQUE(slug)
-    // was dropped in migration v17.
+    // v0.18.0 Step 5+: source_id is now in the INSERT column list so multi-
+    // source callers actually land on the (source_id, slug) row they intend.
+    // Pre-fix: omitting source_id let the schema DEFAULT 'default' apply, so
+    // a caller syncing under 'jarvis-memory' silently fabricated a duplicate
+    // at (default, slug); subsequent bare-slug subqueries (getTags, deleteChunks,
+    // etc.) then matched 2 rows and blew up with Postgres 21000.
+    // ON CONFLICT target is (source_id, slug); global UNIQUE(slug) dropped in v17.
     const pageKind = page.page_kind || 'markdown';
     // v0.29.1 — effective_date / effective_date_source / import_filename are
     // additive opt-in inputs from the importer (computeEffectiveDate). When
@@ -516,8 +569,8 @@ export class PostgresEngine implements BrainEngine {
     const effectiveDateSource = page.effective_date_source ?? null;
     const importFilename = page.import_filename ?? null;
     const rows = await sql`
-      INSERT INTO pages (slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename)
-      VALUES (${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename})
+      INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename)
+      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename})
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -535,9 +588,10 @@ export class PostgresEngine implements BrainEngine {
     return rowToPage(rows[0]);
   }
 
-  async deletePage(slug: string): Promise<void> {
+  async deletePage(slug: string, opts?: { sourceId?: string }): Promise<void> {
     const sql = this.sql;
-    await sql`DELETE FROM pages WHERE slug = ${slug}`;
+    const sourceId = opts?.sourceId ?? 'default';
+    await sql`DELETE FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}`;
   }
 
   async softDeletePage(slug: string, opts?: { sourceId?: string }): Promise<{ slug: string } | null> {
@@ -1016,12 +1070,15 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Chunks
-  async upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void> {
+  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
     const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
 
-    // Get page_id
-    const pages = await sql`SELECT id FROM pages WHERE slug = ${slug}`;
-    if (pages.length === 0) throw new Error(`Page not found: ${slug}`);
+    // Source-scope the page-id lookup. Without this filter, multi-source
+    // brains where the slug exists in 2+ sources return >1 row and the
+    // chunk replacement targets the wrong page (or fans out across pages).
+    const pages = await sql`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}`;
+    if (pages.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
     const pageId = pages[0].id;
 
     // Remove chunks that no longer exist (chunk_index beyond new count)
@@ -1117,12 +1174,13 @@ export class PostgresEngine implements BrainEngine {
     );
   }
 
-  async getChunks(slug: string): Promise<Chunk[]> {
+  async getChunks(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]> {
     const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
     const rows = await sql`
       SELECT cc.* FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
-      WHERE p.slug = ${slug}
+      WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
       ORDER BY cc.chunk_index
     `;
     return rows.map((r) => rowToChunk(r as Record<string, unknown>));
@@ -1152,11 +1210,12 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as StaleChunkRow[];
   }
 
-  async deleteChunks(slug: string): Promise<void> {
+  async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {
     const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
     await sql`
       DELETE FROM content_chunks
-      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
+      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
     `;
   }
 
@@ -1169,28 +1228,39 @@ export class PostgresEngine implements BrainEngine {
     linkSource?: string,
     originSlug?: string,
     originField?: string,
+    opts?: { fromSourceId?: string; toSourceId?: string; originSourceId?: string },
   ): Promise<void> {
     const sql = this.sql;
+    const fromSrc = opts?.fromSourceId ?? 'default';
+    const toSrc = opts?.toSourceId ?? 'default';
+    const originSrc = opts?.originSourceId ?? 'default';
+
     // Pre-check existence so we can throw a clear error (ON CONFLICT DO UPDATE
-    // returns 0 rows when source SELECT is empty, indistinguishable from missing page).
+    // returns 0 rows when source SELECT is empty, indistinguishable from missing
+    // page). Source-qualified — pre-v0.18 the bare slug check matched ANY source,
+    // letting addLink succeed even when the intended source row was missing.
     const exists = await sql`
-      SELECT 1 FROM pages WHERE slug = ${from}
+      SELECT 1 FROM pages WHERE slug = ${from} AND source_id = ${fromSrc}
       INTERSECT
-      SELECT 1 FROM pages WHERE slug = ${to}
+      SELECT 1 FROM pages WHERE slug = ${to} AND source_id = ${toSrc}
     `;
     if (exists.length === 0) {
-      throw new Error(`addLink failed: page "${from}" or "${to}" not found`);
+      throw new Error(`addLink failed: page "${from}" (source=${fromSrc}) or "${to}" (source=${toSrc}) not found`);
     }
     // Default link_source to 'markdown' for back-compat with pre-v0.13 callers.
-    // origin_page_id resolves from originSlug via the pages join (NULL if no slug).
+    // Mirror addLinksBatch's VALUES + JOIN-on-(slug, source_id) shape. The old
+    // `FROM pages f, pages t` cross-product fanned out across every source
+    // containing either slug, so a multi-source brain silently created edges
+    // pointing at the wrong pages.
     const src = linkSource ?? 'markdown';
     await sql`
       INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
-      SELECT f.id, t.id, ${linkType || ''}, ${context || ''}, ${src},
-             (SELECT id FROM pages WHERE slug = ${originSlug ?? null}),
-             ${originField ?? null}
-      FROM pages f, pages t
-      WHERE f.slug = ${from} AND t.slug = ${to}
+      SELECT f.id, t.id, v.link_type, v.context, v.link_source, o.id, v.origin_field
+      FROM (VALUES (${from}, ${to}, ${linkType || ''}, ${context || ''}, ${src}, ${originSlug ?? null}, ${originField ?? null}, ${fromSrc}, ${toSrc}, ${originSrc}))
+        AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field, from_source_id, to_source_id, origin_source_id)
+      JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
+      JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
+      LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id
       ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO UPDATE SET
         context = EXCLUDED.context,
         origin_field = EXCLUDED.origin_field
@@ -1236,37 +1306,47 @@ export class PostgresEngine implements BrainEngine {
     return result.length;
   }
 
-  async removeLink(from: string, to: string, linkType?: string, linkSource?: string): Promise<void> {
+  async removeLink(
+    from: string,
+    to: string,
+    linkType?: string,
+    linkSource?: string,
+    opts?: { fromSourceId?: string; toSourceId?: string },
+  ): Promise<void> {
     const sql = this.sql;
+    const fromSrc = opts?.fromSourceId ?? 'default';
+    const toSrc = opts?.toSourceId ?? 'default';
     // Build up filters dynamically. linkType + linkSource are independent
-    // optional constraints; all four combinations are valid.
+    // optional constraints; all four combinations are valid. Each branch's
+    // page-id subquery is source-qualified so multi-source brains don't
+    // delete the wrong (from, to) pair.
     if (linkType !== undefined && linkSource !== undefined) {
       await sql`
         DELETE FROM links
-        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
+        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from} AND source_id = ${fromSrc})
+          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to} AND source_id = ${toSrc})
           AND link_type = ${linkType}
           AND link_source IS NOT DISTINCT FROM ${linkSource}
       `;
     } else if (linkType !== undefined) {
       await sql`
         DELETE FROM links
-        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
+        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from} AND source_id = ${fromSrc})
+          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to} AND source_id = ${toSrc})
           AND link_type = ${linkType}
       `;
     } else if (linkSource !== undefined) {
       await sql`
         DELETE FROM links
-        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
+        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from} AND source_id = ${fromSrc})
+          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to} AND source_id = ${toSrc})
           AND link_source IS NOT DISTINCT FROM ${linkSource}
       `;
     } else {
       await sql`
         DELETE FROM links
-        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from})
-          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to})
+        WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from} AND source_id = ${fromSrc})
+          AND to_page_id = (SELECT id FROM pages WHERE slug = ${to} AND source_id = ${toSrc})
       `;
     }
   }
@@ -1573,12 +1653,15 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Tags
-  async addTag(slug: string, tag: string): Promise<void> {
+  async addTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
     const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
     // Verify page exists before attempting insert (ON CONFLICT DO NOTHING
-    // swallows the "already tagged" case, but we still need to detect missing pages)
-    const page = await sql`SELECT id FROM pages WHERE slug = ${slug}`;
-    if (page.length === 0) throw new Error(`addTag failed: page "${slug}" not found`);
+    // swallows the "already tagged" case, but we still need to detect missing
+    // pages). Source-scoped lookup — pre-v0.18 the bare-slug subquery returned
+    // multiple rows in multi-source brains and crashed with Postgres 21000.
+    const page = await sql`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}`;
+    if (page.length === 0) throw new Error(`addTag failed: page "${slug}" (source=${sourceId}) not found`);
     await sql`
       INSERT INTO tags (page_id, tag)
       VALUES (${page[0].id}, ${tag})
@@ -1586,20 +1669,22 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
-  async removeTag(slug: string, tag: string): Promise<void> {
+  async removeTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
     const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
     await sql`
       DELETE FROM tags
-      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
+      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
         AND tag = ${tag}
     `;
   }
 
-  async getTags(slug: string): Promise<string[]> {
+  async getTags(slug: string, opts?: { sourceId?: string }): Promise<string[]> {
     const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
     const rows = await sql`
       SELECT tag FROM tags
-      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
+      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
       ORDER BY tag
     `;
     return rows.map((r) => r.tag as string);
@@ -1609,22 +1694,25 @@ export class PostgresEngine implements BrainEngine {
   async addTimelineEntry(
     slug: string,
     entry: TimelineInput,
-    opts?: { skipExistenceCheck?: boolean },
+    opts?: { skipExistenceCheck?: boolean; sourceId?: string },
   ): Promise<void> {
     const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
     if (!opts?.skipExistenceCheck) {
-      const exists = await sql`SELECT 1 FROM pages WHERE slug = ${slug}`;
+      const exists = await sql`SELECT 1 FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}`;
       if (exists.length === 0) {
-        throw new Error(`addTimelineEntry failed: page "${slug}" not found`);
+        throw new Error(`addTimelineEntry failed: page "${slug}" (source=${sourceId}) not found`);
       }
     }
     // ON CONFLICT DO NOTHING via the (page_id, date, summary) unique index.
     // Returning 0 rows means either page missing OR duplicate; skipExistenceCheck
-    // makes that ambiguity safe (caller asserts page exists).
+    // makes that ambiguity safe (caller asserts page exists). Source-qualify
+    // the page-id lookup so multi-source brains don't fan timeline rows out
+    // across every source containing the slug.
     await sql`
       INSERT INTO timeline_entries (page_id, date, source, summary, detail)
       SELECT id, ${entry.date}::date, ${entry.source || ''}, ${entry.summary}, ${entry.detail || ''}
-      FROM pages WHERE slug = ${slug}
+      FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}
       ON CONFLICT (page_id, date, summary) DO NOTHING
     `;
   }
@@ -1793,6 +1881,251 @@ export class PostgresEngine implements BrainEngine {
         reasons = EXCLUDED.reasons,
         judged_at = now()
     `;
+  }
+
+  // ============================================================
+  // v0.31: Hot memory — facts table operations
+  // ============================================================
+
+  async insertFact(
+    input: NewFact,
+    ctx: { source_id: string; supersedeId?: number },
+  ): Promise<{ id: number; status: FactInsertStatus }> {
+    const sql = this.sql;
+    const validFrom = input.valid_from ?? new Date();
+    const validUntil = input.valid_until ?? null;
+    const kind = input.kind ?? 'fact';
+    const visibility = input.visibility ?? 'private';
+    const confidence = input.confidence ?? 1.0;
+    const entitySlug = input.entity_slug ?? null;
+    const context = input.context ?? null;
+    const sourceSession = input.source_session ?? null;
+    const embedding = input.embedding ?? null;
+    const embeddedAt = embedding ? new Date() : null;
+    const embedLit = embedding ? toPgVectorLiteral(embedding) : null;
+
+    if (ctx.supersedeId !== undefined) {
+      // Per-entity advisory lock + atomic insert + supersede in one txn.
+      const supersedeId = ctx.supersedeId;
+      const newId = await sql.begin(async (tx) => {
+        if (entitySlug) {
+          await tx`SELECT pg_advisory_xact_lock(hashtextextended(${ctx.source_id} || ':' || ${entitySlug}, 0))`;
+        }
+        const ins = await tx<Array<{ id: number }>>`
+          INSERT INTO facts (
+            source_id, entity_slug, fact, kind, visibility, context,
+            valid_from, valid_until, source, source_session, confidence,
+            embedding, embedded_at
+          ) VALUES (
+            ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${context},
+            ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
+            ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt}
+          ) RETURNING id
+        `;
+        const id = Number(ins[0].id);
+        await tx`UPDATE facts SET expired_at = now(), superseded_by = ${id}
+                 WHERE id = ${supersedeId} AND expired_at IS NULL`;
+        return id;
+      });
+      return { id: newId, status: 'superseded' };
+    }
+
+    // Plain insert path with optional advisory lock for the dedup window.
+    const id = await sql.begin(async (tx) => {
+      if (entitySlug) {
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended(${ctx.source_id} || ':' || ${entitySlug}, 0))`;
+      }
+      const ins = await tx<Array<{ id: number }>>`
+        INSERT INTO facts (
+          source_id, entity_slug, fact, kind, visibility, context,
+          valid_from, valid_until, source, source_session, confidence,
+          embedding, embedded_at
+        ) VALUES (
+          ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${context},
+          ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
+          ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt}
+        ) RETURNING id
+      `;
+      return Number(ins[0].id);
+    });
+    return { id, status: 'inserted' };
+  }
+
+  async expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean> {
+    const sql = this.sql;
+    const at = opts?.at ?? new Date();
+    const supersededBy = opts?.supersededBy ?? null;
+    const result = await sql`
+      UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by)
+      WHERE id = ${id} AND expired_at IS NULL
+    `;
+    return (result.count ?? 0) > 0;
+  }
+
+  async listFactsByEntity(
+    source_id: string,
+    entitySlug: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
+    const offset = Math.max(0, opts?.offset ?? 0);
+    const activeOnly = opts?.activeOnly !== false;
+    const kinds = (opts?.kinds && opts.kinds.length > 0) ? opts.kinds : null;
+    const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND entity_slug = ${entitySlug}
+        ${activeOnly ? sql`AND expired_at IS NULL` : sql``}
+        ${kinds ? sql`AND kind = ANY(${kinds}::text[])` : sql``}
+        ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
+      ORDER BY valid_from DESC, id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async listFactsSince(
+    source_id: string,
+    since: Date,
+    opts?: FactListOpts & { entitySlug?: string },
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
+    const offset = Math.max(0, opts?.offset ?? 0);
+    const activeOnly = opts?.activeOnly !== false;
+    const kinds = (opts?.kinds && opts.kinds.length > 0) ? opts.kinds : null;
+    const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
+    const entitySlug = opts?.entitySlug ?? null;
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND created_at >= ${since}
+        ${entitySlug ? sql`AND entity_slug = ${entitySlug}` : sql``}
+        ${activeOnly ? sql`AND expired_at IS NULL` : sql``}
+        ${kinds ? sql`AND kind = ANY(${kinds}::text[])` : sql``}
+        ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async listFactsBySession(
+    source_id: string,
+    sessionId: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
+    const offset = Math.max(0, opts?.offset ?? 0);
+    const activeOnly = opts?.activeOnly !== false;
+    const kinds = (opts?.kinds && opts.kinds.length > 0) ? opts.kinds : null;
+    const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND source_session = ${sessionId}
+        ${activeOnly ? sql`AND expired_at IS NULL` : sql``}
+        ${kinds ? sql`AND kind = ANY(${kinds}::text[])` : sql``}
+        ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async listSupersessions(
+    source_id: string,
+    opts?: { since?: Date; limit?: number },
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
+    const since = opts?.since ?? null;
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND expired_at IS NOT NULL
+        AND superseded_by IS NOT NULL
+        ${since ? sql`AND expired_at >= ${since}` : sql``}
+      ORDER BY expired_at DESC, id DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async findCandidateDuplicates(
+    source_id: string,
+    entitySlug: string,
+    factText: string,
+    opts?: { k?: number; embedding?: Float32Array },
+  ): Promise<FactRow[]> {
+    const sql = this.sql;
+    const k = Math.min(Math.max(opts?.k ?? 5, 1), 20);
+    if (opts?.embedding) {
+      const lit = toPgVectorLiteral(opts.embedding);
+      const rows = await sql<FactRowSqlShape[]>`
+        SELECT * FROM facts
+        WHERE source_id = ${source_id}
+          AND entity_slug = ${entitySlug}
+          AND expired_at IS NULL
+          AND embedding IS NOT NULL
+        ORDER BY embedding <=> ${sql.unsafe(`'${lit}'::vector`)}
+        LIMIT ${k}
+      `;
+      return rows.map(rowToFactPg);
+    }
+    const rows = await sql<FactRowSqlShape[]>`
+      SELECT * FROM facts
+      WHERE source_id = ${source_id}
+        AND entity_slug = ${entitySlug}
+        AND expired_at IS NULL
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${k}
+    `;
+    return rows.map(rowToFactPg);
+  }
+
+  async consolidateFact(id: number, takeId: number): Promise<void> {
+    const sql = this.sql;
+    await sql`UPDATE facts SET consolidated_at = now(), consolidated_into = ${takeId} WHERE id = ${id}`;
+  }
+
+  async getFactsHealth(source_id: string): Promise<FactsHealth> {
+    const sql = this.sql;
+    const totals = await sql<Array<{
+      total_active: bigint; total_today: bigint; total_week: bigint;
+      total_expired: bigint; total_consolidated: bigint;
+    }>>`
+      SELECT
+        COUNT(*) FILTER (WHERE expired_at IS NULL)                                     AS total_active,
+        COUNT(*) FILTER (WHERE expired_at IS NULL AND created_at > now() - interval '24 hours') AS total_today,
+        COUNT(*) FILTER (WHERE expired_at IS NULL AND created_at > now() - interval '7 days')   AS total_week,
+        COUNT(*) FILTER (WHERE expired_at IS NOT NULL)                                 AS total_expired,
+        COUNT(*) FILTER (WHERE consolidated_at IS NOT NULL)                            AS total_consolidated
+      FROM facts WHERE source_id = ${source_id}
+    `;
+    const top = await sql<Array<{ entity_slug: string; count: bigint }>>`
+      SELECT entity_slug, COUNT(*) AS count
+      FROM facts
+      WHERE source_id = ${source_id} AND expired_at IS NULL AND entity_slug IS NOT NULL
+      GROUP BY entity_slug
+      ORDER BY count DESC, entity_slug ASC
+      LIMIT 5
+    `;
+    const r = totals[0] ?? {
+      total_active: 0n, total_today: 0n, total_week: 0n, total_expired: 0n, total_consolidated: 0n,
+    };
+    return {
+      source_id,
+      total_active: Number(r.total_active),
+      total_today: Number(r.total_today),
+      total_week: Number(r.total_week),
+      total_expired: Number(r.total_expired),
+      total_consolidated: Number(r.total_consolidated),
+      top_entities: top.map(t => ({ entity_slug: t.entity_slug, count: Number(t.count) })),
+    };
   }
 
   // ============================================================
@@ -2146,15 +2479,16 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Versions
-  async createVersion(slug: string): Promise<PageVersion> {
+  async createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion> {
     const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
     const rows = await sql`
       INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
       SELECT id, compiled_truth, frontmatter
-      FROM pages WHERE slug = ${slug}
+      FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}
       RETURNING *
     `;
-    if (rows.length === 0) throw new Error(`createVersion failed: page "${slug}" not found`);
+    if (rows.length === 0) throw new Error(`createVersion failed: page "${slug}" (source=${sourceId}) not found`);
     return rows[0] as unknown as PageVersion;
   }
 
@@ -2324,10 +2658,14 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Sync
-  async updateSlug(oldSlug: string, newSlug: string): Promise<void> {
+  async updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<void> {
     newSlug = validateSlug(newSlug);
     const sql = this.sql;
-    await sql`UPDATE pages SET slug = ${newSlug}, updated_at = now() WHERE slug = ${oldSlug}`;
+    const sourceId = opts?.sourceId ?? 'default';
+    // Source-qualify so a rename in source A doesn't sweep up same-slug rows
+    // in sources B/C/D (which would either rename them all OR fail the
+    // (source_id, slug) UNIQUE if the new slug already exists in another source).
+    await sql`UPDATE pages SET slug = ${newSlug}, updated_at = now() WHERE slug = ${oldSlug} AND source_id = ${sourceId}`;
   }
 
   async rewriteLinks(_oldSlug: string, _newSlug: string): Promise<void> {
@@ -2881,6 +3219,74 @@ export class PostgresEngine implements BrainEngine {
 
     return computeAnomaliesFromBuckets(baseline, today, sigma);
   }
+}
+
+/**
+ * Raw row shape returned from `SELECT * FROM facts` on Postgres.
+ * postgres.js auto-decodes timestamps and numbers; embedding lands as
+ * either a string ("[0.1,...]") or already-parsed array depending on type
+ * codec — we handle both.
+ */
+interface FactRowSqlShape {
+  id: number | bigint;
+  source_id: string;
+  entity_slug: string | null;
+  fact: string;
+  kind: FactKind;
+  visibility: FactVisibility;
+  context: string | null;
+  valid_from: Date;
+  valid_until: Date | null;
+  expired_at: Date | null;
+  superseded_by: number | bigint | null;
+  consolidated_at: Date | null;
+  consolidated_into: number | bigint | null;
+  source: string;
+  source_session: string | null;
+  confidence: number | string;
+  embedding: string | number[] | Float32Array | null;
+  embedded_at: Date | null;
+  created_at: Date;
+}
+
+function rowToFactPg(row: FactRowSqlShape): FactRow {
+  let embedding: Float32Array | null = null;
+  if (row.embedding != null) {
+    if (row.embedding instanceof Float32Array) embedding = row.embedding;
+    else if (Array.isArray(row.embedding)) embedding = new Float32Array(row.embedding);
+    else if (typeof row.embedding === 'string') {
+      const trimmed = row.embedding.trim();
+      const inner = trimmed.startsWith('[') ? trimmed.slice(1, -1) : trimmed;
+      const parts = inner.split(',').map(p => parseFloat(p.trim())).filter(Number.isFinite);
+      embedding = parts.length > 0 ? new Float32Array(parts) : null;
+    }
+  }
+  return {
+    id: Number(row.id),
+    source_id: row.source_id,
+    entity_slug: row.entity_slug,
+    fact: row.fact,
+    kind: row.kind,
+    visibility: row.visibility,
+    context: row.context,
+    valid_from: row.valid_from,
+    valid_until: row.valid_until,
+    expired_at: row.expired_at,
+    superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
+    consolidated_at: row.consolidated_at,
+    consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
+    source: row.source,
+    source_session: row.source_session,
+    confidence: typeof row.confidence === 'string' ? parseFloat(row.confidence) : row.confidence,
+    embedding,
+    embedded_at: row.embedded_at,
+    created_at: row.created_at,
+  };
+}
+
+function toPgVectorLiteral(v: Float32Array | number[]): string {
+  if (v instanceof Float32Array) return '[' + Array.from(v).join(',') + ']';
+  return '[' + v.join(',') + ']';
 }
 
 function pgRowToCodeEdge(row: Record<string, unknown>): import('./types.ts').CodeEdgeResult {

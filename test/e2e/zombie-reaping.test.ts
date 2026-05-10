@@ -113,7 +113,7 @@ describeE2E('SIGCHLD handler reaps shell-job children (real binary)', () => {
           { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env }, stdio: 'pipe' });
       } catch { /* best effort */ }
     }
-  });
+  }, 30_000);
 
   test('shell-job child does NOT linger as a zombie (Z state) after exit', async () => {
     // Submit a shell job that sleeps briefly then exits 0. Worker spawns

@@ -308,6 +308,92 @@ export interface DreamVerdictInput {
   reasons: string[];
 }
 
+// ============================================================
+// v0.31 Hot Memory: facts table + recall surface
+// ============================================================
+
+/** Allowed `facts.kind` values. Different decay halflives apply per kind. */
+export type FactKind = 'event' | 'preference' | 'commitment' | 'belief' | 'fact';
+
+export const ALL_FACT_KINDS: readonly FactKind[] = [
+  'event', 'preference', 'commitment', 'belief', 'fact',
+] as const;
+
+/** Visibility tier on a fact row. Mirrors takes' world-default ACL contract (D21). */
+export type FactVisibility = 'private' | 'world';
+
+/** Status returned by insertFact. */
+export type FactInsertStatus = 'inserted' | 'duplicate' | 'superseded';
+
+/** A fact row read from the facts table. */
+export interface FactRow {
+  id: number;
+  source_id: string;
+  entity_slug: string | null;
+  fact: string;
+  kind: FactKind;
+  visibility: FactVisibility;
+  context: string | null;
+  valid_from: Date;
+  valid_until: Date | null;
+  expired_at: Date | null;
+  superseded_by: number | null;
+  consolidated_at: Date | null;
+  consolidated_into: number | null;
+  source: string;
+  source_session: string | null;
+  confidence: number;
+  embedding: Float32Array | null;
+  embedded_at: Date | null;
+  created_at: Date;
+}
+
+/** Input for insertFact. source_id supplied via the ctx arg. */
+export interface NewFact {
+  fact: string;
+  kind?: FactKind;                     // default 'fact'
+  entity_slug?: string | null;
+  visibility?: FactVisibility;          // default 'private'
+  context?: string | null;
+  valid_from?: Date;                   // default now()
+  valid_until?: Date | null;
+  source: string;                       // 'mcp:put_page' | 'mcp:extract_facts' | 'cli:think' | etc
+  source_session?: string | null;
+  confidence?: number;                  // [0,1], default 1.0
+  embedding?: Float32Array | null;     // pre-computed; if null, insertFact computes via gateway
+}
+
+/** Options shared by list-facts methods. */
+export interface FactListOpts {
+  /** Hide expired_at IS NOT NULL rows. Default true. */
+  activeOnly?: boolean;
+  limit?: number;
+  offset?: number;
+  /** Restrict to specific kinds. Default: all kinds. */
+  kinds?: FactKind[];
+  /**
+   * Visibility filter. When undefined, returns all. When set, only matches
+   * are returned. Remote (untrusted) callers must supply ['world'].
+   */
+  visibility?: FactVisibility[];
+}
+
+/** Per-source operational health snapshot consumed by `gbrain doctor`. */
+export interface FactsHealth {
+  source_id: string;
+  total_active: number;          // facts where expired_at IS NULL
+  total_today: number;           // created in last 24h
+  total_week: number;            // created in last 7d
+  total_expired: number;         // expired_at IS NOT NULL
+  total_consolidated: number;    // consolidated_at IS NOT NULL
+  top_entities: Array<{ entity_slug: string; count: number }>;
+  /** Optional counters fed by the queue / classifier — populated when those modules report. */
+  drop_counter?: number;
+  classifier_fail_counter?: number;
+  p50_latency_ms?: number;
+  p99_latency_ms?: number;
+}
+
 /** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */
 export const MAX_SEARCH_LIMIT = 100;
 
@@ -343,7 +429,14 @@ export interface BrainEngine {
    * by `restore_page` flow, and by operator diagnostics.
    */
   getPage(slug: string, opts?: GetPageOpts): Promise<Page | null>;
-  putPage(slug: string, page: PageInput): Promise<Page>;
+  /**
+   * Insert or update a page. When `opts.sourceId` is omitted, the row is
+   * written under the schema DEFAULT ('default'). When provided, `source_id`
+   * is included in the INSERT column list so ON CONFLICT (source_id, slug)
+   * DO UPDATE actually targets the intended row instead of fabricating a
+   * duplicate at (default, slug). Multi-source brains MUST pass sourceId.
+   */
+  putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page>;
   /**
    * Hard-delete a page row. Cascades to content_chunks, page_links,
    * chunk_relations via existing FK ON DELETE CASCADE.
@@ -353,7 +446,13 @@ export interface BrainEngine {
    * as the underlying primitive used by `purgeDeletedPages` and by callers
    * that explicitly want hard-delete semantics (e.g. test setup teardown).
    */
-  deletePage(slug: string): Promise<void>;
+  /**
+   * v0.18.0+ multi-source: `opts.sourceId` scopes the DELETE so a source-A
+   * delete doesn't hard-delete the same-slug pages in sources B/C/D. Without
+   * it, the bare DELETE matches every row with that slug across all sources.
+   * Cascades through content_chunks / page_links / chunk_relations via FKs.
+   */
+  deletePage(slug: string, opts?: { sourceId?: string }): Promise<void>;
   /**
    * v0.26.5 — set `deleted_at = now()` on a page. Returns the slug if a row
    * was soft-deleted, null if no row matched (already soft-deleted OR not found).
@@ -392,8 +491,20 @@ export interface BrainEngine {
   getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>>;
 
   // Chunks
-  upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
-  getChunks(slug: string): Promise<Chunk[]>;
+  /**
+   * Replace the chunk set for a page. Internal page-id lookup is sourceId-
+   * scoped when `opts.sourceId` is given; without it, the schema DEFAULT
+   * matches and bare-slug lookup blows up if the same slug exists in
+   * multiple sources (Postgres 21000).
+   */
+  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * Read every chunk for a page. `opts.sourceId` source-scopes the page
+   * lookup; without it, multi-source brains return chunks from every
+   * same-slug source (importCodeFile uses this for incremental embedding
+   * reuse, which would then attach the wrong source's embeddings).
+   */
+  getChunks(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]>;
   /**
    * Count chunks across the entire brain where embedded_at IS NULL.
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
@@ -409,13 +520,24 @@ export interface BrainEngine {
    * Bounded by an internal LIMIT of 100000 to mirror listPages.
    */
   listStaleChunks(): Promise<StaleChunkRow[]>;
-  deleteChunks(slug: string): Promise<void>;
+  /**
+   * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
+   * when `opts.sourceId` is given; otherwise the bare-slug subquery returns
+   * the wrong row count in multi-source brains.
+   */
+  deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void>;
 
   // Links
   /**
    * Single-row link insert. linkSource defaults to 'markdown' for back-compat
    * with pre-v0.13 callers. Pass 'frontmatter' + originSlug + originField for
    * frontmatter-derived edges; 'manual' for user-initiated edges.
+   */
+  /**
+   * v0.18.0+ multi-source: each endpoint can live in a different source.
+   * `opts.fromSourceId` / `opts.toSourceId` / `opts.originSourceId` default to
+   * 'default'. Without these, the original cross-product `FROM pages f, pages t`
+   * fanned out across every source containing the slug.
    */
   addLink(
     from: string,
@@ -425,6 +547,7 @@ export interface BrainEngine {
     linkSource?: string,
     originSlug?: string,
     originField?: string,
+    opts?: { fromSourceId?: string; toSourceId?: string; originSourceId?: string },
   ): Promise<void>;
   /**
    * Bulk insert links via a single multi-row INSERT...SELECT FROM (VALUES) JOIN pages
@@ -441,7 +564,13 @@ export interface BrainEngine {
    * 'manual') — used by runAutoLink reconciliation to avoid deleting edges from
    * other provenances when pruning frontmatter-derived edges.
    */
-  removeLink(from: string, to: string, linkType?: string, linkSource?: string): Promise<void>;
+  removeLink(
+    from: string,
+    to: string,
+    linkType?: string,
+    linkSource?: string,
+    opts?: { fromSourceId?: string; toSourceId?: string },
+  ): Promise<void>;
   getLinks(slug: string): Promise<Link[]>;
   getBacklinks(slug: string): Promise<Link[]>;
   /**
@@ -519,9 +648,15 @@ export interface BrainEngine {
   findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags
-  addTag(slug: string, tag: string): Promise<void>;
-  removeTag(slug: string, tag: string): Promise<void>;
-  getTags(slug: string): Promise<string[]>;
+  /**
+   * v0.18.0+ multi-source: `opts.sourceId` scopes the page-id lookup. When
+   * omitted, the schema DEFAULT 'default' applies; in multi-source brains
+   * with the same slug across sources the bare-slug lookup returns >1 row
+   * and the INSERT/DELETE fails with Postgres 21000.
+   */
+  addTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void>;
+  removeTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void>;
+  getTags(slug: string, opts?: { sourceId?: string }): Promise<string[]>;
 
   // Timeline
   /**
@@ -530,10 +665,17 @@ export interface BrainEngine {
    * known to exist (e.g., from a getAllSlugs() snapshot). Duplicates are silently
    * deduplicated by the (page_id, date, summary) UNIQUE index (ON CONFLICT DO NOTHING).
    */
+  /**
+   * Insert a timeline entry. By default verifies the page exists and throws if not.
+   * `opts.skipExistenceCheck` skips the pre-check for batch loops where the slug
+   * is already known to exist. `opts.sourceId` source-scopes both the existence
+   * check AND the page-id lookup inside the INSERT — required for multi-source
+   * brains where the slug exists in 2+ sources.
+   */
   addTimelineEntry(
     slug: string,
     entry: TimelineInput,
-    opts?: { skipExistenceCheck?: boolean },
+    opts?: { skipExistenceCheck?: boolean; sourceId?: string },
   ): Promise<void>;
   /**
    * Bulk insert timeline entries via a single multi-row INSERT...SELECT FROM (VALUES)
@@ -669,8 +811,95 @@ export interface BrainEngine {
   getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null>;
   putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void>;
 
+  // ============================================================
+  // v0.31 Hot memory — facts table operations
+  // ============================================================
+  /**
+   * Insert a fact into the per-source hot memory. The handler:
+   *   1. canonicalizes entity_slug against pages (caller may pre-canonicalize)
+   *   2. queries findCandidateDuplicates (entity-prefiltered, k=5 cap)
+   *   3. cosine ≥0.95 fast-path → mark duplicate, skip classifier
+   *   4. else classifier (caller's job; this engine method handles the
+   *      DB-side INSERT/UPDATE only). On insert.status === 'duplicate' or
+   *      'superseded' the engine returns the existing/superseding row id.
+   * Per-entity advisory lock on Postgres serializes the dedup window.
+   * PGLite no-op for the lock (single-process).
+   *
+   * `status` reflects what the engine wrote:
+   *   'inserted'   → row inserted
+   *   'duplicate'  → no new row (returns the matching candidate id)
+   *   'superseded' → new row inserted; old row got expired_at + superseded_by
+   */
+  insertFact(
+    input: NewFact,
+    ctx: { source_id: string; supersedeId?: number },
+  ): Promise<{ id: number; status: FactInsertStatus }>;
+
+  /**
+   * Mark a fact expired. Never DELETE. Returns true iff a row was updated.
+   * Idempotent-as-false (already expired returns false without changing state).
+   */
+  expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean>;
+
+  /** List active facts about an entity within a source, newest first. */
+  listFactsByEntity(
+    source_id: string,
+    entitySlug: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]>;
+
+  /** List facts created since a given timestamp within a source. */
+  listFactsSince(
+    source_id: string,
+    since: Date,
+    opts?: FactListOpts & { entitySlug?: string },
+  ): Promise<FactRow[]>;
+
+  /** List facts captured under a session id within a source. */
+  listFactsBySession(
+    source_id: string,
+    sessionId: string,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]>;
+
+  /**
+   * Audit log: facts that were superseded (expired_at + superseded_by both set),
+   * newest first. Drives `gbrain recall --supersessions`.
+   */
+  listSupersessions(
+    source_id: string,
+    opts?: { since?: Date; limit?: number },
+  ): Promise<FactRow[]>;
+
+  /**
+   * Find candidate duplicates for a new fact within a source+entity bucket.
+   * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
+   * radius). Hard cap k=5 by default. Embedding-cosine when both sides have
+   * embeddings; recency fallback otherwise.
+   */
+  findCandidateDuplicates(
+    source_id: string,
+    entitySlug: string,
+    factText: string,
+    opts?: { k?: number; embedding?: Float32Array },
+  ): Promise<FactRow[]>;
+
+  /**
+   * Mark a fact as consolidated into a take. Sets consolidated_at + consolidated_into.
+   * Never DELETE — facts stay as audit trail.
+   */
+  consolidateFact(id: number, takeId: number): Promise<void>;
+
+  /** Per-source operational metrics for `gbrain doctor` facts_health check. */
+  getFactsHealth(source_id: string): Promise<FactsHealth>;
+
   // Versions
-  createVersion(slug: string): Promise<PageVersion>;
+  /**
+   * Snapshot a page row into page_versions. Source-scoped via `opts.sourceId`;
+   * without it the bare-slug lookup snapshots whichever row Postgres returns
+   * first when the slug exists across multiple sources.
+   */
+  createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion>;
   getVersions(slug: string): Promise<PageVersion[]>;
   revertToVersion(slug: string, versionId: number): Promise<void>;
 
@@ -683,7 +912,13 @@ export interface BrainEngine {
   getIngestLog(opts?: { limit?: number }): Promise<IngestLogEntry[]>;
 
   // Sync
-  updateSlug(oldSlug: string, newSlug: string): Promise<void>;
+  /**
+   * Rename a page's slug (chunks + links + tags + timeline + versions all
+   * preserved via stable page_id). `opts.sourceId` scopes the UPDATE — without
+   * it, the bare `WHERE slug = old` matches every row across every source and
+   * would either rename them all OR violate the (source_id, slug) UNIQUE.
+   */
+  updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<void>;
   rewriteLinks(oldSlug: string, newSlug: string): Promise<void>;
 
   // Config

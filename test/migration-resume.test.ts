@@ -18,15 +18,22 @@ import { tmpdir } from 'os';
 
 let tmpHome: string;
 const originalHome = process.env.HOME;
+const originalGbrainHome = process.env.GBRAIN_HOME;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-migration-resume-'));
+  // preferences.ts's gbrainDir() returns `$HOME/.gbrain` when GBRAIN_HOME
+  // is unset. Set HOME only; clear any inherited GBRAIN_HOME so the test
+  // body matches the migrations dir at `$tmpHome/.gbrain/migrations/`.
   process.env.HOME = tmpHome;
+  delete process.env.GBRAIN_HOME;
 });
 
 afterEach(() => {
   if (originalHome) process.env.HOME = originalHome;
   else delete process.env.HOME;
+  if (originalGbrainHome) process.env.GBRAIN_HOME = originalGbrainHome;
+  else delete process.env.GBRAIN_HOME;
   try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 

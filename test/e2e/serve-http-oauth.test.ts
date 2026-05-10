@@ -114,7 +114,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
         console.error(`[afterAll] revoke-client cleanup failed for ${id}: ${e.message}`);
       }
     }
-  });
+  }, 30_000);
 
   // Helper: mint a token with given scopes
   async function mintToken(scope = 'read write'): Promise<{ access_token: string; expires_in: number; scope: string }> {

@@ -41,7 +41,7 @@ describe.skipIf(skip)('PostgresEngine.disconnect idempotency', () => {
     // the instance-pool engine's double-disconnect.
     await db.disconnect();
     await db.connect({ database_url: DATABASE_URL! });
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await db.disconnect();

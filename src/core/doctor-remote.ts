@@ -14,6 +14,7 @@
 
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from './remote-mcp-probe.ts';
+import { callRemoteTool, RemoteMcpError } from './mcp-client.ts';
 
 export interface RemoteCheck {
   name: string;
@@ -52,10 +53,28 @@ export async function runRemoteDoctor(config: GBrainConfig, args: string[]): Pro
 }
 
 /**
+ * v0.31.1: opts for collectRemoteDoctorReport.
+ *
+ * `skipScopeProbe` defaults to false. Set to true in test fixtures that
+ * mock /mcp at JSON-RPC initialize level only — the MCP SDK Client used
+ * by the scope probe hangs on shape mismatch and doesn't always honor
+ * AbortSignal. Production callers always run the probe.
+ *
+ * Also honors GBRAIN_DOCTOR_SKIP_SCOPE_PROBE=1 for ops bypass; explicit
+ * opts.skipScopeProbe wins.
+ */
+export interface CollectRemoteDoctorOpts {
+  skipScopeProbe?: boolean;
+}
+
+/**
  * Pure data collector — separated from the print/exit logic so tests can
  * assert the report shape without intercepting stdout.
  */
-export async function collectRemoteDoctorReport(config: GBrainConfig): Promise<RemoteDoctorReport> {
+export async function collectRemoteDoctorReport(
+  config: GBrainConfig,
+  opts: CollectRemoteDoctorOpts = {},
+): Promise<RemoteDoctorReport> {
   const remote = config.remote_mcp;
   const checks: RemoteCheck[] = [];
 
@@ -180,7 +199,145 @@ export async function collectRemoteDoctorReport(config: GBrainConfig): Promise<R
     message: 'initialize round-trip succeeded',
   });
 
+  // 5. v0.31.1 (CDX-5): scope-probe — verify the OAuth client actually has
+  // the scopes its token claims. Calls a representative read op (always
+  // safe), then a representative admin op (also read-only, no side effects).
+  // Reports per-tier status with a pinpoint remediation hint when admin is
+  // missing — the v0.29.2/v0.30.0 thin-clients without admin scope hit
+  // `gbrain stats` / `gbrain history` and fail today; this check surfaces
+  // the gap during `gbrain remote doctor` instead of mid-command.
+  //
+  // Skippable via opts.skipScopeProbe (preferred for tests) OR
+  // GBRAIN_DOCTOR_SKIP_SCOPE_PROBE=1 (env-flag for ops bypass) — the MCP
+  // SDK Client hangs on JSON-RPC shape mismatch in fixtures that don't
+  // implement full tools/call.
+  const grantedScope = tokenRes.token.scope ?? '';
+  const skipProbe = opts.skipScopeProbe || process.env.GBRAIN_DOCTOR_SKIP_SCOPE_PROBE === '1';
+  if (!skipProbe) {
+    const scopeResult = await probeScopes(config);
+    checks.push(buildScopeCheck(grantedScope, scopeResult));
+  }
+
   return finalize(remote, checks, tokenRes.token.scope);
+}
+
+/**
+ * v0.31.1: minimal probe of the read + admin scope tiers via two harmless
+ * read-only MCP calls. Write tier is NOT probed (no benign write op exists
+ * — every write would mutate state). Trust the granted-scope string for
+ * write status.
+ */
+/** v0.31.1: exported for test access (test/oauth-scope-probe.test.ts). */
+export interface ScopeProbeResult {
+  read_ok: boolean;
+  admin_ok: boolean;
+  read_error?: string;
+  admin_error?: string;
+}
+
+async function probeScopes(config: GBrainConfig): Promise<ScopeProbeResult> {
+  const result: ScopeProbeResult = { read_ok: false, admin_ok: false };
+
+  // Read tier: get_brain_identity is the cheapest read op (just returns
+  // counters; no DB scan beyond the existing getStats).
+  try {
+    await callRemoteTool(config, 'get_brain_identity', {}, { timeoutMs: 1500 });
+    result.read_ok = true;
+  } catch (e) {
+    if (e instanceof RemoteMcpError) {
+      result.read_error = e.detail?.code === 'missing_scope' ? 'missing_scope' : e.reason;
+    } else {
+      result.read_error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // Admin tier: get_health is read-only (engine.getHealth is a SELECT) but
+  // requires admin scope per operations.ts:1370.
+  try {
+    await callRemoteTool(config, 'get_health', {}, { timeoutMs: 1500 });
+    result.admin_ok = true;
+  } catch (e) {
+    if (e instanceof RemoteMcpError) {
+      result.admin_error = e.detail?.code === 'missing_scope' ? 'missing_scope' : e.reason;
+    } else {
+      result.admin_error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  return result;
+}
+
+/** v0.31.1: exported for test access. */
+export function buildScopeCheck(grantedScope: string, probe: ScopeProbeResult): RemoteCheck {
+  // Status semantics — informational by default, escalates only on signals
+  // we can KNOW indicate a scope problem (i.e. tool_error code='missing_scope').
+  // Other probe failures (parse/network/timeout) might be transient or fixture
+  // artifacts; report as 'ok' with `inconclusive` detail so doctor's overall
+  // status doesn't flap on probe noise.
+  //
+  //   - read.missing_scope  → 'fail' (broken setup; nothing works)
+  //   - admin.missing_scope → 'warn' (the load-bearing case for v0.29.2 thin
+  //     clients that registered with read+write only; pinpoint hint follows)
+  //   - both succeed        → 'ok'
+  //   - other probe errors  → 'ok' with inconclusive=true
+  const readMissing = !probe.read_ok && probe.read_error === 'missing_scope';
+  const adminMissing = !probe.admin_ok && probe.admin_error === 'missing_scope';
+
+  if (readMissing) {
+    return {
+      name: 'oauth_client_scopes_probe',
+      status: 'fail',
+      message: 'OAuth client lacks read scope. Re-register on the host with at least `--scopes read`.',
+      detail: {
+        granted: grantedScope || null,
+        read_ok: false,
+        admin_ok: probe.admin_ok,
+      },
+    };
+  }
+  if (adminMissing) {
+    return {
+      name: 'oauth_client_scopes_probe',
+      status: 'warn',
+      message:
+        'admin scope MISSING (read works). On the host, re-register: ' +
+        '`gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin`',
+      detail: {
+        granted: grantedScope || null,
+        read_ok: true,
+        admin_ok: false,
+        admin_error: probe.admin_error ?? null,
+      },
+    };
+  }
+  if (probe.read_ok && probe.admin_ok) {
+    return {
+      name: 'oauth_client_scopes_probe',
+      status: 'ok',
+      message: `read + admin scopes verified (write tier inferred from granted="${grantedScope || 'unspecified'}")`,
+      detail: {
+        granted: grantedScope || null,
+        read_ok: true,
+        admin_ok: true,
+      },
+    };
+  }
+  // Inconclusive: probe failed for non-scope reasons. Report as 'ok' so
+  // unrelated probe transients don't escalate doctor's overall status,
+  // but include the probe results for debugging.
+  return {
+    name: 'oauth_client_scopes_probe',
+    status: 'ok',
+    message: `scope probe inconclusive (granted="${grantedScope || 'unspecified'}"); commands will surface scope errors at call time if any`,
+    detail: {
+      granted: grantedScope || null,
+      read_ok: probe.read_ok,
+      admin_ok: probe.admin_ok,
+      read_error: probe.read_error ?? null,
+      admin_error: probe.admin_error ?? null,
+      inconclusive: true,
+    },
+  };
 }
 
 function finalize(

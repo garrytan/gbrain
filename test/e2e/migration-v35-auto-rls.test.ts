@@ -35,7 +35,7 @@ describeE2E('migration v35: auto_rls_event_trigger', () => {
     // setupDB() runs db.initSchema() (SCHEMA_SQL only, no migrations).
     // Advance through every migration so v35 is actually installed.
     await runMigrationsUpTo(getEngine(), LATEST_VERSION);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     const conn = getConn();

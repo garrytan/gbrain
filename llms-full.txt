@@ -348,6 +348,63 @@ gbrain-evals consumes: `gbrain/engine`, `gbrain/types`, `gbrain/operations`,
 `gbrain/extract`. Removing any of these is a breaking change for the
 gbrain-evals consumer.
 
+## Thin-client routing (v0.31.1, Issue #734)
+
+`gbrain init --mcp-only` (v0.29.2) sets up a thin-client install: no local
+brain content, just an OAuth client pointing at a remote `gbrain serve --http`.
+v0.29.2/v0.30.0 only refused 9 obvious local-only commands; the other ~25
+silently fell through to `connectEngine()` and opened the empty local PGLite,
+returning "No results." against a populated remote brain. v0.31.1 fixes the
+silent-empty-results bug class for every operation surface.
+
+Key files:
+
+- `src/cli.ts` — Routing seam INSIDE the existing op-dispatch path (CDX-1: no
+  parallel `src/core/thin-client/` module; routing is a ~80-line conditional
+  in `runThinClientRouted`). Detects `isThinClient(cfg)` BEFORE `connectEngine`
+  so thin-client installs never open the empty PGLite. localOnly ops on
+  thin-client refuse via `refuseThinClient` (with pinpoint hint table
+  `THIN_CLIENT_REFUSE_HINTS`). Banner via `printIdentityBannerBestEffort`
+  before each routed call (suppressed by `--quiet`, `GBRAIN_NO_BANNER=1`,
+  non-TTY default). Exhaustive TS `never` switch on `RemoteMcpError.reason`
+  for canned, actionable error messages. ENG-2 renderer parity: local-engine
+  path runs `JSON.parse(JSON.stringify(result))` so renderers see the same
+  shape on both paths (kills Date/bigint/Buffer drift class).
+- `src/core/mcp-client.ts` — `callRemoteTool(config, toolName, args, opts)`.
+  Hardened in v0.31.1 (CDX-4): all transport errors normalized to
+  `RemoteMcpError` via the `toRemoteMcpError` funnel. New `CallRemoteToolOptions
+  {timeoutMs, signal}`; `buildAbortController` composes external signal with
+  timeout. New `RemoteMcpErrorReason` stable union, `RemoteMcpErrorDetail.kind`
+  ('timeout' | 'aborted' | 'unreachable') sub-tag, `RemoteMcpErrorDetail.code`
+  field carrying server-supplied error codes (e.g. `missing_scope`).
+  `extractToolErrorCode` parses JSON envelopes first, falls back to substring
+  detection for legacy server messages. `unpackToolResult<T>(res)` unchanged
+  (parses tool-call JSON content). `_clearMcpClientTokenCache()` test escape.
+- `src/core/cli-options.ts` — `parseGlobalFlags` adds `--timeout=Ns` (accepts
+  `30s`, `2m`, `500ms`, plain ms). Default `null` = per-command default (30s
+  for most ops, 180s for `think`). `parseTimeout(s)` exported helper.
+- `src/core/doctor-remote.ts` — `gbrain remote doctor` adds the
+  `oauth_client_scopes_probe` check (CDX-5). Probes the read tier via
+  `get_brain_identity` and admin tier via `get_health`; reports per-tier
+  status with pinpoint remediation when admin is missing. `buildScopeCheck`
+  + `ScopeProbeResult` exported for test access. Skippable via
+  `GBRAIN_DOCTOR_SKIP_SCOPE_PROBE=1` for fixtures that mock /mcp at JSON-RPC
+  initialize level only (MCP SDK Client hangs on shape mismatch).
+- `src/core/operations.ts` — `get_brain_identity` op (read scope, no params,
+  banner-only): cheap counter packet `{version, engine, page_count,
+  chunk_count, last_sync_iso}` for the thin-client identity banner. Reuses
+  `engine.getStats()`; banner's 60s client-side TTL bounds frequency to
+  ≤1/60s per CLI process (well below the Fly.io health-check cadence that
+  motivated the original `getStats` cost warning).
+- `src/commands/{salience,anomalies,graph-query,think}.ts` — Per-command
+  thin-client routing branches. These commands bypass the operation-layer
+  dispatch in cli.ts (call `engine.foo()` directly), so each gets its own
+  `if (isThinClient(cfg)) { callRemoteTool(...) }` branch that maps CLI flags
+  to op params. `think` is a special case: the server's `think` op
+  intentionally disables `--save`/`--take` for remote callers
+  (operations.ts:1103-1135 trust-boundary gate); thin-client `think` warns
+  loudly when those flags are set.
+
 ## Commands
 
 Run `gbrain --help` or `gbrain --tools-json` for full command reference.
@@ -1545,7 +1602,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Trigger | Skill |
 |---------|-------|
 | User shares a link, article, tweet, or idea | `skills/idea-ingest/SKILL.md` |
-| Video, audio, PDF, book, YouTube, screenshot | `skills/media-ingest/SKILL.md` |
+| "video", "PDF book", "YouTube", "screenshot", "summarize this book", "ingest this PDF", "process this book", "ingest it into my brain" | `skills/media-ingest/SKILL.md` |
 | Meeting transcript received | `skills/meeting-ingestion/SKILL.md` |
 | Generic "ingest this" (auto-routes to above) | `skills/ingest/SKILL.md` |
 
@@ -1626,23 +1683,23 @@ These apply to ALL brain-writing skills:
 
 | Trigger | Skill |
 |---------|-------|
-| "personalized version of this book" | `skills/book-mirror/SKILL.md` |
+| "personalized version of this book", "mirror this book", "two-column book", "book to my life", "this book apply to me", "personalized version" | `skills/book-mirror/SKILL.md` |
 
-| "enrich this article" | `skills/article-enrichment/SKILL.md` |
+| "enrich this article", "enriching the article", "enrich the article", "enrich brain pages", "batch enrich", "enrich pass" | `skills/article-enrichment/SKILL.md` |
 
-| "strategic reading" | `skills/strategic-reading/SKILL.md` |
+| "strategic reading", "read this through the lens", "apply this to my problem", "what can I learn from this", "extract a playbook from this" | `skills/strategic-reading/SKILL.md` |
 
-| "concept synthesis" | `skills/concept-synthesis/SKILL.md` |
+| "concept synthesis", "synthesize my concepts", "intellectual map", "find patterns across my notes", "trace idea evolution", "canon vs riff" | `skills/concept-synthesis/SKILL.md` |
 
-| "perplexity research" | `skills/perplexity-research/SKILL.md` |
+| "perplexity research", "perplexity-research", "what's new about this", "current state of", "web research pass", "what changed about", "surface new developments" | `skills/perplexity-research/SKILL.md` |
 
-| "crawl my archive" | `skills/archive-crawler/SKILL.md` |
+| "crawl my archive", "find gold in my archive", "archive crawler", "scan my dropbox", "mine my old files" | `skills/archive-crawler/SKILL.md` |
 
-| "verify this academic claim" | `skills/academic-verify/SKILL.md` |
+| "verify this academic claim", "check this study", "academic verify", "validate citation", "Retraction Watch", "is this study real" | `skills/academic-verify/SKILL.md` |
 
-| "make pdf from brain" | `skills/brain-pdf/SKILL.md` |
+| "make pdf from brain", "brain pdf", "convert brain page to pdf", "page as pdf", "export brain page", "publish this page as pdf" | `skills/brain-pdf/SKILL.md` |
 
-| "voice note" | `skills/voice-note-ingest/SKILL.md` |
+| "voice note", "voice memo", "audio message", "audio note", "transcribe and file" | `skills/voice-note-ingest/SKILL.md` |
 
 ---
 
@@ -2419,13 +2476,26 @@ ADMIN
                                         $GBRAIN_HOME/clones/<id>/ and re-cloned on sync if
                                         it goes missing. Also exposed via MCP for remote
                                         agent setup (whoami + sources_{add,list,remove,status}).
-  gbrain dream [--dry-run] [--phase N]  9-phase maintenance cycle (lint→backlinks→sync→synthesize
-                                        →extract→patterns→recompute_emotional_weight→embed→orphans).
-                                        v0.23 added synthesize + patterns. v0.29 added emotional-weight
-                                        recompute. v0.30.2: synthesize now chunks fat transcripts
-                                        (config: dream.synthesize.max_prompt_tokens, max_chunks_per_transcript).
+  gbrain dream [--dry-run] [--phase N]  11-phase maintenance cycle (lint→backlinks→sync→synthesize
+                                        →extract→patterns→recompute_emotional_weight→consolidate
+                                        →embed→orphans→purge). v0.23 added synthesize + patterns.
+                                        v0.29 added emotional-weight recompute. v0.30.2: synthesize
+                                        chunks fat transcripts. v0.31: consolidate promotes hot facts
+                                        into takes overnight.
   gbrain dream --input <file>           Ad-hoc transcript synthesis (implies --phase synthesize)
   gbrain dream --date YYYY-MM-DD        Synthesize a single day; --from/--to for backfill ranges
+
+  # v0.31 Hot Memory: cross-session facts queryable in real time.
+  gbrain recall <entity>                List active facts for an entity (newest first)
+  gbrain recall --since "1h ago"        Recency-filtered recall
+  gbrain recall --session <id>          Facts captured in a session id
+  gbrain recall --today                 Markdown render with kind icons (📅🎯🤝💭📌)
+  gbrain recall --supersessions         Audit log of auto-overwritten facts
+  gbrain recall --grep <text>           Substring filter (case-insensitive)
+  gbrain recall --as-context            Prompt-injection-ready markdown for headless agents
+  gbrain recall --json                  Structured output with effective_confidence per row
+  gbrain forget <fact-id>               Expire a fact (soft delete; never hard-DELETE)
+
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
   gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)

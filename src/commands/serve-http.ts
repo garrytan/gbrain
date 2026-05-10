@@ -27,7 +27,8 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
-import { summarizeMcpParams } from '../mcp/dispatch.ts';
+import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
+import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
@@ -859,25 +860,6 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         };
       }
 
-      const ctx: OperationContext = {
-        engine,
-        config,
-        logger: {
-          info: (msg: string) => console.error(`[INFO] ${msg}`),
-          warn: (msg: string) => console.error(`[WARN] ${msg}`),
-          error: (msg: string) => console.error(`[ERROR] ${msg}`),
-        },
-        dryRun: !!(params?.dry_run),
-        // F7: HTTP MCP is the untrusted/agent-facing transport. Stdio MCP at
-        // src/mcp/dispatch.ts:61 sets this; the inlined HTTP context-builder
-        // forgot it for several releases, which let HTTP MCP callers with a
-        // read+write token submit `shell` jobs and execute arbitrary commands
-        // on the host (RCE). The fail-closed contract in operations.ts is the
-        // belt; this is the suspenders.
-        remote: true,
-        auth: authInfo,
-      };
-
       // F8: redact request payload by default (declared keys only via the
       // op's `params` allow-list; values + attacker-controlled key names
       // never written to mcp_request_log or the SSE feed). --log-full-params
@@ -889,49 +871,48 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         : (safeParamsSummary ? JSON.stringify(safeParamsSummary) : null);
       const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
 
+      // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
+      // src/mcp/dispatch.ts so HTTP MCP shares the same dispatch path as
+      // stdio MCP. The dispatcher does param validation, OperationContext
+      // build, error envelope unification, and (new) `_meta.brain_hot_memory`
+      // injection via the metaHook. HTTP-specific concerns (mcp_request_log
+      // persistence + SSE broadcast) stay here; the dispatcher returns the
+      // ToolResult and we read isError + _meta to pick the right branch.
+      const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
+        ?? ['world'];
+      const tokenSourceId = (authInfo as AuthInfo & { sourceId?: string }).sourceId
+        ?? process.env.GBRAIN_SOURCE
+        ?? 'default';
+
+      let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {
-        const result = await op.handler(ctx, (params || {}) as Record<string, unknown>);
-        const latency = Date.now() - startTime;
-
-        try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'success'}, ${logParams})`;
-        } catch { /* best effort */ }
-
-        broadcastEvent({
-          agent: agentName,
-          operation: name,
-          params: broadcastParams,
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: 'success',
-          timestamp: new Date().toISOString(),
+        toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
+          remote: true,
+          takesHoldersAllowList: tokenAllowList,
+          sourceId: tokenSourceId,
+          metaHook: getBrainHotMemoryMeta,
+          // v0.31 follow-up fix: thread auth so the whoami op (and any
+          // future scope-aware handlers) can introspect the caller. The
+          // original D12/eE1 refactor moved dispatch into dispatchToolCall
+          // but forgot to pass authInfo; whoami fell through to the
+          // unknown_transport throw because ctx.auth was undefined.
+          auth: authInfo,
+          logger: {
+            info: (msg: string) => console.error(`[INFO] ${msg}`),
+            warn: (msg: string) => console.error(`[WARN] ${msg}`),
+            error: (msg: string) => console.error(`[ERROR] ${msg}`),
+          },
         });
-
-        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (e) {
+        // dispatchToolCall absorbs OperationError + Error and returns
+        // isError:true; only an unexpected throw lands here. Treat as the
+        // F15 unified envelope.
         const latency = Date.now() - startTime;
-        // F15: unify error envelope. Both OperationError and unexpected
-        // exceptions go through src/core/errors.ts so clients see a single
-        // shape ({class, code, message, hint}). Pre-fix, OperationError
-        // serialized via e.toJSON() and other exceptions used a hand-rolled
-        // {error, message} envelope — a client couldn't pattern-match
-        // reliably across the two.
-        const errorPayload = e instanceof OperationError
-          ? buildError({
-              class: 'OperationError',
-              code: e.code,
-              message: e.message,
-              hint: e.suggestion,
-              docs_url: e.docs,
-            })
-          : serializeError(e);
-        const errMsg = errorPayload.message;
+        const errorPayload = serializeError(e);
         try {
           await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errorPayload.message})`;
         } catch { /* best effort */ }
-
         broadcastEvent({
           agent: agentName,
           operation: name,
@@ -942,9 +923,50 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           error: errorPayload,
           timestamp: new Date().toISOString(),
         });
-
         return { content: [{ type: 'text', text: JSON.stringify({ error: errorPayload }) }], isError: true };
       }
+
+      const latency = Date.now() - startTime;
+      if (toolResult.isError) {
+        // dispatchToolCall serializes the error into the content text;
+        // for the audit log we re-extract a message string for the
+        // mcp_request_log error_message column. Best-effort parse.
+        let errMsg = 'unknown_error';
+        try {
+          const parsed = JSON.parse(toolResult.content[0]?.text ?? '{}');
+          errMsg = parsed.error?.message ?? parsed.message ?? errMsg;
+        } catch { /* ignore */ }
+        try {
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: name,
+          params: broadcastParams,
+          scopes: authInfo.scopes.join(','),
+          latency_ms: latency,
+          status: 'error',
+          error: { code: 'op_error', message: errMsg },
+          timestamp: new Date().toISOString(),
+        });
+        return toolResult;
+      }
+
+      try {
+        await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+                  VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'success'}, ${logParams})`;
+      } catch { /* best effort */ }
+      broadcastEvent({
+        agent: agentName,
+        operation: name,
+        params: broadcastParams,
+        scopes: authInfo.scopes.join(','),
+        latency_ms: latency,
+        status: 'success',
+        timestamp: new Date().toISOString(),
+      });
+      return toolResult;
     });
 
     // F14: wrap transport setup + handleRequest in try/catch. Without this,

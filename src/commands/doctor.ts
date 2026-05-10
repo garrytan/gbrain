@@ -3,7 +3,7 @@ import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
-import { findRepoRoot } from '../core/repo-root.ts';
+import { autoDetectSkillsDir } from '../core/repo-root.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
@@ -228,9 +228,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // --- Filesystem checks (always run, no DB needed) ---
 
   // 1. Resolver health
-  const repoRoot = findRepoRoot();
-  if (repoRoot) {
-    const skillsDir = join(repoRoot, 'skills');
+  // Use the same auto-detect as `check-resolvable` so doctor sees a
+  // workspace/skills dir reachable via $OPENCLAW_WORKSPACE or
+  // ~/.openclaw/workspace, not just a `skills/` walked up from cwd.
+  const detected = autoDetectSkillsDir();
+  const skillsDir = detected.dir;
+  if (skillsDir) {
 
     // --fix: run auto-repair BEFORE checkResolvable so the post-fix scan
     // reflects the new state. Auto-fix only targets DRY violations today;
@@ -268,8 +271,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   }
 
   // 2. Skill conformance
-  if (repoRoot) {
-    const skillsDir = join(repoRoot, 'skills');
+  if (skillsDir) {
     const conformanceResult = checkSkillConformance(skillsDir);
     checks.push(conformanceResult);
   }
@@ -875,7 +877,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain link-extract && gbrain timeline-extract`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain extract links && gbrain extract timeline`,
       });
     }
 
@@ -1380,6 +1382,47 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     } finally {
       queueHealthHb();
     }
+  }
+
+  // 11.5 facts_health (v0.31 hot memory). Surfaces per-source counters so
+  // operators can see the extraction pipeline's pulse without raw SQL.
+  // Lightweight: one COUNT-with-filters query + a top-5 aggregate. Only
+  // runs when the facts table exists (post-v40 brains); pre-v40 the
+  // probe is a no-op.
+  progress.heartbeat('facts_health');
+  try {
+    const factsExists = await engine.executeRaw<{ exists: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'facts') AS exists`,
+    );
+    if (factsExists[0]?.exists) {
+      const health = await engine.getFactsHealth('default');
+      const status: 'ok' | 'warn' = health.total_active >= 0 ? 'ok' : 'warn';
+      const top = health.top_entities
+        .slice(0, 3)
+        .map(t => `${t.entity_slug}:${t.count}`)
+        .join(', ') || '—';
+      checks.push({
+        name: 'facts_health',
+        status,
+        message:
+          `facts_health(default): ${health.total_active} active, ` +
+          `${health.total_today} today, ${health.total_week} this week, ` +
+          `${health.total_consolidated} consolidated, ` +
+          `top entities ${top}`,
+      });
+    } else {
+      checks.push({
+        name: 'facts_health',
+        status: 'ok',
+        message: 'facts table not present (pre-v0.31 brain or migration pending)',
+      });
+    }
+  } catch (e) {
+    checks.push({
+      name: 'facts_health',
+      status: 'warn',
+      message: `facts_health probe failed: ${e instanceof Error ? e.message : String(e)}`,
+    });
   }
 
   // 12. Index audit (opt-in via --index-audit). v0.13.1 follow-up to #170.

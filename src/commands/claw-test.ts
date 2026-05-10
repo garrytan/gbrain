@@ -147,16 +147,25 @@ async function runScripted(
   phases.push({ name: 'install_brain', argv: ['init', '--pglite'] });
 
   // Phase 3: import (only when scenario has a brain dir)
+  // Capture brainDir for downstream phases that need an explicit --dir
+  // (extract requires it post-#688 — defaults to configured source, and
+  // gbrain init --pglite doesn't register a fs source).
+  let brainDir: string | undefined;
   if (scenario.brainRelative) {
-    const brainDir = join(scenario.dir, scenario.brainRelative);
+    brainDir = join(scenario.dir, scenario.brainRelative);
     phases.push({ name: 'import', argv: ['import', brainDir, '--no-embed', '--progress-json'] });
   }
 
   // Phase 4: query (best-effort sanity)
   phases.push({ name: 'query', argv: ['query', 'the'] });
 
-  // Phase 5: extract (positional argument is required: 'all' covers links + timeline)
-  phases.push({ name: 'extract', argv: ['extract', 'all', '--source', 'fs', '--progress-json'] });
+  // Phase 5: extract (positional argument is required: 'all' covers links + timeline).
+  // Pass --dir explicitly because the install_brain phase doesn't register
+  // a fs source; without --dir, post-#688 extract refuses with "No brain
+  // directory configured." When the scenario has no brain dir, skip.
+  if (brainDir) {
+    phases.push({ name: 'extract', argv: ['extract', 'all', '--source', 'fs', '--dir', brainDir, '--progress-json'] });
+  }
 
   // Phase 6: verify
   phases.push({ name: 'verify', argv: ['doctor', '--json', '--progress-json'] });
