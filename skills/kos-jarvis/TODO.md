@@ -1,25 +1,38 @@
-# kos-jarvis — Outstanding Work (post v0.31.2 sync, 2026-05-09)
+# kos-jarvis — Outstanding Work (post v0.31.2 sync + M1/M2/M3-pilot, 2026-05-10)
 
-> **Updated**: 2026-05-09 — **v0.31.2 上游同步完成** (sync-v0.31.2 branch),
+> **Updated**: 2026-05-10 — Same-day follow-up to v0.31.2 sync.
+> 4 planned items, 3 commits landed, 1 (M3 production cutover) validated
+> end-to-end on throwaway DB but deferred (vector-space compat decision
+> needs a clean window). Story in `docs/JARVIS-ARCHITECTURE.md` §6.23.
+>
+> **Active fork dirs: 14 → 11** (will go to 10 once M3.cutover ships).
+>
+> Commits this session:
+> - `9e3cd0f` — M1: archive kos-lint + frontmatter-ref-fix + slug-normalize,
+>   shrink notion-ingest-delta SKILL.md to 5-line redirect
+> - `3d667de` — M2-D: mark RESOLVED (premise was wrong; fork never had
+>   `OperationContext.remote`)
+> - `eedb357` — M2-A: archive triplet (dikw-compile, evidence-gate,
+>   confidence-score) — production probe confirmed 100% dead code
+>
+> M3 pilot validated: native v0.27 Vercel AI SDK gateway with
+> `google:gemini-embedding-001` + `--embedding-dimensions 1536` works
+> end-to-end on Postgres-backed throwaway DB (`gbrain_m3_pilot`).
+> Shim log line count unchanged across pilot lifecycle = 100% native
+> traffic. English + Chinese retrieval both produce expected top-hits.
+> Production cutover details under M3.cutover entry below.
+>
+> **Brain unchanged through this work**: 2718 pages, 96% embed coverage
+> (244 stale pending — option (a) of M3.cutover handles this), schema v45,
+> 35 RLS tables, brain_score 80/100. kos-compat-api PID 23937 served
+> through all 4 work blocks without restart needed (only restarted at
+> end of M2-A to load new `/ingest` hint string).
+>
+> **v0.31.2 sync context** (still relevant):
 > 22 commits 跨 5 大版本 (v0.27.0 → v0.31.2) / 378 文件 / +57 691 -1 833 LoC。
-> 仅 5 个 conflict (上次 31,fork surface 缩窄):package.json 保 pglite 0.4.4
-> override + 加 jsquash 解码器,bun.lock + llms-full.txt take upstream regenerate,
-> README.md take v0.28.8 LongMemEval 头条,RESOLVER.md take 上游 voice-note
-> 5-keyword + 重新 append KOS 段。pglite-engine.ts WAL patch **自动 merge
-> 干净**(无需手 reapply)。typecheck 干净,bin 0.31.2,4760 unit pass / 9 fail
-> (1 known + 2 env-coupled + 2 self-recursion + 2 doctor-fix + 1 perf + 1 build-llms
-> 已 regen 修),check:all 干净。
->
-> **Production schema 自动 v34 → v45** — bun install postinstall 钩子 silent
-> apply,**v0.31.1.1 fixwave 的 bootstrap 加固真的 work**,无需手动 ALTER。
-> 35 tables 全 RLS,facts table 已建,2718 pages,brain_score 80/100,
-> embed coverage 96% (244 stale,等下次 embed --stale 补)。
->
-> **重大 unblock — M3 milestone probe-passed**: v0.27.0 ships native Vercel AI
-> SDK gateway,Google provider 真用 NANO_BANANA_API_KEY 跑通 (286ms / 768 dim
-> default,`--embedding-dimensions 1536` flag preserves dim)。**Production
-> cutover 推到下个 session**(本机 PGLite #223 cold-start hang 让 `/tmp/pilot-brain`
-> 端到端验证受阻 — 用 Postgres-backed throwaway DB 绕开)。Shim 仍跑。
+> 仅 5 个 conflict。pglite-engine.ts WAL patch 自动 merge 干净。typecheck
+> 干净,bin 0.31.2,4760 unit pass / 9 fail (mostly env-coupled),check:all
+> 干净。Production schema 自动 v34 → v45 via bun install postinstall.
 >
 > **Upstream PR #627 closed as superseded** by v0.31.1.1 #682+#741 fixwave
 > (broader bootstrap cover incl v0.20+v0.26.3+v39-v41)。
@@ -309,39 +322,104 @@ Fork 也没有 hand-rolled `kos-compat-api` 的 remote check — 所有信任分
 
 **Action taken**: 单 commit 标记 entry RESOLVED,无 code 改动。
 
-### [ ] (M3) gemini-embed-shim 退役 — Postgres-backed pilot + production cutover
+### [x] (M3.pilot) Native Google embedding pilot — DONE 2026-05-10
 
-**Why**: v0.31.2 sync 同窗口 probe pass(`gbrain providers test --model
-google:gemini-embedding-001` → 286ms / 768 dim default,native v0.27 Vercel
-AI SDK gateway 用 NANO_BANANA_API_KEY 跑通)。Production cutover 因本机
-PGLite #223 cold-start hang 受阻于 `/tmp/pilot-brain` 端到端验证(进程
-100% CPU 7+ 分钟 0 byte 输出)。推到下个 session 用 Postgres-backed
-throwaway DB 绕开 PGLite。
+End-to-end pilot ran in throwaway local Postgres DB (`gbrain_m3_pilot`,
+schema v45 via `init --supabase --non-interactive --embedding-model
+google:gemini-embedding-001 --embedding-dimensions 1536`). 2 sample
+concept pages (English + mixed CJK) synced + embedded via the **native
+v0.27 Vercel AI SDK gateway** (NANO_BANANA_API_KEY for
+`GOOGLE_GENERATIVE_AI_API_KEY`).
 
-**What**:
-1. Throwaway pilot DB:`createdb gbrain_m3_pilot` on local Postgres
-2. `GOOGLE_GENERATIVE_AI_API_KEY=$NANO_BANANA_API_KEY \
-    DATABASE_URL=postgresql://chenyuanquan@127.0.0.1:5432/gbrain_m3_pilot \
-    bun run src/cli.ts init --supabase \
-      --embedding-model google:gemini-embedding-001 \
-      --embedding-dimensions 1536 \
-      --skip-mcp --skip-cron`
-3. 复制 10-20 sample `concepts/` pages,跑 sync,verify embedding 列真是 1536-dim
-4. 跑 query 一组中文/英文 query,看 retrieval 质量跟 shim 时代基本无回退
-5. Production cutover:plist 加 `GOOGLE_GENERATIVE_AI_API_KEY` /
-   `GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001` /
-   `GBRAIN_EMBEDDING_DIMENSIONS=1536`,删 `OPENAI_BASE_URL` / `OPENAI_API_KEY=stub`
-6. Restart kos-compat-api + notion-poller + dream-cycle (cron 下次 fresh load)
-7. 跑 `gbrain embed --stale` 补 244 stale,verify 流量真走 Google native
-8. Retire shim:`launchctl bootout` +
-   `git mv skills/kos-jarvis/gemini-embed-shim skills/kos-jarvis/_archived/` +
-   `git mv scripts/launchd/com.jarvis.gemini-embed-shim.plist.template scripts/launchd/_archived/`
-9. 更 manifest.json / RESOLVER.md / kos-jarvis/README.md / fork CLAUDE.md /
-   CONSOLIDATION-PLAN.md M3 milestone CHECK + active 14 → 13
+**Verification**:
+- `vector_dims(content_chunks.embedding) = 1536` ✓
+- English query `founder mode` → top hit 0.92 ✓
+- Chinese query `向量检索` → top hit 0.90 ✓
+- `wc -l shim.stdout.log` unchanged across pilot lifecycle (last
+  shim write 23:53 UTC; pilot ran 00:23-00:30) — **100% native traffic**
+- Production service mesh unaffected (kos-compat-api PID continued,
+  BrainDb pinned to production DB)
+- `~/.gbrain/config.json` clobbered by init (per CLAUDE.md fork rule);
+  restored from `~/.gbrain/config.json.pre-m3-2026-05-10` snapshot
+- Pilot artifacts cleaned: `dropdb gbrain_m3_pilot`, `rm -rf /tmp/m3-pilot-brain`
 
-**Acceptance**: shim launchd 服务消失;`gbrain embed --stale` 跑完 0 stale;
-production query latency / quality 跟 v0.31.2 sync 前 baseline 无回退;
-fork active dirs 14 → 13。
+**Findings worth flagging** (now in §6.23):
+1. `content_chunks.model` is audit-only fallback string
+   (`postgres-engine.ts:1136` writes `chunk.model || 'text-embedding-3-large'`);
+   import path doesn't fill `chunk.model`. Real provider is correct
+   (vector content is real Google output) but column lies. Use shim
+   log delta to verify cutover, not this column.
+2. `init --supabase` writes DB `config.embedding_model` without
+   `provider:` prefix. `loadConfigWithEngine` doesn't actually read
+   that field anyway (file/env-only by design,
+   `src/core/config.ts:182-184`). Cosmetic, no impact.
+
+### [ ] (M3.cutover) gemini-embed-shim 退役 — production cutover
+
+**Status**: Pilot validated (see M3.pilot above). Cutover deferred —
+needs vector-space compat decision (mixed shim-era 1536-dim vs
+native-era 1536-dim chunks; both use Google `gemini-embedding-001` at
+same dim, HNSW is `vector_cosine_ops` so cosine-invariant under
+normalization differences — *probably* fine but unmeasured).
+
+**What** (next session, ~2-3 h):
+
+Plist edits (deployed at `~/Library/LaunchAgents/com.jarvis.{kos-compat-api,notion-poller,dream-cycle,enrich-sweep,kos-patrol}.plist`,
+templates at `scripts/launchd/com.jarvis.*.plist.template`):
+- Add to EnvironmentVariables:
+  - `GOOGLE_GENERATIVE_AI_API_KEY=$NANO_BANANA_API_KEY`
+  - `GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001`
+  - `GBRAIN_EMBEDDING_DIMENSIONS=1536`
+- Remove from EnvironmentVariables:
+  - `OPENAI_BASE_URL=http://127.0.0.1:7222/v1`
+  - `OPENAI_API_KEY=stub-for-gemini-shim`
+- Also add `embedding_model` + `embedding_dimensions` fields to
+  `~/.gbrain/config.json` so non-launchd-spawned `gbrain` invocations
+  (Lucien's interactive CLI) match.
+
+Vector-space compat decision (pick one before bootout):
+- **(a) Force re-embed all 2718 pages right after cutover.** Few
+  minutes / few cents on Google. Cleanest. Run
+  `gbrain embed --all --force` (or equivalent — verify flag exists in
+  v0.31.2 first).
+- **(b) Keep shim running 24-48h soak.** Let new chunks be native, old
+  chunks stay shim-era; sample 10-20 representative production queries
+  before/after; compare top-k overlap. If degradation < threshold,
+  proceed to bootout. Costs nothing extra but observation window.
+- **(c) Just cutover and `gbrain embed --stale`** to backfill the 244
+  stale chunks only. Existing 2474 chunks untouched. Risk: if normalization
+  differs, mixed vector space silently degrades retrieval.
+
+Recommend **(a)** — clean state is cheap here.
+
+Then:
+1. Cycle services: `launchctl bootout gui/$UID/com.jarvis.<svc>` +
+   `bootstrap gui/$UID ~/Library/LaunchAgents/com.jarvis.<svc>.plist`
+   for the 5 affected services
+2. Smoke: `curl -H "Authorization: Bearer $KOS_API_TOKEN"
+   http://127.0.0.1:7225/status` returns 2718 pages, query a Chinese
+   phrase, watch shim log line count — must NOT increase
+3. `launchctl bootout gui/$UID/com.jarvis.gemini-embed-shim` +
+   `rm ~/Library/LaunchAgents/com.jarvis.gemini-embed-shim.plist`
+4. `git mv skills/kos-jarvis/gemini-embed-shim
+   skills/kos-jarvis/_archived/gemini-embed-shim`
+5. `git mv scripts/launchd/com.jarvis.gemini-embed-shim.plist.template
+   scripts/launchd/_archived/`
+6. Update: `skills/manifest.json` (delete shim entry),
+   `skills/RESOLVER.md` KOS section (no shim trigger to remove —
+   it has none — but add archive note), `skills/kos-jarvis/README.md`
+   (move shim to _archived/ tree, active dirs 11 → 10), fork
+   `CLAUDE.md` (remove the "shim is currently routing" rule —
+   replace with "embeddings now native via v0.27 gateway"),
+   `docs/KOS-JARVIS-CONSOLIDATION-PLAN.md` (M3 milestone CHECK)
+
+**Acceptance**: shim launchd service gone, 0 shim log writes after
+cutover, query latency/quality unchanged from pre-cutover baseline,
+fork active dirs **11 → 10**.
+
+**Scope**: 30 min plist edits + 30 min cycle/smoke + 30 min vector-space
+re-embed (option a) + 30 min retire/cleanup. Total ~2 h. Needs window
+where Lucien is OK with brief launchd churn (~5 minutes during cycle).
 
 **Scope**: 1-2 h pilot + 30 min production switch + 30 min retire/cleanup。Total ~2-3 h。
 

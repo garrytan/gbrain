@@ -2551,6 +2551,160 @@ at 03:33 are also rollback points.
 
 ---
 
+## 6.23 M1 + M2-A archive + M3 pilot validation (2026-05-10)
+
+Same-day follow-up to the v0.31.2 sync. Four planned items, three
+landed as commits, one (M3 production cutover) was validated end-to-end
+on a throwaway DB but deferred — see "M3 cutover deferred" below for
+the rationale.
+
+### M1 — three retirements
+
+`kos-lint` (was already broken in production: kos-patrol stderr
+reported `JSON parse failed; exit=3` since 2026-04-29), `frontmatter-ref-fix`
+(one-shot, ran v1+v2 on 2026-04-27), `slug-normalize` (one-shot, ran
+2026-04-23). All three moved to `skills/kos-jarvis/_archived/`.
+`kos-patrol/run.ts` phase 2 (lint delegation) shrunk to a no-op stub —
+the renderer signature stayed stable so dashboards/digests keep working.
+RESOLVER table, manifest.json, brain-db.ts caller list, and the
+notion-ingest-delta SKILL.md (rewritten to a 5-line redirect to
+`workers/notion-poller/`) all synced. Worker file header inherited the
+original two-mode design rationale (backfill+delta, payload shape,
+failure modes) from the old design contract. Verification: typecheck
+clean, kos-patrol smoke `0 ERROR / 0 WARN / 2718 pages / exit 0` (the
+WARN drop from 1421 is the expected effect of kos-lint retire — its
+weak-link / orphan WARN contributions are gone). Commit `9e3cd0f`.
+
+### M2-D — premise wrong, no code change
+
+The TODO entry claimed `Operation.scope` + `.localOnly` would "replace
+fork-local `OperationContext.remote`". Reading
+`src/core/operations.ts:223-249` (F7b hardening, v0.30.0) shows that's
+not how it works:
+- `OperationContext.remote: boolean` is **REQUIRED** first-class —
+  every transport (CLI / stdio MCP / HTTP MCP / subagent dispatcher)
+  must set it explicitly. F7b hardening makes the type system the
+  first line of defense.
+- `Operation.scope` / `Operation.localOnly` are **operation-side**
+  safety declarations (op self-rating).
+- `OperationContext.remote` is **caller-side** trust (caller
+  self-rating).
+- They compose: HTTP rejects `scope=admin + localOnly + remote=true`.
+  One does NOT replace the other.
+
+Fork-local audit:
+`git grep "ctx\.remote\|context\.remote" -- server/ workers/ skills/kos-jarvis/_lib/`
+returns zero matches. The only hit elsewhere is
+`brain-db.test.ts:88 'remote: true'`, which is the v0.25.0
+`EvalCandidateInput` eval-row schema field — different concept entirely.
+Fork has never hand-rolled remote checks in `kos-compat-api`; trust
+classification is delegated to the gbrain CLI subprocess or downstream
+op handlers. TODO entry rewritten to RESOLVED with the premise
+correction. Commit `3d667de`.
+
+### M2-A — archive triplet (mechanical part)
+
+The KOS quality triplet (`dikw-compile`, `evidence-gate`,
+`confidence-score`) was already confirmed dead code by 2026-05-04
+production probe (recorded in §6.21):
+- `frontmatter.dikw_layer` set on 0 / 2477 pages (0.00%)
+- `frontmatter.evidence_level` set on 1 / 2477 (0.04%)
+- `frontmatter.confidence` set on 2470 / 2477 — but values are
+  hardcoded template strings from `kos-compat-api.ts:454, :533`,
+  not script-computed.
+
+Mechanical retire: `git mv` triplet → `_archived/`, manifest.json
+deleted 3 entries (49 → 46 total skills, 11 → 8 kos-jarvis), RESOLVER
+KOS section deleted 3 trigger rows + appended M2-A archive note,
+`kos-compat-api.ts:600` prompt rewritten:
+`"dikw-compile recommended for strong-link network"` →
+`"use \`gbrain dream\` for cross-page synthesis"`. Active fork dirs
+14 → 11. Commit `eedb357`. Pilot run of v0.25.1 `concept-synthesis`
+on the 188 `concepts/` pages was deferred to follow-up M2-A.pilot —
+that skill is `writes_pages: true` mutating + LLM-driven, the work
+crosses into brain-side commit territory, separate cycle warranted.
+
+### M3 — pilot validated, production cutover deferred
+
+Pilot ran end-to-end on a throwaway local Postgres DB
+(`gbrain_m3_pilot`):
+
+```
+createdb gbrain_m3_pilot
+GOOGLE_GENERATIVE_AI_API_KEY=$NANO_BANANA_API_KEY \
+GBRAIN_DATABASE_URL=postgresql://chenyuanquan@127.0.0.1:5432/gbrain_m3_pilot \
+bun run src/cli.ts init --supabase --non-interactive \
+  --embedding-model google:gemini-embedding-001 \
+  --embedding-dimensions 1536
+# 35 tables created, schema v45, config row written
+```
+
+Two sample concept pages (one English "founder mode", one mixed
+English/Chinese "M3 pilot sample") synced and embedded with the
+**native v0.27 Vercel AI SDK gateway** + Google `gemini-embedding-001`
++ `--embedding-dimensions 1536` flag. Verification:
+
+- `vector_dims(content_chunks.embedding) = 1536` for both rows ✓
+- English query "founder mode" → `concepts/founder-mode` 0.92 (top hit) ✓
+- Chinese query "向量检索" → `concepts/sample-test` 0.90 (top hit) ✓
+- **Shim not hit**: `wc -l skills/kos-jarvis/gemini-embed-shim/shim.stdout.log`
+  unchanged across pilot lifecycle (last write 23:53 UTC; pilot ran 00:23–00:30).
+  100% native Google traffic.
+- `~/.gbrain/config.json` was clobbered by `init --supabase` (expected
+  per CLAUDE.md fork rule) — restored from
+  `~/.gbrain/config.json.pre-m3-2026-05-10` snapshot. Production
+  service mesh continued running through pilot (kos-compat-api PID
+  unchanged, BrainDb instance pinned to production DB).
+
+**Two findings worth flagging**:
+
+1. **`content_chunks.model` field is audit-only and unreliable.**
+   `src/core/postgres-engine.ts:1136` writes
+   `chunk.model || 'text-embedding-3-large'`. The `import` path
+   (`src/commands/embed.ts:202`) builds chunks WITHOUT a model field,
+   so the fallback string always wins regardless of which provider the
+   gateway actually called. The vector content is correct (real Google
+   1536-dim), but the audit column lies. Don't use this column as a
+   "did the cutover work" signal — use the shim log delta instead.
+   Filing this as a P3 upstream gap below.
+
+2. **`init --supabase` writes `embedding_model` to the DB `config`
+   table without the `provider:` prefix** (it stores `gemini-embedding-001`,
+   not `google:gemini-embedding-001`). `loadConfigWithEngine` doesn't
+   actually consume that field anyway — `embedding_model` is
+   file/env-only by design (`src/core/config.ts:182-184`). Cosmetic
+   inconsistency, no functional impact, not worth a PR.
+
+**Why production cutover was deferred**: cutover requires editing the
+deployed plists for kos-compat-api + notion-poller + dream-cycle
+(adding `GOOGLE_GENERATIVE_AI_API_KEY` + `GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001` +
+`GBRAIN_EMBEDDING_DIMENSIONS=1536`, removing `OPENAI_BASE_URL` +
+`OPENAI_API_KEY`), `launchctl bootout`/`bootstrap` cycling, then
+running `gbrain embed --stale` to backfill the 244 stale chunks.
+Vector-space compat between shim-era 1536-dim chunks (OpenAI shape →
+shim → Google `batchEmbedContents`) and native-era 1536-dim chunks
+(Vercel AI SDK → Google native API) is *probably* fine — both use
+Google `gemini-embedding-001` underneath at the same dim, and GBrain's
+HNSW index is `vector_cosine_ops` (cosine is invariant under L2-norm
+differences) — but "probably" hasn't been measured. A safe cutover
+would either (a) force re-embed all 2718 pages right after the switch
+(few minutes / few-cents on Google) or (b) keep the shim running for
+24-48h soak and compare retrieval results.
+
+Filed as M3.cutover follow-up in `skills/kos-jarvis/TODO.md`. Pilot
+artifacts cleaned up (`dropdb gbrain_m3_pilot`, `rm -rf /tmp/m3-pilot-brain`).
+Backup `~/.gbrain/config.json.pre-m3-2026-05-10` retained as audit
+trace.
+
+**Net effect of this same-day follow-up**: 3 commits landed, fork
+active dirs **14 → 11** (M1 retired 3, M2-A retired 3 — but
+gemini-embed-shim still active so the M3 line in the README still says
+"M3 退役 in flight"). Total deleted/relocated code: ~6800 lines
+(mostly dead `_archived/` content). No production breakage; service
+mesh continued serving through all four work blocks.
+
+---
+
 ## 7. Known gaps (see `skills/kos-jarvis/TODO.md` for live tracker)
 
 - **P0 resolved 2026-04-22**: notion-poller PGLite deadlock — Path B landed in v0.17 sync (see §6.7). `scripts/minions-wrap/notion-poller.sh` deleted; plist now direct-bun invocation of `workers/notion-poller/run.ts`. First live cycle: 78 s / 9 pages ingested / 0 lock timeouts.
